@@ -7098,7 +7098,10 @@
     "expected": "freed 1 once, then the run error, exit 1: ›`free` and `move` end a name; no drop flag‹ \"no teardown runs over an emptied place\"; Thobias asked for this case to be recorded (Q-0045.3, 1 October 2026): \"a problem should be recorded that sometimes free could be called multiple times on one name when it isnt a pointer\"",
     "tier": "interpreted",
     "found": "logoslang-issue-192-review-3 on branch issue-192-teardown-at-life-end at b3fc006 (the REPL does the same); not on dev c8a654c, where a plain record is not held; rerun by Orchestrator (2) at b3fc006",
-    "why": null,
+    "why": [
+      "W78",
+      "W79"
+    ],
     "issue": 240,
     "fixed": null,
     "made": {
@@ -7110,7 +7113,26 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-01T21:42+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "f4d1fa3",
+        "change": "why + W78",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:42+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "f4d1fa3",
+        "change": "why + W79",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P40",
@@ -7159,5 +7181,902 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "W78",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The pass's fault end (end_after_fault) learns that its failing line already freed a name only from close_line, which sets the ExitItem's end once the line is parsed, or from drain, which pushes a pending line's ended names to OpenScope.reached before running it; an immediate operand runs inside its line's parse through immediate_value and run_on_pass, after drain and before close_line, so a record it freed is still held at the fault (end None, not in reached) and held_at_fault runs its free again",
+    "proposed_for": "P39",
+    "why": [
+      "W83",
+      "W82"
+    ],
+    "anchors": [
+      "end_after_fault",
+      "close_line",
+      "drain",
+      "immediate_value",
+      "run_on_pass",
+      "held_at_fault",
+      "ExitItem",
+      "OpenScope",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)",
+      "The pass runs only as far as it must, in order, and never twice",
+      "`free` and `move` end a name; no drop flag"
+    ],
+    "evidence": [
+      {
+        "command": "grep -n 'reached.push(name)\\|exit\\[at\\].end = Some(line)\\|let bits = self.run_on_pass(node)\\|item.held_at_fault(types, open.ran) && !reached' src/parse/bodies.rs",
+        "output": "1330:                self.cx.open[depth].exit[at].end = Some(line);     (close_line)\n1410:                    self.cx.open[at].reached.push(name);           (drain, before run_on_pass of a pending item)\n1443:                item.from > 0 && item.held_at_fault(types, open.ran) && !reached(item)   (end_after_fault)\n1501:        let bits = self.run_on_pass(node).map_err(ParseError::Run)?;   (immediate_value, after self.drain()?; records no ended name)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "logos '<bag, g>, a := bag(1), x := immediate ( free a, g() ), 1' against the same line without immediate, and an immediate nested in a block line",
+        "output": "x := immediate ( free a, g() ), 1          -> freed 1 / freed 1 / run error: stop\nx := ( free a, g() ), 1                    -> freed 1 / run error: stop\nfree a, g(), 1                             -> freed 1 / run error: stop\nx := ( y := immediate ( free a, g() ), 2 ), 1  -> freed 1 / freed 1 / run error: stop\nx := immediate ( free a, 2 ), 1            -> freed 1 / 1 (no fault: close_line set end)\n(bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), g := fn () -> i32 ( error «stop» ); dev f4d1fa3, interpreted)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "rg -n 'item.from > 0 && item.held_at_fault|exit\\[at\\].end = Some\\(line\\)|let bits = self.run_on_pass\\(node\\)|open\\[at\\].reached.push\\(name\\)' src/parse/bodies.rs; rg -n -A4 'fn held_at_fault' src/identities/drop_model.rs",
+        "output": "1330:  self.cx.open[depth].exit[at].end = Some(line);   (close_line, after the line is parsed)\n1410:  self.cx.open[at].reached.push(name);              (drain, only for lines it runs)\n1443:  item.from > 0 && item.held_at_fault(types, open.ran) && !reached(item)   (end_after_fault)\n1501:  let bits = self.run_on_pass(node).map_err(ParseError::Run)?;   (immediate_value, mid-line)\n675: pub(crate) unsafe fn held_at_fault(&self, types: &Core, failed: usize) -> bool {\n676:     self.held_at(failed)\n677:         || self.from <= failed && self.end == Some(failed) && holds_by_address(types, types.type_of(self.what))",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "logos over bag (P39's header), the fault inside vs outside the immediate's run",
+        "output": "x := immediate ( free a, g() )        -> freed 1 / freed 1 / run error: stop\nx := ( free a, g() )                  -> freed 1 / run error: stop\nx := immediate ( free a, 2 ), y := g() -> freed 1 / run error: stop\nx := g() + immediate ( free a, 2 )     -> freed 1 / run error: stop\nx := ( c := immediate ( free a, g() ), 2 ) -> freed 1 / freed 1 / run error: stop",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "An immediate runs its operand inside its line's parse (immediate_value calls run_on_pass), before close_line sets the exit item's end for a name that line freed and outside drain, which alone adds ended names to reached; so when that run faults, end_after_fault finds the name's item with end None, held_at_fault calls it held, and ExitItem::run tears it down again (a line run by drain has end set, and held_at_fault skips a plain record its own line ended)"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T21:41+02:00",
+      "by": "logoslang-why-P39-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:42+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "f4d1fa3",
+        "change": "accepted as a why of P39, same as W81",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ade3111",
+        "change": "why + W83",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ade3111",
+        "change": "why + W82",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W79",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A plain record kept in its own bytes has no NULL form: end_held runs its free over its bytes' address and writes nothing into its place, and holds_by_address is false for its type, so held_at_fault cannot read the place and trusts the parse's word alone; ›`free` and `move` end a name; no drop flag‹ has a failing line's cleanup read NULL and leaves a record's NULL form Open (#240), so a free that ran unrecorded runs again, while an owning pointer's 0 would stop it in end_held",
+    "proposed_for": "P39",
+    "why": [
+      "W85"
+    ],
+    "anchors": [
+      "end_held",
+      "holds_by_address",
+      "held_at_fault",
+      "ended_at_run",
+      "is_plain",
+      "src/identities/drop_model.rs"
+    ],
+    "design": [
+      "`free` and `move` end a name; no drop flag",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "grep -n -A3 'fn holds_by_address\\|let held = if super::this::is_plain' src/identities/drop_model.rs",
+        "output": "763:pub(crate) unsafe fn holds_by_address(types: &Core, ty: DyadPtr) -> bool {\n764-    !ty.is_null()\n765-        && (numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()\n766-            || meta::is_record_type(ty) && !super::this::is_plain(types, ty))\n801:    let held = if super::this::is_plain(rt.types(), ty) {\n802-        slot as i64          (plain record: the address, place left as it is)\n803-    } else {\n804-        let held = std::ptr::read_unaligned(slot as *const i64);\n805-        std::ptr::write_unaligned(slot as *mut i64, 0);   (address holder: NULL written)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "grep -n 'Open (asked 1 October 2026, #240)\\|an `immediate` freed while the pass parsed its line' DESIGN.md",
+        "output": "394:- **Open (asked 1 October 2026, #240):** the NULL form of a value kept directly in its place ... has no byte pattern that is not a real `bag`. Until it is settled, such a record's `free` can run twice on a line that fails after freeing it (problem P39)\n396:- **Seed:** ... Not yet: a record kept in its bytes ... one an `immediate` freed while the pass parsed its line is freed again when the pass faults on that line.",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "rg -n -A3 'let held = if super::this::is_plain|pub\\(crate\\) unsafe fn holds_by_address' src/identities/drop_model.rs",
+        "output": "763:pub(crate) unsafe fn holds_by_address(types: &Core, ty: DyadPtr) -> bool {\n764-    !ty.is_null()\n765-        && (numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()\n766-            || meta::is_record_type(ty) && !super::this::is_plain(types, ty))\n--\n801:    let held = if super::this::is_plain(rt.types(), ty) {\n802-        slot as i64\n803-    } else {\n804-        let held = std::ptr::read_unaligned(slot as *const i64);\n805-        std::ptr::write_unaligned(slot as *mut i64, 0);",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "logos 'p := alloc 1 of i32 7, g := fn () -> i32 ( error «stop» ), x := immediate ( free p, g() ), 1'  vs the same line over bag (P39's program)",
+        "output": "pointer: <command line>: run error: stop / exit 1 (one free, the second teardown finds 0)\nbag: freed 1 / freed 1 / <command line>: run error: stop / exit 1",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "A plain record kept in its own bytes has no NULL form: end_held runs its type's free over the place's address and writes nothing there, and holds_by_address is false for it, so a second teardown of the same place cannot see that free already ran (a pointer's place is set to 0 and its second teardown frees nothing)"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T21:41+02:00",
+      "by": "logoslang-why-P39-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:42+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "f4d1fa3",
+        "change": "accepted as a why of P39, same as W80",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ade3111",
+        "change": "why + W85",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W80",
+    "kind": "why",
+    "status": "merged",
+    "text": "A plain record kept in its own bytes has no NULL form: end_held runs its type's free over the place's address and writes nothing there, and holds_by_address is false for it, so a second teardown of the same place cannot see that free already ran (a pointer's place is set to 0 and its second teardown frees nothing)",
+    "proposed_for": "P39",
+    "why": null,
+    "anchors": [
+      "end_held",
+      "holds_by_address",
+      "is_plain",
+      "src/identities/drop_model.rs"
+    ],
+    "design": [
+      "`free` and `move` end a name; no drop flag"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n -A3 'let held = if super::this::is_plain|pub\\(crate\\) unsafe fn holds_by_address' src/identities/drop_model.rs",
+        "output": "763:pub(crate) unsafe fn holds_by_address(types: &Core, ty: DyadPtr) -> bool {\n764-    !ty.is_null()\n765-        && (numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()\n766-            || meta::is_record_type(ty) && !super::this::is_plain(types, ty))\n--\n801:    let held = if super::this::is_plain(rt.types(), ty) {\n802-        slot as i64\n803-    } else {\n804-        let held = std::ptr::read_unaligned(slot as *const i64);\n805-        std::ptr::write_unaligned(slot as *mut i64, 0);",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "logos 'p := alloc 1 of i32 7, g := fn () -> i32 ( error «stop» ), x := immediate ( free p, g() ), 1'  vs the same line over bag (P39's program)",
+        "output": "pointer: <command line>: run error: stop / exit 1 (one free, the second teardown finds 0)\nbag: freed 1 / freed 1 / <command line>: run error: stop / exit 1",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W79",
+    "made": {
+      "at": "2026-10-01T21:42+02:00",
+      "by": "logoslang-why-P39-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:42+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "f4d1fa3",
+        "change": "merged into W79",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W81",
+    "kind": "why",
+    "status": "merged",
+    "text": "An immediate runs its operand inside its line's parse (immediate_value calls run_on_pass), before close_line sets the exit item's end for a name that line freed and outside drain, which alone adds ended names to reached; so when that run faults, end_after_fault finds the name's item with end None, held_at_fault calls it held, and ExitItem::run tears it down again (a line run by drain has end set, and held_at_fault skips a plain record its own line ended)",
+    "proposed_for": "P39",
+    "why": null,
+    "anchors": [
+      "immediate_value",
+      "run_on_pass",
+      "close_line",
+      "drain",
+      "end_after_fault",
+      "held_at_fault",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)",
+      "`free` and `move` end a name; no drop flag"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'item.from > 0 && item.held_at_fault|exit\\[at\\].end = Some\\(line\\)|let bits = self.run_on_pass\\(node\\)|open\\[at\\].reached.push\\(name\\)' src/parse/bodies.rs; rg -n -A4 'fn held_at_fault' src/identities/drop_model.rs",
+        "output": "1330:  self.cx.open[depth].exit[at].end = Some(line);   (close_line, after the line is parsed)\n1410:  self.cx.open[at].reached.push(name);              (drain, only for lines it runs)\n1443:  item.from > 0 && item.held_at_fault(types, open.ran) && !reached(item)   (end_after_fault)\n1501:  let bits = self.run_on_pass(node).map_err(ParseError::Run)?;   (immediate_value, mid-line)\n675: pub(crate) unsafe fn held_at_fault(&self, types: &Core, failed: usize) -> bool {\n676:     self.held_at(failed)\n677:         || self.from <= failed && self.end == Some(failed) && holds_by_address(types, types.type_of(self.what))",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "logos over bag (P39's header), the fault inside vs outside the immediate's run",
+        "output": "x := immediate ( free a, g() )        -> freed 1 / freed 1 / run error: stop\nx := ( free a, g() )                  -> freed 1 / run error: stop\nx := immediate ( free a, 2 ), y := g() -> freed 1 / run error: stop\nx := g() + immediate ( free a, 2 )     -> freed 1 / run error: stop\nx := ( c := immediate ( free a, g() ), 2 ) -> freed 1 / freed 1 / run error: stop",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W78",
+    "made": {
+      "at": "2026-10-01T21:42+02:00",
+      "by": "logoslang-why-P39-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:42+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "f4d1fa3",
+        "change": "merged into W78",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P42",
+    "kind": "problem",
+    "status": "open",
+    "text": "A plain record name declared `?` and never written has its type's `free` run at its scope's end",
+    "program": "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), mut a := bag ?, 1",
+    "output": "freed 0\n1\nexit 0",
+    "expected": "`1` alone, no `freed`: nothing was written into `a`, so its place holds no value, and ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹ runs a teardown \"for each value a place of the scope still holds\". Whether `mut a := bag ?` is legal at all is asked as Q-0056 (Thobias's #178 \"Yes, bag ? owns too\" against his Q-0039 (c), \"a local owner then always gets its value at its declaration\")",
+    "tier": "interpreted, command line; the same inside a function body, `f := fn () -> i32 ( mut a := bag ?, 1 ), f()`",
+    "found": "Orchestrator (2), checking #178's programs on dev f4d1fa3, release, 1 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T21:43+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "f4d1fa3",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W82",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The pass tells a name's holder that a run reached the name's end (OpenScope.reached.push from a line's ends) only inside drain's loop, not in run_on_pass, the one entry every pass run takes; the other run_on_pass callers run code in the middle of a line's parse and push nothing: immediate_value, construct_decl for a share value, eval_type_call, run_logos_body, the constructor fold in types.rs and the rank value, though mark_dead has already logged the name in ended_log when the run starts",
+    "proposed_for": "W78",
+    "why": [
+      "W83"
+    ],
+    "anchors": [
+      "run_on_pass",
+      "drain",
+      "OpenScope",
+      "immediate_value",
+      "construct_decl",
+      "eval_type_call",
+      "run_logos_body",
+      "mark_dead",
+      "ended_log",
+      "src/parse/driver.rs",
+      "src/parse/bodies.rs",
+      "src/parse/declare.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "`free` and `move` end a name; no drop flag"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'run_on_pass\\(|reached.push' src/parse",
+        "output": "src/parse/types.rs:882:   self.run_on_pass(value)  (rank value)\nsrc/parse/types.rs:1204:  self.run_on_pass(node)   (constructor fold)\nsrc/parse/fields.rs:891:  self.run_on_pass(call)   (eval_type_call)\nsrc/parse/mod.rs:278:     self.run_on_pass(node)   (value_of, a REPL line or tail)\nsrc/parse/driver.rs:893:  self.run_on_pass(call)   (run_logos_body)\nsrc/parse/bodies.rs:1415: self.run_on_pass(node)   (drain)\nsrc/parse/bodies.rs:1501: self.run_on_pass(node)   (immediate_value)\nsrc/parse/declare.rs:502: self.run_on_pass(node)   (construct_decl, share)\nsrc/parse/bodies.rs:1410: self.cx.open[at].reached.push(name)   (the one push, in drain)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "logos over P39's bag/g header, a := bag(1), then a share value that frees a and fails",
+        "output": "share k := ( free a, g() ), 1                 -> freed 1 / freed 1 / run error: stop\nx := ( share k := ( free a, g() ), 2 ), 1     -> freed 1 / freed 1 / run error: stop\nt := type ( share k := ( free a, g() ) ), 1   -> freed 1 / freed 1 / error: a type body's own declaration failed at the definition: stop\nshare k := ( free a, 2 ), 1                   -> freed 1 / 1\np := alloc 1 of i32 7, ..., share k := ( free p, g() ), 1 -> run error: stop (once)",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T21:44+02:00",
+      "by": "logoslang-why-P39-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ade3111",
+        "change": "accepted as a why of W78",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "why + W88",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "W88 merged into W83",
+        "reason": "the same fact for a second list: the pass keeps where a name ends only per whole closed line (ExitItem.end and OpenScope.unrun ends both filled at close_line); agent B traced W82 to W83 directly"
+      }
+    ]
+  },
+  {
+    "id": "W83",
+    "kind": "why",
+    "status": "accepted",
+    "text": "An ExitItem holds one end, a line index (end: Option<usize>), and it is written only when a line or block closes: mark_dead only queues the name in OpenScope.ended, and close_line (or a block tail moving out) turns it into end = Some(line); so the pass's record of where a held name ends has no point inside a line, and a run that frees the name while that line is still being parsed leaves end None",
+    "proposed_for": "W78",
+    "why": [
+      "W89"
+    ],
+    "anchors": [
+      "ExitItem",
+      "mark_dead",
+      "close_line",
+      "OpenScope",
+      "held_at_fault",
+      "src/parse/declare.rs",
+      "src/parse/bodies.rs",
+      "src/identities/drop_model.rs",
+      "end_after_fault",
+      "held_at",
+      "immediate_value",
+      "run_on_pass",
+      "unrun",
+      "next_cell",
+      "drain",
+      "src/parse/driver.rs"
+    ],
+    "design": [
+      "`move` and `free` are static: the parse marks the name dead",
+      "`free` and `move` end a name; no drop flag",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n '\\.end = Some|end: Some|open.ended.push|pub end: Option' src/parse src/identities/drop_model.rs",
+        "output": "src/identities/drop_model.rs:649:    pub end: Option<usize>,\nsrc/parse/declare.rs:292:            open.ended.push(ended.binding);            (mark_dead: queued only)\nsrc/parse/bodies.rs:1271:                closed.exit[at].end = Some(tail);   (block tail moved out, at the block's close)\nsrc/parse/bodies.rs:1330:                self.cx.open[depth].exit[at].end = Some(line);   (close_line)\nsrc/parse/bodies.rs:1335:                open.exit.insert(0, ExitItem { what: name, from: 0, end: Some(line) });   (close_line)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "logos over P39's bag/g header: the same free run mid-line vs on a closed line",
+        "output": "x := immediate ( free a, 2 ), y := g(), 1 -> freed 1 / run error: stop   (end set at close, then the fault)\nx := immediate ( free a, g() ), 1          -> freed 1 / freed 1 / run error: stop   (fault before close: end None)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "grep -n 'open.ended.push(ended.binding)\\|take(&mut self.cx.open\\[depth\\].ended)\\|exit\\[at\\].end = Some(line)\\|held_at_fault(types, open.ran) && !reached\\|self.end_after_fault(&open)\\|self.end_after_fault(&closed)\\|end == Some(failed)' src/parse/declare.rs src/parse/bodies.rs src/identities/drop_model.rs",
+        "output": "src/parse/declare.rs:292:            open.ended.push(ended.binding);         (mark_dead, at parse of free a)\nsrc/parse/bodies.rs:1203:                    self.end_after_fault(&open);   (an unclosed block: its ended never read)\nsrc/parse/bodies.rs:1325:        for name in std::mem::take(&mut self.cx.open[depth].ended) {   (close_line)\nsrc/parse/bodies.rs:1330:                self.cx.open[depth].exit[at].end = Some(line);\nsrc/parse/bodies.rs:1443:                item.from > 0 && item.held_at_fault(types, open.ran) && !reached(item)   (end_after_fault: exit and reached only)\nsrc/identities/drop_model.rs:679:                && self.end == Some(failed)   (held_at_fault's failing-line arm, never hit when end is None)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "logos '<bag, g>, a := bag(1), <line>, 1' for a closed failing line against an unclosed one (dev f4d1fa3, interpreted)",
+        "output": "x := ( y := g(), free a, 1 ), 1              -> freed 1 / run error: stop   (closed line: block's fault exit frees a, top level's end == failed leaves it)\nx := immediate ( y := g(), free a, 1 ), 1     -> freed 1 / freed 1 / run error: stop   (free never ran: block's fault exit frees a, top level's end None frees it again)\nx := immediate ( free a, 2 ) + g(), 1         -> freed 1 / freed 1 / run error: stop   (immediate's operand is ( free a, 2 ) + g())\nx := immediate ( free a, 2 ), y := g(), 1     -> freed 1 / run error: stop   (line closed before the fault)\n(bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), g := fn () -> i32 ( error «stop» ))",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "grep -n 'open.unrun.push((item.dyad, open.lines, Vec::new()))\\|open.unrun.last_mut().filter\\|for (node, line, ends) in list\\|reached.push(name)\\|unsafe fn run_on_pass' src/parse/driver.rs src/parse/bodies.rs; sed -n 921,926p src/parse/driver.rs",
+        "output": "src/parse/driver.rs:684:                        open.unrun.push((item.dyad, open.lines, Vec::new()));   (next_cell: a whole line, no ends yet)\nsrc/parse/driver.rs:921:    pub(super) unsafe fn run_on_pass(\nsrc/parse/bodies.rs:1337:            if let Some((_, _, ends)) = open.unrun.last_mut().filter(|(_, at, _)| *at == line) {   (close_line fills ends)\nsrc/parse/bodies.rs:1395:            for (node, line, ends) in list {   (drain walks unrun)\nsrc/parse/bodies.rs:1410:                    self.cx.open[at].reached.push(name);   (drain, from those ends)\nrun_on_pass's parameters: (&mut self, node: DyadPtr): no ends",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The parse records a name's end per closed line: mark_dead puts it in OpenScope.ended, and only close_line turns that into the ExitItem's end; end_after_fault reads exit and reached and never ended, so a fault the pass meets while its line is still being parsed (an immediate operand, run through run_on_pass mid-line) is judged as if the failing line ended nothing, and held_at(failed) counts the name held, where an end of the failing line would have sent it to held_at_fault's own arm, which leaves a record unfreed and reads a pointer's NULL",
+      "The names a pass run reaches are carried only by OpenScope.unrun, a list of whole lines (dyad, line, ends): next_cell pushes each parsed line with empty ends and close_line fills ends after the line is parsed; run_on_pass takes a bare node and no ends, so only drain, the one walker of unrun, has names to push to reached, and a part of a line run before it closes is no entry of the list"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T21:44+02:00",
+      "by": "logoslang-why-P39-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ade3111",
+        "change": "accepted as a why of W78, same as W84",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "why + W89",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "took in W88",
+        "reason": "the same fact for a second list: the pass keeps where a name ends only per whole closed line (ExitItem.end and OpenScope.unrun ends both filled at close_line); agent B traced W82 to W83 directly"
+      }
+    ]
+  },
+  {
+    "id": "W84",
+    "kind": "why",
+    "status": "merged",
+    "text": "The parse records a name's end per closed line: mark_dead puts it in OpenScope.ended, and only close_line turns that into the ExitItem's end; end_after_fault reads exit and reached and never ended, so a fault the pass meets while its line is still being parsed (an immediate operand, run through run_on_pass mid-line) is judged as if the failing line ended nothing, and held_at(failed) counts the name held, where an end of the failing line would have sent it to held_at_fault's own arm, which leaves a record unfreed and reads a pointer's NULL",
+    "proposed_for": "W78",
+    "why": null,
+    "anchors": [
+      "mark_dead",
+      "OpenScope",
+      "close_line",
+      "end_after_fault",
+      "held_at_fault",
+      "held_at",
+      "immediate_value",
+      "run_on_pass",
+      "src/parse/bodies.rs",
+      "src/parse/declare.rs"
+    ],
+    "design": [
+      "`free` and `move` end a name; no drop flag",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "evidence": [
+      {
+        "command": "grep -n 'open.ended.push(ended.binding)\\|take(&mut self.cx.open\\[depth\\].ended)\\|exit\\[at\\].end = Some(line)\\|held_at_fault(types, open.ran) && !reached\\|self.end_after_fault(&open)\\|self.end_after_fault(&closed)\\|end == Some(failed)' src/parse/declare.rs src/parse/bodies.rs src/identities/drop_model.rs",
+        "output": "src/parse/declare.rs:292:            open.ended.push(ended.binding);         (mark_dead, at parse of free a)\nsrc/parse/bodies.rs:1203:                    self.end_after_fault(&open);   (an unclosed block: its ended never read)\nsrc/parse/bodies.rs:1325:        for name in std::mem::take(&mut self.cx.open[depth].ended) {   (close_line)\nsrc/parse/bodies.rs:1330:                self.cx.open[depth].exit[at].end = Some(line);\nsrc/parse/bodies.rs:1443:                item.from > 0 && item.held_at_fault(types, open.ran) && !reached(item)   (end_after_fault: exit and reached only)\nsrc/identities/drop_model.rs:679:                && self.end == Some(failed)   (held_at_fault's failing-line arm, never hit when end is None)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "logos '<bag, g>, a := bag(1), <line>, 1' for a closed failing line against an unclosed one (dev f4d1fa3, interpreted)",
+        "output": "x := ( y := g(), free a, 1 ), 1              -> freed 1 / run error: stop   (closed line: block's fault exit frees a, top level's end == failed leaves it)\nx := immediate ( y := g(), free a, 1 ), 1     -> freed 1 / freed 1 / run error: stop   (free never ran: block's fault exit frees a, top level's end None frees it again)\nx := immediate ( free a, 2 ) + g(), 1         -> freed 1 / freed 1 / run error: stop   (immediate's operand is ( free a, 2 ) + g())\nx := immediate ( free a, 2 ), y := g(), 1     -> freed 1 / run error: stop   (line closed before the fault)\n(bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), g := fn () -> i32 ( error «stop» ))",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W83",
+    "made": {
+      "at": "2026-10-01T21:45+02:00",
+      "by": "logoslang-why-P39-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ade3111",
+        "change": "merged into W83",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W85",
+    "kind": "why",
+    "status": "accepted",
+    "text": "DESIGN.md has no rule for the NULL form of a value kept in its own bytes: ›:= decides nothing about copy or reference; the type's reading rule does‹ stores a data record's bytes in its place, so there is no address to zero; ›free and move end a name; no drop flag‹ needs a NULL form for every value with a free slot, forbids a run-time flag and rejects NULL over a node's type word, and leaves this case Open (#240); bag's every byte pattern is a real bag, so end_held's is_plain branch and holds_by_address have nothing to write or read",
+    "proposed_for": "W79",
+    "why": [],
+    "anchors": [
+      "end_held",
+      "holds_by_address",
+      "is_plain",
+      "src/identities/drop_model.rs",
+      "src/identities/this.rs",
+      "held_at_fault",
+      "DESIGN.md"
+    ],
+    "design": [
+      "`free` and `move` end a name; no drop flag",
+      "`:=` decides nothing about copy or reference; the type's reading rule does",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n -i 'NULL form|null form' DESIGN.md (searched also: kept directly in, in its own bytes, drop flag, plain record)",
+        "output": "388: ... So every value with a free slot needs a NULL form: a pointer's is 0; that of a value kept directly in its place is the Open point below.\n392: Rejected, to stay rejected (1 October 2026, Thobias, Q-0045): free writing NULL over a node's type word, as the NULL form of a value kept in its own bytes.\n393: Open (asked 1 October 2026, #240): the NULL form of a value kept directly in its place ... bag := type ( mut n := i32 ?, share free = (…) ) has no byte pattern that is not a real bag.\n715-716 (›:= decides nothing…‹): A data type reads its value as bytes, stored in a fresh place: y := x is a copy.",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "rg -n -B2 -A2 'stand-in for #240|let held = if super::this::is_plain' src/identities/drop_model.rs",
+        "output": "758: /// that 0 is its NULL. A record kept in its own bytes has no NULL form yet, so a line that\n759: /// fails cannot tell whether its own free or move of one ran: stand-in for #240.\n801:    let held = if super::this::is_plain(rt.types(), ty) {\n802:        slot as i64",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "rg -n -i 'null form|drop flag|NULL.*record|record.*NULL|own bytes|kept directly|in its bytes|byte pattern|niche|sentinel' DESIGN.md",
+        "output": "387:### `free` and `move` end a name; no drop flag\n388: ... So every value with a `free` slot needs a NULL form: a pointer's is 0; that of a value kept directly in its place is the Open point below.\n392:- **Rejected, to stay rejected (1 October 2026, Thobias, Q-0045):** `free` writing NULL over a node's type word, as the NULL form of a value kept in its own bytes.\n393:- **Open (asked 1 October 2026, #240):** the NULL form of a value kept directly in its place ... has no byte pattern that is not a real `bag`.\n697: (gate rule) no run-time byte, the drop-flag reason of ›`free` and `move` end a name; no drop flag‹\n976:- **Ruled (1 October 2026, Thobias, Q-0043):** \"teardown done\" reads each held place and frees what is not NULL\n(no other hit: no rule gives a record, or any value kept in its place, a NULL form)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "grep -n -B4 'unsafe fn is_plain' src/identities/this.rs",
+        "output": "289-/// A plain record, laid out in bytes: neither a node a Logos `parse` builds nor one that runs.\n293:pub(crate) unsafe fn is_plain(types: &Core, owner: DyadPtr) -> bool {",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "DESIGN.md has no rule for the NULL form of a value kept directly in its place: ›`free` and `move` end a name; no drop flag‹ asks every value with a free slot for one, rejects a run-time drop flag and (Q-0045) NULL written over a node's type word, and leaves a plain record's Open (#240); ›A checked error is a fault: the task that hit it is cancelled‹ only reads NULL; so a record is_plain lays out as its fields' bytes, where every pattern is a real value, and holds_by_address and end_held have no NULL to write or read"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T21:45+02:00",
+      "by": "logoslang-why-P39-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ade3111",
+        "change": "accepted as a why of W79, same as W86",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "asked: no why found",
+        "reason": "both agents: DESIGN has no rule for the NULL form of a value kept in its own bytes; past it lies Thobias's ruling on the Open line at ›`free` and `move` end a name; no drop flag‹ (#240)"
+      }
+    ]
+  },
+  {
+    "id": "W86",
+    "kind": "why",
+    "status": "merged",
+    "text": "DESIGN.md has no rule for the NULL form of a value kept directly in its place: ›`free` and `move` end a name; no drop flag‹ asks every value with a free slot for one, rejects a run-time drop flag and (Q-0045) NULL written over a node's type word, and leaves a plain record's Open (#240); ›A checked error is a fault: the task that hit it is cancelled‹ only reads NULL; so a record is_plain lays out as its fields' bytes, where every pattern is a real value, and holds_by_address and end_held have no NULL to write or read",
+    "proposed_for": "W79",
+    "why": null,
+    "anchors": [
+      "is_plain",
+      "holds_by_address",
+      "end_held",
+      "held_at_fault",
+      "src/identities/this.rs",
+      "src/identities/drop_model.rs",
+      "DESIGN.md"
+    ],
+    "design": [
+      "`free` and `move` end a name; no drop flag",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n -i 'null form|drop flag|NULL.*record|record.*NULL|own bytes|kept directly|in its bytes|byte pattern|niche|sentinel' DESIGN.md",
+        "output": "387:### `free` and `move` end a name; no drop flag\n388: ... So every value with a `free` slot needs a NULL form: a pointer's is 0; that of a value kept directly in its place is the Open point below.\n392:- **Rejected, to stay rejected (1 October 2026, Thobias, Q-0045):** `free` writing NULL over a node's type word, as the NULL form of a value kept in its own bytes.\n393:- **Open (asked 1 October 2026, #240):** the NULL form of a value kept directly in its place ... has no byte pattern that is not a real `bag`.\n697: (gate rule) no run-time byte, the drop-flag reason of ›`free` and `move` end a name; no drop flag‹\n976:- **Ruled (1 October 2026, Thobias, Q-0043):** \"teardown done\" reads each held place and frees what is not NULL\n(no other hit: no rule gives a record, or any value kept in its place, a NULL form)",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "grep -n -B4 'unsafe fn is_plain' src/identities/this.rs",
+        "output": "289-/// A plain record, laid out in bytes: neither a node a Logos `parse` builds nor one that runs.\n293:pub(crate) unsafe fn is_plain(types: &Core, owner: DyadPtr) -> bool {",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W85",
+    "made": {
+      "at": "2026-10-01T21:45+02:00",
+      "by": "logoslang-why-P39-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ade3111",
+        "change": "merged into W85",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W87",
+    "kind": "why",
+    "status": "merged",
+    "text": "DESIGN.md states where a name ends at item granularity: ›move and free are static: the parse marks the name dead‹ makes it dead 'from that line', or 'at that item, on every path' settled at an if's close, and ›free and move end a name; no drop flag‹ leaves where inside a failing line it stopped to the place's NULL; so the parse, which implements that rule, keeps one line index per name (ExitItem.end) settled in close_line, and has no position inside a line to record a mid-line run's free in",
+    "proposed_for": "W83",
+    "why": null,
+    "anchors": [
+      "ExitItem",
+      "mark_dead",
+      "close_line",
+      "held_at_fault",
+      "src/parse/declare.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "`move` and `free` are static: the parse marks the name dead",
+      "`free` and `move` end a name; no drop flag"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'makes .x. dead from that line|at that item, on every path|since the line may have stopped before its own' DESIGN.md (cut)",
+        "output": "466: 1. Same level: move x / free x beside x's declaration makes x dead from that line.\n467: 2. Nested block: ... ends x's life at that item, on every path. ... at the if's close every other arm runs x's free at its end\n388: Only a line that fails reads the places: its cleanup ... frees each place of the scopes it stops that is not NULL, since the line may have stopped before its own free or move or after it.",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "rg -n -A3 'pub\\(crate\\) fn mark_dead' src/parse/declare.rs; rg -n 'exit\\[at\\].end = Some\\(line\\)|ends.push\\(name\\)' src/parse/bodies.rs",
+        "output": "declare.rs:270-273 /// node has emptied ended's place ... Each scope from the one that held it inward settles, when its line closes, that it holds the name up to that line, and an if reads which of its arms ended it.\nbodies.rs:1330: self.cx.open[depth].exit[at].end = Some(line);\nbodies.rs:1338: ends.push(name);",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W89",
+    "made": {
+      "at": "2026-10-01T21:48+02:00",
+      "by": "logoslang-why-P39-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "merged into W89",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W88",
+    "kind": "why",
+    "status": "merged",
+    "text": "The names a pass run reaches are carried only by OpenScope.unrun, a list of whole lines (dyad, line, ends): next_cell pushes each parsed line with empty ends and close_line fills ends after the line is parsed; run_on_pass takes a bare node and no ends, so only drain, the one walker of unrun, has names to push to reached, and a part of a line run before it closes is no entry of the list",
+    "proposed_for": "W82",
+    "why": null,
+    "anchors": [
+      "OpenScope",
+      "unrun",
+      "next_cell",
+      "close_line",
+      "drain",
+      "run_on_pass",
+      "src/parse/driver.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "evidence": [
+      {
+        "command": "grep -n 'open.unrun.push((item.dyad, open.lines, Vec::new()))\\|open.unrun.last_mut().filter\\|for (node, line, ends) in list\\|reached.push(name)\\|unsafe fn run_on_pass' src/parse/driver.rs src/parse/bodies.rs; sed -n 921,926p src/parse/driver.rs",
+        "output": "src/parse/driver.rs:684:                        open.unrun.push((item.dyad, open.lines, Vec::new()));   (next_cell: a whole line, no ends yet)\nsrc/parse/driver.rs:921:    pub(super) unsafe fn run_on_pass(\nsrc/parse/bodies.rs:1337:            if let Some((_, _, ends)) = open.unrun.last_mut().filter(|(_, at, _)| *at == line) {   (close_line fills ends)\nsrc/parse/bodies.rs:1395:            for (node, line, ends) in list {   (drain walks unrun)\nsrc/parse/bodies.rs:1410:                    self.cx.open[at].reached.push(name);   (drain, from those ends)\nrun_on_pass's parameters: (&mut self, node: DyadPtr): no ends",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W83",
+    "made": {
+      "at": "2026-10-01T21:49+02:00",
+      "by": "logoslang-why-P39-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "accepted as a why of W82",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "merged into W83",
+        "reason": "the same fact for a second list: the pass keeps where a name ends only per whole closed line (ExitItem.end and OpenScope.unrun ends both filled at close_line); agent B traced W82 to W83 directly"
+      }
+    ]
+  },
+  {
+    "id": "W89",
+    "kind": "why",
+    "status": "accepted",
+    "text": "DESIGN.md puts a name's end at a line and gives everything inside a failing line to the place's NULL: ›`move` and `free` are static: the parse marks the name dead‹ makes a name dead from its line or item and says only a line that fails reads whether a place is NULL, and ›`free` and `move` end a name; no drop flag‹ (Q-0043) chose that NULL read over each spot where a line can fail knowing from the line's order which names are still alive, the line's order being ruled only for a `return` (Q-0045); so the parse needs no end inside a line, and a value with no NULL form (W85) is left with nothing that knows",
+    "proposed_for": "W83",
+    "why": [],
+    "anchors": [
+      "ExitItem",
+      "close_line",
+      "mark_dead",
+      "held_at_fault",
+      "DESIGN.md",
+      "src/parse/declare.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "`move` and `free` are static: the parse marks the name dead",
+      "`free` and `move` end a name; no drop flag",
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n -i 'dead from that line|at that item, on every path|Only a line that fails|line.s order' DESIGN.md",
+        "output": "466:1. *Same level:* `move x` / `free x` beside `x`'s declaration makes `x` dead from that line.\n467:2. *Nested block:* ... ends `x`'s life **at that item, on every path** ... Only a line that fails reads whether a place is NULL\n388: ... Only a line that fails reads the places: its cleanup ... frees each place of the scopes it stops that is not NULL, since the line may have stopped before its own `free` or `move` or after it.\n391: Ruled (Q-0043): ... Chosen over no check at all, each spot where a line can fail knowing from the line's order which names are still alive.\n368: Ruled (Q-0045): a `return` in the middle of a line ... The parse finds these from the line's order; nothing is looked up at run time.",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "rg -n 'makes .x. dead from that line|at that item, on every path|since the line may have stopped before its own' DESIGN.md (cut)",
+        "output": "466: 1. Same level: move x / free x beside x's declaration makes x dead from that line.\n467: 2. Nested block: ... ends x's life at that item, on every path. ... at the if's close every other arm runs x's free at its end\n388: Only a line that fails reads the places: its cleanup ... frees each place of the scopes it stops that is not NULL, since the line may have stopped before its own free or move or after it.",
+        "commit": "f4d1fa3"
+      },
+      {
+        "command": "rg -n -A3 'pub\\(crate\\) fn mark_dead' src/parse/declare.rs; rg -n 'exit\\[at\\].end = Some\\(line\\)|ends.push\\(name\\)' src/parse/bodies.rs",
+        "output": "declare.rs:270-273 /// node has emptied ended's place ... Each scope from the one that held it inward settles, when its line closes, that it holds the name up to that line, and an if reads which of its arms ended it.\nbodies.rs:1330: self.cx.open[depth].exit[at].end = Some(line);\nbodies.rs:1338: ends.push(name);",
+        "commit": "f4d1fa3"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "DESIGN.md states where a name ends at item granularity: ›move and free are static: the parse marks the name dead‹ makes it dead 'from that line', or 'at that item, on every path' settled at an if's close, and ›free and move end a name; no drop flag‹ leaves where inside a failing line it stopped to the place's NULL; so the parse, which implements that rule, keeps one line index per name (ExitItem.end) settled in close_line, and has no position inside a line to record a mid-line run's free in"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T21:49+02:00",
+      "by": "logoslang-why-P39-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "f4d1fa3",
+      "run": "why-P39",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T21:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "accepted as a why of W83, same as W87",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T21:51+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "6b3a673",
+        "change": "asked: no why found",
+        "reason": "both agents: it is the Q-0043 ruling as written, whose Why is Thobias's (\"all things that could possibly be freed when error occurs is not NULL\"); the one case where that reason fails is W85; past it lies his choice"
+      }
+    ]
   }
 ]
