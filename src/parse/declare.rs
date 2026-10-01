@@ -625,22 +625,13 @@ impl<'a> Parser<'a> {
         // the dyad behind it and keeps `value` as what the initializer stores.
         // SAFETY: `value` is a dyad from the store.
         let read = unsafe { self.types.through(value) };
-        // A box on the right is decided first; a rational value gets a place of
-        // `rational_number`.
+        // A box on the right is decided first: a value that gives back a type, a node's
+        // address or a rational gets a place of that type.
         // SAFETY: `read` is a dyad from the store.
-        let rational = unsafe { crate::identities::rational::is_rational_value(self.types, read) };
-        // SAFETY: `read` is a reduced dyad from the store.
-        let box_ty = match unsafe { crate::identities::read::read_kind(self.types, read) } {
-            _ if rational => Some(self.types.rational),
-            crate::identities::read::Read::Container(t)
-                if t == self.types.type_ || t == self.types.dyad_ =>
-            {
-                Some(t)
-            }
-            // SAFETY: as above.
-            _ if unsafe { dyad::ty(read) } == self.types.tape.cell_value => Some(self.types.type_),
-            // SAFETY: as above.
-            _ => unsafe { crate::identities::hashmap::box_of(self.types, read) },
+        let box_ty = unsafe {
+            let out = crate::identities::read::output_type(self.types, read);
+            let rational = crate::identities::rational::is_rational_value(self.types, read);
+            (rational || out == self.types.type_ || out == self.types.dyad_).then_some(out)
         };
         // SAFETY: `binding`, `value` and `read` are dyads from the store.
         let declared = unsafe {
@@ -704,7 +695,7 @@ impl<'a> Parser<'a> {
                 // Both make their value into the name's own bytes: the target slot. A record
                 // just made or moved out, of a type whose body fills `free`, makes the name its
                 // owner.
-                let t = crate::identities::by_copy::made_type(self.types, read);
+                let t = crate::identities::read::output_type(self.types, read);
                 let width = crate::identities::read::place_layout(self.types, t)
                     .map_or(8, |(_, width)| width)
                     .max(1);
@@ -727,12 +718,10 @@ impl<'a> Parser<'a> {
                     .map_or(8, |(_, width)| width);
                 let place = self.place_for(binding, t, width);
                 crate::identities::build_init(self.rt.store, self.types, place, read)?
-            } else if let Some(t) =
-                crate::identities::node_type_of(self.types, value).filter(|_| {
-                    crate::identities::read::read_kind(self.types, read)
-                        != crate::identities::read::Read::Node
-                })
-            {
+            } else if let Some(t) = crate::identities::node_output(self.types, value).filter(|_| {
+                crate::identities::read::read_kind(self.types, read)
+                    != crate::identities::read::Read::Node
+            }) {
                 // A node a Logos `parse` builds is held by its address: `b := a` borrows it,
                 // and a value just made or moved makes the name its owner.
                 let place = self.place_for(binding, t, 8);
@@ -754,18 +743,12 @@ impl<'a> Parser<'a> {
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
                 self.hold(binding);
                 init
-            } else if dyad::ty(read) != self.types.rational
-                && matches!(
-                    crate::identities::numtype_of(self.types, value),
-                    crate::identities::Operand::Concrete(_)
-                        | crate::identities::Operand::Pointer(_)
-                )
+            } else if let Some((ty_node, width)) =
+                crate::identities::scalar_binding_type(self.rt.store, self.types, value)
             {
-                // A runtime numeric or pointer value is snapshotted: fresh
+                // A runtime numeric, `bool` or pointer value is snapshotted: fresh
                 // per-call storage, the name bound to it, the value kept as a
                 // re-runnable initializer, so a read is a plain load and a loop-body local re-initializes on entry.
-                let (ty_node, width) =
-                    crate::identities::scalar_binding_type(self.rt.store, self.types, value);
                 let place = self.place_for(binding, ty_node, width);
                 crate::identities::build_init(self.rt.store, self.types, place, value)?
             } else if self.types.frame_of(read).is_some() && dyad::ty(read) == self.types.binding_ {
@@ -872,17 +855,16 @@ impl<'a> Parser<'a> {
                     unsafe {
                         // A place holding a type cannot say what a hole's
                         // layout is (DESIGN ›A type is a comptime value‹).
-                        match crate::identities::read::read_kind(types, d) {
-                            crate::identities::read::Read::Identity => Some(d),
-                            crate::identities::read::Read::Container(t)
-                                if t == types.type_ || t == types.dyad_ =>
-                            {
+                        if crate::identities::read::read_kind(types, d)
+                            == crate::identities::read::Read::Identity
+                        {
+                            Some(d)
+                        } else {
+                            let out = crate::identities::read::output_type(types, d);
+                            if out == types.type_ || out == types.dyad_ {
                                 return Err(ParseError::TypeKnownOnlyAtRun);
                             }
-                            _ if crate::identities::yields_type(types, d) => {
-                                return Err(ParseError::TypeKnownOnlyAtRun);
-                            }
-                            _ => None,
+                            None
                         }
                     }
                 }

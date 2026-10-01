@@ -21,7 +21,7 @@ use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
-use crate::identities::{by_copy, numtype_of, operands, Operand};
+use crate::identities::{by_copy, operand_of, operands, Operand};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_OUTPUT};
 use crate::Core;
 
@@ -491,7 +491,7 @@ impl Lowerer<'_, '_> {
         op: ArithOp,
     ) -> Result<Value, CompileError> {
         let (lhs, rhs) = operands(node);
-        let nt = match numtype_of(self.types, lhs) {
+        let nt = match operand_of(self.types, lhs) {
             Operand::Concrete(nt) => nt,
             // A pointer step: the offset was scaled to `i64` bytes at parse.
             Operand::Pointer(_) => NumType::I64,
@@ -780,7 +780,7 @@ impl Lowerer<'_, '_> {
         step: DyadPtr,
         body: DyadPtr,
     ) -> Result<Value, CompileError> {
-        let Operand::Concrete(nt) = numtype_of(self.types, start) else {
+        let Operand::Concrete(nt) = operand_of(self.types, start) else {
             return Err(CompileError::Internal("a loop's range is committed to one number type"));
         };
         let ct = nt.cranelift_type();
@@ -1033,7 +1033,7 @@ impl Lowerer<'_, '_> {
                 let v = if self.builder.func.dfg.value_type(v) == types::I64 {
                     v
                 } else {
-                    let nt = match numtype_of(self.types, arg) {
+                    let nt = match operand_of(self.types, arg) {
                         Operand::Concrete(nt) => nt,
                         // A pointer rides the container as its 8-byte address.
                         Operand::Pointer(_) => NumType::U64,

@@ -1115,6 +1115,7 @@ The author declares `output_type := type ?`; the parse writes `tape[0].output_ty
 - **Why:** `^` over i32 and f64 is one definition whose result follows its operands (Thobias: "the constructor has to look at the type of lhs and rhs to decide what the output type should be"). Written at build time, so a body using `^` gets its types in the one pass, no lookahead.
 - **Ruled:** 16 September 2026, Thobias. Renamed `output_type` 26 Sept 2026, Thobias: it holds the type of what the run yields.
 - **Rejected:** one result type fixed on the type (not dynamic enough).
+- **Seed:** since 1 October 2026 (#82), every built-in's parse writes the type its node gives back too, and every use site reads it through one read; a plain number a sequence, an `if` or a `return` hands on reads as an `i32`, the stand-in for #214.
 
 ### Each field-type combination a node is built with is its own specialization for `compile`
 - **Ruled:** 16 September 2026.

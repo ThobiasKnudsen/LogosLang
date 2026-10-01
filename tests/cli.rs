@@ -3623,11 +3623,11 @@ fn and_and_or_run_both_sides() {
     for (tail, printed) in [
         (
             "c := i32 0, a := box (1, 2), x := (c == 1) and ( free a, c == 0 ), print «after {x}»",
-            "free\nafter 0\n",
+            "free\nafter false\n",
         ),
         (
             "c := i32 1, a := box (1, 2), x := (c == 1) or ( free a, c == 0 ), print «after {x}»",
-            "free\nafter 1\n",
+            "free\nafter true\n",
         ),
         (
             "f := fn (c := i32 ?) -> i32 ( a := box (1, 2), x := (c == 1) and ( free a, c == 0 ), 7 ), \
@@ -4452,4 +4452,82 @@ fn a_name_used_inside_its_own_declaration_is_a_checked_error() {
     let out = logos().arg("x := 5, free x, x := 6, x").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "6\n");
+}
+
+#[test]
+fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
+    for (src, want) in [
+        ("x := i32 1, a := x == 1, a", "true\n"),
+        ("x := i32 1, a := x == 1, b := true, a and b", "true\n"),
+        ("f := fn () -> bool ( true ), b := f(), print «{b}», b.type", "true\nbool\n"),
+        ("f := fn () -> bool ( true ), b := f(), if b ( i32 1 ) else ( i32 2 )", "1\n"),
+        ("g := fn (a := i32 ?) -> bool ( a < 1 ), not g(0)", "false\n"),
+        ("x := f64 2.5, (return x) + 1.0", "3.5\n"),
+        ("x := f64 2.5, y := (return x), y", "2.5\n"),
+        ("true == true", "true\n"),
+        ("x := i32 3, print «{(&x).type == @i32}», p := &x, p.type == @i32", "true\ntrue\n"),
+        ("f := fn () -> @i32 ( alloc 1 of i32 0 ), f().type == @i32", "true\n"),
+        (
+            "f := fn (c := i32 ?) -> bool ( a := c == 1, mut b := not a, b = not b, b ), \
+             f.compile(), print «{f(1)} {f(2)}»",
+            "true false\n",
+        ),
+        ("f := fn (x := f64 ?) -> f64 ( (return x) + 1.0 ), f.compile(), f(2.5)", "2.5\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, want, "{src}");
+    }
+    // A comparison gives back a `bool`, which is no number and no `i32`.
+    for (src, error) in [
+        ("x := i32 1, (x == 1) + 1", "this operator cannot compute over these operands"),
+        ("x := i32 1, mut a := i32 0, a = x == 1, a", "these types do not match"),
+        ("x := i32 1, mut a := x == 1, a = i32 1, a", "these types do not match"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
+    let isbool = "isbool := type ( a := ?, output_type := type ?, \
+                  share run = ( if (a.type == bool) (i32 1) else (i32 2) ), \
+                  share parse_rank = *.parse_rank + 1, share associativity = left, \
+                  share parse = ( tape[0].type = isbool, tape[0].a = tape[-1], \
+                  tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )";
+    let pass = "pass := type ( a := ?, output_type := type ?, share run = ( a ), \
+                share parse_rank = *.parse_rank + 1, share associativity = left, \
+                share parse = ( tape[0].type = pass, tape[0].a = tape[-1], \
+                tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, \
+                tape.remove(-1) ) )";
+    for (src, want) in [
+        (
+            format!(
+                "{isbool}, big := fn (v := i32 ?) -> bool ( v > 1 ), n := i32 5, big(n) isbool"
+            ),
+            "1\n",
+        ),
+        (format!("{isbool}, (i32 1 < i32 2) isbool"), "1\n"),
+        (
+            format!(
+                "{isbool}, g := fn (n := i32 ?) -> i32 ( (n < i32 2) isbool ), g.compile(), g(1)"
+            ),
+            "1\n",
+        ),
+        (format!("{pass}, x := i32 5, (x < i32 7) pass"), "true\n"),
+        (format!("{pass}, f := fn () -> bool ( true pass ), f.compile(), f()"), "true\n"),
+        (
+            format!(
+                "{pass}, u := u8 7, x := i32 5, y := f64 2.5, \
+                 print «{{u pass}} {{x pass pass}} {{y pass}} {{42 pass}}»"
+            ),
+            "7 5 2.5 42\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, want, "{src}");
+    }
 }

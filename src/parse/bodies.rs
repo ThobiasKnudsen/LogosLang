@@ -158,48 +158,6 @@ pub(crate) unsafe fn fn_receiver(types: &Core, f: DyadPtr) -> u64 {
 /// under `crate::WORK_STACK_BYTES` and far past anything a person writes.
 pub const MAX_BRACKET_DEPTH: usize = 2_000;
 
-/// A `bool` value, a comparison, or a logical operator.
-///
-/// # Safety
-/// `node` must be a valid dyad from the store.
-pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
-    let node = types.through(node);
-    let logos = types.type_of(node);
-    // A sequence's value is its trailing expression's.
-    if logos == types.scope {
-        return match last_sequence_expr(node) {
-            Some(last) => is_bool_result(types, last),
-            None => false,
-        };
-    }
-    // `and`/`or` over two booleans is one; over two non-booleans it is a group.
-    if logos == types.and_ || logos == types.or_ {
-        let (lhs, rhs) = crate::identities::operands(node);
-        return is_bool_result(types, lhs) && is_bool_result(types, rhs);
-    }
-    // A call, or a node of a type with a run, is what its function declares it returns.
-    let f = if crate::identities::meta::is_record_type(logos)
-        && !crate::identities::meta::run_body_of(logos).is_null()
-    {
-        crate::identities::run_body::spec_of(node)
-    } else {
-        logos
-    };
-    if !f.is_null() && dyad::ty(f) == types.fn_type {
-        return *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT) == types.bool_;
-    }
-    logos == types.bool_
-        || logos == types.lt
-        || logos == types.gt
-        || logos == types.eq
-        || logos == types.le
-        || logos == types.ge
-        || logos == types.ne
-        || logos == types.not_
-        || logos == types.subset
-        || logos == types.tape.is_constructed
-}
-
 /// Deliberately no scope unwrapping: a sequence-valued condition may carry
 /// effectful non-tail expressions a fold would silently drop.
 ///
@@ -674,7 +632,7 @@ impl<'a> Parser<'a> {
         let cond = self.one_of(items)?.dyad;
         let types = self.types;
         // SAFETY: `cond` is the reduced dyad just parsed.
-        if !unsafe { is_bool_result(types, cond) } {
+        if unsafe { crate::identities::read::output_type(types, cond) } != types.bool_ {
             return Err(ParseError::NonBoolCondition);
         }
 
@@ -879,7 +837,7 @@ impl<'a> Parser<'a> {
         operand: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        if !is_bool_result(types, operand) {
+        if crate::identities::read::output_type(types, operand) != types.bool_ {
             return Err(ParseError::NonBoolOperands);
         }
         // A bool-literal operand folds now (pure, nothing lost): what keeps a
@@ -917,7 +875,7 @@ impl<'a> Parser<'a> {
         let items = self.drive_until_open(RightSide::Condition)?;
         let cond = self.one_of(items)?.dyad;
         // SAFETY: `cond` is the reduced dyad just parsed.
-        if !unsafe { is_bool_result(self.types, cond) } {
+        if unsafe { crate::identities::read::output_type(self.types, cond) } != self.types.bool_ {
             return Err(ParseError::NonBoolCondition);
         }
         // A repeated body: parse-time rebinding is off inside.
@@ -1479,7 +1437,7 @@ impl<'a> Parser<'a> {
     unsafe fn immediate_value(&mut self, node: DyadPtr) -> Result<DyadPtr, ParseError> {
         use crate::identities::numtype::NumType;
         use crate::identities::read::{read_kind, Dispatch, Read};
-        use crate::identities::{numtype_of, Operand};
+        use crate::identities::{operand_of, Operand};
         let types = self.types;
         let kind = read_kind(types, node);
         let place = types.is_storage(node);
@@ -1491,8 +1449,8 @@ impl<'a> Parser<'a> {
                 return self.eval_type_call(node);
             }
         }
-        let bool_ = is_bool_result(types, node);
-        let nt = match numtype_of(types, node) {
+        let bool_ = crate::identities::read::output_type(types, node) == types.bool_;
+        let nt = match operand_of(types, node) {
             Operand::Concrete(nt) => nt,
             Operand::Literal => NumType::I32,
             _ if bool_ => NumType::I32,

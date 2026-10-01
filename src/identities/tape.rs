@@ -12,7 +12,7 @@
 
 use super::callable::{self, Callables};
 use super::numtype::NumType;
-use super::{meta, numtype_of, Cx, Operand};
+use super::{meta, operand_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -288,12 +288,10 @@ pub(crate) fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPt
     }
     // SAFETY: `cell` is a reduced dyad from the store.
     let yields_node = unsafe {
-        matches!(numtype_of(types, cell), Operand::Pointer(p) if p == types.dyad_)
-            || matches!(
-                super::read::read_kind(types, types.through(cell)),
-                super::read::Read::Container(t) if t == types.dyad_
-            )
-            || super::yields_type(types, cell)
+        let out = super::read::output_type(types, cell);
+        out == types.dyad_
+            || out == types.type_
+            || matches!(operand_of(types, cell), Operand::Pointer(p) if p == types.dyad_)
     };
     if yields_node {
         return cell;
@@ -361,8 +359,7 @@ unsafe fn read_parts(types: &Core, read: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr)
 /// As `read_parts`.
 pub(crate) unsafe fn build_cell_type(store: &mut Store, types: &Core, read: DyadPtr) -> DyadPtr {
     let (recv, k, i) = read_parts(types, read);
-    let output = at_dyad(store, types);
-    node(store, types.tape.cell_type, types.tape.cell_type_leaf, &[recv, k, i], output)
+    node(store, types.tape.cell_type, types.tape.cell_type_leaf, &[recv, k, i], types.type_)
 }
 
 /// DESIGN ›A type is a comptime value, resolved in the pass‹, a checked tape cell.
@@ -753,7 +750,7 @@ fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if dyad::ty(target) == types.scope || dyad::ty(target) == types.square_brackets {
             return Ok(dyad::ty(target) as i64);
         }
-        Ok(super::yielded_type(types, target) as i64)
+        Ok(super::read::output_type(types, target) as i64)
     }
 }
 
@@ -816,7 +813,7 @@ fn run_cell_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let ops = dyad::value(node) as *const DyadPtr;
         let cell = read_target(rt, ops)?;
         let ty = *ops.add(3);
-        if super::node_type_of(rt.types(), cell) != Some(ty) {
+        if super::node_output(rt.types(), cell) != Some(ty) {
             return Err(RunError::CellNotANode);
         }
         rt.run(cell)
@@ -851,7 +848,7 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             let built = rt.construct_on_pass(ty, line)? as DyadPtr;
             line = rt.through(built);
         }
-        if super::node_type_of(rt.types(), line) != Some(ty) {
+        if super::node_output(rt.types(), line) != Some(ty) {
             return Err(RunError::CellNotANode);
         }
         rt.run(line)
@@ -921,7 +918,7 @@ unsafe fn narrowed_operand(rt: &mut Runtime, read: DyadPtr, operand: DyadPtr) ->
     }
     // SAFETY: a checked number read's fourth operand is the number type it was checked against.
     let to = *(dyad::value(read) as *const DyadPtr).add(3);
-    match numtype_of(types, operand) {
+    match operand_of(types, operand) {
         Operand::Concrete(from) if types.numtypes[from as usize] != to => {
             let from = types.numtypes[from as usize];
             super::convert::build_convert(rt.store(), types, operand, from, to)
@@ -940,7 +937,7 @@ unsafe fn typed_operand(
     ty: DyadPtr,
 ) -> Result<DyadPtr, RunError> {
     let types = rt.types();
-    let typed = if let Operand::Literal = numtype_of(types, operand) {
+    let typed = if let Operand::Literal = operand_of(types, operand) {
         let types: *const crate::Core = types;
         // SAFETY: the `Core` outlives the runtime that borrowed it.
         super::commit_literal_to(rt.store(), &*types, operand, ty)
@@ -1017,7 +1014,7 @@ unsafe fn owned_lines(types: &Core, bracket: DyadPtr) -> Result<(), crate::parse
         let line = types.through(line);
         let named = matches!(super::read::read_kind(types, line), super::read::Read::Container(_));
         let owned =
-            super::node_type_of(types, line).is_some_and(|t| !meta::instances_free_of(t).is_null());
+            super::node_output(types, line).is_some_and(|t| !meta::instances_free_of(t).is_null());
         if named && owned {
             return Err(crate::parse::ParseError::LineNotMoved);
         }
@@ -1041,7 +1038,7 @@ unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
     let store = rt.store();
     if !d.is_null()
         && super::read::read_kind(&*types, d) != super::read::Read::Node
-        && super::node_type_of(&*types, d).is_some()
+        && super::node_output(&*types, d).is_some()
     {
         return d;
     }
@@ -1063,14 +1060,25 @@ pub(crate) unsafe fn build_bracket_arg(
     Ok(node(store, types.tape.bracket_arg, types.tape.bracket_arg_leaf, &[bracket], output))
 }
 
-/// A line with a value to evaluate where the call runs: a number, or a node of a type a Logos
-/// `parse` builds, which travels as its address.
+/// A line with a value to evaluate where the call runs: a number or a `bool`, or a node of a
+/// type a Logos `parse` builds, which travels as its address.
 ///
 /// # Safety
 /// `line` must be a reduced dyad from the store.
 unsafe fn has_value(types: &Core, line: DyadPtr) -> bool {
-    matches!(numtype_of(types, line), Operand::Concrete(_))
-        || super::node_type_of(types, line).is_some()
+    scalar_line(types, line).is_some() || super::node_output(types, line).is_some()
+}
+
+/// The type and machine type of a line whose value is a number or a `bool`.
+///
+/// # Safety
+/// `line` must be a reduced dyad from the store.
+unsafe fn scalar_line(types: &Core, line: DyadPtr) -> Option<(DyadPtr, NumType)> {
+    let t = super::read::output_type(types, line);
+    match super::read::place_layout(types, t)? {
+        (super::read::Read::Scalar(nt), _) => Some((t, nt)),
+        _ => None,
+    }
 }
 
 /// A bracket handed to a placed call: each line is evaluated where the call runs, in its
@@ -1120,13 +1128,13 @@ unsafe fn lower_bracket(lw: &mut Lowerer, bracket: DyadPtr) -> Result<Value, Com
     let mut bits = Vec::with_capacity(lines.len());
     for &line in lines {
         let line = lw.through(line);
-        bits.push(match numtype_of(lw.types(), line) {
+        bits.push(match scalar_line(lw.types(), line) {
             _ if is_bracket(lw.types(), line) => lower_bracket(lw, line)?,
-            Operand::Concrete(nt) => {
+            Some((_, nt)) => {
                 let v = lw.lower(line)?;
                 lw.widen(v, nt)
             }
-            _ if super::node_type_of(lw.types(), line).is_some() => lw.lower(line)?,
+            _ if super::node_output(lw.types(), line).is_some() => lw.lower(line)?,
             _ => lw.const_i64(0),
         });
     }
@@ -1167,12 +1175,10 @@ unsafe fn bracket_holding(
     let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
     let mut values = Vec::with_capacity(lines.len());
     for (&line, &b) in lines.iter().zip(bits) {
-        values.push(match numtype_of(types, line) {
+        values.push(match scalar_line(types, line) {
             _ if is_bracket(types, types.through(line)) => b as usize as DyadPtr,
-            Operand::Concrete(nt) => {
-                store.alloc_blob(types.numtypes[nt as usize], &b.to_ne_bytes()[..nt.bytes()])
-            }
-            _ if super::node_type_of(types, line).is_some() => b as usize as DyadPtr,
+            Some((t, nt)) => store.alloc_blob(t, &b.to_ne_bytes()[..nt.bytes()]),
+            _ if super::node_output(types, line).is_some() => b as usize as DyadPtr,
             _ => line,
         });
     }

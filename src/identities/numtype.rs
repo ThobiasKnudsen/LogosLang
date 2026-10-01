@@ -307,14 +307,6 @@ pub(crate) unsafe fn of_type_node(type_node: DyadPtr) -> NumType {
     NumType::from_tag(tag)
 }
 
-/// A conversion is `[operand, from, to, op]`; this is `to`.
-///
-/// # Safety
-/// `node` must be a conversion node from `convert::build_convert`.
-pub(crate) unsafe fn stored_type(node: DyadPtr) -> DyadPtr {
-    *(dyad::value(node) as *const DyadPtr).add(2)
-}
-
 /// Integer `Div`/`Rem` are total: a zero divisor yields the type's MAX, the signed
 /// MIN/-1 overflow saturates to MAX, and MIN % -1 is 0. Float `Rem` is rejected at
 /// parse (Cranelift has no float remainder).

@@ -391,11 +391,11 @@ impl<'a> Parser<'a> {
         // SAFETY: `first` is a constructed node from the store.
         let node_box = unsafe {
             let d = self.types.through(first);
-            let t = self.types.type_of(d);
+            let out = crate::identities::read::output_type(self.types, d);
             !d.is_null()
-                && ((t == self.types.type_ || t == self.types.dyad_) && self.types.is_storage(d)
-                    || !crate::identities::is_type_value(self.types, d)
-                        && crate::identities::yields_type(self.types, d))
+                && ((out == self.types.type_ || out == self.types.dyad_)
+                    && self.types.is_storage(d)
+                    || out == self.types.type_ && !crate::identities::is_type_value(self.types, d))
         };
         if node_box {
             ParseError::TypeKnownOnlyAtRun
@@ -466,7 +466,7 @@ impl<'a> Parser<'a> {
             if ty == self.types.fn_type || ty == self.types.type_ {
                 return None;
             }
-            crate::identities::node_type_of(self.types, id).filter(|&t| wakes(t))
+            crate::identities::node_output(self.types, id).filter(|&t| wakes(t))
         }
     }
 

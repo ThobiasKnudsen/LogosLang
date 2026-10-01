@@ -12,7 +12,7 @@ use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
-use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
+use super::{commit_if_literal, meta, operand_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -165,25 +165,15 @@ pub(crate) unsafe fn build_ctor(
         let fty = super::hole::type_in(field);
         let field_read = super::read::place_layout(types, fty);
         let field_ptr = matches!(field_read, Some((super::read::Read::Pointer(_), _)));
-        let arg = match numtype_of(types, arg) {
-            Operand::Literal => {
-                if field_ptr {
-                    // A literal into a pointer field would be a wild address.
-                    return Err(ParseError::TypeMismatch);
-                }
-                commit_if_literal(store, types, arg, &Operand::Literal, fty, nt)?
+        let arg = if let Operand::Literal = operand_of(types, arg) {
+            if field_ptr {
+                // A literal into a pointer field would be a wild address.
+                return Err(ParseError::TypeMismatch);
             }
-            Operand::Pointer(pointee) => {
-                // Pointees compare as types, not nodes.
-                if !matches!(field_read, Some((super::read::Read::Pointer(fp), _)) if super::pointee_types_match(fp, pointee))
-                {
-                    return Err(ParseError::TypeMismatch);
-                }
-                arg
-            }
-            Operand::Concrete(a_nt) if !field_ptr && a_nt == nt => arg,
-            Operand::Concrete(_) => return Err(ParseError::TypeMismatch),
-            Operand::NonNumeric => return Err(ParseError::UnsupportedOperands),
+            commit_if_literal(store, types, arg, &Operand::Literal, fty, nt)?
+        } else {
+            super::check_store_type(types, fty, arg)?;
+            arg
         };
         ops.push(arg);
     }

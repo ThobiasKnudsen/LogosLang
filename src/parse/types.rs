@@ -868,7 +868,7 @@ impl<'a> Parser<'a> {
     fn rank_value(&mut self, value: DyadPtr, read: DyadPtr) -> Result<f64, ParseError> {
         use crate::identities::numtype::NumType;
         // SAFETY: `value` is a reduced dyad from the store.
-        let nt = match unsafe { crate::identities::numtype_of(self.types, value) } {
+        let nt = match unsafe { crate::identities::operand_of(self.types, value) } {
             crate::identities::Operand::Literal => None,
             crate::identities::Operand::Concrete(nt) => Some(nt),
             _ => return Err(ParseError::NonComptimeRank),
@@ -1217,7 +1217,7 @@ impl<'a> Parser<'a> {
         ty: DyadPtr,
         node: DyadPtr,
     ) -> Result<Option<Vec<DyadPtr>>, ParseError> {
-        use crate::identities::{numtype_of, Operand};
+        use crate::identities::{operand_of, Operand};
         let types = self.types;
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
         let slots = dyad::value(node) as *mut DyadPtr;
@@ -1240,7 +1240,7 @@ impl<'a> Parser<'a> {
                 && declared != types.scope
             {
                 // A literal stays as it stands in a rational field: its bytes are the value's.
-                if matches!(numtype_of(types, slot), Operand::Literal) {
+                if matches!(operand_of(types, slot), Operand::Literal) {
                     let lit = types.through(slot);
                     if crate::identities::is_numtype_node(types, declared) {
                         *slots.add(i) = crate::identities::commit_literal_to(
@@ -1261,11 +1261,16 @@ impl<'a> Parser<'a> {
                 }
                 bracket
             } else {
-                match numtype_of(types, slot) {
-                    Operand::Concrete(nt) => types.numtypes[nt as usize],
-                    // The literal's own type; its bytes are the value the call copies.
-                    Operand::Literal => types.rational,
-                    Operand::Pointer(_) | Operand::NonNumeric => return Ok(None),
+                // A literal's own type is `rational_number`; its bytes are the value the call
+                // copies.
+                let out = crate::identities::read::output_type(types, slot);
+                match crate::identities::read::place_layout(types, out) {
+                    Some((
+                        crate::identities::read::Read::Scalar(_)
+                        | crate::identities::read::Read::Rational,
+                        _,
+                    )) => out,
+                    _ => return Ok(None),
                 }
             };
             key.push(entry);

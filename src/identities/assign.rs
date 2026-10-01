@@ -190,7 +190,7 @@ pub(super) fn build_store(
     }
     if lhs_ty == types.tape.is_constructed {
         // SAFETY: `rhs` is a reduced dyad from the store.
-        if !unsafe { crate::parse::is_bool_result(types, rhs) } {
+        if unsafe { super::read::output_type(types, rhs) } != types.bool_ {
             return Err(ParseError::FlagTakesBool);
         }
         // SAFETY: `lhs_d` is a flag slot node, `rhs` a reduced bool dyad.
@@ -231,13 +231,7 @@ pub(super) fn build_store(
                 }
                 Read::Address => t == types.dyad_,
                 // SAFETY: as above.
-                Read::Executable(_) => {
-                    // SAFETY: as above.
-                    unsafe {
-                        super::hashmap::box_of(types, rhs) == Some(t)
-                            || (t == types.type_ && super::yields_type(types, rhs))
-                    }
-                }
+                Read::Executable(_) => unsafe { super::read::output_type(types, rhs) == t },
                 _ => false,
             };
             if !ok {
@@ -248,7 +242,7 @@ pub(super) fn build_store(
         // SAFETY: as above.
         Read::Container(t) if unsafe { meta::is_node_valued(t, types.fn_type) } => {
             // SAFETY: as above.
-            if unsafe { super::node_type_of(types, rhs) } != Some(t) {
+            if unsafe { super::node_output(types, rhs) } != Some(t) {
                 return Err(ParseError::TypeMismatch);
             }
             return Ok(store_node(store, types, op, lhs, rhs, types.ops.store_leaf(NumType::I64)));
@@ -257,7 +251,7 @@ pub(super) fn build_store(
             // SAFETY: `rhs` is a reduced dyad from the store.
             let fits = unsafe {
                 super::rational::is_rational_value(types, rhs)
-                    || matches!(super::numtype_of(types, rhs), super::Operand::Literal)
+                    || matches!(super::operand_of(types, rhs), super::Operand::Literal)
             };
             if !fits {
                 return Err(ParseError::TypeMismatch);

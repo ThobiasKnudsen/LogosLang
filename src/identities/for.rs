@@ -73,7 +73,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `for` node; its parts are valid dyads.
     unsafe {
         let (var, start, end, step, body) = parts(node);
-        let super::Operand::Concrete(nt) = super::numtype_of(rt.types(), start) else {
+        let super::Operand::Concrete(nt) = super::operand_of(rt.types(), start) else {
             return Err(RunError::NoWholeRead);
         };
         let counter = |rt: &mut Runtime| rt.place_addr(var).ok_or(RunError::NoActivation);

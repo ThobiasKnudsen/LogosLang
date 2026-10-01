@@ -254,28 +254,21 @@ pub(crate) unsafe fn build_write(
     if let Some(ty) = load_type(types, read) {
         // The slot holds the node the right side yields, its address, never the expression.
         if meta::is_node_valued(ty, types.fn_type) {
-            if super::node_type_of(types, value) != Some(ty) {
+            if super::node_output(types, value) != Some(ty) {
                 return Err(crate::parse::ParseError::TypeMismatch);
             }
             let ops = [this, k, value, owner];
             return Ok(node(store, types.this.write, types.this.write_leaf, &ops, types.void_));
         }
-        let yields_value = match super::numtype_of(types, value) {
-            super::Operand::Concrete(_) | super::Operand::Literal => true,
-            super::Operand::Pointer(p) => p != types.dyad_,
-            super::Operand::NonNumeric => false,
-        };
-        if yields_value {
-            let value = super::commit_fn_body(store, types, value, ty)?;
-            let fits = match (super::read::place_layout(types, ty), super::numtype_of(types, value))
-            {
-                (Some((super::read::Read::Scalar(nt), _)), super::Operand::Concrete(v)) => nt == v,
-                (Some((super::read::Read::Pointer(p), _)), super::Operand::Pointer(v)) => p == v,
+        let yields_value = matches!(super::operand_of(types, value), super::Operand::Literal)
+            || match super::read::place_layout(types, super::read::output_type(types, value)) {
+                Some((super::read::Read::Scalar(_), _)) => true,
+                Some((super::read::Read::Pointer(p), _)) => p != types.dyad_,
                 _ => false,
             };
-            if !fits {
-                return Err(crate::parse::ParseError::TypeMismatch);
-            }
+        if yields_value {
+            let value = super::commit_fn_body(store, types, value, ty)?;
+            super::check_store_type(types, ty, value)?;
             let ops = [this, k, value, ty, owner];
             return Ok(node(store, types.this.store, types.this.store_leaf, &ops, types.void_));
         }

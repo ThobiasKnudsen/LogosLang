@@ -13,7 +13,7 @@ use super::callable::{self, Callables};
 use super::{bool_mod, meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{bool_literal_value, is_bool_result, Assoc, ParseError};
+use crate::parse::{bool_literal_value, Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -44,7 +44,8 @@ pub(super) fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-    let (lb, rb) = unsafe { (is_bool_result(types, lhs), is_bool_result(types, rhs)) };
+    let is_bool = |n: DyadPtr| unsafe { super::read::output_type(types, n) == types.bool_ };
+    let (lb, rb) = (is_bool(lhs), is_bool(rhs));
     if lb != rb {
         return Err(ParseError::NonBoolOperands);
     }

@@ -311,7 +311,7 @@ pub(super) fn build_alloc(
     use crate::identities::Operand;
     // SAFETY: `count` and `init` are reduced dyads just parsed.
     unsafe {
-        match crate::identities::numtype_of(types, count) {
+        match crate::identities::operand_of(types, count) {
             Operand::Literal => {}
             Operand::Concrete(nt) if !nt.is_float() => {}
             _ => return Err(ParseError::UnsupportedOperands),
@@ -322,13 +322,10 @@ pub(super) fn build_alloc(
         // SAFETY: as above.
         Some(init) if unsafe { types.is_hole(init) } => unsafe { super::hole::type_in(init) },
         // SAFETY: as above.
-        Some(init) => match unsafe { crate::identities::numtype_of(types, init) } {
-            Operand::Concrete(_) | Operand::Pointer(_) => {
-                // SAFETY: as above; the operand is scalar or pointer, what `scalar_binding_type` takes.
-                unsafe { crate::identities::scalar_binding_type(store, types, init).0 }
-            }
+        Some(init) => match unsafe { crate::identities::scalar_binding_type(store, types, init) } {
+            Some((t, _)) => t,
             // SAFETY: as above.
-            _ => unsafe { crate::identities::node_type_of(types, init) }
+            None => unsafe { crate::identities::node_output(types, init) }
                 .ok_or(ParseError::UnsupportedOperands)?,
         },
     };
@@ -399,7 +396,7 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let ty = super::node_type_of(types, place).unwrap_or(types.type_of(place));
+    let ty = super::read::output_type(types, place);
     store.alloc_words(types.move_, &[place, ty, types.ops.move_, ty])
 }
 
@@ -423,9 +420,7 @@ pub(crate) unsafe fn build_place_free(
         build_block_free(p.store(), types, place)
     } else if p.is_owning_read(place) {
         // An owning field reads a node of a type whose body fills `free`.
-        let free = meta::instances_free_of(
-            super::node_type_of(types, place).unwrap_or(types.type_of(place)),
-        );
+        let free = meta::instances_free_of(super::read::output_type(types, place));
         build_instance_free(p.store(), types, place, free)
     } else if let Some(free) = cell_free(types, place) {
         build_instance_free(p.store(), types, place, free)
@@ -854,45 +849,14 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
 }
 
 /// What a bound owning pointer points at, so the binding site can mint its owning
-/// `@pointee` type; a scope whose tail is one propagates through.
+/// `@pointee` type: the pointee of the owning type the value that moves out gives back.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    let node = types.through(node);
-    let logos = dyad::ty(node);
-    if logos == types.alloc_ {
-        Some(*(dyad::value(node) as *const DyadPtr).add(ALLOC_POINTEE))
-    } else if logos == types.move_ {
-        let ty = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_POINTEE);
-        (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())
-            .then(|| numtype::pointee_of(ty))
-    } else if let Some(output) = moving_call_output(types, node) {
-        numtype::is_pointer_type(output).then(|| numtype::pointee_of(output))
-    } else if logos == types.scope {
-        // A block that yields an owning value moves ownership to the binder.
-        crate::parse::last_sequence_expr(node).and_then(|tail| owning_pointee_of(types, tail))
-    } else {
-        None
-    }
-}
-
-/// A call whose callee's last value moves out: the callee's declared result.
-///
-/// # Safety
-/// `node` must be a reduced dyad from the store.
-unsafe fn moving_call_output(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    use super::read::{read_kind, Dispatch, Read};
-    let Read::Executable(Dispatch::Call(f)) = read_kind(types, node) else {
-        return None;
-    };
-    if dyad::ty(f) != types.fn_type {
-        return None;
-    }
-    let fields = dyad::value(f) as *const DyadPtr;
-    let body = *fields.add(crate::parse::FN_BODY);
-    (!body.is_null() && moves_out_within(types, body, 1))
-        .then(|| *fields.add(crate::parse::FN_OUTPUT))
+    let ty = super::read::output_type(types, moved_out(types, node, 0)?);
+    (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())
+        .then(|| numtype::pointee_of(ty))
 }
 
 /// Whether binding `node` makes the binder an owner: a value just constructed (`alloc`, a
@@ -903,17 +867,19 @@ unsafe fn moving_call_output(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
 /// # Safety
 /// `node` must be a reduced dyad from the store.
 pub(crate) unsafe fn moves_out(types: &Core, node: DyadPtr) -> bool {
-    moves_out_within(types, node, 0)
+    moved_out(types, node, 0).is_some()
 }
 
 /// A recursive function's body calls itself; past this depth the answer is no.
 const MOVES_OUT_DEPTH: usize = 32;
 
+/// The node whose value moves out when `node` runs, as [`moves_out`] decides it.
+///
 /// # Safety
 /// As `moves_out`.
-unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
+unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Option<DyadPtr> {
     if depth > MOVES_OUT_DEPTH {
-        return false;
+        return None;
     }
     let node = types.through(node);
     let logos = dyad::ty(node);
@@ -922,23 +888,25 @@ unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
         || logos == types.this.copy
         || logos == types.construct_
     {
-        return true;
+        return Some(node);
     }
     // A record call's result moves out when its callee's value does; a record handed on by
     // its bytes' address, when a name that held it or what it copies does.
     if logos == types.by_copy.result {
         let call = *(dyad::value(node) as *const DyadPtr).add(1);
-        return moves_out_within(types, call, depth + 1);
+        return moved_out(types, call, depth + 1);
     }
     if logos == types.by_copy.out {
         let inner = types.through(*(dyad::value(node) as *const DyadPtr));
-        return (dyad::ty(inner) == types.binding_
-            && crate::binding::Binding::has_gate(inner, types.own_))
-            || moves_out_within(types, inner, depth + 1);
+        if dyad::ty(inner) == types.binding_ && crate::binding::Binding::has_gate(inner, types.own_)
+        {
+            return Some(inner);
+        }
+        return moved_out(types, inner, depth + 1);
     }
     if logos == types.scope {
         return crate::parse::last_sequence_expr(node)
-            .is_some_and(|tail| moves_out_within(types, tail, depth + 1));
+            .and_then(|tail| moved_out(types, tail, depth + 1));
     }
     if let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
         super::read::read_kind(types, node)
@@ -948,14 +916,14 @@ unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
         if !(*args).is_null() && dyad::ty(*args) == types.this.copy {
             let template = *(dyad::value(*args) as *const DyadPtr);
             let fields = dyad::value(f) as *const DyadPtr;
-            return *fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template);
+            return (*fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template)).then_some(node);
         }
         if dyad::ty(f) == types.fn_type {
             let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);
-            return !body.is_null() && moves_out_within(types, body, depth + 1);
+            return if body.is_null() { None } else { moved_out(types, body, depth + 1) };
         }
     }
-    false
+    None
 }
 
 /// Whether a value owns a block: binding it mints an owning place its scope holds.
@@ -987,15 +955,6 @@ pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Option<Teardow
     if let Some(pointee) = owning_pointee_of(types, value) {
         return Some(Teardown::Block(pointee));
     }
-    // A node, or a plain record in its bytes.
-    let typed = super::node_type_of(types, value).or_else(|| {
-        super::by_copy::record_type_of(types, value).filter(|&t| meta::is_record_type(t))
-    });
-    if let Some(t) = typed {
-        let free = meta::instances_free_of(t);
-        let owned = !free.is_null() && moves_out(types, value);
-        return Some(if owned { Teardown::Node(free) } else { Teardown::Nothing });
-    }
     let node = types.through(value);
     if dyad::ty(node) == types.scope {
         return crate::parse::last_sequence_expr(node)
@@ -1009,6 +968,15 @@ pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Option<Teardow
         }
         let plain = |arm: DyadPtr| teardown_of(types, arm) == Some(Teardown::Nothing);
         return (plain(then) && plain(els)).then_some(Teardown::Nothing);
+    }
+    // A node, or a plain record in its bytes.
+    let t = super::read::output_type(types, value);
+    let typed = super::node_output(types, value).is_some()
+        || (super::by_copy::record_width(types, t).is_some() && meta::is_record_type(t));
+    if typed {
+        let free = meta::instances_free_of(t);
+        let owned = !free.is_null() && moves_out(types, value);
+        return Some(if owned { Teardown::Node(free) } else { Teardown::Nothing });
     }
     Some(Teardown::Nothing)
 }
