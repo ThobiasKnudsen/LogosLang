@@ -12,7 +12,7 @@ The general rules live in the global `~/.claude/CLAUDE.md` since 29 September 20
 - The structural facts that are roots here: one rule written twice, once for the interpreter and once for the compiler; a Rust `match`/`if` on node kind where DESIGN says the record decides; a hand-kept list of kinds; a mechanism DESIGN has superseded; a rule DESIGN does not have yet.
 
 # Faithfulness in this repo
-- DESIGN.md is one rule per `###` heading (since 27 September 2026). Point at a rule by its heading, `«### like this»`, never by line number; a `DESIGN.md l.N` in a Source bullet, an issue or a memory means line N of the paragraph form at git e75bcdc.
+- DESIGN.md is one rule per `###` heading (since 27 September 2026). Point at a rule by its heading, `«### like this»`, never by line number; a `DESIGN.md l.N` in an issue or a memory means line N of the paragraph form at git e75bcdc.
 - A ruling is recorded at the rule it touches: a **Ruled** line with date, who and reason; a **Rejected, to stay rejected** line; or a new `###` rule. What it supersedes is a **History** line in DESIGN_HISTORY.md under the same heading.
 - `language_sketch.logos` illustrates DESIGN.md; a conflict between the two is surfaced as a blocking question like any other.
 - Before starting work in a spec area, run /faithfulness-audit.

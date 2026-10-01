@@ -8078,5 +8078,264 @@
         "reason": "both agents: it is the Q-0043 ruling as written, whose Why is Thobias's (\"all things that could possibly be freed when error occurs is not NULL\"); the one case where that reason fails is W85; past it lies his choice"
       }
     ]
+  },
+  {
+    "id": "S31",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A name's end is the spot in its line's order where its free or move stands, not the line: a line left early, by a return or a fault, frees each name it holds whose end comes after the spot it stopped at, found from the line's order as Q-0045 does for a return; free and move write no NULL and nothing reads one",
+    "fixes": [
+      "W89",
+      "W83",
+      "W78"
+    ],
+    "assessment": "Root fix: one rule for leaving a line early (return and fault), so the NULL read, held_at_fault's holds_by_address branch, ended_at_run and the NULL write in lower_move/end_held go, and no value needs a NULL form (W85's Open point becomes moot). Removes P39 and its sibling, a fault before the free of a record in its bytes, which today leaks (g() + ( free a, i32 1 ) prints no 'freed 1'). Reverses Q-0043's choice (it chose the NULL read over exactly this) and needs the fault to know its spot: a RunError carries none today, so run.rs gains the node a fault left its line through. About 150 lines in drop_model.rs, scope.rs, bodies.rs (ExitItem.end becomes line + ending node, end_after_fault), run.rs; shares drop_model.rs and declare.rs with issue-178",
+    "decision": null,
+    "design": [
+      "`free` and `move` end a name; no drop flag",
+      "`move` and `free` are static: the parse marks the name dead",
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T21:54+02:00",
+      "by": "logoslang-solve-W89",
+      "model": "opus",
+      "effort": "high",
+      "commit": "6b3a673",
+      "run": "solve-W89",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S32",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Two rules by kind: keep Q-0043's NULL read for a value behind an address (a pointer, a node) and use the line's order only for a record kept in its own bytes, which has no NULL",
+    "fixes": [
+      "W89"
+    ],
+    "assessment": "Symptom fix: removes P39 and the record leak without reversing Q-0043, but puts a branch on kind where one rule should decide (the order already decides for a return, Q-0045), so leaving a line early has three mechanisms (order for return, NULL for an address, order for a record in bytes). Same code and the same fault-spot work as S31, plus keeping the NULL path. Recommended against",
+    "decision": null,
+    "design": [
+      "`free` and `move` end a name; no drop flag"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T21:54+02:00",
+      "by": "logoslang-solve-W89",
+      "model": "opus",
+      "effort": "high",
+      "commit": "6b3a673",
+      "run": "solve-W89",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S33",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "run_on_pass, the one entry every pass run takes, tells the holder of each name the run's node ends (OpenScope.reached), as drain's loop does now, so an immediate that freed a name is not freed again at the pass's fault",
+    "fixes": [
+      "W82",
+      "W78"
+    ],
+    "assessment": "Narrow fix at W82: removes P39 only. Leaves W89: a fault before the free of a record in its bytes still leaks (g() + ( free a, i32 1 ) prints no 'freed 1'), and an immediate ( g(), free a ) marks a reached before g() faults, so it leaks there too; the NULL read and W85's Open point stay. About 15 lines in driver.rs and bodies.rs; not needed if S31 lands",
+    "decision": null,
+    "design": [
+      "`free` and `move` end a name; no drop flag"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T21:54+02:00",
+      "by": "logoslang-solve-W89",
+      "model": "opus",
+      "effort": "high",
+      "commit": "6b3a673",
+      "run": "solve-W89",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S34",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The parse states every place a name ends, inside a line too, so each spot where a line can fail knows which names it has already ended, as Rust's drop elaboration does; a failing line reads no NULL, so no value needs a NULL form and a record stays in its own bytes",
+    "fixes": [
+      "W85",
+      "W89"
+    ],
+    "assessment": "Removes P39 and its unfiled sibling, the leak when a line fails before its own free of a record (x := g() + ( free a, i32 1 ) prints nothing), for every type alike, both tiers, the pass and the REPL; no flag is ever needed since an if's close already frees in the arms that did not end the name. DESIGN: reverses Q-0043's choice at ›free and move end a name; no drop flag‹ (it chose the NULL read over this) and deletes its 'every value with a free slot needs a NULL form'; ›A checked error is a fault‹ and ›move and free are static‹ rule 2 lose 'reads whether a place is NULL'; @'s free still writes 0 into the pointer (Q-0045.1), for cells. Code: medium-large: an order mark per end inside a line (src/parse/bodies.rs, declare.rs), the fault naming the node it hit, held_at_fault reading the mark; deletes holds_by_address, ended_at_run, the pass's reached list and end_held's NULL write for names. Shares DESIGN and held_at_fault with W89.",
+    "decision": null,
+    "design": [
+      "`free` and `move` end a name; no drop flag",
+      "`move` and `free` are static: the parse marks the name dead",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T21:55+02:00",
+      "by": "logoslang-solve-W85",
+      "model": "opus",
+      "effort": "high",
+      "commit": "6b3a673",
+      "run": "solve-W85",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S35",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A value whose type fills free is kept in a node of its own and its name holds the address, so 0 is its NULL like every pointer's (Q-0045.3 option b); a record with no free stays in its bytes",
+    "fixes": [
+      "W85"
+    ],
+    "assessment": "Removes P39 and the leak sibling: one rule, every held value is an address, so holds_by_address reads 'type fills free' and end_held's is_plain branch and the pass's reached list go. Keeps Q-0043 as ruled. DESIGN: a new line at ›:= decides nothing about copy or reference; the type's reading rule does‹ (such a type reads by address, so b := a borrows, as ›A filled share free is the value's teardown‹ already says) and closes #240's Open line. Costs: one node per such value, one hop per field read, a bag field inside another record becomes a pointer; mut a := bag ? holds 0 and frees nothing (P42 answered by that, Q-0056 still open). Code: medium: is_plain, the record constructor and layout in read.rs, end_held, holds_by_address, src/parse/bodies.rs. Leaves W89.",
+    "decision": null,
+    "design": [
+      "`free` and `move` end a name; no drop flag",
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T21:55+02:00",
+      "by": "logoslang-solve-W85",
+      "model": "opus",
+      "effort": "high",
+      "commit": "6b3a673",
+      "run": "solve-W85",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P43",
+    "kind": "problem",
+    "status": "open",
+    "text": "A path into a `:=` node whose right side is an operator over two literals fails: with `b := 2 ^ 3`, both `b:start.rhs.rhs` and `b:start.rhs.lhs` are \"this operator cannot compute over these operands\". Over a parameter, `b := x ^ 3` in `f(5)`, the path `b:start.rhs.lhs` reads 5.",
+    "program": "^ := type ( lhs := ?, rhs := i32 ?, output_type := type ?, share run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ), share parse_rank = *.parse_rank + 1, share associativity = right, share parse = ( tape[0]:type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = tape[-1]:type, tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) ),\nb := 2 ^ 3,\nb:start.rhs.rhs",
+    "output": "<command line>:3:16: error: this operator cannot compute over these operands\n  b:start.rhs.rhs\n                 ^\nexit 1",
+    "expected": "`3`. DESIGN ›Reading a path runs nothing‹: \"So with `b := 2 ^ 3`, `b:start.rhs.lhs` is `2`\"; ›A `:=` node's fields are `lhs` and `rhs`‹: \"`rhs` is the right side as written … What the seed made of the right side stays a third slot.\"",
+    "tier": "interpreted",
+    "found": "logoslang-issue-215-worker, on issue-215-type-dot-rename slice 1 and on the main checkout binary; rerun by Orchestrator (2) on dev 6b3a673 code (solve-W85 release build)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T21:56+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "b4c6bf4",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P44",
+    "kind": "problem",
+    "status": "open",
+    "text": "A record that a line frees with `free a` is never freed when the line fails before reaching that `free`: no `freed 1` is printed, at the top level and in a function body alike.",
+    "program": "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ),\ng := fn () -> i32 ( error «stop» ),\na := bag(1), x := g() + ( free a, i32 1 ), 1",
+    "output": "<command line>: run error: stop\nexit 1",
+    "expected": "`freed 1`, then the run error. DESIGN ›`free` and `move` end a name; no drop flag‹, Q-0043: \"It answers a line that fails before its own `free`: in `x := g() + ( free a, i32 1 )` a fault in `g()` left `a` unfreed, the parse having counted `a` ended by that line.\" and ›A checked error is a fault: the task that hit it is cancelled‹. The rule's Seed line names it as not yet built for a record kept in its bytes.",
+    "tier": "interpreted",
+    "found": "logoslang-solve-W85 and logoslang-solve-W89, both on dev 6b3a673; rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build), also inside `f := fn () -> i32 ( a := bag(1), x := g() + ( free a, i32 1 ), x ), f()`",
+    "why": null,
+    "issue": 240,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T21:58+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "b4c6bf4",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P45",
+    "kind": "problem",
+    "status": "open",
+    "text": "A method call as a bare `if` or `while` condition is refused: `if v.ok() ( … )` is \"this condition must be a bool\", the caret under the call's `(`. The same call in brackets, `if (v.ok()) ( … )`, prints `y`, and a plain call, `f := fn () -> bool ( true ), if f() ( … )`, prints `y`.",
+    "program": "p := type ( a := i32 ?, share ok := fn () -> bool ( true ) ), v := p (3), if v.ok() ( print «y» ) else ( print «n» )",
+    "output": "<command line>:1:82: error: this condition must be a bool\n  p := type ( a := i32 ?, share ok := fn () -> bool ( true ) ), v := p (3), if v.ok() ( print «y» ) else ( print «n» )\n                                                                                   ^\nexit 1",
+    "expected": "`y`. DESIGN ›`if` needs no brackets around a complete condition or its body‹: \"The condition is the first complete expression after `if`, the next expression the body; a `(` right after a complete condition starts the body\"; `if f() (…)` reads its call as the condition. `while v.ok() ( … )` is refused the same way.",
+    "tier": "interpreted",
+    "found": "logoslang-issue-215-worker, on issue-215-type-dot-rename and dev 6b3a673; rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build) and on the branch at 63a2141",
+    "why": null,
+    "issue": 236,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T22:03+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "b4c6bf4",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P46",
+    "kind": "problem",
+    "status": "open",
+    "text": "A name bound to a call of a function declared `-> bool` holds the number `1` of type `i32`, not `true`: it prints `1`, and `if b ( … )` on it is \"this condition must be a bool\", at the top level and in a function body. The same call unbound prints `true`, and `-> f64` binds an `f64`.",
+    "program": "f := fn () -> bool ( true ), b := f(), print «{b}», b:type",
+    "output": "1\ni32\nexit 0",
+    "expected": "`true`, then `bool`, as `b := true, print «{b}», b:type` prints. DESIGN ›Anything yielding a `bool` is a condition‹: \"The condition is the first complete expression, and its result must be `bool`, whatever built it.\"",
+    "tier": "interpreted",
+    "found": "Orchestrator (2), checking logoslang-issue-215-worker's `if v.ok() ( … )` finding on dev 6b3a673 code (solve-W85 release build): `b := v.ok()` is `1` of type `i32` too",
+    "why": null,
+    "issue": 209,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T22:03+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "b4c6bf4",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P47",
+    "kind": "problem",
+    "status": "open",
+    "text": "Inside a function, a node whose parse copies one of its fields into another, `tape[0].rhs = tape[0].lhs`, runs with a number in the copied field that changes from run to run: `f(4)` prints 34664372 on one run and 1481789364 on the next, interpreted and after `f.compile()` alike. At the top level the same node over `x := i32 3` prints 6, and in the function `tape[0].rhs = tape[-1]` prints 8.",
+    "program": "pr := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, share run = ( lhs + rhs ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = pr, tape[0].lhs = tape[-1], tape[0].rhs = tape[0].lhs, tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) ), f := fn (x := i32 ?) -> i32 ( x pr ), f(4)",
+    "output": "34664372\nexit 0\n(a second run: 1481789364, exit 0)",
+    "expected": "`8`: the parse filled `rhs` with what `lhs` holds, the parameter `x` (4), as the top level gives `6` for `x := i32 3` and the function gives `8` with `tape[0].rhs = tape[-1]`. DESIGN ›A parse connects each operand to a field by name and removes the cells it took‹: \"the parse writes `tape[0].lhs = tape[-1]` and removes the consumed cells\".",
+    "tier": "interpreted and compiled",
+    "found": "logoslang-issue-215-review-1, reviewing #215, on dev b4c6bf4 (release built from git archive) and on issue-215-type-dot-rename spelled `.type`; rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T22:10+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "4698d3d",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
