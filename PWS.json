@@ -8481,5 +8481,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P54",
+    "kind": "problem",
+    "status": "open",
+    "text": "The type `rational_number` is shown as `type`: `5.type`, `x := 5, x.type` and `rational_number` alone all print `type`, while `5.type == rational_number` is `true`, and `f64` and `x := f64 2.5, x.type` print `f64`.",
+    "program": "5.type",
+    "output": "type\nexit 0",
+    "expected": "`rational_number`, as `f64` shows `f64`: both are values of `type`, shown by its one `print` slot (DESIGN ›A value is shown as the text its type's `print` slot gives back‹: \"no value is a special case\"). What that slot gives back is still Open there (#182); that it shows the two alike is not.",
+    "tier": "interpreted",
+    "found": "Orchestrator (2), probing the #82 worker's Q-0059 examples on dev 0388214 (clean release build of the #82 worktree)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T22:50+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "34bb0ac",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
