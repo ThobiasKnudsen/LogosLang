@@ -915,8 +915,9 @@ unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Option<DyadPtr
         if els.is_null() {
             return None;
         }
-        let then_out = moved_out(types, then, depth + 1)?;
-        let else_out = moved_out(types, els, depth + 1)?;
+        // An arm is no call, so an `else if` chain's length is no recursion's depth.
+        let then_out = moved_out(types, then, depth)?;
+        let else_out = moved_out(types, els, depth)?;
         // The `if` gives its then arm's type, and `move` of a borrow moves out a borrow, so the
         // arms hand on one owning block only when both give an owning type.
         let owns = |out| owning_pointee(super::read::output_type(types, out)).is_some();
@@ -1922,6 +1923,14 @@ mod tests {
             assert_eq!(run(&format!("{c}{tail}")), (1, 0), "{tail}");
             assert_eq!(free_log(), freed, "{tail}");
         }
+        // An `else if` chain longer than the call-depth bound still hands its block on.
+        let mut chain = String::from("x := if (c == 0) (alloc 1 of i32 0)");
+        for k in 1..40 {
+            chain.push_str(&format!(" else if (c == {k}) (alloc 1 of i32 {k})"));
+        }
+        chain.push_str(" else (alloc 1 of i32 40),\n1");
+        assert_eq!(run(&format!("{c}{chain}")), (1, 0));
+        assert_eq!(free_log(), vec![1]);
         // An owning arm beside `move` of a borrow: the name holds neither, so `&y` is never freed.
         let mixed = "c := i32 0,\ny := i32 4,\nb := &y,\na := alloc 1 of i32 5,\n\
                      x := if (c == 1) (move a) else (move b),\nx@";
