@@ -2456,6 +2456,9 @@ fn the_echo_reads_the_tail_value_as_any_use_does() {
         ("if c (i32 1) else (i64 2), 3", "3\n"),
         ("if c (1) else if c (2) else (3)", "1\n"),
         ("x := if c (1) else (if c (2) else (3)), x", "1\n"),
+        // An arm that gives nothing leaves its sibling's value unused, whichever arm it is.
+        ("if c (if c (i32 1) else (i64 2)) else (print «b»)", ""),
+        ("if c (print «b») else (if c (i32 1) else (i64 2))", "b\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("mut c := true, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");

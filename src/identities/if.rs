@@ -147,13 +147,18 @@ pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, 
     if els.is_null() {
         return Err(ParseError::MissingElse);
     }
+    // An arm that gives nothing makes the `if` give nothing, whichever arm it is, so a sibling
+    // arm's two types are no use of a value.
+    let mut differ = Ok(());
     for arm in [then, els] {
         match super::read::value_type(types, arm) {
             Err(ParseError::StatementAsValue) => return Err(ParseError::ArmGivesNothing),
+            Err(ParseError::ArmsDiffer) => differ = Err(ParseError::ArmsDiffer),
             Err(e) => return Err(e),
             Ok(_) => {}
         }
     }
+    differ?;
     match *(dyad::value(node) as *const DyadPtr).add(IF_OUTPUT) {
         out if out == types.void_ => Err(ParseError::ArmsDiffer),
         out => Ok(out),
