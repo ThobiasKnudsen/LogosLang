@@ -164,7 +164,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                     let types = p.types();
                     // SAFETY: `value` is a reduced dyad from the store.
                     let Some(teardown) = (unsafe { teardown_of(types, value) }) else {
-                        return Err(p.fail_at(at, ParseError::FreeOfUntypedValue));
+                        return Err(p.fail_at(at, ParseError::FreeOfUndecidedValue));
                     };
                     let node = build_value_free(p.store(), types, value, teardown);
                     tape.place(node);
@@ -903,6 +903,15 @@ unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Option<DyadPtr
         return crate::parse::last_sequence_expr(node)
             .and_then(|tail| moved_out(types, tail, depth + 1));
     }
+    if logos == types.if_ {
+        let (_, then, els) = super::if_mod::branches(node);
+        if els.is_null() {
+            return None;
+        }
+        moved_out(types, then, depth + 1)?;
+        moved_out(types, els, depth + 1)?;
+        return Some(node);
+    }
     if let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
         super::read::read_kind(types, node)
     {
@@ -941,8 +950,8 @@ pub(crate) enum Teardown {
     Block(DyadPtr),
 }
 
-/// `None` for an `if` with an `else` whose arms carry a teardown, whose value's type shows
-/// only when it runs: stand-in for #82.
+/// `None` for an `if` whose arms end their values differently, as one making a value and
+/// one borrowing: what ends the value shows only when it runs.
 ///
 /// # Safety
 /// `value` must be a reduced dyad from the store.
@@ -957,12 +966,9 @@ pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Option<Teardow
     }
     if dyad::ty(node) == types.if_ {
         let (_, then, els) = super::if_mod::branches(node);
-        // An `if` with no `else` yields unit whichever way it goes.
-        if els.is_null() {
-            return Some(Teardown::Nothing);
+        if !els.is_null() && teardown_of(types, then)? != teardown_of(types, els)? {
+            return None;
         }
-        let plain = |arm: DyadPtr| teardown_of(types, arm) == Some(Teardown::Nothing);
-        return (plain(then) && plain(els)).then_some(Teardown::Nothing);
     }
     // A node, or a plain record in its bytes.
     let t = super::read::output_type(types, value);
@@ -1866,14 +1872,38 @@ mod tests {
         ] {
             assert_eq!(parse_err(src), ParseError::MoveOfValue, "{src}");
         }
+        // One arm makes a block, the other borrows one: what ends the value shows at run.
         assert_eq!(
             parse_err(
-                "c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)),\n1"
+                "c := i32 1,\np := alloc 1 of i32 7,\nfree (if (c == 1) (alloc 1 of i32 5) else (p)),\n1"
             ),
-            ParseError::FreeOfUntypedValue
+            ParseError::FreeOfUndecidedValue
         );
         // With no `else` the value is unit, known at parse.
         assert_eq!(run("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5)),\n1").0, 1);
+    }
+
+    #[test]
+    fn an_if_whose_every_arm_makes_or_moves_a_value_hands_it_on() {
+        let c = "c := i32 1,\n";
+        let free = "free (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)),\n1";
+        assert_eq!(run(&format!("{c}{free}")), (1, 0));
+        for (tail, freed) in [
+            ("x := if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6),\n1", vec![5]),
+            (
+                "a := alloc 1 of i32 5,\nb := alloc 1 of i32 6,\n\
+                 x := if (c == 1) (move a) else (move b),\n1",
+                vec![6, 5],
+            ),
+            (
+                "f := fn () -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6) ),\n\
+                 x := f(),\n1",
+                vec![5],
+            ),
+        ] {
+            assert_eq!(run(&format!("{c}{tail}")), (1, 0), "{tail}");
+            assert_eq!(free_log(), freed, "{tail}");
+        }
     }
 
     #[test]

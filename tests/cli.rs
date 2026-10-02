@@ -3435,6 +3435,19 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
         ("a := box (7, 1), free a, print «after»", "free\nafter\n"),
         // A returned borrow is no owner: the callee's own array is freed as it returns.
         ("mk := fn () -> box ( a := box (9, 1), b := a, b ), m := mk(), print «got»", "free\ngot\n"),
+        // An `if` whose every arm makes or moves the value hands it on as either arm would.
+        ("c := true, x := if c (box (1, 2)) else (box (3, 4)), print «{x.size}»", "2\nfree\n"),
+        (
+            "c := true, a := box (1, 2), b := box (3, 4, 5), x := if c (move a) else (move b), \
+             print «mid»",
+            "free\nmid\nfree\n",
+        ),
+        ("c := true, free (if c (box (1, 2)) else (box (3, 4))), print «after»", "free\nafter\n"),
+        (
+            "c := true, mk := fn () -> box ( if c (box (1, 2)) else (box (3, 4)) ), m := mk(), \
+             print «got»",
+            "got\nfree\n",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
@@ -4132,7 +4145,7 @@ fn free_and_move_refuse_what_they_cannot_take_where_it_stands() {
         ),
         ("free i32, 1", "i32", "`i32` is a name the run starts with"),
         (
-            "c := i32 1, free (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)), 1",
+            "c := i32 1, p := alloc 1 of i32 7, free (if (c == 1) (alloc 1 of i32 5) else (p)), 1",
             "(if",
             "`free` runs a value and then its type's `free`",
         ),

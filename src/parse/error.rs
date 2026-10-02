@@ -258,8 +258,9 @@ pub enum ParseError {
     MoveOfValue,
     /// `free` of a hole, which holds no value.
     FreeOfHole,
-    /// `free` of a value whose type, and so its `free`, is known only when it runs.
-    FreeOfUntypedValue,
+    /// `free` of a value whose teardown is known only when it runs: an `if` one of whose arms
+    /// makes or moves its value and another borrows.
+    FreeOfUndecidedValue,
     /// `move` or `free` of a name the run starts with (`i32`), which every section reads;
     /// carries the name.
     EndsPrimordialName(Box<String>),
