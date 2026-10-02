@@ -1194,7 +1194,7 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
-        let t = crate::identities::read::output_type(types, lhs);
+        let t = crate::identities::read::value_type(types, lhs)?;
         if t.is_null() {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }

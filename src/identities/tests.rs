@@ -1270,6 +1270,10 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         ("x := if c (i32 1) else (mut y := i32 2, y = 3)", ParseError::ArmGivesNothing),
         ("mut x := i32 1, x = if c (2)", ParseError::MissingElse),
         ("x := if c (i32 1) else if c (i32 2)", ParseError::MissingElse),
+        // A block's value is its last line's, refused for that line's reason.
+        ("x := ( y := i32 1, if c (i32 1) else (i64 2) )", ParseError::ArmsDiffer),
+        ("x := ( y := i32 1, if c (5) )", ParseError::MissingElse),
+        ("x := (if c (i32 1) else (i64 2)).type", ParseError::ArmsDiffer),
     ] {
         assert_eq!(parse_err(&f(body)), error, "{body}");
     }

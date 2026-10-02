@@ -2426,11 +2426,40 @@ fn a_line_that_gives_nothing_echoes_nothing_and_no_value_reads_it() {
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert_eq!(stdout, "", "{tail}");
     }
-    for tail in ["x := f(), x", "print «{f()}»", "f() + 1", "y := (return n), y"] {
+    for tail in ["x := f(), x", "print «{f()}»", "f() + 1", "y := (return n), y", "f().type"] {
         let (code, _, stderr) = run_line(&format!("{void_fn}, {tail}"));
         assert_eq!(code, Some(1), "{tail}");
         assert!(stderr.contains("gives nothing"), "{tail}: stderr: {stderr}");
     }
+}
+
+#[test]
+fn the_echo_reads_the_tail_value_as_any_use_does() {
+    // Refused before the tail runs, so `ran` never prints.
+    for tail in [
+        "if c (i32 1) else (i64 2)",
+        "( y := i32 1, if c (print «ran», i32 1) else (i64 2) )",
+        "(if c (i32 1) else (i64 2)).type",
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("mut c := true, {tail}"));
+        assert_eq!(code, Some(1), "{tail}");
+        assert_eq!(stdout, "", "{tail}");
+        assert!(stderr.contains("give different types"), "{tail}: stderr: {stderr}");
+    }
+    for (tail, want) in [
+        ("if c (i32 1) else (i32 2)", "1\n"),
+        ("if c (5)", ""),
+        ("if c (i32 1) else (print «b»)", ""),
+        ("if c (i32 1) else (i64 2), 3", "3\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("mut c := true, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, want, "{tail}");
+    }
+    let (echoes, stderr) =
+        repl(b"mut c := true\nif c (i32 1) else (i64 2)\nif c (i32 1) else (i32 2)\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+    assert!(stderr.contains("give different types"), "stderr: {stderr}");
 }
 
 #[test]

@@ -205,12 +205,36 @@ pub(crate) unsafe fn value_type(
     node: DyadPtr,
 ) -> Result<DyadPtr, crate::parse::ParseError> {
     let d = types.through(node);
-    if !d.is_null() && types.storage_type(d).is_none() && dyad::ty(d) == types.if_ {
-        return super::if_mod::value_type(types, d);
+    if !d.is_null() && types.storage_type(d).is_none() {
+        if dyad::ty(d) == types.if_ {
+            return super::if_mod::value_type(types, d);
+        }
+        // A block's value is its last line's, refused for that line's reason.
+        if dyad::ty(d) == types.scope {
+            if let Some(last) = crate::parse::last_sequence_expr(d) {
+                value_type(types, last)?;
+            }
+        }
     }
     match output_type(types, node) {
         t if t == types.void_ => Err(crate::parse::ParseError::StatementAsValue),
         t => Ok(t),
+    }
+}
+
+/// Whether a line's last value is shown: a line that gives nothing shows nothing, and the echo
+/// is a use, so an `if` that gives a value no one type holds is refused here as anywhere.
+/// DESIGN ›A value is shown as the text its type's `print` slot gives back‹, ›`if` reads its
+/// own right side‹.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub unsafe fn is_shown(types: &Core, node: DyadPtr) -> Result<bool, crate::parse::ParseError> {
+    use crate::parse::ParseError;
+    match value_type(types, node) {
+        Ok(_) => Ok(true),
+        Err(ParseError::ArmsDiffer) => Err(ParseError::ArmsDiffer),
+        Err(_) => Ok(false),
     }
 }
 
