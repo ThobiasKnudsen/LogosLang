@@ -8577,5 +8577,53 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P58",
+    "kind": "problem",
+    "status": "open",
+    "text": "A call argument that gives nothing is accepted by a bare parameter: a statement (`x := i32 5`, `y = 5`, `while false (1)`) or a `-> void` call passed to `fn (b)` runs and the call goes on, where a typed parameter refuses the same argument",
+    "program": "g := fn (b) -> i32 ( 7 ), g(x := i32 5)",
+    "output": "7\nexit 0",
+    "expected": "Refused where the call is written, as `g := fn (a := i32 ?) -> i32 ( a ), mut y := i32 0, g(y = 5)` is (\"these types do not match\"): DESIGN ›`=` sits beside `:=`, and returns nothing‹, Ruled Q-59/Q-61: the statement words \"give their line nothing\", so there is no value to pass. Also `g(while false (1))`, `g(v())` over `v := fn () -> void ( )`, `mut y := i32 0, g(y = 5)`.",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-1, review round 1 of #82, on dev 2b9b9b2 and on issue-82-output-type 6fe5070",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-02T21:06+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2b9b9b2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P59",
+    "kind": "problem",
+    "status": "open",
+    "text": "An operator applied to an `and`/`or` group of numbers fails at run with \"this node was built with no operation to run\", on both tiers",
+    "program": "x := i32 1, y := i32 2, (x and y) + 1",
+    "output": "<command line>: run error: this node was built with no operation to run\nexit 1",
+    "expected": "Each member gets the operator: DESIGN ›`and`/`or` on non-booleans build a group; every operator on a group applies to each member‹: \"`(a and b) + 1 == 3` is `a + 1 == 3 and b + 1 == 3`\". Also `x := i32 1, (1 or 2) + 1` and `((x and y) + 1).type\". #156 (Groups) is closed.",
+    "tier": "interpreted and compiled",
+    "found": "logoslang-issue-82-review-1, review round 1 of #82, on dev 2b9b9b2 and on issue-82-output-type 6fe5070",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-02T21:06+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2b9b9b2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
