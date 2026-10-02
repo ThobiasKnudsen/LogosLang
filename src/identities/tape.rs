@@ -12,6 +12,7 @@
 
 use super::callable::{self, Callables};
 use super::numtype::NumType;
+use super::pointer::at_dyad;
 use super::{meta, operand_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -261,12 +262,6 @@ fn act(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> D
     let mut v = operands.to_vec();
     v.push(leaf);
     store.alloc_words(op, &v)
-}
-
-/// What a read of a cell, a line or a name gives back: the dyad's address.
-fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
-    // SAFETY: `dyad_` is a type node `Core::build` minted.
-    unsafe { super::pointer::make_pointer_type(store, types.type_, types.dyad_) }
 }
 
 /// `t[k]`: read, the cell's pointer; as `=`'s target, the write (`build_write`).

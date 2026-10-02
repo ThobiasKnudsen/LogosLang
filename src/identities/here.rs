@@ -8,6 +8,7 @@
 //! DESIGN ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹
 
 use super::callable::{self, Callables};
+use super::pointer::at_dyad;
 use super::{meta, scope, Cx};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -62,12 +63,6 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> HereIds {
         back,
         back_leaf,
     }
-}
-
-/// What `here`, `caller.scope` and `.back` give back: a scope node's address.
-fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
-    // SAFETY: `dyad_` is a type node `Core::build` minted.
-    unsafe { super::pointer::make_pointer_type(store, types.type_, types.dyad_) }
 }
 
 /// `[scope, op, output_type]`, `scope` the scope open at the appearance.

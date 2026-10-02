@@ -155,6 +155,12 @@ pub(crate) unsafe fn make_pointer_type(
     node
 }
 
+/// `@dyad`, what a read of a cell, a line, a field, a name or a scope gives back.
+pub(crate) fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
+    // SAFETY: `dyad_` is a type node `Core::build` minted.
+    unsafe { make_pointer_type(store, types.type_, types.dyad_) }
+}
+
 /// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,
 /// so `free`/`move` recognize owning-ness by the slot while a borrow's pointer has none.
 /// Never interned.

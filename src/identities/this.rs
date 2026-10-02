@@ -126,8 +126,7 @@ pub(crate) fn build_slot(
     fill: DyadPtr,
     owner: DyadPtr,
 ) -> DyadPtr {
-    // SAFETY: `dyad_` is a type node `Core::build` minted.
-    let output = unsafe { super::pointer::make_pointer_type(store, types.type_, types.dyad_) };
+    let output = super::pointer::at_dyad(store, types);
     let ops = [this, k, binding, fill, owner];
     node(store, types.this.slot, types.this.slot_leaf, &ops, output)
 }
