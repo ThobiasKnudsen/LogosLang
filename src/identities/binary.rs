@@ -57,6 +57,7 @@ pub(super) fn register_all(cx: &mut Cx) -> BinaryIds {
 }
 
 fn register(cx: &mut Cx, spelling: &str, rank: f64, family: Family) -> DyadPtr {
+    // Each node carries its own `output_type`: stand-in for #242.
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
