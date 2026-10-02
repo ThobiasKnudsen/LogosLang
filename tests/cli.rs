@@ -4547,6 +4547,8 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
             "5 7\n",
         ),
         ("f := fn () -> @i32 ( alloc 1 of i32 0 ), f().type == @i32", "true\n"),
+        // A list standing as a value gives back itself, never nothing.
+        ("t := ([1, 2]).type, t == square_brackets", "true\n"),
         (
             "f := fn (c := i32 ?) -> bool ( a := c == 1, mut b := not a, b = not b, b ), \
              f.compile(), print «{f(1)} {f(2)}»",

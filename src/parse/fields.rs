@@ -820,8 +820,9 @@ impl<'a> Parser<'a> {
         // SAFETY: `scope` is the block `parse_block` minted, closed.
         let dyads =
             unsafe { crate::identities::scope::dyads(self.rt.store, self.types.array_, scope) };
-        let node =
-            self.rt.store.alloc_words(self.types.square_brackets, &[dyads, std::ptr::null_mut()]);
+        // A list standing as a value gives back itself.
+        let sq = self.types.square_brackets;
+        let node = self.rt.store.alloc_words(sq, &[dyads, std::ptr::null_mut(), sq]);
         tape.place(node);
         Ok(Constructed::Placed)
     }

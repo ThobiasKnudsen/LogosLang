@@ -81,7 +81,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         crate::parse::Assoc::Left,
-        &["dyads", "op"],
+        &["dyads", "op", "output_type"],
     );
     let square_brackets = cx.store.alloc_head(cx.type_, record);
     cx.declare("square_brackets", square_brackets);
