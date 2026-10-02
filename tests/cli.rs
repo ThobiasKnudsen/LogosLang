@@ -2418,6 +2418,22 @@ fn a_tight_read_runs_over_a_keyword_before_its_constructor_wakes() {
 }
 
 #[test]
+fn a_line_that_gives_nothing_echoes_nothing_and_no_value_reads_it() {
+    let void_fn = "mut n := i32 1, f := fn () -> void ( n = n + 1 )";
+    for tail in ["f()", "for i in 0..3 ( n = n + 1 )", "while n < 4 ( n = n + 1 )", "if (n > 9) 5"]
+    {
+        let (code, stdout, stderr) = run_line(&format!("{void_fn}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, "", "{tail}");
+    }
+    for tail in ["x := f(), x", "print «{f()}»", "f() + 1", "y := (return n), y"] {
+        let (code, _, stderr) = run_line(&format!("{void_fn}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}");
+        assert!(stderr.contains("gives nothing"), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn assignment_returns_nothing() {
     let (_e, stderr) = repl(b"mut a := i32 1\nmut b := i32 2\na = b = 3\n");
     assert!(stderr.contains("gives nothing"), "stderr: {stderr}");

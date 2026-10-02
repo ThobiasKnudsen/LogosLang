@@ -185,7 +185,15 @@ impl<'a> Parser<'a> {
                     self.types.string_,
                     &text,
                 )),
-                Piece::Scope(inner) => parts.push(self.parse_within(inner.start, inner.end)?),
+                Piece::Scope(inner) => {
+                    let part = self.parse_within(inner.start, inner.end)?;
+                    // SAFETY: `part` is the reduced dyad just parsed.
+                    if let Err(e) = unsafe { crate::identities::read::value_type(self.types, part) }
+                    {
+                        return Err(self.fail_at(inner.start, e));
+                    }
+                    parts.push(part);
+                }
                 Piece::StrayClose(at) => {
                     self.cx.pos = at;
                     return Err(ParseError::StrayInterpolationClose);
