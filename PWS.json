@@ -1374,7 +1374,7 @@
     "text": "A function declared `-> i32` whose body is `f64 2.5` returns `0`",
     "program": "f := fn () -> i32 ( f64 2.5 ), f()",
     "output": "0\nexit 0",
-    "expected": "Refused where the function is defined, as the same value into the same place type is at a call argument (`g := fn (a := i32 ?) -> i32 ( a ), g(f64 2.5)` is \"these types do not match\"): ›No implicit coercion; a numeric type applied to a value is the conversion‹",
+    "expected": "Refused where the function is defined, as the same value into the same place type is at a call argument (`g := fn (a := i32 ?) -> i32 ( a ), g(f64 2.5)` is \"these types do not match\"): ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹",
     "tier": "interpreted",
     "found": "first example of #198 (RCA fn-tail-type, 29 September 2026, dev 9e06864); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
     "why": [
@@ -1417,7 +1417,7 @@
       "commit_fn_body"
     ],
     "design": [
-      "No implicit coercion; a numeric type applied to a value is the conversion"
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
     "evidence": [
       {
@@ -1464,7 +1464,7 @@
       "build_storeptr"
     ],
     "design": [
-      "No implicit coercion; a numeric type applied to a value is the conversion"
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
     "evidence": [
       {
@@ -1508,7 +1508,7 @@
     "assessment": "Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32, the segfault of -> @i32 ( i32 5 ), the compiled verifier errors); its bool arm leans on is_bool_result until group A lands; leaves the bare-parameter tail (#216) and a ? parameter's tail (a generic body built once)",
     "decision": null,
     "design": [
-      "No implicit coercion; a numeric type applied to a value is the conversion"
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
     "issue": 198,
     "done": null,
@@ -3142,7 +3142,7 @@
     ],
     "design": [
       "A node's output type is per node, and its parse writes it",
-      "No implicit coercion; a numeric type applied to a value is the conversion"
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
     "evidence": [
       {
@@ -3234,7 +3234,7 @@
       "src/identities/bool.rs"
     ],
     "design": [
-      "No implicit coercion; a numeric type applied to a value is the conversion",
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly",
       "A node's output type is per node, and its parse writes it"
     ],
     "evidence": [
@@ -3370,7 +3370,7 @@
     ],
     "design": [
       "A node's output type is per node, and its parse writes it",
-      "No implicit coercion; a numeric type applied to a value is the conversion"
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
     "evidence": [
       {
@@ -3448,7 +3448,7 @@
       "is_bool_result"
     ],
     "design": [
-      "No implicit coercion; a numeric type applied to a value is the conversion"
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
     "evidence": [
       {
@@ -3508,7 +3508,7 @@
       "set_dyad"
     ],
     "design": [
-      "No implicit coercion; a numeric type applied to a value is the conversion",
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly",
       "Anything yielding a `bool` is a condition"
     ],
     "evidence": [
@@ -3596,7 +3596,7 @@
     ],
     "design": [
       "Anything yielding a `bool` is a condition",
-      "No implicit coercion; a numeric type applied to a value is the conversion"
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
     "evidence": [
       {
@@ -4434,7 +4434,7 @@
     "text": "A comparison adds to a number: `(x == 1) + 1` prints `2`",
     "program": "x := i32 1, (x == 1) + 1",
     "output": "2\nexit 0",
-    "expected": "refused, as `true + 1` is (\"this operator cannot compute over these operands\"): a comparison yields `bool` (›No implicit coercion; a numeric type applied to a value is the conversion‹: \"Comparisons resolve operands the same way and yield `bool`\")",
+    "expected": "refused, as `true + 1` is (\"this operator cannot compute over these operands\"): a comparison yields `bool` (›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹: \"Comparisons resolve operands the same way and yield `bool`\")",
     "tier": "interpreted",
     "found": "sibling probe in the why run on P21 (logoslang-why-P21-a and -b, 1 October 2026); rerun by Orchestrator (2) on dev e14738b, release, command line",
     "why": [
@@ -4480,7 +4480,7 @@
     "text": "A comparison is stored into an `i32` place without a conversion",
     "program": "x := i32 1, mut a := i32 0, a = x == 1, a",
     "output": "1\nexit 0",
-    "expected": "refused, as `a = true` is (\"these types do not match (crossing types needs an explicit cast)\"): a comparison yields `bool`, and crossing types takes a conversion (›No implicit coercion; a numeric type applied to a value is the conversion‹)",
+    "expected": "refused, as `a = true` is (\"these types do not match (crossing types needs an explicit cast)\"): a comparison yields `bool`, and crossing types takes a conversion (›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹)",
     "tier": "interpreted",
     "found": "sibling probe in the why run on P21 (logoslang-why-P21-a and -b, 1 October 2026); rerun by Orchestrator (2) on dev e14738b, release, command line",
     "why": [
@@ -8393,7 +8393,7 @@
     "text": "A type value written in brackets, or read through a member, is not applied to the value after it: `t := i32, (t) 4` and `x := i32 3, y := x:type 4, y` are \"expected one expression, found more\", while a bare name holding the same type, `t := i32, y := t 4, y`, gives `4`.",
     "program": "t := i32, (t) 4",
     "output": "<command line>:1:15: error: expected one expression, found more\n  t := i32, (t) 4\n                ^\nexit 1",
-    "expected": "`4`, as `t := i32, y := t 4, y` gives. DESIGN ›No implicit coercion; a numeric type applied to a value is the conversion‹, and its Ruled line of 30 September 2026 (Q-20): \"`.`, `@` and a call bind tighter than the type: \\\"in all these cases . @ g and - should have higher precedence\\\"\".",
+    "expected": "`4`, as `t := i32, y := t 4, y` gives. DESIGN ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹, and its Ruled line of 30 September 2026 (Q-20): \"`.`, `@` and a call bind tighter than the type: \\\"in all these cases . @ g and - should have higher precedence\\\"\".",
     "tier": "interpreted",
     "found": "logoslang-issue-215-review-1, on dev b4c6bf4 and on issue-215-type-dot-rename (`x.type 4`); rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build)",
     "why": null,
