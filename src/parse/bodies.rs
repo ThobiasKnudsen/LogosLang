@@ -592,7 +592,7 @@ impl<'a> Parser<'a> {
         if crate::identities::drop_model::lent_place(types, place).is_some_and(left) {
             return Err(ParseError::AddressOfHeld);
         }
-        if crate::identities::drop_model::is_owning_value(types, value) {
+        if crate::identities::drop_model::may_own_block(types, value) {
             return Err(ParseError::OwnershipAcrossReturn);
         }
         let live = self.cx.open[frame.open_below..]
@@ -1026,7 +1026,7 @@ impl<'a> Parser<'a> {
         // that it takes the value.
         for &arg in &args {
             // SAFETY: `args` are reduced dyads just parsed.
-            if unsafe { crate::identities::drop_model::is_owning_value(self.types, arg) } {
+            if unsafe { crate::identities::drop_model::may_own_block(self.types, arg) } {
                 return Err(ParseError::UnboundOwningValue);
             }
         }
