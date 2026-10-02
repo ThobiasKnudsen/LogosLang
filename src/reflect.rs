@@ -486,13 +486,9 @@ mod tests {
                 (core.ne, meta::TUPLE_TAG, 4),
                 (core.and_, meta::TUPLE_TAG, 4),
                 (core.or_, meta::TUPLE_TAG, 4),
-                (core.assign, meta::TUPLE_TAG, 4),
                 (core.if_, meta::TUPLE_TAG, 8),
-                (core.while_, meta::TUPLE_TAG, 4),
-                (core.for_, meta::TUPLE_TAG, 7),
                 (core.convert, meta::TUPLE_TAG, 5),
                 (core.deref_, meta::TUPLE_TAG, 5),
-                (core.storeptr_, meta::TUPLE_TAG, 6),
                 (core.return_, meta::TUPLE_TAG, 4),
                 (core.not_, meta::TUPLE_TAG, 3),
                 (core.construct_, meta::LIST_TAG, 4),
@@ -500,6 +496,13 @@ mod tests {
                 assert_eq!(meta::kind_of(id), Some(kind));
                 assert_eq!(meta::arity_of(id), arity);
                 assert_eq!(meta::output_slot_of(id), Some(arity - 1));
+            }
+            for (id, arity) in
+                [(core.assign, 3), (core.while_, 3), (core.for_, 6), (core.storeptr_, 5)]
+            {
+                assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
+                assert_eq!(meta::arity_of(id), arity);
+                assert_eq!(meta::output_slot_of(id), None);
             }
             assert_eq!(meta::kind_of(core.i32_), Some(NumType::I32 as u8));
             assert_eq!(meta::kind_of(core.bool_), Some(NumType::I32 as u8));
@@ -535,10 +538,7 @@ mod tests {
             let roles: Vec<&[u8]> = (0..meta::arity_of(core.for_))
                 .map(|i| text_of(meta::role_of(core.for_, i)))
                 .collect();
-            assert_eq!(
-                roles,
-                [&b"variable"[..], b"start", b"end", b"step", b"body", b"op", b"output_type"]
-            );
+            assert_eq!(roles, [&b"variable"[..], b"start", b"end", b"step", b"body", b"op"]);
             assert_eq!(text_of(meta::role_of(core.return_, 0)), b"value");
             assert_eq!(text_of(meta::role_of(core.fn_type, 1)), b"output_type");
         }
@@ -628,8 +628,7 @@ mod tests {
             let Shape::Tuple { slots } = describe(types, roots[5]) else {
                 panic!("for should be a tuple");
             };
-            assert_eq!(slots.len(), 7);
-            assert_eq!(slots[6].node, core.void_);
+            assert_eq!(slots.len(), 6);
             assert_eq!(text_of(slots[3].role), b"step");
             assert!(slots[3].node.is_null());
             // The named counter is a name of the program frame, `i32` at its offset.

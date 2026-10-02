@@ -68,7 +68,7 @@ pub(super) fn register(
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["pointer", "value", "pointee", "offset", "op", "output_type"],
+        &["pointer", "value", "pointee", "offset", "op"],
     );
     let storeptr = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(storeptr, lower_storeptr);
@@ -227,7 +227,7 @@ pub(crate) unsafe fn build_storeptr(
         super::check_store_type(types, pointee, rhs)?;
         rhs
     };
-    let ops = [ptr_expr, rhs, pointee, off_node, types.ops.storeptr_, types.void_];
+    let ops = [ptr_expr, rhs, pointee, off_node, types.ops.storeptr_];
     Ok(store.alloc_words(types.storeptr_, &ops))
 }
 

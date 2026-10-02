@@ -868,7 +868,7 @@ impl<'a> Parser<'a> {
         if self.cx.frames.is_empty() && unsafe { contains_return(types, body) } {
             return Err(ParseError::EarlyReturn);
         }
-        Ok(self.rt.store.alloc_words(while_id, &[cond, body, types.ops.while_, types.void_]))
+        Ok(self.rt.store.alloc_words(while_id, &[cond, body, types.ops.while_]))
     }
 
     fn parse_while_parts(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
@@ -977,7 +977,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::EarlyReturn);
         }
 
-        let ops = [var, start, end, step, body, types.ops.for_, types.void_];
+        let ops = [var, start, end, step, body, types.ops.for_];
         Ok(self.rt.store.alloc_words(for_id, &ops))
     }
 

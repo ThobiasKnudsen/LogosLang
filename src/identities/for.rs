@@ -25,7 +25,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         meta::TUPLE_TAG,
         meta::prec::READER,
         Assoc::Left,
-        &["variable", "start", "end", "step", "body", "op", "output_type"],
+        &["variable", "start", "end", "step", "body", "op"],
     );
     let for_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("for", for_);

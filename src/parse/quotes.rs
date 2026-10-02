@@ -86,7 +86,7 @@ impl<'a> Parser<'a> {
             types.string_,
             path_text.as_bytes(),
         );
-        let ops = [path_node, types.ops.import_, types.void_];
+        let ops = [path_node, types.ops.import_];
         let node = self.rt.store.alloc_words(types.import_, &ops);
         tape.place(node);
         Ok(Constructed::Placed)

@@ -22,7 +22,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         meta::prec::READER,
         Assoc::Left,
-        &["condition", "body", "op", "output_type"],
+        &["condition", "body", "op"],
     );
     let while_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("while", while_);

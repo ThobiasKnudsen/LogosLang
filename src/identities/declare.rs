@@ -37,7 +37,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["lhs", "rhs", "declared", "op", "output_type"],
+        &["lhs", "rhs", "declared", "op"],
     );
     let declare = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(declare, lower);
@@ -52,7 +52,7 @@ pub(crate) fn build(
     rhs: DyadPtr,
     declared: DyadPtr,
 ) -> DyadPtr {
-    store.alloc_words(types.declare_, &[lhs, rhs, declared, types.ops.declare_, types.void_])
+    store.alloc_words(types.declare_, &[lhs, rhs, declared, types.ops.declare_])
 }
 
 /// # Safety

@@ -25,7 +25,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
         meta::TUPLE_TAG,
         meta::prec::DECLARE,
         Assoc::Right,
-        &["lhs", "rhs", "op", "output_type"],
+        &["lhs", "rhs", "op"],
     );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("=", id);
@@ -237,7 +237,7 @@ pub(super) fn build_store(
             if !ok {
                 return Err(ParseError::BadDeclaredType);
             }
-            return Ok(store_node(store, types, op, lhs, rhs, types.ops.store_leaf(NumType::I64)));
+            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
         }
         // SAFETY: as above.
         Read::Container(t) if unsafe { meta::is_node_valued(t, types.fn_type) } => {
@@ -245,7 +245,7 @@ pub(super) fn build_store(
             if unsafe { super::node_output(types, rhs) } != Some(t) {
                 return Err(ParseError::TypeMismatch);
             }
-            return Ok(store_node(store, types, op, lhs, rhs, types.ops.store_leaf(NumType::I64)));
+            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
         }
         Read::Rational => {
             // SAFETY: `rhs` is a reduced dyad from the store.
@@ -256,7 +256,7 @@ pub(super) fn build_store(
             if !fits {
                 return Err(ParseError::TypeMismatch);
             }
-            return Ok(store_node(store, types, op, lhs, rhs, types.ops.rational_store));
+            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.rational_store]));
         }
         Read::Scalar(_) | Read::Pointer(_) if marked => {}
         Read::Literal => {
@@ -295,19 +295,7 @@ pub(super) fn build_store(
     }
     // SAFETY: `lhs` is a typed variable checked assignable above.
     let nt = unsafe { of_type_node(lhs_type) };
-    Ok(store_node(store, types, op, lhs, rhs, types.ops.store_leaf(nt)))
-}
-
-/// `[lhs, rhs, leaf, void]`: an assignment gives back nothing.
-fn store_node(
-    store: &mut Store,
-    types: &Core,
-    op: DyadPtr,
-    lhs: DyadPtr,
-    rhs: DyadPtr,
-    leaf: DyadPtr,
-) -> DyadPtr {
-    store.alloc_words(op, &[lhs, rhs, leaf, types.void_])
+    Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(nt)]))
 }
 
 /// Guards a null storage address like the interpreter's `Uninitialized`; the

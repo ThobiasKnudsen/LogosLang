@@ -523,7 +523,7 @@ impl<'a> Parser<'a> {
                     self.types.conv_container,
                 );
                 let types = self.types;
-                let ops = [lhs, code, types.ops.compile_, types.void_];
+                let ops = [lhs, code, types.ops.compile_];
                 return Ok((self.rt.store.alloc_words(types.compile_, &ops), 1));
             }
         }

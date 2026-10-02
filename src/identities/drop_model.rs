@@ -25,11 +25,10 @@ use crate::store::Store;
 const ALLOC_POINTEE: usize = 0;
 const ALLOC_COUNT: usize = 1;
 const ALLOC_INIT: usize = 2;
-/// `free` and `move` are `[place, pointee, op, output_type]`.
+/// `move` is `[place, pointee, op, output_type]`, `free` `[place, pointee, op]`.
 const TEARDOWN_PLACE: usize = 0;
 const TEARDOWN_POINTEE: usize = 1;
-const PLACE_ROLES: [&str; 4] = ["place", "pointee", "op", "output_type"];
-/// `defer` is `[inner, op, output_type]`.
+/// `defer` is `[inner, op]`.
 const DEFER_INNER: usize = 0;
 
 pub(super) struct DropModel {
@@ -109,7 +108,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let move_ = keyword(cx, "move", meta::prec::PREFIX, &PLACE_ROLES, |p, _id, tape| {
+    let move_roles = ["place", "pointee", "op", "output_type"];
+    let move_ = keyword(cx, "move", meta::prec::PREFIX, &move_roles, |p, _id, tape| {
         let (place, ended) = match p.place_operand_cell(tape)? {
             Taken::Place(place, ended) => (place, ended),
             Taken::Value(_, at) | Taken::Hole(at) => {
@@ -155,48 +155,43 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // teardown, and a name, field path or cell whose type fills no `free` the inert `free`. A
     // value no name holds runs, then its type's `free`. `free = …` never reaches here: `=`
     // constructs first and takes the lone `free` as the slot's name.
-    let free_ = keyword(cx, "free", meta::prec::PREFIX, &PLACE_ROLES, |p, _id, tape| {
-        let (place, ended) = match p.place_operand_cell(tape)? {
-            Taken::Place(place, ended) => (place, ended),
-            Taken::Hole(at) => return Err(p.fail_at(at, ParseError::FreeOfHole)),
-            Taken::Value(value, at) => {
-                let types = p.types();
-                // SAFETY: `value` is a reduced dyad from the store.
-                let Some(teardown) = (unsafe { teardown_of(types, value) }) else {
-                    return Err(p.fail_at(at, ParseError::FreeOfUntypedValue));
-                };
-                let node = build_value_free(p.store(), types, value, teardown);
-                tape.place(node);
-                return Ok(crate::parse::Constructed::Placed);
+    let free_ =
+        keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
+            let (place, ended) = match p.place_operand_cell(tape)? {
+                Taken::Place(place, ended) => (place, ended),
+                Taken::Hole(at) => return Err(p.fail_at(at, ParseError::FreeOfHole)),
+                Taken::Value(value, at) => {
+                    let types = p.types();
+                    // SAFETY: `value` is a reduced dyad from the store.
+                    let Some(teardown) = (unsafe { teardown_of(types, value) }) else {
+                        return Err(p.fail_at(at, ParseError::FreeOfUntypedValue));
+                    };
+                    let node = build_value_free(p.store(), types, value, teardown);
+                    tape.place(node);
+                    return Ok(crate::parse::Constructed::Placed);
+                }
+            };
+            // SAFETY: `ended` holds the binding the resolver returned.
+            let holder = ended.as_ref().is_some_and(|e| unsafe { p.name_holds(e.binding) });
+            // SAFETY: `place` is a reduced dyad from the store.
+            let node = unsafe { build_place_free(p, place, holder) }?;
+            tape.place(node);
+            if let Some(ended) = ended {
+                p.mark_dead(ended, node);
             }
-        };
-        // SAFETY: `ended` holds the binding the resolver returned.
-        let holder = ended.as_ref().is_some_and(|e| unsafe { p.name_holds(e.binding) });
-        // SAFETY: `place` is a reduced dyad from the store.
-        let node = unsafe { build_place_free(p, place, holder) }?;
-        tape.place(node);
-        if let Some(ended) = ended {
-            p.mark_dead(ended, node);
-        }
-        Ok(crate::parse::Constructed::Placed)
-    });
+            Ok(crate::parse::Constructed::Placed)
+        });
     cx.lower.insert(free_, lower_free);
     let free_leaf = callable::mint_native(cx.store, cs.callable, run_free, cs.seed_native);
 
     // Its run native is a no-op: a scope's end runs the inner, never the defer node.
-    let defer_ = keyword(
-        cx,
-        "defer",
-        meta::prec::READER,
-        &["inner", "op", "output_type"],
-        |p, _id, tape| {
-            let inner = p.parse_expression()?;
-            let types = p.types();
-            let node = build_defer(p.store(), types, inner);
-            tape.place(node);
-            Ok(crate::parse::Constructed::Placed)
-        },
-    );
+    let defer_ = keyword(cx, "defer", meta::prec::READER, &["inner", "op"], |p, _id, tape| {
+        let inner = p.parse_expression()?;
+        let types = p.types();
+        let node = build_defer(p.store(), types, inner);
+        tape.place(node);
+        Ok(crate::parse::Constructed::Placed)
+    });
     let defer_leaf = callable::mint_native(cx.store, cs.callable, run_defer_noop, cs.seed_native);
 
     let record = meta::operand_record(
@@ -341,10 +336,8 @@ pub(super) fn build_alloc(
     Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_, output]))
 }
 
-/// A `free` node gives back nothing.
 fn free_node(store: &mut Store, types: &Core, slots: [DyadPtr; 3]) -> DyadPtr {
-    let [what, with, op] = slots;
-    store.alloc_words(types.free_, &[what, with, op, types.void_])
+    store.alloc_words(types.free_, &slots)
 }
 
 /// `free` over an owning pointer reached through a field or cell: `[place, pointee, op]`.
@@ -646,7 +639,7 @@ fn lower_move(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 }
 
 pub(crate) fn build_defer(store: &mut Store, types: &Core, inner: DyadPtr) -> DyadPtr {
-    store.alloc_words(types.defer_, &[inner, types.ops.defer_, types.void_])
+    store.alloc_words(types.defer_, &[inner, types.ops.defer_])
 }
 
 /// # Safety

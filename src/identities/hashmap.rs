@@ -52,7 +52,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
         (id, leaf)
     };
     let (get, get_leaf) = op(cx, &["map", "key", "op", "output_type"], run_get);
-    let (put, put_leaf) = op(cx, &["map", "key", "value", "op", "output_type"], run_put);
+    let (put, put_leaf) = op(cx, &["map", "key", "value", "op"], run_put);
     HashmapIds { hashmap, mints, get, get_leaf, put, put_leaf }
 }
 
@@ -221,7 +221,7 @@ pub(crate) unsafe fn build_put(
     let v = super::read::output_type(types, get);
     let value = accept(store, types, v, value)?;
     let ops = dyad::value(get) as *const DyadPtr;
-    let put = [*ops, *ops.add(1), value, types.hashmap.put_leaf, types.void_];
+    let put = [*ops, *ops.add(1), value, types.hashmap.put_leaf];
     Ok(store.alloc_words(types.hashmap.put, &put))
 }
 

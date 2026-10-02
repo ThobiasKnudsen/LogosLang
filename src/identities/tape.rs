@@ -116,39 +116,41 @@ pub(super) fn register(
     cx.declare("parsing_tape", parsing_tape);
 
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
-        let roles: Vec<&str> = roles.iter().copied().chain(["output_type"]).collect();
         let record = meta::operand_record(
             cx,
             meta::TUPLE_TAG,
             meta::prec::INERT,
             crate::parse::Assoc::Left,
-            &roles,
+            roles,
         );
         let id = cx.store.alloc_head(cx.type_, record);
         let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
         (id, leaf)
     };
-    let (slot, slot_leaf) = op(cx, &["tape", "k", "op"], run_slot);
+    let read = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
+        let roles: Vec<&str> = roles.iter().copied().chain(["op", "output_type"]).collect();
+        op(cx, &roles, run)
+    };
+    let (slot, slot_leaf) = read(cx, &["tape", "k"], run_slot);
     let (write, write_leaf) = op(cx, &["tape", "k", "cell", "op"], run_write);
-    let (is_constructed, is_constructed_leaf) = op(cx, &["tape", "k", "op"], run_is_constructed);
+    let (is_constructed, is_constructed_leaf) = read(cx, &["tape", "k"], run_is_constructed);
     let (flag_write, flag_write_leaf) = op(cx, &["tape", "k", "flag", "op"], run_flag_write);
-    let (spelling, spelling_leaf) = op(cx, &["tape", "k", "op"], run_spelling);
+    let (spelling, spelling_leaf) = read(cx, &["tape", "k"], run_spelling);
     let (insert, insert_leaf) = op(cx, &["tape", "k", "cells", "op"], run_insert);
-    let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
+    let (remove, remove_leaf) = read(cx, &["tape", "k"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
-    let (slot_name, slot_name_leaf) = op(cx, &["tape", "k", "op"], run_slot_name);
-    let (cell_type, cell_type_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_type);
-    let (cell_value, cell_value_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_value);
-    let (cell_number, cell_number_leaf) =
-        op(cx, &["tape", "k", "i", "type", "op"], run_cell_number);
-    let (cell_node, cell_node_leaf) = op(cx, &["tape", "k", "i", "type", "op"], run_cell_node);
-    let (cell_dyads, cell_dyads_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads);
-    let (cell_dyads_size, cell_dyads_size_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads_size);
-    let (cell_dyad_at, cell_dyad_at_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_dyad_at);
-    let (placed_call, placed_call_leaf) = op(cx, &["call", "op"], run_placed_call);
-    let (bracket_arg, bracket_arg_leaf) = op(cx, &["bracket", "op"], run_bracket_arg);
-    let (cell_into, cell_into_leaf) = op(cx, &["tape", "k", "i", "type", "op"], run_cell_into);
-    let (cell_identity, cell_identity_leaf) = op(cx, &["tape", "k", "op"], run_cell_identity);
+    let (slot_name, slot_name_leaf) = read(cx, &["tape", "k"], run_slot_name);
+    let (cell_type, cell_type_leaf) = read(cx, &["tape", "k", "i"], run_cell_type);
+    let (cell_value, cell_value_leaf) = read(cx, &["tape", "k", "i"], run_cell_value);
+    let (cell_number, cell_number_leaf) = read(cx, &["tape", "k", "i", "type"], run_cell_number);
+    let (cell_node, cell_node_leaf) = read(cx, &["tape", "k", "i", "type"], run_cell_node);
+    let (cell_dyads, cell_dyads_leaf) = read(cx, &["tape", "k"], run_cell_dyads);
+    let (cell_dyads_size, cell_dyads_size_leaf) = read(cx, &["tape", "k"], run_cell_dyads_size);
+    let (cell_dyad_at, cell_dyad_at_leaf) = read(cx, &["tape", "k", "i"], run_cell_dyad_at);
+    let (placed_call, placed_call_leaf) = read(cx, &["call"], run_placed_call);
+    let (bracket_arg, bracket_arg_leaf) = read(cx, &["bracket"], run_bracket_arg);
+    let (cell_into, cell_into_leaf) = read(cx, &["tape", "k", "i", "type"], run_cell_into);
+    let (cell_identity, cell_identity_leaf) = read(cx, &["tape", "k"], run_cell_identity);
     cx.lower.insert(bracket_arg, lower_bracket_arg);
     let nothing = cx.store.alloc_leaf(void_ty);
     for (name, id) in [
@@ -254,6 +256,13 @@ fn node(
     store.alloc_words(op, &v)
 }
 
+/// A write to the tape gives its line nothing, so its node has no output word.
+fn act(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> DyadPtr {
+    let mut v = operands.to_vec();
+    v.push(leaf);
+    store.alloc_words(op, &v)
+}
+
 /// What a read of a cell, a line or a name gives back: the dyad's address.
 fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
     // SAFETY: `dyad_` is a type node `Core::build` minted.
@@ -317,7 +326,7 @@ pub(crate) unsafe fn build_write(
     let ops = dyad::value(slot) as *const DyadPtr;
     let (recv, k) = (*ops, *ops.add(1));
     let cell = cell_arg(store, types, cell);
-    node(store, types.tape.write, types.tape.write_leaf, &[recv, k, cell], types.void_)
+    act(store, types.tape.write, types.tape.write_leaf, &[recv, k, cell])
 }
 
 /// # Safety
@@ -521,7 +530,7 @@ pub(crate) unsafe fn build_flag_write(
     flag: DyadPtr,
 ) -> DyadPtr {
     let (recv, k) = slot_parts(flag_read);
-    node(store, types.tape.flag_write, types.tape.flag_write_leaf, &[recv, k, flag], types.void_)
+    act(store, types.tape.flag_write, types.tape.flag_write_leaf, &[recv, k, flag])
 }
 
 /// `insert` takes a tape: a `lex «…»` node as it stands, or a `parsing_tape` place by
@@ -548,18 +557,15 @@ pub(crate) unsafe fn build_member(
             let d = types.through(cells);
             receiver_addr(store, types, d).ok_or(ParseError::InsertTakesTape)?
         };
-        return Ok(node(store, op, leaf, &[recv, k, cells], types.void_));
+        return Ok(act(store, op, leaf, &[recv, k, cells]));
     }
     let [k] = args[..] else {
         return Err(ParseError::CtorArity);
     };
-    let output = if op == ids.is_constructed {
-        types.bool_
-    } else if op == ids.spelling || op == ids.remove {
-        at_dyad(store, types)
-    } else {
-        types.void_
-    };
+    if op == ids.recenter {
+        return Ok(act(store, op, leaf, &[recv, k]));
+    }
+    let output = if op == ids.is_constructed { types.bool_ } else { at_dyad(store, types) };
     Ok(node(store, op, leaf, &[recv, k], output))
 }
 

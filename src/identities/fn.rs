@@ -73,7 +73,7 @@ pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["function", "code", "op", "output_type"],
+        &["function", "code", "op"],
     );
     let compile_ = cx.store.alloc_head(cx.type_, record);
     let leaf = callable::mint_native(cx.store, cs.callable, compile_run, cs.seed_native);

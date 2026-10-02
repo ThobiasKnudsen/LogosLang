@@ -54,30 +54,30 @@ pub struct ThisIds {
 /// name in a `free` or `share` function builds it too, and `=` the write over it.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
-        let roles: Vec<&str> = roles.iter().copied().chain(["output_type"]).collect();
         let record = meta::operand_record(
             cx,
             meta::TUPLE_TAG,
             meta::prec::INERT,
             crate::parse::Assoc::Left,
-            &roles,
+            roles,
         );
         let id = cx.store.alloc_head(cx.type_, record);
         let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
         (id, leaf)
     };
-    let (slot, slot_leaf) = op(cx, &["value", "k", "binding", "fill", "owner", "op"], run_slot);
+    let (slot, slot_leaf) =
+        op(cx, &["value", "k", "binding", "fill", "owner", "op", "output_type"], run_slot);
     let (write, write_leaf) = op(cx, &["value", "k", "v", "owner", "op"], run_write);
     let (load, load_leaf) =
-        op(cx, &["value", "k", "type", "binding", "fill", "owner", "op"], run_load);
+        op(cx, &["value", "k", "type", "binding", "fill", "owner", "op", "output_type"], run_load);
     let fill = {
         let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
         cx.store.alloc_head(cx.type_, record)
     };
     let (store, store_leaf) = op(cx, &["value", "k", "v", "type", "owner", "op"], run_store);
-    let (copy, copy_leaf) = op(cx, &["this", "op"], run_copy);
+    let (copy, copy_leaf) = op(cx, &["this", "op", "output_type"], run_copy);
     cx.lower.insert(copy, lower_copy);
-    let (pack, pack_leaf) = op(cx, &["type", "places", "op"], run_pack);
+    let (pack, pack_leaf) = op(cx, &["type", "places", "op", "output_type"], run_pack);
     cx.lower.insert(pack, lower_pack);
     ThisIds {
         slot,
@@ -105,6 +105,13 @@ fn node(
 ) -> DyadPtr {
     let mut v = operands.to_vec();
     v.extend([leaf, output]);
+    store.alloc_words(op, &v)
+}
+
+/// A write gives its line nothing, so its node has no output word.
+fn act(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> DyadPtr {
+    let mut v = operands.to_vec();
+    v.push(leaf);
     store.alloc_words(op, &v)
 }
 
@@ -258,7 +265,7 @@ pub(crate) unsafe fn build_write(
                 return Err(crate::parse::ParseError::TypeMismatch);
             }
             let ops = [this, k, value, owner];
-            return Ok(node(store, types.this.write, types.this.write_leaf, &ops, types.void_));
+            return Ok(act(store, types.this.write, types.this.write_leaf, &ops));
         }
         let yields_value = matches!(super::operand_of(types, value), super::Operand::Literal)
             || match super::read::place_layout(types, super::read::output_type(types, value)) {
@@ -270,12 +277,12 @@ pub(crate) unsafe fn build_write(
             let value = super::commit_fn_body(store, types, value, ty)?;
             super::check_store_type(types, ty, value)?;
             let ops = [this, k, value, ty, owner];
-            return Ok(node(store, types.this.store, types.this.store_leaf, &ops, types.void_));
+            return Ok(act(store, types.this.store, types.this.store_leaf, &ops));
         }
     }
     let value = super::tape::cell_arg(store, types, value);
     let ops = [this, k, value, owner];
-    Ok(node(store, types.this.write, types.this.write_leaf, &ops, types.void_))
+    Ok(act(store, types.this.write, types.this.write_leaf, &ops))
 }
 
 /// Where field `k` of the value lies: a node's slot, or the bytes of a plain record,
