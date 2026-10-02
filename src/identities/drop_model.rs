@@ -925,10 +925,10 @@ unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Option<DyadPtr
         // An arm is no call, so an `else if` chain's length is no recursion's depth.
         let then_out = moved_out(types, then, depth)?;
         let else_out = moved_out(types, els, depth)?;
-        // The `if` gives its then arm's type, and `move` of a borrow moves out a borrow, so the
-        // arms hand on one owning block only when both give an owning type.
+        // `move` of a borrow moves out a borrow, so the arms hand on one owning block only when
+        // both give an owning type.
         let owns = |out| owning_pointee(super::read::output_type(types, out)).is_some();
-        return (owns(then_out) == owns(else_out)).then_some(node);
+        return (owns(then_out) == owns(else_out)).then_some(then_out);
     }
     if let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
         super::read::read_kind(types, node)
@@ -1926,6 +1926,8 @@ mod tests {
         let c = "c := i32 1,\n";
         let free = "free (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)),\n1";
         assert_eq!(run(&format!("{c}{free}")), (1, 0));
+        let mk = "mk := fn () -> @i32 ( alloc 1 of i32 5 ),\n";
+        assert_eq!(run(&format!("{c}{mk}free (if (c == 1) (mk()) else (mk())),\n1")), (1, 0));
         for (tail, freed) in [
             ("x := if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6),\n1", vec![5]),
             (
@@ -1936,6 +1938,12 @@ mod tests {
             (
                 "f := fn () -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6) ),\n\
                  x := f(),\n1",
+                vec![5],
+            ),
+            // A call whose block moves out hands it on from an arm as it does alone.
+            (
+                "mk := fn () -> @i32 ( alloc 1 of i32 5 ),\n\
+                 x := if (c == 1) (mk()) else (alloc 1 of i32 6),\n1",
                 vec![5],
             ),
         ] {
