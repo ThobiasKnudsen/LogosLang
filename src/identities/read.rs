@@ -223,7 +223,7 @@ pub(crate) unsafe fn value_type(
 }
 
 /// Whether a line's last value is shown: a line that gives nothing shows nothing, and the echo
-/// is a use, so an `if` that gives a value no one type holds is refused here as anywhere.
+/// is a use, so a value refused anywhere, as an `if` whose arms give two types, is refused here.
 /// DESIGN ›A value is shown as the text its type's `print` slot gives back‹, ›`if` reads its
 /// own right side‹.
 ///
@@ -233,8 +233,10 @@ pub unsafe fn is_shown(types: &Core, node: DyadPtr) -> Result<bool, crate::parse
     use crate::parse::ParseError;
     match value_type(types, node) {
         Ok(_) => Ok(true),
-        Err(ParseError::ArmsDiffer) => Err(ParseError::ArmsDiffer),
-        Err(_) => Ok(false),
+        Err(
+            ParseError::StatementAsValue | ParseError::MissingElse | ParseError::ArmGivesNothing,
+        ) => Ok(false),
+        Err(e) => Err(e),
     }
 }
 
