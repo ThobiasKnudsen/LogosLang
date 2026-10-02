@@ -96,14 +96,30 @@ pub(crate) unsafe fn refresh_output(types: &Core, node: DyadPtr) {
 /// # Safety
 /// `then` must be a reduced dyad from the store, `els` null or one.
 unsafe fn arms_output(types: &Core, then: DyadPtr, els: DyadPtr) -> DyadPtr {
-    if els.is_null() || !super::same_type(arm_type(types, then), arm_type(types, els)) {
+    if arms_type(types, then, els) == types.void_ {
         return types.void_;
     }
     super::read::handed_on(types, then)
 }
 
-/// Read through a block to its last line, so a plain number stays a `rational_number`
-/// beside an arm of a number type.
+/// The arms' one type before a plain number is handed on, else `void`.
+///
+/// # Safety
+/// As [`arms_output`].
+unsafe fn arms_type(types: &Core, then: DyadPtr, els: DyadPtr) -> DyadPtr {
+    if els.is_null() {
+        return types.void_;
+    }
+    let t = arm_type(types, then);
+    if super::same_type(t, arm_type(types, els)) {
+        t
+    } else {
+        types.void_
+    }
+}
+
+/// Read through a block to its last line and through a nested `if` to its arms, so a plain
+/// number stays a `rational_number` beside an arm of a number type.
 ///
 /// # Safety
 /// `arm` must be a reduced dyad from the store.
@@ -113,6 +129,10 @@ unsafe fn arm_type(types: &Core, arm: DyadPtr) -> DyadPtr {
             Some(last) => arm_type(types, last),
             None => types.void_,
         };
+    }
+    if dyad::ty(arm) == types.if_ {
+        let (_, then, els) = branches(arm);
+        return arms_type(types, then, els);
     }
     super::read::output_type(types, arm)
 }

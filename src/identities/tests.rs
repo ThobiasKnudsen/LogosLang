@@ -1266,6 +1266,7 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         ("x := (if c (i32 1) else (i64 2)) + 1", ParseError::ArmsDiffer),
         ("x := i64 (if c (i32 1) else (i64 2))", ParseError::ArmsDiffer),
         ("x := if c (i32 1) else if c (i32 2) else (i64 3)", ParseError::ArmsDiffer),
+        ("x := if c (i32 1) else if c (2) else (3)", ParseError::ArmsDiffer),
         ("x := if c (return 1) else (i32 2)", ParseError::ArmGivesNothing),
         ("x := if c (i32 1) else (mut y := i32 2, y = 3)", ParseError::ArmGivesNothing),
         ("mut x := i32 1, x = if c (2)", ParseError::MissingElse),
@@ -1281,6 +1282,9 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         "x := if c (1) else (2)",
         "x := if c (i32 1) else (i32 2)",
         "x := if c (i32 1) else if c (i32 2) else (i32 3)",
+        // A nested `if`'s plain numbers are read as its arms, not as what it hands on.
+        "x := if c (1) else if c (2) else (3)",
+        "x := if c (1) else (print «a», if c (2) else (3))",
         "x := if c (y := i32 1, y) else (i32 2)",
         "if c (return 1) else (mut y := i32 2, y = 3)",
         // Each `alloc` mints its own owning `@i32`, one type with the other.

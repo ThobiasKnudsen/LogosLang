@@ -2451,6 +2451,8 @@ fn the_echo_reads_the_tail_value_as_any_use_does() {
         ("if c (5)", ""),
         ("if c (i32 1) else (print «b»)", ""),
         ("if c (i32 1) else (i64 2), 3", "3\n"),
+        ("if c (1) else if c (2) else (3)", "1\n"),
+        ("x := if c (1) else (if c (2) else (3)), x", "1\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("mut c := true, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
