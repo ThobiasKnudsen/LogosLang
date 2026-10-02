@@ -489,7 +489,6 @@ mod tests {
                 (core.if_, meta::TUPLE_TAG, 8),
                 (core.convert, meta::TUPLE_TAG, 5),
                 (core.deref_, meta::TUPLE_TAG, 5),
-                (core.return_, meta::TUPLE_TAG, 4),
                 (core.not_, meta::TUPLE_TAG, 3),
                 (core.construct_, meta::LIST_TAG, 4),
             ] {
@@ -497,9 +496,13 @@ mod tests {
                 assert_eq!(meta::arity_of(id), arity);
                 assert_eq!(meta::output_slot_of(id), Some(arity - 1));
             }
-            for (id, arity) in
-                [(core.assign, 3), (core.while_, 3), (core.for_, 6), (core.storeptr_, 5)]
-            {
+            for (id, arity) in [
+                (core.assign, 3),
+                (core.while_, 3),
+                (core.for_, 6),
+                (core.storeptr_, 5),
+                (core.return_, 3),
+            ] {
                 assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
                 assert_eq!(meta::arity_of(id), arity);
                 assert_eq!(meta::output_slot_of(id), None);

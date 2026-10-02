@@ -173,6 +173,8 @@ pub(super) fn build_store(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    // SAFETY: `rhs` is a reduced dyad from the store.
+    unsafe { super::read::value_type(types, rhs) }?;
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
     // SAFETY: `through` hands back its argument, the dyad a binding names, or the storage.
@@ -272,10 +274,6 @@ pub(super) fn build_store(
     let lhs_pointer = unsafe { is_pointer_type(lhs_type) };
     if lhs_pointer && rhs_ty == types.rational {
         return Err(ParseError::TypeMismatch);
-    }
-    // `=` returns nothing, so `a = b = c` assigns nothing.
-    if rhs_ty == types.assign || rhs_ty == types.storeptr_ {
-        return Err(ParseError::StatementAsValue);
     }
     // SAFETY: as above.
     let rhs = unsafe {

@@ -1123,11 +1123,9 @@ pub(crate) unsafe fn commit_fn_body(
     if by_copy::record_width(types, output).is_some() {
         // A record result is handed back as the address of its bytes, which the call copies.
         return walk_tail(types, body, &mut |leaf| {
-            if dyad::ty(leaf) != types.construct_ {
-                refuse_statement(types, leaf)?;
-            }
-            // `error «…»` never yields, and an `out` already hands back its bytes.
-            if dyad::ty(leaf) == types.error.error || dyad::ty(leaf) == types.by_copy.out {
+            refuse_statement(types, leaf)?;
+            // An `out` already hands back its bytes.
+            if dyad::ty(leaf) == types.by_copy.out {
                 return Ok(leaf);
             }
             if read::output_type(types, leaf) != output {
@@ -1155,7 +1153,10 @@ unsafe fn walk_tail(
     if dyad::ty(node) == types.return_ {
         let ops = dyad::value(node) as *mut DyadPtr;
         *ops = walk_tail(types, *ops, leaf)?;
-        return_mod::refresh_output(types, node);
+        return Ok(node);
+    }
+    // An `error` leaves the function, so it hands the tail nothing to check.
+    if dyad::ty(node) == types.error.error {
         return Ok(node);
     }
     // An else-less `if` yields unit, so it cannot be a value function's tail.
@@ -1214,6 +1215,10 @@ unsafe fn commit_tail(
         if let Operand::Pointer(_) = operand_of(types, leaf) {
             return Err(ParseError::TypeMismatch);
         }
+        // A record's bytes are no number: stand-in for #198.
+        if by_copy::record_width(types, read::output_type(types, leaf)).is_some() {
+            return Err(ParseError::TypeMismatch);
+        }
         // A run-time rational has no machine form until it is converted explicitly.
         if rational::is_rational_value(types, leaf) {
             return Err(ParseError::TypeMismatch);
@@ -1222,20 +1227,12 @@ unsafe fn commit_tail(
     })
 }
 
-/// A statement yields unit, so it is no value's tail.
+/// A node that gives nothing is no value's tail.
 ///
 /// # Safety
 /// `node` is a valid dyad from the store.
 unsafe fn refuse_statement(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
-    let ty = dyad::ty(node);
-    if ty == types.while_
-        || ty == types.for_
-        || ty == types.construct_
-        || ty == types.declare_
-        || ty == types.assign
-        || ty == types.storeptr_
-        || ty == types.compile_
-    {
+    if read::output_type(types, node) == types.void_ {
         return Err(ParseError::StatementAsValue);
     }
     Ok(())
@@ -1274,6 +1271,7 @@ pub(crate) unsafe fn build_cast(
         return Err(ParseError::BadCast);
     };
     let operand = *operand;
+    read::value_type(types, operand)?;
     let to = numtype::of_type_node(target);
     match operand_of(types, operand) {
         Operand::Concrete(from) => {

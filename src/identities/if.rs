@@ -17,7 +17,7 @@ use super::{array, meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
-use crate::parse::Assoc;
+use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
@@ -90,13 +90,54 @@ pub(crate) unsafe fn refresh_output(types: &Core, node: DyadPtr) {
     *(dyad::value(node) as *mut DyadPtr).add(IF_OUTPUT) = arms_output(types, then, els);
 }
 
+/// What the arms give when every one gives the same type, else `void`. DESIGN ›`if` reads its
+/// own right side‹.
+///
 /// # Safety
 /// `then` must be a reduced dyad from the store, `els` null or one.
 unsafe fn arms_output(types: &Core, then: DyadPtr, els: DyadPtr) -> DyadPtr {
-    if els.is_null() {
+    if els.is_null() || arm_type(types, then) != arm_type(types, els) {
         return types.void_;
     }
     super::read::handed_on(types, then)
+}
+
+/// Read through a block to its last line, so a plain number stays a `rational_number`
+/// beside an arm of a number type.
+///
+/// # Safety
+/// `arm` must be a reduced dyad from the store.
+unsafe fn arm_type(types: &Core, arm: DyadPtr) -> DyadPtr {
+    if dyad::ty(arm) == types.scope {
+        return match crate::parse::last_sequence_expr(arm) {
+            Some(last) => arm_type(types, last),
+            None => types.void_,
+        };
+    }
+    super::read::output_type(types, arm)
+}
+
+/// The type an `if` gives where its value is used, or why it gives none: it needs an `else`,
+/// every arm must give a value, and the arms one type. DESIGN ›`if` reads its own right side‹.
+///
+/// # Safety
+/// `node` must be an `if` node [`build`] made.
+pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, ParseError> {
+    let (_, then, els) = branches(node);
+    if els.is_null() {
+        return Err(ParseError::MissingElse);
+    }
+    for arm in [then, els] {
+        if dyad::ty(arm) == types.if_ {
+            value_type(types, arm)?;
+        } else if arm_type(types, arm) == types.void_ {
+            return Err(ParseError::ArmGivesNothing);
+        }
+    }
+    match *(dyad::value(node) as *const DyadPtr).add(IF_OUTPUT) {
+        out if out == types.void_ => Err(ParseError::ArmsDiffer),
+        out => Ok(out),
+    }
 }
 
 /// # Safety

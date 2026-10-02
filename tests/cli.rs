@@ -1420,9 +1420,12 @@ fn a_read_where_the_tape_reaches_no_cell_is_a_constructed_void() {
     // Written into a cell, it is a finished expression that yields nothing.
     let w = "w := type ( share parse_rank = fn.parse_rank, share parse = ( tape[0] = tape[1], \
              tape.is_constructed[0] = true ) )";
-    let out = logos().arg(format!("{w}, x := (w), 4")).output().unwrap();
+    let out = logos().arg(format!("{w}, (w), 4")).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "4\n");
+    let out = logos().arg(format!("{w}, x := (w), 4")).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("gives nothing"), "stderr: {stderr}");
     // A write is still the checked error.
     let out = logos()
         .arg("v := type ( share parse_rank = fn.parse_rank, share parse = ( tape[1] = i32 3 ) ), v")
@@ -2367,8 +2370,8 @@ fn a_share_function_writes_a_field_of_a_frame_local_record() {
           f := fn () -> i32 ( mut p := pt(1, 2), p.bump(), p.bump(), p.a )\nf()\n\
           mut q := pt(10, 5)\nq.bump()\nq.a\n",
     );
-    // A `-> void` call echoes its unit.
-    assert_eq!(echoes, ["5", "0", "15"], "stderr: {stderr}");
+    // A `-> void` call gives nothing, so it echoes nothing.
+    assert_eq!(echoes, ["5", "15"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
@@ -2417,7 +2420,7 @@ fn a_tight_read_runs_over_a_keyword_before_its_constructor_wakes() {
 #[test]
 fn assignment_returns_nothing() {
     let (_e, stderr) = repl(b"mut a := i32 1\nmut b := i32 2\na = b = 3\n");
-    assert!(stderr.contains("yields no value"), "stderr: {stderr}");
+    assert!(stderr.contains("gives nothing"), "stderr: {stderr}");
     let (_e, stderr) = repl(b"mut a := i32 1\ny := (a = 2) + 1\n");
     assert!(!stderr.is_empty(), "stderr: {stderr}");
     let (echoes, stderr) = repl(
@@ -3643,7 +3646,7 @@ fn and_and_or_run_both_sides() {
 
 #[test]
 fn a_return_frees_what_its_line_ends_after_it_compiled_or_not() {
-    let ret = "(if (c == 1) (return 5) else (i32 2))";
+    let ret = "(if (c == 1) (return 5), i32 2)";
     for (body, other) in [
         (format!("x := {ret} + (free a, i32 1)"), 3),
         (format!("x := ( {ret}, 7 ) + (free a, i32 1)"), 8),
@@ -4462,8 +4465,6 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
         ("f := fn () -> bool ( true ), b := f(), print «{b}», b.type", "true\nbool\n"),
         ("f := fn () -> bool ( true ), b := f(), if b ( i32 1 ) else ( i32 2 )", "1\n"),
         ("g := fn (a := i32 ?) -> bool ( a < 1 ), not g(0)", "false\n"),
-        ("x := f64 2.5, (return x) + 1.0", "3.5\n"),
-        ("x := f64 2.5, y := (return x), y", "2.5\n"),
         ("true == true", "true\n"),
         ("x := i32 3, print «{(&x).type == @i32}», p := &x, p.type == @i32", "true\ntrue\n"),
         ("f := fn () -> @i32 ( alloc 1 of i32 0 ), f().type == @i32", "true\n"),
@@ -4472,7 +4473,6 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
              f.compile(), print «{f(1)} {f(2)}»",
             "true false\n",
         ),
-        ("f := fn (x := f64 ?) -> f64 ( (return x) + 1.0 ), f.compile(), f(2.5)", "2.5\n"),
     ] {
         let (code, stdout, stderr) = run_line(src);
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
@@ -4483,6 +4483,10 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
         ("x := i32 1, (x == 1) + 1", "this operator cannot compute over these operands"),
         ("x := i32 1, mut a := i32 0, a = x == 1, a", "these types do not match"),
         ("x := i32 1, mut a := x == 1, a = i32 1, a", "these types do not match"),
+        // A `return` gives its own line nothing.
+        ("x := f64 2.5, (return x) + 1.0", "gives nothing"),
+        ("x := f64 2.5, y := (return x), y", "gives nothing"),
+        ("f := fn (x := f64 ?) -> f64 ( (return x) + 1.0 ), f(2.5)", "gives nothing"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}");

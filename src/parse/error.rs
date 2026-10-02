@@ -103,6 +103,11 @@ pub enum ParseError {
     /// An `if` without an `else` where a value is required: with no false
     /// branch it yields unit.
     MissingElse,
+    /// An arm of an `if` whose value is used gives nothing, as one ending in `return`.
+    ArmGivesNothing,
+    /// The arms of an `if` whose value is used give different types, and no type
+    /// written in front of it says which one it gives.
+    ArmsDiffer,
     /// A logical operator applied to a non-`bool` operand.
     NonBoolOperands,
     /// A binary operator's operands were two different concrete numeric
@@ -112,7 +117,8 @@ pub enum ParseError {
     UncomputableLiteral,
     /// A `return` before the tail with no function around it to leave.
     EarlyReturn,
-    /// A unit-valued statement (a `while` loop) stood where a value is required.
+    /// A node that gives nothing (a statement, a `-> void` call) stood where a value is
+    /// required.
     StatementAsValue,
     /// An assignment target that is not a typed numeric variable: a comptime
     /// binding has no machine storage to write.

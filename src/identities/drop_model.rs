@@ -1398,10 +1398,8 @@ mod tests {
     fn a_return_frees_what_its_line_ends_after_it() {
         // Freed once on each path, by whichever end the path reaches first: the `return`, a
         // block it leaves, the `if` it leaves, or the line's own `free`.
-        let (ret, other) = (
-            "(if (c == 1) (return 5) else (i32 2))",
-            "(if (c == 1) (return 5) else (free a, i32 2))",
-        );
+        let (ret, other) =
+            ("(if (c == 1) (return 5), i32 2)", "(if (c == 1) (return 5) else (free a), i32 2)");
         let bodies = [
             format!("x := {ret} + (free a, i32 1)"),
             format!("x := ( {ret}, 7 ) + (free a, i32 1)"),

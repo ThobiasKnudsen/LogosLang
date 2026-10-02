@@ -621,6 +621,10 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = std::ptr::null_mut();
         let cell = value?;
         let value = cell.dyad;
+        if !cell.hole {
+            // SAFETY: `value` is a reduced dyad from the store.
+            unsafe { crate::identities::read::value_type(self.types, value) }?;
+        }
         // A bare name as the value is its binding (a use); the declaration inspects
         // the dyad behind it and keeps `value` as what the initializer stores.
         // SAFETY: `value` is a dyad from the store.

@@ -63,6 +63,16 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::MissingElse => {
             "an `if` used as a value needs an `else` branch".into()
         }
+        ParseError::ArmGivesNothing => {
+            "every arm of an `if` used as a value must give one, and this arm gives nothing \
+             (a `return` hands its value to the call, not to the `if`)"
+                .into()
+        }
+        ParseError::ArmsDiffer => {
+            "the arms of this `if` give different types: convert them to one type, \
+             as in `if c (i64 (i32 1)) else (i64 2)`"
+                .into()
+        }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
             "these types do not match (crossing types needs an explicit cast)".into()
@@ -73,9 +83,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::EarlyReturn => {
             "outside a function, `return` must be the last expression of its scope".into()
         }
-        ParseError::StatementAsValue => {
-            "a statement yields no value and cannot stand here".into()
-        }
+        ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
         ParseError::AssignToLiteral(lit) => format!(
             "`{lit}` is a literal with no storage: `x := {lit}` names the number \

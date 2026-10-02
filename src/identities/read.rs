@@ -141,8 +141,8 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     }
 }
 
-/// What a sequence, an arm, a `return` or a `move` hands on from `node`: its output, a plain
-/// number read as an `i32`: stand-in for #214.
+/// What a sequence, an arm or a `move` hands on from `node`: its output, a plain number read
+/// as an `i32`: stand-in for #214.
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
@@ -192,6 +192,25 @@ pub unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
         Some(i) => *(dyad::value(node) as *const DyadPtr).add(i),
         None if meta::op_slot_of(op).is_some() => types.void_,
         None => types.logos_of(node),
+    }
+}
+
+/// The type `node` gives where its value is used, or the error that says why it gives none.
+/// DESIGN ›`=` sits beside `:=`, and returns nothing‹, ›`if` reads its own right side‹.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn value_type(
+    types: &Core,
+    node: DyadPtr,
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    let d = types.through(node);
+    if !d.is_null() && types.storage_type(d).is_none() && dyad::ty(d) == types.if_ {
+        return super::if_mod::value_type(types, d);
+    }
+    match output_type(types, node) {
+        t if t == types.void_ => Err(crate::parse::ParseError::StatementAsValue),
+        t => Ok(t),
     }
 }
 

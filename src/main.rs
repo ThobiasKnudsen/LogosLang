@@ -33,51 +33,29 @@ impl Engine {
     }
 }
 
-/// The echo rule: a declaration, an assignment, a bare fn or type definition,
-/// a compile, an import, or a print is a statement and stays silent; everything else echoes.
+/// The REPL's echo rule: a line that gives nothing, a bare fn or a type definition stays
+/// silent; everything else echoes.
 ///
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    let (named, logos) = tail_type(core, node);
+    let named = core.through(node);
+    let logos = core.type_of(named);
     // A bare type definition is a statement; a place holding a type is a value and echoes.
     if logos == core.type_ {
         return seed::identities::read::read_kind(core, named)
             == seed::identities::read::Read::Identity;
     }
-    is_silent_type(core, logos) || logos == core.fn_type || logos == core.free_
+    is_silent_tail(core, node) || logos == core.fn_type
 }
 
-/// The dyad a line's tail names (through its binding) and its type.
-///
-/// # Safety
-/// `node` must be a valid dyad.
-unsafe fn tail_type(
-    core: &Core,
-    node: seed::dyad::DyadPtr,
-) -> (seed::dyad::DyadPtr, seed::dyad::DyadPtr) {
-    let named = core.through(node);
-    (named, core.type_of(named))
-}
-
-/// The statement types with no value worth printing in any mode.
-fn is_silent_type(core: &Core, logos: seed::dyad::DyadPtr) -> bool {
-    logos == core.declare_
-        || logos == core.assign
-        || logos == core.storeptr_
-        || logos == core.compile_
-        || logos == core.import_
-        || logos == core.print.print
-        || logos == core.hashmap.put
-}
-
-/// Whether a line prints nothing. Narrower than the REPL's rule: a bare type
-/// tail still prints its spelling.
+/// Whether a line prints nothing: it gives nothing. Narrower than the REPL's rule: a bare
+/// type tail still prints its spelling. DESIGN ›`=` sits beside `:=`, and returns nothing‹.
 ///
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_silent_tail(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    is_silent_type(core, tail_type(core, node).1)
+    seed::identities::read::output_type(core, node) == core.void_
 }
 
 fn main() -> ExitCode {

@@ -1253,7 +1253,35 @@ fn else_less_if_in_a_void_fn_yields_unit_both_tiers() {
 #[test]
 fn an_else_less_if_is_rejected_in_value_positions() {
     assert_eq!(parse_err("fn () -> i32 ( if (1 < 2) (1) )"), ParseError::MissingElse);
-    assert_eq!(parse_err("( if (1 < 2) (1) ) + 1"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err("( if (1 < 2) (1) ) + 1"), ParseError::MissingElse);
+    assert_eq!(parse_err("y := if (1 < 2) (1)"), ParseError::MissingElse);
+}
+
+#[test]
+fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
+    let f = |body: &str| format!("fn (c := bool ?) -> i32 ( {body}, i32 0 )");
+    for (body, error) in [
+        ("x := if c (i32 1) else (i64 2)", ParseError::ArmsDiffer),
+        ("x := if c (i32 1) else (0)", ParseError::ArmsDiffer),
+        ("x := (if c (i32 1) else (i64 2)) + 1", ParseError::ArmsDiffer),
+        ("x := i64 (if c (i32 1) else (i64 2))", ParseError::ArmsDiffer),
+        ("x := if c (i32 1) else if c (i32 2) else (i64 3)", ParseError::ArmsDiffer),
+        ("x := if c (return 1) else (i32 2)", ParseError::ArmGivesNothing),
+        ("x := if c (i32 1) else (mut y := i32 2, y = 3)", ParseError::ArmGivesNothing),
+        ("mut x := i32 1, x = if c (2)", ParseError::MissingElse),
+        ("x := if c (i32 1) else if c (i32 2)", ParseError::MissingElse),
+    ] {
+        assert_eq!(parse_err(&f(body)), error, "{body}");
+    }
+    for body in [
+        "x := if c (1) else (2)",
+        "x := if c (i32 1) else (i32 2)",
+        "x := if c (i32 1) else if c (i32 2) else (i32 3)",
+        "x := if c (y := i32 1, y) else (i32 2)",
+        "if c (return 1) else (mut y := i32 2, y = 3)",
+    ] {
+        assert_eq!(parses(&f(body)), Ok(()), "{body}");
+    }
 }
 
 #[test]
@@ -1604,7 +1632,8 @@ fn while_condition_must_be_bool() {
 #[test]
 fn a_while_loop_is_not_a_value() {
     assert_eq!(parse_err("fn () -> i32 ( while (1 < 2) (3) )"), ParseError::StatementAsValue);
-    assert_eq!(parse_err("( while (1 < 2) (3) ) + 1"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err("( while (1 < 2) (3) ) + 1"), ParseError::StatementAsValue);
+    assert_eq!(parse_err("y := while (1 < 2) (3)"), ParseError::StatementAsValue);
 }
 
 #[test]
@@ -2728,7 +2757,15 @@ fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
         5_000_000_000,
     );
     // Through a block bound to a name: the function is left, not the block.
-    diff_typed_call("fn (n := i32 ?) -> i32 ( x := ( return 5 ), x + 1 )", "f(0)", 5);
+    diff_typed_call(
+        "fn (n := i32 ?) -> i32 ( x := ( if (n == 0) (return 5), n ), x + 1 )",
+        "f(0)",
+        5,
+    );
+    assert_eq!(
+        parse_err("fn (n := i32 ?) -> i32 ( x := ( return 5 ), x + 1 )"),
+        ParseError::StatementAsValue
+    );
     assert_eq!(
         parse_err("fn (n := i32 ?) -> type ( if (n > 2) (return 5), i32 )"),
         ParseError::TypeMismatch
@@ -3574,11 +3611,15 @@ fn f64_comparison_matches_between_tiers() {
 
 /// Parse `src` at expression scope and return the error it fails with.
 fn parse_err(src: &str) -> ParseError {
+    parses(src).unwrap_err()
+}
+
+fn parses(src: &str) -> Result<(), ParseError> {
     let (mut store, mut trie, core) = new_core();
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p = Parser::new(src, &mut store, &mut trie, &core, s);
-    p.parse_expression().unwrap_err()
+    p.parse_expression().map(|_| ())
 }
 
 #[test]
