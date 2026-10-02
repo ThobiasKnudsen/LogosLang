@@ -162,16 +162,12 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 Taken::Hole(at) => return Err(p.fail_at(at, ParseError::FreeOfHole)),
                 Taken::Value(value, at) => {
                     let types = p.types();
-                    // A value that gives nothing has nothing to free.
                     // SAFETY: `value` is a reduced dyad from the store.
-                    let teardown = match unsafe { super::read::gives_value(types, value) } {
-                        Err(e) => return Err(p.fail_at(at, e)),
-                        Ok(false) => Teardown::Nothing,
-                        // SAFETY: as above.
-                        Ok(true) => match unsafe { teardown_of(types, value) } {
-                            Some(teardown) => teardown,
-                            None => return Err(p.fail_at(at, ParseError::FreeOfUndecidedValue)),
-                        },
+                    unsafe { super::read::gives_value(types, value) }
+                        .map_err(|e| p.fail_at(at, e))?;
+                    // SAFETY: as above.
+                    let Some(teardown) = (unsafe { teardown_of(types, value) }) else {
+                        return Err(p.fail_at(at, ParseError::FreeOfUndecidedValue));
                     };
                     let node = build_value_free(p.store(), types, value, teardown);
                     tape.place(node);
@@ -1913,12 +1909,13 @@ mod tests {
         ] {
             assert_eq!(parse_err(src), ParseError::ArmsDiffer, "{src}");
         }
-        // With no `else`, or with an arm that gives nothing, the `if` gives nothing to free.
-        assert_eq!(run("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5)),\n1").0, 1);
+        // One arm makes a block, the other gives nothing.
         assert_eq!(
-            run("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5) else (y := i32 2)),\n1").0,
-            1
+            parse_err("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5) else (y := i32 2)),\n1"),
+            ParseError::FreeOfUndecidedValue
         );
+        // With no `else` the `if` gives nothing.
+        assert_eq!(run("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5)),\n1").0, 1);
     }
 
     #[test]
