@@ -742,6 +742,11 @@ unsafe fn commit_if_literal(
     nt: NumType,
 ) -> Result<DyadPtr, ParseError> {
     if let Operand::Literal = op {
+        // `bool` shares `i32`'s machine form, so the type decides: a plain number lands only in
+        // a number type.
+        if !is_numtype_node(types, type_node) {
+            return Err(ParseError::UncomputableLiteral);
+        }
         // A comptime name used here is its binding; the literal folds through it.
         let bits =
             rational::mold_to(types.through(node), nt).ok_or(ParseError::UncomputableLiteral)?;

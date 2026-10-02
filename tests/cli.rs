@@ -4528,6 +4528,12 @@ fn a_bool_hole_is_a_bool_place_on_both_tiers() {
     for (src, error) in [
         ("a := bool ?, a", "`a` is read before it is written"),
         ("mut a := bool ?, a = i32 1, a", "these types do not match"),
+        // A plain number is no `bool`, though a `bool` is stored as an `i32`.
+        ("mut a := bool ?, a = 1, a", "no exact value in the type it lands in"),
+        ("mut a := true, a = 2, a", "no exact value in the type it lands in"),
+        ("pt := type ( ok := bool ?, n := i32 ? ), p := pt(7, 3), p.ok", "no exact value"),
+        ("f := fn (b := bool ?) -> i32 ( if b (1) else (2) ), f(2)", "no exact value"),
+        ("b := alloc 1 of bool ?, b@ = 7, b@", "no exact value"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}");
