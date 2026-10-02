@@ -849,7 +849,14 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    let ty = super::read::output_type(types, moved_out(types, node, 0)?);
+    owning_pointee(super::read::output_type(types, moved_out(types, node, 0)?))
+}
+
+/// The pointee of an owning `@pointee` type, one whose record carries a destructor.
+///
+/// # Safety
+/// `ty` must be null or a type node from the store.
+unsafe fn owning_pointee(ty: DyadPtr) -> Option<DyadPtr> {
     (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())
         .then(|| numtype::pointee_of(ty))
 }
@@ -908,9 +915,12 @@ unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Option<DyadPtr
         if els.is_null() {
             return None;
         }
-        moved_out(types, then, depth + 1)?;
-        moved_out(types, els, depth + 1)?;
-        return Some(node);
+        let then_out = moved_out(types, then, depth + 1)?;
+        let else_out = moved_out(types, els, depth + 1)?;
+        // The `if` gives its then arm's type, and `move` of a borrow moves out a borrow, so the
+        // arms hand on one owning block only when both give an owning type.
+        let owns = |out| owning_pointee(super::read::output_type(types, out)).is_some();
+        return (owns(then_out) == owns(else_out)).then_some(node);
     }
     if let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
         super::read::read_kind(types, node)
@@ -1879,6 +1889,14 @@ mod tests {
             ),
             ParseError::FreeOfUndecidedValue
         );
+        // `move` of a borrow hands on a borrow, though both arms move out an `@i32`.
+        assert_eq!(
+            parse_err(
+                "c := i32 1,\ny := i32 4,\nb := &y,\n\
+                 free (if (c == 1) (alloc 1 of i32 5) else (move b)),\n1"
+            ),
+            ParseError::FreeOfUndecidedValue
+        );
         // With no `else` the value is unit, known at parse.
         assert_eq!(run("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5)),\n1").0, 1);
     }
@@ -1904,6 +1922,11 @@ mod tests {
             assert_eq!(run(&format!("{c}{tail}")), (1, 0), "{tail}");
             assert_eq!(free_log(), freed, "{tail}");
         }
+        // An owning arm beside `move` of a borrow: the name holds neither, so `&y` is never freed.
+        let mixed = "c := i32 0,\ny := i32 4,\nb := &y,\na := alloc 1 of i32 5,\n\
+                     x := if (c == 1) (move a) else (move b),\nx@";
+        assert_eq!(run(mixed), (4, 0));
+        assert_eq!(free_log(), vec![5]);
     }
 
     #[test]
