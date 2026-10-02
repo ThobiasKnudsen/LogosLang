@@ -3,8 +3,7 @@
 
 //! `return`: the node `[value, ends, op]`. Inside a call it leaves the function with the
 //! operand's value, from wherever it stands, freeing on its way the names its own line ends
-//! after it; outside any function it is a scope's tail and yields the value. Its own line
-//! gets nothing from it.
+//! after it. Its own line gets nothing from it, inside a function or outside any.
 //! DESIGN ›A scope's value is what it evaluates to, and `return` is an optional
 //! early exit from the enclosing function‹, ›A value's teardown runs where its life ends;
 //! the ending identity reads the type's `free` slot‹
