@@ -148,10 +148,10 @@ pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, 
         return Err(ParseError::MissingElse);
     }
     for arm in [then, els] {
-        if dyad::ty(arm) == types.if_ {
-            value_type(types, arm)?;
-        } else if arm_type(types, arm) == types.void_ {
-            return Err(ParseError::ArmGivesNothing);
+        match super::read::value_type(types, arm) {
+            Err(ParseError::StatementAsValue) => return Err(ParseError::ArmGivesNothing),
+            Err(e) => return Err(e),
+            Ok(_) => {}
         }
     }
     match *(dyad::value(node) as *const DyadPtr).add(IF_OUTPUT) {

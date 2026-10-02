@@ -2465,6 +2465,19 @@ fn the_echo_reads_the_tail_value_as_any_use_does() {
 }
 
 #[test]
+fn an_arm_that_gives_nothing_is_refused_whatever_it_ends_in() {
+    for arm in ["error «no»", "print «b»"] {
+        let (code, stdout, stderr) = run_line(&format!("c := true, x := if c (1) else ({arm}), x"));
+        assert_eq!(code, Some(1), "{arm}");
+        assert_eq!(stdout, "", "{arm}");
+        assert!(
+            stderr.contains("this arm gives nothing (a statement, a `return` or an `error`"),
+            "{arm}: stderr: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn assignment_returns_nothing() {
     let (_e, stderr) = repl(b"mut a := i32 1\nmut b := i32 2\na = b = 3\n");
     assert!(stderr.contains("gives nothing"), "stderr: {stderr}");

@@ -65,7 +65,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::ArmGivesNothing => {
             "every arm of an `if` used as a value must give one, and this arm gives nothing \
-             (a `return` hands its value to the call, not to the `if`)"
+             (a statement, a `return` or an `error` gives the `if` no value)"
                 .into()
         }
         ParseError::ArmsDiffer => {

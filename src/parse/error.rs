@@ -103,7 +103,8 @@ pub enum ParseError {
     /// An `if` without an `else` where a value is required: with no false
     /// branch it yields unit.
     MissingElse,
-    /// An arm of an `if` whose value is used gives nothing, as one ending in `return`.
+    /// An arm of an `if` whose value is used gives nothing, as one ending in `return` or
+    /// `error`.
     ArmGivesNothing,
     /// The arms of an `if` whose value is used give different types, and no type
     /// written in front of it says which one it gives.
