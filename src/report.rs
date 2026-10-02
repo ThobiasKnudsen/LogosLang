@@ -347,8 +347,9 @@ pub fn parse_message(e: &ParseError) -> String {
              this program cannot end it: give it a name of your own, `t := {name}`, and end that"
         ),
         ParseError::FreeOfUndecidedValue => {
-            "`free` runs a value and then its type's `free`, and whether this value is one to free \
-             is known only when it runs: free it inside each branch, `if c (free (a())) else (free (b()))`"
+            "`free` runs a value and then its type's `free`, and one arm of this `if` makes its value \
+             while another borrows one, so whether it is one to free is known only when it runs: \
+             free it inside the arm that makes it, `if c (free (a())) else (b)`"
                 .into()
         }
     }

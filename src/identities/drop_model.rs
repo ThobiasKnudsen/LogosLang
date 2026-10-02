@@ -962,7 +962,7 @@ pub(crate) enum Teardown {
 }
 
 /// `None` for an `if` whose arms end their values differently, as one making a value and
-/// one borrowing: what ends the value shows only when it runs.
+/// one borrowing: what ends the value shows only when it runs; stand-in for #82.
 ///
 /// # Safety
 /// `value` must be a reduced dyad from the store.
