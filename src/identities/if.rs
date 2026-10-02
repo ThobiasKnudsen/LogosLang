@@ -96,7 +96,7 @@ pub(crate) unsafe fn refresh_output(types: &Core, node: DyadPtr) {
 /// # Safety
 /// `then` must be a reduced dyad from the store, `els` null or one.
 unsafe fn arms_output(types: &Core, then: DyadPtr, els: DyadPtr) -> DyadPtr {
-    if els.is_null() || arm_type(types, then) != arm_type(types, els) {
+    if els.is_null() || !super::same_type(arm_type(types, then), arm_type(types, els)) {
         return types.void_;
     }
     super::read::handed_on(types, then)

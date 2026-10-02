@@ -874,7 +874,7 @@ pub(crate) unsafe fn check_store_type(
     let out = read::output_type(types, rhs);
     let ok = match read::place_layout(types, target_ty) {
         Some((read::Read::Pointer(tp), _)) => {
-            numtype::is_pointer_type(out) && pointee_types_match(tp, numtype::pointee_of(out))
+            numtype::is_pointer_type(out) && same_type(tp, numtype::pointee_of(out))
         }
         Some((read::Read::Scalar(_), _)) => out == target_ty,
         Some((read::Read::Container(t), _)) if meta::is_node_valued(t, types.fn_type) => {
@@ -892,12 +892,12 @@ pub(crate) unsafe fn check_store_type(
 /// Same type, not same node: an owning `@T` and the plain `@T` name one pointee.
 ///
 /// # Safety
-/// `a`/`b` must be type nodes from the store.
-unsafe fn pointee_types_match(a: DyadPtr, b: DyadPtr) -> bool {
+/// `a`/`b` must be null or type nodes from the store.
+pub(crate) unsafe fn same_type(a: DyadPtr, b: DyadPtr) -> bool {
     a == b
         || (numtype::is_pointer_type(a)
             && numtype::is_pointer_type(b)
-            && pointee_types_match(numtype::pointee_of(a), numtype::pointee_of(b)))
+            && same_type(numtype::pointee_of(a), numtype::pointee_of(b)))
 }
 
 /// Render a run result through `node`'s static type, so `5.5` and `true` print as such.
@@ -1061,7 +1061,7 @@ pub(crate) unsafe fn commit_call_args(
             }
             // A literal committed into a pointer parameter would be dereferenced as a wild address.
             Some((read::Read::Pointer(pp), _)) => match operand_of(types, *arg) {
-                Operand::Pointer(pointee) if pointee_types_match(pp, pointee) => {}
+                Operand::Pointer(pointee) if same_type(pp, pointee) => {}
                 _ => return Err(ParseError::TypeMismatch),
             },
             Some((read::Read::Container(t), _)) if t == types.dyad_ => {

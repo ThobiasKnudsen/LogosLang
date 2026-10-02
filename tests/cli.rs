@@ -4483,6 +4483,12 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
         ("g := fn (a := i32 ?) -> bool ( a < 1 ), not g(0)", "false\n"),
         ("true == true", "true\n"),
         ("x := i32 3, print «{(&x).type == @i32}», p := &x, p.type == @i32", "true\ntrue\n"),
+        (
+            "mut c := true, a := alloc 1 of i32 5, b := alloc 1 of i32 6, \
+             x := if c (move a) else (move b), y := if c (alloc 1 of i32 7) else (alloc 1 of i32 8), \
+             print «{x@} {y@}», free x, free y",
+            "5 7\n",
+        ),
         ("f := fn () -> @i32 ( alloc 1 of i32 0 ), f().type == @i32", "true\n"),
         (
             "f := fn (c := i32 ?) -> bool ( a := c == 1, mut b := not a, b = not b, b ), \

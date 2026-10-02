@@ -1279,6 +1279,8 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         "x := if c (i32 1) else if c (i32 2) else (i32 3)",
         "x := if c (y := i32 1, y) else (i32 2)",
         "if c (return 1) else (mut y := i32 2, y = 3)",
+        // Each `alloc` mints its own owning `@i32`, one type with the other.
+        "x := if c (alloc 1 of i32 5) else (alloc 1 of i32 6)",
     ] {
         assert_eq!(parses(&f(body)), Ok(()), "{body}");
     }
