@@ -412,7 +412,7 @@
     "text": "A box made on a line of its own, with no name, never prints its `free`",
     "program": "boxed := type ( mut p := own @i32 ?, mut size := u64 0, share free = ( print «free», free p ), share parse_rank = dyad.parse_rank, share parse = ( tape.is_constructed[0] = true ) ), box := type ( elements := scope ?, output_type := type ?, share run = ( mut v := output_type ?, v.p = mut alloc elements.dyads.size of i32 ?, for i in 0..elements.dyads.size ( (v.p + i)@ = elements.dyads[i], v.size = i + 1 ), move v ), share parse_rank = dyad.parse_rank, share associativity = left, share parse = ( if tape[1]:type == scope ( for i in 0..tape[1].dyads.size ( if not (tape[1].dyads[i]:type ⊆ i32) error «not an i32» ), tape[0]:type = box, tape[0].elements = tape[1], tape[0].output_type = boxed, tape.remove(1) ) else ( tape[0] = boxed ), tape.is_constructed[0] = true ) ), box (1, 2), print «after»",
     "output": "after\nexit 0",
-    "expected": "`free`, then `after`: a value nothing takes lives to the end of its line and its type's `free` runs there (Q-0025, Thobias, 30 September 2026, not yet in DESIGN.md; ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹); the named control `a := box (1, 2), print «after»` prints `after`, `free`",
+    "expected": "`free`, then `after`: a value nothing takes lives to the end of its line and its type's `free` runs there (Q-25, Thobias, 30 September 2026, not yet in DESIGN.md; ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹); the named control `a := box (1, 2), print «after»` prints `after`, `free`",
     "tier": "interpreted",
     "found": "first example of #224 (RCA unbound-owning-line, 30 September 2026, dev 1922c65 and 61db292); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
     "why": [
@@ -806,7 +806,7 @@
         "effort": "max",
         "commit": "c8a654c",
         "change": "why - W8",
-        "reason": "W8 rejected: not a defect since Q-0044.6 and Q-0046 (Thobias, 1 October 2026): a type (…) is a new type each time its body runs, 'there is nothing defined to do minting of anything a function runs'; P5's cause is W77"
+        "reason": "W8 rejected: not a defect since Q-44.6 and Q-46 (Thobias, 1 October 2026): a type (…) is a new type each time its body runs, 'there is nothing defined to do minting of anything a function runs'; P5's cause is W77"
       }
     ]
   },
@@ -860,7 +860,7 @@
         "effort": "max",
         "commit": "c8a654c",
         "change": "rejected, its whys were W9",
-        "reason": "not a defect since Q-0044.6 and Q-0046 (Thobias, 1 October 2026): a type (…) is a new type each time its body runs, 'there is nothing defined to do minting of anything a function runs'; P5's cause is W77"
+        "reason": "not a defect since Q-44.6 and Q-46 (Thobias, 1 October 2026): a type (…) is a new type each time its body runs, 'there is nothing defined to do minting of anything a function runs'; P5's cause is W77"
       }
     ]
   },
@@ -1034,7 +1034,7 @@
         "effort": "max",
         "commit": "c8a654c",
         "change": "fixes - W8, rejected",
-        "reason": "not a defect since Q-0044.6 and Q-0046 (Thobias, 1 October 2026): a type (…) is a new type each time its body runs, 'there is nothing defined to do minting of anything a function runs'; P5's cause is W77"
+        "reason": "not a defect since Q-44.6 and Q-46 (Thobias, 1 October 2026): a type (…) is a new type each time its body runs, 'there is nothing defined to do minting of anything a function runs'; P5's cause is W77"
       }
     ]
   },
@@ -1081,7 +1081,7 @@
     "text": "A command line holding only a comment is refused",
     "program": "# hi",
     "output": "<command line>:1:5: error: nothing to evaluate here\n  # hi\n      ^\nexit 1",
-    "expected": "Nothing printed, exit 0: a comment is void-valued (›Text literals are plain values; `#` is the one comment constructor‹), and a program with nothing in it has no value (Q-0033, Thobias, 30 September 2026, not yet in DESIGN.md); `( # note⏎), 7` and an imported file of comments run clean",
+    "expected": "Nothing printed, exit 0: a comment is void-valued (›Text literals are plain values; `#` is the one comment constructor‹), and a program with nothing in it has no value (Q-33, Thobias, 30 September 2026, not yet in DESIGN.md); `( # note⏎), 7` and an imported file of comments run clean",
     "tier": "interpreted",
     "found": "first example of #234 (RCA comment-only-segment, 30 September 2026, dev 5a6c160 and 1f68f83); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
     "why": [
@@ -6539,7 +6539,7 @@
     "text": "In the REPL, a `defer` line echoes `0`",
     "program": "defer (print «d»)\nprint «a»",
     "output": "logos 0.1.0 — one expression per line, ctrl-d to exit\n» 0\n» a\n» \nexit 0",
-    "expected": "no echo for the `defer` line, since it gives no value (Q-0033, Thobias, 30 September 2026: a REPL line is a program line, and an empty one is no value); the same class as #187, where a `for` or `while` loop as the tail echoes `0`",
+    "expected": "no echo for the `defer` line, since it gives no value (Q-33, Thobias, 30 September 2026: a REPL line is a program line, and an empty one is no value); the same class as #187, where a `for` or `while` loop as the tail echoes `0`",
     "tier": "interpreted, REPL on stdin; on #192's branch (02c0759) too, where `d` then prints at session end",
     "found": "logoslang-issue-192-review-2 (session 247213f5), review round 2 of #192, 1 October 2026, branch 02c0759; rerun by Orchestrator (2) on dev df1c3ac, release, REPL on stdin",
     "why": null,
@@ -6563,9 +6563,9 @@
     "text": "A local name declared as an owning hole is accepted: `mut a := own @i32 ?` declares an owner that starts empty",
     "program": "mut a := own @i32 ?, a = alloc 1 of i32 5, a@",
     "output": "5\nexit 0",
-    "expected": "Refused at the declaration: an owning hole is legal on a field and a parameter only, and a local owner gets its value where it is declared (Thobias, Q-0039 answer 1, 1 October 2026: \"c\"). Not in DESIGN yet, which allows it on a name at ›A field may be `own @T ?`‹ and ›A field may be `own t ?`, `t` a type whose body fills `share free`‹",
+    "expected": "Refused at the declaration: an owning hole is legal on a field and a parameter only, and a local owner gets its value where it is declared (Thobias, Q-39 answer 1, 1 October 2026: \"c\"). Not in DESIGN yet, which allows it on a name at ›A field may be `own @T ?`‹ and ›A field may be `own t ?`, `t` a type whose body fills `share free`‹",
     "tier": "interpreted (command-line source)",
-    "found": "Q-0039, asked by #192 worker c727a831 on 30 September 2026; rerun by Orchestrator (2) on dev 267ebaa (code 224ea38), 1 October 2026",
+    "found": "Q-39, asked by #192 worker c727a831 on 30 September 2026; rerun by Orchestrator (2) on dev 267ebaa (code 224ea38), 1 October 2026",
     "why": [
       "W76"
     ],
@@ -6635,7 +6635,7 @@
         "effort": "max",
         "commit": "267ebaa",
         "change": "asked: no why found",
-        "reason": "a rule the ruling document does not have yet; Thobias ruled it in Q-0039 (\"c\"), so there is nothing further to ask"
+        "reason": "a rule the ruling document does not have yet; Thobias ruled it in Q-39 (\"c\"), so there is nothing further to ask"
       }
     ]
   },
@@ -6652,7 +6652,7 @@
       "by": "Thobias",
       "at": "2026-10-01T02:39+02:00",
       "words": "c",
-      "reason": "Q-0039 option (c), as he chose it: a local owner then always gets its value at its declaration (`a := alloc 1 of i32 5` already makes `a` the owner), so it never starts empty"
+      "reason": "Q-39 option (c), as he chose it: a local owner then always gets its value at its declaration (`a := alloc 1 of i32 5` already makes `a` the owner), so it never starts empty"
     },
     "design": [
       "`move` is the act, `own` the gate word, `free` the end",
@@ -6678,7 +6678,7 @@
         "effort": "max",
         "commit": "267ebaa",
         "change": "chosen by Thobias: \"c\"",
-        "reason": "Q-0039 option (c), as he chose it: a local owner then always gets its value at its declaration (`a := alloc 1 of i32 5` already makes `a` the owner), so it never starts empty"
+        "reason": "Q-39 option (c), as he chose it: a local owner then always gets its value at its declaration (`a := alloc 1 of i32 5` already makes `a` the owner), so it never starts empty"
       },
       {
         "at": "2026-10-01T02:39+02:00",
@@ -7068,7 +7068,7 @@
       "W9",
       "W10"
     ],
-    "assessment": "Root fix under Q-0044/Q-0046 (a type is new each time its body runs, no memo): removes the lost place of writing itself, so P5 (immediate per build, draft W77), P6 and P38 (later z seen) become impossible in both builders at once; S8's point in select is then needed only if something else resolves off the frontier. Licensed by the #197 branch's ›immediate‹ text 'built as far as it can be where it is written' (Q-0028, Q-0029), not yet on dev. Lands in bodies.rs, types.rs, the held cells (resolved bindings kept per cell); waits for #197's merge, #192 (bodies.rs) and #202 for the fn half; it is #219 widened to name resolution.",
+    "assessment": "Root fix under Q-44/Q-46 (a type is new each time its body runs, no memo): removes the lost place of writing itself, so P5 (immediate per build, draft W77), P6 and P38 (later z seen) become impossible in both builders at once; S8's point in select is then needed only if something else resolves off the frontier. Licensed by the #197 branch's ›immediate‹ text 'built as far as it can be where it is written' (Q-28, Q-29), not yet on dev. Lands in bodies.rs, types.rs, the held cells (resolved bindings kept per cell); waits for #197's merge, #192 (bodies.rs) and #202 for the fn half; it is #219 widened to name resolution.",
     "decision": null,
     "design": [
       "`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)",
@@ -7095,7 +7095,7 @@
     "text": "A record whose `free` already ran on a line is freed a second time when that line then fails",
     "program": "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), g := fn () -> i32 ( error «stop» ), a := bag(1), x := immediate ( free a, g() ), 1",
     "output": "freed 1\nfreed 1\n<command line>: run error: stop\nexit 1",
-    "expected": "freed 1 once, then the run error, exit 1: ›`free` and `move` end a name; no drop flag‹ \"no teardown runs over an emptied place\"; Thobias asked for this case to be recorded (Q-0045.3, 1 October 2026): \"a problem should be recorded that sometimes free could be called multiple times on one name when it isnt a pointer\"",
+    "expected": "freed 1 once, then the run error, exit 1: ›`free` and `move` end a name; no drop flag‹ \"no teardown runs over an emptied place\"; Thobias asked for this case to be recorded (Q-45.3, 1 October 2026): \"a problem should be recorded that sometimes free could be called multiple times on one name when it isnt a pointer\"",
     "tier": "interpreted",
     "found": "logoslang-issue-192-review-3 on branch issue-192-teardown-at-life-end at b3fc006 (the REPL does the same); not on dev c8a654c, where a plain record is not held; rerun by Orchestrator (2) at b3fc006",
     "why": [
@@ -7477,7 +7477,7 @@
     "text": "A plain record name declared `?` and never written has its type's `free` run at its scope's end",
     "program": "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), mut a := bag ?, 1",
     "output": "freed 0\n1\nexit 0",
-    "expected": "`1` alone, no `freed`: nothing was written into `a`, so its place holds no value, and ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹ runs a teardown \"for each value a place of the scope still holds\". Whether `mut a := bag ?` is legal at all is asked as Q-0056 (Thobias's #178 \"Yes, bag ? owns too\" against his Q-0039 (c), \"a local owner then always gets its value at its declaration\")",
+    "expected": "`1` alone, no `freed`: nothing was written into `a`, so its place holds no value, and ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹ runs a teardown \"for each value a place of the scope still holds\". Whether `mut a := bag ?` is legal at all is asked as Q-56 (Thobias's #178 \"Yes, bag ? owns too\" against his Q-39 (c), \"a local owner then always gets its value at its declaration\")",
     "tier": "interpreted, command line; the same inside a function body, `f := fn () -> i32 ( mut a := bag ?, 1 ), f()`",
     "found": "Orchestrator (2), checking #178's programs on dev f4d1fa3, release, 1 October 2026",
     "why": null,
@@ -7769,7 +7769,7 @@
     "evidence": [
       {
         "command": "rg -n -i 'NULL form|null form' DESIGN.md (searched also: kept directly in, in its own bytes, drop flag, plain record)",
-        "output": "388: ... So every value with a free slot needs a NULL form: a pointer's is 0; that of a value kept directly in its place is the Open point below.\n392: Rejected, to stay rejected (1 October 2026, Thobias, Q-0045): free writing NULL over a node's type word, as the NULL form of a value kept in its own bytes.\n393: Open (asked 1 October 2026, #240): the NULL form of a value kept directly in its place ... bag := type ( mut n := i32 ?, share free = (…) ) has no byte pattern that is not a real bag.\n715-716 (›:= decides nothing…‹): A data type reads its value as bytes, stored in a fresh place: y := x is a copy.",
+        "output": "388: ... So every value with a free slot needs a NULL form: a pointer's is 0; that of a value kept directly in its place is the Open point below.\n392: Rejected, to stay rejected (1 October 2026, Thobias, Q-45): free writing NULL over a node's type word, as the NULL form of a value kept in its own bytes.\n393: Open (asked 1 October 2026, #240): the NULL form of a value kept directly in its place ... bag := type ( mut n := i32 ?, share free = (…) ) has no byte pattern that is not a real bag.\n715-716 (›:= decides nothing…‹): A data type reads its value as bytes, stored in a fresh place: y := x is a copy.",
         "commit": "f4d1fa3"
       },
       {
@@ -7779,7 +7779,7 @@
       },
       {
         "command": "rg -n -i 'null form|drop flag|NULL.*record|record.*NULL|own bytes|kept directly|in its bytes|byte pattern|niche|sentinel' DESIGN.md",
-        "output": "387:### `free` and `move` end a name; no drop flag\n388: ... So every value with a `free` slot needs a NULL form: a pointer's is 0; that of a value kept directly in its place is the Open point below.\n392:- **Rejected, to stay rejected (1 October 2026, Thobias, Q-0045):** `free` writing NULL over a node's type word, as the NULL form of a value kept in its own bytes.\n393:- **Open (asked 1 October 2026, #240):** the NULL form of a value kept directly in its place ... has no byte pattern that is not a real `bag`.\n697: (gate rule) no run-time byte, the drop-flag reason of ›`free` and `move` end a name; no drop flag‹\n976:- **Ruled (1 October 2026, Thobias, Q-0043):** \"teardown done\" reads each held place and frees what is not NULL\n(no other hit: no rule gives a record, or any value kept in its place, a NULL form)",
+        "output": "387:### `free` and `move` end a name; no drop flag\n388: ... So every value with a `free` slot needs a NULL form: a pointer's is 0; that of a value kept directly in its place is the Open point below.\n392:- **Rejected, to stay rejected (1 October 2026, Thobias, Q-45):** `free` writing NULL over a node's type word, as the NULL form of a value kept in its own bytes.\n393:- **Open (asked 1 October 2026, #240):** the NULL form of a value kept directly in its place ... has no byte pattern that is not a real `bag`.\n697: (gate rule) no run-time byte, the drop-flag reason of ›`free` and `move` end a name; no drop flag‹\n976:- **Ruled (1 October 2026, Thobias, Q-43):** \"teardown done\" reads each held place and frees what is not NULL\n(no other hit: no rule gives a record, or any value kept in its place, a NULL form)",
         "commit": "f4d1fa3"
       },
       {
@@ -7793,7 +7793,7 @@
       "B"
     ],
     "aliases": [
-      "DESIGN.md has no rule for the NULL form of a value kept directly in its place: ›`free` and `move` end a name; no drop flag‹ asks every value with a free slot for one, rejects a run-time drop flag and (Q-0045) NULL written over a node's type word, and leaves a plain record's Open (#240); ›A checked error is a fault: the task that hit it is cancelled‹ only reads NULL; so a record is_plain lays out as its fields' bytes, where every pattern is a real value, and holds_by_address and end_held have no NULL to write or read"
+      "DESIGN.md has no rule for the NULL form of a value kept directly in its place: ›`free` and `move` end a name; no drop flag‹ asks every value with a free slot for one, rejects a run-time drop flag and (Q-45) NULL written over a node's type word, and leaves a plain record's Open (#240); ›A checked error is a fault: the task that hit it is cancelled‹ only reads NULL; so a record is_plain lays out as its fields' bytes, where every pattern is a real value, and holds_by_address and end_held have no NULL to write or read"
     ],
     "merged_into": null,
     "made": {
@@ -7830,7 +7830,7 @@
     "id": "W86",
     "kind": "why",
     "status": "merged",
-    "text": "DESIGN.md has no rule for the NULL form of a value kept directly in its place: ›`free` and `move` end a name; no drop flag‹ asks every value with a free slot for one, rejects a run-time drop flag and (Q-0045) NULL written over a node's type word, and leaves a plain record's Open (#240); ›A checked error is a fault: the task that hit it is cancelled‹ only reads NULL; so a record is_plain lays out as its fields' bytes, where every pattern is a real value, and holds_by_address and end_held have no NULL to write or read",
+    "text": "DESIGN.md has no rule for the NULL form of a value kept directly in its place: ›`free` and `move` end a name; no drop flag‹ asks every value with a free slot for one, rejects a run-time drop flag and (Q-45) NULL written over a node's type word, and leaves a plain record's Open (#240); ›A checked error is a fault: the task that hit it is cancelled‹ only reads NULL; so a record is_plain lays out as its fields' bytes, where every pattern is a real value, and holds_by_address and end_held have no NULL to write or read",
     "proposed_for": "W79",
     "why": null,
     "anchors": [
@@ -7849,7 +7849,7 @@
     "evidence": [
       {
         "command": "rg -n -i 'null form|drop flag|NULL.*record|record.*NULL|own bytes|kept directly|in its bytes|byte pattern|niche|sentinel' DESIGN.md",
-        "output": "387:### `free` and `move` end a name; no drop flag\n388: ... So every value with a `free` slot needs a NULL form: a pointer's is 0; that of a value kept directly in its place is the Open point below.\n392:- **Rejected, to stay rejected (1 October 2026, Thobias, Q-0045):** `free` writing NULL over a node's type word, as the NULL form of a value kept in its own bytes.\n393:- **Open (asked 1 October 2026, #240):** the NULL form of a value kept directly in its place ... has no byte pattern that is not a real `bag`.\n697: (gate rule) no run-time byte, the drop-flag reason of ›`free` and `move` end a name; no drop flag‹\n976:- **Ruled (1 October 2026, Thobias, Q-0043):** \"teardown done\" reads each held place and frees what is not NULL\n(no other hit: no rule gives a record, or any value kept in its place, a NULL form)",
+        "output": "387:### `free` and `move` end a name; no drop flag\n388: ... So every value with a `free` slot needs a NULL form: a pointer's is 0; that of a value kept directly in its place is the Open point below.\n392:- **Rejected, to stay rejected (1 October 2026, Thobias, Q-45):** `free` writing NULL over a node's type word, as the NULL form of a value kept in its own bytes.\n393:- **Open (asked 1 October 2026, #240):** the NULL form of a value kept directly in its place ... has no byte pattern that is not a real `bag`.\n697: (gate rule) no run-time byte, the drop-flag reason of ›`free` and `move` end a name; no drop flag‹\n976:- **Ruled (1 October 2026, Thobias, Q-43):** \"teardown done\" reads each held place and frees what is not NULL\n(no other hit: no rule gives a record, or any value kept in its place, a NULL form)",
         "commit": "f4d1fa3"
       },
       {
@@ -8007,7 +8007,7 @@
     "id": "W89",
     "kind": "why",
     "status": "accepted",
-    "text": "DESIGN.md puts a name's end at a line and gives everything inside a failing line to the place's NULL: ›`move` and `free` are static: the parse marks the name dead‹ makes a name dead from its line or item and says only a line that fails reads whether a place is NULL, and ›`free` and `move` end a name; no drop flag‹ (Q-0043) chose that NULL read over each spot where a line can fail knowing from the line's order which names are still alive, the line's order being ruled only for a `return` (Q-0045); so the parse needs no end inside a line, and a value with no NULL form (W85) is left with nothing that knows",
+    "text": "DESIGN.md puts a name's end at a line and gives everything inside a failing line to the place's NULL: ›`move` and `free` are static: the parse marks the name dead‹ makes a name dead from its line or item and says only a line that fails reads whether a place is NULL, and ›`free` and `move` end a name; no drop flag‹ (Q-43) chose that NULL read over each spot where a line can fail knowing from the line's order which names are still alive, the line's order being ruled only for a `return` (Q-45); so the parse needs no end inside a line, and a value with no NULL form (W85) is left with nothing that knows",
     "proposed_for": "W83",
     "why": [],
     "anchors": [
@@ -8027,7 +8027,7 @@
     "evidence": [
       {
         "command": "rg -n -i 'dead from that line|at that item, on every path|Only a line that fails|line.s order' DESIGN.md",
-        "output": "466:1. *Same level:* `move x` / `free x` beside `x`'s declaration makes `x` dead from that line.\n467:2. *Nested block:* ... ends `x`'s life **at that item, on every path** ... Only a line that fails reads whether a place is NULL\n388: ... Only a line that fails reads the places: its cleanup ... frees each place of the scopes it stops that is not NULL, since the line may have stopped before its own `free` or `move` or after it.\n391: Ruled (Q-0043): ... Chosen over no check at all, each spot where a line can fail knowing from the line's order which names are still alive.\n368: Ruled (Q-0045): a `return` in the middle of a line ... The parse finds these from the line's order; nothing is looked up at run time.",
+        "output": "466:1. *Same level:* `move x` / `free x` beside `x`'s declaration makes `x` dead from that line.\n467:2. *Nested block:* ... ends `x`'s life **at that item, on every path** ... Only a line that fails reads whether a place is NULL\n388: ... Only a line that fails reads the places: its cleanup ... frees each place of the scopes it stops that is not NULL, since the line may have stopped before its own `free` or `move` or after it.\n391: Ruled (Q-43): ... Chosen over no check at all, each spot where a line can fail knowing from the line's order which names are still alive.\n368: Ruled (Q-45): a `return` in the middle of a line ... The parse finds these from the line's order; nothing is looked up at run time.",
         "commit": "f4d1fa3"
       },
       {
@@ -8075,7 +8075,7 @@
         "effort": "max",
         "commit": "6b3a673",
         "change": "asked: no why found",
-        "reason": "both agents: it is the Q-0043 ruling as written, whose Why is Thobias's (\"all things that could possibly be freed when error occurs is not NULL\"); the one case where that reason fails is W85; past it lies his choice"
+        "reason": "both agents: it is the Q-43 ruling as written, whose Why is Thobias's (\"all things that could possibly be freed when error occurs is not NULL\"); the one case where that reason fails is W85; past it lies his choice"
       }
     ]
   },
@@ -8083,13 +8083,13 @@
     "id": "S31",
     "kind": "solution",
     "status": "proposed",
-    "text": "A name's end is the spot in its line's order where its free or move stands, not the line: a line left early, by a return or a fault, frees each name it holds whose end comes after the spot it stopped at, found from the line's order as Q-0045 does for a return; free and move write no NULL and nothing reads one",
+    "text": "A name's end is the spot in its line's order where its free or move stands, not the line: a line left early, by a return or a fault, frees each name it holds whose end comes after the spot it stopped at, found from the line's order as Q-45 does for a return; free and move write no NULL and nothing reads one",
     "fixes": [
       "W89",
       "W83",
       "W78"
     ],
-    "assessment": "Root fix: one rule for leaving a line early (return and fault), so the NULL read, held_at_fault's holds_by_address branch, ended_at_run and the NULL write in lower_move/end_held go, and no value needs a NULL form (W85's Open point becomes moot). Removes P39 and its sibling, a fault before the free of a record in its bytes, which today leaks (g() + ( free a, i32 1 ) prints no 'freed 1'). Reverses Q-0043's choice (it chose the NULL read over exactly this) and needs the fault to know its spot: a RunError carries none today, so run.rs gains the node a fault left its line through. About 150 lines in drop_model.rs, scope.rs, bodies.rs (ExitItem.end becomes line + ending node, end_after_fault), run.rs; shares drop_model.rs and declare.rs with issue-178",
+    "assessment": "Root fix: one rule for leaving a line early (return and fault), so the NULL read, held_at_fault's holds_by_address branch, ended_at_run and the NULL write in lower_move/end_held go, and no value needs a NULL form (W85's Open point becomes moot). Removes P39 and its sibling, a fault before the free of a record in its bytes, which today leaks (g() + ( free a, i32 1 ) prints no 'freed 1'). Reverses Q-43's choice (it chose the NULL read over exactly this) and needs the fault to know its spot: a RunError carries none today, so run.rs gains the node a fault left its line through. About 150 lines in drop_model.rs, scope.rs, bodies.rs (ExitItem.end becomes line + ending node, end_after_fault), run.rs; shares drop_model.rs and declare.rs with issue-178",
     "decision": null,
     "design": [
       "`free` and `move` end a name; no drop flag",
@@ -8113,11 +8113,11 @@
     "id": "S32",
     "kind": "solution",
     "status": "proposed",
-    "text": "Two rules by kind: keep Q-0043's NULL read for a value behind an address (a pointer, a node) and use the line's order only for a record kept in its own bytes, which has no NULL",
+    "text": "Two rules by kind: keep Q-43's NULL read for a value behind an address (a pointer, a node) and use the line's order only for a record kept in its own bytes, which has no NULL",
     "fixes": [
       "W89"
     ],
-    "assessment": "Symptom fix: removes P39 and the record leak without reversing Q-0043, but puts a branch on kind where one rule should decide (the order already decides for a return, Q-0045), so leaving a line early has three mechanisms (order for return, NULL for an address, order for a record in bytes). Same code and the same fault-spot work as S31, plus keeping the NULL path. Recommended against",
+    "assessment": "Symptom fix: removes P39 and the record leak without reversing Q-43, but puts a branch on kind where one rule should decide (the order already decides for a return, Q-45), so leaving a line early has three mechanisms (order for return, NULL for an address, order for a record in bytes). Same code and the same fault-spot work as S31, plus keeping the NULL path. Recommended against",
     "decision": null,
     "design": [
       "`free` and `move` end a name; no drop flag"
@@ -8171,7 +8171,7 @@
       "W85",
       "W89"
     ],
-    "assessment": "Removes P39 and its unfiled sibling, the leak when a line fails before its own free of a record (x := g() + ( free a, i32 1 ) prints nothing), for every type alike, both tiers, the pass and the REPL; no flag is ever needed since an if's close already frees in the arms that did not end the name. DESIGN: reverses Q-0043's choice at ›free and move end a name; no drop flag‹ (it chose the NULL read over this) and deletes its 'every value with a free slot needs a NULL form'; ›A checked error is a fault‹ and ›move and free are static‹ rule 2 lose 'reads whether a place is NULL'; @'s free still writes 0 into the pointer (Q-0045.1), for cells. Code: medium-large: an order mark per end inside a line (src/parse/bodies.rs, declare.rs), the fault naming the node it hit, held_at_fault reading the mark; deletes holds_by_address, ended_at_run, the pass's reached list and end_held's NULL write for names. Shares DESIGN and held_at_fault with W89.",
+    "assessment": "Removes P39 and its unfiled sibling, the leak when a line fails before its own free of a record (x := g() + ( free a, i32 1 ) prints nothing), for every type alike, both tiers, the pass and the REPL; no flag is ever needed since an if's close already frees in the arms that did not end the name. DESIGN: reverses Q-43's choice at ›free and move end a name; no drop flag‹ (it chose the NULL read over this) and deletes its 'every value with a free slot needs a NULL form'; ›A checked error is a fault‹ and ›move and free are static‹ rule 2 lose 'reads whether a place is NULL'; @'s free still writes 0 into the pointer (Q-45.1), for cells. Code: medium-large: an order mark per end inside a line (src/parse/bodies.rs, declare.rs), the fault naming the node it hit, held_at_fault reading the mark; deletes holds_by_address, ended_at_run, the pass's reached list and end_held's NULL write for names. Shares DESIGN and held_at_fault with W89.",
     "decision": null,
     "design": [
       "`free` and `move` end a name; no drop flag",
@@ -8195,11 +8195,11 @@
     "id": "S35",
     "kind": "solution",
     "status": "proposed",
-    "text": "A value whose type fills free is kept in a node of its own and its name holds the address, so 0 is its NULL like every pointer's (Q-0045.3 option b); a record with no free stays in its bytes",
+    "text": "A value whose type fills free is kept in a node of its own and its name holds the address, so 0 is its NULL like every pointer's (Q-45.3 option b); a record with no free stays in its bytes",
     "fixes": [
       "W85"
     ],
-    "assessment": "Removes P39 and the leak sibling: one rule, every held value is an address, so holds_by_address reads 'type fills free' and end_held's is_plain branch and the pass's reached list go. Keeps Q-0043 as ruled. DESIGN: a new line at ›:= decides nothing about copy or reference; the type's reading rule does‹ (such a type reads by address, so b := a borrows, as ›A filled share free is the value's teardown‹ already says) and closes #240's Open line. Costs: one node per such value, one hop per field read, a bag field inside another record becomes a pointer; mut a := bag ? holds 0 and frees nothing (P42 answered by that, Q-0056 still open). Code: medium: is_plain, the record constructor and layout in read.rs, end_held, holds_by_address, src/parse/bodies.rs. Leaves W89.",
+    "assessment": "Removes P39 and the leak sibling: one rule, every held value is an address, so holds_by_address reads 'type fills free' and end_held's is_plain branch and the pass's reached list go. Keeps Q-43 as ruled. DESIGN: a new line at ›:= decides nothing about copy or reference; the type's reading rule does‹ (such a type reads by address, so b := a borrows, as ›A filled share free is the value's teardown‹ already says) and closes #240's Open line. Costs: one node per such value, one hop per field read, a bag field inside another record becomes a pointer; mut a := bag ? holds 0 and frees nothing (P42 answered by that, Q-56 still open). Code: medium: is_plain, the record constructor and layout in read.rs, end_held, holds_by_address, src/parse/bodies.rs. Leaves W89.",
     "decision": null,
     "design": [
       "`free` and `move` end a name; no drop flag",
@@ -8249,7 +8249,7 @@
     "text": "A record that a line frees with `free a` is never freed when the line fails before reaching that `free`: no `freed 1` is printed, at the top level and in a function body alike.",
     "program": "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ),\ng := fn () -> i32 ( error «stop» ),\na := bag(1), x := g() + ( free a, i32 1 ), 1",
     "output": "<command line>: run error: stop\nexit 1",
-    "expected": "`freed 1`, then the run error. DESIGN ›`free` and `move` end a name; no drop flag‹, Q-0043: \"It answers a line that fails before its own `free`: in `x := g() + ( free a, i32 1 )` a fault in `g()` left `a` unfreed, the parse having counted `a` ended by that line.\" and ›A checked error is a fault: the task that hit it is cancelled‹. The rule's Seed line names it as not yet built for a record kept in its bytes.",
+    "expected": "`freed 1`, then the run error. DESIGN ›`free` and `move` end a name; no drop flag‹, Q-43: \"It answers a line that fails before its own `free`: in `x := g() + ( free a, i32 1 )` a fault in `g()` left `a` unfreed, the parse having counted `a` ended by that line.\" and ›A checked error is a fault: the task that hit it is cancelled‹. The rule's Seed line names it as not yet built for a record kept in its bytes.",
     "tier": "interpreted",
     "found": "logoslang-solve-W85 and logoslang-solve-W89, both on dev 6b3a673; rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build), also inside `f := fn () -> i32 ( a := bag(1), x := g() + ( free a, i32 1 ), x ), f()`",
     "why": null,
@@ -8393,7 +8393,7 @@
     "text": "A type value written in brackets, or read through a member, is not applied to the value after it: `t := i32, (t) 4` and `x := i32 3, y := x:type 4, y` are \"expected one expression, found more\", while a bare name holding the same type, `t := i32, y := t 4, y`, gives `4`.",
     "program": "t := i32, (t) 4",
     "output": "<command line>:1:15: error: expected one expression, found more\n  t := i32, (t) 4\n                ^\nexit 1",
-    "expected": "`4`, as `t := i32, y := t 4, y` gives. DESIGN ›No implicit coercion; a numeric type applied to a value is the conversion‹, and its Ruled line of 30 September 2026 (Q-0020): \"`.`, `@` and a call bind tighter than the type: \\\"in all these cases . @ g and - should have higher precedence\\\"\".",
+    "expected": "`4`, as `t := i32, y := t 4, y` gives. DESIGN ›No implicit coercion; a numeric type applied to a value is the conversion‹, and its Ruled line of 30 September 2026 (Q-20): \"`.`, `@` and a call bind tighter than the type: \\\"in all these cases . @ g and - should have higher precedence\\\"\".",
     "tier": "interpreted",
     "found": "logoslang-issue-215-review-1, on dev b4c6bf4 and on issue-215-type-dot-rename (`x.type 4`); rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build)",
     "why": null,
@@ -8491,7 +8491,7 @@
     "output": "type\nexit 0",
     "expected": "`rational_number`, as `f64` shows `f64`: both are values of `type`, shown by its one `print` slot (DESIGN ›A value is shown as the text its type's `print` slot gives back‹: \"no value is a special case\"). What that slot gives back is still Open there (#182); that it shows the two alike is not.",
     "tier": "interpreted",
-    "found": "Orchestrator (2), probing the #82 worker's Q-0059 examples on dev 0388214 (clean release build of the #82 worktree)",
+    "found": "Orchestrator (2), probing the #82 worker's Q-59 examples on dev 0388214 (clean release build of the #82 worktree)",
     "why": null,
     "issue": null,
     "fixed": null,
@@ -8537,7 +8537,7 @@
     "text": "An `=` into a record name declared `?` and never written runs the type's `free` on the unwritten value first: with `<BOX>` the `boxed`/`box` fixture of `tests/cli.rs` (its `free` prints `free`), `mut w := boxed ?, w = box (1, 2), print «after»` prints `free`, `after`, `free`. The scope-end half of the same name is P42.",
     "program": "<BOX>, mut w := boxed ?, w = box (1, 2), print «after»",
     "output": "free\nafter\nfree\nexit 0",
-    "expected": "`after`, `free`: one value was written, so one `free` runs. Which of \"starts empty and frees nothing\" or \"refused at the declaration\" is Q-0056, open since 1 October 2026; either way the unwritten value is not freed (DESIGN ›Reading a place before its first write is refused at parse‹: a place has no value before its first write).",
+    "expected": "`after`, `free`: one value was written, so one `free` runs. Which of \"starts empty and frees nothing\" or \"refused at the declaration\" is Q-56, open since 1 October 2026; either way the unwritten value is not freed (DESIGN ›Reading a place before its first write is refused at parse‹: a place has no value before its first write).",
     "tier": "interpreted",
     "found": "relink helper of Orchestrator (2), 1 October 2026, dev 0388214; rerun by Orchestrator (2)",
     "why": null,
