@@ -116,6 +116,7 @@ fn run_line(source: &str) -> ExitCode {
 
     // The tail is the last non-comment item: prose never becomes the line's value.
     let mut last = None;
+    let mut last_end = 0;
     let mut ran_something = false;
     while let Some(item) = p.parse_next() {
         let node = match item {
@@ -142,6 +143,7 @@ fn run_line(source: &str) -> ExitCode {
         if unsafe { dyad::ty(node) } != types.comment_ {
             ran_something = true;
             last = Some(node);
+            last_end = p.offset();
         }
     }
     // A stray `)` ends the item loop without being consumed.
@@ -160,7 +162,7 @@ fn run_line(source: &str) -> ExitCode {
         Some(node) => match unsafe { seed::identities::read::is_shown(types, node) } {
             Ok(shown) => shown.then_some(node),
             Err(e) => {
-                let shown = report::render(path, source, end, &report::parse_message(&e));
+                let shown = report::render(path, source, last_end, &report::parse_message(&e));
                 p.exit_after_fault();
                 eprintln!("{shown}");
                 return ExitCode::FAILURE;

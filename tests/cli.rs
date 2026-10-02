@@ -2446,6 +2446,9 @@ fn the_echo_reads_the_tail_value_as_any_use_does() {
         assert_eq!(stdout, "", "{tail}");
         assert!(stderr.contains("give different types"), "{tail}: stderr: {stderr}");
     }
+    // The caret stands where the refused line ends, not after the prose below it.
+    let (_, _, stderr) = run_line("mut c := true,\nif c (i32 1) else (i64 2),\n# a closing note\n");
+    assert!(stderr.starts_with("<command line>:2:"), "stderr: {stderr}");
     for (tail, want) in [
         ("if c (i32 1) else (i32 2)", "1\n"),
         ("if c (5)", ""),
