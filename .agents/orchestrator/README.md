@@ -10,9 +10,12 @@ This folder is where the repo's orchestrator (a Claude session running the `/orc
 | `history/` | answered questions | yes |
 | `PWS.json` | the graph of problems, the whys behind them and their solutions; written only by `pws.py` | yes |
 | `orchestrate.conf` | the repo's facts for the orchestrator: base branch, gate commands, ruling document | yes |
+| `orchestrate.local.conf` | this machine's values for the same keys, such as `MEMORY_DIR`; they win | no |
 | `seen/`, `state/`, `prompts/`, `tmp/`, `why/`, `rca/`, `solve/`, locks | this machine's working files | no, see `.gitignore` |
 
-Only the main checkout writes this folder, on the base branch. A branch that changes anything here except Seed lines in the ruling document is refused at merge.
+Only the main checkout writes this folder, on the base branch. A branch may change only two things here: Seed lines in the ruling document, and its own issue's question files. The merge refuses anything else.
+
+`bash ~/.claude/skills/orchestrate/orchestrate.sh setup` makes this folder in a new repo from the templates beside the script.
 
 ## Answering a question
 
@@ -22,7 +25,7 @@ The files sort in the order they should be answered. The part before the first `
 
 ## Ids
 
-A question's id (`Q-72`) stays the same through every move. A PWS node made since October 2026 carries its maker's short name, `P-thobias-60`, so two people never make the same id. Set your name once per machine:
+An id stays the same through every move. Ids made since October 2026 carry their maker's short name, `Q-thobias-73` for a question and `P-thobias-60` for a PWS node, so two people never make the same id. Your orchestrator's watch and its `questions` list show only your ids and the old ones. Set your name once per machine:
 
 ```
 git config --global orchestrator.user <name>

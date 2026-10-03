@@ -7,6 +7,5 @@ why/
 rca/
 solve/
 *.lock
-next-id
 orchestrate.local.conf
 .pws-*.tmp
