@@ -39,4 +39,4 @@ Never tag speculatively "to see if CI passes". There is no undo.
 # Branches in this repo
 - `dev` is the working branch and the base of every issue branch; `main` is protected and takes a PR (Release rules, step 5).
 - `git branch -r | grep -v 'origin/dev$\|origin/main$'` must list only branches with unmerged work.
-- The orchestrator reads this repo's settings from `.claude/orchestrate.conf` and `.claude/orchestrate-notes.md`.
+- The orchestrator reads this repo's settings from `.agents/orchestrator/orchestrate.conf` and `.claude/orchestrate-notes.md`.
