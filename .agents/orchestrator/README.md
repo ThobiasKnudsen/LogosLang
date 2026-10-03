@@ -21,7 +21,7 @@ Only the main checkout writes this folder, on the base branch. A branch may chan
 
 Open the file, write under each `**Answer N:**` line, and save. Every save wakes the orchestrator; it relays once every question in the file has an answer. Never rename a file you have open.
 
-The files sort in the order they should be answered. The part before the first `_` is the priority: lowercase letters compared as text, so `b` comes before `bm`, which comes before `c`. A new question gets a priority between two others, and no other file is renamed.
+The files sort in the order they should be answered. The part before the first `_` is the priority: lowercase letters compared as text, so `b` comes before `bm`, which comes before `c`. VS Code and `LC_COLLATE=C ls` show this order; a plain `ls` may not, since some locales skip the `_`. A new question gets a priority between two others, and no other file is renamed.
 
 ## Ids
 
