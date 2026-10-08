@@ -19445,7 +19445,9 @@
     "status": "accepted",
     "text": "moved_out walks both arms of an if and, at every call, the callee's whole FN_BODY again, keeping no answer per function, so the walk handed_ends starts on f_n's arm calls reaches f0's body once per path, 2^n times; MOVES_OUT_DEPTH caps depth (one per function), not paths",
     "proposed_for": "P112",
-    "why": null,
+    "why": [
+      "W207"
+    ],
     "anchors": [
       "moved_out",
       "handed_ends",
@@ -19535,7 +19537,483 @@
         "commit": "fca360c",
         "change": "accepted as a why of P112, same as W204",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T00:51+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f9f87e6",
+        "change": "why + W207",
+        "reason": null
       }
     ]
+  },
+  {
+    "id": "W206",
+    "kind": "why",
+    "status": "merged",
+    "text": "Nothing keeps whether a call makes or borrows its value: moved_out, handed_ends and teardown_of take only &Core and a node, the fn record's FN_SLOTS keep body facts worked out once at the close (FN_OUTER, FN_RECEIVER) but no ownership answer, fn_over_body's own handed_ends(body) at that close is kept only for its error, and no map keyed by node exists; so a call's answer can only come from walking its FN_BODY again, on every path, even where only one path exists",
+    "proposed_for": "W205",
+    "why": null,
+    "anchors": [
+      "moved_out",
+      "handed_ends",
+      "teardown_of",
+      "fn_over_body",
+      "FN_SLOTS",
+      "FN_OUTER",
+      "FN_RECEIVER",
+      "FN_BODY",
+      "src/identities/drop_model.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "Reading a program takes time in step with its size; no walk runs once per path",
+      "A last value moves out",
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'unsafe fn (moved_out|handed_ends|teardown_of|owning_pointee_of)\\(' src/identities/drop_model.rs; rg -n 'pub const FN_[A-Z_]+' src/parse/bodies.rs; rg -n 'add\\(FN_(OUTER|RECEIVER|BODY)\\) =|handed_ends\\(self.types, body\\)' src/parse/bodies.rs; rg -n 'Hash(Map|Set)<\\s*DyadPtr|BTreeMap<\\s*DyadPtr' src --glob '!**/tests.rs'",
+        "output": "drop_model.rs:852: unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr>\ndrop_model.rs:898: unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Out\ndrop_model.rs:989: unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Teardown\ndrop_model.rs:1030: unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<bool>, ParseError>\nbodies.rs:84-106: FN_INPUT 0, FN_OUTPUT 1, FN_BODY 2, FN_BCODE 3, FN_FRAME 4, FN_OUTER 5, FN_RECEIVER 6; FN_SLOTS = 7\nbodies.rs:455: *(..).add(FN_RECEIVER) = leaf   (fn_over_body)\nbodies.rs:540: unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?;   (answer dropped; only the error is kept)\nbodies.rs:573/575: *slots.add(FN_BODY) = body; *slots.add(FN_OUTER) = outer;\nmaps keyed by node: store.rs artifacts, compile.rs LowerTable, scopes.rs set, quotes.rs sections, bodies.rs:349 names, identities/mod.rs metas, extents: none holds an ownership answer",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "c32cf74, release, gdb counting breakpoints on seed::identities::drop_model::moved_out and handed_ends, over why-probes/count-one-path.txt and count.txt: chains with ONE path (else arm alloc 1 of i32 1, or no if at all)",
+        "output": "then-arm-only-5: 7; moved_out 190, handed_ends 31\nthen-arm-only-10: 7; moved_out 675, handed_ends 61\nthen-arm-only-20: 7; moved_out 2545, handed_ends 121\nno-if-20 (f_k := fn () -> @i32 ( f_(k-1)() )): 7; moved_out 483, handed_ends 21\n(one path: moved_out grows about 4x for twice the length, so each definition re-walks the whole chain below it; handed_ends grows in step)",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W207",
+    "made": {
+      "at": "2026-10-09T00:49+02:00",
+      "by": "logoslang-why-P112-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T00:51+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f9f87e6",
+        "change": "merged into W207",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W207",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A fn's record keeps no answer to whether its calls hand on a made value: of its FN_SLOTS, FN_OUTPUT holds the written -> @i32, the interned pointer type with no destructor, since only the type alloc mints (make_owning_pointer_type) carries one; fn_over_body works the body's answer out at each function's close (handed_ends(self.types, body)) and keeps only its error; so moved_out can learn a call's ownership only by walking the callee's FN_BODY, as ›A last value moves out‹ says the parse sees the callee's body at the call",
+    "proposed_for": "W205",
+    "why": [
+      "W211"
+    ],
+    "anchors": [
+      "FN_SLOTS",
+      "FN_OUTPUT",
+      "FN_BODY",
+      "fn_over_body",
+      "make_pointer_type",
+      "make_owning_pointer_type",
+      "moved_out",
+      "owning_pointee_of",
+      "src/parse/bodies.rs",
+      "src/identities/pointer.rs",
+      "handed_ends",
+      "teardown_of",
+      "FN_OUTER",
+      "FN_RECEIVER",
+      "src/identities/drop_model.rs"
+    ],
+    "design": [
+      "A last value moves out",
+      "Three fail-closed ownership rules, and `-> own @T`",
+      "Reading a program takes time in step with its size; no walk runs once per path",
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'pub const FN_\\w+: usize' src/parse/bodies.rs",
+        "output": "84:pub const FN_INPUT: usize = 0;\n86:pub const FN_OUTPUT: usize = 1;\n88:pub const FN_BODY: usize = 2;\n91:pub const FN_BCODE: usize = 3;\n95:pub const FN_FRAME: usize = 4;\n100:pub const FN_OUTER: usize = 5;\n104:pub const FN_RECEIVER: usize = 6;",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "rg -n 'what `alloc` mints|is never interned' src/identities/pointer.rs; rg -n -A1 'FN_BODY);$' src/identities/drop_model.rs; rg -n -A1 'match moved_out\\(types, node, 0\\)' src/identities/drop_model.rs",
+        "output": "134:/// carrying no record gets a fresh node; an owning pointer type is never interned.\n164:/// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,\n960:            let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);\n961-            return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };\n853:    match moved_out(types, node, 0) {\n854-        Out::Moves(out) => owning_pointee(super::read::output_type(types, out)),   (the owning type is read off the alloc found inside the body, never off the call)",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "target/release/logos 'f := fn () -> own @i32 ( alloc 1 of i32 5 ), 7'",
+        "output": "<command line>:1:24: error: `own` marks a hole, `own @T ?` or `own t ?`, and `-> own @T` is not in the seed yet; `move x` moves a value\nexit 1",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "rg -n 'caller knows it owes the teardown|`-> own @T` hands ownership' DESIGN.md",
+        "output": "354:Rules 2 and 3 no longer apply to a *last* value since 25 September 2026 (›A last value moves out‹). `-> own @T` hands ownership to the caller, whose bound name holds the value (...)\n378:- **Why:** the caller knows it owes the teardown, because the parse sees the callee's body at the call.",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "bash why-probes/variants.sh 22   (i32-both: -> i32 gives no end, so handed_ends answers before any walk into a body)",
+        "output": "both-arms  -> @i32 out=7 time=1.013s\ni32-both   -> i32  out=7 time=0.012s",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "rg -n 'unsafe fn (moved_out|handed_ends|teardown_of|owning_pointee_of)\\(' src/identities/drop_model.rs; rg -n 'pub const FN_[A-Z_]+' src/parse/bodies.rs; rg -n 'add\\(FN_(OUTER|RECEIVER|BODY)\\) =|handed_ends\\(self.types, body\\)' src/parse/bodies.rs; rg -n 'Hash(Map|Set)<\\s*DyadPtr|BTreeMap<\\s*DyadPtr' src --glob '!**/tests.rs'",
+        "output": "drop_model.rs:852: unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr>\ndrop_model.rs:898: unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Out\ndrop_model.rs:989: unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Teardown\ndrop_model.rs:1030: unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<bool>, ParseError>\nbodies.rs:84-106: FN_INPUT 0, FN_OUTPUT 1, FN_BODY 2, FN_BCODE 3, FN_FRAME 4, FN_OUTER 5, FN_RECEIVER 6; FN_SLOTS = 7\nbodies.rs:455: *(..).add(FN_RECEIVER) = leaf   (fn_over_body)\nbodies.rs:540: unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?;   (answer dropped; only the error is kept)\nbodies.rs:573/575: *slots.add(FN_BODY) = body; *slots.add(FN_OUTER) = outer;\nmaps keyed by node: store.rs artifacts, compile.rs LowerTable, scopes.rs set, quotes.rs sections, bodies.rs:349 names, identities/mod.rs metas, extents: none holds an ownership answer",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "c32cf74, release, gdb counting breakpoints on seed::identities::drop_model::moved_out and handed_ends, over why-probes/count-one-path.txt and count.txt: chains with ONE path (else arm alloc 1 of i32 1, or no if at all)",
+        "output": "then-arm-only-5: 7; moved_out 190, handed_ends 31\nthen-arm-only-10: 7; moved_out 675, handed_ends 61\nthen-arm-only-20: 7; moved_out 2545, handed_ends 121\nno-if-20 (f_k := fn () -> @i32 ( f_(k-1)() )): 7; moved_out 483, handed_ends 21\n(one path: moved_out grows about 4x for twice the length, so each definition re-walks the whole chain below it; handed_ends grows in step)",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "Nothing keeps whether a call makes or borrows its value: moved_out, handed_ends and teardown_of take only &Core and a node, the fn record's FN_SLOTS keep body facts worked out once at the close (FN_OUTER, FN_RECEIVER) but no ownership answer, fn_over_body's own handed_ends(body) at that close is kept only for its error, and no map keyed by node exists; so a call's answer can only come from walking its FN_BODY again, on every path, even where only one path exists"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T00:50+02:00",
+      "by": "logoslang-why-P112-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T00:51+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f9f87e6",
+        "change": "accepted as a why of W205, same as W206",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T00:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f9f87e6",
+        "change": "why + W211",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T00:58+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f9f87e6",
+        "change": "text was \"A fn's record keeps no answer to whether its calls hand on a made value: of its FN_SLOTS, FN_OUTPUT holds the written -> @i32, the interned pointer type with no destructor, since only the type alloc mints (make_owning_pointer_type) carries one, and -> own @T is refused as not in the seed; so moved_out can learn a call's ownership only by walking the callee's FN_BODY, as ›A last value moves out‹ says the parse sees the callee's body at the call\"",
+        "reason": "B (W211's round): the -> own @T clause fails the direct test, since the chain is written -> @i32 and DESIGN asks no own of a made last value; A's W210, rejected as a restatement, adds that the answer is worked out at the close and dropped"
+      }
+    ]
+  },
+  {
+    "id": "W208",
+    "kind": "why",
+    "status": "draft",
+    "text": "handed_ends lets an if's arms differ wherever one arm's answer is None, a call the parse cannot see into or a value with no end (its (a, b) => Ok(a.or(b)) arm), so the then arm's answer is not the if's: moved_out, though its comment says the then arm's is it, walks the else arm too, to hand on that arm's Unknown or Stays",
+    "proposed_for": "W205",
+    "why": null,
+    "anchors": [
+      "handed_ends",
+      "moved_out",
+      "ArmsMakeAndBorrow",
+      "src/identities/drop_model.rs"
+    ],
+    "design": [
+      "`if` reads its own right side"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -A3 'match \\(handed_ends\\(types, then\\)' src/identities/drop_model.rs",
+        "output": "1045:            return match (handed_ends(types, then)?, handed_ends(types, els)?) {\n1046-                (Some(a), Some(b)) if a != b => Err(ParseError::ArmsMakeAndBorrow),\n1047-                (a, b) => Ok(a.or(b)),\n1048-            };",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "sed -n '929,943p' src/identities/drop_model.rs",
+        "output": "929:    // A used `if` ends its value alike in every arm (`handed_ends`), so the then arm's is it.\n936:        let then_out = moved_out(types, then, depth);\n937:        let Out::Moves(out) = then_out else {\n938:            return then_out;\n939:        };\n940:        return match moved_out(types, els, depth) {\n941:            Out::Moves(_) => Out::Moves(out),\n942:            els_out => els_out,\n943:        };",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "target/release/logos 'g := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else (g(n - 1)) ), p := g(2), p@'   (a made arm beside a call the parse cannot see is accepted)",
+        "output": "5\nexit 0",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "bash why-probes/variants.sh 22   (one walked path per function when only the then arm calls)",
+        "output": "both-arms  -> @i32 ( if (c == 1) (PREV()) else (PREV()) )          out=7 time=1.013s\nthen-only  -> @i32 ( if (c == 1) (PREV()) else (alloc 1 of i32 6) ) out=7 time=0.013s",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T00:50+02:00",
+      "by": "logoslang-why-P112-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W209",
+    "kind": "why",
+    "status": "merged",
+    "text": "DESIGN decides whether a call hands on an owned value in two rules that point different ways: ›Gate spelling: words left of `:=`; ownership in the reference type‹ puts it in the result type (-> own @T hands ownership; unmarked is borrow-only, and a plain @T is a borrow by ›A value's teardown runs where its life ends‹), while ›A last value moves out‹ hands an alloc's owning @T out through an unmarked -> @i32 and has the parse see the callee's body at the call; the seed follows the second, so two functions written -> @i32 hand on one made and one borrowed value and only their bodies tell which",
+    "proposed_for": "W207",
+    "why": null,
+    "anchors": [
+      "DESIGN.md",
+      "FN_OUTPUT",
+      "moved_out",
+      "ArmsMakeAndBorrow"
+    ],
+    "design": [
+      "A last value moves out",
+      "Gate spelling: words left of `:=`; ownership in the reference type",
+      "Three fail-closed ownership rules, and `-> own @T`",
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o '.{0,60}(a plain `@T` a borrow|Unmarked is fail-closed[^.]*|`-> own @T` hands ownership to the caller|an `alloc`.s owning `@T` included|parse sees the callee.s body at the call).{0,40}' DESIGN.md",
+        "output": "311: ... an owning `@T` is its own type since 25 September 2026 and a plain `@T` a borrow; and the allocator lives on the value.\n354: ... (›A last value moves out‹). `-> own @T` hands ownership to the caller, whose bound name holds the value\n377: ... moves to whoever takes the value, an `alloc`'s owning `@T` included. `mk := fn () -> t ( a := array i32 (…), a )`\n378:- **Why:** the caller knows it owes the teardown, because the parse sees the callee's body at the call.\n490: ... `-> own @T` hands ownership to the caller. Unmarked is fail-closed: private, immutable, borrow-only.",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "bash why-probes/run-lines.sh why-probes/w207.txt   (c := true, y := i32 4, f := fn () -> @i32 ( alloc 1 of i32 5 ), g := fn () -> @i32 ( &y ), then:)",
+        "output": "x := if c (f()) else (g()), x@  -> error: make a value in every arm, or borrow in every arm: one arm of this `if` makes its value and another borrows one ... exit 1\nx := if c (f()) else (f()), x@  -> 5, exit 0\nx := if c (g()) else (g()), x@  -> 4, exit 0",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "target/release/logos 'f := fn () -> own @i32 ( alloc 1 of i32 5 ), 7'",
+        "output": "error: `own` marks a hole, `own @T ?` or `own t ?`, and `-> own @T` is not in the seed yet; `move x` moves a value\nexit 1",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W211",
+    "made": {
+      "at": "2026-10-09T00:54+02:00",
+      "by": "logoslang-why-P112-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T00:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f9f87e6",
+        "change": "merged into W211",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W210",
+    "kind": "why",
+    "status": "rejected",
+    "text": "fn_over_body works the body's made-or-borrowed answer out at every function's close, handed_ends(self.types, body), and keeps only its error (the ? of a statement), dropping the Option<bool>; it writes FN_INPUT, the written FN_OUTPUT, FN_BODY, FN_FRAME and FN_OUTER, and FN_SLOTS has no slot for the answer, so what the parse had in hand is on no node when a later call asks",
+    "proposed_for": "W207",
+    "why": null,
+    "anchors": [
+      "fn_over_body",
+      "handed_ends",
+      "FN_SLOTS",
+      "FN_OUTPUT",
+      "FN_BODY",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "Reading a program takes time in step with its size; no walk runs once per path",
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -B1 -A1 'handed_ends\\(self.types, body\\)' src/parse/bodies.rs; rg -n -A1 'pub\\(crate\\) unsafe fn handed_ends' src/identities/drop_model.rs",
+        "output": "539-            // SAFETY: `body` is the valid dyad just built.\n540:            unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?;\n541-        }\n1030:pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<bool>, ParseError> {",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "rg -n 'add\\(FN_\\w+\\) =|early\\[FN_\\w+\\] =' src/parse/bodies.rs",
+        "output": "455:            unsafe { *(dyad::value(f) as *mut DyadPtr).add(FN_RECEIVER) = leaf };\n481:            early[FN_INPUT] = input;\n482:            early[FN_OUTPUT] = output;\n488:                *slots.add(FN_INPUT) = input;\n489:                *slots.add(FN_OUTPUT) = output;\n573:            *slots.add(FN_BODY) = body;\n574:            *slots.add(FN_FRAME) = frame;\n575:            *slots.add(FN_OUTER) = outer;",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "for n in 1 2 3 4 8; do bash why-probes/gdb-chain.sh $n why-probes/count.gdb | rg 'already hit'; done   (the answer is worked out per function, handed_ends linear, then walked again per path, moved_out doubling)",
+        "output": "n=1: moved_out 22, handed_ends 7\nn=4: moved_out 425, handed_ends 25\nn=8: moved_out 8045, handed_ends 49",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T00:54+02:00",
+      "by": "logoslang-why-P112-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T00:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f9f87e6",
+        "change": "rejected",
+        "reason": "restates W207 (the fn record keeps no answer); its detail, that fn_over_body works the answer out at each close and keeps only the error, is added to W207's text"
+      }
+    ]
+  },
+  {
+    "id": "W211",
+    "kind": "why",
+    "status": "accepted",
+    "text": "›A last value moves out‹ decides whether a call hands on a made value by the callee's last line, not by its written result: a plain -> @i32 is made for fn () -> @i32 ( alloc 1 of i32 5 ) and borrowed for fn (p := @i32 ?) -> @i32 ( p ), and -> own @T is not needed for a made last value; so the written type fn_over_body puts in FN_OUTPUT before the body is parsed cannot hold the answer, which exists only once the body is built",
+    "proposed_for": "W207",
+    "why": null,
+    "anchors": [
+      "FN_OUTPUT",
+      "fn_over_body",
+      "parse_fn",
+      "moved_out",
+      "handed_ends",
+      "src/parse/bodies.rs",
+      "src/identities/drop_model.rs",
+      "DESIGN.md",
+      "ArmsMakeAndBorrow"
+    ],
+    "design": [
+      "A last value moves out",
+      "`move` is the act, `own` the gate word, `free` the end",
+      "Three fail-closed ownership rules, and `-> own @T`",
+      "Gate spelling: words left of `:=`; ownership in the reference type",
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -A1 '^### A last value moves out' DESIGN.md; rg -n 'Rules 2 and 3 no longer apply' DESIGN.md; rg -n 'early\\[FN_OUTPUT\\] = output|add\\(FN_OUTPUT\\) = output|so a recursive self-call resolves its types' src/parse/bodies.rs",
+        "output": "DESIGN.md: A function's or block's last value, when it is a place that scope owns, moves to whoever takes the value, an `alloc`'s owning `@T` included. `mk := fn () -> t ( a := array i32 (…), a )` and `-> array i32 ( array i32 (1, 2) )` hand their array to the caller ... Why: the caller knows it owes the teardown, because the parse sees the callee's body at the call.\nDESIGN.md: Rules 2 and 3 no longer apply to a *last* value since 25 September 2026 (›A last value moves out‹). `-> own @T` hands ownership to the caller\nbodies.rs:464: points at it, before the body parses, so a recursive self-call resolves its types.\nbodies.rs:482: early[FN_OUTPUT] = output;      (fn_over_body, before bracketed_body)\nbodies.rs:489: *slots.add(FN_OUTPUT) = output;  (no write to FN_OUTPUT after the body closes)",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "c32cf74, interpreted, release: timeout 60 target/release/logos \"<line>\" for each line of why-probes/output-type.txt",
+        "output": "same-written-type-two-answers: c := true, y := alloc 1 of i32 3, f := fn () -> @i32 ( alloc 1 of i32 5 ), g := fn (p := @i32 ?) -> @i32 ( p ), x := if c (f()) else (g(y)), 7\n  -> error: make a value in every arm, or borrow in every arm: one arm of this `if` makes its value and another borrows one, ... exit 1\nboth-made: same with h := fn () -> @i32 ( alloc 1 of i32 6 ), x := if c (f()) else (h()), 7  -> 7, exit 0\nown-result: f := fn () -> own @i32 ( alloc 1 of i32 5 ), 7  -> error: ... `-> own @T` is not in the seed yet ..., exit 1\n(f and g are both written -> @i32; only their bodies tell made from borrowed)",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "rg -n -o '.{0,60}(a plain `@T` a borrow|Unmarked is fail-closed[^.]*|`-> own @T` hands ownership to the caller|an `alloc`.s owning `@T` included|parse sees the callee.s body at the call).{0,40}' DESIGN.md",
+        "output": "311: ... an owning `@T` is its own type since 25 September 2026 and a plain `@T` a borrow; and the allocator lives on the value.\n354: ... (›A last value moves out‹). `-> own @T` hands ownership to the caller, whose bound name holds the value\n377: ... moves to whoever takes the value, an `alloc`'s owning `@T` included. `mk := fn () -> t ( a := array i32 (…), a )`\n378:- **Why:** the caller knows it owes the teardown, because the parse sees the callee's body at the call.\n490: ... `-> own @T` hands ownership to the caller. Unmarked is fail-closed: private, immutable, borrow-only.",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "bash why-probes/run-lines.sh why-probes/w207.txt   (c := true, y := i32 4, f := fn () -> @i32 ( alloc 1 of i32 5 ), g := fn () -> @i32 ( &y ), then:)",
+        "output": "x := if c (f()) else (g()), x@  -> error: make a value in every arm, or borrow in every arm: one arm of this `if` makes its value and another borrows one ... exit 1\nx := if c (f()) else (f()), x@  -> 5, exit 0\nx := if c (g()) else (g()), x@  -> 4, exit 0",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "target/release/logos 'f := fn () -> own @i32 ( alloc 1 of i32 5 ), 7'",
+        "output": "error: `own` marks a hole, `own @T ?` or `own t ?`, and `-> own @T` is not in the seed yet; `move x` moves a value\nexit 1",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "DESIGN decides whether a call hands on an owned value in two rules that point different ways: ›Gate spelling: words left of `:=`; ownership in the reference type‹ puts it in the result type (-> own @T hands ownership; unmarked is borrow-only, and a plain @T is a borrow by ›A value's teardown runs where its life ends‹), while ›A last value moves out‹ hands an alloc's owning @T out through an unmarked -> @i32 and has the parse see the callee's body at the call; the seed follows the second, so two functions written -> @i32 hand on one made and one borrowed value and only their bodies tell which"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T00:54+02:00",
+      "by": "logoslang-why-P112-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T00:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f9f87e6",
+        "change": "accepted as a why of W207, same as W209",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P119",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch, an unbound call of a -> dyad function, echoed or printed with {f()}, shows a large number instead of the type it gives; bound to a name first, it prints the type",
+    "program": "f := fn () -> dyad ( i64 ), f()",
+    "output": "140465898779392 (an address; varies per run), on branch issue-82-output-type 2f88fbe; x := f(), print «{x}» prints i64; dev panics on the same program",
+    "expected": "i64, as the bound name prints",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-5 (review round 5, issue 82 comment 6070695131)",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T00:58+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "f9f87e6",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
