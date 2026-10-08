@@ -26,7 +26,8 @@ pub(super) struct OpenFn {
     pub(super) open_below: usize,
     /// Every `return` in the body, committed to the result type as the tail is.
     pub(super) returns: Vec<OpenReturn>,
-    /// The `-> T`, `void` where the call gives nothing and no `return` hands it a value.
+    /// The `-> T`: a `return` hands the call its operand, which the call takes only where this
+    /// is not `void`.
     pub(super) output: DyadPtr,
 }
 
