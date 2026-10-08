@@ -790,7 +790,6 @@ impl<'a> Parser<'a> {
                 outer: Vec::new(),
                 open_below: 0,
                 returns: Vec::new(),
-                output: *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT),
             })
             .collect();
 

@@ -1991,6 +1991,8 @@ mod tests {
             "free (if (c == 1) (alloc 1 of i32 5) else (p)),\n1",
             "free (if (c == 1) (alloc 1 of i32 5) else (move b)),\n1",
             "g := fn (q := @i32 ?) -> @i32 ( return if (c == 1) (move q) else (alloc 1 of i32 5) )",
+            "g := fn (q := @i32 ?) -> void ( return if (c == 1) (move q) else (alloc 1 of i32 5) )",
+            "g := fn (q := @i32 ?) -> void ( return if (c == 1) (alloc 1 of i32 5) else (move q) )",
             // A function's last line gives the call its value.
             "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
             "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (return move q) else (alloc 1 of i32 5) )",

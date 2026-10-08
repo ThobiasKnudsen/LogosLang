@@ -26,9 +26,6 @@ pub(super) struct OpenFn {
     pub(super) open_below: usize,
     /// Every `return` in the body, committed to the result type as the tail is.
     pub(super) returns: Vec<OpenReturn>,
-    /// The `-> T`: a `return` hands the call its operand, which the call takes only where this
-    /// is not `void`.
-    pub(super) output: DyadPtr,
 }
 
 /// A `return` in a function body being parsed. Its line may still end names after it, in a
@@ -507,7 +504,6 @@ impl<'a> Parser<'a> {
             outer: Vec::new(),
             open_below: self.cx.open.len(),
             returns: Vec::new(),
-            output,
         });
         // SAFETY: `input` is the record just built, `params` its bindings.
         unsafe {
@@ -605,10 +601,8 @@ impl<'a> Parser<'a> {
         if crate::identities::drop_model::lent_place(types, place).is_some_and(left) {
             return Err(ParseError::AddressOfHeld);
         }
-        // The call takes the operand as it takes the last line, so it is read as that line is.
-        if frame.output != types.void_ {
-            crate::identities::drop_model::handed_ends(types, value)?;
-        }
+        // Whether the operand is owned is read from one arm, so every arm must agree first.
+        crate::identities::drop_model::handed_ends(types, value)?;
         if crate::identities::drop_model::is_owning_value(types, value) {
             return Err(ParseError::OwnershipAcrossReturn);
         }
