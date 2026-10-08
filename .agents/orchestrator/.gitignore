@@ -1,11 +1,11 @@
 # This machine's files: the rest of .agents/orchestrator/ is committed.
-seen/
-state/
-prompts/
-tmp/
-why/
-rca/
-solve/
+/seen/
+/state/
+/prompts/
+/tmp/
+/why/
+/rca/
+/solve/
 *.lock
-orchestrate.local.conf
+/orchestrate.local.conf
 .pws-*.tmp
