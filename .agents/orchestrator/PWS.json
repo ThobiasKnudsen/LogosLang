@@ -9307,7 +9307,7 @@
   {
     "id": "P83",
     "kind": "problem",
-    "status": "open",
+    "status": "withdrawn",
     "text": "ids-short changes every node id that carries a maker name, in the graph, the folder documents, the state files and the folder names; the same ids quoted anywhere else keep the old form",
     "program": "Read from the code (not run): grep -n \"Older ids\\|stays the same through every move\" ~/.claude/skills/orchestrate/setup/README.md | cut -c1-60; the file list of cmd_ids_short in orchestrate.sh (line 1213) and pws.py cmd_short_ids",
     "output": "setup/README.md:45: An id stays the same through every move. ...\nids-short rewrites the ids in PWS.json, the ruling document and its history, the folder README and AGENTS.md, the state, probe, draft and worktree folder names; issues, commit messages, transcripts and the prompts of sessions already running keep the old ids (P69 and P79 are two of the effects)",
@@ -9326,6 +9326,16 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T20:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f845596",
+        "change": "withdrawn",
+        "reason": "Thobias, Q75 answer 2: his remark meant the Q74 Decided line, that ids-short would only change the README example, which is P79; P83 read more into it than he said"
+      }
+    ]
   }
 ]
