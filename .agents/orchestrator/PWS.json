@@ -9117,7 +9117,12 @@
     "expected": "Each rule has one home (SKILL_HISTORY.md, Orchestrate, agent-agnostic-prompt.md, Q-thobias-109 (3); the head of SKILL_HISTORY.md: so that SKILL.md keeps only the rules)",
     "tier": null,
     "found": "review logoslang-help-1 (F15), 8 Oct 2026; confirmed by orchestrator LogosLang",
-    "why": null,
+    "why": [
+      "W90",
+      "W91",
+      "W93",
+      "W95"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -9129,7 +9134,44 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "why + W90",
+        "reason": null
+      },
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "why + W91",
+        "reason": null
+      },
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "why + W93",
+        "reason": null
+      },
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "why + W95",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P75",
@@ -9516,7 +9558,7 @@
   {
     "id": "P89",
     "kind": "problem",
-    "status": "open",
+    "status": "withdrawn",
     "text": "SKILL.md states one rule twice: 'A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill, never in a repo's ruling document' stands at line 10 and again at line 70",
     "program": "grep -n \"never in a repo's ruling document\" ~/.claude/skills/orchestrate/SKILL.md | cut -c1-12",
     "output": "10:**This fil\n70:- **Every r",
@@ -9535,7 +9577,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T21:51+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3021851",
+        "change": "withdrawn",
+        "reason": "P74 already holds it: 'where a general ruling is recorded' is one of the eight rules P74 lists as standing in two or three places; the orchestrator recorded it a second time"
+      }
+    ]
   },
   {
     "id": "P90",
@@ -9558,6 +9610,823 @@
       "commit": "b101dfd",
       "run": null,
       "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W90",
+    "kind": "why",
+    "status": "accepted",
+    "text": "every-prompt.md (## In every repo) and agent-agnostic-prompt.md (## Rules for every agent, in every repo) are two files for the same reader and scope, and compose_prompt in orchestrate.sh puts both into every prompt, while no line in SKILL.md, SKILL_HISTORY.md or either file says which kind of rule goes in which; so FOUND reports, how to search the ruling document, who writes it and the secret-file rule each stand in both",
+    "proposed_for": "P74",
+    "why": null,
+    "anchors": [
+      "compose_prompt",
+      "~/.claude/skills/orchestrate/every-prompt.md",
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude/skills/orchestrate && grep -n \"^## \" every-prompt.md agent-agnostic-prompt.md && sed -n '3p' agent-agnostic-prompt.md | cut -c1-80",
+        "output": "every-prompt.md:1:## In every repo\nagent-agnostic-prompt.md:1:## Rules for every agent, in every repo\nThe owner gives every agent these rules, whatever the repo and whoever runs it.",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "cd ~/.claude/skills/orchestrate && grep -n 'cat \"$SCRIPT_DIR/\\(every\\|agent-agnostic\\)-prompt.md\"' orchestrate.sh",
+        "output": "285:  every=$(cat \"$SCRIPT_DIR/every-prompt.md\")\n287:  every+=$'\\n\\n'$(cat \"$SCRIPT_DIR/agent-agnostic-prompt.md\")",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "cd ~/.claude/skills/orchestrate && grep -n -o \"never filed\\|Search its whole text\\|Search it rather than reading it whole\\|writes them, in the main checkout\\|Only the orchestrator writes the ruling document\\|git-ignored secret files\\|Never read, print or search private keys\" every-prompt.md agent-agnostic-prompt.md",
+        "output": "every-prompt.md:4:never filed\nevery-prompt.md:8:Search its whole text\nevery-prompt.md:9:git-ignored secret files\nevery-prompt.md:10:writes them, in the main checkout\nagent-agnostic-prompt.md:6:Search it rather than reading it whole\nagent-agnostic-prompt.md:9:Only the orchestrator writes the ruling document\nagent-agnostic-prompt.md:12:never filed\nagent-agnostic-prompt.md:25:Never read, print or search private keys",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "rg -n -i 'every-prompt|agent-agnostic' ~/.claude/skills/orchestrate/SKILL.md ~/.claude/skills/orchestrate/SKILL_HISTORY.md | cut -c1-120",
+        "output": "SKILL.md:18: Write for Thobias as every-prompt.md asks every agent to ...\nSKILL.md:22: Every session ... follows agent-agnostic-prompt.md's Files, commands and git ...\nSKILL_HISTORY.md:12: ... moved into that file, composed into every prompt like every-prompt.md ...\n(no line divides the two files' scope)",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -n '^## ' every-prompt.md agent-agnostic-prompt.md; grep -n 'every-prompt.md\\|agent-agnostic-prompt.md' orchestrate.sh SKILL.md",
+        "output": "every-prompt.md:1:## In every repo\nagent-agnostic-prompt.md:1:## Rules for every agent, in every repo\norchestrate.sh:285:  every=$(cat \"$SCRIPT_DIR/every-prompt.md\")\norchestrate.sh:287:  every+=$'\\n\\n'$(cat \"$SCRIPT_DIR/agent-agnostic-prompt.md\")\nSKILL.md:18 and :22 name the files only for one rule each (plain words; Files, commands and git), never for what each holds",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -n -o 'never filed.\\{0,40\\}\\|Never read `{{RULING_DOC}}` whole\\|Search it rather than reading it whole\\|only `{{ORCH}}` writes them\\|Only the orchestrator writes the ruling document\\|git-ignored secret files\\|Never read, print or search private keys' every-prompt.md agent-agnostic-prompt.md",
+        "output": "every-prompt.md:4:never filed: send `FOUND` to `{{ORCH}}`, even where\nevery-prompt.md:8:Never read `{{RULING_DOC}}` whole\nevery-prompt.md:9:git-ignored secret files\nevery-prompt.md:10:only `{{ORCH}}` writes them\nagent-agnostic-prompt.md:6:Search it rather than reading it whole\nagent-agnostic-prompt.md:9:Only the orchestrator writes the ruling document\nagent-agnostic-prompt.md:12:never filed. The orchestrator puts it in the repo's\nagent-agnostic-prompt.md:25:Never read, print or search private keys",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "every-prompt.md (\"## In every repo\") and agent-agnostic-prompt.md (\"## Rules for every agent, in every repo\") name the same scope, compose_prompt in orchestrate.sh puts both into every agent prompt, and neither file nor SKILL.md says which kind of rule belongs in which, so four rules (FOUND reports, searching the ruling document, who writes it, secret files) are written in both"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:52+02:00",
+      "by": "logoslang-why-P74-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "accepted as a why of P74, same as W92",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W91",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The global CLAUDE.md imports agent-agnostic-prompt.md under ## The rules every agent follows, in every repo, and still keeps its own ## Code Changes, ## Error Recovery and ## Security bullets for the same three rules (ships to production, blocked after 2-3 attempts, never read private keys or .env files), though the import line says each rule has one home",
+    "proposed_for": "P74",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude && grep -n -o \"ships to production [a-z]*\\|blocked after [0-9-]* attempts\\|private keys\\|^@.*agent-agnostic-prompt.md\" CLAUDE.md skills/orchestrate/agent-agnostic-prompt.md",
+        "output": "CLAUDE.md:21:ships to production immediately\nCLAUDE.md:31:blocked after 2-3 attempts\nCLAUDE.md:34:private keys\nCLAUDE.md:71:@/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md\nskills/orchestrate/agent-agnostic-prompt.md:25:private keys\nskills/orchestrate/agent-agnostic-prompt.md:28:ships to production at",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -n -o 'so each rule has one home' ~/.claude/CLAUDE.md",
+        "output": "70:so each rule has one home",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -n -o '@/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md\\|NEVER read, access, or attempt to access private keys\\|Never read, print or search private keys\\|Write every change as if it ships to production\\|blocked after 2-3 attempts\\|blocked after two or three attempts' ~/.claude/CLAUDE.md agent-agnostic-prompt.md",
+        "output": "CLAUDE.md:21:Write every change as if it ships to production\nCLAUDE.md:31:blocked after 2-3 attempts\nCLAUDE.md:34:NEVER read, access, or attempt to access private keys\nCLAUDE.md:71:@/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md\nagent-agnostic-prompt.md:25:Never read, print or search private keys\nagent-agnostic-prompt.md:28:Write every change as if it ships to production\nagent-agnostic-prompt.md:28:blocked after two or three attempts",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The global ~/.claude/CLAUDE.md imports agent-agnostic-prompt.md (its line 71) and still keeps its own Code Changes, Error Recovery and Security sections, which state three of the import's rules again: \"Write every change as if it ships to production\", blocked after two or three attempts, and never reading private keys, .env files or credentials"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:52+02:00",
+      "by": "logoslang-why-P74-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "accepted as a why of P74, same as W94",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W92",
+    "kind": "why",
+    "status": "merged",
+    "text": "every-prompt.md (\"## In every repo\") and agent-agnostic-prompt.md (\"## Rules for every agent, in every repo\") name the same scope, compose_prompt in orchestrate.sh puts both into every agent prompt, and neither file nor SKILL.md says which kind of rule belongs in which, so four rules (FOUND reports, searching the ruling document, who writes it, secret files) are written in both",
+    "proposed_for": "P74",
+    "why": null,
+    "anchors": [
+      "compose_prompt",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/every-prompt.md",
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n '^## ' every-prompt.md agent-agnostic-prompt.md; grep -n 'every-prompt.md\\|agent-agnostic-prompt.md' orchestrate.sh SKILL.md",
+        "output": "every-prompt.md:1:## In every repo\nagent-agnostic-prompt.md:1:## Rules for every agent, in every repo\norchestrate.sh:285:  every=$(cat \"$SCRIPT_DIR/every-prompt.md\")\norchestrate.sh:287:  every+=$'\\n\\n'$(cat \"$SCRIPT_DIR/agent-agnostic-prompt.md\")\nSKILL.md:18 and :22 name the files only for one rule each (plain words; Files, commands and git), never for what each holds",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -n -o 'never filed.\\{0,40\\}\\|Never read `{{RULING_DOC}}` whole\\|Search it rather than reading it whole\\|only `{{ORCH}}` writes them\\|Only the orchestrator writes the ruling document\\|git-ignored secret files\\|Never read, print or search private keys' every-prompt.md agent-agnostic-prompt.md",
+        "output": "every-prompt.md:4:never filed: send `FOUND` to `{{ORCH}}`, even where\nevery-prompt.md:8:Never read `{{RULING_DOC}}` whole\nevery-prompt.md:9:git-ignored secret files\nevery-prompt.md:10:only `{{ORCH}}` writes them\nagent-agnostic-prompt.md:6:Search it rather than reading it whole\nagent-agnostic-prompt.md:9:Only the orchestrator writes the ruling document\nagent-agnostic-prompt.md:12:never filed. The orchestrator puts it in the repo's\nagent-agnostic-prompt.md:25:Never read, print or search private keys",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W90",
+    "made": {
+      "at": "2026-10-08T21:52+02:00",
+      "by": "logoslang-why-P74-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "merged into W90",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W93",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The global CLAUDE.md, which every session reads, carries clauses for the orchestrator alone (its Pending line in ## Code Changes and again in ## Rulings and their records, and that a ruling on how the orchestrator works is recorded in SKILL.md) instead of pointing to SKILL.md, the orchestrator's own rule file, which states the same rules",
+    "proposed_for": "P74",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude && grep -n -o \"an orchestrator stores them as a Pending line\\|An orchestrator writes it as a \\*\\*Pending\\*\\* line\\|A ruling whose wording must wait is a Pending line\\|A ruling on how the orchestrator or its prompts work in every repo is recorded in [^,;]*\" CLAUDE.md skills/orchestrate/SKILL.md",
+        "output": "CLAUDE.md:26:an orchestrator stores them as a Pending line\nCLAUDE.md:86:An orchestrator writes it as a **Pending** line\nCLAUDE.md:86:A ruling on how the orchestrator or its prompts work in every repo is recorded in `~/.claude/skills/orchestrate/SKILL.md`\nskills/orchestrate/SKILL.md:10:A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill\nskills/orchestrate/SKILL.md:28:A ruling whose wording must wait is a Pending line\nskills/orchestrate/SKILL.md:70:A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -n -o 'recorded in `~/.claude/skills/orchestrate/SKILL.md`\\|recorded in this skill, never in a repo.s ruling document\\|as a Pending line in the repo.s KNOWLEDGE.md\\|writes it as a \\*\\*Pending\\*\\* line in KNOWLEDGE.md\\|is a Pending line in the ruling document' ~/.claude/CLAUDE.md SKILL.md",
+        "output": "CLAUDE.md:26:as a Pending line in the repo's KNOWLEDGE.md\nCLAUDE.md:86:writes it as a **Pending** line in KNOWLEDGE.md\nCLAUDE.md:86:recorded in `~/.claude/skills/orchestrate/SKILL.md`\nSKILL.md:10:recorded in this skill, never in a repo's ruling document\nSKILL.md:28:is a Pending line in the ruling document\nSKILL.md:70:recorded in this skill, never in a repo's ruling document",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The global ~/.claude/CLAUDE.md, under \"Rulings and their records\" and at the end of \"Code Changes\", states two rules of how the orchestrator works (a ruling on the orchestrator in every repo is recorded in SKILL.md; an orchestrator writes a waiting ruling as a Pending line in KNOWLEDGE.md), which SKILL.md states too, and the first of them makes SKILL.md the only home of such a rule"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:52+02:00",
+      "by": "logoslang-why-P74-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "accepted as a why of P74, same as W96",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W94",
+    "kind": "why",
+    "status": "merged",
+    "text": "The global ~/.claude/CLAUDE.md imports agent-agnostic-prompt.md (its line 71) and still keeps its own Code Changes, Error Recovery and Security sections, which state three of the import's rules again: \"Write every change as if it ships to production\", blocked after two or three attempts, and never reading private keys, .env files or credentials",
+    "proposed_for": "P74",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o '@/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md\\|NEVER read, access, or attempt to access private keys\\|Never read, print or search private keys\\|Write every change as if it ships to production\\|blocked after 2-3 attempts\\|blocked after two or three attempts' ~/.claude/CLAUDE.md agent-agnostic-prompt.md",
+        "output": "CLAUDE.md:21:Write every change as if it ships to production\nCLAUDE.md:31:blocked after 2-3 attempts\nCLAUDE.md:34:NEVER read, access, or attempt to access private keys\nCLAUDE.md:71:@/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md\nagent-agnostic-prompt.md:25:Never read, print or search private keys\nagent-agnostic-prompt.md:28:Write every change as if it ships to production\nagent-agnostic-prompt.md:28:blocked after two or three attempts",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W91",
+    "made": {
+      "at": "2026-10-08T21:52+02:00",
+      "by": "logoslang-why-P74-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "merged into W91",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W95",
+    "kind": "why",
+    "status": "accepted",
+    "text": "SKILL.md's rule Every ruling is recorded in its home gives one recording form for both homes, a Ruled line with the date, Thobias and his words, sending only what it supersedes to the history file, so a skill ruling recorded by it puts his words and the date into SKILL.md, against SKILL.md's head line that keeps one clause of reason there and the story in SKILL_HISTORY.md",
+    "proposed_for": "P74",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/SKILL_HISTORY.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude/skills/orchestrate && grep -n -o \"Each rule here keeps one clause of reason[^.]*\\|Put it at the rule it touches: a Ruled line ([^)]*)\\|What it supersedes goes under the same heading in the history file beside it\" SKILL.md",
+        "output": "8:Each rule here keeps one clause of reason; the story behind it, with his words and the date, is in `SKILL_HISTORY\n70:Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason)\n70:What it supersedes goes under the same heading in the history file beside it",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "cd ~/.claude/skills/orchestrate && grep -n -o -F -e 'change \"why runs\" and \"solution talks\"' -e 'rename .agents/orchistrate/history' SKILL.md SKILL_HISTORY.md",
+        "output": "SKILL.md:14:change \"why runs\" and \"solution talks\"\nSKILL.md:56:rename .agents/orchistrate/history\nSKILL_HISTORY.md:13:change \"why runs\" and \"solution talks\"\nSKILL_HISTORY.md:43:rename .agents/orchistrate/history",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -n -o 'Each rule here keeps one clause of reason.\\{0,110\\}\\|Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason)\\|A skill ruling that must wait is a Pending line here, at the rule it touches, in the same form' SKILL.md",
+        "output": "SKILL.md:8:Each rule here keeps one clause of reason; the story behind it, with his words and the date, is in `SKILL_HISTORY.md` beside this file, under the same\nSKILL.md:28:A skill ruling that must wait is a Pending line here, at the rule it touches, in the same form\nSKILL.md:70:Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason)",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -c -F -e 'could stack up alot' -e 'so boring to read' -e 'the rca agent is wrong' -e 'i want a reciept file' -e 'rename .agents/orchistrate/history' -e 'yes that proposition is good' SKILL.md SKILL_HISTORY.md; dated passages of SKILL.md",
+        "output": "SKILL.md:5\nSKILL_HISTORY.md:7\nSKILL.md:49 (8 October 2026, Q75 and Q77) ... \"could stack up alot before solutions could even run\"\nSKILL.md:50 Pending (8 October 2026, Q78)\nSKILL.md:67 (7 October 2026): \"but when you are making rulings youreslf i want a reciept file ...\"\nSKILL.md:95 (8 October 2026, Q75 and Q77): either \"the rca agent is wrong or the solutions wasnt fixed properly ...\"",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "SKILL.md's recording step has one form for every home: \"Every ruling is recorded in its home\" says \"Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason)\", and its memory paragraph makes a waiting skill ruling \"a Pending line here ... in the same form\"; with SKILL.md as the home, that writes his words and the date into SKILL.md, against its own line 8 (one clause of reason here, the story in SKILL_HISTORY.md), so his quotes stand in both files"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:52+02:00",
+      "by": "logoslang-why-P74-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "accepted as a why of P74, same as W97",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W96",
+    "kind": "why",
+    "status": "merged",
+    "text": "The global ~/.claude/CLAUDE.md, under \"Rulings and their records\" and at the end of \"Code Changes\", states two rules of how the orchestrator works (a ruling on the orchestrator in every repo is recorded in SKILL.md; an orchestrator writes a waiting ruling as a Pending line in KNOWLEDGE.md), which SKILL.md states too, and the first of them makes SKILL.md the only home of such a rule",
+    "proposed_for": "P74",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o 'recorded in `~/.claude/skills/orchestrate/SKILL.md`\\|recorded in this skill, never in a repo.s ruling document\\|as a Pending line in the repo.s KNOWLEDGE.md\\|writes it as a \\*\\*Pending\\*\\* line in KNOWLEDGE.md\\|is a Pending line in the ruling document' ~/.claude/CLAUDE.md SKILL.md",
+        "output": "CLAUDE.md:26:as a Pending line in the repo's KNOWLEDGE.md\nCLAUDE.md:86:writes it as a **Pending** line in KNOWLEDGE.md\nCLAUDE.md:86:recorded in `~/.claude/skills/orchestrate/SKILL.md`\nSKILL.md:10:recorded in this skill, never in a repo's ruling document\nSKILL.md:28:is a Pending line in the ruling document\nSKILL.md:70:recorded in this skill, never in a repo's ruling document",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W93",
+    "made": {
+      "at": "2026-10-08T21:52+02:00",
+      "by": "logoslang-why-P74-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "merged into W93",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W97",
+    "kind": "why",
+    "status": "merged",
+    "text": "SKILL.md's recording step has one form for every home: \"Every ruling is recorded in its home\" says \"Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason)\", and its memory paragraph makes a waiting skill ruling \"a Pending line here ... in the same form\"; with SKILL.md as the home, that writes his words and the date into SKILL.md, against its own line 8 (one clause of reason here, the story in SKILL_HISTORY.md), so his quotes stand in both files",
+    "proposed_for": "P74",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/SKILL_HISTORY.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o 'Each rule here keeps one clause of reason.\\{0,110\\}\\|Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason)\\|A skill ruling that must wait is a Pending line here, at the rule it touches, in the same form' SKILL.md",
+        "output": "SKILL.md:8:Each rule here keeps one clause of reason; the story behind it, with his words and the date, is in `SKILL_HISTORY.md` beside this file, under the same\nSKILL.md:28:A skill ruling that must wait is a Pending line here, at the rule it touches, in the same form\nSKILL.md:70:Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason)",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -c -F -e 'could stack up alot' -e 'so boring to read' -e 'the rca agent is wrong' -e 'i want a reciept file' -e 'rename .agents/orchistrate/history' -e 'yes that proposition is good' SKILL.md SKILL_HISTORY.md; dated passages of SKILL.md",
+        "output": "SKILL.md:5\nSKILL_HISTORY.md:7\nSKILL.md:49 (8 October 2026, Q75 and Q77) ... \"could stack up alot before solutions could even run\"\nSKILL.md:50 Pending (8 October 2026, Q78)\nSKILL.md:67 (7 October 2026): \"but when you are making rulings youreslf i want a reciept file ...\"\nSKILL.md:95 (8 October 2026, Q75 and Q77): either \"the rca agent is wrong or the solutions wasnt fixed properly ...\"",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W95",
+    "made": {
+      "at": "2026-10-08T21:52+02:00",
+      "by": "logoslang-why-P74-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T21:53+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2225d4d",
+        "change": "merged into W95",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P91",
+    "kind": "problem",
+    "status": "open",
+    "text": "A line after a return that always leaves the function is accepted and never runs, on both tiers",
+    "program": "f := fn () -> i32 ( return i32 5, i32 6 ), f()",
+    "output": "5\nexit 0  (the same with f.compile() before f(); and f := fn (c := i32 ?) -> i32 ( if c == i32 1 (return i32 1) else (return i32 2), i32 3 ), f(i32 1) prints 1, exit 0)",
+    "expected": "an error at i32 6, where it is written: ›A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function‹, Ruled 8 October 2026 (Thobias, Q72): 'anything written after a statically guaranteed return should be an error'",
+    "tier": "interpreted and compiled",
+    "found": "logoslang-help-4, 8 Oct 2026, dev b101dfd",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:54+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2225d4d",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P92",
+    "kind": "problem",
+    "status": "open",
+    "text": "A pub pattern name in an imported file does not reach the importer as a pattern: the importer gets the pattern's literal spelling",
+    "program": "in a folder holding pattern.logos with the line: pub regex «[0-9]+\\\\.k» := type (),\nlogos 'import ./pattern.logos, (5.k).type == type'",
+    "output": "<command line>:1:29: error: this operator cannot compute over these operands\nexit 1  (the same declaration on the command line, logos 'regex «[0-9]+\\\\.k» := type (), (5.k).type == type', prints true)",
+    "expected": "true, as on the command line: ›Importing is dropping the text there, wrapped in its own scope‹, 'Upward, only `pub` escapes', and the file means the same wherever it is imported",
+    "tier": "interpreted",
+    "found": "logoslang-help-4, 8 Oct 2026, dev b101dfd; probe file .agents/orchestrator/tmp/import-probe/pattern.logos",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:54+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2225d4d",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P93",
+    "kind": "problem",
+    "status": "open",
+    "text": "Freeing an imported pub name ends only the importer's own binding: the file's function that reads it is still accepted, and fails only when it runs",
+    "program": "in a folder holding heap.logos with the lines: pub c := alloc 1 of i32 7,  pub get := fn () -> i32 ( return c@ ),\nlogos 'import ./heap.logos, free c, get()'",
+    "output": "<command line>: run error: this pointer holds nothing yet\nexit 1  (with lib.logos holding pub mut counter := i32 10 and pub peek := fn () -> i32 ( return counter ), 'import ./lib.logos, free counter, peek()' prints 10)",
+    "expected": "never a run error: the free is refused, or get() is the dead-name error where it is written (›A call is a use of every outer name the callee's body reads‹); which of the two is open (›`free x` works on any identity‹, its Open line: a borrowed read by an imported file is the borrow checker's question, #35)",
+    "tier": "interpreted",
+    "found": "logoslang-help-4, 8 Oct 2026, dev b101dfd; probe files in .agents/orchestrator/tmp/import-probe/",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:54+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2225d4d",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W98",
+    "kind": "why",
+    "status": "draft",
+    "text": "agent-agnostic-prompt.md is also imported raw into every session by the global CLAUDE.md, so it has no blanks ({{ORCH}}, {{RULING_DOC}}, {{ORCH_DIR}}), yet it states the orchestrator's protocol in generic words (FOUND and never filed, PWS.json, ANSWER, only the orchestrator writes the ruling document, search it rather than reading it whole); every-prompt.md, the shared file that carries the repo's names, states the same rules again with the names filled in",
+    "proposed_for": "W90",
+    "why": null,
+    "anchors": [
+      "compose_prompt",
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md",
+      "~/.claude/skills/orchestrate/every-prompt.md",
+      "~/.claude/CLAUDE.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -c '{{' agent-agnostic-prompt.md every-prompt.md; grep -n -o '@/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md' ~/.claude/CLAUDE.md",
+        "output": "agent-agnostic-prompt.md:0\nevery-prompt.md:6\nCLAUDE.md:71:@/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -n -o 'the orchestrator[^.;]\\{0,50\\}\\|`FOUND`[^.;]\\{0,30\\}\\|PWS.json\\|`ANSWER`' agent-agnostic-prompt.md; grep -n -o '`{{[A-Z_]*}}`' every-prompt.md",
+        "output": "agent-agnostic-prompt.md:9:the orchestrator writes the ruling document and its history file\nagent-agnostic-prompt.md:9:`ANSWER`\nagent-agnostic-prompt.md:12:`FOUND` and never filed\nagent-agnostic-prompt.md:12:PWS.json\nevery-prompt.md:4:`{{ORCH}}` (FOUND)\nevery-prompt.md:8:`{{RULING_DOC}}` (search it, never read it whole)\nevery-prompt.md:10:`{{ORCH_DIR}}` `{{RULING_DOC}}` `{{ORCH}}` (who writes them)",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:55+02:00",
+      "by": "logoslang-why-P74-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W99",
+    "kind": "why",
+    "status": "draft",
+    "text": "agent-agnostic-prompt.md's ### Files, commands and git takes in rules of three topics the global CLAUDE.md keeps as sections of its own (ships to production from ## Code Changes, blocked after two or three attempts from ## Error Recovery, never read secret files from ## Security), while CLAUDE.md's import line, which lists what the imported file holds, names only the faithfulness protocol, root causes, comments, how files and commands are handled and branches; so those three sections read as topics the import does not cover and stay",
+    "proposed_for": "W91",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o 'The faithfulness protocol for KNOWLEDGE.md.\\{0,170\\}' ~/.claude/CLAUDE.md; grep -n '^## ' ~/.claude/CLAUDE.md; grep -n '^### ' agent-agnostic-prompt.md; grep -n -o 'Never read, print or search private keys\\|Write every change as if it ships to production\\|blocked after two or three attempts' agent-agnostic-prompt.md",
+        "output": "CLAUDE.md:70:The faithfulness protocol for KNOWLEDGE.md, root causes before symptoms, the comment rules, how files and commands are handled, and the branch rules are in one file, which every prompt the orchestrator composes c...\nCLAUDE.md:20:## Code Changes\nCLAUDE.md:28:## Error Recovery\nCLAUDE.md:33:## Security\nCLAUDE.md:69:## The rules every agent follows, in every repo\nagent-agnostic-prompt.md:22:### Files, commands and git\nagent-agnostic-prompt.md:25:Never read, print or search private keys\nagent-agnostic-prompt.md:28:Write every change as if it ships to production\nagent-agnostic-prompt.md:28:blocked after two or three attempts",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:55+02:00",
+      "by": "logoslang-why-P74-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W100",
+    "kind": "why",
+    "status": "draft",
+    "text": "The global CLAUDE.md's record rules speak to every session (\"Probable decisions can still be stored in mem0\"; a ruling is recorded \"in KNOWLEDGE.md\"), and neither SKILL.md nor agent-agnostic-prompt.md says that SKILL.md's rules win over CLAUDE.md for the orchestrator (agent-agnostic-prompt.md gives precedence only to the repo's own AGENTS.md files); so each skill ruling that differs from those rules is written into CLAUDE.md as an orchestrator clause, as SKILL_HISTORY.md records for the Pending lines",
+    "proposed_for": "W93",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/SKILL_HISTORY.md",
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o 'Probable decisions can still be stored in mem0.\\{0,200\\}' ~/.claude/CLAUDE.md; grep -n -o 'record it in the same session: in KNOWLEDGE.md' ~/.claude/CLAUDE.md; grep -n 'CLAUDE.md' SKILL.md | cut -c1-60; grep -n -o 'where those say otherwise for that repo, they win' agent-agnostic-prompt.md; grep -n -o 'two lines on pending edits in auto-memory were changed the same day to say so for an orchestrator' SKILL_HISTORY.md",
+        "output": "CLAUDE.md:26:Probable decisions can still be stored in mem0 for future reference even before confirmation; an orchestrator stores them as a Pending line in the repo's KNOWLEDGE.md instead, never in mem0 or auto-memory.\nCLAUDE.md:86:record it in the same session: in KNOWLEDGE.md\nSKILL.md:16, :32, :47 name a CLAUDE.md only for a repo's commands or the script, never for which rules win\nagent-agnostic-prompt.md:3:where those say otherwise for that repo, they win\nSKILL_HISTORY.md:23:two lines on pending edits in auto-memory were changed the same day to say so for an orchestrator",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:55+02:00",
+      "by": "logoslang-why-P74-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W101",
+    "kind": "why",
+    "status": "draft",
+    "text": "agent-agnostic-prompt.md, which the global CLAUDE.md imports into every session and SKILL.md describes as the rules every agent follows in every repo, is written in the orchestrator's own protocol (FOUND, ANSWER, the orchestrator puts it in PWS.json, Only the orchestrator writes the ruling document), so it holds the orchestrator agents' rules, the scope every-prompt.md already holds, instead of only the rules that stand with or without an orchestrator",
+    "proposed_for": "W90",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md",
+      "~/.claude/skills/orchestrate/every-prompt.md",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/CLAUDE.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude/skills/orchestrate && grep -n -o -E \"orchestrator[^.;:]{0,50}|FOUND|PWS\\.json|ANSWER\" agent-agnostic-prompt.md",
+        "output": "3:orchestrator's agents, in the repo's `\n6:orchestrator/KNOWLEDGE\n9:orchestrator writes the ruling document and its history file\n9:ANSWER\n12:FOUND\n12:orchestrator puts it in the repo's problem graph (`PWS\n26:orchestrator",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "cd ~/.claude/skills/orchestrate && grep -n -o -E \"every-prompt\\.md[^.;]{0,20}|agent-agnostic-prompt\\.md. \\([^)]*\\)\" SKILL.md",
+        "output": "16:every-prompt.md`, `linear-prompt\n16:agent-agnostic-prompt.md` (the rules every agent follows in every repo, which the owner's global CLAUDE.md imports too)\n18:every-prompt.md` asks every agent t",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "grep -n '^@' ~/.claude/CLAUDE.md",
+        "output": "71:@/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:55+02:00",
+      "by": "logoslang-why-P74-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W102",
+    "kind": "why",
+    "status": "draft",
+    "text": "The global CLAUDE.md names what its import holds by a hand-kept list of five topics (the faithfulness protocol, root causes, the comment rules, files and commands, the branch rules), while agent-agnostic-prompt.md's ### Files, commands and git also holds three rules outside them (changes as if they ship to production, blocked after two or three attempts, secret files), so CLAUDE.md's ## Code Changes, ## Error Recovery and ## Security show no sign that the import already holds their rules",
+    "proposed_for": "W91",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude && grep -n -o -E \"The faithfulness protocol for KNOWLEDGE.md, root causes before symptoms, the comment rules, how files and commands are handled, and the branch rules are in one file|^##+ [A-Za-z].*\" CLAUDE.md skills/orchestrate/agent-agnostic-prompt.md",
+        "output": "CLAUDE.md:20:## Code Changes\nCLAUDE.md:28:## Error Recovery\nCLAUDE.md:33:## Security\nCLAUDE.md:69:## The rules every agent follows, in every repo\nCLAUDE.md:70:The faithfulness protocol for KNOWLEDGE.md, root causes before symptoms, the comment rules, how files and commands are handled, and the branch rules are in one file\nskills/orchestrate/agent-agnostic-prompt.md:5:### The ruling document comes first\nskills/orchestrate/agent-agnostic-prompt.md:11:### Root causes first\nskills/orchestrate/agent-agnostic-prompt.md:17:### Comments: as few as possible\nskills/orchestrate/agent-agnostic-prompt.md:22:### Files, commands and git",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "cd ~/.claude && grep -n -o \"ships to production [a-z]*\\|blocked after [0-9-]* attempts\\|private keys\\|^@.*agent-agnostic-prompt.md\" CLAUDE.md skills/orchestrate/agent-agnostic-prompt.md",
+        "output": "CLAUDE.md:21:ships to production immediately\nCLAUDE.md:31:blocked after 2-3 attempts\nCLAUDE.md:34:private keys\nskills/orchestrate/agent-agnostic-prompt.md:25:private keys\nskills/orchestrate/agent-agnostic-prompt.md:28:ships to production at",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:55+02:00",
+      "by": "logoslang-why-P74-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W103",
+    "kind": "why",
+    "status": "draft",
+    "text": "The global CLAUDE.md's general rules send every session's records to fixed homes, probable decisions to mem0 in ## Code Changes and a ruling to KNOWLEDGE.md with a waiting wording in auto-memory in ## Rulings and their records, instead of to the home the session's own rules name; the orchestrator must keep nothing in auto-memory and records general rulings in SKILL.md, so each fixed home needs an orchestrator exception written beside it in CLAUDE.md, restating SKILL.md",
+    "proposed_for": "W93",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude && grep -n -o -E \"stored in mem0[^.;]*|as an explicit pending edit in auto-memory|record it in the same session: in KNOWLEDGE.md\" CLAUDE.md",
+        "output": "26:stored in mem0 for future reference even before confirmation\n86:record it in the same session: in KNOWLEDGE.md\n86:as an explicit pending edit in auto-memory",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "cd ~/.claude/skills/orchestrate && grep -n -o -E \"nothing of yours goes into auto-memory|A skill ruling that must wait is a Pending line here, at the rule it touches, in the same form|with the date, his words and what it waits for\" SKILL.md",
+        "output": "28:nothing of yours goes into auto-memory\n28:with the date, his words and what it waits for\n28:A skill ruling that must wait is a Pending line here, at the rule it touches, in the same form",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "cd ~/.claude && grep -n -o \"an orchestrator stores them as a Pending line\\|An orchestrator writes it as a \\*\\*Pending\\*\\* line\\|A ruling whose wording must wait is a Pending line\\|A ruling on how the orchestrator or its prompts work in every repo is recorded in [^,;]*\" CLAUDE.md skills/orchestrate/SKILL.md",
+        "output": "CLAUDE.md:26:an orchestrator stores them as a Pending line\nCLAUDE.md:86:An orchestrator writes it as a **Pending** line\nCLAUDE.md:86:A ruling on how the orchestrator or its prompts work in every repo is recorded in `~/.claude/skills/orchestrate/SKILL.md`",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:56+02:00",
+      "by": "logoslang-why-P74-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W104",
+    "kind": "why",
+    "status": "draft",
+    "text": "No step of SKILL.md writes SKILL_HISTORY.md: the skill's split (one clause of reason in SKILL.md, every rule's story in SKILL_HISTORY.md) stands only as a description in SKILL.md's head line, while the one recording step, Every ruling is recorded in its home, is the ruling document's form (setup/KNOWLEDGE.md: the Ruled line keeps the reason at the rule, the history file takes only what is superseded), and SKILL_HISTORY.md's head says it matches the repos' KNOWLEDGE_HISTORY.md though it holds a different kind of entry",
+    "proposed_for": "W95",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/SKILL_HISTORY.md",
+      "~/.claude/skills/orchestrate/setup/KNOWLEDGE.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n 'SKILL_HISTORY' SKILL.md | cut -c1-80; grep -n -o 'Put it at the rule it touches[^.]*\\|What it supersedes goes under the same heading in the history file beside it, with why' SKILL.md",
+        "output": "SKILL.md:8: ... Each rule here keeps one clause of reason; the story behind it, with his words and the date, is in SKILL_HISTORY.md (a description, not a step)\nSKILL.md:67: ... it supersedes the placed-and-closed step of that morning (SKILL_HISTORY.md). (a citation, not a step)\nSKILL.md:70:Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason), a new ### rule, or a Rejected line\nSKILL.md:70:What it supersedes goes under the same heading in the history file beside it, with why",
+        "commit": "b101dfd"
+      },
+      {
+        "command": "sed -n 5p setup/KNOWLEDGE.md; grep -n -o 'The story behind each rule in `SKILL.md`[^.]\\{0,80\\}\\|matching the repos. `KNOWLEDGE_HISTORY.md`' SKILL_HISTORY.md",
+        "output": "setup/KNOWLEDGE.md:5: A rule carries its reason. A ruling on it is a **Ruled** line: the date, who, and the reason. ... What a ruling supersedes goes to KNOWLEDGE_HISTORY.md beside this file, under the same heading, with why.\nSKILL_HISTORY.md:3:The story behind each rule in SKILL.md and the prompts beside it: Thobias's words, the date, the case that prompted it\nSKILL_HISTORY.md:3:matching the repos' KNOWLEDGE_HISTORY.md",
+        "commit": "b101dfd"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T21:56+02:00",
+      "by": "logoslang-why-P74-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "why-P74",
+      "agent": "B"
     },
     "history": []
   }
