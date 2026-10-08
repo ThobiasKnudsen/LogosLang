@@ -19446,7 +19446,8 @@
     "text": "moved_out walks both arms of an if and, at every call, the callee's whole FN_BODY again, keeping no answer per function, so the walk handed_ends starts on f_n's arm calls reaches f0's body once per path, 2^n times; MOVES_OUT_DEPTH caps depth (one per function), not paths",
     "proposed_for": "P112",
     "why": [
-      "W207"
+      "W207",
+      "W208"
     ],
     "anchors": [
       "moved_out",
@@ -19545,6 +19546,15 @@
         "effort": "xhigh",
         "commit": "f9f87e6",
         "change": "why + W207",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T01:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "57cb92e",
+        "change": "why + W208",
         "reason": null
       }
     ]
@@ -19732,7 +19742,7 @@
   {
     "id": "W208",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "handed_ends lets an if's arms differ wherever one arm's answer is None, a call the parse cannot see into or a value with no end (its (a, b) => Ok(a.or(b)) arm), so the then arm's answer is not the if's: moved_out, though its comment says the then arm's is it, walks the else arm too, to hand on that arm's Unknown or Stays",
     "proposed_for": "W205",
     "why": null,
@@ -19740,10 +19750,13 @@
       "handed_ends",
       "moved_out",
       "ArmsMakeAndBorrow",
-      "src/identities/drop_model.rs"
+      "src/identities/drop_model.rs",
+      "Out"
     ],
     "design": [
-      "`if` reads its own right side"
+      "`if` reads its own right side",
+      "`move` and `free` are static: the parse marks the name dead",
+      "Reading a program takes time in step with its size; no walk runs once per path"
     ],
     "pages": [],
     "evidence": [
@@ -19766,12 +19779,35 @@
         "command": "bash why-probes/variants.sh 22   (one walked path per function when only the then arm calls)",
         "output": "both-arms  -> @i32 ( if (c == 1) (PREV()) else (PREV()) )          out=7 time=1.013s\nthen-only  -> @i32 ( if (c == 1) (PREV()) else (alloc 1 of i32 6) ) out=7 time=0.013s",
         "commit": "c32cf74"
+      },
+      {
+        "command": "grep -n -A14 'A used .if. ends its value alike' src/identities/drop_model.rs",
+        "output": "929:    // A used `if` ends its value alike in every arm (`handed_ends`), so the then arm's is it.\n930-    if logos == types.if_ {\n936-        let then_out = moved_out(types, then, depth);\n937-        let Out::Moves(out) = then_out else {\n938-            return then_out;\n939-        };\n940-        return match moved_out(types, els, depth) {\n941-            Out::Moves(_) => Out::Moves(out),\n942-            els_out => els_out,\n943-        };",
+        "commit": "2f88fbe"
+      },
+      {
+        "command": "bash why-probes/chain.sh 10 SHAPE gdb why-probes/count.gdb | grep -E 'already hit'   (breakpoint 1 moved_out, 2 handed_ends; 10 fns; SHAPE both: both arms call f(i-1); then: then arm calls, else arm alloc; else: then arm alloc, else arm calls)",
+        "output": "both: moved_out 32591, handed_ends 61\nthen: moved_out 675, handed_ends 61\nelse: moved_out 675, handed_ends 61\n(once the then arm moves, the else arm's chain is walked as fully as a then arm's; walking both is what doubles the count per function)",
+        "commit": "2f88fbe"
+      },
+      {
+        "command": "for s in both then else; do bash why-probes/chain.sh 22 $s; done; bash why-probes/chain.sh 20 both   (interpreted, release, 2f88fbe)",
+        "output": "n=22 both: out=7 exit=0 time=953 ms\nn=22 then: out=7 exit=0 time=10 ms\nn=22 else: out=7 exit=0 time=10 ms\nn=20 both: out=7 exit=0 time=263 ms",
+        "commit": "2f88fbe"
+      },
+      {
+        "command": "grep -n -o 'Not yet: an arm the parse cannot see through.\\{0,330\\}' DESIGN.md   (the Seed line of the rule: what the else arm's Unknown is handed on for)",
+        "output": "406:Not yet: an arm the parse cannot see through, a function's call to itself or calls nested deeper than it follows, agrees with every other arm, and a name bound to its value owns nothing, so what it made leaks: `y := i32 4, x := if c (mk(3)) else (&y)` over a recursive `mk` that makes its value is accepted, and which arm of a recursive function comes first can decide whether the parse sees through it",
+        "commit": "2f88fbe"
       }
     ],
     "found_by": [
-      "A"
+      "A",
+      "D"
     ],
-    "aliases": [],
+    "aliases": [
+      "moved_out's if case does not take the then arm's answer: when the then arm moves it walks the else arm as well (match moved_out(types, els, depth)), only to hand on an else arm's Out::Unknown or Out::Stays, though handed_ends already refuses known arms that mix made and borrowed and the comment above the case says the then arm's answer is the if's; so the walk splits in two at every if whose then arm moves"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T00:50+02:00",
@@ -19782,7 +19818,17 @@
       "run": "why-P112",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T01:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "57cb92e",
+        "change": "accepted as a why of W205, same as W214",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W209",
@@ -20019,7 +20065,7 @@
   {
     "id": "W212",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "moved_out works an if's answer out from both arms on every ask and keeps it nowhere: the if node's six words are cond, then, else and three end lists (IF_THEN_ENDS, IF_ELSE_ENDS, IF_CONDITION_ENDS), since the Q72 ruling at ›A node's output type is per node‹ has an if store nothing of what it gives and leaves speed to a cache, and moved_out takes no cache; so where both arms call the same function the else arm walks again all the then arm just walked, doubling the walk at each if on the path",
     "proposed_for": "W205",
     "why": null,
@@ -20073,7 +20119,17 @@
       "run": "why-P112",
       "agent": "C"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T01:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "57cb92e",
+        "change": "rejected",
+        "reason": "restates W205 (moved_out keeps no answer): the else arm re-walks only because nothing keeps an answer, which W205 states and W207 explains at the call; its pointer, that Q72 has an if store nothing and leaves speed to a cache, goes to the solution agent"
+      }
+    ]
   },
   {
     "id": "W213",
@@ -20169,6 +20225,97 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "7493c94",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W214",
+    "kind": "why",
+    "status": "merged",
+    "text": "moved_out's if case does not take the then arm's answer: when the then arm moves it walks the else arm as well (match moved_out(types, els, depth)), only to hand on an else arm's Out::Unknown or Out::Stays, though handed_ends already refuses known arms that mix made and borrowed and the comment above the case says the then arm's answer is the if's; so the walk splits in two at every if whose then arm moves",
+    "proposed_for": "W205",
+    "why": null,
+    "anchors": [
+      "moved_out",
+      "handed_ends",
+      "Out",
+      "ArmsMakeAndBorrow",
+      "src/identities/drop_model.rs"
+    ],
+    "design": [
+      "`move` and `free` are static: the parse marks the name dead",
+      "Reading a program takes time in step with its size; no walk runs once per path"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -A14 'A used .if. ends its value alike' src/identities/drop_model.rs",
+        "output": "929:    // A used `if` ends its value alike in every arm (`handed_ends`), so the then arm's is it.\n930-    if logos == types.if_ {\n936-        let then_out = moved_out(types, then, depth);\n937-        let Out::Moves(out) = then_out else {\n938-            return then_out;\n939-        };\n940-        return match moved_out(types, els, depth) {\n941-            Out::Moves(_) => Out::Moves(out),\n942-            els_out => els_out,\n943-        };",
+        "commit": "2f88fbe"
+      },
+      {
+        "command": "bash why-probes/chain.sh 10 SHAPE gdb why-probes/count.gdb | grep -E 'already hit'   (breakpoint 1 moved_out, 2 handed_ends; 10 fns; SHAPE both: both arms call f(i-1); then: then arm calls, else arm alloc; else: then arm alloc, else arm calls)",
+        "output": "both: moved_out 32591, handed_ends 61\nthen: moved_out 675, handed_ends 61\nelse: moved_out 675, handed_ends 61\n(once the then arm moves, the else arm's chain is walked as fully as a then arm's; walking both is what doubles the count per function)",
+        "commit": "2f88fbe"
+      },
+      {
+        "command": "for s in both then else; do bash why-probes/chain.sh 22 $s; done; bash why-probes/chain.sh 20 both   (interpreted, release, 2f88fbe)",
+        "output": "n=22 both: out=7 exit=0 time=953 ms\nn=22 then: out=7 exit=0 time=10 ms\nn=22 else: out=7 exit=0 time=10 ms\nn=20 both: out=7 exit=0 time=263 ms",
+        "commit": "2f88fbe"
+      },
+      {
+        "command": "grep -n -o 'Not yet: an arm the parse cannot see through.\\{0,330\\}' DESIGN.md   (the Seed line of the rule: what the else arm's Unknown is handed on for)",
+        "output": "406:Not yet: an arm the parse cannot see through, a function's call to itself or calls nested deeper than it follows, agrees with every other arm, and a name bound to its value owns nothing, so what it made leaks: `y := i32 4, x := if c (mk(3)) else (&y)` over a recursive `mk` that makes its value is accepted, and which arm of a recursive function comes first can decide whether the parse sees through it",
+        "commit": "2f88fbe"
+      }
+    ],
+    "found_by": [
+      "D"
+    ],
+    "aliases": [],
+    "merged_into": "W208",
+    "made": {
+      "at": "2026-10-09T01:07+02:00",
+      "by": "logoslang-why-P112-d",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2f88fbe",
+      "run": "why-P112",
+      "agent": "D"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T01:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "57cb92e",
+        "change": "merged into W208",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P122",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch each function's close starts the ownership walk 8 times where once would do: handed_ends runs on the same if twice, from if::output_type and from fn_over_body, and for each arm asks moved_out twice, directly and through teardown_of and owning_pointee_of",
+    "program": "c := i32 1, f0 := fn () -> @i32 ( alloc 1 of i32 5 ), f1 := fn () -> @i32 ( if (c == 1) (f0()) else (f0()) ), 7",
+    "output": "7; under gdb, handed_ends is hit 6 times per function and moved_out is started 8 times per function close, on branch issue-82-output-type 2f88fbe",
+    "expected": "each function's body walked for its ownership answer once (DESIGN ›Reading a program takes time in step with its size; no walk runs once per path‹: an answer a walk needs again for the same node is kept)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P112-d and logoslang-why-P112-c (P112 why round on W205, why-probes/callers.gdb)",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T01:07+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "57cb92e",
       "run": null,
       "agent": null
     },
