@@ -1004,7 +1004,7 @@ The eager-segment model (›The scope's constructor is the driver‹). Higher bi
 
 ### Reading a program takes time in step with its size; no walk runs once per path
 Every walk the reading adds (a check over a body, an ownership walk, a search for a name) visits each node a bounded number of times. An answer a walk needs again for the same node is kept, not walked again. So a chain of 30 functions, each calling the one before in both arms of an `if`, reads in time in step with 30, not with 2^30; an `if` with 2,000 `else if` arms reads in time in step with 2,000, not with 2,000².
-- **Why:** Thobias, after a branch read such a chain a hundredfold slower than `dev`, its time doubling with each function: "its quite concerning that an implementation agent could allow such slow and non scalable code. how is that even possible."
+- **Why:** Thobias, after a branch read such a chain a hundredfold slower than `dev`, its time doubling with each function: "its quite concerning that an implementation agent could allow such slow and non scalable code. how is that even possible." A walk that slow points to a wrong design, so it is traced to its cause before it is fixed: "the fact that it got so slow means the solution is likely wrong."
 - **Ruled:** 9 October 2026, Thobias: this rule, and a speed probe (a long chain, a wide `if`) in every review round.
 
 ### `parse_rank` is one `f64` on one shared axis, and may be relative
