@@ -13600,7 +13600,8 @@
     "text": "The bracket depth has no count of its own: check_depth reads it as the length of Context.open, the list of OpenScope records each open scope's end runs from, a field of the sub-parse's Context and not of Parser; Context::nested carries five fields of the interrupted Context (dir, held_depth, last_declared, last_write, reader) and takes everything else from Context::top, open included, so a sub-parse's fresh scope list is a fresh depth",
     "proposed_for": "W120",
     "why": [
-      "W138"
+      "W138",
+      "W158"
     ],
     "anchors": [
       "check_depth",
@@ -13677,6 +13678,15 @@
         "commit": "d3ab677",
         "change": "why + W138",
         "reason": "A and B: no rule says what counts toward the drive's depth or that a body built inside a bracket adds to it, so nothing called for a count of its own and the depth was left as one text's scope list"
+      },
+      {
+        "at": "2026-10-08T22:25+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "ffe09a1",
+        "change": "why + W158",
+        "reason": null
       }
     ]
   },
@@ -13914,7 +13924,7 @@
   {
     "id": "W148",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "Neither DESIGN.md nor a page it links has a rule for what a parse's read of its own node's number field gives during the parse: the two-moments sentence of ›A field is filled at run, per evaluation; its type decides how the operand is used‹ says only what the slot holds at parse (the operand node), and ›A tape read checked against a number type reads as that number‹ (a constant reads as its value, a name or expression is the checked error, never evaluated in the parse) covers `tape[k]` cells, not `tape[0].f`; the seed filled the gap by value, pinned by the test `a_number_field_is_read_and_written_by_value_in_a_parse_body` (`tape[0].m = tape[0].n * 2` gives 6), so `build_field_read` reads every number field as its type, a name in the slot included",
     "proposed_for": "W124",
     "why": null,
@@ -13955,7 +13965,17 @@
       "run": "why-P47",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:25+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "ffe09a1",
+        "change": "rejected",
+        "reason": "withdrawn by A: ›A field is filled at run…‹ (at parse the slot holds the operand node) and ›Reading a path runs nothing‹ (Ruled 30 September 2026: tape[0].lhs inside a parse reads the node; a name, literal or place stands as itself) decide every case it named, P47's copy and the seed test's constant alike"
+      }
+    ]
   },
   {
     "id": "W149",
@@ -14045,7 +14065,7 @@
     "status": "accepted",
     "text": "DESIGN.md makes a cell's pointer and its flag two separate things written by two separate writes: ›is_constructed is the tape's own list‹ keeps the flag as a linked list parallel to the cells, never a field of the dyad, and ›The constructor sets the flag itself; a tape write never sets it‹ says a write to tape[k] replaces the pointer, nothing more; the seed mirrors this as two independent Cell fields with one setter each (set_dyad, set_constructed), so the pair \"flagged and holds a node\" spans two writes in either order and no single write is the place where both are known",
     "proposed_for": "W127",
-    "why": null,
+    "why": [],
     "anchors": [
       "Cell",
       "set_dyad",
@@ -14110,6 +14130,15 @@
         "commit": "d3ab677",
         "change": "accepted as a why of W127, same as W151",
         "reason": "B and A blind to each other: DESIGN makes the flag and the node two separate writes (›is_constructed is the tape's own list‹: a list parallel to the cells; ›The constructor sets tape.is_constructed[0] = true itself; a tape write never sets it‹: a write to tape[k] replaces the pointer, nothing more), and Cell copies that as two fields with one setter each"
+      },
+      {
+        "at": "2026-10-08T22:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "ffe09a1",
+        "change": "asked: no why found",
+        "reason": "A and B: none; a DESIGN fact with its own ruled reason (›The constructor sets tape.is_constructed[0] = true itself; a tape write never sets it‹: a constructor may leave an unfinished value, so a write cannot mean done), which the code mirrors; what leaves both writes without a condition is W123"
       }
     ]
   },
@@ -14324,7 +14353,7 @@
   {
     "id": "W154",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "Context.open is the scope-end stack of the text being parsed (each OpenScope holds its exit items, unrun lines, ended and narrowed names), read by position from that text's top (hold writes open[0] or open[len-1], close_line closes open[len-1]), so a sub-parse can carry the depth only by sharing the outer text's scope ends: the import does so on purpose to share one drain, an inline fn body does so with OpenFn.open_below marking its base, and construct_run_body and construct_held_type, whose bodies end apart from the bracket they are built in, start their own, and their depth with it",
     "proposed_for": "W143",
     "why": null,
@@ -14358,7 +14387,7 @@
       "B"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W158",
     "made": {
       "at": "2026-10-08T22:22+02:00",
       "by": "logoslang-why-P23-b",
@@ -14368,7 +14397,17 @@
       "run": "why-P23",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:25+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "ffe09a1",
+        "change": "merged into W158",
+        "reason": "C and B blind to each other: the depth is read off Context.open, the scope-end stack, so it crosses into a sub-parse only where the scope ends do (the import shares them on purpose; a run body or a held type ends apart from its bracket and starts its own), and which of Context's fields cross is decided field by field; one pass-wide count removes W143"
+      }
+    ]
   },
   {
     "id": "W155",
@@ -14460,7 +14499,7 @@
     "id": "W156",
     "kind": "why",
     "status": "accepted",
-    "text": "The read tape[k] hands a constructor the cell's raw pointer as a value, null for a fresh spelling: run_slot returns read_cell(...).dyad with no check, while its sibling run_slot_name refuses a cell with no binding (RunError::NoName) and slot_cell refuses a null scope (NotAScope); so tape[0] = tape[1] over zz gets a null to store, though «What still holds of the old lifecycle» makes reading a null slot a checked error and «The seed's tape shape» calls an unknown spelling's cell the spelling alone, no node",
+    "text": "The read tape[k] hands a constructor the cell's raw pointer as a value, null for a fresh spelling: run_slot returns read_cell(...).dyad with no check, while its sibling run_slot_name refuses a cell with no binding (RunError::NoName) and slot_cell refuses a null only on its bracket branch; so tape[0] = tape[1] over zz gets a null to store, though «What still holds of the old lifecycle» makes reading a null slot a checked error and «The seed's tape shape» calls an unknown spelling's cell the spelling alone, no node",
     "proposed_for": "W112",
     "why": null,
     "anchors": [
@@ -14529,7 +14568,360 @@
         "commit": "d3ab677",
         "change": "accepted as a why of W112, same as W147",
         "reason": "D and C blind to each other: run_slot (tape[k]) hands a fresh spelling's missing node out as a raw null with no check, while its siblings refuse it, so tape[0] = tape[1] gives set_dyad a null to store; against ›What still holds of the old lifecycle‹ (reading a null slot is a checked error); explains W112's copy half"
+      },
+      {
+        "at": "2026-10-08T22:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "ffe09a1",
+        "change": "text was \"The read tape[k] hands a constructor the cell's raw pointer as a value, null for a fresh spelling: run_slot returns read_cell(...).dyad with no check, while its sibling run_slot_name refuses a cell with no binding (RunError::NoName) and slot_cell refuses a null scope (NotAScope); so tape[0] = tape[1] over zz gets a null to store, though «What still holds of the old lifecycle» makes reading a null slot a checked error and «The seed's tape shape» calls an unknown spelling's cell the spelling alone, no node\"",
+        "reason": "B (round on W156): slot_cell's cell branch passes rt.through(cell.dyad) on, null included; it refuses a null only on its bracket branch (tape[1].type and tape[1].dyads exit 139 on h zz, dev 9c123fb, why-probes/p31-b3.txt)"
       }
     ]
+  },
+  {
+    "id": "W157",
+    "kind": "why",
+    "status": "draft",
+    "text": "Neither DESIGN.md nor a page it links says what value the read tape[k] gives on a cell that holds the spelling alone: «A tape read checked against a number type reads as that number» says tape[k] hands a constructor the cell, «The seed's tape shape» says an unknown spelling's cell is the spelling alone, «What lex returns: a parsing_tape fragment» says a cell with no node is not an error, «What still holds of the old lifecycle» makes reading a null slot the checked error, and «A tape[k] read past the lexed frontier» names as errors only the reads that need more than a cell has (.dyads, :name); so run_slot hands out the cell's pointer field, null, and no rule says whether that read is refused or a spelling travels with it",
+    "proposed_for": "W156",
+    "why": null,
+    "anchors": [
+      "run_slot",
+      "read_cell",
+      "run_slot_name",
+      "set_dyad",
+      "src/identities/tape.rs"
+    ],
+    "design": [
+      "A tape read checked against a number type reads as that number",
+      "The seed's tape shape (#60, #121) and its remaining stand-ins",
+      "What `lex` returns: a `parsing_tape` fragment",
+      "What still holds of the old lifecycle",
+      "A `tape[k]` read past the lexed frontier lexes on demand for every constructor",
+      "The constructor sets `tape.is_constructed[0] = true` itself; a tape write never sets it"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'hands a constructor the cell|the spelling alone for an unknown one|Not an error: it is how a constructor spells|reading it is a checked error|A read that needs more than a cell has|replaces the pointer, nothing more' DESIGN.md (dev 9c123fb)",
+        "output": "1395 (A tape read checked against a number type ...): `tape[k]` hands a constructor the cell.   [what value, for a spelling-alone cell: not said]\n1437 (The seed's tape shape): A cell is the binding the trie resolved, the spelling alone for an unknown one, or the node\n1505 (What lex returns): Text that names nothing lexes to a cell with no node ... Not an error: it is how a constructor spells a name that does not exist yet; constructing it later is the ordinary unknown-name error.\n724 (What still holds of the old lifecycle): `undefined` is a null slot, and reading it is a checked error, never undefined behavior.\n1429 (A `tape[k]` read past ...): A read that needs more than a cell has (`tape[k].dyads`, `tape[k]:name`) is the error it is on any cell without one.   [bare tape[k] not listed]\n1136 (The constructor sets ... itself): A write to `tape[k]` replaces the pointer, nothing more.   [a spelling has no pointer to hand on]\nthe rules pull two ways: 724 refuses the null read, 1505 keeps a node-less cell legal for a constructor to move",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "sed -n 573,576p src/identities/tape.rs (dev 9c123fb)",
+        "output": "fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {\n    unsafe { Ok(read_cell(rt, dyad::value(node) as *const DyadPtr)?.dyad as i64) }   (Cell::dyad as the value; the spelling stays behind)",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:25+02:00",
+      "by": "logoslang-why-P31-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P31",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W158",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Which of Context's 29 fields cross into a sub-parse is decided field by field by hand: Context::nested carries five, each of the three openers (construct_run_body, construct_held_type, the import in quotes.rs) sets more of its own, and only the import moves open across after enter, for its scope-end job (›Importing is dropping the text there, wrapped in its own scope‹); no one rule sorts the state of the whole pass from the state of one body, so the depth, read off open, crosses only where open's scope-end bookkeeping does",
+    "proposed_for": "W143",
+    "why": null,
+    "anchors": [
+      "Context",
+      "Context::nested",
+      "Context::top",
+      "enter",
+      "construct_run_body",
+      "construct_held_type",
+      "src/parse/mod.rs",
+      "src/parse/quotes.rs",
+      "src/parse/bodies.rs",
+      "src/parse/types.rs",
+      "OpenScope",
+      "hold",
+      "close_line",
+      "OpenFn",
+      "check_depth",
+      "src/parse/declare.rs"
+    ],
+    "design": [
+      "Importing is dropping the text there, wrapped in its own scope"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 156,193p src/parse/mod.rs | rg -c '^\\s+\\w+: '   (Context::top's field initialisers); sed -n 196,205p src/parse/mod.rs; rg -n -B3 '\\.\\.Context::nested\\(&self.cx, text, nested\\)' src/parse; rg -n 'g.0.cx.open = std::mem::take' src/parse",
+        "output": "29\nfn nested: dir: outer.dir.clone(), held_depth: outer.held_depth, last_declared: outer.last_declared, last_write: outer.last_write, reader: outer.reader, ..Context::top(source, scopes)\nsrc/parse/types.rs:797-800  frames, held_depth: depth, feed: Some(Feed { .. in_run_order: true }), ..Context::nested(..)   (construct_held_type)\nsrc/parse/quotes.rs:303-304 dir: canon.parent()…, ..Context::nested(..)   (import)\nsrc/parse/bodies.rs:347-348 feed: Some(Feed { .. in_run_order: false }), ..Context::nested(..)   (construct_run_body)\nsrc/parse/quotes.rs:311: g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect(\"pushed by enter\").open);\nquotes.rs:308-310 comment: \"An import is text dropped in place … it shares the importer's bracket stack, so its drain runs the items in source order\"",
+        "commit": "50007fb"
+      },
+      {
+        "command": "python3 why-probes/depth-axis.py target/release/logos 1100   (dev 50007fb, release, interpreted)",
+        "output": "2 x 1100 inline fn: exit 1 ['<command line>:1:2040: error: scopes nested deeper than 2000']\n2 x 1100 run body: exit 0 ['leaf', '1']\n(the import carries open and so the depth; a run body's Context does not, and the count restarts)",
+        "commit": "50007fb"
+      },
+      {
+        "command": "rg -n 'cx\\.open\\.len\\(\\)' src/parse   (dev 896f9a6: the one length, read for scope ends and for depth)",
+        "output": "src/parse/declare.rs:245:            if self.cx.once_at == Some(self.cx.frames.len()) { 0 } else { self.cx.open.len() - 1 };   [hold: which scope's exit takes a name]\nsrc/parse/bodies.rs:547:            open_below: self.cx.open.len(),   [an inline fn body's base in the shared stack]\nsrc/parse/bodies.rs:650:            level: self.cx.open.len() - 1,   [a return's scope]\nsrc/parse/bodies.rs:697:        let (if_depth, log_start) = (self.cx.open.len(), self.cx.ended_log.len());\nsrc/parse/bodies.rs:795:        let was = self.cx.else_ends.replace(self.cx.open.len() + 1);\nsrc/parse/bodies.rs:1181:        if self.cx.open.len() + unopened >= MAX_BRACKET_DEPTH {   [check_depth: the depth]\nsrc/parse/bodies.rs:1220:        self.close_returns(self.cx.open.len());\nsrc/parse/bodies.rs:1318:        let depth = self.cx.open.len() - 1;   [close_line]\nsrc/parse/driver.rs:150:            if id == self.types.else_ && self.cx.else_ends == Some(self.cx.open.len()) {\nsrc/parse/driver.rs:686:            let bare_branch = self.cx.else_ends == Some(self.cx.open.len());",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "sed -n 307,312p src/parse/quotes.rs   (the one sub-parse that carries open, and why)",
+        "output": "        // An import is text dropped in place (DESIGN ›Importing is dropping the text there‹):\n        // it shares the importer's bracket stack, so its `drain` runs the items in source order.\n        // Its top level is a scope of its own, which lives as long as the program: what it\n        // still holds at its end, and its `defer`s, join the program's exit.\n        g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect(\"pushed by enter\").open);\n        g.0.cx.open.push(OpenScope::default());",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B",
+      "C"
+    ],
+    "aliases": [
+      "Context.open is the scope-end stack of the text being parsed (each OpenScope holds its exit items, unrun lines, ended and narrowed names), read by position from that text's top (hold writes open[0] or open[len-1], close_line closes open[len-1]), so a sub-parse can carry the depth only by sharing the outer text's scope ends: the import does so on purpose to share one drain, an inline fn body does so with OpenFn.open_below marking its base, and construct_run_body and construct_held_type, whose bodies end apart from the bracket they are built in, start their own, and their depth with it"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:25+02:00",
+      "by": "logoslang-why-P23-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "50007fb",
+      "run": "why-P23",
+      "agent": "C"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:25+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "ffe09a1",
+        "change": "accepted as a why of W143, same as W154",
+        "reason": "C and B blind to each other: the depth is read off Context.open, the scope-end stack, so it crosses into a sub-parse only where the scope ends do (the import shares them on purpose; a run body or a held type ends apart from its bracket and starts its own), and which of Context's fields cross is decided field by field; one pass-wide count removes W143"
+      }
+    ]
+  },
+  {
+    "id": "W159",
+    "kind": "why",
+    "status": "draft",
+    "text": "read_cell, the one read every tape native takes its cell through, hands back the raw Cell, so each native decides alone what a cell with no node gives: run_slot returns its null dyad, run_slot_name refuses it (Cell::binding null, RunError::NoName), and slot_cell's cell branch passes rt.through(cell.dyad) on, null included, to read_target, where run_cell_type and the dyads read dereference it; DESIGN's ›A tape[k] read past the lexed frontier‹ makes tape[k]:name and tape[k].dyads the error on any cell without one, and ›What still holds of the old lifecycle‹ makes reading a null a checked error, yet only one of the four reads keeps that",
+    "proposed_for": "W156",
+    "why": null,
+    "anchors": [
+      "read_cell",
+      "run_slot",
+      "run_slot_name",
+      "slot_cell",
+      "read_target",
+      "run_cell_type",
+      "Cell",
+      "src/identities/tape.rs"
+    ],
+    "design": [
+      "A `tape[k]` read past the lexed frontier lexes on demand for every constructor",
+      "What still holds of the old lifecycle"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 567,576p src/identities/tape.rs; sed -n 666,688p src/identities/tape.rs (dev 9c123fb)",
+        "output": "unsafe fn read_cell(...) -> Result<Cell, RunError> { let (tape, k) = tape_at(rt, ops)?; ... Ok((*tape).at(k).copied().unwrap_or_else(|| Cell::built(nothing))) }\nfn run_slot(...) { unsafe { Ok(read_cell(rt, ...)?.dyad as i64) } }\nunsafe fn slot_cell(...) { if (*ops.add(1)).is_null() { let held = ...; if held.is_null() { return Err(RunError::NotAScope(held)); } ... }\n    let cell = read_cell(rt, ops)?;\n    Ok(rt.through(cell.dyad))            (cell branch: no null test)\nfn run_slot_name(...) { let c = read_cell(...)?; let binding = c.binding(rt.types()); if binding.is_null() { return Err(RunError::NoName); }",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "target/release/logos 'h := type (share parse_rank = *.parse_rank + 1, share parse = ( <BODY>, tape.remove(0) )), h zz, 5' (dev 9c123fb, why-probes/p31-b3.txt)",
+        "output": "n := tape[1]:name   -> error: ... this cell holds no name, exit 1\nt := tape[1].type   -> exit 139\nd := tape[1].dyads  -> exit 139\nt := tape[1].type with x := 3, h x -> 5, exit 0 (a cell with a node)\nsed -n 1429p DESIGN.md: A read that needs more than a cell has (tape[k].dyads, tape[k]:name) is the error it is on any cell without one.",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:25+02:00",
+      "by": "logoslang-why-P31-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P31",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W160",
+    "kind": "why",
+    "status": "draft",
+    "text": "The rule of Reading a path runs nothing for a node's field is written only for a node the parser holds while it parses: Parser::node_field reads the slot then and path_operand hands the node itself (a name, a literal, a place) or its address; tape[0]'s node exists only when the parse body runs, so the branch on is_node_cell in fields.rs sends tape[0].f to this_field, the reader of a value's field, and no run-time read applies the path rule",
+    "proposed_for": "W155",
+    "why": null,
+    "anchors": [
+      "node_field",
+      "path_operand",
+      "reached_member",
+      "is_node_cell",
+      "this_field",
+      "src/parse/fields.rs"
+    ],
+    "design": [
+      "Reading a path runs nothing",
+      "A field is filled at run, per evaluation; its type decides how the operand is used"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'fn path_operand|fn node_field|self.reached_member\\(|self.node_field\\(|self.is_node_cell\\(lhs\\)|self.this_field\\(' src/parse/fields.rs; sed -n 259,263p src/parse/fields.rs",
+        "output": "229:    unsafe fn node_field(\n343:    unsafe fn path_operand(&mut self, node: DyadPtr) -> DyadPtr {\n403:            if name != \"dyads\" && self.is_node_cell(lhs) {\n405:                let member = self.this_field(name, nstart)?;\n451:                if let Some(read) = self.reached_member(node, name, index, key.is_some())? {\n507:                if let Some(field) = self.node_field(lhs, name)? {\n        let field = *(value as *const DyadPtr).add(i);   (node_field: the slot read while parsing)\n        ...\n        Ok(Some(self.path_operand(field)))\npath_operand doc: A node reached by path, as a value: itself when reading it runs nothing (a name, a literal, a place), else its address, so reading a path never runs code.",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "why-probes/p47.txt line 1 against the DESIGN example b:start.rhs.lhs (P43's probe: b := x ^ 3 in f(5) reads 5)",
+        "output": "tape[0].lhs in pr's parse, x a parameter: a number read at parse (-225058716), through this_field\nb:start.rhs.lhs on a node held at parse: the name x itself, through node_field/path_operand, read 5 at run (P43)",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:26+02:00",
+      "by": "logoslang-why-P47-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P47",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W161",
+    "kind": "why",
+    "status": "draft",
+    "text": "DESIGN makes the build due at the node's construction: ›A generic function body is lexed once and built once per set of field types‹ has a call site with known types resolve to the built function and store it in the dyad as the op slot of + stores add_i32, and ›Deferral is authored, and unfinished work is visible‹ has a node move on the moment its input arrives; no rule lets a node stand placed with its types known and its function built after the body holding it is built",
+    "proposed_for": "W152",
+    "why": null,
+    "anchors": [
+      "resolve_specialization",
+      "set_spec",
+      "construct_run_body"
+    ],
+    "design": [
+      "A generic function body is lexed once and built once per set of field types",
+      "Deferral is authored, and unfinished work is visible"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'stores it in the dyad as|moves on the moment the input arrives' DESIGN.md",
+        "output": "1909: A generic fn is a chooser, exactly as + is: the concrete function for each argument-type combination is its own identity, built once from the written body with op slots resolved, then reused. A call site with known types resolves to that identity by the same lowering rules that fill +'s op slot, and stores it in the dyad as +'s op slot stores add_i32. …\n1901: Progress is driven by data, never scheduled: a node missing an input stays built and moves on the moment the input arrives. One rule at three levels: … an unresolved type (the conserved op slot, which does not lower until resolved) …",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "python3 why-probes/chain-operand.py target/release/logos N 1990 x   (P23's chain with the nodes x t{i}, x := mut i32 3, so no node is all-literal and fold_comptime_node never folds; dev 896f9a6, release, interpreted)",
+        "output": "17 1990 x -> 0 leaf\n18 1990 x -> -6 thread has overflowed its stack\n(the fold is not needed for the nesting: set_spec, which the op-slot sentence asks for, needs the build at every node)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:26+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "P101",
+    "kind": "problem",
+    "status": "open",
+    "text": "Seven comments in src point to the DESIGN rule ›There is no `this`‹, a heading DESIGN.md no longer has; its text now stands in the body of ›A type body describes one level‹",
+    "program": "grep -rn 'There is no `this`' src | wc -l; grep -c '^### There is no `this`' DESIGN.md",
+    "output": "7; 0 (dev ffe09a1)",
+    "expected": "every pointer a comment makes names a heading the ruling document has (the comment rules: a bare pointer to a rule of the ruling document by its heading)",
+    "tier": "source",
+    "found": "logoslang-why-P47-b (session 269d1af9), why run on P47, 8 October 2026; checked by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T22:26+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "ffe09a1",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W162",
+    "kind": "why",
+    "status": "draft",
+    "text": "ConstructFn, every identity's constructor, is a Rust fn that runs to its end and returns Constructed only when its span is built, with nothing to suspend in: the constructor of ( builds its whole interior through parse_sequence_cell before it returns, and the reader that places a run node returns only after construct_run_body has built the body, so each nesting of the drive is a frame of the Rust call that ›The scope's constructor is the driver‹ calls it (a scope's constructor is called by its enclosing scope)",
+    "proposed_for": "W153",
+    "why": null,
+    "anchors": [
+      "ConstructFn",
+      "Constructed",
+      "parse_sequence_cell",
+      "src/identities/paren.rs",
+      "src/parse/driver.rs"
+    ],
+    "design": [
+      "The scope's constructor is the driver"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'pub type ConstructFn|fn\\(&mut Parser, DyadPtr, &mut ParsingTape\\)|A constructor edits the tape in place|pub enum Constructed' src/parse/driver.rs; rg -n 'cx.metas.insert\\(open|parse_sequence_cell\\(\\)\\?|expect_close\\(\\)\\?|Constructed::Placed' src/identities/paren.rs",
+        "output": "src/parse/driver.rs:34:/// A constructor edits the tape in place; `Placed` reports only that it did.\nsrc/parse/driver.rs:37:pub enum Constructed {          (Placed | Decline: no third answer such as wait or resume)\nsrc/parse/driver.rs:45:pub type ConstructFn =\nsrc/parse/driver.rs:46:    fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>;\nsrc/identities/paren.rs:17:    cx.metas.insert(open, |p, _id, tape| {\nsrc/identities/paren.rs:18:        let body = p.parse_sequence_cell()?;\nsrc/identities/paren.rs:19:        p.expect_close()?;\nsrc/identities/paren.rs:21:        Ok(crate::parse::Constructed::Placed)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n 'so the drive recurses by nesting' DESIGN.md",
+        "output": "1518: … It is the constructor of the enclosing scope identity: ( building its scope value, and its kin. A scope's constructor is called by its own enclosing scope when its opener appears, so the drive recurses by nesting. …",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:26+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": []
   }
 ]
