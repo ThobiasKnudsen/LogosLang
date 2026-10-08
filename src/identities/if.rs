@@ -68,15 +68,17 @@ pub(crate) fn build(
     store.alloc_words(types.if_, &[cond, then, els, none, none, none, types.ops.if_])
 }
 
-/// What an `if` gives back, worked out from its arms when asked: their one type, else `void`.
-/// DESIGN ›`if` reads its own right side‹, ›A node's output type is per node, and its parse
-/// writes it‹.
+/// What an `if` gives back, worked out from its arms when asked: their one type where every
+/// arm makes its value or every arm borrows one, else `void`. DESIGN ›`if` reads its own right
+/// side‹, ›A node's output type is per node, and its parse writes it‹.
 ///
 /// # Safety
 /// `node` must be an `if` node [`build`] made.
 pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
     let (_, then, els) = branches(node);
-    if arms_type(types, then, els) == types.void_ {
+    if arms_type(types, then, els) == types.void_
+        || super::drop_model::handed_ends(types, node).is_err()
+    {
         return types.void_;
     }
     super::read::handed_on(types, then)
@@ -140,12 +142,11 @@ pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, 
         }
     }
     differ?;
-    let out = output_type(types, node);
-    if out == types.void_ {
+    if arms_type(types, then, els) == types.void_ {
         return Err(ParseError::ArmsDiffer);
     }
     super::drop_model::handed_ends(types, node)?;
-    Ok(out)
+    Ok(super::read::handed_on(types, then))
 }
 
 /// # Safety

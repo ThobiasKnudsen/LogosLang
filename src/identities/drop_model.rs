@@ -2012,6 +2012,17 @@ mod tests {
             )),
             ParseError::ArmsMakeAndBorrow
         );
+        // It gives no value, so a reader that asks only its type finds none.
+        assert_eq!(
+            parse_err(&format!("{c}x := (if (c == 1) (alloc 1 of i32 5) else (move b))@,\n1")),
+            ParseError::UnsupportedOperands
+        );
+        assert_eq!(
+            parse_err(&format!(
+                "{BAG}c := i32 1,\na := bag (),\nx := (if (c == 1) (bag ()) else (a)).items,\n1"
+            )),
+            ParseError::UnsupportedOperands
+        );
         // Arms alike, or one that leaves at a function's end, mix nothing.
         for (tail, want) in [
             ("d := &y,\nf(if (c == 1) (move b) else (move d))", 4),
