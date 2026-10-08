@@ -19745,7 +19745,9 @@
     "status": "accepted",
     "text": "handed_ends lets an if's arms differ wherever one arm's answer is None, a call the parse cannot see into or a value with no end (its (a, b) => Ok(a.or(b)) arm), so the then arm's answer is not the if's: moved_out, though its comment says the then arm's is it, walks the else arm too, to hand on that arm's Unknown or Stays",
     "proposed_for": "W205",
-    "why": null,
+    "why": [
+      "W215"
+    ],
     "anchors": [
       "handed_ends",
       "moved_out",
@@ -19826,6 +19828,15 @@
         "effort": "xhigh",
         "commit": "57cb92e",
         "change": "accepted as a why of W205, same as W214",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T01:11+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3f50afb",
+        "change": "why + W215",
         "reason": null
       }
     ]
@@ -20363,5 +20374,162 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "W215",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Neither DESIGN.md nor a spec page it points to says what a call the parse cannot see through hands on, made or borrowed: a function's call to itself, whose FN_BODY fn_over_body writes only after the body closes, or a call nested past MOVES_OUT_DEPTH, both Out::Unknown in moved_out; the Q72 line of ›`move` and `free` are static: the parse marks the name dead‹ asks every arm to make or every arm to borrow but is silent on an arm with no answer, its Seed line records this only as Not yet, ›A last value moves out‹ reads a body a self-call does not have yet, and ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹ resolves a self-call to its node for the type alone; so handed_ends has no rule to judge that arm by, gives it None, and lets it agree with any arm",
+    "proposed_for": "W208",
+    "why": null,
+    "anchors": [
+      "handed_ends",
+      "moved_out",
+      "MOVES_OUT_DEPTH",
+      "FN_BODY",
+      "fn_over_body",
+      "DESIGN.md",
+      "src/identities/drop_model.rs",
+      "src/parse/bodies.rs",
+      "Out",
+      "ArmsMakeAndBorrow"
+    ],
+    "design": [
+      "`move` and `free` are static: the parse marks the name dead",
+      "A last value moves out",
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
+      "Reading a program takes time in step with its size; no walk runs once per path"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -i -o '.{0,160}(call to itself|calls itself|self-call|recursive (call|function|maker)|recursion).{0,200}' DESIGN.md   (every DESIGN sentence on a self-call)",
+        "output": "110: ... if every evaluator were LG to interpret, the recursion would never end. (compilation, not ownership)\n406: ... Not yet: an arm the parse cannot see through, a function's call to itself or calls nested deeper than it follows, agrees with every other arm, and a name bound to its value owns nothing, so what it made leaks: ... over a recursive `mk` that makes its value is accepted (Seed line)\n1207: ... It is also what makes recursion work (each call gets its own frame) (frames, not ownership)\n1559: ... a `fn` after its `-> T` and before its body, so a self-call in the body resolves to it (the node, for its type)",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "rg -n -A1 'if body.is_null\\(\\) \\{ Out::Unknown|if depth > MOVES_OUT_DEPTH' src/identities/drop_model.rs; rg -n '\\*slots.add\\(FN_BODY\\) = body' src/parse/bodies.rs",
+        "output": "899:    if depth > MOVES_OUT_DEPTH {\n900-        return Out::Unknown;\n961:            return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };\n573:            *slots.add(FN_BODY) = body;   (in fn_over_body, after bracketed_body has parsed the body)",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "bash why-probes/run-lines.sh why-probes/w208.txt   (the self-call arm agrees with a made arm and with a borrowed one)",
+        "output": "mk := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else (mk(n - 1)) ), x := mk(3), x@  -> 5, exit 0\nmk := fn (n := i32 ?) -> @i32 ( if (n != 0) (mk(n - 1)) else (alloc 1 of i32 5) ), x := mk(3), x@  -> 5, exit 0\ny := i32 4, mk := fn (n := i32 ?) -> @i32 ( if (n == 0) (&y) else (mk(n - 1)) ), x := mk(3), x@  -> 4, exit 0",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "rg -n -A6 'fn a_function_s_call_to_itself_agrees_with_every_arm' src/identities/drop_model.rs",
+        "output": "2069:    fn a_function_s_call_to_itself_agrees_with_every_arm() {\n2070-        // The binder cannot see through the call either, so it owns nothing yet: the leak is\n2071-        // pinned as a number.\n2074-        assert_eq!(run(&format!(\"{mk},\\nx := mk(3),\\nx@\")), (5, 1));",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "rg -n 'handed_ends\\(self.types, body\\)|\\*slots.add\\(FN_BODY\\) = body' src/parse/bodies.rs; rg -n 'body.is_null\\(\\) \\{ Out::Unknown|A call into a body not parsed whole yet|\\(a, b\\) => Ok\\(a.or\\(b\\)\\)' src/identities/drop_model.rs; rg -n -i 'calls itself|call to itself|recursive' DESIGN.md | rg -v '^(110|294|1046):'",
+        "output": "bodies.rs:540: handed_ends(self.types, body)   (fn_over_body, at the close)\nbodies.rs:573: *slots.add(FN_BODY) = body;      (written after it, so a self-call inside the body sees a null FN_BODY)\ndrop_model.rs:889-890: /// A call into a body not parsed whole yet, as a function's call to itself, or past [`MOVES_OUT_DEPTH`].\ndrop_model.rs:961: return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };\ndrop_model.rs:1047: (a, b) => Ok(a.or(b)),\nDESIGN.md: the one hit on a call to itself in an ownership rule is the Seed line of ›`move` and `free` are static‹ (406): \"Not yet: an arm the parse cannot see through, a function's call to itself or calls nested deeper than it follows, agrees with every other arm, and a name bound to its value owns nothing, so what it made leaks\"; its Q72 ruling: \"an `if` whose value is used makes a value in every arm or borrows one in every arm ... it refuses rather than guesses\"",
+        "commit": "3f50afb"
+      },
+      {
+        "command": "c32cf74, interpreted, release: timeout 60 target/release/logos \"<line>\" for each line of why-probes/unknown-arm.txt",
+        "output": "self-call-beside-made: g := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else (g(n - 1)) ), p := g(2), p@  -> 5\nself-call-beside-borrow: y := alloc 1 of i32 3, g := fn (n := i32 ?) -> @i32 ( if (n == 0) (y) else (g(n - 1)) ), 7  -> 7\nshallow-made-beside-borrow: h0 := fn () -> @i32 ( alloc 1 of i32 5 ), h1..h3 each ( h_(k-1)() ), x := if c (h3()) else (y), 7  -> error: make a value in every arm, or borrow in every arm ...\ndeep-made-beside-borrow: the same over h0..h35  -> 7   (past MOVES_OUT_DEPTH the made call is Unknown too, and agrees with the borrow)",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "Neither DESIGN.md nor a page it links says how an if arm is judged made or borrowed when the parse has not finished the callee's body, a function's call to itself (fn_over_body runs handed_ends at the close before it writes FN_BODY, and moved_out gives Out::Unknown for a null body): Q72 asks every arm to agree and refuse rather than guess, ›A last value moves out‹ reads the callee's body at the call, and refusing such an arm would refuse every recursive fn with a made base arm; so handed_ends lets the unknown arm agree with any other (the Seed line's Not yet), and the if's answer is not its then arm's"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T01:09+02:00",
+      "by": "logoslang-why-P112-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T01:11+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3f50afb",
+        "change": "accepted as a why of W208, same as W216",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W216",
+    "kind": "why",
+    "status": "merged",
+    "text": "Neither DESIGN.md nor a page it links says how an if arm is judged made or borrowed when the parse has not finished the callee's body, a function's call to itself (fn_over_body runs handed_ends at the close before it writes FN_BODY, and moved_out gives Out::Unknown for a null body): Q72 asks every arm to agree and refuse rather than guess, ›A last value moves out‹ reads the callee's body at the call, and refusing such an arm would refuse every recursive fn with a made base arm; so handed_ends lets the unknown arm agree with any other (the Seed line's Not yet), and the if's answer is not its then arm's",
+    "proposed_for": "W208",
+    "why": null,
+    "anchors": [
+      "handed_ends",
+      "moved_out",
+      "fn_over_body",
+      "FN_BODY",
+      "Out",
+      "ArmsMakeAndBorrow",
+      "src/identities/drop_model.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "`move` and `free` are static: the parse marks the name dead",
+      "A last value moves out",
+      "Reading a program takes time in step with its size; no walk runs once per path"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'handed_ends\\(self.types, body\\)|\\*slots.add\\(FN_BODY\\) = body' src/parse/bodies.rs; rg -n 'body.is_null\\(\\) \\{ Out::Unknown|A call into a body not parsed whole yet|\\(a, b\\) => Ok\\(a.or\\(b\\)\\)' src/identities/drop_model.rs; rg -n -i 'calls itself|call to itself|recursive' DESIGN.md | rg -v '^(110|294|1046):'",
+        "output": "bodies.rs:540: handed_ends(self.types, body)   (fn_over_body, at the close)\nbodies.rs:573: *slots.add(FN_BODY) = body;      (written after it, so a self-call inside the body sees a null FN_BODY)\ndrop_model.rs:889-890: /// A call into a body not parsed whole yet, as a function's call to itself, or past [`MOVES_OUT_DEPTH`].\ndrop_model.rs:961: return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };\ndrop_model.rs:1047: (a, b) => Ok(a.or(b)),\nDESIGN.md: the one hit on a call to itself in an ownership rule is the Seed line of ›`move` and `free` are static‹ (406): \"Not yet: an arm the parse cannot see through, a function's call to itself or calls nested deeper than it follows, agrees with every other arm, and a name bound to its value owns nothing, so what it made leaks\"; its Q72 ruling: \"an `if` whose value is used makes a value in every arm or borrows one in every arm ... it refuses rather than guesses\"",
+        "commit": "3f50afb"
+      },
+      {
+        "command": "c32cf74, interpreted, release: timeout 60 target/release/logos \"<line>\" for each line of why-probes/unknown-arm.txt",
+        "output": "self-call-beside-made: g := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else (g(n - 1)) ), p := g(2), p@  -> 5\nself-call-beside-borrow: y := alloc 1 of i32 3, g := fn (n := i32 ?) -> @i32 ( if (n == 0) (y) else (g(n - 1)) ), 7  -> 7\nshallow-made-beside-borrow: h0 := fn () -> @i32 ( alloc 1 of i32 5 ), h1..h3 each ( h_(k-1)() ), x := if c (h3()) else (y), 7  -> error: make a value in every arm, or borrow in every arm ...\ndeep-made-beside-borrow: the same over h0..h35  -> 7   (past MOVES_OUT_DEPTH the made call is Unknown too, and agrees with the borrow)",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W215",
+    "made": {
+      "at": "2026-10-09T01:10+02:00",
+      "by": "logoslang-why-P112-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T01:11+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3f50afb",
+        "change": "evidence 1 was {\"command\": \"rg -n 'handed_ends\\\\(self.types, body\\\\)|\\\\*slots.add\\\\(FN_BODY\\\\) = body' src/parse/bodies.rs; rg -n 'body.is_null\\\\(\\\\) \\\\{ Out::Unknown|A call into a body not parsed whole yet|\\\\(a, b\\\\) => Ok\\\\(a.or\\\\(b\\\\)\\\\)' src/identities/drop_model.rs; rg -n -i 'calls itself|call to itself|recursive' DESIGN.md | rg -v '^(110|294|1046):'\", \"output\": \"bodies.rs:540: handed_ends(self.types, body)   (fn_over_body, at the close)\\nbodies.rs:573: *slots.add(FN_BODY) = body;      (written after it, so a self-call inside the body sees a null FN_BODY)\\ndrop_model.rs:889: /// A call into a body not parsed whole yet, as a function's call to itself, or past [].\\ndrop_model.rs:961: return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };\\ndrop_model.rs:1047: (a, b) => Ok(a.or(b)),\\nDESIGN.md: the one hit on a call to itself in an ownership rule is the Seed line of ›`move` and `free` are static‹ (406): \\\"Not yet: an arm the parse cannot see through, a function's call to itself or calls nested deeper than it follows, agrees with every other arm, and a name bound to its value owns nothing, so what it made leaks\\\"; its Q72 ruling: \\\"an `if` whose value is used makes a value in every arm or borrows one in every arm ... it refuses rather than guesses\\\"\", \"commit\": \"c32cf74\"}",
+        "reason": "the shell ate a backticked word in the drop_model.rs line, which runs over lines 889-890 and ends 'or past [MOVES_OUT_DEPTH].' (asked by why-P112-b; checked in its worktree)"
+      },
+      {
+        "at": "2026-10-09T01:11+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3f50afb",
+        "change": "merged into W215",
+        "reason": null
+      }
+    ]
   }
 ]
