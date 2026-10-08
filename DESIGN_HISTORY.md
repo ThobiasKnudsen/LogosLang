@@ -433,6 +433,7 @@ Nothing moved from this section.
 
 ### A node's output type is per node, and its parse writes it
 - **History:** 16 Sept: `output := type ?`, `tape[0]:dyad.value.output = tape[-1]:dyad.type`.
+- **History:** until 8 October 2026 the rule named no node it leaves out, so it read as covering every node, `if` and blocks too, while ›`if` reads its own right side‹ (Q-59) said an `if` has no `output_type`; #82's branch followed this rule and kept an `if`'s arm type in the `if` node and a block's last-line type in the block. Superseded by Q72 (1), because the type already follows from the arms and the last line, and a stored copy goes stale unnoticed after a rewrite.
 - **Quotes:** Ruled: "need to rename to output_type everywhere".
 
 ### A member stands before any body that reads it
