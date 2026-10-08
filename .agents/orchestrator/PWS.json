@@ -51,6 +51,7 @@
     "design": [
       "A node's output type is per node, and its parse writes it"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 693,702p src/identities/mod.rs",
@@ -99,6 +100,7 @@
     "design": [
       "A node's output type is per node, and its parse writes it"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"fn (numtype_of|node_type_of|is_bool_result|record_type_of|owning_pointee_of)\\b\" src",
@@ -286,6 +288,7 @@
     "design": [
       "Backends are identities, and lowering is keyed by them"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 97,103p src/identities/declare.rs",
@@ -337,6 +340,7 @@
       "The Logos IR sits between the Logic Graph and every backend",
       "Backends are identities, and lowering is keyed by them"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -c \"fn lower\" src/identities",
@@ -460,6 +464,7 @@
     "design": [
       "A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 162,169p src/identities/scope.rs",
@@ -507,6 +512,7 @@
     "design": [
       "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"fn own_node|fn take_pending_defers|session_defers\" src",
@@ -601,6 +607,7 @@
       "Holding is decided at the binding site, parameters included",
       "Three fail-closed ownership rules, and `-> own @T`"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n is_owning_value src",
@@ -824,6 +831,7 @@
     "design": [
       "A `type (…)` inside a body is built once per set of the values it reads (built each time it runs, until 29 September 2026)"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"fn construct_run_body|fn construct_held_type|run_body::(lookup|insert)\" src",
@@ -879,6 +887,7 @@
       "A generic function body is lexed once and built once per set of field types",
       "The pass runs only as far as it must, in order, and never twice"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"fn construct_run_body|fn construct_held_type|run_body::(lookup|insert)\" src",
@@ -964,6 +973,7 @@
       "Name resolution is scope-filtered, and shadowing is disallowed",
       "A binding is live while its scope is open and it is not dead; it carries a range"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"is_dead\\(\\)\" src/parse/scopes.rs",
@@ -1127,6 +1137,7 @@
     "design": [
       "The scope's constructor is the driver"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 235,242p src/main.rs",
@@ -1176,6 +1187,7 @@
       "The scope's constructor is the driver",
       "The pass runs only as far as it must, in order, and never twice"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"fn run_line|fn repl\\b|fn run_imported|fn parse_block|fn parse_within\" src",
@@ -1262,6 +1274,7 @@
       "A scope's `dyads` fill as its lines complete, and hold everything",
       "Text literals are plain values; `#` is the one comment constructor"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n lifted src/parse/mod.rs src/parse/driver.rs",
@@ -1419,6 +1432,7 @@
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 1429,1437p src/identities/mod.rs",
@@ -1466,6 +1480,7 @@
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -c \"commit_if_literal\\(|commit_literal_to\\(|check_store_type\\(|commit_fn_body\\(\" src",
@@ -1586,6 +1601,7 @@
     "design": [
       "A field is filled at run, per evaluation; its type decides how the operand is used"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 254,260p src/identities/this.rs",
@@ -1633,6 +1649,7 @@
       "A tape read checked against a number type reads as that number",
       "A field is filled at run, per evaluation; its type decides how the operand is used"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"fn build_write|fn run_store|fn cell_arg|fn run_placed_call|Dispatch::Call\" src/identities/this.rs src/identities/tape.rs",
@@ -1752,6 +1769,7 @@
     "design": [
       "`,` outranks a type's optional operand: `f(i32 3)` is one argument, `f(i32, 3)` two"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 147,166p src/identities/numtype.rs",
@@ -1800,6 +1818,7 @@
       "`,` outranks a type's optional operand: `f(i32 3)` is one argument, `f(i32, 3)` two",
       "`if` needs no brackets around a complete condition or its body"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"fn is_value_word|stand_as_value|right.constructed\" src/identities/numtype.rs src/identities/rational.rs src/parse/operands.rs",
@@ -1920,6 +1939,7 @@
     "design": [
       "What `=` does is decided by the type of the place on its left"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 249,256p src/identities/assign.rs",
@@ -1967,6 +1987,7 @@
       "`:=` decides nothing about copy or reference; the type's reading rule does",
       "What `=` does is decided by the type of the place on its left"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"fn cell_numtype|fn record_width|fn build_store\" src/identities",
@@ -2087,6 +2108,7 @@
     "design": [
       "Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 958,963p src/parse/fields.rs",
@@ -2134,6 +2156,7 @@
     "design": [
       "The checker reads a fact base the graph provides; the rules over it are user-definable"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"place_of\\(\" src | grep -v \"fn place_of\"",
@@ -2275,6 +2298,7 @@
     "design": [
       "`?` is one value, the unknown; `key := T ?` declares without a value"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 684,689p src/parse/declare.rs",
@@ -2320,6 +2344,7 @@
     "design": [
       "`?` is one value, the unknown; `key := T ?` declares without a value"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"no type yet\" src/parse",
@@ -2366,6 +2391,7 @@
     "design": [
       "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"place_for\\(\" src | grep -v \"fn place_for\"; grep -c place_for src/identities/assign.rs",
@@ -2487,6 +2513,7 @@
     "design": [
       "What `lex` returns: a `parsing_tape` fragment"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n \"cx\\.pos = \" src/parse --count-matches",
@@ -2540,6 +2567,7 @@
       "A `tape[k]` read past the lexed frontier lexes on demand for every constructor",
       "What `lex` returns: a `parsing_tape` fragment"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 17,19p src/identities/paren.rs",
@@ -2657,6 +2685,7 @@
       "A `dyad ?` place is transparent: a placeholder for a new node of any type",
       "A function's surface is `fn (params) -> T (body)`, and its parameter list is a record type"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 272,273p src/parse/types.rs",
@@ -2981,6 +3010,7 @@
       "A node's output type is per node, and its parse writes it",
       "Anything yielding a `bool` is a condition"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'A comparison or logical result|return Operand::Concrete\\(NumType::I32\\);|scalar_binding_type\\(self|Concrete\\(nt\\) => \\(types.numtypes|if let Some\\(t\\) = self.storage_type' src/identities/mod.rs src/parse/declare.rs",
@@ -3083,6 +3113,7 @@
       "A node's output type is per node, and its parse writes it",
       "Anything yielding a `bool` is a condition"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'return Operand::Concrete\\(NumType::I32\\);|Operand::Concrete\\(nt\\) => \\(types.numtypes|scalar_binding_type\\(self' src/identities/mod.rs src/parse/declare.rs",
@@ -3144,6 +3175,7 @@
       "A node's output type is per node, and its parse writes it",
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'Concrete\\(NumType\\),|fn call_return_numtype|numtype::of_type_node\\(out\\)|Concrete\\(nt\\) => \\(types.numtypes|meta::record\\(cx.store, NumType::I32' src/identities",
@@ -3237,6 +3269,7 @@
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly",
       "A node's output type is per node, and its parse writes it"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'carries the I32 width kind|meta::record\\(cx.store, NumType::I32|^pub enum (NumType|Operand)|Concrete\\(NumType\\),|NumType::from_tag\\(tag\\)|numtype::of_type_node\\(out\\)' src/identities/bool.rs src/identities/numtype.rs src/identities/mod.rs",
@@ -3299,6 +3332,7 @@
       "Anything yielding a `bool` is a condition",
       "What `=` does is decided by the type of the place on its left"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'if t == types.bool_ \\{|a .bool. place is refused|return Err\\(ParseError::NonNumericDeclaredType\\)|Binding::set_dyad\\(binding, read\\)' src/parse/declare.rs",
@@ -3372,6 +3406,7 @@
       "A node's output type is per node, and its parse writes it",
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'pub\\(crate\\) const [A-Z_]*TAG: u8' src/identities; rg -n 'NumType::I32 as u8' src/identities/bool.rs",
@@ -3450,6 +3485,7 @@
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'meta::record\\(cx.store, NumType::I32|place_layout\\(types, core.bool_\\)|if node == types.bool_|if t == types.bool_' src",
@@ -3511,6 +3547,7 @@
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly",
       "Anything yielding a `bool` is a condition"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'A comparison or logical result is|types.numtypes.iter\\(\\).any\\(\\|&t\\| !t.is_null\\(\\) && t == logos\\)|Concrete\\(c\\) if c == nt|since its literals cannot yet be stored' src/identities/mod.rs src/parse/declare.rs",
@@ -3598,6 +3635,7 @@
       "Anything yielding a `bool` is a condition",
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'types.numtypes.iter\\(\\).any|return Operand::Concrete\\(NumType::I32\\);|matches!\\(numtype_of\\(types, rhs\\), Operand::Concrete\\(c\\) if c == nt\\)|a .bool. place is refused' src/identities/mod.rs src/parse/declare.rs",
@@ -3654,6 +3692,7 @@
     "design": [
       "The dyad's read surface: two fields, and the type answers the rest"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -c 'kind_of\\(' src; rg -n 'kind_of\\(' src | wc -l",
@@ -3713,6 +3752,7 @@
     "design": [
       "The dyad's read surface: two fields, and the type answers the rest"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -c 'kind_of\\(' src --glob '!*tests.rs'",
@@ -3791,6 +3831,7 @@
     "design": [
       "The dyad's read surface: two fields, and the type answers the rest"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'h\\[0\\] = kind;|h\\[ASSOC_OFF\\] =|h\\[PREC_OFF..CTOR_OFF\\]|The slots from CTOR_OFF on stay zero|A record type node.s record: payload|let nt = numtype::of_type_node\\(t\\);|Some\\(\\(Read::Scalar\\(nt\\), nt.bytes\\(\\)\\)\\)' src/identities/meta.rs src/identities/read.rs",
@@ -3853,6 +3894,7 @@
       "The dyad's read surface: two fields, and the type answers the rest",
       "A plain number is a `rational_number`, and a number type's definition converts it (headed \"Numeric literals are uncommitted until context classifies them\" until 29 September 2026)"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'meta::record\\(cx.store, (nt as u8|NumType::I32 as u8)' src/identities; rg -n 'payload .\\[scope: @dyad\\]\\[fields: @dyad\\]\\[size_bytes|k if k < VOID_TAG|Some\\(\\(Read::Scalar\\(nt\\), nt.bytes\\(\\)\\)\\)|record_size_of\\(t\\)' src/identities/meta.rs src/identities/read.rs",
@@ -3954,6 +3996,7 @@
       "The dyad's read surface: two fields, and the type answers the rest",
       "`.size_bytes` is a `u64`"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'let mut blob = header\\(RECORD_TAG|\"size_bytes\" if meta::is_record_type|\"size_bytes\" => match crate::identities::read::place_layout' src; rg -c 'is_record_type\\(' src --glob '!*tests.rs'",
@@ -4031,6 +4074,7 @@
       "`.size_bytes` is a `u64`",
       "The dyad's read surface: two fields, and the type answers the rest"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'unsafe fn logos_member|\"parse\" => \\{|\"run\" => \\{|\"size_bytes\"|\"scope\" if' src/parse/fields.rs",
@@ -4090,6 +4134,7 @@
       "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule",
       "The dyad describes itself down to one fixed point"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'self.arith\\[op as usize\\]\\[nt as usize\\]|self.cmp\\[op as usize\\]\\[nt as usize\\]|types.ops.cmp_leaf\\(c, nt\\)|types.ops.arith_leaf\\(a, nt\\)' src/identities",
@@ -4164,6 +4209,7 @@
       "A slot is filled with `=`; `:=` declares a member of your own",
       "Plain data and hand-written types are one identity, `type`"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n '^const [A-Z_]+_OFF|^pub\\(crate\\) const PAYLOAD_OFF' src/identities/meta.rs; rg -n 'fn record_scope_of' -A 2 src/identities/meta.rs",
@@ -4221,6 +4267,7 @@
       "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule",
       "Backends are identities, and lowering is keyed by them"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'fn build_op|let slots = match family|Family::Cmp\\(c\\) => \\{|let \\(\\[lhs, rhs\\], nt\\) = unsafe \\{ resolve_binary' src/identities/binary.rs; rg -n 'Seed:\\*\\* divergence: .\\+. resolves at parse' DESIGN.md",
@@ -4289,6 +4336,7 @@
       "A slot is filled with `=`; `:=` declares a member of your own",
       "Plain data and hand-written types are one identity, `type`"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'payload, per kind|ADDR              pointee|TUPLE/LIST         u8 arity|A record type node.s record: payload|header\\((kind|ADDR_TAG|RECORD_TAG)' src/identities/meta.rs",
@@ -4367,6 +4415,7 @@
       "Backends are identities, and lowering is keyed by them",
       "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'pub type LowerTable|Some\\(f\\) => f\\(self, node\\)' src/compile.rs; rg -c 'lower\\.insert\\(' src --glob '!*tests.rs'; rg -in 'backend' src --glob '!*tests.rs'",
@@ -4550,6 +4599,7 @@
       "Still to be written in type.logos; reflection of fields is open",
       "A slot is filled with `=`; `:=` declares a member of your own"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'type\\.logos' src --glob '*.rs'; rg -n 'pub const SLOT_NAMES' src/parse/types.rs; rg -n ':= .* \\?$|lex_rank is not here' identities/type.logos",
@@ -4605,6 +4655,7 @@
       "Backends are identities, and lowering is keyed by them",
       "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'pub type LowerTable' src/compile.rs; rg -n 'cx.lower.insert' src | wc -l; rg -in 'backend' src --glob '*.rs'",
@@ -4667,6 +4718,7 @@
       "Still to be written in type.logos; reflection of fields is open",
       "A slot is filled with `=`; `:=` declares a member of your own"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'Record layout \\(unaligned|payload, per kind|read_unaligned\\(dyad::head\\(id\\).add\\(PAYLOAD_OFF \\+ 16\\)' src/identities/meta.rs; rg -n 'pub\\(crate\\) const [A-Z_]*TAG: u8' src/identities | wc -l; rg -c 'PAYLOAD_OFF \\+ [0-9]+' src/identities/meta.rs",
@@ -4744,6 +4796,7 @@
       "The dyad describes itself down to one fixed point",
       "Still to be written in type.logos; reflection of fields is open"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'include_str|type\\.logos' src --glob '!*tests.rs'; rg -n 'pub const SLOT_NAMES' src/parse/types.rs",
@@ -4804,6 +4857,7 @@
       "The core is one hand-built cyclic graph, not a sequence",
       "The dyad describes itself down to one fixed point"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n ':= ' identities/type.logos; rg -n 'type.logos is not done|Every field under the .type. scope must be expressed there|what a type exposes to reflection about its fields' DESIGN.md",
@@ -4881,6 +4935,7 @@
       "The core is one hand-built cyclic graph, not a sequence",
       "The dyad describes itself down to one fixed point"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'let record = meta::record\\(cx.store, meta::TYPEREC_TAG, meta::prec::READER\\)' src/identities/mod.rs; rg -n 'meta::TYPEREC_TAG \\| meta::DYAD_TAG => Some' src/identities/read.rs",
@@ -4936,6 +4991,7 @@
       "A small Rust seed starts the system",
       "Backends are identities, and lowering is keyed by them"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'marker and profile-driven promotion are later work|a path to Cranelift' DESIGN.md",
@@ -5030,6 +5086,7 @@
       "A checked error is a fault: the task that hit it is cancelled",
       "Interpreted by default; any function can be JIT compiled, mutable code included"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -rn pending src/compile.rs src/run.rs | grep -v '///'",
@@ -5092,6 +5149,7 @@
       "A checked error is a fault: the task that hit it is cancelled",
       "Interpreted by default; any function can be JIT compiled, mutable code included"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'pending' src/run.rs src/compile.rs",
@@ -5179,6 +5237,7 @@
       "A checked error is a fault: the task that hit it is cancelled",
       "Scheduling, preemption, and cancellation happen at boundaries"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'runs on|run on|cannot simply stop|no trap handler' src/run.rs src/compile.rs; rg -n 'return_' src/compile.rs",
@@ -5247,6 +5306,7 @@
       "A checked error is a fault: the task that hit it is cancelled",
       "Scheduling, preemption, and cancellation happen at boundaries"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -n 'fn lower_return' -A 4 src/compile.rs; grep -n 'cannot simply stop' src/compile.rs",
@@ -5347,6 +5407,7 @@
     "design": [
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'teardowns' src/compile.rs src/identities/scope.rs",
@@ -5406,6 +5467,7 @@
     "design": [
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -n 'teardowns' src/compile.rs; grep -n 'RunError::Return(v)) =>' -A 2 src/identities/scope.rs",
@@ -5490,6 +5552,7 @@
       "Scheduling, preemption, and cancellation happen at boundaries",
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'let (mut )?defers' src; sed -n 164,180p src/identities/scope.rs; sed -n 343,376p src/run.rs | rg -n 'defer|teardown|scope'",
@@ -5564,6 +5627,7 @@
       "A checked error is a fault: the task that hit it is cancelled",
       "The pass runs only as far as it must, in order, and never twice"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -n 'struct Activation' -A 4 src/run.rs; grep -n 'rides the Rust call stack' -A 1 src/run.rs; grep -n 'let mut defers\\|match rt.run(expr)' src/identities/scope.rs; grep -n 'let defers\\|last = self.lower(line)' src/compile.rs",
@@ -5641,6 +5705,7 @@
       "Scheduling, preemption, and cancellation happen at boundaries",
       "The pass runs only as far as it must, in order, and never twice"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 326,342p src/run.rs; sed -n 111,144p src/compile.rs | rg -n 'scope|teardown'",
@@ -5701,6 +5766,7 @@
       "Scheduling, preemption, and cancellation happen at boundaries",
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'A frame keeps a cursor|the cursor and the result live on the frame|adaptive layer after v1.0.0|as ›Scheduling, preemption, and cancellation‹ cancels a task' DESIGN.md | cut -c1-200",
@@ -5757,6 +5823,7 @@
       "A checked error is a fault: the task that hit it is cancelled",
       "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n -i 'pending .?defer' DESIGN.md | cut -c1-120",
@@ -5823,6 +5890,7 @@
       "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -rn 'set_cursor(scope\\|take_cursor(\\|swap_remove(i)' src | grep -v '///'; grep -n 'for (i, &expr) in exprs\\|let mut defers' src/identities/scope.rs",
@@ -5903,6 +5971,7 @@
       "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'set_cursor|take_cursor' src --type rust | rg -v 'tests.rs|tape.rs|lex.rs'; sed -n 449,457p src/run.rs",
@@ -6059,6 +6128,7 @@
     "design": [
       "The pass runs only as far as it must, in order, and never twice"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -rn 'unrun\\|set_cursor(scope\\|take_cursor(node)\\|for (i, &expr) in exprs' src | grep -v '///'",
@@ -6127,6 +6197,7 @@
       "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 31,43p src/parse/bodies.rs; sed -n 1253,1258p src/parse/bodies.rs; sed -n 1344,1352p src/parse/bodies.rs; rg -n 'let (mut )?defers' src/identities/scope.rs src/compile.rs",
@@ -6275,6 +6346,7 @@
       "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
       "The scope's constructor is the driver"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -n 'open: vec!\\[OpenScope::default()\\]' src/parse/mod.rs; grep -n 'None at the top level' src/parse/bodies.rs; grep -n 'let root_scope = scope::mint' src/identities/mod.rs",
@@ -6358,6 +6430,7 @@
       "The pass runs only as far as it must, in order, and never twice",
       "The scope's constructor is the driver"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 142,148p src/identities/scope.rs; sed -n 1234,1236p src/parse/bodies.rs; sed -n 1253,1271p src/parse/bodies.rs",
@@ -6421,6 +6494,7 @@
       "The scope's constructor is the driver",
       "The pass runs only as far as it must, in order, and never twice"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "sed -n 41,43p src/parse/bodies.rs; rg -n 'OpenScope \\{' src/parse; sed -n 1338,1347p src/parse/bodies.rs",
@@ -6479,6 +6553,7 @@
       "The pass runs only as far as it must, in order, and never twice",
       "The scope's constructor is the driver"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -n 'let start = rt.take_cursor\\|for (i, &expr) in exprs\\|run_teardowns(rt, &defers)\\|Ok(last)' src/identities/scope.rs; grep -n 'exprs_of(scope)\\|set_cursor(scope, lines)' src/parse/bodies.rs",
@@ -6608,6 +6683,7 @@
       "A field may be `own t ?`, `t` a type whose body fills `share free`",
       "Gate spelling: words left of `:=`; ownership in the reference type"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n -o 'mut a := own [^`]*' DESIGN.md",
@@ -7019,6 +7095,7 @@
       "`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)",
       "A generic function body is lexed once and built once per set of field types"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -rn \"Feed { cells\" src/parse",
@@ -7208,6 +7285,7 @@
       "The pass runs only as far as it must, in order, and never twice",
       "`free` and `move` end a name; no drop flag"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -n 'reached.push(name)\\|exit\\[at\\].end = Some(line)\\|let bits = self.run_on_pass(node)\\|item.held_at_fault(types, open.ran) && !reached' src/parse/bodies.rs",
@@ -7298,6 +7376,7 @@
       "`free` and `move` end a name; no drop flag",
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -n -A3 'fn holds_by_address\\|let held = if super::this::is_plain' src/identities/drop_model.rs",
@@ -7374,6 +7453,7 @@
     "design": [
       "`free` and `move` end a name; no drop flag"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n -A3 'let held = if super::this::is_plain|pub\\(crate\\) unsafe fn holds_by_address' src/identities/drop_model.rs",
@@ -7432,6 +7512,7 @@
       "`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)",
       "`free` and `move` end a name; no drop flag"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'item.from > 0 && item.held_at_fault|exit\\[at\\].end = Some\\(line\\)|let bits = self.run_on_pass\\(node\\)|open\\[at\\].reached.push\\(name\\)' src/parse/bodies.rs; rg -n -A4 'fn held_at_fault' src/identities/drop_model.rs",
@@ -7521,6 +7602,7 @@
       "The pass runs only as far as it must, in order, and never twice",
       "`free` and `move` end a name; no drop flag"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'run_on_pass\\(|reached.push' src/parse",
@@ -7609,6 +7691,7 @@
       "`free` and `move` end a name; no drop flag",
       "The pass runs only as far as it must, in order, and never twice"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n '\\.end = Some|end: Some|open.ended.push|pub end: Option' src/parse src/identities/drop_model.rs",
@@ -7707,6 +7790,7 @@
       "`free` and `move` end a name; no drop flag",
       "The pass runs only as far as it must, in order, and never twice"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -n 'open.ended.push(ended.binding)\\|take(&mut self.cx.open\\[depth\\].ended)\\|exit\\[at\\].end = Some(line)\\|held_at_fault(types, open.ran) && !reached\\|self.end_after_fault(&open)\\|self.end_after_fault(&closed)\\|end == Some(failed)' src/parse/declare.rs src/parse/bodies.rs src/identities/drop_model.rs",
@@ -7766,6 +7850,7 @@
       "`:=` decides nothing about copy or reference; the type's reading rule does",
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n -i 'NULL form|null form' DESIGN.md (searched also: kept directly in, in its own bytes, drop flag, plain record)",
@@ -7846,6 +7931,7 @@
       "`free` and `move` end a name; no drop flag",
       "A checked error is a fault: the task that hit it is cancelled"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n -i 'null form|drop flag|NULL.*record|record.*NULL|own bytes|kept directly|in its bytes|byte pattern|niche|sentinel' DESIGN.md",
@@ -7903,6 +7989,7 @@
       "`move` and `free` are static: the parse marks the name dead",
       "`free` and `move` end a name; no drop flag"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n 'makes .x. dead from that line|at that item, on every path|since the line may have stopped before its own' DESIGN.md (cut)",
@@ -7961,6 +8048,7 @@
     "design": [
       "The pass runs only as far as it must, in order, and never twice"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "grep -n 'open.unrun.push((item.dyad, open.lines, Vec::new()))\\|open.unrun.last_mut().filter\\|for (node, line, ends) in list\\|reached.push(name)\\|unsafe fn run_on_pass' src/parse/driver.rs src/parse/bodies.rs; sed -n 921,926p src/parse/driver.rs",
@@ -8024,6 +8112,7 @@
       "`free` and `move` end a name; no drop flag",
       "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
     ],
+    "pages": [],
     "evidence": [
       {
         "command": "rg -n -i 'dead from that line|at that item, on every path|Only a line that fails|line.s order' DESIGN.md",
@@ -8621,6 +8710,558 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "2b9b9b2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P60",
+    "kind": "problem",
+    "status": "open",
+    "text": "questions-watch in a repo set up before 5 October 2026 wakes at once on an open question nobody has edited",
+    "program": "ORCH=\"orchestrator LogosLang\" bash ~/.claude/skills/orchestrate/orchestrate.sh -C /home/o/Personal/Code/LogosLang questions-watch; then git -C /home/o/Personal/Code/LogosLang status --porcelain -- .agents/orchestrator/questions",
+    "output": "questions-watch printed /home/o/Personal/Code/LogosLang/.agents/orchestrator/questions/b_Q-72_issue-82.md and exited 0 within a second; git status printed nothing; the sha256 of each of the 15 open files equals its mark in seen/ (seen/Q-72 and so on)",
+    "expected": "The watch ends only when the owner saves an edit in a question file (SKILL.md, Questions to Thobias: questions-watch ends when he saves one of the repo question files with anything changed in it)",
+    "tier": null,
+    "found": "orchestrator LogosLang, 8 Oct 2026, first watch after the skill changes of 5-7 Oct; confirmed by the review logoslang-help-1 (F1)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:01+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P61",
+    "kind": "problem",
+    "status": "open",
+    "text": "In a repo that still has history/, the first question-new, question-close or setup makes answers/, after which answers-rename refuses and answered questions sit in two folders",
+    "program": "Read from the code (not run): sed -n \"377p;1425p;1483p;498p\" ~/.claude/skills/orchestrate/orchestrate.sh",
+    "output": "  mkdir -p \"$QDIR\" \"$HDIR\"\n  mkdir -p \"$QDIR\" \"$HDIR\" \"$ORCH_DIR/tmp\"\n  mkdir -p \"$HDIR\"\n  [ ! -e \"$ORCH_DIR/answers\" ] || die \"$ORCH_DIR/answers exists already\"\n(HDIR is .agents/orchestrator/answers; exit 0)",
+    "expected": "A repo with history/ runs answers-rename once and all answered questions end in answers/ (SKILL.md, Questions to Thobias: a repo that still has history/ renames it once with answers-rename)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F2), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:01+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P62",
+    "kind": "problem",
+    "status": "open",
+    "text": "status prints a session state in the status column and its wait reason in the state column when the session status is null",
+    "program": "The read at orchestrate.sh line 345 (while IFS=TAB read -r name id st state wf), fed the row: name1 TAB id1 TAB TAB idle TAB blocked; live rows have status null (claude agents --json printed \"status\":null,\"state\":\"blocked\" for 884f1987)",
+    "output": "st=[idle] state=[blocked] wf=[]",
+    "expected": "Each column holds its own field, so a blocked session shows as blocked with its reason beside it (SKILL.md, The message protocol: a turn that ended on an API error shows in status as blocked with the error beside it)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F3), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:01+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P63",
+    "kind": "problem",
+    "status": "open",
+    "text": "questions lists question files named the old way (b_Q-72_issue-82.md) out of their priority order",
+    "program": "ls .agents/orchestrator/questions/*.md | xargs -n1 basename | sort -t- -k1,1n -k2.2,2n | head -4 (the sort at orchestrate.sh line 1509), in LogosLang at 3434cc2",
+    "output": "g_Q-50_W9.md\nh_Q-60_orchestrate.md\np_Q-thobias-73_orchestrate.md\nb_Q-72_issue-82.md",
+    "expected": "The open questions in the order they should be answered: b, c, d ... for these files (orchestrate.sh help, questions)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F4), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:01+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P64",
+    "kind": "problem",
+    "status": "open",
+    "text": "agent-agnostic-prompt.md tells every session never to work in the main checkout, while the orchestrator, its helpers, /solve and the owner sessions are told to work there",
+    "program": "sed -n 26p ~/.claude/skills/orchestrate/agent-agnostic-prompt.md; grep -n \"Only the main checkout writes the folder\" ~/.claude/skills/orchestrate/SKILL.md; sed -n 10p ~/.claude/skills/solve/SKILL.md",
+    "output": "agent-agnostic-prompt.md:26: Your worktree and branch are the ones your prompt names, made for you by the orchestrator ... Never work in the main checkout.\nSKILL.md:30: ... Only the main checkout writes the folder, on the base ...\nsolve/SKILL.md:10: He runs it himself, in the main checkout of the repo.",
+    "expected": "A rule binds the sessions it fits; before 5 October the Branch rules said: Direct work on the base branch is for the session Thobias drives himself in the main checkout, and for edits outside the code (global CLAUDE.md, Branch rules, 4 Oct copy in .agents/orchestrator/tmp/claude-md-before.md)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F5), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:01+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P65",
+    "kind": "problem",
+    "status": "open",
+    "text": "SKILL.md, The why run, step 5 says why-done starts a solution agent on every waiting root, while the script gives the run waiting roots to one talk",
+    "program": "sed -n 94p ~/.claude/skills/orchestrate/SKILL.md; grep -n \"solve_for_problem \\\"\\$p\\\"\" ~/.claude/skills/orchestrate/orchestrate.sh",
+    "output": "SKILL.md:94: ... `why-done P` (the probes are kept ...; it then starts a solution agent on every root cause with no solution and no open talk) ...\norchestrate.sh:1039:  solve_for_problem \"$p\"",
+    "expected": "One talk per problem: the run roots join one talk (SKILL.md, The why run, step 6; Q120 (1))",
+    "tier": null,
+    "found": "review logoslang-help-1 (F6), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:01+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P66",
+    "kind": "problem",
+    "status": "open",
+    "text": "solve/SKILL.md points twice for its reasons to the heading The solve skill in SKILL_HISTORY.md, and that heading does not exist",
+    "program": "grep -n \"The solve skill\" ~/.claude/skills/solve/SKILL.md | cut -c1-3; grep -c \"^## The solve skill\" ~/.claude/skills/orchestrate/SKILL_HISTORY.md",
+    "output": "10:\n45:\n0",
+    "expected": "Every pointer to a story lands on a heading that holds it (SKILL_HISTORY.md head: so that SKILL.md keeps only the rules)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F7), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:03+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P67",
+    "kind": "problem",
+    "status": "open",
+    "text": "/solve skips a root only when a worktree named solve-W of that root exists, so a root held by a talk named for another root is not skipped",
+    "program": "Read from the code (not run): sed -n 18p ~/.claude/skills/solve/SKILL.md; grep -n \"^talk_of\" ~/.claude/skills/orchestrate/orchestrate.sh",
+    "output": "solve/SKILL.md:18: ... A root a solution agent already works on (`solve-W` in `git worktree list`) is skipped; say so.\ntalk_of reads state/solve-*/roots, so the talk solve-W85 can hold W89 with no worktree named solve-W89",
+    "expected": "A root that any open talk holds is skipped (SKILL.md, The why run, step 6: one talk per problem, and talks that share a root merge)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F8), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:03+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P68",
+    "kind": "problem",
+    "status": "open",
+    "text": "question-template.md has no Decided section, asks for a priority as a place in the order, and has no Metadata field for the orchestrator, though its own text and SKILL.md ask for all three",
+    "program": "grep -n -i \"decided\\|its place in the order\\|Asked by\" ~/.claude/skills/orchestrate/question-template.md | cut -c1-90",
+    "output": "11:<in complete, simple sentences: ... lists the decision under \"Decided\" below, one line each>\n27:- **Priority:** <why it sits at its place in the order: who waits, what the answers unblock, ...\n32:- **Asked by:** <agent name> (session <id>), <model>",
+    "expected": "A Decided section; a priority judged alone, never against the other open questions; a Metadata line naming the orchestrator and its user (SKILL.md, Questions to Thobias, lines 51 and 53; SKILL_HISTORY.md, Receipts for the orchestrator own decisions)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F9), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:03+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P69",
+    "kind": "problem",
+    "status": "open",
+    "text": "After ids-short, a why or solution agent resumed with its old prompt still uses the long run name and ids: it no longer sees its own drafts, sees the run rejected drafts, and pws.py show of its old ids finds nothing",
+    "program": "Read from the code (not run; no repo has a why run open): pws.py visible() tests n[\"made\"][\"run\"] == run with run from PWS_RUN; cmd_short_ids rewrites made.run in every node; pws.py get matches ids exactly",
+    "output": "mine = n[\"made\"][\"agent\"] == agent and n[\"made\"][\"run\"] == run\n(after ids-short, made.run is why-P60 while the resumed prompt sets PWS_RUN=why-P-thobias-60; pws.py show P-thobias-60 prints that there is no node)",
+    "expected": "A resumed agent sees exactly its own drafts and finds its nodes by the ids it was given (SKILL.md, The why run: two blind agents; SKILL.md line 80: resume it after, with its new folder in the message)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F10), 8 Oct 2026; confirmed by orchestrator LogosLang by reading the code; LogosLang has no named ids, so it is not affected today",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:03+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P70",
+    "kind": "problem",
+    "status": "open",
+    "text": "record copies the whole skill into the repo folder skill/ before each own PR, and no ruling records why; with an old unanchored .gitignore line solve/ the copy of solve/SKILL.md is silently ignored",
+    "program": "grep -n -i \"copy\" ~/.claude/skills/orchestrate/SKILL_HISTORY.md | cut -c1-60; grep -n \"copy_skill\" ~/.claude/skills/orchestrate/orchestrate.sh | cut -c1-60; grep -n \"^solve/\" .agents/orchestrator/.gitignore",
+    "output": "SKILL_HISTORY.md: only the heading What a worktree gets copied matches\norchestrate.sh:514: copy_skill() {\norchestrate.sh:546:   copy_skill \"$ORCH_DIR/skill\"\nLogosLang .agents/orchestrator/.gitignore has the unanchored line solve/",
+    "expected": "Every change rests on a recorded ruling with its reason (global CLAUDE.md: All rulings MUST have a good reason for existing); SKILL_HISTORY.md also records that the skill is the owner tool across repos and the team does not build it (Q-thobias-113 (2))",
+    "tier": null,
+    "found": "review logoslang-help-1 (F11), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:03+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P71",
+    "kind": "problem",
+    "status": "open",
+    "text": "questions and questions-watch now list and wake on every question in the folder, a teammate question included, and no Superseded line says why the only-your-questions filter went",
+    "program": "diff -u <4 Oct copy>/orchestrate.sh ~/.claude/skills/orchestrate/orchestrate.sh, the questions-watch hunk",
+    "output": "-    [ -f \"$f\" ] && mine \"$f\"\n+    ... qid_of \"${f##*/}\" >/dev/null\n(the 4 Oct SKILL.md said: a teammate questions pulled into the folder never wake you)",
+    "expected": "A replaced rule has a Superseded line that says why (global CLAUDE.md: when something is superseded it also MUST say why); the ruling Q-thobias-115 removed the user name from file names only",
+    "tier": null,
+    "found": "review logoslang-help-1 (F12), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P72",
+    "kind": "problem",
+    "status": "open",
+    "text": "SKILL.md and solve/SKILL.md name a repo: P111 in AI-RCA graph, and issues such as AIRCA-281",
+    "program": "grep -n -o \"P111 in AI-RCA.s graph\" ~/.claude/skills/orchestrate/SKILL.md; grep -n -o \"issues such as .AIRCA-281.\" ~/.claude/skills/solve/SKILL.md",
+    "output": "96:P111 in AI-RCA's graph\n14:issues such as `AIRCA-281`",
+    "expected": "No repo is named in the skill or a prompt (SKILL.md, Never: Name no repo in the skill or a prompt); the Linear section already writes <team>-281",
+    "tier": null,
+    "found": "review logoslang-help-1 (F13), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P73",
+    "kind": "problem",
+    "status": "open",
+    "text": "SKILL.md, the own PR paragraph, lists the solution talk tag as S-W..., the form superseded on 6 October 2026",
+    "program": "grep -n -o \"tags .O., .S-W…., .W…-P….\" ~/.claude/skills/orchestrate/SKILL.md",
+    "output": "143:tags `O`, `S-W…`, `W…-P…`",
+    "expected": "Talk tags are S-P89; S-W269 is the form from before 6 October (SKILL.md line 51; SKILL_HISTORY.md, Questions to Thobias, Superseded 2026-10-06, Q127)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F14), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P74",
+    "kind": "problem",
+    "status": "open",
+    "text": "Eight rules of the orchestrator setup stand in two or three places at once (FOUND reports, how to search the ruling document, who writes it, secret files, where a general ruling is recorded, Pending lines, three global CLAUDE.md rules doubled by its own import, and stories kept in SKILL.md as well as SKILL_HISTORY.md)",
+    "program": "grep -n \"never filed\" ~/.claude/skills/orchestrate/every-prompt.md ~/.claude/skills/orchestrate/agent-agnostic-prompt.md | cut -c1-110; grep -n \"rg -n -i\\|grep -n .\\^### .\" ~/.claude/skills/orchestrate/every-prompt.md ~/.claude/skills/orchestrate/agent-agnostic-prompt.md | cut -c1-110",
+    "output": "every-prompt.md:4: Findings are reported, never filed: send FOUND ...\nagent-agnostic-prompt.md:12: A problem your task does not cover is reported as FOUND and never filed ...\nevery-prompt.md:8: Search its whole text, rg -n -i <words> ...\nagent-agnostic-prompt.md:6: ... grep -n ^### lists its rules ...\n(the other six pairs are quoted in state/help-1/answer.md, F15)",
+    "expected": "Each rule has one home (SKILL_HISTORY.md, Orchestrate, agent-agnostic-prompt.md, Q-thobias-109 (3); the head of SKILL_HISTORY.md: so that SKILL.md keeps only the rules)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F15), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P75",
+    "kind": "problem",
+    "status": "open",
+    "text": "The global CLAUDE.md tells an orchestrator to store probable, unconfirmed decisions as Pending lines in the repo KNOWLEDGE.md, while SKILL.md keeps Pending lines for rulings whose wording must wait, and LogosLang has no KNOWLEDGE.md",
+    "program": "grep -n -o \"an orchestrator stores them as a Pending line in the repo.s KNOWLEDGE.md instead\" ~/.claude/CLAUDE.md; grep -n -o \"A ruling whose wording must wait\" ~/.claude/skills/orchestrate/SKILL.md; grep RULING_DOC .agents/orchestrator/orchestrate.conf",
+    "output": "CLAUDE.md: an orchestrator stores them as a Pending line in the repo's KNOWLEDGE.md instead\nSKILL.md:26: A ruling whose wording must wait\nRULING_DOC=DESIGN.md",
+    "expected": "The ruling document holds rulings; a decision nobody confirmed waits outside it (SKILL.md line 26; SKILL_HISTORY.md, How you work on his machine, No auto-memory, Q-thobias-112 (2): the orchestrator own memory lives in its skill or .agents/orchistrate folder)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F16), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P76",
+    "kind": "problem",
+    "status": "open",
+    "text": "Six rules of the old global CLAUDE.md are in neither the new CLAUDE.md nor agent-agnostic-prompt.md: the root test with sibling cases, search first, order the work by the links, an added arm is a new symptom, a branch stays local, and who works in the main checkout",
+    "program": "grep -c \"sibling cases\\|Search first\\|Order the work\\|added arm is a new symptom\\|stays local unless\" ~/.claude/skills/orchestrate/agent-agnostic-prompt.md .agents/orchestrator/tmp/claude-md-before.md ~/.claude/CLAUDE.md",
+    "output": "/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md:0\n/home/o/Personal/Code/LogosLang/.agents/orchestrator/tmp/claude-md-before.md:6\n/home/o/.claude/CLAUDE.md:0",
+    "expected": "SKILL_HISTORY.md, agent-agnostic-prompt.md, Root causes first: the old form stays in his global CLAUDE.md for a repo without an orchestrator; a rule dropped has a Superseded line that says why",
+    "tier": null,
+    "found": "review logoslang-help-1 (F17), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P77",
+    "kind": "problem",
+    "status": "open",
+    "text": "agent-agnostic-prompt.md changed the quote rule from plan or commit message to plan and commit message, and added the rule that a sentence pointing to a ruling is no disagreement, with no recorded reason for either",
+    "program": "sed -n \"7,8p\" ~/.claude/skills/orchestrate/agent-agnostic-prompt.md | cut -c1-200; sed -n 20p .agents/orchestrator/tmp/claude-md-before.md",
+    "output": "agent-agnostic-prompt.md:7: ... in your plan and in the commit message ...\nagent-agnostic-prompt.md:8: ... A sentence that already points to a ruling is not a disagreement: follow the ruling and ask nothing more.\nbefore:20: ... in the plan or the commit message. No quote -> stop and ask.",
+    "expected": "Every change rests on a recorded ruling with its reason (global CLAUDE.md: All rulings MUST have a good reason for existing)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F18), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P78",
+    "kind": "problem",
+    "status": "open",
+    "text": "The two comments above cmd_spawn_helper say opposite things: the first says the helper runs in the main checkout, the second that it runs in a detached worktree of its own",
+    "program": "sed -n \"1232p;1234p\" ~/.claude/skills/orchestrate/orchestrate.sh",
+    "output": "# the answer to a file and sends its path to ASKER. It runs in the main checkout, so it is no session of\n# a helper looks in the asker's checkout but runs in a small detached worktree of its own, help-K, since the",
+    "expected": "One comment that says what the code does: a detached worktree help-K (agent-agnostic-prompt.md, Comments: as few as possible; the code at lines 1248-1249 runs worktree add --detach)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F19), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P79",
+    "kind": "problem",
+    "status": "open",
+    "text": "ids-short rewrites the folder README, so the README sentence Older ids (P-thobias-60, ...) stay as they are becomes Older ids (P60, ...)",
+    "program": "Read from the code (not run): sed -n 1213p ~/.claude/skills/orchestrate/orchestrate.sh; grep -o \"Older ids (.P-thobias-60.\" ~/.claude/skills/orchestrate/setup/README.md",
+    "output": "  for f in \"$REPO/$RULING_DOC\" \"$REPO/$(history_doc)\" \"$ORCH_DIR/README.md\" \"$ORCH_DIR/AGENTS.md\" \\\nOlder ids (`P-thobias-60`",
+    "expected": "The README example keeps the old form it explains (setup/README.md line 45)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F20), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P80",
+    "kind": "problem",
+    "status": "open",
+    "text": "question-close removes the seen mark under the id as typed, so question-close Q72 leaves seen/Q-72 behind and question-close Q-72 leaves seen/Q72",
+    "program": "Read from the code (not run): sed -n 1490p ~/.claude/skills/orchestrate/orchestrate.sh",
+    "output": "  rm -f \"$SEEN/$id\"",
+    "expected": "The mark of the closed question is removed whatever spelling was typed (marks are keyed by id_of, the QN form, orchestrate.sh line 1350)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F21), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P81",
+    "kind": "problem",
+    "status": "open",
+    "text": "answers-rename and links-repair rewrite question files without the question lock and commit nothing, unlike question-new, question-prio, question-tag and question-close",
+    "program": "grep -n \"question.lock\\|commit_questions\" ~/.claude/skills/orchestrate/orchestrate.sh | cut -c1-70, read against the bodies of cmd_answers_rename (line 495) and cmd_links_repair (line 1402)",
+    "output": "question.lock and commit_questions appear at lines 1426-1492 (question-new, question-prio, question-tag, question-close) and nowhere in lines 495-510 or 1402-1415",
+    "expected": "With QUESTION_COMMITS=on every write to the question folders is committed under the lock (SKILL_HISTORY.md, Questions to Thobias, Question commits, Q-73 1 c)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F22), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P82",
+    "kind": "problem",
+    "status": "open",
+    "text": "solve-add lists a root twice in its ROOTS line when the talk it merges holds a root the target talk already has",
+    "program": "Read from the code (not run): sed -n 1150p ~/.claude/skills/orchestrate/orchestrate.sh",
+    "output": "      for m in $(talk_roots \"$o\"); do grep -qx -- \"$m\" \"$d/roots\" || echo \"$m\" >> \"$d/roots\"; added+=(\"$m\"); done",
+    "expected": "Each root once in the ROOTS line (added+= only when the root is new)",
+    "tier": null,
+    "found": "review logoslang-help-1 (F23), 8 Oct 2026; confirmed by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T19:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3434cc2",
       "run": null,
       "agent": null
     },
