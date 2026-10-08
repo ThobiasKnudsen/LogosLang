@@ -9337,5 +9337,63 @@
         "reason": "Thobias, Q75 answer 2: his remark meant the Q74 Decided line, that ids-short would only change the README example, which is P79; P83 read more into it than he said"
       }
     ]
+  },
+  {
+    "id": "P84",
+    "kind": "problem",
+    "status": "open",
+    "text": "A receipt in Q77 gives the owner's silence as its reason: its Decided line says 'You did not object in Q75', and the orchestrator had said the same in chat the same day",
+    "program": "grep -n 'did not object' .agents/orchestrator/questions/6-Q77-O.md",
+    "output": "80:- **The W49 talk stays merged into the W54 talk.** You did not object in Q75. Their one question is now Q76.",
+    "expected": "A receipt rests on the ruling or the reason behind the decision (here Q120 (1): roots a problem shares go to one solution agent), never on the owner's silence; Thobias, Q77: 'why are you again saying i didnt object to Q75? what is up with that?'",
+    "tier": null,
+    "found": "Thobias, in his Q77 answer, 8 Oct 2026; recorded by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:19+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "40fbfbf",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P85",
+    "kind": "problem",
+    "status": "open",
+    "text": "PWS.json is one file that every pws.py command reads whole and every write rewrites whole: on a copy of AI-RCA's graph scaled to 100,485 nodes, one search takes about 25 seconds, one write about 17 seconds, and the file is 311 MB, over GitHub's 100 MB file limit; AI-RCA's graph grew to 495 nodes (1.5 MB) in its first 6 days",
+    "program": "Steps: copy AI-RCA's .agents/orchestrator/PWS.json (495 nodes) into one array 203 times, each copy's ids shifted by 100000 (W269 becomes W100269), in a temporary folder; then time pws.load, pws.structure_errors, a Ranker search over every node, and pws.save on it",
+    "output": "   1485 nodes     4.6 MB: load   0.1s, check   0.0s, similar   0.2s (0 hits), save   0.1s\n  10395 nodes    32.1 MB: load   0.4s, check   0.2s, similar   1.7s (0 hits), save   1.0s\n 100485 nodes   311.0 MB: load   4.4s, check   2.3s, similar  18.5s (0 hits), save  10.2s",
+    "expected": "Every node stays in files on GitHub as the graph grows, and a search or a write stays about as fast as today; Thobias, Q77: 'would be nice to be able to store all the nodes in files though so that they can be stored on github'",
+    "tier": null,
+    "found": "orchestrator LogosLang, measuring Thobias's Q77 question about 1k to 1M nodes, 8 Oct 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:22+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "40fbfbf",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-08T21:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "40fbfbf",
+        "change": "program was \"python3 -I /home/o/.claude/jobs/79afb672/tmp/bench.py /home/o/Aksena/AI-RCA/main/.agents/orchestrator/PWS.json /home/o/.claude/jobs/79afb672/tmp/bench\"",
+        "reason": "the first program named a script in a temporary job folder that is deleted with the job"
+      }
+    ]
   }
 ]
