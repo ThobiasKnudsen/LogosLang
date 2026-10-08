@@ -11216,7 +11216,7 @@
     "status": "accepted",
     "text": "A function's local is read at the innermost activation whatever call that is: `Runtime::place_addr` matches `Frame::Call(_)`, dropping the function the binding names, and takes `frame_base()`, and `Activation` keeps only a base, so a parse that runs the read of `x` (W16's `store`) while its own call is innermost reads the parse call's frame at `x`'s offset instead of failing with `NoActivation`; the rule that a function's local is read only inside a call of that function is checked only at parse, by `check_capture` over the names a body spells (`CapturedLocal`, `OnceReadsUnmade`), so a read that reaches the run without being spelled in its own function, as this one, is judged nowhere",
     "proposed_for": "P47",
-    "why": null,
+    "why": [],
     "anchors": [
       "place_addr",
       "frame_base",
@@ -11288,6 +11288,15 @@
         "commit": "2817cf4",
         "change": "text was \"A function's local is read at the innermost activation whatever call that is: `Runtime::place_addr` matches `Frame::Call(_)`, dropping the function the binding names, and takes `frame_base()`, and `Activation` keeps only a base, so a parse that runs the read of `x` (W16's `store`) while its own call is innermost reads the parse call's frame at `x`'s offset instead of failing with `NoActivation`\"",
         "reason": "A (W125) and B (W122) both answered W111 with its own fact plus where the rule's only check stands; that part was missing from W111"
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "asked: no why found",
+        "reason": "A and B: none; DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹ already gives a function local the call's base, so the code differs from a decided rule, and nothing deeper is a fact that can change"
       }
     ]
   },
@@ -11299,7 +11308,8 @@
     "proposed_for": "P31",
     "why": [
       "W123",
-      "W126"
+      "W126",
+      "W127"
     ],
     "anchors": [
       "run_flag_write",
@@ -11390,6 +11400,15 @@
         "effort": "xhigh",
         "commit": "2817cf4",
         "change": "why + W126",
+        "reason": null
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "why + W127",
         "reason": null
       }
     ]
@@ -11770,7 +11789,8 @@
     "text": "check_depth counts only self.cx.open, the open scopes of the parse Context in force, and construct_run_body and construct_held_type enter a Context::nested whose open starts at Context::top's one entry (only the import sub-parse moves the outer open stack in), so brackets open in the contexts set aside in Parser.outer are never counted against MAX_BRACKET_DEPTH",
     "proposed_for": "P23",
     "why": [
-      "W138"
+      "W138",
+      "W143"
     ],
     "anchors": [
       "check_depth",
@@ -11853,6 +11873,15 @@
         "effort": "xhigh",
         "commit": "2817cf4",
         "change": "why + W138",
+        "reason": null
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "why + W143",
         "reason": null
       }
     ]
@@ -12064,7 +12093,7 @@
     "status": "accepted",
     "text": "Neither DESIGN.md nor a page it links has a rule for a constructor's write that leaves a flagged cell holding no node: «The tape is Logic Graph with a string extension» states the invariant but no step that keeps it, «The constructor sets `tape.is_constructed[0] = true` itself» puts no condition on the flag or on the pointer write, and «An unknown spelling stays text on the tape» sends an undeclared spelling to the leftover-cell error, which looks only at unconstructed cells; so set_constructed and set_dyad carry no condition and a flagged spelling skips the one check DESIGN gives it",
     "proposed_for": "W112",
-    "why": null,
+    "why": [],
     "anchors": [
       "set_constructed",
       "set_dyad",
@@ -12134,6 +12163,15 @@
         "commit": "2817cf4",
         "change": "accepted as a why of W112, same as W128",
         "reason": "A and B: no rule says what a write that leaves a flagged cell with no node is, or which step refuses it; read whole: ›The tape is Logic Graph with a string extension‹, ›The constructor sets tape.is_constructed[0] = true itself‹, ›is_constructed is the tape's own list‹, ›A constructor that finds nothing to consume sets its flag‹, ›An unknown spelling stays text on the tape‹, ›What still holds of the old lifecycle‹, ›A constructor's outcome is read off its own cell‹: they state the invariant and that reading null is a checked error, none puts a condition on the writes"
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "asked: no why found",
+        "reason": "A and B: none; a rule DESIGN does not have yet; ›What still holds of the old lifecycle‹ decides what a reader of null does, not which write refuses a flagged cell with no node"
       }
     ]
   },
@@ -12141,7 +12179,7 @@
     "id": "W124",
     "kind": "why",
     "status": "accepted",
-    "text": "A parse body's field read tape[0].lhs is built by build_field_read with the field's declared run type (i32), as a run body's bare lhs is, so it is a this.load that yields the value the slot's node gives and build_write sees a number; in_parse is known there and only sets the fill mark, though at parse the slot holds the operand node itself",
+    "text": "A parse body's field read tape[0].lhs is built by build_field_read with the field's declared run type (i32), so it is a this.load that yields the value the slot's node gives and build_write sees a number; in_parse is known there and only sets the fill mark, though at parse the slot holds the operand node itself",
     "proposed_for": "P47",
     "why": null,
     "anchors": [
@@ -12208,6 +12246,15 @@
         "commit": "2817cf4",
         "change": "accepted as a why of P47, same as W113",
         "reason": "C and B blind to each other: a parse body's read of tape[0].lhs is built as a this.load of the field's declared run type, where ›A field is filled at run, per evaluation; its type decides how the operand is used‹ says at parse it is the slot holding the operand node; a fact apart from W16, since tape[0].rhs = tape[0].lhs + 0 still fails through W16 alone and fields declared ? give the right 8"
+      },
+      {
+        "at": "2026-10-08T22:18+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "text was \"A parse body's field read tape[0].lhs is built by build_field_read with the field's declared run type (i32), as a run body's bare lhs is, so it is a this.load that yields the value the slot's node gives and build_write sees a number; in_parse is known there and only sets the fill mark, though at parse the slot holds the operand node itself\"",
+        "reason": "B (W140 round): a run body's bare lhs is not read through build_field_read; construct_run_body_in makes the fields the run fn's own parameters (src/parse/bodies.rs, 'The parameters are the fields alone'), checked by the orchestrator"
       }
     ]
   },
@@ -12277,7 +12324,7 @@
     "status": "accepted",
     "text": "DESIGN.md says two things about which flag a constructor may write: «Two levels» allows one, its own cell's `tape.is_constructed[0] = true`, while the Open line of «A `tape[k]` read past the lexed frontier lexes on demand for every constructor» names `tape.is_constructed[k] = …` as a write at an index k, an error only past the reach; the seed follows the second, run_flag_write decoding k through tape_at, the one index decoder every tape native shares, which checks the reach and nothing else",
     "proposed_for": "W112",
-    "why": null,
+    "why": [],
     "anchors": [
       "run_flag_write",
       "tape_at",
@@ -12345,13 +12392,22 @@
         "commit": "2817cf4",
         "change": "accepted as a why of W112, same as W129",
         "reason": "A and B: ›Two levels‹ (and ›is_constructed is the tape's own list‹) let a constructor write only its own cell's flag, while the Open line of ›A tape[k] read past the lexed frontier lexes on demand for every constructor‹ makes only a write past the reach the error; both passages stand as quoted; explains the any-cell half of W112"
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "asked: no why found",
+        "reason": "A and B: none; two DESIGN passages disagree (›Two levels‹, ruled, against the Open line, Claude's, of ›A tape[k] read past the lexed frontier lexes on demand for every constructor‹), and only a ruling ends it"
       }
     ]
   },
   {
     "id": "W127",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "No one place in the code owns the rule that a constructed cell holds a node: Cell keeps dyad (null legal, null for a fresh spelling) and constructed as two independent fields, Cell::built takes null (bodies.rs builds one so), set_dyad and set_constructed each change one field alone, and the rule lives in its readers instead, stated two ways in their SAFETY lines (null or a node in run_ctor, holds a node in declare.rs, fields.rs, rational.rs and run_ctor again) and checked by local copies of !c.dyad.is_null() in construct_segment, the woke read in fields.rs and run_ctor twice, while as_operand trusts the flag; so a write has nothing to call that would refuse the null, and run_ctor, judging the constructor's own cell, lets a flagged null pass",
     "proposed_for": "W112",
     "why": null,
@@ -12367,11 +12423,20 @@
       "src/parse/fields.rs",
       "src/parse/declare.rs",
       "src/identities/rational.rs",
-      "src/parse/bodies.rs"
+      "src/parse/bodies.rs",
+      "parse_block",
+      "is_fresh",
+      "binding",
+      "is_bracket",
+      "construct_leaf",
+      "src/parse/operands.rs",
+      "src/identities/numtype.rs"
     ],
     "design": [
       "The tape is Logic Graph with a string extension",
-      "A constructor's outcome is read off its own cell; no holding, no re-invocation"
+      "A constructor's outcome is read off its own cell; no holding, no re-invocation",
+      "`is_constructed` is the tape's own list, read `tape.is_constructed[k]`",
+      "The seed's tape shape (#60, #121) and its remaining stand-ins"
     ],
     "pages": [],
     "evidence": [
@@ -12384,12 +12449,42 @@
         "command": "target/release/logos 'h := type (share parse_rank = *.parse_rank + 1, share parse = ( tape[0] = tape[1], tape.is_constructed[0] = true, tape.remove(1) )), h zz, 5' then gdb bt on target/debug/logos (dev 9c123fb)",
         "output": "exit 139; crash frame #13 seed::parse::Parser::close_line (item=0x0): run_ctor judged the own cell, flagged with a null dyad, and raised no error",
         "commit": "9c123fb"
+      },
+      {
+        "command": "rg -n 'must be null or a dyad|null is a legal cell dyad|Cell::built\\(std::ptr::null_mut|constructed cell.s dyad is null' src/parse (dev 50007fb)",
+        "output": "src/parse/tape.rs:86:    /// `dyad` must be null or a dyad from the store.     (Cell::built, which sets constructed: true)\nsrc/parse/bodies.rs:1195:        // SAFETY: null is a legal cell dyad.\nsrc/parse/bodies.rs:1196:        let mut last = unsafe { Cell::built(std::ptr::null_mut()) };\nsrc/parse/driver.rs:547:            // SAFETY: a constructed cell's dyad is null or a node from the store.",
+        "commit": "50007fb"
+      },
+      {
+        "command": "sed -n 199,218p src/parse/tape.rs (dev 50007fb)",
+        "output": "pub fn set_dyad(&mut self, offset: isize, dyad: DyadPtr) -> bool { ... c.dyad = dyad; c.bracket = false; ... }\npub fn set_constructed(&mut self, offset: isize, flag: bool) -> bool { ... c.constructed = flag; ... }\n(each writes one field; neither reads the other)",
+        "commit": "50007fb"
+      },
+      {
+        "command": "rg -n 'pub dyad|pub constructed|pub fn (identity|binding|is_fresh|is_bracket)\\b' src/parse/tape.rs; sed -n 137,139p src/parse/tape.rs (dev 9c123fb)",
+        "output": "16:    pub dyad: DyadPtr,        /// The binding or the node; null for a fresh spelling.\n17:    pub constructed: bool,\n119:    pub fn identity(&self, types: &Core) -> DyadPtr {     (binding read through, or null)\n126:    pub fn binding(&self, types: &Core) -> DyadPtr {      (null unless unconstructed and a binding)\n137:    pub fn is_fresh(&self) -> bool { !self.constructed && self.dyad.is_null() && self.text.is_some() }\n143:    pub fn is_bracket(&self) -> bool {\n(no read of a constructed cell's node; a flagged fresh spelling is none of these)",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "rg -n 'constructed.*\\.dyad|\\.dyad.*constructed' src --type rust -g '!**/tests.rs' (every reader of a built cell's node outside run_ctor, dev 9c123fb)",
+        "output": "src/parse/driver.rs:292:   c.constructed && !c.dyad.is_null() && unsafe { dyad::ty(c.dyad) } == comment_    (tests null)\nsrc/parse/driver.rs:809:   Constructed::Placed => Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad)),   (no test)\nsrc/parse/operands.rs:193: c if c.constructed => Ok(c.dyad),     (no test)\nsrc/parse/fields.rs:694:   tape.at(-1).filter(|c| c.constructed && !c.dyad.is_null()).map(|c| c.dyad);    (tests null)\nsrc/identities/numtype.rs:150: if c.constructed && !c.is_bracket() && unsafe { dyad::ty(c.dyad) } == types.rational   (no test)\nrun_ctor (src/parse/driver.rs): let record = !cell.dyad.is_null() ... if !cell.dyad.is_null() {   (tests null)\n3 of 6 readers test the null, 3 do not; non-test files reading .dyad of a cell: 11, .constructed: 10",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "release dev 9c123fb, H = h := type (share parse_rank = *.parse_rank + 1, share parse = ( tape.is_constructed[1] = true, tape.remove(0) )); gdb frame #15 on the debug build",
+        "output": "H, h zz, 5        -> exit 139 (close_line)\nH, h zz + 1, 5    -> exit 139 (binary::pointer_step, lhs=0x0)\nH, i32 -h zz, 5   -> exit 139 (resolve_binary, rhs=0x0)\nH, y := h zz, 5   -> exit 139 (declare_here)\nH, h 7, 5         -> 5, exit 0 (the flagged cell holds a node)",
+        "commit": "9c123fb"
       }
     ],
     "found_by": [
-      "B"
+      "A",
+      "B",
+      "C"
     ],
-    "aliases": [],
+    "aliases": [
+      "The seed's own contract for a tape cell makes a constructed cell with a null dyad legal: Cell::built's Safety line says its dyad must be null or a dyad from the store, parse_block builds Cell::built(std::ptr::null_mut()) under SAFETY: null is a legal cell dyad, and run_ctor's SAFETY line says a constructed cell's dyad is null or a node; so set_constructed and set_dyad, which each write one field of Cell, have no tie between the flag and a node to keep, against ›The tape is Logic Graph with a string extension‹, which says a constructed cell is already a graph dyad",
+      "Cell keeps what a cell holds as two independent public fields, dyad (null for a fresh spelling) and constructed, and gives reads for three of their pairings (binding, is_fresh, which requires constructed false, and is_bracket) but none for the node a constructed cell holds; so every reader of a built cell reads c.dyad beside c.constructed itself and decides the null on its own: as_operand, construct_leaf and numtype's literal fold do not test it, construct_segment's comment lift, the woke read in src/parse/fields.rs and run_ctor do"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-08T22:06+02:00",
@@ -12400,7 +12495,26 @@
       "run": "why-P31",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "accepted as a why of W112, same as W146",
+        "reason": "B and C blind to each other: Cell keeps the node and the built flag as two independent fields, its contracts (Cell::built's Safety line, parse_block's 'null is a legal cell dyad', run_ctor's SAFETY line) make a built null cell legal, and set_constructed and set_dyad each write one field alone, so no write has a tie between the flag and a node to keep"
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "took in W141, a why of W135",
+        "reason": "A found the same fact at W135: Cell gives no read for the node a built cell holds, so each reader reads c.dyad beside c.constructed and decides the null itself"
+      }
+    ]
   },
   {
     "id": "W128",
@@ -12525,9 +12639,9 @@
     "id": "W130",
     "kind": "why",
     "status": "accepted",
-    "text": "slot_body_fill's SlotKind::Run arm only lexes a type's run body and holds it, even when its fields are typed and it declares no output_type, so resolve_specialization builds it with construct_run_body at its first node, inside the reader of that node; t0's first node builds t0's body, whose node 3 t1 builds t1's body on top of it, and every link's 1,990 brackets stay on one Rust stack, where ›A generic function body is lexed once and built once per set of field types‹ builds such a body whole at its definition",
+    "text": "slot_body_fill's SlotKind::Run arm only lexes a type's run body and holds it, even when its fields are typed and it declares no output_type, so resolve_specialization builds it with construct_run_body at its first node, inside the reader of that node; t0's first node builds t0's body, whose node 3 t1 builds t1's body on top of it, and every link's 1,990 brackets stay on one Rust stack, where ›A generic function body is lexed once and built once per set of field types‹ builds such a body whole at its definition; the run-body table's one way in is resolve_specialization, keyed from a placed node by field_type_key, and parse_type_body's close only installs the lexed body, though for declared field types the key is known there",
     "proposed_for": "P23",
-    "why": null,
+    "why": [],
     "anchors": [
       "slot_body_fill",
       "SlotKind::Run",
@@ -12580,6 +12694,24 @@
         "commit": "2817cf4",
         "change": "accepted as a why of W121",
         "reason": "explains W121: the run body is held whole until its first node though its fields are typed and it declares no output_type, where ›A generic function body is lexed once and built once per set of field types‹ builds it at its definition (its Seed line records the gap, #219); C's warm probe, each body built right after its type, runs 18 and 30 links"
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "text was \"slot_body_fill's SlotKind::Run arm only lexes a type's run body and holds it, even when its fields are typed and it declares no output_type, so resolve_specialization builds it with construct_run_body at its first node, inside the reader of that node; t0's first node builds t0's body, whose node 3 t1 builds t1's body on top of it, and every link's 1,990 brackets stay on one Rust stack, where ›A generic function body is lexed once and built once per set of field types‹ builds such a body whole at its definition\"",
+        "reason": "B's W145 states W130's own mechanism in more detail: the table's one way in and the close that builds nothing"
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "asked: no why found",
+        "reason": "A: none, the held-whole mechanism the 29 September ruling superseded (the rule's Seed line, #219); B's only answer restated it; a mechanism DESIGN has superseded"
       }
     ]
   },
@@ -12629,7 +12761,7 @@
   {
     "id": "W132",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "The bracket depth is the open field of the parse Context, which enter swaps out whole, and what a sub-parse keeps from the interrupted parse is a hand-kept list in Context::nested (dir, held_depth, last_declared, last_write, reader; open is not on it), so each caller of enter decides its own starting depth, and only the import site moves open across by hand",
     "proposed_for": "W120",
     "why": null,
@@ -12660,7 +12792,7 @@
       "B"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W143",
     "made": {
       "at": "2026-10-08T22:07+02:00",
       "by": "logoslang-why-P23-b",
@@ -12670,7 +12802,17 @@
       "run": "why-P23",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "merged into W143",
+        "reason": "C and B blind to each other: the bracket depth has no count of its own, it is the length of Context.open, and Context::nested carries a hand-kept five of Context's fields (dir, held_depth, last_declared, last_write, reader), open not among them, so a nested parse starts its depth fresh; C's probe: two walls of 1,100 brackets give 'scopes nested deeper than 2000' in one Context and run in a nested one"
+      }
+    ]
   },
   {
     "id": "W133",
@@ -12767,7 +12909,9 @@
     "status": "accepted",
     "text": "What a constructed cell with a null dyad means is decided at each reader, not once: read_kind gives Read::Undefined for a null node (a checked error, which is all the REPL's bare h zz meets, through value_of before close_item) and run_ctor tests cell.dyad.is_null() under a SAFETY line that a constructed cell's dyad is null or a node, while as_operand hands c.dyad on as the operand and close_line, declare_here and binary::pointer_step call dyad::ty on it, so the null cell crashes at whichever reader dereferences it first",
     "proposed_for": "P31",
-    "why": null,
+    "why": [
+      "W127"
+    ],
     "anchors": [
       "read_kind",
       "run_ctor",
@@ -12857,6 +13001,15 @@
         "commit": "2817cf4",
         "change": "accepted as a why of P31, same as W110, W136",
         "reason": "B and C blind to each other: what a constructed cell holding no node means is decided by each reader on its own (as_operand passes it on, close_line, declare_here and pointer_step dereference it, read_kind gives Undefined, run_ctor skips it); W136, run_ctor letting the null pass, is one of those readers, and one decision made once removes both"
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "why + W127",
+        "reason": null
       }
     ]
   },
@@ -12918,7 +13071,7 @@
   {
     "id": "W137",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "The one work stack (WORK_STACK_BYTES) is guarded by two counts in their own units, each sized alone against the whole stack: MAX_BRACKET_DEPTH counts brackets in one parse Context (check_depth) and MAX_CALL_DEPTH counts calls in run::Context.depth; nothing measures the stack itself, so frames one count does not see (another parse Context's brackets, or the other count's frames, while parse and run call into each other by resolve_specialization and mint_host) go unchecked",
     "proposed_for": "W120",
     "why": null,
@@ -12961,7 +13114,17 @@
       "run": "why-P23",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "rejected",
+        "reason": "fails the direct test: P23 is one parse inside another, which W120 and W143 cover; B could not make the mixed parse-and-call case crash, and A and C both name MAX_CALL_DEPTH as no cause of W120"
+      }
+    ]
   },
   {
     "id": "W138",
@@ -12969,7 +13132,7 @@
     "status": "accepted",
     "text": "Neither DESIGN.md nor a spec page it points to says how deep the drive may nest or what counts toward that depth: ›The scope's constructor is the driver‹ makes the drive recurse by nesting with no bound, ›A checked error is a fault‹ says only what a checked error does, and resource exhaustion is Open (deferred) under ›Effect identities are fail-closed; pure computation is ambient‹; so MAX_BRACKET_DEPTH is the seed's own guard, written and sized for one text's brackets, and no rule says a body built inside a bracket counts toward it",
     "proposed_for": "W120",
-    "why": null,
+    "why": [],
     "anchors": [
       "MAX_BRACKET_DEPTH",
       "check_depth",
@@ -13037,6 +13200,15 @@
         "commit": "2817cf4",
         "change": "accepted as a why of W120, same as W139",
         "reason": "A and B: no rule says the drive's nesting has a limit or what counts toward it; read whole: ›A checked error is a fault‹ (what a checked error does), ›Effect identities are fail-closed; pure computation is ambient‹ (resource exhaustion Open, deferred), ›Locals live on the stack‹ (a frame's memory); so MAX_BRACKET_DEPTH is the seed's own guard for one text's brackets"
+      },
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "asked: no why found",
+        "reason": "A and B: none; a rule DESIGN does not have yet (how deep the drive may nest, and what counts), resource exhaustion being Open (deferred) under ›Effect identities are fail-closed; pure computation is ambient‹"
       }
     ]
   },
@@ -13164,6 +13336,581 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "2817cf4",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W140",
+    "kind": "why",
+    "status": "draft",
+    "text": "A parse's node is bound as the same this_param a free or share function's value is (SlotKind::Parse, SlotKind::Free, the share fn's first parameter), and tape[0].f in a parse and a bare f in those functions go through the one reader Parser::this_field, made for a value whose field gives what its declared type says; a run body is not among them, since its fields are its own parameters (construct_run_body_in), so the parse's moment, the slot holding the operand node, has no reader of its own",
+    "proposed_for": "W124",
+    "why": null,
+    "anchors": [
+      "this_param",
+      "this_field",
+      "names_own_field",
+      "is_node_cell",
+      "construct_run_body_in",
+      "hidden_param_record",
+      "src/parse/types.rs",
+      "src/parse/fields.rs"
+    ],
+    "design": [
+      "A field is filled at run, per evaluation; its type decides how the operand is used",
+      "Reading a path runs nothing"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'def.this_param = |this_field\\(' src/parse; sed -n 4,8p src/identities/this.rs",
+        "output": "src/parse/types.rs:984:                def.this_param = params[1];   (SlotKind::Parse, beside tape_param, in_parse = true)\nsrc/parse/types.rs:1031:                def.this_param = params[0];  (SlotKind::Free)\nsrc/parse/bodies.rs:482:        def.this_param = this;          (a share fn's value, its first parameter)\nsrc/parse/fields.rs:405:                let member = self.this_field(name, nstart)?;   (tape[0].f when is_node_cell)\nsrc/parse/driver.rs:137:            cell.dyad = self.this_field(cell.spelling(), start)?;   (bare f when names_own_field)\nthis.rs header: The value a type's bodies work on: a parse's node, tape[0], or a free's or share function's value, bound as an unnamed parameter ... A field read, tape[0].f or bare f, reaches field f ... for a field of a number or pointer type the value that node yields",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "why-probes/w124.txt: tw := type ( lhs := i32 ?, ..., share run = ( lhs + lhs ), ... ), bump := fn () -> i32 ( print «b», 1 ), bump() tw   (and in f after f.compile())",
+        "output": "b\n2   (both tiers: a run body reads lhs once, as its parameter, not through this_field)",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:17+02:00",
+      "by": "logoslang-why-P47-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P47",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W141",
+    "kind": "why",
+    "status": "merged",
+    "text": "Cell keeps what a cell holds as two independent public fields, dyad (null for a fresh spelling) and constructed, and gives reads for three of their pairings (binding, is_fresh, which requires constructed false, and is_bracket) but none for the node a constructed cell holds; so every reader of a built cell reads c.dyad beside c.constructed itself and decides the null on its own: as_operand, construct_leaf and numtype's literal fold do not test it, construct_segment's comment lift, the woke read in src/parse/fields.rs and run_ctor do",
+    "proposed_for": "W135",
+    "why": null,
+    "anchors": [
+      "Cell",
+      "is_fresh",
+      "binding",
+      "is_bracket",
+      "as_operand",
+      "construct_leaf",
+      "construct_segment",
+      "run_ctor",
+      "src/parse/tape.rs",
+      "src/parse/operands.rs",
+      "src/parse/driver.rs",
+      "src/parse/fields.rs",
+      "src/identities/numtype.rs"
+    ],
+    "design": [
+      "The tape is Logic Graph with a string extension",
+      "The seed's tape shape (#60, #121) and its remaining stand-ins"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'pub dyad|pub constructed|pub fn (identity|binding|is_fresh|is_bracket)\\b' src/parse/tape.rs; sed -n 137,139p src/parse/tape.rs (dev 9c123fb)",
+        "output": "16:    pub dyad: DyadPtr,        /// The binding or the node; null for a fresh spelling.\n17:    pub constructed: bool,\n119:    pub fn identity(&self, types: &Core) -> DyadPtr {     (binding read through, or null)\n126:    pub fn binding(&self, types: &Core) -> DyadPtr {      (null unless unconstructed and a binding)\n137:    pub fn is_fresh(&self) -> bool { !self.constructed && self.dyad.is_null() && self.text.is_some() }\n143:    pub fn is_bracket(&self) -> bool {\n(no read of a constructed cell's node; a flagged fresh spelling is none of these)",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "rg -n 'constructed.*\\.dyad|\\.dyad.*constructed' src --type rust -g '!**/tests.rs' (every reader of a built cell's node outside run_ctor, dev 9c123fb)",
+        "output": "src/parse/driver.rs:292:   c.constructed && !c.dyad.is_null() && unsafe { dyad::ty(c.dyad) } == comment_    (tests null)\nsrc/parse/driver.rs:809:   Constructed::Placed => Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad)),   (no test)\nsrc/parse/operands.rs:193: c if c.constructed => Ok(c.dyad),     (no test)\nsrc/parse/fields.rs:694:   tape.at(-1).filter(|c| c.constructed && !c.dyad.is_null()).map(|c| c.dyad);    (tests null)\nsrc/identities/numtype.rs:150: if c.constructed && !c.is_bracket() && unsafe { dyad::ty(c.dyad) } == types.rational   (no test)\nrun_ctor (src/parse/driver.rs): let record = !cell.dyad.is_null() ... if !cell.dyad.is_null() {   (tests null)\n3 of 6 readers test the null, 3 do not; non-test files reading .dyad of a cell: 11, .constructed: 10",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "release dev 9c123fb, H = h := type (share parse_rank = *.parse_rank + 1, share parse = ( tape.is_constructed[1] = true, tape.remove(0) )); gdb frame #15 on the debug build",
+        "output": "H, h zz, 5        -> exit 139 (close_line)\nH, h zz + 1, 5    -> exit 139 (binary::pointer_step, lhs=0x0)\nH, i32 -h zz, 5   -> exit 139 (resolve_binary, rhs=0x0)\nH, y := h zz, 5   -> exit 139 (declare_here)\nH, h 7, 5         -> 5, exit 0 (the flagged cell holds a node)",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W127",
+    "made": {
+      "at": "2026-10-08T22:17+02:00",
+      "by": "logoslang-why-P31-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P31",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "merged into W127",
+        "reason": "A found the same fact at W135: Cell gives no read for the node a built cell holds, so each reader reads c.dyad beside c.constructed and decides the null itself"
+      }
+    ]
+  },
+  {
+    "id": "W142",
+    "kind": "why",
+    "status": "draft",
+    "text": "DyadPtr is a bare *mut Dyad that stands both for a node and for no node (undefined, a fresh cell), so whether a pointer may be null is said only in each function's Safety line (dyad::ty: a valid dyad; read_kind: null or a valid dyad) and never by the type; the checked error ›What still holds of the old lifecycle‹ asks for on reading an undefined slot is therefore written only where a reader chose to write it (read_kind gives Read::Undefined), and as_operand, close_line, declare_here and numtype_of take the pointer as a node with nothing making them decide",
+    "proposed_for": "W135",
+    "why": null,
+    "anchors": [
+      "DyadPtr",
+      "read_kind",
+      "as_operand",
+      "close_line",
+      "declare_here",
+      "numtype_of",
+      "src/identities/dyad.rs",
+      "src/identities/read.rs"
+    ],
+    "design": [
+      "What still holds of the old lifecycle",
+      "The tape is Logic Graph with a string extension"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'pub type DyadPtr' src; sed -n 24,30p src/identities/dyad.rs; sed -n 62,69p src/identities/read.rs; sed -n 724p DESIGN.md",
+        "output": "src/identities/dyad.rs:19:pub type DyadPtr = *mut Dyad;\n/// # Safety\n/// `p` must be a valid dyad from the store.\npub unsafe fn ty(p: DyadPtr) -> DyadPtr { (*p).ty }\n/// `node` must be null or a valid dyad from the store; ...\npub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {\n    let node = types.through(node);\n    if node.is_null() { return Read::Undefined; }\n724: `undefined` is a null slot, and reading it is a checked error, never undefined behavior.",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "rg -c counts over src (dev 9c123fb)",
+        "output": "Safety lines allowing null ('must be null or', 'is null or', 'null or a dyad/node'): 74\nSafety lines requiring a node ('must be a valid dyad', 'is a (reduced) dyad from the store'): 76\ndyad::ty( call sites: 285 (each relies on its own caller's Safety line; none is checked)",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:17+02:00",
+      "by": "logoslang-why-P31-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P31",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W143",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The bracket depth has no count of its own: check_depth reads it as the length of Context.open, the list of OpenScope records each open scope's end runs from, a field of the sub-parse's Context and not of Parser; Context::nested carries five fields of the interrupted Context (dir, held_depth, last_declared, last_write, reader) and takes everything else from Context::top, open included, so a sub-parse's fresh scope list is a fresh depth",
+    "proposed_for": "W120",
+    "why": null,
+    "anchors": [
+      "check_depth",
+      "OpenScope",
+      "Context::nested",
+      "Context::top",
+      "held_depth",
+      "Parser",
+      "src/parse/mod.rs",
+      "src/parse/bodies.rs",
+      "enter",
+      "construct_run_body",
+      "construct_held_type",
+      "src/parse/quotes.rs"
+    ],
+    "design": [
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'its length is the bracket depth|length is the bracket|open: Vec<OpenScope>|open: vec!\\[OpenScope::default\\(\\)\\]|fn nested|held_depth: outer.held_depth|\\.\\.Context::top\\(source, scopes\\)|cx: Context<.a>,|outer: Vec<Context|self.cx.open.len\\(\\) \\+ unopened' src/parse/mod.rs src/parse/bodies.rs",
+        "output": "src/parse/mod.rs:51:    cx: Context<'a>,\nsrc/parse/mod.rs:52:    outer: Vec<Context<'a>>,\nsrc/parse/mod.rs:103:    /// length is the bracket depth.   (doc of Context.open: \"The open scopes, innermost last, the base entry the top level; its length is the bracket depth.\")\nsrc/parse/mod.rs:104:    open: Vec<OpenScope>,\nsrc/parse/mod.rs:173:            open: vec![OpenScope::default()],   (Context::top)\nsrc/parse/mod.rs:196:    fn nested(outer: &Self, source: &'a str, scopes: ScopeStack) -> Self {\nsrc/parse/mod.rs:199:            held_depth: outer.held_depth,   (carried, like dir, last_declared, last_write, reader)\nsrc/parse/mod.rs:203:            ..Context::top(source, scopes)\nsrc/parse/bodies.rs:1181:        if self.cx.open.len() + unopened >= MAX_BRACKET_DEPTH {\n(OpenScope's fields: exit, lines, ended, ended_earlier, unrun, ran, reached: what a scope's end runs; no depth counter on Parser)",
+        "commit": "50007fb"
+      },
+      {
+        "command": "python3 why-probes/depth-axis.py target/release/logos 1100   (two walls of 1,100 brackets, the inner one an inline fn body in the same Context, or a type's run body built at its first node in a Context::nested; dev 50007fb, release, interpreted)",
+        "output": "2 x 1100 inline fn: exit 1 ['<command line>:1:2040: error: scopes nested deeper than 2000']\n2 x 1100 run body: exit 0 ['leaf', '1']\n(the same 2,200 brackets count when they stay in one Context, and restart from 1 in a nested one)",
+        "commit": "50007fb"
+      },
+      {
+        "command": "sed -n 194,205p src/parse/mod.rs   (dev 896f9a6)",
+        "output": "    /// A sub-parse over `source`: fresh state, keeping only what the interrupted parse\n    /// leaves in force across it.\n    fn nested(outer: &Self, source: &'a str, scopes: ScopeStack) -> Self {\n        Context {\n            dir: outer.dir.clone(),\n            held_depth: outer.held_depth,\n            last_declared: outer.last_declared,\n            last_write: outer.last_write,\n            reader: outer.reader,\n            ..Context::top(source, scopes)\n        }\n    }\n(Context::top sets 31 fields, open among them as vec![OpenScope::default()] at src/parse/mod.rs:173)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n 'self.enter\\(|g.0.cx.open = std::mem::take' src/parse   (the three callers of enter; only one carries open)",
+        "output": "src/parse/types.rs:803:        let g = self.enter(cx);   [construct_held_type: open from Context::top]\nsrc/parse/quotes.rs:306:        let g = self.enter(cx);   [import]\nsrc/parse/quotes.rs:311:        g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect(\"pushed by enter\").open);   [import moves the outer open in]\nsrc/parse/bodies.rs:350:        let g = self.enter(cx);   [construct_run_body: open from Context::top]",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B",
+      "C"
+    ],
+    "aliases": [
+      "The bracket depth is the open field of the parse Context, which enter swaps out whole, and what a sub-parse keeps from the interrupted parse is a hand-kept list in Context::nested (dir, held_depth, last_declared, last_write, reader; open is not on it), so each caller of enter decides its own starting depth, and only the import site moves open across by hand"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:17+02:00",
+      "by": "logoslang-why-P23-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "50007fb",
+      "run": "why-P23",
+      "agent": "C"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "accepted as a why of W120, same as W132",
+        "reason": "C and B blind to each other: the bracket depth has no count of its own, it is the length of Context.open, and Context::nested carries a hand-kept five of Context's fields (dir, held_depth, last_declared, last_write, reader), open not among them, so a nested parse starts its depth fresh; C's probe: two walls of 1,100 brackets give 'scopes nested deeper than 2000' in one Context and run in a nested one"
+      }
+    ]
+  },
+  {
+    "id": "W144",
+    "kind": "why",
+    "status": "draft",
+    "text": "For a run body whose field types follow the node, ›A generic function body is lexed once and built once per set of field types‹ itself has it wait for the first node with them, and a node written in another run body is built while that body is built, so a chain of types with untyped fields nests one build in another by the rule, even once W130 is fixed",
+    "proposed_for": "W121",
+    "why": null,
+    "anchors": [
+      "resolve_specialization",
+      "construct_run_body",
+      "field_type_key"
+    ],
+    "design": [
+      "A generic function body is lexed once and built once per set of field types"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'what needs them waits for the first node with them' DESIGN.md (the rule's first paragraph)",
+        "output": "1908: … A type's run body waits for nothing when its fields are typed and its type declares no output_type or has a parse that writes the same one at every node …; in one whose field types or output type follow the node, what needs them waits for the first node with them, as in ^'s, whose result follows its operands …",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "python3 why-probes/chain-field-type.py target/release/logos N 1990 '?'   (P23's chain with a := ? instead of a := i32 ?; dev 896f9a6, release, interpreted)",
+        "output": "17 1990 ? -> 0 leaf\n18 1990 ? -> -6 thread has overflowed its stack\n(t1's key, i32, is known only at the node 3 t1, which stands 1,990 brackets deep in t0's body while t0's body is built)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:17+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W145",
+    "kind": "why",
+    "status": "rejected",
+    "text": "The run-body table (run_body::insert, run_body::lookup) has one way in, resolve_specialization, which takes its key from a placed node by field_type_key(ty, node); parse_type_body's close only installs the lexed body (install_run_body) and builds nothing, though for fields with a declared type field_type_key returns that declared type at every node, so the key is known at the definition",
+    "proposed_for": "W130",
+    "why": null,
+    "anchors": [
+      "resolve_specialization",
+      "field_type_key",
+      "construct_run_body",
+      "install_run_body",
+      "parse_type_body",
+      "src/parse/types.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "A generic function body is lexed once and built once per set of field types"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'run_body::insert|run_body::lookup|construct_run_body\\(|install_run_body\\(node|let Some\\(key\\) = self.field_type_key' src   (dev 896f9a6; and field_type_key's typed-field arm)",
+        "output": "src/parse/types.rs:695:            unsafe { crate::identities::meta::install_run_body(node, def.run_body) };   [parse_type_body's close: the lexed body only]\nsrc/parse/types.rs:1128:        let Some(key) = self.field_type_key(ty, node)? else {   [resolve_specialization]\nsrc/parse/types.rs:1131:        let mut spec = crate::identities::run_body::lookup(held, &key);\nsrc/parse/types.rs:1133:            spec = self.construct_run_body(ty, held, &key, at, spelling)?;\nsrc/parse/bodies.rs:320:    pub(super) unsafe fn construct_run_body(\nsrc/parse/bodies.rs:344:        crate::identities::run_body::insert(self.rt.store, types, held, key, spec);\nfield_type_key, a field whose declared type is not type, a bracket or scope: key.push(declared) (types.rs:1244-1261), whatever the node holds",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "target/release/logos '<program>'   (dev 896f9a6, release, interpreted; why-probes/W130-held.txt)",
+        "output": "sq2 := type ( a := i32 ?, share run = ( immediate ( print «hi», 1 ), a * a ) ), print «defined»\n-> defined   (the rule's example prints hi there: built at the definition)\nt1 := type ( a := i32 ?, share run = ( immediate ( print «t1 built», 1 ), print «t1 runs» ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = t1, tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) ) ), print «defined», 3 t1, print «again», 4 t1\n-> defined / t1 built / t1 runs / again / t1 runs / 0   (built at the first node, once: the second node finds the same key [i32])",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:17+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "rejected",
+        "reason": "restates W130 (amended to carry its detail)"
+      }
+    ]
+  },
+  {
+    "id": "W146",
+    "kind": "why",
+    "status": "merged",
+    "text": "The seed's own contract for a tape cell makes a constructed cell with a null dyad legal: Cell::built's Safety line says its dyad must be null or a dyad from the store, parse_block builds Cell::built(std::ptr::null_mut()) under SAFETY: null is a legal cell dyad, and run_ctor's SAFETY line says a constructed cell's dyad is null or a node; so set_constructed and set_dyad, which each write one field of Cell, have no tie between the flag and a node to keep, against ›The tape is Logic Graph with a string extension‹, which says a constructed cell is already a graph dyad",
+    "proposed_for": "W112",
+    "why": null,
+    "anchors": [
+      "Cell",
+      "set_constructed",
+      "set_dyad",
+      "parse_block",
+      "run_ctor",
+      "src/parse/tape.rs",
+      "src/parse/bodies.rs",
+      "src/parse/driver.rs"
+    ],
+    "design": [
+      "The tape is Logic Graph with a string extension",
+      "`is_constructed` is the tape's own list, read `tape.is_constructed[k]`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'must be null or a dyad|null is a legal cell dyad|Cell::built\\(std::ptr::null_mut|constructed cell.s dyad is null' src/parse (dev 50007fb)",
+        "output": "src/parse/tape.rs:86:    /// `dyad` must be null or a dyad from the store.     (Cell::built, which sets constructed: true)\nsrc/parse/bodies.rs:1195:        // SAFETY: null is a legal cell dyad.\nsrc/parse/bodies.rs:1196:        let mut last = unsafe { Cell::built(std::ptr::null_mut()) };\nsrc/parse/driver.rs:547:            // SAFETY: a constructed cell's dyad is null or a node from the store.",
+        "commit": "50007fb"
+      },
+      {
+        "command": "sed -n 199,218p src/parse/tape.rs (dev 50007fb)",
+        "output": "pub fn set_dyad(&mut self, offset: isize, dyad: DyadPtr) -> bool { ... c.dyad = dyad; c.bracket = false; ... }\npub fn set_constructed(&mut self, offset: isize, flag: bool) -> bool { ... c.constructed = flag; ... }\n(each writes one field; neither reads the other)",
+        "commit": "50007fb"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": "W127",
+    "made": {
+      "at": "2026-10-08T22:17+02:00",
+      "by": "logoslang-why-P31-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "50007fb",
+      "run": "why-P31",
+      "agent": "C"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6718deb",
+        "change": "merged into W127",
+        "reason": "B and C blind to each other: Cell keeps the node and the built flag as two independent fields, its contracts (Cell::built's Safety line, parse_block's 'null is a legal cell dyad', run_ctor's SAFETY line) make a built null cell legal, and set_constructed and set_dyad each write one field alone, so no write has a tie between the flag and a node to keep"
+      }
+    ]
+  },
+  {
+    "id": "W147",
+    "kind": "why",
+    "status": "draft",
+    "text": "The tape's reads hand a fresh spelling's missing node out as an ordinary null value: run_slot (tape[k]) returns read_cell(...).dyad and slot_cell (behind tape[k].type) returns rt.through(cell.dyad) with no null test, so tape[0] = tape[1] gets a null for set_dyad to store; ›An unknown spelling stays text on the tape‹ gives the cell no node and ›A tape[k] read past the lexed frontier lexes on demand for every constructor‹ says only that the reader decides what the cell is, and no rule says what value a tape[k] read gives for a cell with no node",
+    "proposed_for": "W112",
+    "why": null,
+    "anchors": [
+      "run_slot",
+      "slot_cell",
+      "read_cell",
+      "run_cell_type",
+      "run_write",
+      "set_dyad",
+      "src/identities/tape.rs"
+    ],
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
+      "A `tape[k]` read past the lexed frontier lexes on demand for every constructor"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 572,575p src/identities/tape.rs; sed -n 674,675p src/identities/tape.rs (dev 50007fb)",
+        "output": "fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {\n    unsafe { Ok(read_cell(rt, dyad::value(node) as *const DyadPtr)?.dyad as i64) }\n    let cell = read_cell(rt, ops)?;      (slot_cell)\n    Ok(rt.through(cell.dyad))",
+        "commit": "50007fb"
+      },
+      {
+        "command": "target/release/logos 'h := type (share parse_rank = *.parse_rank + 1, share parse = ( <BODY> )), <USE>, 5' (dev 50007fb); gdb on target/debug/logos for the .type line",
+        "output": "t := tape[1].type, tape.remove(0) / h zz -> exit 139, no flag written; debug: panicked at src/identities/dyad.rs:29:5: null pointer dereference, dyad::ty (p=0x0) <- tape::run_cell_type src/identities/tape.rs:725\ntape[0] = tape[1], tape.is_constructed[0] = true, tape.remove(1) / h zz -> exit 139\nsame body / x := 3, ..., h x -> 5, exit 0 (a declared name's cell has a node)\ntape[0] = tape[1], tape.remove(1) / h zz -> error: the constructor of `h` edited the tape but left its own cell unconstructed ..., exit 1",
+        "commit": "50007fb"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:18+02:00",
+      "by": "logoslang-why-P31-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "50007fb",
+      "run": "why-P31",
+      "agent": "C"
+    },
+    "history": []
+  },
+  {
+    "id": "W148",
+    "kind": "why",
+    "status": "draft",
+    "text": "Neither DESIGN.md nor a page it links has a rule for what a parse's read of its own node's number field gives during the parse: the two-moments sentence of ›A field is filled at run, per evaluation; its type decides how the operand is used‹ says only what the slot holds at parse (the operand node), and ›A tape read checked against a number type reads as that number‹ (a constant reads as its value, a name or expression is the checked error, never evaluated in the parse) covers `tape[k]` cells, not `tape[0].f`; the seed filled the gap by value, pinned by the test `a_number_field_is_read_and_written_by_value_in_a_parse_body` (`tape[0].m = tape[0].n * 2` gives 6), so `build_field_read` reads every number field as its type, a name in the slot included",
+    "proposed_for": "W124",
+    "why": null,
+    "anchors": [
+      "a_number_field_is_read_and_written_by_value_in_a_parse_body",
+      "tests/cli.rs",
+      "build_field_read",
+      "this_field"
+    ],
+    "design": [
+      "A field is filled at run, per evaluation; its type decides how the operand is used",
+      "A tape read checked against a number type reads as that number"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -i 'by value in a parse|takes part in arithmetic|value exists only when it runs' DESIGN.md tests/cli.rs; sed -n 3254,3264p tests/cli.rs",
+        "output": "DESIGN.md:1397: ... A line that is an expression (a name included) is the checked error when the narrowed read runs in the parse, never evaluated there: the value exists only when it runs ...   (under ### A tape read checked against a number type reads as that number; about tape[k] cells)\ntests/cli.rs:3255:fn a_number_field_is_read_and_written_by_value_in_a_parse_body() {\n    // `tape[0].n` is the u64 it holds, so it takes part in arithmetic; the value a\n    // run-time right side yields is what the field keeps after the parse returns.\n        \"q := type ( n := u64 ?, m := u64 ?, share parse_rank = 60, share parse = ( \\\n         tape[0].type = q, tape[0].n = tape[1].dyads.size, tape[0].m = tape[0].n * 2, \\\n         tape[0] = tape[0].m, tape.remove(1), ...\" q (1, 2, 3)\n    assert_eq!((code, stdout.as_str()), (Some(0), \"6\\n\"), ...);\n(DESIGN searched also for 'field ... read ... in the parse', 'a parse reads ... field', 'known node', 'parse-time read': only ›A field of a type that runs ...‹ l.1338 on b.items through a known node, which is not a parse body's own node)",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "cargo test --release --test cli a_number_field_is_read_and_written_by_value_in_a_parse_body; P47 (slot holds the name x, function parameter)",
+        "output": "test a_number_field_is_read_and_written_by_value_in_a_parse_body ... ok   (slot holds a number the parse made: read by value, right)\nP47 f(4): -1706254236, exit 0   (slot holds the name x: the same by-value read runs x in the parse, where DESIGN's tape rule would make it the checked error)",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:18+02:00",
+      "by": "logoslang-why-P47-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P47",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W149",
+    "kind": "why",
+    "status": "draft",
+    "text": "The seed carries out ›The scope's constructor is the driver‹'s recursion by nesting as Rust calls on the work thread's stack: paren's constructor calls parse_sequence_cell, so each ( is parse_block, next_cell, lex_next, run_ctor and the paren closure again, five Rust frames, and a body built inside a bracket (construct_run_body, construct_held_type) is one more Rust call on top; the drive keeps no stack of its own, so every nesting, in one text or across built bodies, spends WORK_STACK_BYTES",
+    "proposed_for": "W121",
+    "why": null,
+    "anchors": [
+      "parse_sequence_cell",
+      "parse_block",
+      "next_cell",
+      "lex_next",
+      "run_ctor",
+      "src/identities/paren.rs",
+      "WORK_STACK_BYTES"
+    ],
+    "design": [
+      "The scope's constructor is the driver"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'parse_sequence_cell' src/identities/paren.rs; and one bracket's frames in the gdb backtrace of P23 (why-probes/p23-bt.txt, dev 896f9a6, release)",
+        "output": "18:        let body = p.parse_sequence_cell()?;\n#101 Parser::next_cell\n#102 Parser::parse_block\n#103 identities::paren::register::{closure#0}\n#104 Parser::run_ctor\n#105 Parser::lex_next\n#106 Parser::next_cell\n(repeats per bracket: 34,920 parse_block frames for 18 x 1990 brackets; the overflow is 64 MiB of these)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "the doc comments on the guards, src/lib.rs and src/parse/bodies.rs",
+        "output": "WORK_STACK_BYTES: The parser recurses per bracket and the interpreter per call, so the depth guards mean one thing only when the stack under them is always this size (8 MiB overflowed near 5,500 frames).\nMAX_BRACKET_DEPTH: Each open bracket recurses through parse_sequence and ('s constructor, so a wall of ( costs Rust stack like a runaway recursion",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:18+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "P100",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type's parse that only reads tape[1].type, where tape[1] is a word nobody declared, crashes with a segmentation fault; it writes nothing to the tape",
+    "program": "target/release/logos 'h := type (share parse_rank = *.parse_rank + 1, share parse = ( t := tape[1].type, tape.remove(0) )), h zz, 5'",
+    "output": "exit 139, nothing printed; a debug build panics at src/identities/dyad.rs:29:5, null pointer dereference",
+    "expected": "a checked error with a message, never a crash: ›What still holds of the old lifecycle‹, 'undefined is a null slot, and reading it is a checked error, never undefined behavior'",
+    "tier": "interpreted (command line)",
+    "found": "logoslang-why-P31-c (session f48d6a31), why run on P31, dev 50007fb, release and debug",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T22:20+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "6718deb",
       "run": null,
       "agent": null
     },
