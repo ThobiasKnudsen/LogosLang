@@ -1,0 +1,32 @@
+# Q-57: May I delete six leftover worktrees and one branch? (one word)
+
+<!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save.
+     Every save wakes the orchestrator; it relays once each question has an answer. -->
+
+## 1. Delete these?
+
+| What | Why it can go | How |
+| :- | :- | :- |
+| branch `issue-178-record-teardown` and its worktree `.claude/worktrees/issue-178` | #178 is fixed on dev by #192, by another mechanism; I reran its three programs on dev f4d1fa3 and each prints `freed` once. The branch holds 4 commits that are not on dev, so deleting it needs `git branch -D`. It is local only. | `git worktree remove`, then `git branch -D` |
+| the worktrees `rca-constructed-null-cell`, `rca-field-outer-shadow`, `rca-quote-brace-skip`, `rca-share-read-before-write` | analyses from before 1 October; their problems and whys were moved into PWS.json, and their questions were retired | `rca-done`, which first copies each RCA.md and its probes to `~/.claude/orchestrate/rca/logoslang/` |
+| the worktree `pws-migration` | the PWS migration is done; nothing changed in it, detached at 9fc7634 | `git worktree remove` |
+
+Kept: the parked branches of #175, #176 and #177 (they wait for #82 and #164), and the `solve-W9`, `solve-W49`, `solve-W54` worktrees (they wait for Q-47, Q-49 and Q-50).
+
+Not asked, since you ruled it on 30 September ("do choice a. delete them"): #226, deleting the old `l.N` line numbers from DESIGN.md and DESIGN_HISTORY.md. I do it on dev now that #192 has merged.
+
+- (a) **Yes, all of it.**
+- (b) **Only some:** say which.
+
+**Answer 1:** 
+
+## Metadata
+- **Status:** open
+- **Priority:** nothing waits; your rule is that no branch is force-deleted and no directory tree removed without your word on that exact target
+- **Asked:** 2026-10-01 21:52
+- **Project:** LogosLang, [repo](file:///home/o/Personal/Code/LogosLang)
+- **Issue:** [#178](https://github.com/ThobiasKnudsen/LogosLang/issues/178), closed today: #192 fixed it
+- **Branch and worktree:** the six below
+- **Asked by:** Orchestrator (2)
+- **Waiting:** nothing
+- **Orchestrator:** Orchestrator (2)

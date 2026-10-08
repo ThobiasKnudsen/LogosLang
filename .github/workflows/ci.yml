@@ -7,6 +7,10 @@ name: ci
 # compile could merge green. The `rust` job below is a required status check
 # on main beside docs.yml's `test` and `validate`.
 #
+# A push that changes only .agents/orchestrator/ (the orchestrator's questions,
+# answers and PWS graph) runs nothing: no build reads those files. Pull requests
+# always run, since the checks are required there.
+#
 # The `dco` job is the provenance gate: every commit a pull request adds must carry a
 # `Signed-off-by` line naming its author, which is what `git commit -s` writes. That
 # line certifies the Developer Certificate of Origin 1.1 (./DCO), the lightweight
@@ -18,6 +22,7 @@ on:
   pull_request:
   push:
     branches: [main, dev]
+    paths-ignore: ['.agents/orchestrator/**']
 
 permissions:
   contents: read

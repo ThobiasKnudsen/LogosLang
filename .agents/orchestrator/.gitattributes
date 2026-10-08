@@ -1,0 +1,4 @@
+# question files and their template keep line-end spaces: the owner types after "**Answer N:** "
+questions/*.md whitespace=-blank-at-eol
+answers/*.md whitespace=-blank-at-eol
+skill/question-template.md whitespace=-blank-at-eol
