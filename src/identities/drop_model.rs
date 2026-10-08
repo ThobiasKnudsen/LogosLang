@@ -971,29 +971,38 @@ pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Teardown {
         return crate::parse::last_sequence_expr(node)
             .map_or(Teardown::Nothing, |tail| teardown_of(types, tail));
     }
-    // A node, or a plain record in its bytes.
-    let t = super::read::output_type(types, value);
+    let free = type_free(types, value, super::read::output_type(types, value));
+    if !free.is_null() && moves_out(types, value) {
+        Teardown::Node(free)
+    } else {
+        Teardown::Nothing
+    }
+}
+
+/// The `free` `value`'s type `t` fills, for a node or a plain record in its bytes; null where
+/// there is none.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store, `t` its output type.
+unsafe fn type_free(types: &Core, value: DyadPtr, t: DyadPtr) -> DyadPtr {
     let typed = super::node_output(types, value).is_some()
         || (super::by_copy::record_width(types, t).is_some() && meta::is_record_type(t));
     if typed {
-        let free = meta::instances_free_of(t);
-        let owned = !free.is_null() && moves_out(types, value);
-        return if owned { Teardown::Node(free) } else { Teardown::Nothing };
+        meta::instances_free_of(t)
+    } else {
+        std::ptr::null_mut()
     }
-    Teardown::Nothing
 }
 
-/// What ends the value `node` hands on, the same on every path that hands one on: an `if`
-/// whose arms make a value in one and borrow one in another is refused, since who owns it
-/// would show only when it runs. `None` where no path hands one on; a `return` hands on its
-/// operand. DESIGN ›`move` and `free` are static: the parse marks the name dead‹.
+/// Whether the value `node` hands on is made there (`Some(true)`) or borrowed (`Some(false)`),
+/// the same on every path that hands one on: an `if` whose arms make a value in one and borrow
+/// one in another is refused, since who owns it would show only when it runs. `None` where no
+/// path hands on a value with an end, as a copied number; a `return` hands on its operand.
+/// DESIGN ›`move` and `free` are static: the parse marks the name dead‹.
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
-pub(crate) unsafe fn handed_ends(
-    types: &Core,
-    node: DyadPtr,
-) -> Result<Option<Teardown>, ParseError> {
+pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<bool>, ParseError> {
     let d = types.through(node);
     let logos = dyad::ty(d);
     if logos == types.return_ {
@@ -1014,10 +1023,12 @@ pub(crate) unsafe fn handed_ends(
             };
         }
     }
-    if super::read::output_type(types, node) == types.void_ {
+    let t = super::read::output_type(types, node);
+    if t == types.void_ {
         return Ok(None);
     }
-    Ok(Some(teardown_of(types, node)))
+    let has_end = numtype::is_pointer_type(t) || !type_free(types, node, t).is_null();
+    Ok(has_end.then(|| teardown_of(types, node) != Teardown::Nothing))
 }
 
 /// The runtime notes the live allocation so leaks and double frees are observable.
@@ -1983,8 +1994,17 @@ mod tests {
             // A function's last line gives the call its value.
             "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
             "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (return move q) else (alloc 1 of i32 5) )",
+            "g := fn (q := @i64 ?) -> dyad ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
         ] {
             assert_eq!(parse_err(&format!("{c}{src}")), ParseError::ArmsMakeAndBorrow, "{src}");
+        }
+        // A number has nothing to end, so beside a made value it mixes nothing: the `-> T`
+        // refuses it for its type.
+        for src in [
+            "g := fn () -> i32 ( if (c == 1) (alloc 1 of i32 5) else (i32 6) )",
+            "g := fn () -> i32 ( if (c == 1) (i32 6) else (alloc 1 of i32 5) )",
+        ] {
+            assert_eq!(parse_err(&format!("{c}{src}")), ParseError::TypeMismatch, "{src}");
         }
         assert_eq!(
             parse_err(&format!(
