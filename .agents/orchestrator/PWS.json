@@ -19443,7 +19443,7 @@
     "id": "W205",
     "kind": "why",
     "status": "accepted",
-    "text": "moved_out walks both arms of an if and, at every call, the callee's whole FN_BODY again, keeping no answer per function, so the walk handed_ends starts on f_n's arm calls reaches f0's body once per path, 2^n times; MOVES_OUT_DEPTH caps depth (one per function), not paths",
+    "text": "moved_out walks both arms of an if and, at every call, the callee's whole FN_BODY again, keeping no answer per function, so the walk handed_ends starts on f_n's arm calls reaches f0's body once per path, 2^n times; MOVES_OUT_DEPTH caps depth (one step per pointer-result call, about three per record-result call), not paths",
     "proposed_for": "P112",
     "why": [
       "W207",
@@ -19556,6 +19556,15 @@
         "commit": "57cb92e",
         "change": "why + W208",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T01:17+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e63fd52",
+        "change": "text was \"moved_out walks both arms of an if and, at every call, the callee's whole FN_BODY again, keeping no answer per function, so the walk handed_ends starts on f_n's arm calls reaches f0's body once per path, 2^n times; MOVES_OUT_DEPTH caps depth (one per function), not paths\"",
+        "reason": "why-P112-c: a record-result call adds about three depth steps (the call, by_copy.result, by_copy.out), so 'one per function' holds for pointer results only"
       }
     ]
   },
@@ -20542,5 +20551,56 @@
         "reason": null
       }
     ]
+  },
+  {
+    "id": "W217",
+    "kind": "why",
+    "status": "draft",
+    "text": "moved_out tells recursion by depth alone: MOVES_OUT_DEPTH, there because a recursive function's body calls itself, counts every node the walk goes down through (a call, a block's last line, by_copy.result, by_copy.out), not whether it meets a function it is already walking, so a chain with no recursion is cut as if it had some: a made value 32 pointer-result calls or 10 record-result calls deep is Out::Unknown, the second kind of call W215 says no rule judges",
+    "proposed_for": "W215",
+    "why": null,
+    "anchors": [
+      "moved_out",
+      "MOVES_OUT_DEPTH",
+      "Out",
+      "src/identities/drop_model.rs"
+    ],
+    "design": [
+      "`move` and `free` are static: the parse marks the name dead",
+      "Reading a program takes time in step with its size; no walk runs once per path"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'depth \\+ 1|if depth > MOVES_OUT_DEPTH|^const MOVES_OUT_DEPTH|^/// A recursive function|if logos == types\\.(by_copy\\.result|by_copy\\.out|scope|if_)|moved_out\\(types, (then|els), depth\\)' src/identities/drop_model.rs",
+        "output": "879:/// A recursive function's body calls itself; past this depth the answer is unknown.\n880:const MOVES_OUT_DEPTH: usize = 32;\n899:    if depth > MOVES_OUT_DEPTH {\n913:    if logos == types.by_copy.result {\n915:        return moved_out(types, call, depth + 1);\n917:    if logos == types.by_copy.out {\n923:        return moved_out(types, inner, depth + 1);\n925:    if logos == types.scope {\n927:            .map_or(Out::Stays, |tail| moved_out(types, tail, depth + 1));\n930:    if logos == types.if_ {\n936:        let then_out = moved_out(types, then, depth);\n940:        return match moved_out(types, els, depth) {\n961:            return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };\n(no other depth step and no check of which function the walk is in)",
+        "commit": "90fe8d6"
+      },
+      {
+        "command": "90fe8d6, interpreted, release: no recursion anywhere. Pointer: c := i32 1, h0 := fn () -> @i32 ( alloc 1 of i32 5 ), each h_i := fn () -> @i32 ( h_{i-1}() ), then y := alloc 1 of i32 3, x := if (c == 1) (h_n()) else (y), 7. Record: bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), c := i32 1, f0 := fn () -> bag ( bag(1) ), each f_i := fn () -> bag ( f_{i-1}() ), then x := f_n(), print «after». (why-probes/chain.sh noif with P=h, and bagnoif, with TAIL)",
+        "output": "pointer n=30: error: make a value in every arm, or borrow in every arm, exit 1\npointer n=31: error: make a value in every arm, or borrow in every arm, exit 1\npointer n=32: exit 0   (h32() is Unknown and agrees with the borrow y)\npointer n=34: exit 0\nrecord n=8: after, freed 1\nrecord n=9: after, freed 1\nrecord n=10: after   (x owns nothing; the bag is never freed)\nrecord n=11: after",
+        "commit": "90fe8d6"
+      },
+      {
+        "command": "90fe8d6, release: gdb -batch -nx -ex 'break seed::identities::drop_model::moved_out if $rdx == 33' (rdx = depth; 33 is past MOVES_OUT_DEPTH) over the record chain with each f_i := fn () -> bag ( if (c == 1) (f_{i-1}()) else (f_{i-1}()) ) and x := f_n(), print «after» (why-probes/cap.gdb)",
+        "output": "n=8:  depth 33 reached 0 times\nn=10: depth 33 reached 2 times   (the binding's walks; the same chain ending in 7 reaches it 0 times)",
+        "commit": "90fe8d6"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T01:17+02:00",
+      "by": "logoslang-why-P112-c",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "90fe8d6",
+      "run": "why-P112",
+      "agent": "C"
+    },
+    "history": []
   }
 ]
