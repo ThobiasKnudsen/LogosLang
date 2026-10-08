@@ -8959,10 +8959,10 @@
     "id": "P70",
     "kind": "problem",
     "status": "open",
-    "text": "record copies the whole skill into the repo folder skill/ before each own PR, and no ruling records why; with an old unanchored .gitignore line solve/ the copy of solve/SKILL.md is silently ignored",
-    "program": "grep -n -i \"copy\" ~/.claude/skills/orchestrate/SKILL_HISTORY.md | cut -c1-60; grep -n \"copy_skill\" ~/.claude/skills/orchestrate/orchestrate.sh | cut -c1-60; grep -n \"^solve/\" .agents/orchestrator/.gitignore",
-    "output": "SKILL_HISTORY.md: only the heading What a worktree gets copied matches\norchestrate.sh:514: copy_skill() {\norchestrate.sh:546:   copy_skill \"$ORCH_DIR/skill\"\nLogosLang .agents/orchestrator/.gitignore has the unanchored line solve/",
-    "expected": "Every change rests on a recorded ruling with its reason (global CLAUDE.md: All rulings MUST have a good reason for existing); SKILL_HISTORY.md also records that the skill is the owner tool across repos and the team does not build it (Q-thobias-113 (2))",
+    "text": "record copies the whole skill into skill/ of every repo with MERGE=pr, while the ruling for that copy names one repo and calls it project-specific; SKILL_HISTORY.md does not record it",
+    "program": "grep -n \"copy_skill\" ~/.claude/skills/orchestrate/orchestrate.sh | cut -c1-60; grep -c -i \"Q104\\|project specific\" ~/.claude/skills/orchestrate/SKILL_HISTORY.md",
+    "output": "orchestrate.sh:514: copy_skill() {\norchestrate.sh:546:   copy_skill \"$ORCH_DIR/skill\"\n0",
+    "expected": "Thobias, 5 October 2026, AI-RCA Q104 (1), choosing a copy at .agents/orchestrator/skill/ in that repo: \"b, but remember this is project specific memory which means it must be stated in AGENTS.md or KNOWLEDGE.md\"; AI-RCA KNOWLEDGE.md, The orchestrator own rules live in its skill, records it there",
     "tier": null,
     "found": "review logoslang-help-1 (F11), 8 Oct 2026; confirmed by orchestrator LogosLang",
     "why": null,
@@ -8977,7 +8977,44 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T19:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "82b9362",
+        "change": "text was \"record copies the whole skill into the repo folder skill/ before each own PR, and no ruling records why; with an old unanchored .gitignore line solve/ the copy of solve/SKILL.md is silently ignored\"",
+        "reason": "The review said no ruling records the copy. AI-RCA Q104 (1) and its KNOWLEDGE.md do; what stays wrong is that the skill applies a one-repo ruling to every MERGE=pr repo and its history does not point to it. The gitignore part does not apply: AI-RCA has the anchored /solve/ line, and LogosLang never copies the skill."
+      },
+      {
+        "at": "2026-10-08T19:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "82b9362",
+        "change": "expected was \"Every change rests on a recorded ruling with its reason (global CLAUDE.md: All rulings MUST have a good reason for existing); SKILL_HISTORY.md also records that the skill is the owner tool across repos and the team does not build it (Q-thobias-113 (2))\"",
+        "reason": "The review said no ruling records the copy. AI-RCA Q104 (1) and its KNOWLEDGE.md do; what stays wrong is that the skill applies a one-repo ruling to every MERGE=pr repo and its history does not point to it. The gitignore part does not apply: AI-RCA has the anchored /solve/ line, and LogosLang never copies the skill."
+      },
+      {
+        "at": "2026-10-08T19:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "82b9362",
+        "change": "program was \"grep -n -i \\\"copy\\\" ~/.claude/skills/orchestrate/SKILL_HISTORY.md | cut -c1-60; grep -n \\\"copy_skill\\\" ~/.claude/skills/orchestrate/orchestrate.sh | cut -c1-60; grep -n \\\"^solve/\\\" .agents/orchestrator/.gitignore\"",
+        "reason": "The review said no ruling records the copy. AI-RCA Q104 (1) and its KNOWLEDGE.md do; what stays wrong is that the skill applies a one-repo ruling to every MERGE=pr repo and its history does not point to it. The gitignore part does not apply: AI-RCA has the anchored /solve/ line, and LogosLang never copies the skill."
+      },
+      {
+        "at": "2026-10-08T19:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "82b9362",
+        "change": "output was \"SKILL_HISTORY.md: only the heading What a worktree gets copied matches\\norchestrate.sh:514: copy_skill() {\\norchestrate.sh:546:   copy_skill \\\"$ORCH_DIR/skill\\\"\\nLogosLang .agents/orchestrator/.gitignore has the unanchored line solve/\"",
+        "reason": "The review said no ruling records the copy. AI-RCA Q104 (1) and its KNOWLEDGE.md do; what stays wrong is that the skill applies a one-repo ruling to every MERGE=pr repo and its history does not point to it. The gitignore part does not apply: AI-RCA has the anchored /solve/ line, and LogosLang never copies the skill."
+      }
+    ]
   },
   {
     "id": "P71",
