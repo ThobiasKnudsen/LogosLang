@@ -76,47 +76,49 @@ pub(crate) fn build(
 /// `node` must be an `if` node [`build`] made.
 pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
     let (_, then, els) = branches(node);
-    if arms_type(types, then, els) == types.void_
-        || super::drop_model::handed_ends(types, node).is_err()
-    {
+    let (t, handed) = arms_type(types, then, els);
+    if t == types.void_ || super::drop_model::handed_ends(types, node).is_err() {
         return types.void_;
     }
-    super::read::handed_on(types, then)
+    handed
 }
 
-/// The arms' one type before a plain number is handed on, else `void`.
+/// The arms' one type before a plain number is handed on, and what the then arm hands on;
+/// `void` for both where there is no `else` or the arms' types differ.
 ///
 /// # Safety
 /// `then` must be a reduced dyad from the store, `els` null or one.
-unsafe fn arms_type(types: &Core, then: DyadPtr, els: DyadPtr) -> DyadPtr {
+unsafe fn arms_type(types: &Core, then: DyadPtr, els: DyadPtr) -> (DyadPtr, DyadPtr) {
+    let none = (types.void_, types.void_);
     if els.is_null() {
-        return types.void_;
+        return none;
     }
     let t = arm_type(types, then);
-    if super::same_type(t, arm_type(types, els)) {
+    if super::same_type(t.0, arm_type(types, els).0) {
         t
     } else {
-        types.void_
+        none
     }
 }
 
 /// Read through a block to its last line and through a nested `if` to its arms, so a plain
-/// number stays a `rational_number` beside an arm of a number type.
+/// number stays a `rational_number` beside an arm of a number type; with it what that line
+/// hands on, read once here so no nested `if` is worked out again.
 ///
 /// # Safety
 /// `arm` must be a reduced dyad from the store.
-unsafe fn arm_type(types: &Core, arm: DyadPtr) -> DyadPtr {
+unsafe fn arm_type(types: &Core, arm: DyadPtr) -> (DyadPtr, DyadPtr) {
     if dyad::ty(arm) == types.scope {
         return match crate::parse::last_sequence_expr(arm) {
             Some(last) => arm_type(types, last),
-            None => types.void_,
+            None => (types.void_, types.void_),
         };
     }
     if dyad::ty(arm) == types.if_ {
         let (_, then, els) = branches(arm);
         return arms_type(types, then, els);
     }
-    super::read::output_type(types, arm)
+    (super::read::output_type(types, arm), super::read::handed_on(types, arm))
 }
 
 /// The type an `if` gives where its value is used, or why it gives none: it needs an `else`,
@@ -142,11 +144,12 @@ pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, 
         }
     }
     differ?;
-    if arms_type(types, then, els) == types.void_ {
+    let (t, handed) = arms_type(types, then, els);
+    if t == types.void_ {
         return Err(ParseError::ArmsDiffer);
     }
     super::drop_model::handed_ends(types, node)?;
-    Ok(super::read::handed_on(types, then))
+    Ok(handed)
 }
 
 /// # Safety
