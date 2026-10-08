@@ -14204,7 +14204,7 @@
     "id": "W152",
     "kind": "why",
     "status": "accepted",
-    "text": "resolve_specialization needs the node's built function before the reader may place the node: it stores it with set_spec, checks check_call_reads(spec), runs fold_comptime_node(ty, node, spec) on an all-literal node, and reads its FN_OUTPUT for the by-copy result, so a body that has to wait for its node (fields typed by the node, a := ?) is still built at once by construct_run_body inside that node's reader, never after the enclosing body's parse returns",
+    "text": "resolve_specialization needs the node's built function before the reader may place the node: it stores it with set_spec, checks check_call_reads(spec) and reads its FN_OUTPUT for the by-copy result, so a body that has to wait for its node (fields typed by the node, a := ?) is still built at once by construct_run_body inside that node's reader, never after the enclosing body's parse returns",
     "proposed_for": "W121",
     "why": null,
     "anchors": [
@@ -14269,6 +14269,15 @@
         "commit": "d3ab677",
         "change": "accepted as a why of W121, same as W144",
         "reason": "C and A blind to each other: a body whose field types follow the node is built at its first node inside that node's reader, which stands inside the build of the body holding it, so untyped chains nest too (A's and C's probe: P23 with a := ? aborts at 18 x 1990 cold, runs warm); C's code reason is kept: resolve_specialization needs the built function (set_spec, check_call_reads, fold_comptime_node, FN_OUTPUT) before the reader may place the node; ›A generic function body…‹ says when the body is built, not that it is built inside the bracket"
+      },
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "text was \"resolve_specialization needs the node's built function before the reader may place the node: it stores it with set_spec, checks check_call_reads(spec), runs fold_comptime_node(ty, node, spec) on an all-literal node, and reads its FN_OUTPUT for the by-copy result, so a body that has to wait for its node (fields typed by the node, a := ?) is still built at once by construct_run_body inside that node's reader, never after the enclosing body's parse returns\"",
+        "reason": "A and B: the fold is no cause in P23 (B: 3 t1 inside t0's body is not folded while t0's body is built, why-probes/W152-fold.txt; A: with x t{i}, nothing all-literal, it still nests)"
       }
     ]
   },
@@ -14278,7 +14287,9 @@
     "status": "accepted",
     "text": "The parse keeps no stack of its own for the drive's nesting: each open bracket recurses as a Rust call through parse_sequence and the bracket's constructor, and a body built inside it is one more Rust call (enter, then construct_run_body_in) on the work thread's one WORK_STACK_BYTES stack; ›The scope's constructor is the driver‹ says only that the drive recurses by nesting, not where that nesting is kept",
     "proposed_for": "W121",
-    "why": null,
+    "why": [
+      "W162"
+    ],
     "anchors": [
       "parse_sequence",
       "construct_run_body_in",
@@ -14347,6 +14358,15 @@
         "commit": "d3ab677",
         "change": "accepted as a why of W121, same as W149",
         "reason": "C and B blind to each other: the drive's nesting is kept as Rust calls (each open bracket through parse_sequence and the bracket's constructor, a body's build one more call), with no stack of its own, all on the one WORK_STACK_BYTES stack"
+      },
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "why + W162",
+        "reason": null
       }
     ]
   },
@@ -14415,7 +14435,9 @@
     "status": "accepted",
     "text": "One field-read rule serves both moments: Parser::this_field builds a parse's tape[0].f and a free or share function's bare field alike, and build_field_read reads any number or pointer field as the value its node yields (a this.load) by the declared type alone, as the this.rs module header states and the test a_number_field_is_read_and_written_by_value_in_a_parse_body asserts (tape[0].m = tape[0].n * 2); DESIGN gives the parse moment its own read: the slot holding the operand node, where a name or place stands as itself",
     "proposed_for": "W124",
-    "why": null,
+    "why": [
+      "W160"
+    ],
     "anchors": [
       "this_field",
       "build_field_read",
@@ -14492,6 +14514,15 @@
         "commit": "d3ab677",
         "change": "accepted as a why of W124, same as W140",
         "reason": "C and B blind to each other: Parser::this_field builds both a parse's tape[0].f and a bare field read in a free or share function, and build_field_read picks a load or a slot read by the declared type alone, so a number or pointer field is always a this.load; DESIGN gives the parse moment its own read (›A field is filled at run…‹: at parse the slot holds the operand node; ›Reading a path runs nothing‹, 30 September: tape[0].lhs inside a parse reads the node's field)"
+      },
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "why + W160",
+        "reason": null
       }
     ]
   },
@@ -14501,7 +14532,10 @@
     "status": "accepted",
     "text": "The read tape[k] hands a constructor the cell's raw pointer as a value, null for a fresh spelling: run_slot returns read_cell(...).dyad with no check, while its sibling run_slot_name refuses a cell with no binding (RunError::NoName) and slot_cell refuses a null only on its bracket branch; so tape[0] = tape[1] over zz gets a null to store, though «What still holds of the old lifecycle» makes reading a null slot a checked error and «The seed's tape shape» calls an unknown spelling's cell the spelling alone, no node",
     "proposed_for": "W112",
-    "why": null,
+    "why": [
+      "W166",
+      "W157"
+    ],
     "anchors": [
       "run_slot",
       "read_cell",
@@ -14577,13 +14611,31 @@
         "commit": "ffe09a1",
         "change": "text was \"The read tape[k] hands a constructor the cell's raw pointer as a value, null for a fresh spelling: run_slot returns read_cell(...).dyad with no check, while its sibling run_slot_name refuses a cell with no binding (RunError::NoName) and slot_cell refuses a null scope (NotAScope); so tape[0] = tape[1] over zz gets a null to store, though «What still holds of the old lifecycle» makes reading a null slot a checked error and «The seed's tape shape» calls an unknown spelling's cell the spelling alone, no node\"",
         "reason": "B (round on W156): slot_cell's cell branch passes rt.through(cell.dyad) on, null included; it refuses a null only on its bracket branch (tape[1].type and tape[1].dyads exit 139 on h zz, dev 9c123fb, why-probes/p31-b3.txt)"
+      },
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "why + W166",
+        "reason": null
+      },
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "why + W157",
+        "reason": null
       }
     ]
   },
   {
     "id": "W157",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "Neither DESIGN.md nor a page it links says what value the read tape[k] gives on a cell that holds the spelling alone: «A tape read checked against a number type reads as that number» says tape[k] hands a constructor the cell, «The seed's tape shape» says an unknown spelling's cell is the spelling alone, «What lex returns: a parsing_tape fragment» says a cell with no node is not an error, «What still holds of the old lifecycle» makes reading a null slot the checked error, and «A tape[k] read past the lexed frontier» names as errors only the reads that need more than a cell has (.dyads, :name); so run_slot hands out the cell's pointer field, null, and no rule says whether that read is refused or a spelling travels with it",
     "proposed_for": "W156",
     "why": null,
@@ -14629,7 +14681,17 @@
       "run": "why-P31",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "accepted as a why of W156",
+        "reason": "A only, judged by the direct test: no rule says what the read tape[k] gives for a cell that holds a spelling alone; read whole: ›What lex returns: a parsing_tape fragment‹ keeps such a cell legal ('Not an error'), ›What still holds of the old lifecycle‹ makes reading a null a checked error, ›The constructor sets tape.is_constructed[0] = true itself‹ has a tape write replace the pointer only, and C noted the same openness inside ›A tape[k] read past the lexed frontier…‹; so run_slot hands the null on"
+      }
+    ]
   },
   {
     "id": "W158",
@@ -14714,7 +14776,7 @@
   {
     "id": "W159",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "read_cell, the one read every tape native takes its cell through, hands back the raw Cell, so each native decides alone what a cell with no node gives: run_slot returns its null dyad, run_slot_name refuses it (Cell::binding null, RunError::NoName), and slot_cell's cell branch passes rt.through(cell.dyad) on, null included, to read_target, where run_cell_type and the dyads read dereference it; DESIGN's ›A tape[k] read past the lexed frontier‹ makes tape[k]:name and tape[k].dyads the error on any cell without one, and ›What still holds of the old lifecycle‹ makes reading a null a checked error, yet only one of the four reads keeps that",
     "proposed_for": "W156",
     "why": null,
@@ -14749,7 +14811,7 @@
       "B"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W166",
     "made": {
       "at": "2026-10-08T22:25+02:00",
       "by": "logoslang-why-P31-b",
@@ -14759,12 +14821,22 @@
       "run": "why-P31",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "merged into W166",
+        "reason": "C and B blind to each other: what a cell gives its constructor is decided twice, by as_operand for the built-in readers (a fresh spelling is the unknown-name error) and by each tape native on its own for a constructor written in Logos (run_slot hands the null on, run_slot_name refuses, slot_cell refuses only on its bracket branch); the natives cannot reach as_operand"
+      }
+    ]
   },
   {
     "id": "W160",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "The rule of Reading a path runs nothing for a node's field is written only for a node the parser holds while it parses: Parser::node_field reads the slot then and path_operand hands the node itself (a name, a literal, a place) or its address; tape[0]'s node exists only when the parse body runs, so the branch on is_node_cell in fields.rs sends tape[0].f to this_field, the reader of a value's field, and no run-time read applies the path rule",
     "proposed_for": "W155",
     "why": null,
@@ -14807,7 +14879,17 @@
       "run": "why-P47",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "accepted as a why of W155",
+        "reason": "B only, judged by the direct test and its evidence: the code that carries out ›Reading a path runs nothing‹ for a node's field (node_field, path_operand) reads a node the parser holds while it parses, and tape[0]'s node exists only when the parse body runs, so the is_node_cell branch (src/parse/fields.rs:403) sends tape[0].f to this_field; with no read at run time that gives the node, the value reader serves the parse moment; C's own note confirms the IR has no read that carries the field's type and runs nothing"
+      }
+    ]
   },
   {
     "id": "W161",
@@ -14829,8 +14911,8 @@
     "evidence": [
       {
         "command": "rg -n 'stores it in the dyad as|moves on the moment the input arrives' DESIGN.md",
-        "output": "1909: A generic fn is a chooser, exactly as + is: the concrete function for each argument-type combination is its own identity, built once from the written body with op slots resolved, then reused. A call site with known types resolves to that identity by the same lowering rules that fill +'s op slot, and stores it in the dyad as +'s op slot stores add_i32. …\n1901: Progress is driven by data, never scheduled: a node missing an input stays built and moves on the moment the input arrives. One rule at three levels: … an unresolved type (the conserved op slot, which does not lower until resolved) …",
-        "commit": "896f9a6"
+        "output": "1902:Progress is driven by data, never scheduled: a node missing an input stays built and moves on the moment the input arrives. One rule at three levels: an unconstructed neighbour on the tape (the `is_constructed` flags), an unresolved type (the conserved op slot, which does not lower until resolved), an unknown runtime value (control flow arriving).\n1909:A generic `fn` is a chooser, exactly as `+` is: the concrete function for each argument-type combination is its own identity, built once from the written body with op slots resolved, then reused. A call site with known types resolves to that identity by the same lowering rules that fill `+`'s op slot, and stores it in the dyad as `+`'s op slot stores `add_i32`. The written generic body never runs itself.\n1912:- **Ruled (29 September 2026, Thobias, #197):** one rule for a `fn` body and a type's `run` body: built where it is written when everything the build needs is known there, otherwise kept lexed and built where that arrives, a call or the first node. It narrows the same day's first answer, which had a `run` body wait for the first node even over known field types. **Why:** \"the body of fn cannot always be build at the definition site so it has to be parsed where its called later, but when it actually can be built at definition it should be built. that should likely be the case for type as well i think\"; of `run`: \"that should probably be true for run as well but since it rarely gets everything it needs when the type is parsed its usually just stored as lexed until an instance of the type occurs with all the infromation it needs\" (Thobias). It is ›Deferral is authored, and unfinished work is visible‹ applied to a body: a node \"moves on the moment the input arrives\".",
+        "commit": "2bf390e"
       },
       {
         "command": "python3 why-probes/chain-operand.py target/release/logos N 1990 x   (P23's chain with the nodes x t{i}, x := mut i32 3, so no node is all-literal and fold_comptime_node never folds; dev 896f9a6, release, interpreted)",
@@ -14852,7 +14934,17 @@
       "run": "why-P23",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:27+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "evidence 1 was {\"command\": \"rg -n 'stores it in the dyad as|moves on the moment the input arrives' DESIGN.md\", \"output\": \"1909: A generic fn is a chooser, exactly as + is: the concrete function for each argument-type combination is its own identity, built once from the written body with op slots resolved, then reused. A call site with known types resolves to that identity by the same lowering rules that fill +'s op slot, and stores it in the dyad as +'s op slot stores add_i32. …\\n1901: Progress is driven by data, never scheduled: a node missing an input stays built and moves on the moment the input arrives. One rule at three levels: … an unresolved type (the conserved op slot, which does not lower until resolved) …\", \"commit\": \"896f9a6\"}",
+        "reason": "rerun at 2bf390e at A's request: the Deferral sentence is on 1902, and the #197 ruling quoting it on 1912"
+      }
+    ]
   },
   {
     "id": "P101",
@@ -14881,7 +14973,7 @@
   {
     "id": "W162",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "ConstructFn, every identity's constructor, is a Rust fn that runs to its end and returns Constructed only when its span is built, with nothing to suspend in: the constructor of ( builds its whole interior through parse_sequence_cell before it returns, and the reader that places a run node returns only after construct_run_body has built the body, so each nesting of the drive is a frame of the Rust call that ›The scope's constructor is the driver‹ calls it (a scope's constructor is called by its enclosing scope)",
     "proposed_for": "W153",
     "why": null,
@@ -14890,7 +14982,9 @@
       "Constructed",
       "parse_sequence_cell",
       "src/identities/paren.rs",
-      "src/parse/driver.rs"
+      "src/parse/driver.rs",
+      "expect_close",
+      "run_ctor"
     ],
     "design": [
       "The scope's constructor is the driver"
@@ -14904,14 +14998,27 @@
       },
       {
         "command": "rg -n 'so the drive recurses by nesting' DESIGN.md",
-        "output": "1518: … It is the constructor of the enclosing scope identity: ( building its scope value, and its kin. A scope's constructor is called by its own enclosing scope when its opener appears, so the drive recurses by nesting. …",
+        "output": "1516:The \"driver\" is not special machinery and not the tape. It is the constructor of the enclosing **scope** identity: `(` building its `scope` value, and its kin. A scope's constructor is called by its own enclosing scope when its opener appears, so the drive recurses by nesting. The root scope is run by `import` over a file, and by the command line over its one line. The tape runs nothing: it only lexes and remembers.",
+        "commit": "2bf390e"
+      },
+      {
+        "command": "sed -n 42,46p src/parse/driver.rs; sed -n 17,22p src/identities/paren.rs   (dev 896f9a6)",
+        "output": "/// Every identity's parse-time constructor: it reads its span from the\n/// cursor cell, its context from `tape.at(-1)` and `tape.at(1)`, and edits\n/// the tape in place. The driver decides only *when* constructors run.\npub type ConstructFn =\n    fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>;\n    cx.metas.insert(open, |p, _id, tape| {\n        let body = p.parse_sequence_cell()?;\n        p.expect_close()?;\n        tape.place_bracket_cell(body);\n        Ok(crate::parse::Constructed::Placed)\n    });",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "the rule's text, DESIGN.md ›The scope's constructor is the driver‹",
+        "output": "A scope's constructor is called by its own enclosing scope when its opener appears, so the drive recurses by nesting.",
         "commit": "896f9a6"
       }
     ],
     "found_by": [
-      "A"
+      "A",
+      "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "Every constructor is a ConstructFn, fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>, which runs to completion: a scope's constructor drives its contents by calling back into the parser (paren's calls p.parse_sequence_cell() then p.expect_close()) and returns only after its closer, with no form in which a constructor stops at an inner opener and is resumed at that opener's closer; so ›The scope's constructor is the driver‹'s calls nest as Rust calls, and the drive's depth is the depth of the Rust stack"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-08T22:26+02:00",
@@ -14922,6 +15029,257 @@
       "run": "why-P23",
       "agent": "A"
     },
+    "history": [
+      {
+        "at": "2026-10-08T22:27+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "evidence 2 was {\"command\": \"rg -n 'so the drive recurses by nesting' DESIGN.md\", \"output\": \"1518: … It is the constructor of the enclosing scope identity: ( building its scope value, and its kin. A scope's constructor is called by its own enclosing scope when its opener appears, so the drive recurses by nesting. …\", \"commit\": \"896f9a6\"}",
+        "reason": "rerun at 2bf390e at A's request: the driver sentence is on 1516"
+      },
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "accepted as a why of W153, same as W165",
+        "reason": "A and B blind to each other: every constructor is a ConstructFn that runs to its end and answers Placed or Decline, with no form that stops at an inner opener and resumes at its closer; paren's constructor builds its whole interior before it returns, so each nesting of the drive is a Rust call frame"
+      }
+    ]
+  },
+  {
+    "id": "W163",
+    "kind": "why",
+    "status": "draft",
+    "text": "A node of a type with a run body carries no type of what it gives: read_kind reads it as Read::Executable(Call(spec)) and numtype_of (behind yielded_type) as the function built for its field types, both through run_body::spec_of(node), and as nothing while no spec is set; so the enclosing parse cannot type a use of the node, as P23's 3 t{i+1} standing as the tail t{i}'s body yields, until the node's body is built, which is why resolve_specialization builds it in the node's reader",
+    "proposed_for": "W152",
+    "why": null,
+    "anchors": [
+      "read_kind",
+      "numtype_of",
+      "yielded_type",
+      "spec_of",
+      "resolve_specialization",
+      "src/identities/read.rs",
+      "src/identities/mod.rs"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -B3 'run_body::spec_of\\(node\\)' src/identities/read.rs src/identities/mod.rs   (dev 896f9a6)",
+        "output": "src/identities/read.rs-103-            if !meta::run_body_of(op).is_null() {\nsrc/identities/read.rs-104-                // The node runs as the function built for its field-type set,\nsrc/identities/read.rs-105-                // and not at all until one exists.\nsrc/identities/read.rs:106:                let spec = super::run_body::spec_of(node);   [read_kind]\nsrc/identities/mod.rs-826-    // A call yields the callee's return type. A node of a type with a run reads as the\nsrc/identities/mod.rs-827-    // function built for its field types, or as nothing until one exists.\nsrc/identities/mod.rs:829:            let spec = run_body::spec_of(node);   [numtype_of; yielded_type falls back to it]\n(spec null: read_kind gives Read::Executable(Dispatch::None), numtype_of Operand::NonNumeric)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n 'set_spec\\(node, spec\\)' src   (the one writer of a node's spec)",
+        "output": "src/parse/types.rs:1135:        crate::identities::run_body::set_spec(node, spec);   [resolve_specialization, in the node's reader]",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:27+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
     "history": []
+  },
+  {
+    "id": "W164",
+    "kind": "why",
+    "status": "draft",
+    "text": "›A call is a use of every outer name the callee's body reads‹ checks each call at elaboration against the list of outer names the body's own parse fills, and a node of a run type is such a call; the seed fills that list (FN_OUTER) only when fn_over_body builds the function, so check_call_reads(spec) at the node can run only once the node's body is built, in its reader",
+    "proposed_for": "W152",
+    "why": null,
+    "anchors": [
+      "check_call_reads",
+      "FN_OUTER",
+      "fn_over_body",
+      "resolve_specialization",
+      "src/parse/operands.rs",
+      "src/parse/bodies.rs",
+      "src/parse/types.rs"
+    ],
+    "design": [
+      "A call is a use of every outer name the callee's body reads"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'self.check_call_reads\\(spec\\)|\\*slots.add\\(FN_OUTER\\) = outer|let outer = \\*\\(dyad::value\\(fn_node\\)' src/parse   (dev 896f9a6)",
+        "output": "src/parse/types.rs:1138:        if let Err(e) = self.check_call_reads(spec) {   [resolve_specialization, at the node]\nsrc/parse/bodies.rs:132:    let outer = *(dyad::value(fn_node) as *const DyadPtr).add(FN_OUTER);   [fn_outer, the list check_call_reads reads]\nsrc/parse/bodies.rs:612:            *slots.add(FN_OUTER) = outer;   [fn_over_body, the build: the one writer]",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "the rule's text, DESIGN.md ›A call is a use of every outer name the callee's body reads‹",
+        "output": "A body resolves outside names when parsed, so the function knows which outer names it reads, and calling it uses each of them there.\n- Why: ... The list is the function's own, filled by the parse it already makes, so no per-name list of users ... The check is a range lookup per outer name per call, at elaboration; running code checks nothing.",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:27+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W165",
+    "kind": "why",
+    "status": "merged",
+    "text": "Every constructor is a ConstructFn, fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>, which runs to completion: a scope's constructor drives its contents by calling back into the parser (paren's calls p.parse_sequence_cell() then p.expect_close()) and returns only after its closer, with no form in which a constructor stops at an inner opener and is resumed at that opener's closer; so ›The scope's constructor is the driver‹'s calls nest as Rust calls, and the drive's depth is the depth of the Rust stack",
+    "proposed_for": "W153",
+    "why": null,
+    "anchors": [
+      "ConstructFn",
+      "parse_sequence_cell",
+      "expect_close",
+      "run_ctor",
+      "src/parse/driver.rs",
+      "src/identities/paren.rs"
+    ],
+    "design": [
+      "The scope's constructor is the driver"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 42,46p src/parse/driver.rs; sed -n 17,22p src/identities/paren.rs   (dev 896f9a6)",
+        "output": "/// Every identity's parse-time constructor: it reads its span from the\n/// cursor cell, its context from `tape.at(-1)` and `tape.at(1)`, and edits\n/// the tape in place. The driver decides only *when* constructors run.\npub type ConstructFn =\n    fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>;\n    cx.metas.insert(open, |p, _id, tape| {\n        let body = p.parse_sequence_cell()?;\n        p.expect_close()?;\n        tape.place_bracket_cell(body);\n        Ok(crate::parse::Constructed::Placed)\n    });",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "the rule's text, DESIGN.md ›The scope's constructor is the driver‹",
+        "output": "A scope's constructor is called by its own enclosing scope when its opener appears, so the drive recurses by nesting.",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W162",
+    "made": {
+      "at": "2026-10-08T22:27+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "merged into W162",
+        "reason": "A and B blind to each other: every constructor is a ConstructFn that runs to its end and answers Placed or Decline, with no form that stops at an inner opener and resumes at its closer; paren's constructor builds its whole interior before it returns, so each nesting of the drive is a Rust call frame"
+      }
+    ]
+  },
+  {
+    "id": "W166",
+    "kind": "why",
+    "status": "accepted",
+    "text": "What a cell gives the constructor that reads it is written twice: as_operand, the parser's one seam for built-in constructors, sends a fresh spelling to resolve_fresh for the unknown-name error, while a Logos-written constructor reads cells through the tape natives (run_slot, slot_cell, run_slot_name), each with its own rule, and the runtime's Host gives them only the parser's lex_on, mint and construct, no door to as_operand; so run_slot has no fresh-spelling branch, against ›A tape[k] read past the lexed frontier lexes on demand for every constructor‹: a cell arrives exactly as it would to : or application, one rule for every reader, built-in or written in Logos",
+    "proposed_for": "W156",
+    "why": null,
+    "anchors": [
+      "as_operand",
+      "resolve_fresh",
+      "run_slot",
+      "slot_cell",
+      "run_slot_name",
+      "Host",
+      "lex_on",
+      "src/parse/operands.rs",
+      "src/identities/tape.rs",
+      "src/run.rs",
+      "read_cell",
+      "read_target",
+      "run_cell_type",
+      "Cell"
+    ],
+    "design": [
+      "A `tape[k]` read past the lexed frontier lexes on demand for every constructor",
+      "What still holds of the old lifecycle"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 188,203p src/parse/operands.rs; sed -n 572,575p src/identities/tape.rs; sed -n 391,405p src/run.rs (dev 50007fb)",
+        "output": "/// The one seam every constructor goes through: ... a fresh-name token re-resolves its span for the precise error.\npub(crate) fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {\n    c if c.constructed => Ok(c.dyad),\n    c => { ... if c.is_fresh() { match self.resolve_fresh(c.spelling()) { ... Err(e) => return Err(ParseError::Resolve(e)) ...\nfn run_slot(...) { unsafe { Ok(read_cell(rt, ...)?.dyad as i64) } }\npub(crate) struct Host { parser, lex_on, mint, construct }   (no read of a cell as an operand)\nrg 'host|as_operand|resolve_fresh' src/identities/tape.rs -> no match",
+        "commit": "50007fb"
+      },
+      {
+        "command": "target/release/logos '<program>' (dev 50007fb); H := 'h := type (share parse_rank = *.parse_rank + 1, share parse = ( tape[0] = tape[1], tape.is_constructed[0] = true, tape.remove(1) ))'",
+        "output": "zz + 1, 5          -> error: unknown name `zz`, exit 1   (built-in reader, through as_operand)\n- zz, 5            -> error: unknown name `zz`, exit 1\nH, h zz, 5         -> exit 139                          (Logos reader, through run_slot)\nH, x := 3, h x, 5  -> 5, exit 0",
+        "commit": "50007fb"
+      },
+      {
+        "command": "sed -n 567,576p src/identities/tape.rs; sed -n 666,688p src/identities/tape.rs (dev 9c123fb)",
+        "output": "unsafe fn read_cell(...) -> Result<Cell, RunError> { let (tape, k) = tape_at(rt, ops)?; ... Ok((*tape).at(k).copied().unwrap_or_else(|| Cell::built(nothing))) }\nfn run_slot(...) { unsafe { Ok(read_cell(rt, ...)?.dyad as i64) } }\nunsafe fn slot_cell(...) { if (*ops.add(1)).is_null() { let held = ...; if held.is_null() { return Err(RunError::NotAScope(held)); } ... }\n    let cell = read_cell(rt, ops)?;\n    Ok(rt.through(cell.dyad))            (cell branch: no null test)\nfn run_slot_name(...) { let c = read_cell(...)?; let binding = c.binding(rt.types()); if binding.is_null() { return Err(RunError::NoName); }",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "target/release/logos 'h := type (share parse_rank = *.parse_rank + 1, share parse = ( <BODY>, tape.remove(0) )), h zz, 5' (dev 9c123fb, why-probes/p31-b3.txt)",
+        "output": "n := tape[1]:name   -> error: ... this cell holds no name, exit 1\nt := tape[1].type   -> exit 139\nd := tape[1].dyads  -> exit 139\nt := tape[1].type with x := 3, h x -> 5, exit 0 (a cell with a node)\nsed -n 1429p DESIGN.md: A read that needs more than a cell has (tape[k].dyads, tape[k]:name) is the error it is on any cell without one.",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "B",
+      "C"
+    ],
+    "aliases": [
+      "read_cell, the one read every tape native takes its cell through, hands back the raw Cell, so each native decides alone what a cell with no node gives: run_slot returns its null dyad, run_slot_name refuses it (Cell::binding null, RunError::NoName), and slot_cell's cell branch passes rt.through(cell.dyad) on, null included, to read_target, where run_cell_type and the dyads read dereference it; DESIGN's ›A tape[k] read past the lexed frontier‹ makes tape[k]:name and tape[k].dyads the error on any cell without one, and ›What still holds of the old lifecycle‹ makes reading a null a checked error, yet only one of the four reads keeps that"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:27+02:00",
+      "by": "logoslang-why-P31-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "50007fb",
+      "run": "why-P31",
+      "agent": "C"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:29+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "2bf390e",
+        "change": "accepted as a why of W156, same as W159",
+        "reason": "C and B blind to each other: what a cell gives its constructor is decided twice, by as_operand for the built-in readers (a fresh spelling is the unknown-name error) and by each tape native on its own for a constructor written in Logos (run_slot hands the null on, run_slot_name refuses, slot_cell refuses only on its bracket branch); the natives cannot reach as_operand"
+      }
+    ]
   }
 ]
