@@ -20794,5 +20794,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P124",
+    "kind": "problem",
+    "status": "open",
+    "text": "The orchestrator session is slow to answer Thobias, to place questions and to act on agents' messages: one session does every step of every task in turn (1,365 tool calls on 8 October 2026), reads a message only between its own steps, so an agent's answer waits while another task runs (why-P112-e's answer waited almost 6 minutes behind PolyLogue's setup), and its context fills and is compacted again and again (31 times in this session, a pause of about 80 seconds each, 31 minutes in all, then files read again)",
+    "program": "Steps: in the orchestrator session's transcript, ~/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl (46,347 lines, 113 MB), count the assistant entries with a tool call dated 2026-10-08; for each entry with isCompactSummary, the time from the last entry more than 1 second before it; the entries that contain the harness reminder \"hasn't heard from you in a while\"; and the timestamps at which an agent's message first appears and at which the orchestrator's reply to it first appears",
+    "output": "tool calls dated 2026-10-08: 1365\ncompactions in the session: 31; pause before each summary: median 79 s, max 123 s, 31 min in all; on 2026-10-08 at 17:03, 19:07, 19:39, 20:07, 20:34, 21:31, 22:15 and 23:24 UTC (8 in 6.5 hours)\ntranscript entries containing \"hasn't heard from you in a while\": 195\nWHY logoslang/why-P112-e first appears 23:25:17 UTC; DONE logoslang/why-P112-e sent 23:31:03 (5 min 46 s, while PolyLogue's KNOWLEDGE.md was being written)\nQUESTION logoslang/solve-W211 first appears 23:38:29 UTC; placed as Q89 23:39:39 (70 s, 13 tool calls: read the draft, 5 searches of DESIGN.md, 5 edits, place, message)",
+    "expected": "The orchestrator answers Thobias, places a question and acts on an agent's message promptly, whatever else it is doing. Thobias, 9 October 2026: 'there have been may times you have been slow at answering and creating new questions and other things. why is this happening? its definetively an issue you should record'",
+    "tier": "orchestrator",
+    "found": "orchestrator LogosLang, from its own session transcript at Thobias's request, 9 Oct 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T01:42+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "e3064fd",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
