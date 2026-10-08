@@ -1002,6 +1002,11 @@ A constructed cell is already a graph dyad. An unconstructed cell points at its 
 The eager-segment model (›The scope's constructor is the driver‹). Higher binds tighter; associativity breaks ties.
 - **Ruled:** 30 August 2026.
 
+### Reading a program takes time in step with its size; no walk runs once per path
+Every walk the reading adds (a check over a body, an ownership walk, a search for a name) visits each node a bounded number of times. An answer a walk needs again for the same node is kept, not walked again. So a chain of 30 functions, each calling the one before in both arms of an `if`, reads in time in step with 30, not with 2^30; an `if` with 2,000 `else if` arms reads in time in step with 2,000, not with 2,000².
+- **Why:** Thobias, after a branch read such a chain a hundredfold slower than `dev`, its time doubling with each function: "its quite concerning that an implementation agent could allow such slow and non scalable code. how is that even possible."
+- **Ruled:** 9 October 2026, Thobias: this rule, and a speed probe (a long chain, a wide `if`) in every review round.
+
 ### `parse_rank` is one `f64` on one shared axis, and may be relative
 Fractions let a new operator slot between two others without renumbering. Relative: `share parse_rank = mul.parse_rank - 1`, ordinary comptime field arithmetic under ›Deferral is authored‹ (unresolved stays a visible node until forced), resolved by the operator's first use or the use-before-definition error.
 - **Ruled:** relative ranks August 2026, in discussion; the operator is `=` (a declared slot is filled, not redeclared) 4 September 2026 (›The constructor is a field‹).
