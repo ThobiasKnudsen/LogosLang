@@ -19181,5 +19181,77 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P116",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch a recursive maker whose else arm binds its own call to a name is refused as mixing made and borrowed arms, though both arms make their value",
+    "program": "mk := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else ( x := mk(n - 1), x ) ), y := mk(3), print «{y@}»",
+    "output": "error: make a value in every arm, or borrow in every arm (branch issue-82-output-type c32cf74); dev runs it and leaks the value; the same with move x and with the boxed fixture",
+    "expected": "5, with the value freed when y's life ends: both arms make their value (›`move` and `free` are static: the parse marks the name dead‹, Ruled 8 October 2026, Thobias, Q72: an if makes in every arm or borrows in every arm)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-5, branch c32cf74, row 1 of comment 6069945355: the ownership walk stops at a call to itself, so a name bound to it owns nothing and reads as a borrow",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T00:06+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d9a7fb7",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P117",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch an if whose one arm calls a function that makes its value and whose other arm borrows is accepted, and the made block leaks, when the walk cannot see through the call",
+    "program": "mk as in the problem above, c := i32 1, y := i32 4, x := if (c == 1) (mk(3)) else (&y)   (with a chain of 15 calling functions in place of mk(3) it is refused; with 40 it is accepted)",
+    "output": "accepted, and the block mk made is never freed (branch issue-82-output-type c32cf74); dev refuses the line for another reason",
+    "expected": "refused where it is written, \"make a value in every arm, or borrow in every arm\" (›`move` and `free` are static: the parse marks the name dead‹, Ruled 8 October 2026, Thobias, Q72)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-5, branch c32cf74, row 2 of comment 6069945355: the walk stops at a call to itself and after 32 levels of calls",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T00:06+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d9a7fb7",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P118",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch an if whose arms both make their value, one through a recursive call, is accepted but the name it binds owns nothing, so the value leaks",
+    "program": "mk as in the problems above, c := i32 1, x := if (c == 1) (mk(3)) else (alloc 1 of i32 6)",
+    "output": "accepted, and x owns nothing, so the value is never freed (branch issue-82-output-type c32cf74)",
+    "expected": "accepted, and x owns the made value and frees it when its life ends (›`move` and `free` are static: the parse marks the name dead‹, Q72)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-5, branch c32cf74, row 3 of comment 6069945355",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T00:06+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d9a7fb7",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
