@@ -1520,7 +1520,7 @@
     "fixes": [
       "W15"
     ],
-    "assessment": "Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32, the segfault of -> @i32 ( i32 5 ), the compiled verifier errors); its bool arm leans on is_bool_result until group A lands; leaves the bare-parameter tail (#216) and a ? parameter's tail (a generic body built once)",
+    "assessment": "Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32, the segfault of -> @i32 ( i32 5 ), the compiled verifier errors), but its rule, the value's type must be the place's type, is the one Q-63 superseded on 2 October 2026: it keeps refusing x = f32 9 into an f64, which the rule now converts, and it would newly refuse -> i64 ( i32 5 ), which prints 5 today and is right under the rule. Its bool arm leans on is_bool_result until group A lands; leaves the bare-parameter tail and a ? parameter's tail (#202)",
     "decision": null,
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
@@ -1545,6 +1545,15 @@
         "commit": "9fc7634",
         "change": "issue #198",
         "reason": null
+      },
+      {
+        "at": "2026-10-08T21:36+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "b101dfd",
+        "change": "assessment was \"Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32, the segfault of -> @i32 ( i32 5 ), the compiled verifier errors); its bool arm leans on is_bool_result until group A lands; leaves the bare-parameter tail (#216) and a ? parameter's tail (a generic body built once)\"",
+        "reason": "Recorded before Q-63 (2 October 2026) replaced 'no implicit coercion' with the subset conversion rule W15 rests on"
       }
     ]
   },
@@ -8526,7 +8535,7 @@
   {
     "id": "P52",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A bare `if` condition whose right side is a member read named like an identity is cut short: `if here.scope == here.scope ( print «yes» ), 7` is \"expected one expression, found more\", the caret under the body's `(`.",
     "program": "if here.scope == here.scope ( print «yes» ), 7",
     "output": "<command line>:1:29: error: expected one expression, found more\n  if here.scope == here.scope ( print «yes» ), 7\n                              ^\nexit 1",
@@ -8535,7 +8544,7 @@
     "found": "logoslang-issue-215-review-1 on dev b4c6bf4, a sibling of the #215 worker's finding that a member's spelling is resolved as the identity it names; on issue-215-type-dot-rename the `condition_ends` arm (c40a321, a symptom fix recorded on #236) makes it print `yes` and `7`; rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build)",
     "why": null,
     "issue": 236,
-    "fixed": null,
+    "fixed": "b101dfd",
     "made": {
       "at": "2026-10-01T22:21+02:00",
       "by": "Orchestrator (2)",
@@ -8545,7 +8554,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T21:38+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "b101dfd",
+        "change": "fixed at b101dfd",
+        "reason": "rerun by logoslang-help-3 on dev b101dfd prints yes then 7; the fixing merge lies between the commit P52 was found at and b101dfd, not bisected"
+      }
+    ]
   },
   {
     "id": "P53",
@@ -9395,5 +9414,151 @@
         "reason": "the first program named a script in a temporary job folder that is deleted with the job"
       }
     ]
+  },
+  {
+    "id": "S36",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One landing function, land(value, place_type), asked by all eight sites and by every if arm: a value of the place's type passes; a plain number converts exactly by the type's definition; a value whose type lies inside the place's type gets the node a written conversion T(value) builds; anything else is refused. Each site loses its own arms",
+    "fixes": [
+      "W15"
+    ],
+    "assessment": "Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32 gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and makes the 2 October conversion rule (Q-63) true at every landing, where the seed refuses it today: x = f32 9 into an f64 gives 9.0, -> f64 ( u32 4000000000 ) gives 4000000000.0. The 'lies inside' test is one function over the number types' sign, width and float bits, beside their parse in numtype.rs, never a table. Tests that pin a widening's refusal change. W19 (#212) and #242's operand conversion reuse land. Leaves the ? and bare-parameter tails (#202)",
+    "decision": null,
+    "design": [
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T21:36+02:00",
+      "by": "logoslang-solve-W15",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "b101dfd",
+      "run": "solve-W15",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P86",
+    "kind": "problem",
+    "status": "open",
+    "text": "A why about the orchestrator skill cannot be recorded: pws.py's anchor_found accepts only a name found in the repo's tracked non-Markdown files, while every cause of a skill problem lies in ~/.claude/skills/ or ~/.claude/CLAUDE.md",
+    "program": "in the LogosLang main checkout: python3 -c \"import sys; sys.path.insert(0, '$HOME/.claude/skills/orchestrate'); import pws; print([pws.anchor_found(a, '.') for a in ('cmd_spawn_helper', 'compose_prompt', 'anchor_found')])\"",
+    "output": "[False, False, False]  (exit 0); so add why with any of these anchors fails with 'not found in this checkout's code (Markdown and .agents/orchestrator/ left out)'",
+    "expected": "a why agent on a skill problem (P60-P85) can name the skill's functions and sentences as anchors; SKILL.md: 'a bug in this skill or its script' is a problem like any other (›Problems‹)",
+    "tier": null,
+    "found": "logoslang-why-P74-a (BLOCKED) and logoslang-why-P74-b (QUESTION), 8 Oct 2026, dev b101dfd",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:41+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b101dfd",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P87",
+    "kind": "problem",
+    "status": "open",
+    "text": "agent-agnostic-prompt.md reaches every agent on this machine twice: the global CLAUDE.md imports it and compose_prompt appends it to every prompt; SKILL.md says so but gives no reason for the second copy",
+    "program": "grep -n agent-agnostic-prompt ~/.claude/CLAUDE.md ~/.claude/skills/orchestrate/orchestrate.sh",
+    "output": "/home/o/.claude/CLAUDE.md:71:@/home/o/.claude/skills/orchestrate/agent-agnostic-prompt.md ... orchestrate.sh:287:  every+=$'\\n\\n'$(cat \"$SCRIPT_DIR/agent-agnostic-prompt.md\")  (the file is 5642 bytes)",
+    "expected": "each agent reads the rules once, or the skill records why a second copy is needed (for example a session whose CLAUDE.md lacks the import)",
+    "tier": null,
+    "found": "logoslang-why-P74-a or -b, 8 Oct 2026; checked by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:41+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b101dfd",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P88",
+    "kind": "problem",
+    "status": "open",
+    "text": "Two of the owner's rule files disagree on a found problem in a repo without an orchestrator: agent-agnostic-prompt.md says it is reported as FOUND and never filed, the global CLAUDE.md says a root cause is filed as an issue with the root-cause label",
+    "program": "sed -n 12p ~/.claude/skills/orchestrate/agent-agnostic-prompt.md; sed -n 88p ~/.claude/CLAUDE.md",
+    "output": "- A problem your task does not cover is reported as `FOUND` and never filed. The orchestrator puts it in the repo's problem graph ...\n- In a repo without an orchestrator, a root cause is filed as an issue with the `root-cause` label ...",
+    "expected": "one rule per case: agent-agnostic-prompt.md's rule names the case with an orchestrator, or says what an agent does where none runs; the agent-agnostic prompt: 'Two sources disagree ... stop and send a QUESTION'",
+    "tier": null,
+    "found": "logoslang-why-P74-a or -b, 8 Oct 2026; checked by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:42+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b101dfd",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P89",
+    "kind": "problem",
+    "status": "open",
+    "text": "SKILL.md states one rule twice: 'A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill, never in a repo's ruling document' stands at line 10 and again at line 70",
+    "program": "grep -n \"never in a repo's ruling document\" ~/.claude/skills/orchestrate/SKILL.md | cut -c1-12",
+    "output": "10:**This fil\n70:- **Every r",
+    "expected": "each rule has one home and other places point to it (the agent-agnostic prompt's comment rule: every sentence that repeats a ruling goes wrong when the ruling changes)",
+    "tier": null,
+    "found": "logoslang-why-P74-a or -b, 8 Oct 2026; checked by orchestrator LogosLang",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:42+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b101dfd",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P90",
+    "kind": "problem",
+    "status": "open",
+    "text": "A u32 at a function's tail declared -> f64 is handed back as its raw bits: the f64 result is a tiny denormal, not the number",
+    "program": "f := fn () -> f64 ( u32 4000000000 ), f()",
+    "output": "1.9762625834e-314  (exit 0)",
+    "expected": "4000000000.0: a u32 lies inside f64, so it converts unwritten (›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹, Ruled 2 October 2026, Q-63)",
+    "tier": "interpreted",
+    "found": "logoslang-solve-W15, 8 Oct 2026, dev b101dfd",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T21:42+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b101dfd",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
