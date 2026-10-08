@@ -16490,7 +16490,7 @@
     "status": "accepted",
     "text": "›A call is a use of every outer name the callee's body reads‹ makes the list transitive (Calls count too: g(), whose body calls climb(), is refused as climb() is), so a body's own outer list takes in the list of every node it holds; check_call_reads joins the inner list into the frames being built through note_outer_read, and the enclosing build writes its FN_OUTER at its end, so the inner body must be built while the enclosing body is still being built",
     "proposed_for": "W171",
-    "why": null,
+    "why": [],
     "anchors": [
       "check_call_reads",
       "note_outer_read",
@@ -16536,6 +16536,15 @@
         "commit": "d0b716e",
         "change": "accepted as a why of W152",
         "reason": "direct test after C: the call-use rule is transitive and the enclosing build writes FN_OUTER at its end, so the inner body must be built while the enclosing one is (probe transitive-reads.txt); it explains W152, not W171"
+      },
+      {
+        "at": "2026-10-08T22:58+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "16bd619",
+        "change": "asked: no why found",
+        "reason": "why-P23-a and why-P23-b: none; DESIGN's own call-use rule with its Why"
       }
     ]
   },
@@ -17017,7 +17026,7 @@
     "status": "accepted",
     "text": "Neither DESIGN.md nor a spec page it points to says what a node of a type with a run gives when the type declares no output_type, as each of P23's t{i} declares none: ›A node's output type is per node, and its parse writes it‹ holds, by its Q72 line, only for a type whose author declares output_type and has if and block work theirs out when asked; the statement-word line gives nothing only for :=, return and their kin; ›A generic function body is lexed once and built once per set of field types‹ says only that an undeclared output is not something the build waits for; so the node has no field to carry it, and the seed's void comes from construct_run_body_in, reachable only through the spec",
     "proposed_for": "W163",
-    "why": null,
+    "why": [],
     "anchors": [
       "construct_run_body_in",
       "FN_OUTPUT",
@@ -17090,6 +17099,15 @@
         "commit": "d0b716e",
         "change": "evidence 1 was {\"command\": \"rg -n -i \\\"declares no .output_type.|no .output_type.|without (an )?.output_type.|undeclared output\\\" DESIGN.md; rg -n 'the rule holds for a type whose author declares .output_type.' DESIGN.md\", \"output\": \"1717: … statement words … are node types of their own, each with its own fields and no `output_type`, and like `=` they give their line nothing   (statement words only)\\n1914: … an undeclared output is not something its build waits for, so it is built at the definition too   (build timing, not what the node gives)\\n1123 (Q72 line): the rule holds for a type whose author declares `output_type`; an `if` and a block store no type of what they give. It is worked out when asked\\n(no line says what a run node of a type without output_type gives)\", \"commit\": \"50007fb\"}",
         "reason": "why-P23-c: the Q72 line is DESIGN.md:1126, not 1123; checked"
+      },
+      {
+        "at": "2026-10-08T22:58+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "16bd619",
+        "change": "asked: no why found",
+        "reason": "why-P23-a and why-P23-b: none; a rule DESIGN does not have yet"
       }
     ]
   },
@@ -17504,7 +17522,7 @@
   {
     "id": "W190",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "DESIGN defines liveness as the parse's present state: ›A binding is live while its scope is open and it is not dead; it carries a range‹ makes the range a walk over the body for reflection, with the index's two pointers its derived fast path, and ›A call is a use of every outer name the callee's body reads‹ checks at elaboration; so the seed tests a binding as it stands now (scopes.is_open, is_dead), in check_call_reads as in ScopeStack::select, and the test is right only while the parse stands at the read",
     "proposed_for": "W178",
     "why": null,
@@ -17546,7 +17564,17 @@
       "run": "why-P23",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:58+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "16bd619",
+        "change": "rejected",
+        "reason": "its premise is contradicted by ›Name resolution is scope-filtered…‹: \"A use keeps candidates whose scope is open *and* whose range covers the point\" and \"the point decides, not the scope alone\"; the range is not for reflection only"
+      }
+    ]
   },
   {
     "id": "W191",
@@ -17596,6 +17624,128 @@
       "commit": "896f9a6",
       "run": "why-P23",
       "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W192",
+    "kind": "why",
+    "status": "draft",
+    "text": "construct_run_body works the output type out only as one step of the build, in construct_run_body_in after enter swaps in the build's Context, and hands the spec back only when that build succeeds, removing it from the run-body table on failure (run_body::remove); so resolve_specialization never holds a spec with its output set before the build ends, and has nothing to give the node earlier",
+    "proposed_for": "W179",
+    "why": null,
+    "anchors": [
+      "construct_run_body",
+      "construct_run_body_in",
+      "enter",
+      "resolve_specialization",
+      "src/parse/bodies.rs"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'let g = self.enter\\(cx\\);|let inner = g.0.construct_run_body_in|Ok\\(f\\) => Ok\\(f\\)|run_body::remove\\(self.rt.store, types, held, key\\)|let output = scope|map_or\\(types.void_' src/parse/bodies.rs   (dev 896f9a6)",
+        "output": "350:        let g = self.enter(cx);\n351:        let inner = g.0.construct_run_body_in(ty, key, spec);\n356:            Ok(f) => Ok(f),\n358:                crate::identities::run_body::remove(self.rt.store, types, held, key);\n417:        let output = scope\n422:            .map_or(types.void_, |i| key[i]);\n(350-358 construct_run_body: enter, build, then the spec on success or its removal on failure; 417-422 construct_run_body_in: the output, inside the build)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:57+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W193",
+    "kind": "why",
+    "status": "draft",
+    "text": "SKILL.md has no section on its own files: what it says about recording in the skill stands as five clauses in three places, each a clause of a rule about something else (the head: one clause of reason here, the story in SKILL_HISTORY.md, and the home sentence inside the project-agnostic paragraph; How you work on his machine: edited in place, and a waiting skill ruling is a Pending line here in the same form, under the auto-memory rule; Questions to Thobias: the home sentence again inside the ruling document's step), so the home sentence never meets the head's split and each clause takes the form of the rule it sits in",
+    "proposed_for": "W134",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/SKILL_HISTORY.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n \"^## \" ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "20:## How you work on his machine\n30:## One repo, one orchestrator, several bases\n37:## Setup, once per session\n45:## Picking work\n54:## Questions to Thobias\n75:## Spawning an implementation agent\n81:## The review loop\n85:## The why agents\n107:## The message protocol\n132:## Merging\n136:## A Linear repo and the PR flow\n153:## Staying responsive\n159:## Never",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "grep -n -o \"Each rule here keeps one clause of reason\\|is recorded in this skill, never in a repo's ruling document\\|This skill's files ([^)]*) are edited in place\\|A skill ruling that must wait is a Pending line here, at the rule it touches, in the same form\\|Put it at the rule it touches: a Ruled line ([^)]*)\" ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "8:Each rule here keeps one clause of reason\n10:is recorded in this skill, never in a repo's ruling document\n26:This skill's files (this one, the script and the prompts beside it, and `~/.claude/skills/solve/SKILL.md`) are edited in place\n28:A skill ruling that must wait is a Pending line here, at the rule it touches, in the same form\n70:is recorded in this skill, never in a repo's ruling document\n70:Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:58+02:00",
+      "by": "logoslang-why-P74-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P74",
+      "agent": "C"
+    },
+    "history": []
+  },
+  {
+    "id": "W194",
+    "kind": "why",
+    "status": "draft",
+    "text": "The only maker of a ruling document is orchestrate.sh's setup step, which copies setup/KNOWLEDGE.md to .agents/orchestrator/KNOWLEDGE.md when none is there, while the global CLAUDE.md speaks to every session, in repos without an orchestrator too (In a repo without an orchestrator ...), where no ruling document and so no head stating the form need exist; with nothing to point to there, CLAUDE.md writes the form out itself, naming KNOWLEDGE.md and KNOWLEDGE_HISTORY.md",
+    "proposed_for": "W131",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/setup/KNOWLEDGE.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"setup/KNOWLEDGE.md\" ~/.claude/skills ~/.claude/CLAUDE.md; sed -n 388,392p ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "orchestrate.sh:390:    cp \"$SCRIPT_DIR/setup/KNOWLEDGE.md\" \"$REPO/$RULING_DOC\"\n  if [ ! -e \"$REPO/$RULING_DOC\" ]; then\n    mkdir -p \"$(dirname \"$REPO/$RULING_DOC\")\"\n    cp \"$SCRIPT_DIR/setup/KNOWLEDGE.md\" \"$REPO/$RULING_DOC\"\n    made+=(\"$RULING_DOC\")\n  fi",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "grep -n -o \"In a repo without an orchestrator\\|record it in the same session: in KNOWLEDGE.md\" ~/.claude/CLAUDE.md",
+        "output": "86:record it in the same session: in KNOWLEDGE.md\n88:In a repo without an orchestrator",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:58+02:00",
+      "by": "logoslang-why-P74-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P74",
+      "agent": "C"
     },
     "history": []
   }
