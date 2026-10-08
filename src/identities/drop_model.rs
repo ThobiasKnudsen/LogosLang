@@ -850,7 +850,10 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    owning_pointee(super::read::output_type(types, moved_out(types, node, 0)?))
+    match moved_out(types, node, 0) {
+        Out::Moves(out) => owning_pointee(super::read::output_type(types, out)),
+        Out::Stays | Out::Unknown => None,
+    }
 }
 
 /// The pointee of an owning `@pointee` type, one whose record carries a destructor.
@@ -870,19 +873,31 @@ unsafe fn owning_pointee(ty: DyadPtr) -> Option<DyadPtr> {
 /// # Safety
 /// `node` must be a reduced dyad from the store.
 pub(crate) unsafe fn moves_out(types: &Core, node: DyadPtr) -> bool {
-    moved_out(types, node, 0).is_some()
+    matches!(moved_out(types, node, 0), Out::Moves(_))
 }
 
-/// A recursive function's body calls itself; past this depth the answer is no.
+/// A recursive function's body calls itself; past this depth the answer is unknown.
 const MOVES_OUT_DEPTH: usize = 32;
 
-/// The node whose value moves out when `node` runs, as [`moves_out`] decides it.
+/// What running a node hands on, as far as the parse can see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Out {
+    /// This node's value, just made or moved.
+    Moves(DyadPtr),
+    /// A borrow, or no value that moves.
+    Stays,
+    /// A call into a body not parsed whole yet, as a function's call to itself, or past
+    /// [`MOVES_OUT_DEPTH`].
+    Unknown,
+}
+
+/// What moves out when `node` runs, as [`moves_out`] decides it.
 ///
 /// # Safety
 /// As `moves_out`.
-unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Option<DyadPtr> {
+unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Out {
     if depth > MOVES_OUT_DEPTH {
-        return None;
+        return Out::Unknown;
     }
     let node = types.through(node);
     let logos = dyad::ty(node);
@@ -891,7 +906,7 @@ unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Option<DyadPtr
         || logos == types.this.copy
         || logos == types.construct_
     {
-        return Some(node);
+        return Out::Moves(node);
     }
     // A record call's result moves out when its callee's value does; a record handed on by
     // its bytes' address, when a name that held it or what it copies does.
@@ -903,24 +918,29 @@ unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Option<DyadPtr
         let inner = types.through(*(dyad::value(node) as *const DyadPtr));
         if dyad::ty(inner) == types.binding_ && crate::binding::Binding::has_gate(inner, types.own_)
         {
-            return Some(inner);
+            return Out::Moves(inner);
         }
         return moved_out(types, inner, depth + 1);
     }
     if logos == types.scope {
         return crate::parse::last_sequence_expr(node)
-            .and_then(|tail| moved_out(types, tail, depth + 1));
+            .map_or(Out::Stays, |tail| moved_out(types, tail, depth + 1));
     }
     // A used `if` ends its value alike in every arm (`handed_ends`), so the then arm's is it.
     if logos == types.if_ {
         let (_, then, els) = super::if_mod::branches(node);
         if els.is_null() {
-            return None;
+            return Out::Stays;
         }
         // An arm is no call, so an `else if` chain's length is no recursion's depth.
-        let then_out = moved_out(types, then, depth)?;
-        moved_out(types, els, depth)?;
-        return Some(then_out);
+        let then_out = moved_out(types, then, depth);
+        let Out::Moves(out) = then_out else {
+            return then_out;
+        };
+        return match moved_out(types, els, depth) {
+            Out::Moves(_) => Out::Moves(out),
+            els_out => els_out,
+        };
     }
     if let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
         super::read::read_kind(types, node)
@@ -930,14 +950,18 @@ unsafe fn moved_out(types: &Core, node: DyadPtr, depth: usize) -> Option<DyadPtr
         if !(*args).is_null() && dyad::ty(*args) == types.this.copy {
             let template = *(dyad::value(*args) as *const DyadPtr);
             let fields = dyad::value(f) as *const DyadPtr;
-            return (*fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template)).then_some(node);
+            return if *fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template) {
+                Out::Moves(node)
+            } else {
+                Out::Stays
+            };
         }
         if dyad::ty(f) == types.fn_type {
             let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);
-            return if body.is_null() { None } else { moved_out(types, body, depth + 1) };
+            return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };
         }
     }
-    None
+    Out::Stays
 }
 
 /// Whether a value owns a block: binding it mints an owning place its scope holds.
@@ -997,7 +1021,8 @@ unsafe fn type_free(types: &Core, value: DyadPtr, t: DyadPtr) -> DyadPtr {
 /// Whether the value `node` hands on is made there (`Some(true)`) or borrowed (`Some(false)`),
 /// the same on every path that hands one on: an `if` whose arms make a value in one and borrow
 /// one in another is refused, since who owns it would show only when it runs. `None` where no
-/// path hands on a value with an end, as a copied number; a `return` hands on its operand.
+/// path hands on a value with an end, as a copied number, or where the parse cannot see what
+/// one hands on, as a function's call to itself; a `return` hands on its operand.
 /// DESIGN ›`move` and `free` are static: the parse marks the name dead‹.
 ///
 /// # Safety
@@ -1028,7 +1053,10 @@ pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<b
         return Ok(None);
     }
     let has_end = numtype::is_pointer_type(t) || !type_free(types, node, t).is_null();
-    Ok(has_end.then(|| teardown_of(types, node) != Teardown::Nothing))
+    if !has_end || moved_out(types, node, 0) == Out::Unknown {
+        return Ok(None);
+    }
+    Ok(Some(teardown_of(types, node) != Teardown::Nothing))
 }
 
 /// The runtime notes the live allocation so leaks and double frees are observable.
@@ -1997,6 +2025,8 @@ mod tests {
             "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
             "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (return move q) else (alloc 1 of i32 5) )",
             "g := fn (q := @i64 ?) -> dyad ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
+            "g := fn (n := i32 ?, q := @i32 ?) -> @i32 \
+             ( if (n == 0) (q) else (if (n == 1) (alloc 1 of i32 5) else (g(n - 1, q))) )",
         ] {
             assert_eq!(parse_err(&format!("{c}{src}")), ParseError::ArmsMakeAndBorrow, "{src}");
         }
@@ -2033,6 +2063,15 @@ mod tests {
         ] {
             assert_eq!(run(&format!("{c}{tail}")), (want, 0), "{tail}");
         }
+    }
+
+    #[test]
+    fn a_function_s_call_to_itself_agrees_with_every_arm() {
+        // The binder cannot see through the call either, so it owns nothing yet: the leak is
+        // pinned as a number.
+        let mk =
+            "mk := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else (mk(n - 1)) )";
+        assert_eq!(run(&format!("{mk},\nx := mk(3),\nx@")), (5, 1));
     }
 
     #[test]
