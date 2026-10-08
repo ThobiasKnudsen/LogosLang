@@ -2464,6 +2464,33 @@ fn a_return_outside_every_function_is_refused_where_it_is_written() {
 }
 
 #[test]
+fn a_return_hands_the_call_its_operand_as_the_last_line_does() {
+    for (src, out) in [
+        // A call that gives nothing takes nothing, so the operand need give nothing.
+        (
+            "f := fn (n := i32 ?) -> void ( if (n > 2) (return print «big»), print «small» ), \
+             f(5), f(1)",
+            "big\nsmall\n",
+        ),
+        ("f := fn () -> void ( c := i32 1, return if (c == 1) (print «a») ), f()", "a\n"),
+        // Each arm goes to the `-> T`, and one may leave by `error`, as at the last line.
+        (
+            "f := fn (c := bool ?) -> i64 ( return if c (i32 1) else (i64 2) ), \
+             print «{f(true)} {f(false)}»",
+            "1 2\n",
+        ),
+        (
+            "f := fn (c := bool ?) -> i32 ( return if c (error «no») else (i32 2) ), print «{f(false)}»",
+            "2\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, out, "{src}");
+    }
+}
+
+#[test]
 fn the_echo_reads_the_tail_value_as_any_use_does() {
     // Refused before the tail runs, so `ran` never prints.
     for tail in [
