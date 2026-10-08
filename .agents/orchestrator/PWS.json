@@ -18469,7 +18469,9 @@
     "status": "accepted",
     "text": "Binding holds the range only as two body-item pointers, start and end, with no place in body order on either or on any body item; so testing a point against start..end needs a walk over the scope's body, which the seed never wrote, and every liveness reader takes the frontier shortcut that scopes.rs states (at the frontier range covers the point is exactly not dead)",
     "proposed_for": "W191",
-    "why": null,
+    "why": [
+      "W202"
+    ],
     "anchors": [
       "Binding",
       "ScopeStack",
@@ -18541,6 +18543,15 @@
         "commit": "e0a175b",
         "change": "text was \"Binding holds the range only as two body-item pointers, start and end, with no place in body order on either or on any body item, and start stays null at top level; so testing a point against start..end needs a walk over the scope's body, and for a top-level name has no start at all, and every liveness reader takes the frontier shortcut that scopes.rs states (at the frontier range covers the point is exactly not dead)\"",
         "reason": "A's probe (x := i32 5, b := x + x, b:start.rhs.lhs prints 5 on dev 896f9a6) and B's reading of close_item -> settle_item: start is set at top level too; the doc comment at binding.rs:24-25 is stale"
+      },
+      {
+        "at": "2026-10-08T23:43+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "66481d0",
+        "change": "why + W202",
+        "reason": null
       }
     ]
   },
@@ -18709,19 +18720,23 @@
   {
     "id": "W202",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "DESIGN gives a binding's range only as its two body items, the declaring node and the item holding the ending move or free, with their pointers as the index's derived fast path, and gives no body item a number in body order; the one comparison it names is a walk over the body, while ›Name resolution is scope-filtered, and shadowing is disallowed‹ asks at every use whether the range covers the point and gives O(1) only for the open-scope half",
     "proposed_for": "W200",
-    "why": null,
+    "why": [],
     "anchors": [
       "Binding",
       "settle_item",
       "src/identities/binding.rs",
-      "src/parse/scopes.rs"
+      "src/parse/scopes.rs",
+      "check_call_reads",
+      "ScopeStack",
+      "DESIGN.md"
     ],
     "design": [
       "A binding is live while its scope is open and it is not dead; it carries a range",
-      "Name resolution is scope-filtered, and shadowing is disallowed"
+      "Name resolution is scope-filtered, and shadowing is disallowed",
+      "A call is a use of every outer name the callee's body reads"
     ],
     "pages": [],
     "evidence": [
@@ -18734,12 +18749,20 @@
         "command": "rg -n 'Endpoint::Start => Binding::set_start\\(binding, item\\)|pub from: usize|self.from <= reached' src/parse/scopes.rs src/identities/drop_model.rs   (the seed stamps the item pointer DESIGN names; the line number it counts reaches only ExitItem)",
         "output": "src/parse/scopes.rs:414:                    Endpoint::Start => Binding::set_start(binding, item),\nsrc/identities/drop_model.rs: pub from: usize,\nsrc/identities/drop_model.rs:660:        self.from <= reached && self.end.is_none_or(|end| end > reached)",
         "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n -i \"body order|item's (index|position)|index of (the|an) item|line (index|number)|range lookup|covers the point|fast path\" DESIGN.md   (trimmed to the liveness hits)",
+        "output": "410: … The check is a range lookup per outer name per call, at elaboration; running code checks nothing.\n2133: A use keeps candidates whose scope is open (ancestor on the scope stack) *and* whose range covers the point.\n2146: A binding carries a **range** in its scope's body order: from the declaring node to the **item of that body** holding the ending move/free …\n2147: - Reflection reads the graph, not the index: the declare and ending nodes are body items, so birth and death are a walk over the body; the index's two pointers are the derived fast path.\n2095: … re-elaborates the edited item and every later item in body order …   (edits, not liveness)\n(no line gives a body item an index or position, or says how a point behind the frontier is compared at elaboration)",
+        "commit": "50007fb"
       }
     ],
     "found_by": [
-      "A"
+      "A",
+      "C"
     ],
-    "aliases": [],
+    "aliases": [
+      "Neither DESIGN.md nor a spec page it points to gives a body item a place in its scope's body order, or says how elaboration compares a point behind the frontier with a range: ›A binding is live while its scope is open and it is not dead; it carries a range‹ names the index's two node pointers the derived fast path and leaves the walk over the body to reflection, ›Name resolution is scope-filtered, and shadowing is disallowed‹ asks whether the range covers the point and gives O(1) only for the scope half, and ›A call is a use of every outer name the callee's body reads‹ calls the check a range lookup per outer name per call, at elaboration; a pointer has no order, so the fast path these rules name can answer only at the frontier"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-08T23:40+02:00",
@@ -18750,12 +18773,31 @@
       "run": "why-P23",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T23:43+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "66481d0",
+        "change": "accepted as a why of W200, same as W203",
+        "reason": "A and C, blind: DESIGN gives no body item a place in body order, names the two pointers the fast path and the walk the slow one, yet asks at every use whether the range covers the point"
+      },
+      {
+        "at": "2026-10-08T23:44+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "66481d0",
+        "change": "asked: no why found",
+        "reason": "A and B: a rule DESIGN does not have yet, how a point is compared with a range at a use; nothing beneath it"
+      }
+    ]
   },
   {
     "id": "W203",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "Neither DESIGN.md nor a spec page it points to gives a body item a place in its scope's body order, or says how elaboration compares a point behind the frontier with a range: ›A binding is live while its scope is open and it is not dead; it carries a range‹ names the index's two node pointers the derived fast path and leaves the walk over the body to reflection, ›Name resolution is scope-filtered, and shadowing is disallowed‹ asks whether the range covers the point and gives O(1) only for the scope half, and ›A call is a use of every outer name the callee's body reads‹ calls the check a range lookup per outer name per call, at elaboration; a pointer has no order, so the fast path these rules name can answer only at the frontier",
     "proposed_for": "W200",
     "why": null,
@@ -18783,7 +18825,7 @@
       "C"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W202",
     "made": {
       "at": "2026-10-08T23:42+02:00",
       "by": "logoslang-why-P23-c",
@@ -18792,6 +18834,351 @@
       "commit": "50007fb",
       "run": "why-P23",
       "agent": "C"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T23:43+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "66481d0",
+        "change": "merged into W202",
+        "reason": "A and C, blind: DESIGN gives no body item a place in body order, names the two pointers the fast path and the walk the slow one, yet asks at every use whether the range covers the point"
+      }
+    ]
+  },
+  {
+    "id": "P110",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function declared `-> dyad` that gives back a number hands back the bare number, and reading the result follows it as a node address: a panic on dev, a segmentation fault on the issue 82 branch",
+    "program": "f := fn () -> dyad ( i32 5 ), x := f(), print «{x}»",
+    "output": "dev 5dbf3b2: panic \"invalid NumType tag 24\", exit 1; branch issue-82-output-type 080906e: segmentation fault, exit 139 (also `x`, `x.type`, `y := x`, `-> dyad ( 5 )`, `-> dyad ( alloc 1 of i32 5 )`, and `f := fn (a) -> dyad ( a ), x := f(i32 5), print «{x}»`)",
+    "expected": "5: the result goes into a `dyad` place, and a number written into an empty one makes a new node of its type (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹: \"`mut d := dyad ?, d = i64 5` fills `d` with a new `i64` node\"); until the seed builds that, the checked error `=` gives (its Seed line), never a crash",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-4 (finding N, comment 6069556531), on dev 5dbf3b2 and branch 080906e; QUESTION Q85",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T23:43+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "66481d0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P111",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function declared `-> i32` gives back `true` as `1`, and one declared `-> bool` gives back a number as `true`, where both should be refused",
+    "program": "f := fn () -> i32 ( true ), print «{f()}»\nf := fn () -> bool ( i32 5 ), print «{f()}»",
+    "output": "1, exit 0; true, exit 0 (dev 5dbf3b2 and branch issue-82-output-type 080906e alike)",
+    "expected": "both refused where `f` is defined (›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹, Ruled 8 October 2026, Thobias, Q79: a `bool` lies inside no number type, and no number lies inside `bool`)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-4 (FACT), on dev 5dbf3b2 and branch 080906e; the reviewer names #198's unchecked function result",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T23:43+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "66481d0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P112",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch the parse time doubles with each function in a chain where each function calls the one before it in both arms of an `if`, though nothing is called",
+    "program": "c := i32 1, f0 := fn () -> @i32 ( alloc 1 of i32 5 ), then f1 to f22, each f_i := fn () -> @i32 ( if (c == 1) (f_{i-1}()) else (f_{i-1}()) ), then 7, as one command line",
+    "output": "7, after 1.01 s on branch issue-82-output-type 080906e; 0.27 s on round 3's head; 0.01 s on dev; the time doubles per function",
+    "expected": "7 in about the time dev takes (0.01 s): nothing is called, so each function's body is walked once, not once per path into it",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-4 (finding I, comment 6069556531), branch 080906e: the ownership walk goes into the body of every function an arm calls",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T23:43+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "66481d0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P113",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch a long `else if` chain of `alloc` arms parses in time that grows with the square of its length",
+    "program": "a function whose body is one if with 2000 arms, if (…) (alloc 1 of i32 1) else if (…) (alloc 1 of i32 2) … else (alloc 1 of i32 2000), as one command line",
+    "output": "0.28 s on branch issue-82-output-type 080906e (0.25 s on round 3's head); doubling the arms about quadruples the time",
+    "expected": "time that grows with the number of arms, each arm read once",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-4 (finding L, comment 6069556531), branch 080906e: the type, mix and ownership walks each walk every arm again for every question",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T23:43+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "66481d0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P114",
+    "kind": "problem",
+    "status": "open",
+    "text": "The doc comment on Binding.start says the start is null at top level, but the parser sets it there too, and a why agent was misled by it",
+    "program": "x := i32 5, b := x + x, b:start.rhs.lhs   (and src/identities/binding.rs:24-25: \"null until the parser fills it, and at top level\")",
+    "output": "5, exit 0 (dev 896f9a6): the start is set at top level; tests/cli.rs:169-170 asserts the same for a file",
+    "expected": "the comment says what the code does, or is removed (the comment rules: a comment says what the code cannot, and goes stale where it repeats it)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P23-a, on dev 896f9a6; B read close_item -> settle_item to the same end",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T23:43+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "66481d0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P115",
+    "kind": "problem",
+    "status": "open",
+    "text": "DESIGN does not settle at which line a body written early but built later reads a binding's state: where the body is written, or where it is built",
+    "program": "x := i32 5, t1 := …, t0 := …, 3 t0, free x, 3 t0   (t1 and t0 types whose held run bodies read x, as in W178's evidence; and DESIGN.md ›A binding's fields are read at elaboration, at the line of the read; running code never reads a binding‹)",
+    "output": "error: `x` is dead here: it was moved or freed above (the second 3 t0; the first passes); the rule's text says \"read when the node holding the read is built, from the binding as it stands at that line\" (the build), and its Why says \"A reader at an earlier line must not see a later state, so the answer is fixed where the read is built\", which reads as where the body is written; its Seed line records a divergence",
+    "expected": "DESIGN says which line a held body's reads, and the call-is-a-use check, answer at; that decides whether a range lookup behind the frontier is needed (W202) or the frontier check is right",
+    "tier": "interpreted",
+    "found": "logoslang-why-P23-b, on dev aad6d38, in P23's why run",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T23:44+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "66481d0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S49",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A body written early and built later reads every name as it stood where the body is written (P115's answer): S30's resolution of its names where written, plus a Ruled line at the binding-read rule; a build resolves no name again, so the parse never asks whether a range covers a point behind the frontier",
+    "fixes": [
+      "W9",
+      "W10",
+      "W202"
+    ],
+    "assessment": "Root fix for W9 and W10 (P6, P38 impossible in both builders) and makes W202's lookup unneeded rather than providing it: every liveness question is asked at the frontier, where 'range covers the point' is exactly 'not dead'; the walk DESIGN names stays for reflection only. Fits ›A call is a use…‹ ('A body resolves outside names when parsed … the body's n is the old, ended name') and the binding-read Why ('A reader at an earlier line must not see a later state'); settles that rule's 'when the node holding the read is built'. Gives S-queue the outer-read list before any build. Lands with #219 (bodies.rs, types.rs, held cells keep their resolved bindings); #230 becomes its symptom.",
+    "decision": null,
+    "design": [
+      "A binding's fields are read at elaboration, at the line of the read; running code never reads a binding",
+      "Name resolution is scope-filtered, and shadowing is disallowed",
+      "A call is a use of every outer name the callee's body reads"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S50",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A body built later reads names as they stand at its build, filtered by range: every body item gets its number in body order, a name's life is one record (Binding takes ExitItem's line numbers, W199), and select and check_call_reads compare the point with the range (S8 widened)",
+    "fixes": [
+      "W202",
+      "W10"
+    ],
+    "assessment": "Removes P6 and P38 and gives W202 its O(1) range test, and merges the two copies of a name's life (W199). But a held body then sees a name freed and redeclared after it (x := f64 1 after free x) as the new x, against ›A call is a use…‹'s 'the body's n is the old, ended name'; that conflict needs his ruling. Medium: binding.rs, scopes.rs, declare.rs, bodies.rs; leaves W9 (two builders) and P5. Not recommended over the where-written reading.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S51",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Never build a body inside another body's build: a node whose type holds a run body is placed with its output type (from its parse or mint, or nothing when undeclared) and its outer reads (from where its body was written), and its body's build waits in a list the parse runs as soon as the build that placed it ends, before anything runs",
+    "fixes": [
+      "W130",
+      "W177",
+      "W192"
+    ],
+    "assessment": "Root fix for P23 at any chain length, typed or ? fields alike (probe: 18 links of a := ? abort today too, so building typed bodies at their definition, W130, alone is not enough). Removes the nesting of W121/W152, W177's need to build inside (the list is known where written) and W192's (output known before the build). Needs the where-written reading and W183's answer 'nothing' first. Costs: an error inside the inner body shows after the outer build ends, still before anything runs; the seed's fold of an all-literal node waits for the list. Medium-large: resolve_specialization (types.rs), construct_run_body (bodies.rs), a build list on Parser; after #82 (its branch rewrites bodies.rs and types.rs) and #219.",
+    "decision": null,
+    "design": [
+      "A generic function body is lexed once and built once per set of field types",
+      "A call is a use of every outer name the callee's body reads"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S52",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A rule on nesting depth: nesting past the implementation's limit is a checked error at the opener that crosses it, never an abort, and the count is every bracket open in the whole pass, a body being built inside another's build included; the seed keeps one count on Parser that a sub-parse does not reset",
+    "fixes": [
+      "W138"
+    ],
+    "assessment": "Gives the 2000 guard the rule it lacks and makes P23 a checked error now instead of SIGABRT (W120, W143's fresh count per Context go). Alone it is a backstop, not a fix: the chain still cannot run past 2000 total brackets. Small: check_depth (bodies.rs), Context::nested (mod.rs), quotes.rs, about 30 lines; not blocked except by sharing bodies.rs with #82. Recommended together with the build list.",
+    "decision": null,
+    "design": [
+      "The scope's constructor is the driver",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S53",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The drive keeps its own stack in memory instead of the Rust call stack: a constructor may stop at an inner opener and resume at its closer, so nesting is bounded only by memory",
+    "fixes": [
+      "W168",
+      "W138"
+    ],
+    "assessment": "Removes stack overflow for every nesting, bracket walls included. Changes ›A constructor's outcome is read off its own cell; no holding, no re-invocation‹ (it forbids running a constructor again), and rewrites every constructor and the driver (paren.rs, driver.rs, bodies.rs, types.rs). Far larger than the need: nobody writes 2000 nested brackets. Not recommended now.",
+    "decision": null,
+    "design": [
+      "A constructor's outcome is read off its own cell; no holding, no re-invocation",
+      "The scope's constructor is the driver"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S54",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A node of a type with a run gives nothing when its type declares no output_type, as the statement words do: using it as a value is the error 'this gives nothing'",
+    "fixes": [
+      "W183"
+    ],
+    "assessment": "One rule for every type: a node gives a value only when its type says what (output_type), so the parse knows it at placement, without building the body; extends the Q-59/Q-61 line that statement words with no output_type give nothing to every type. The seed's void today, made a rule. P23's tail then gives nothing and prints nothing (today it prints 0, #82's echo). Text only, plus the tail check.",
+    "decision": null,
+    "design": [
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S55",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A node of a type with a run and no output_type gives what its run body's last line gives, worked out when asked, as Q72 does for a block",
+    "fixes": [
+      "W183"
+    ],
+    "assessment": "Matches Q72's 'a block's from its last line', but the type of the last line is known only after the body is built for this node's field types, so asking it forces a build inside the asking build: it keeps P23's nesting for every such node used as a value, and the build list cannot place the node first. Not recommended.",
+    "decision": null,
+    "design": [
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
     },
     "history": []
   }
