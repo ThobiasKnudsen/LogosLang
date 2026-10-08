@@ -348,8 +348,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ),
         ParseError::FreeOfUndecidedValue => {
             "`free` runs a value and then its type's `free`, and one arm of this `if` makes its value \
-             while another borrows one or gives none, so whether it is one to free is known only \
-             when it runs: free it inside the arm that makes it, `if c (free (a())) else (b)`"
+             while another borrows one, so whether it is one to free is known only when it runs: \
+             free it inside the arm that makes it, `if c (free (a())) else (b)`"
                 .into()
         }
     }

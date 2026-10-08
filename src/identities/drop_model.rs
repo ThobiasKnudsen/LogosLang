@@ -153,8 +153,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 
     // A place: a name that holds its value, an owning field or an owning cell gets its
     // teardown, and a name, field path or cell whose type fills no `free` the inert `free`. A
-    // value no name holds runs, then its type's `free`. `free = …` never reaches here: `=`
-    // constructs first and takes the lone `free` as the slot's name.
+    // value no name holds is used as any value is: it runs, then its type's `free`. `free = …`
+    // never reaches here: `=` constructs first and takes the lone `free` as the slot's name.
     let free_ =
         keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = match p.place_operand_cell(tape)? {
@@ -163,7 +163,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 Taken::Value(value, at) => {
                     let types = p.types();
                     // SAFETY: `value` is a reduced dyad from the store.
-                    unsafe { super::read::gives_value(types, value) }
+                    unsafe { super::read::value_type(types, value) }
                         .map_err(|e| p.fail_at(at, e))?;
                     // SAFETY: as above.
                     let Some(teardown) = (unsafe { teardown_of(types, value) }) else {
@@ -1958,21 +1958,19 @@ mod tests {
             ),
             ParseError::FreeOfUndecidedValue
         );
-        // Arms of two types are refused for that, as wherever the `if`'s value is used.
-        for src in [
-            "c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i64 6)),\n1",
-            "c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5) else (i32 6)),\n1",
-            "c := i32 1,\nfree (if (c == 1) (i32 5) else (i64 6)),\n1",
+        // `free` uses the value it frees, so it refuses what any use refuses, for that reason.
+        let c = "c := i32 1,\nv := fn () -> void ( y := i32 1 ),\n";
+        for (operand, e) in [
+            ("if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i64 6)", ParseError::ArmsDiffer),
+            ("if (c == 1) (alloc 1 of i32 5) else (i32 6)", ParseError::ArmsDiffer),
+            ("if (c == 1) (i32 5) else (i64 6)", ParseError::ArmsDiffer),
+            ("if (c == 1) (alloc 1 of i32 5)", ParseError::MissingElse),
+            ("if (c == 1) (alloc 1 of i32 5) else (y := i32 2)", ParseError::ArmGivesNothing),
+            ("x := i32 5", ParseError::StatementAsValue),
+            ("v()", ParseError::StatementAsValue),
         ] {
-            assert_eq!(parse_err(src), ParseError::ArmsDiffer, "{src}");
+            assert_eq!(parse_err(&format!("{c}free ({operand}),\n1")), e, "{operand}");
         }
-        // One arm makes a block, the other gives nothing.
-        assert_eq!(
-            parse_err("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5) else (y := i32 2)),\n1"),
-            ParseError::FreeOfUndecidedValue
-        );
-        // With no `else` the `if` gives nothing.
-        assert_eq!(run("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5)),\n1").0, 1);
     }
 
     #[test]

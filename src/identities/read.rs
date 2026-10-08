@@ -229,9 +229,9 @@ pub(crate) unsafe fn value_type(
     }
 }
 
-/// Whether a node gives a value where giving none is allowed, as at the echo and `free`: a node
-/// that gives nothing gives none, and a value refused anywhere, as an `if` whose arms give two
-/// types, is refused here. DESIGN ›A value is shown as the text its type's `print` slot gives
+/// Whether a node gives a value where giving none is allowed, at the echo: a node that gives
+/// nothing gives none, and a value refused anywhere, as an `if` whose arms give two types, is
+/// refused here. DESIGN ›A value is shown as the text its type's `print` slot gives
 /// back‹, ›`if` reads its own right side‹.
 ///
 /// # Safety
