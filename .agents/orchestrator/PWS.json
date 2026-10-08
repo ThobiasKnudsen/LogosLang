@@ -19962,7 +19962,7 @@
     "status": "accepted",
     "text": "›A last value moves out‹ decides whether a call hands on a made value by the callee's last line, not by its written result: a plain -> @i32 is made for fn () -> @i32 ( alloc 1 of i32 5 ) and borrowed for fn (p := @i32 ?) -> @i32 ( p ), and -> own @T is not needed for a made last value; so the written type fn_over_body puts in FN_OUTPUT before the body is parsed cannot hold the answer, which exists only once the body is built",
     "proposed_for": "W207",
-    "why": null,
+    "why": [],
     "anchors": [
       "FN_OUTPUT",
       "fn_over_body",
@@ -20034,6 +20034,15 @@
         "effort": "xhigh",
         "commit": "f9f87e6",
         "change": "accepted as a why of W207, same as W209",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T01:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "ff28b70",
+        "change": "asked: no why found",
         "reason": null
       }
     ]
@@ -20134,7 +20143,7 @@
   {
     "id": "W213",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "DESIGN keeps ownership out of every type: alloc n of T v returns a plain @T, holding is decided at the binding site by whether the value is just made or moved (a name borrows), and own is only a gate on a field, parameter or result, the same primitive as pub and mut; so -> @i32 is one type whether the call makes its value or borrows one, and once ›A last value moves out‹ hands a made last value on without -> own @T, only the body's last line can tell them apart",
     "proposed_for": "W211",
     "why": null,
@@ -20180,7 +20189,17 @@
       "run": "why-P112",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T01:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "ff28b70",
+        "change": "rejected",
+        "reason": "fails the direct test: ownership as a gate and not a type does not by itself make ›A last value moves out‹ decide by the body, since a gate word on the result, -> own @T, can say it and DESIGN states it as ruled (P121); A and C found W211 a ruling with no deeper cause"
+      }
+    ]
   },
   {
     "id": "P120",
@@ -20316,6 +20335,30 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "57cb92e",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P123",
+    "kind": "problem",
+    "status": "open",
+    "text": "A record made 10 record-returning calls deep and bound to a name is never freed; with 8 calls it is freed",
+    "program": "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), c := i32 1, f0 := fn () -> bag ( bag(1) ), then f1 to f10 with each f_i := fn () -> bag ( if (c == 1) (f_{i-1}()) else (f_{i-1}()) ), then x := f10(), print «after», as one command line",
+    "output": "after (only); with f1 to f8: after, then freed 1; on branch issue-82-output-type 90fe8d6",
+    "expected": "after, then freed 1, at any depth (DESIGN ›A last value moves out‹: the caller's name becomes the owner)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P112-c (P112 why round on W211, why-probes/chain.sh and cap.gdb)",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T01:08+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "ff28b70",
       "run": null,
       "agent": null
     },
