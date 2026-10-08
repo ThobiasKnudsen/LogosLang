@@ -18990,5 +18990,196 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "S49",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A body written early and built later reads every name as it stood where the body is written (P115's answer): S30's resolution of its names where written, plus a Ruled line at the binding-read rule; a build resolves no name again, so the parse never asks whether a range covers a point behind the frontier",
+    "fixes": [
+      "W9",
+      "W10",
+      "W202"
+    ],
+    "assessment": "Root fix for W9 and W10 (P6, P38 impossible in both builders) and makes W202's lookup unneeded rather than providing it: every liveness question is asked at the frontier, where 'range covers the point' is exactly 'not dead'; the walk DESIGN names stays for reflection only. Fits ›A call is a use…‹ ('A body resolves outside names when parsed … the body's n is the old, ended name') and the binding-read Why ('A reader at an earlier line must not see a later state'); settles that rule's 'when the node holding the read is built'. Gives S-queue the outer-read list before any build. Lands with #219 (bodies.rs, types.rs, held cells keep their resolved bindings); #230 becomes its symptom.",
+    "decision": null,
+    "design": [
+      "A binding's fields are read at elaboration, at the line of the read; running code never reads a binding",
+      "Name resolution is scope-filtered, and shadowing is disallowed",
+      "A call is a use of every outer name the callee's body reads"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S50",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A body built later reads names as they stand at its build, filtered by range: every body item gets its number in body order, a name's life is one record (Binding takes ExitItem's line numbers, W199), and select and check_call_reads compare the point with the range (S8 widened)",
+    "fixes": [
+      "W202",
+      "W10"
+    ],
+    "assessment": "Removes P6 and P38 and gives W202 its O(1) range test, and merges the two copies of a name's life (W199). But a held body then sees a name freed and redeclared after it (x := f64 1 after free x) as the new x, against ›A call is a use…‹'s 'the body's n is the old, ended name'; that conflict needs his ruling. Medium: binding.rs, scopes.rs, declare.rs, bodies.rs; leaves W9 (two builders) and P5. Not recommended over the where-written reading.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S51",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Never build a body inside another body's build: a node whose type holds a run body is placed with its output type (from its parse or mint, or nothing when undeclared) and its outer reads (from where its body was written), and its body's build waits in a list the parse runs as soon as the build that placed it ends, before anything runs",
+    "fixes": [
+      "W130",
+      "W177",
+      "W192"
+    ],
+    "assessment": "Root fix for P23 at any chain length, typed or ? fields alike (probe: 18 links of a := ? abort today too, so building typed bodies at their definition, W130, alone is not enough). Removes the nesting of W121/W152, W177's need to build inside (the list is known where written) and W192's (output known before the build). Needs the where-written reading and W183's answer 'nothing' first. Costs: an error inside the inner body shows after the outer build ends, still before anything runs; the seed's fold of an all-literal node waits for the list. Medium-large: resolve_specialization (types.rs), construct_run_body (bodies.rs), a build list on Parser; after #82 (its branch rewrites bodies.rs and types.rs) and #219.",
+    "decision": null,
+    "design": [
+      "A generic function body is lexed once and built once per set of field types",
+      "A call is a use of every outer name the callee's body reads"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S52",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A rule on nesting depth: nesting past the implementation's limit is a checked error at the opener that crosses it, never an abort, and the count is every bracket open in the whole pass, a body being built inside another's build included; the seed keeps one count on Parser that a sub-parse does not reset",
+    "fixes": [
+      "W138"
+    ],
+    "assessment": "Gives the 2000 guard the rule it lacks and makes P23 a checked error now instead of SIGABRT (W120, W143's fresh count per Context go). Alone it is a backstop, not a fix: the chain still cannot run past 2000 total brackets. Small: check_depth (bodies.rs), Context::nested (mod.rs), quotes.rs, about 30 lines; not blocked except by sharing bodies.rs with #82. Recommended together with the build list.",
+    "decision": null,
+    "design": [
+      "The scope's constructor is the driver",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S53",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The drive keeps its own stack in memory instead of the Rust call stack: a constructor may stop at an inner opener and resume at its closer, so nesting is bounded only by memory",
+    "fixes": [
+      "W168",
+      "W138"
+    ],
+    "assessment": "Removes stack overflow for every nesting, bracket walls included. Changes ›A constructor's outcome is read off its own cell; no holding, no re-invocation‹ (it forbids running a constructor again), and rewrites every constructor and the driver (paren.rs, driver.rs, bodies.rs, types.rs). Far larger than the need: nobody writes 2000 nested brackets. Not recommended now.",
+    "decision": null,
+    "design": [
+      "A constructor's outcome is read off its own cell; no holding, no re-invocation",
+      "The scope's constructor is the driver"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S54",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A node of a type with a run gives nothing when its type declares no output_type, as the statement words do: using it as a value is the error 'this gives nothing'",
+    "fixes": [
+      "W183"
+    ],
+    "assessment": "One rule for every type: a node gives a value only when its type says what (output_type), so the parse knows it at placement, without building the body; extends the Q-59/Q-61 line that statement words with no output_type give nothing to every type. The seed's void today, made a rule. P23's tail then gives nothing and prints nothing (today it prints 0, #82's echo). Text only, plus the tail check.",
+    "decision": null,
+    "design": [
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S55",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A node of a type with a run and no output_type gives what its run body's last line gives, worked out when asked, as Q72 does for a block",
+    "fixes": [
+      "W183"
+    ],
+    "assessment": "Matches Q72's 'a block's from its last line', but the type of the last line is known only after the body is built for this node's field types, so asking it forces a build inside the asking build: it keeps P23's nesting for every such node used as a value, and the build list cannot place the node first. Not recommended.",
+    "decision": null,
+    "design": [
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:50+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "83e3f97",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
   }
 ]
