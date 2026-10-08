@@ -20660,5 +20660,139 @@
         "reason": "one-off E: if the answer were kept at each close, the walk would read it at the call and never go deep, so the cap would never cut; W207 by itself makes the deep and closed cases happen"
       }
     ]
+  },
+  {
+    "id": "S58",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A function hands on a value it made only when its result type says so: -> own @T, or -> own t for a type that fills free; the parse checks the body's last value against the written result where the function closes, and a call reads ownership from the callee's written result, never its body; a block keeps ›A last value moves out‹",
+    "fixes": [
+      "W211",
+      "W207",
+      "W205",
+      "W215",
+      "W217"
+    ],
+    "assessment": "Root fix: the answer is written before the body is parsed, so FN_OUTPUT can hold it. Removes W207, W205, W217 and W215 (a self-call is answered by its signature, written before its body), so P112, P117, P118 and P123 go, and moved_out's walk into FN_BODY, MOVES_OUT_DEPTH and Out::Unknown are deleted; a call into a body built later knows its answer too. Settles P121: a result type carries own. DESIGN: ›A last value moves out‹ narrows to blocks; ›Three fail-closed ownership rules, and -> own @T‹ rule 3 names -> own as the way out; the Open lines at ›Left of := stands one name…‹ and ›A gate word stands only where a binding is being filled‹ close; reverses the 25 September 2026 change that let a bare -> @T hand on an owned place (History). Cost: about 20 test lines in tests/cli.rs gain own; seed small and smaller after (parse -> own, one check at the close, the call arm reads FN_OUTPUT), on #82's branch, where handed_ends lives. Leaves P113 and P122 (an if's answer asked again at each level).",
+    "decision": null,
+    "design": [
+      "A last value moves out",
+      "Three fail-closed ownership rules, and `-> own @T`",
+      "Gate spelling: words left of `:=`; ownership in the reference type",
+      "Left of `:=` stands one name (or regex), with its gate words in front, and nothing else",
+      "A gate word stands only where a binding is being filled"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T01:36+02:00",
+      "by": "logoslang-solve-W211",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8994869",
+      "run": "solve-W211",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S59",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Keep ›A last value moves out‹ (an unmarked result hands on a made last value); the parse works the answer out once, where the function closes, and keeps it on the function's record as it keeps FN_OUTER; a call reads the kept answer, never the body; -> own @T is deleted from DESIGN",
+    "fixes": [
+      "W211",
+      "W207",
+      "W205",
+      "W217"
+    ],
+    "assessment": "Root fix for every call read after its function closes: removes W207, W205 and W217, so P112, P117 (its mk(3) is read after mk closes), P118 and P123 go and MOVES_OUT_DEPTH is deleted; no test changes. Settles P121: no result type carries own. Leaves W215: a self-call whose answer is needed inside its own open body has no kept answer yet and needs a new rule (refuse it, or assume an answer and check it at the close); a body built later (a generic function per set of field types, S51's build list) has no answer until its build. Keeps a copy derived from the body, which Q72 (8 October 2026) declined for an if and a block because a rewrite of the body leaves it stale; FN_OUTER, the outer-read list of ›A call is a use of every outer name the callee's body reads‹, is the precedent. A body's change silently changes who frees in every caller. DESIGN: delete -> own @T from ›Three fail-closed ownership rules, and -> own @T‹, ›Gate spelling…‹ and ›move is the act…‹, close the two Opens, add 'kept where the function closes' at ›A last value moves out‹. Seed small, on #82's branch. Leaves P113 and P122.",
+    "decision": null,
+    "design": [
+      "A last value moves out",
+      "Three fail-closed ownership rules, and `-> own @T`",
+      "Gate spelling: words left of `:=`; ownership in the reference type",
+      "`move` is the act, `own` the gate word, `free` the end",
+      "Left of `:=` stands one name (or regex), with its gate words in front, and nothing else"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T01:36+02:00",
+      "by": "logoslang-solve-W211",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8994869",
+      "run": "solve-W211",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-09T01:38+02:00",
+        "by": "logoslang-solve-W211",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "8994869",
+        "change": "assessment was \"Root fix for every call read after its function closes: removes W207, W205 and W217, so P112, P117 (outside recursion), P118 and P123 go and MOVES_OUT_DEPTH is deleted; no test changes. Settles P121: no result type carries own. Leaves W215: a self-call whose answer is needed inside its own open body has no kept answer yet and needs a new rule (refuse it, or assume an answer and check it at the close); a body built later (a generic function per set of field types, S51's build list) has no answer until its build. Keeps a copy derived from the body, which Q72 (8 October 2026) declined for an if and a block because a rewrite of the body leaves it stale; FN_OUTER, the outer-read list of ›A call is a use of every outer name the callee's body reads‹, is the precedent. A body's change silently changes who frees in every caller. DESIGN: delete -> own @T from ›Three fail-closed ownership rules, and -> own @T‹, ›Gate spelling…‹ and ›move is the act…‹, close the two Opens, add 'kept where the function closes' at ›A last value moves out‹. Seed small, on #82's branch. Leaves P113 and P122.\"",
+        "reason": "P117's recursive call is read after its function closes, so S59 removes it without condition"
+      }
+    ]
+  },
+  {
+    "id": "S60",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Both: -> own @T may be written and is checked where the function closes; where it is not written, the parse works the answer out and keeps it, as S59",
+    "fixes": [
+      "W211",
+      "W207",
+      "W205",
+      "W217"
+    ],
+    "assessment": "Two ways to say one thing: an unwritten result keeps all of S59's gaps (W215 needs a new rule, a body built later has no answer, the kept copy goes stale on a rewrite), and a written one adds S58's check, so the seed carries both mechanisms; a reader of -> @i32 cannot tell whether it borrows. Settles P121 as own allowed but optional. More code than either. Recommended against.",
+    "decision": null,
+    "design": [
+      "A last value moves out",
+      "Gate spelling: words left of `:=`; ownership in the reference type"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T01:36+02:00",
+      "by": "logoslang-solve-W211",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8994869",
+      "run": "solve-W211",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S61",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Patch the walk only: moved_out answers an if by one arm (W208) and tells recursion by the functions it is already inside, not by a depth count (W217); nothing is kept per function",
+    "fixes": [
+      "W208",
+      "W217"
+    ],
+    "assessment": "Symptom fix: P112's doubling goes, but each function's close still walks every function below it, so the chain reads in time growing with the square of its length (675 moved_out calls at 10 functions, why-P112-c), against ›Reading a program takes time in step with its size; no walk runs once per path‹ ('an answer a walk needs again for the same node is kept'). W211 and W207 stay, P121 stays open, and handed_ends must still walk both arms to refuse P117's mix. Recommended against.",
+    "decision": null,
+    "design": [
+      "Reading a program takes time in step with its size; no walk runs once per path"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T01:36+02:00",
+      "by": "logoslang-solve-W211",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8994869",
+      "run": "solve-W211",
+      "agent": null
+    },
+    "history": []
   }
 ]
