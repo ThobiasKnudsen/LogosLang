@@ -17748,5 +17748,29 @@
       "agent": "C"
     },
     "history": []
+  },
+  {
+    "id": "P108",
+    "kind": "problem",
+    "status": "open",
+    "text": "The copies of the ruling recording form in the global CLAUDE.md, SKILL.md and solve/SKILL.md disagree with LogosLang's ruling document: they put date, who and reason on one Ruled line and name KNOWLEDGE.md and KNOWLEDGE_HISTORY.md, while DESIGN.md keeps the reason on a Why line of its own and its history in DESIGN_HISTORY.md",
+    "program": "sed -n 1,12p DESIGN.md   (its \"How to read a rule\"); ls .agents/orchestrator/KNOWLEDGE.md; read ~/.claude/CLAUDE.md ## Rulings and their records, SKILL.md line 70, solve/SKILL.md line 49",
+    "output": "DESIGN.md: \"**Why:** the reason recorded with it.\" and \"**Ruled:** the date and, where the text says, who.\"; History \"stands in DESIGN_HISTORY.md\". ls: cannot access '.agents/orchestrator/KNOWLEDGE.md': No such file or directory. The three copies: a Ruled line with the date, who and the reason; history in KNOWLEDGE_HISTORY.md",
+    "expected": "One statement of how a ruling is recorded, the ruling document's own, and every other file points to it, so no copy can disagree with the repo it is used in",
+    "tier": "rule files",
+    "found": "logoslang-why-P74-c, why round at W131 on P74, dev fae8206",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T22:59+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "bd60bfd",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
