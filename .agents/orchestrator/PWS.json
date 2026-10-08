@@ -11299,7 +11299,7 @@
     "id": "W111",
     "kind": "why",
     "status": "accepted",
-    "text": "A function's local is read at the innermost activation whatever call that is: `Runtime::place_addr` matches `Frame::Call(_)`, dropping the function the binding names, and takes `frame_base()`, and `Activation` keeps only a base, so a parse that runs the read of `x` (W16's `store`) while its own call is innermost reads the parse call's frame at `x`'s offset instead of failing with `NoActivation`; the rule that a function's local is read only inside a call of that function is checked only at parse, by `check_capture` over the names a body spells (`CapturedLocal`, `OnceReadsUnmade`), so a read that reaches the run without being spelled in its own function, as this one, is judged nowhere",
+    "text": "A function's local is read at the innermost activation whatever call that is: `Runtime::place_addr` matches `Frame::Call(_)`, dropping the function the binding names, and takes `frame_base()`, and `Activation` keeps only a base; the compiler's `place_addr_raw` (src/compile.rs) matches `Frame::Call(_)` the same way and takes the frame slot of whatever function it compiles; so a parse that runs the read of `x` (W16's `store`) while its own call is innermost reads the parse call's frame at `x`'s offset instead of failing with `NoActivation`; the rule that a function's local is read only inside a call of that function is checked only at parse, by `check_capture` over the names a body spells (`CapturedLocal`, `OnceReadsUnmade`), so a read that reaches the run without being spelled in its own function, as this one, is judged nowhere",
     "proposed_for": "P47",
     "why": [],
     "anchors": [
@@ -11382,6 +11382,15 @@
         "commit": "6718deb",
         "change": "asked: no why found",
         "reason": "A and B: none; DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹ already gives a function local the call's base, so the code differs from a decided rule, and nothing deeper is a fact that can change"
+      },
+      {
+        "at": "2026-10-08T23:35+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "aad6d38",
+        "change": "text was \"A function's local is read at the innermost activation whatever call that is: `Runtime::place_addr` matches `Frame::Call(_)`, dropping the function the binding names, and takes `frame_base()`, and `Activation` keeps only a base, so a parse that runs the read of `x` (W16's `store`) while its own call is innermost reads the parse call's frame at `x`'s offset instead of failing with `NoActivation`; the rule that a function's local is read only inside a call of that function is checked only at parse, by `check_capture` over the names a body spells (`CapturedLocal`, `OnceReadsUnmade`), so a read that reaches the run without being spelled in its own function, as this one, is judged nowhere\"",
+        "reason": "solve-W111's FACT, checked at src/compile.rs:256: the compiled tier drops the function too"
       }
     ]
   },
@@ -16328,7 +16337,7 @@
     "text": "In a parse, `.type` of a field declared `?` that the parse has filled with a literal is refused, and the test a_fields_type_reads_its_declared_type (tests/cli.rs) asserts the refusal",
     "program": "q := type ( size := ?, share parse_rank = 60, share parse = ( tape[0].type = q, tape[0].size = 3, tape[0] = tape[0].size.type, tape.is_constructed[0] = true ) ), q",
     "output": "error: this read does not fit the node's type, exit 1 (the test asserts exit 1 and this text). With `size := u64 ?` it prints u64",
-    "expected": "u64: `.type` reads the type of what a node yields, also on an operand reached inside a constructor (›`a.type` reads the type of the value a name stands for‹, Ruled 29 September 2026, #199), and the literal 3 the field holds stands as itself (›Reading a path runs nothing‹)",
+    "expected": "rational_number: `.type` reads the type of what a node yields, also on an operand reached inside a constructor (›`a.type` reads the type of the value a name stands for‹, Ruled 29 September 2026, #199); the `?` field's slot holds the literal 3 itself (›Reading a path runs nothing‹), and a plain number is a rational_number (›A plain number is a `rational_number`, and a number type's definition converts it‹; `a := 3, a.type == rational_number` prints true at fae8206)",
     "tier": "interpreted",
     "found": "logoslang-why-P47-c, why round at W160 on P47, dev 50007fb; tests/cli.rs:4264",
     "why": null,
@@ -16343,7 +16352,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T23:37+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "aad6d38",
+        "change": "expected was \"u64: `.type` reads the type of what a node yields, also on an operand reached inside a constructor (›`a.type` reads the type of the value a name stands for‹, Ruled 29 September 2026, #199), and the literal 3 the field holds stands as itself (›Reading a path runs nothing‹)\"",
+        "reason": "solve-W111's FACT: u64 was the declared-type case, not the ? field's; checked against DESIGN"
+      }
+    ]
   },
   {
     "id": "P106",
@@ -17209,7 +17228,7 @@
     "status": "accepted",
     "text": "No repo's ruling document names the skill as the home of a ruling on how the orchestrator works: setup/KNOWLEDGE.md, which orchestrate.sh copies in as every new repo's ruling document, and LogosLang's DESIGN.md say nothing of the skill, though SKILL.md's Every ruling is recorded in its home (\"the ruling document points to it\") and SKILL_HISTORY.md (\"a repo's ruling document only points to the skill\") expect that pointer; so the rule's branch for a home with its own form (\"then record it the way that rule says\") is never taken for a skill ruling",
     "proposed_for": "W134",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/setup/KNOWLEDGE.md",
       "~/.claude/skills/orchestrate/orchestrate.sh",
@@ -17254,6 +17273,15 @@
         "commit": "2dda19c",
         "change": "accepted as a why of W134",
         "reason": "direct test: no ruling document names the skill as a home, so the branch that would give the skill its own form is never taken; a cause beside W193"
+      },
+      {
+        "at": "2026-10-08T23:35+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "aad6d38",
+        "change": "asked: no why found",
+        "reason": "A and B: no rule asks a ruling document or its template to point to the skill; the missing rule is the root"
       }
     ]
   },
@@ -17575,7 +17603,7 @@
     "status": "accepted",
     "text": "The recording form stands at the head of the ruling document (setup/KNOWLEDGE.md, above every ### rule), but every agent is told never to read the ruling document whole and to read only from a ### heading to the next, and no prompt points to its head; so a rule kept only at the head reaches no reader, and each rule file that needs the form carries it in full",
     "proposed_for": "W131",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/setup/KNOWLEDGE.md",
       "~/.claude/skills/orchestrate/every-prompt.md",
@@ -17628,6 +17656,15 @@
         "commit": "2dda19c",
         "change": "accepted as a why of W131",
         "reason": "direct test: where the head exists, agents read a rule heading to heading and no prompt points to the head, so each file carries the form; a cause beside W194"
+      },
+      {
+        "at": "2026-10-08T23:35+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "aad6d38",
+        "change": "asked: no why found",
+        "reason": "A and B: the head stands above every ### rule and the reading rule reaches only ### rules; nothing deeper"
       }
     ]
   },
@@ -17694,7 +17731,10 @@
     "status": "accepted",
     "text": "The seed keeps ›A binding is live while its scope is open and it is not dead; it carries a range‹ only in its state form: Binding records start and end as body items, but every liveness reader (ScopeStack's resolution three times, regex_trie::is_live_in, check_call_reads) tests is_open on the scope and is_dead (end not null) as they stand now, and none compares a point with the start..end range DESIGN gives (A use keeps candidates whose scope is open and whose range covers the point); so a liveness answer is right only at the moment the parse stands at the point asked about",
     "proposed_for": "W178",
-    "why": null,
+    "why": [
+      "W200",
+      "W199"
+    ],
     "anchors": [
       "Binding",
       "is_dead",
@@ -17762,6 +17802,24 @@
         "commit": "2dda19c",
         "change": "accepted as a why of W178, same as W195",
         "reason": "B and C, blind: every liveness reader tests the state now, none compares a point with start..end"
+      },
+      {
+        "at": "2026-10-08T23:38+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c04eb01",
+        "change": "why + W200",
+        "reason": null
+      },
+      {
+        "at": "2026-10-08T23:38+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c04eb01",
+        "change": "why + W199",
+        "reason": null
       }
     ]
   },
@@ -17771,7 +17829,7 @@
     "status": "accepted",
     "text": "construct_run_body works the output type out only as one step of the build, in construct_run_body_in after enter swaps in the build's Context, and hands the spec back only when that build succeeds, removing it from the run-body table on failure (run_body::remove); so resolve_specialization never holds a spec with its output set before the build ends, and has nothing to give the node earlier",
     "proposed_for": "W179",
-    "why": null,
+    "why": [],
     "anchors": [
       "construct_run_body",
       "construct_run_body_in",
@@ -17828,6 +17886,15 @@
         "commit": "2dda19c",
         "change": "accepted as a why of W179, same as W196",
         "reason": "B and C, blind: the output type is written only inside the build, by its one builder"
+      },
+      {
+        "at": "2026-10-08T23:36+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "aad6d38",
+        "change": "asked: no why found",
+        "reason": "A and B: the order of steps in construct_run_body has no rule or fact behind it but history; W183 bears on what the output is, not when"
       }
     ]
   },
@@ -17837,7 +17904,7 @@
     "status": "accepted",
     "text": "SKILL.md has no section on its own files: what it says about recording in the skill stands as five clauses in three places, each a clause of a rule about something else (the head: one clause of reason here, the story in SKILL_HISTORY.md, and the home sentence inside the project-agnostic paragraph; How you work on his machine: edited in place, and a waiting skill ruling is a Pending line here in the same form, under the auto-memory rule; Questions to Thobias: the home sentence again inside the ruling document's step), so the home sentence never meets the head's split and each clause takes the form of the rule it sits in",
     "proposed_for": "W134",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "~/.claude/skills/orchestrate/SKILL_HISTORY.md"
@@ -17892,6 +17959,15 @@
         "commit": "2dda19c",
         "change": "accepted as a why of W134, same as W197",
         "reason": "C and F, blind: SKILL.md states its own recording way only as clauses of other rules, never as a step"
+      },
+      {
+        "at": "2026-10-08T23:35+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "aad6d38",
+        "change": "asked: no why found",
+        "reason": "A and B: SKILL.md's sections follow the orchestrator's jobs, none covers its own files"
       }
     ]
   },
@@ -17901,7 +17977,7 @@
     "status": "accepted",
     "text": "The only maker of a ruling document is orchestrate.sh's setup step, which copies setup/KNOWLEDGE.md to .agents/orchestrator/KNOWLEDGE.md when none is there, while the global CLAUDE.md speaks to every session, in repos without an orchestrator too (In a repo without an orchestrator ...), where no ruling document and so no head stating the form need exist; with nothing to point to there, CLAUDE.md writes the form out itself, naming KNOWLEDGE.md and KNOWLEDGE_HISTORY.md",
     "proposed_for": "W131",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/CLAUDE.md",
       "~/.claude/skills/orchestrate/orchestrate.sh",
@@ -17960,6 +18036,15 @@
         "commit": "2dda19c",
         "change": "accepted as a why of W131, same as W198",
         "reason": "C and F, blind: only setup makes a ruling document with the form at its head; repos without an orchestrator have none, so CLAUDE.md writes it out"
+      },
+      {
+        "at": "2026-10-08T23:35+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "aad6d38",
+        "change": "asked: no why found",
+        "reason": "A and B: only the setup step makes a ruling document; no rule gives a repo without an orchestrator one"
       }
     ]
   },
@@ -18307,6 +18392,406 @@
       "commit": "b101dfd",
       "run": "solve-W15",
       "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W199",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A name's life is recorded twice, and only the teardown copy is a range: ExitItem keeps from and end as line indexes of its scope and held_at(reached) compares a point with them, while the Binding that every liveness reader consults keeps start and end as body-item pointers read only as end set or unset (is_dead); so the range ›A binding is live while its scope is open and it is not dead; it carries a range‹ describes exists in the seed only on the teardown side, for the names a scope holds, and liveness has no comparable range to look up",
+    "proposed_for": "W191",
+    "why": [
+      "W200"
+    ],
+    "anchors": [
+      "ExitItem",
+      "held_at",
+      "Binding",
+      "is_dead",
+      "src/identities/drop_model.rs",
+      "src/identities/binding.rs"
+    ],
+    "design": [
+      "A binding is live while its scope is open and it is not dead; it carries a range"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 642,661p src/identities/drop_model.rs   (dev 896f9a6: the teardown copy, a range with a point compare)",
+        "output": "/// One thing a scope's end runs: an authored `defer`, or a name the scope holds, whose\n/// value's teardown runs. It is held once `from` of the scope's lines completed and until\n/// line `end`, the one that moved or freed the name, when there is one.\npub(crate) struct ExitItem {\n    pub what: DyadPtr,\n    pub from: usize,\n    pub end: Option<usize>,\n}\n    /// Whether the scope's end, reached after `reached` of its lines completed, runs it.\n    pub(crate) fn held_at(&self, reached: usize) -> bool {\n        self.from <= reached && self.end.is_none_or(|end| end > reached)\n    }",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "sed -n 24,29p src/identities/binding.rs; sed -n 78,80p src/identities/binding.rs   (the liveness copy: pointers, read as set or unset)",
+        "output": "    /// The body item of `scope` that declares the name; null until the parser fills it, and at\n    /// top level.\n    pub start: DyadPtr,\n    /// The body item holding the `move` or `free` that made the name dead (the node itself\n    /// while that item is still parsing); null while the name is alive.\n    pub end: DyadPtr,\n    pub fn is_dead(&self) -> bool {\n        !self.end.is_null()\n    }",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T23:35+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T23:38+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c04eb01",
+        "change": "accepted as a why of W191",
+        "reason": "direct test, evidence holds (drop_model.rs:659 held_at compares a point with from..end): the one comparable range of a name's life is kept in the teardown record, which no liveness reader consults; a cause beside W200"
+      },
+      {
+        "at": "2026-10-08T23:41+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e0a175b",
+        "change": "why + W200",
+        "reason": "A and B: the teardown keeps its own line-index range because the binding's two item pointers cannot answer at a point without a walk"
+      }
+    ]
+  },
+  {
+    "id": "W200",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Binding holds the range only as two body-item pointers, start and end, with no place in body order on either or on any body item; so testing a point against start..end needs a walk over the scope's body, which the seed never wrote, and every liveness reader takes the frontier shortcut that scopes.rs states (at the frontier range covers the point is exactly not dead)",
+    "proposed_for": "W191",
+    "why": null,
+    "anchors": [
+      "Binding",
+      "ScopeStack",
+      "src/identities/binding.rs",
+      "src/parse/scopes.rs",
+      "position",
+      "src/identities/scope.rs"
+    ],
+    "design": [
+      "A binding is live while its scope is open and it is not dead; it carries a range",
+      "Name resolution is scope-filtered, and shadowing is disallowed",
+      "A scope node stores only its enclosing scope, spelled `back`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 20,29p src/identities/binding.rs; rg -n 'At the frontier' src/parse/scopes.rs   (dev 896f9a6; Binding has no other position field: lex_rank, frame, offset, gate, name, unwritten, unmade)",
+        "output": "    pub dyad: DyadPtr,\n    /// The enclosing scope, not the declaration node: a dyad has no parent pointer, and\n    /// keying by scope makes liveness an O(1) test against the open scopes.\n    pub scope: DyadPtr,\n    /// The body item of `scope` that declares the name; null until the parser fills it, and at\n    /// top level.\n    pub start: DyadPtr,\n    /// The body item holding the `move` or `free` that made the name dead (the node itself\n    /// while that item is still parsing); null while the name is alive.\n    pub end: DyadPtr,\nsrc/parse/scopes.rs:272:            // At the frontier \"range covers the point\" is exactly \"not dead\".",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "awk 'NR==2147' DESIGN.md; rg -n 'with an O\\(1\\) open-scope set during elaboration' DESIGN.md",
+        "output": "2147: - Reflection reads the graph, not the index: the declare and ending nodes are body items, so birth and death are a walk over the body; the index's two pointers are the derived fast path. …\n(›Name resolution is scope-filtered‹: The walk runs over the scope spine, with an O(1) open-scope set during elaboration: DESIGN gives O(1) only for the scope half; the range half has no order to compare in)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n 'no parent pointer|O\\(1\\) test against the open scopes' src/identities/binding.rs; sed -n 180,182p src/parse/scopes.rs; rg -n 'birth and death are a walk' DESIGN.md",
+        "output": "src/identities/binding.rs:21:    /// The enclosing scope, not the declaration node: a dyad has no parent pointer, and\nsrc/identities/binding.rs:22:    /// keying by scope makes liveness an O(1) test against the open scopes.\nsrc/parse/scopes.rs:180:    pub fn position(&self, scope: DyadPtr) -> Option<usize> {\nsrc/parse/scopes.rs:181:        self.open.iter().position(|&s| s == scope)   (the open stack only)\nDESIGN.md:2147: - Reflection reads the graph, not the index: the declare and ending nodes are body items, so birth and death are a walk over the body; the index's two pointers are the derived fast path.",
+        "commit": "50007fb"
+      },
+      {
+        "command": "rg -n 'position\\(\\|&\\w+\\| \\w+ == (item|start|end|node)\\)|fn (item_index|index_in|holding_item|item_holding|covers|in_range)' src | rg -v tests.rs",
+        "output": "(no output: no function finds a node's item in a scope's body or orders two items)",
+        "commit": "50007fb"
+      }
+    ],
+    "found_by": [
+      "A",
+      "C"
+    ],
+    "aliases": [
+      "The seed has no way to place a point in a scope's body order: a node has no link to the scope or item holding it (›A scope node stores only its enclosing scope, spelled back‹ gives a scope its back link alone), Binding is keyed by scope so that liveness is an O(1) test against the open scopes, and no function finds the item of a scope's body that holds a given node or compares two items' order; ScopeStack's position orders only the scopes open now, so only the frontier, where the open stack is the point's chain, can be asked, and the walk over the body that DESIGN names as the range's slow path was never written"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T23:35+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T23:38+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c04eb01",
+        "change": "accepted as a why of W191, same as W201",
+        "reason": "A and C, blind: no point has a place in a scope's body order and the walk DESIGN names was never written, so only the frontier can be asked"
+      },
+      {
+        "at": "2026-10-08T23:41+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e0a175b",
+        "change": "text was \"Binding holds the range only as two body-item pointers, start and end, with no place in body order on either or on any body item, and start stays null at top level; so testing a point against start..end needs a walk over the scope's body, and for a top-level name has no start at all, and every liveness reader takes the frontier shortcut that scopes.rs states (at the frontier range covers the point is exactly not dead)\"",
+        "reason": "A's probe (x := i32 5, b := x + x, b:start.rhs.lhs prints 5 on dev 896f9a6) and B's reading of close_item -> settle_item: start is set at top level too; the doc comment at binding.rs:24-25 is stale"
+      }
+    ]
+  },
+  {
+    "id": "W201",
+    "kind": "why",
+    "status": "merged",
+    "text": "The seed has no way to place a point in a scope's body order: a node has no link to the scope or item holding it (›A scope node stores only its enclosing scope, spelled back‹ gives a scope its back link alone), Binding is keyed by scope so that liveness is an O(1) test against the open scopes, and no function finds the item of a scope's body that holds a given node or compares two items' order; ScopeStack's position orders only the scopes open now, so only the frontier, where the open stack is the point's chain, can be asked, and the walk over the body that DESIGN names as the range's slow path was never written",
+    "proposed_for": "W191",
+    "why": null,
+    "anchors": [
+      "Binding",
+      "ScopeStack",
+      "position",
+      "src/identities/binding.rs",
+      "src/parse/scopes.rs",
+      "src/identities/scope.rs"
+    ],
+    "design": [
+      "A scope node stores only its enclosing scope, spelled `back`",
+      "A binding is live while its scope is open and it is not dead; it carries a range"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'no parent pointer|O\\(1\\) test against the open scopes' src/identities/binding.rs; sed -n 180,182p src/parse/scopes.rs; rg -n 'birth and death are a walk' DESIGN.md",
+        "output": "src/identities/binding.rs:21:    /// The enclosing scope, not the declaration node: a dyad has no parent pointer, and\nsrc/identities/binding.rs:22:    /// keying by scope makes liveness an O(1) test against the open scopes.\nsrc/parse/scopes.rs:180:    pub fn position(&self, scope: DyadPtr) -> Option<usize> {\nsrc/parse/scopes.rs:181:        self.open.iter().position(|&s| s == scope)   (the open stack only)\nDESIGN.md:2147: - Reflection reads the graph, not the index: the declare and ending nodes are body items, so birth and death are a walk over the body; the index's two pointers are the derived fast path.",
+        "commit": "50007fb"
+      },
+      {
+        "command": "rg -n 'position\\(\\|&\\w+\\| \\w+ == (item|start|end|node)\\)|fn (item_index|index_in|holding_item|item_holding|covers|in_range)' src | rg -v tests.rs",
+        "output": "(no output: no function finds a node's item in a scope's body or orders two items)",
+        "commit": "50007fb"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": "W200",
+    "made": {
+      "at": "2026-10-08T23:37+02:00",
+      "by": "logoslang-why-P23-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "50007fb",
+      "run": "why-P23",
+      "agent": "C"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T23:38+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c04eb01",
+        "change": "merged into W200",
+        "reason": "A and C, blind: no point has a place in a scope's body order and the walk DESIGN names was never written, so only the frontier can be asked"
+      }
+    ]
+  },
+  {
+    "id": "P109",
+    "kind": "problem",
+    "status": "open",
+    "text": "A `return` inside an `immediate` in a function body runs while the body is parsed, with no call to leave: it is passed over, and the lines after it go on running",
+    "program": "f := fn () -> i32 ( k := immediate ( print «a», if (1 < 2) (return 5), 7 ), k ), print «{f()}»",
+    "output": "a\n7\nexit 0",
+    "expected": "an error where the `return` is written, as at the top level (`k := immediate ( print «a», if (1 < 2) (return 5), 7 ), print «{k}»` is refused at the `return` word): an `immediate` runs where it is written, while no call of `f` runs, and one whose operand needs what a call supplies is an error where it is written (›`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value‹); `return` exits the enclosing function (›A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function‹), and here there is no call of it to exit",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-4, on dev 5dbf3b2 and branch issue-82-output-type alike; the run branch is src/identities/return.rs:87 (if !rt.in_call() { return Ok(value); })",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T23:38+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "40a62ca",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S46",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One home per rule, by who reads it: agent-agnostic-prompt.md holds only rules that stand with or without an orchestrator, naming both cases where they differ (a found problem, who records a ruling), plus the one recording form (a Ruled line at the rule, the superseded in <doc>_HISTORY.md, a waiting decision as a Pending line, never mem0 or auto-memory) and one precedence sentence (narrower wins: repo AGENTS.md, then the orchestrator's prompts and skill, then this file, then the global CLAUDE.md); every-prompt.md keeps the orchestrator agents' protocol; the global CLAUDE.md keeps only the owner's personal style plus the import, losing its copies, its topic list, mem0 and its orchestrator clauses; SKILL.md gets one section on its own files that the other rules point to",
+    "fixes": [
+      "W101",
+      "W102",
+      "W106",
+      "W108",
+      "W116",
+      "W184",
+      "W189",
+      "W193",
+      "W194"
+    ],
+    "assessment": "Root fix: deletes the copies (P74's pairs, CLAUDE.md Code Changes/Error Recovery/Security dups, SKILL.md l.10 and l.70, five copies of the form) and the orchestrator clauses in CLAUDE.md, so P88 and P95 become one rule per case, P94 goes (the rule names the repo's ruling document, not KNOWLEDGE.md) and P96 goes (mem0 gone). Two files stay because one is imported raw and one has blanks. W116's part changes what Thobias's own sessions do (no ruling or waiting decision in mem0 or auto-memory) and needs his yes. Text only, in ~/.claude (no git, no branch touches it) plus LogosLang AGENTS.md lines 21-22 and SKILL_HISTORY.md; a few hours; running sessions keep their old prompt until restarted.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:39+02:00",
+      "by": "logoslang-solve-W101",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "aad6d38",
+      "run": "solve-W101",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S47",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Smallest patch: in agent-agnostic-prompt.md, word the two sentences that clash with the global CLAUDE.md per case: a found problem is reported as FOUND under an orchestrator and filed as a root-cause issue without one; only the orchestrator writes the ruling document under one, and a session records the ruling itself without one",
+    "fixes": [
+      "W101"
+    ],
+    "assessment": "Symptom fix: removes P88 and P95 by adding a case to two sentences, so the orchestrator protocol stays in the general file and every later orchestrator rule needs the same patch. Leaves P74 (all eight pairs), P94 (KNOWLEDGE.md by name), P96 (mem0) and W102, W106, W108, W116, W184, W189, W193, W194 untouched, so it cannot hold the other roots. Two lines, minutes of work.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:39+02:00",
+      "by": "logoslang-solve-W101",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "aad6d38",
+      "run": "solve-W101",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S48",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Stop importing agent-agnostic-prompt.md into the global CLAUDE.md and merge it into every-prompt.md, so it holds only orchestrator agents' rules; the global CLAUDE.md keeps its own general rules for sessions without an orchestrator",
+    "fixes": [
+      "W101"
+    ],
+    "assessment": "Removes P88 and P95 (the protocol no longer reaches sessions without an orchestrator) and W90's two-files-one-scope, but brings back what the 5 October 2026 move removed (SKILL_HISTORY.md, agent-agnostic-prompt.md): the faithfulness, root-cause, comment and file rules would stand once in CLAUDE.md for Thobias's own sessions and again in every-prompt.md for the agents, two copies of each, or his own sessions lose them. Leaves W102, W106, W116, W189, W194 and P94, P96. Not recommended.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-08T23:39+02:00",
+      "by": "logoslang-solve-W101",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "aad6d38",
+      "run": "solve-W101",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W202",
+    "kind": "why",
+    "status": "draft",
+    "text": "DESIGN gives a binding's range only as its two body items, the declaring node and the item holding the ending move or free, with their pointers as the index's derived fast path, and gives no body item a number in body order; the one comparison it names is a walk over the body, while ›Name resolution is scope-filtered, and shadowing is disallowed‹ asks at every use whether the range covers the point and gives O(1) only for the open-scope half",
+    "proposed_for": "W200",
+    "why": null,
+    "anchors": [
+      "Binding",
+      "settle_item",
+      "src/identities/binding.rs",
+      "src/parse/scopes.rs"
+    ],
+    "design": [
+      "A binding is live while its scope is open and it is not dead; it carries a range",
+      "Name resolution is scope-filtered, and shadowing is disallowed"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "awk 'NR>=2146 && NR<=2147' DESIGN.md; rg -n 'whose range covers the point|with an O\\(1\\) open-scope set during elaboration' DESIGN.md; rg -n -i 'body order|line index|line number' DESIGN.md   (dev 896f9a6)",
+        "output": "2146: … A binding carries a range in its scope's body order: from the declaring node to the item of that body holding the ending move/free …\n2147: - Reflection reads the graph, not the index: the declare and ending nodes are body items, so birth and death are a walk over the body; the index's two pointers are the derived fast path. …\n2133: A use keeps candidates whose scope is open (ancestor on the scope stack) and whose range covers the point.\n(same rule) The walk runs over the scope spine, with an O(1) open-scope set during elaboration.\nbody order / line index / line number: only 2095 (re-elaboration in body order) and 2146; no number for an item's place",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n 'Endpoint::Start => Binding::set_start\\(binding, item\\)|pub from: usize|self.from <= reached' src/parse/scopes.rs src/identities/drop_model.rs   (the seed stamps the item pointer DESIGN names; the line number it counts reaches only ExitItem)",
+        "output": "src/parse/scopes.rs:414:                    Endpoint::Start => Binding::set_start(binding, item),\nsrc/identities/drop_model.rs: pub from: usize,\nsrc/identities/drop_model.rs:660:        self.from <= reached && self.end.is_none_or(|end| end > reached)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T23:40+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W203",
+    "kind": "why",
+    "status": "draft",
+    "text": "Neither DESIGN.md nor a spec page it points to gives a body item a place in its scope's body order, or says how elaboration compares a point behind the frontier with a range: ›A binding is live while its scope is open and it is not dead; it carries a range‹ names the index's two node pointers the derived fast path and leaves the walk over the body to reflection, ›Name resolution is scope-filtered, and shadowing is disallowed‹ asks whether the range covers the point and gives O(1) only for the scope half, and ›A call is a use of every outer name the callee's body reads‹ calls the check a range lookup per outer name per call, at elaboration; a pointer has no order, so the fast path these rules name can answer only at the frontier",
+    "proposed_for": "W200",
+    "why": null,
+    "anchors": [
+      "Binding",
+      "check_call_reads",
+      "ScopeStack",
+      "DESIGN.md",
+      "src/identities/binding.rs"
+    ],
+    "design": [
+      "A binding is live while its scope is open and it is not dead; it carries a range",
+      "Name resolution is scope-filtered, and shadowing is disallowed",
+      "A call is a use of every outer name the callee's body reads"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -i \"body order|item's (index|position)|index of (the|an) item|line (index|number)|range lookup|covers the point|fast path\" DESIGN.md   (trimmed to the liveness hits)",
+        "output": "410: … The check is a range lookup per outer name per call, at elaboration; running code checks nothing.\n2133: A use keeps candidates whose scope is open (ancestor on the scope stack) *and* whose range covers the point.\n2146: A binding carries a **range** in its scope's body order: from the declaring node to the **item of that body** holding the ending move/free …\n2147: - Reflection reads the graph, not the index: the declare and ending nodes are body items, so birth and death are a walk over the body; the index's two pointers are the derived fast path.\n2095: … re-elaborates the edited item and every later item in body order …   (edits, not liveness)\n(no line gives a body item an index or position, or says how a point behind the frontier is compared at elaboration)",
+        "commit": "50007fb"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T23:42+02:00",
+      "by": "logoslang-why-P23-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "50007fb",
+      "run": "why-P23",
+      "agent": "C"
     },
     "history": []
   }
