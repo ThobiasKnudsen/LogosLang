@@ -11,7 +11,7 @@
 - **Waiting:** the analyst is idle until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-34](../history/Q-34_share-read-before-write.md): your questions "is that possible?" (`set()`) and "why shouldnt B work though? … does this conflict with any borrowchecking and lifetimes though?"; your answer 2 (wrap) is recorded
+  - [Q-34](../answers/Q-34_share-read-before-write.md): your questions "is that possible?" (`set()`) and "why shouldnt B work though? … does this conflict with any borrowchecking and lifetimes though?"; your answer 2 (wrap) is recorded
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›Reading a place before its first write is refused at parse‹, ›A call is a use of every outer name the callee's body reads‹, ›`move` and `free` are static: the parse marks the name dead‹, ›Base stratum: types, ownership, capabilities, and one borrow rule‹
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. -->

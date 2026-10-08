@@ -31,5 +31,5 @@ Recommended: (a), so whoever builds `match` starts from your idea.
 - **Waiting:** nothing
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-59_issue-82.md](../history/Q-59_issue-82.md): your answer 3, where the question comes from
+  - [Q-59_issue-82.md](../answers/Q-59_issue-82.md): your answer 3, where the question comes from
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): the rule quoted above

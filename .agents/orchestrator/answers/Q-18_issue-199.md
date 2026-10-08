@@ -11,8 +11,8 @@
 - **Waiting:** the worker records your settled answers now, then is idle until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your seven answers](../history/Q-14_issue-199.md): what these follow up
-  - [the root-label question](../history/Q-17_issue-203.md): unrelated
+  - [your seven answers](../answers/Q-14_issue-199.md): what these follow up
+  - [the root-label question](../answers/Q-17_issue-203.md): unrelated
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. "all recommended" also works. -->
 

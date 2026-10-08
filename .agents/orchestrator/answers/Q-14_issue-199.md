@@ -11,8 +11,8 @@
 - **Waiting:** the agent is idle until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your answer](../history/Q-11_issue-199.md): "define dyad so that its transparent and a placeholder for a new node with any type"
-  - [the other open question](../history/Q-13_issue-171.md): which root next; answer that one first
+  - [your answer](../answers/Q-11_issue-199.md): "define dyad so that its transparent and a placeholder for a new node with any type"
+  - [the other open question](../answers/Q-13_issue-171.md): which root next; answer that one first
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. "all recommended" also works. -->
 

@@ -11,7 +11,7 @@
 - **Waiting:** nothing; the rule on `own`
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-35](../history/Q-35_issue-192.md): your answer to point 3
+  - [Q-35](../answers/Q-35_issue-192.md): your answer to point 3
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›`move` is the act, `own` the gate word, `free` the end‹, ›Gate spelling: words left of `:=`; ownership in the reference type‹, ›A field may be `own @T ?`‹, ›A field may be `own t ?`, `t` a type whose body fills `share free`‹
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. -->

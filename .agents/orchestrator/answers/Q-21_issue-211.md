@@ -11,7 +11,7 @@
 - **Waiting:** nobody is idle; the review of #211's first slice runs meanwhile
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [the label question](../history/Q-17_issue-203.md): unrelated
+  - [the label question](../answers/Q-17_issue-203.md): unrelated
 
 <!-- Write your answer on the **Answer** line, or anywhere else in the file, and save. -->
 

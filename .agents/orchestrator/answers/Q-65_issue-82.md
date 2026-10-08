@@ -29,6 +29,6 @@ a
 - **Waiting:** #82's worker, paused until 4 October 9:00 by the weekly usage limit
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-63_issue-82.md](../history/Q-63_issue-82.md): your answers this builds on
-  - [03_Q-64_issue-82.md](../history/Q-64_issue-82.md): the other open #82 question
+  - [Q-63_issue-82.md](../answers/Q-63_issue-82.md): your answers this builds on
+  - [03_Q-64_issue-82.md](../answers/Q-64_issue-82.md): the other open #82 question
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›`if` reads its own right side‹, whose Open (Q-65) line this is

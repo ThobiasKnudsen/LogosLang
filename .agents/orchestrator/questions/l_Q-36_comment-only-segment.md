@@ -51,5 +51,5 @@ Is this the (b) you meant? Answer "yes", or say what differs.
 - **Waiting:** the rule of the line-by-line REPL issue
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-33](../history/Q-33_comment-only-segment.md): your example, `» f := fn () -> i32 (` … `» f()` gives `5`
+  - [Q-33](../answers/Q-33_comment-only-segment.md): your example, `» f := fn () -> i32 (` … `» f()` gives `5`
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›Newlines are whitespace; `;` does not exist‹, ›The pass runs only as far as it must, in order, and never twice‹, ›The command line is Logos source; the binary stays out of the way‹

@@ -11,7 +11,7 @@
 - **Waiting:** the #197 review waits for this
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-28](../history/Q-28_issue-197.md): your answers 1 to 3, now recorded; this is the one case they leave open
+  - [Q-28](../answers/Q-28_issue-197.md): your answers 1 to 3, now recorded; this is the one case they leave open
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. -->
 

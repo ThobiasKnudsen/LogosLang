@@ -11,8 +11,8 @@
 - **Waiting:** the reviewer is idle until this is answered; everything else on #197 is checked and green
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your first #197 answer](../history/Q-8_issue-197.md): "case 1 and 2 is correct since immediate executes right when its parsed"
-  - [the other open question](../history/Q-14_issue-199.md): the seven `dyad` points, unrelated
+  - [your first #197 answer](../answers/Q-8_issue-197.md): "case 1 and 2 is correct since immediate executes right when its parsed"
+  - [the other open question](../answers/Q-14_issue-199.md): the seven `dyad` points, unrelated
 
 <!-- Write your answer on the **Answer** line, or anywhere else in the file, and save. -->
 

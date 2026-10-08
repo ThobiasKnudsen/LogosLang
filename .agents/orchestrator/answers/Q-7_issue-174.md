@@ -11,7 +11,7 @@
 - **Waiting:** the agent is idle until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your four answers](../history/Q-5_issue-174.md): "it gives back text so maybe there is a better name tjen print then?"
+  - [your four answers](../answers/Q-5_issue-174.md): "it gives back text so maybe there is a better name tjen print then?"
   - [DESIGN.md on the branch](file:///home/o/Personal/Code/LogosLang/.claude/worktrees/issue-174/DESIGN.md): all four answers are recorded at ›A value is shown as the text its type's `print` slot gives back‹; only the name is open
 
 <!-- Write your answer on the **Answer** line, or anywhere else in the file, and save. -->

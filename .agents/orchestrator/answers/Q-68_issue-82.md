@@ -35,5 +35,5 @@ b
 - **Waiting:** #82's worker, for the function-end case only
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-63_issue-82.md](../history/Q-63_issue-82.md): your answers 3 and 4
+  - [Q-63_issue-82.md](../answers/Q-63_issue-82.md): your answers 3 and 4
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›`if` reads its own right side‹, whose two Q-63 lines this narrows or keeps

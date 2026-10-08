@@ -12,7 +12,7 @@
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
   - [the analysis](file:///home/o/.claude/orchestrate/rca/logoslang/fn-tail-type.md)
-  - [the other open question](../history/Q-8_issue-197.md): unrelated, answer in any order
+  - [the other open question](../answers/Q-8_issue-197.md): unrelated, answer in any order
 
 <!-- Write your answer on the **Answer** line, or anywhere else in the file, and save. -->
 

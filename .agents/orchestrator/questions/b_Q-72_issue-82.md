@@ -93,6 +93,6 @@ Recommended: (a). `free` exists to end a value; when nothing is given there is n
 - **Waiting:** the merge of #82; round 3's reviewer waits for these answers
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-59_issue-82.md](../history/Q-59_issue-82.md): your words on `if` having no `output_type` (point 1)
+  - [Q-59_issue-82.md](../answers/Q-59_issue-82.md): your words on `if` having no `output_type` (point 1)
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): the rules quoted above
   - Review record on #82: [comment 5959473810](https://github.com/ThobiasKnudsen/LogosLang/issues/82#issuecomment-5959473810)

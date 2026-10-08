@@ -11,7 +11,7 @@
 - **Waiting:** the agent is idle until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your answer on #197](../history/Q-8_issue-197.md): "the third example with the loop prit hi iter iter iter because its not parsed three times only once"
+  - [your answer on #197](../answers/Q-8_issue-197.md): "the third example with the loop prit hi iter iter iter because its not parsed three times only once"
 
 <!-- Write your answer on the **Answer** line, or anywhere else in the file, and save. -->
 

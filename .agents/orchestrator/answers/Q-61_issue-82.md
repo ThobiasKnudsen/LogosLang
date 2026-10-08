@@ -99,6 +99,6 @@ For the case fo rhs := ?, lhs := ? their types must always be the same since the
 - **Waiting:** #82's worker, whose job ended with the restart; it is resumed with Q-59's and these answers once they stand in DESIGN
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [05_Q-59_issue-82.md](../history/Q-59_issue-82.md): your answers this round builds on
+  - [05_Q-59_issue-82.md](../answers/Q-59_issue-82.md): your answers this round builds on
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): the rules quoted above, and ›A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function‹
   - [power.logos](file:///home/o/Personal/Code/LogosLang/identities/power.logos): `^` declares `lhs := ?, rhs := ?, output_type := type ?`

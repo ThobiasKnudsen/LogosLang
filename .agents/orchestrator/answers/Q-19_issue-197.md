@@ -11,8 +11,8 @@
 - **Waiting:** nobody; review round 3 checks the recorded rule and merges it
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your answer](../history/Q-15_issue-197.md): "when it actually can be built at definition it should be built"
-  - [the #199 follow-ups](../history/Q-18_issue-199.md) and [the root-label question](../history/Q-17_issue-203.md): unrelated, answer those first
+  - [your answer](../answers/Q-15_issue-197.md): "when it actually can be built at definition it should be built"
+  - [the #199 follow-ups](../answers/Q-18_issue-199.md) and [the root-label question](../answers/Q-17_issue-203.md): unrelated, answer those first
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. -->
 

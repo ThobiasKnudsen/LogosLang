@@ -11,7 +11,7 @@
 - **Waiting:** the agent is idle until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your answer on #199](../history/Q-9_issue-199.md): "a should be of tyoe dyad since that is the only way to have dynamic types but that also means this function cannot be compiled, or it can actually be compiled but it needs specific compilation for each callee since the type may vary"
+  - [your answer on #199](../answers/Q-9_issue-199.md): "a should be of tyoe dyad since that is the only way to have dynamic types but that also means this function cannot be compiled, or it can actually be compiled but it needs specific compilation for each callee since the type may vary"
 
 <!-- Write your answer on the **Answer** line, or anywhere else in the file, and save. -->
 

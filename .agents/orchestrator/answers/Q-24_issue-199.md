@@ -11,8 +11,8 @@
 - **Waiting:** the reviewer is paused until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your answer that `a:start` shows the graph](../history/Q-18_issue-199.md): "if you do a:start you get to the actuall LG where a is declared and defined"
-  - [the other #199 points](../history/Q-22_issue-199.md): point 2 there was rewritten to ask both readings
+  - [your answer that `a:start` shows the graph](../answers/Q-18_issue-199.md): "if you do a:start you get to the actuall LG where a is declared and defined"
+  - [the other #199 points](../answers/Q-22_issue-199.md): point 2 there was rewritten to ask both readings
 
 <!-- Write your answer on the **Answer** line, or anywhere else in the file, and save. -->
 

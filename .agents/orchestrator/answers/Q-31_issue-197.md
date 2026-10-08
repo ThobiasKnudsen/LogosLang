@@ -11,8 +11,8 @@
 - **Waiting:** the #197 review waits for this
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-29](../history/Q-29_issue-197.md): your `mk2` comment, "error because t isnt defined in share e := t"
-  - [the `share` question](../history/Q-30_share-read-before-write.md): whether a `share` line needs a value; under (b) below, `share e := t` has one, made when the type is built
+  - [Q-29](../answers/Q-29_issue-197.md): your `mk2` comment, "error because t isnt defined in share e := t"
+  - [the `share` question](../answers/Q-30_share-read-before-write.md): whether a `share` line needs a value; under (b) below, `share e := t` has one, made when the type is built
   - [array.logos](file:///home/o/Personal/Code/LogosLang/identities/array.logos), lines 8 to 12: array's chooser
   - [#231](https://github.com/ThobiasKnudsen/LogosLang/issues/231), your idea that a `-> type ( … )` body is itself the type's scope
 

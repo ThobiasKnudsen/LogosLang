@@ -11,7 +11,7 @@
 - **Waiting:** the #197 review waits for this
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-28](../history/Q-28_issue-197.md), [Q-29](../history/Q-29_issue-197.md), [Q-31](../history/Q-31_issue-197.md): the answers recorded on #197's branch
+  - [Q-28](../answers/Q-28_issue-197.md), [Q-29](../answers/Q-29_issue-197.md), [Q-31](../answers/Q-31_issue-197.md): the answers recorded on #197's branch
   - [#197 comment 5901314999](https://github.com/ThobiasKnudsen/LogosLang/issues/197#issuecomment-5901314999): the rest of review round 2, fixed
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. -->

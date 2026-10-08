@@ -11,7 +11,7 @@
 - **Waiting:** nobody is idle; #212 is filed the way (b) says and changes if you answer (a)
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [the #197 question](../history/Q-15_issue-197.md) and [the #210 question](../history/Q-16_issue-210.md): unrelated, and both matter more
+  - [the #197 question](../answers/Q-15_issue-197.md) and [the #210 question](../answers/Q-16_issue-210.md): unrelated, and both matter more
 
 <!-- Write your answer on the **Answer** line, or anywhere else in the file, and save. -->
 

@@ -11,7 +11,7 @@
 - **Waiting:** the analyst is idle until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-30](../history/Q-30_share-read-before-write.md): your answer, "the same as nonshare fields … does this make some things hard? i bet it conflicts with some things in the DESIGN.md". Its point 2 asked only in case of (a), so it fell away.
+  - [Q-30](../answers/Q-30_share-read-before-write.md): your answer, "the same as nonshare fields … does this make some things hard? i bet it conflicts with some things in the DESIGN.md". Its point 2 asked only in case of (a), so it fell away.
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›Two muts, and the storage partition‹, ›Reading a place before its first write is refused at parse‹, ›A value of several fields is filled one field at a time‹, ›Integer `/` and `%` are total and saturate; float `%` does not exist‹
   - [RCA.md](file:///home/o/Personal/Code/LogosLang/.claude/worktrees/rca-share-read-before-write/RCA.md): the analysis and the probes behind each line
 

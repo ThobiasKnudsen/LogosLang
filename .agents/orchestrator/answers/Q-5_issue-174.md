@@ -11,7 +11,7 @@
 - **Waiting:** the agent is idle until this is answered
 - **Orchestrator:** Orchestrator
 - **Related:**
-  - [your first answer](../history/Q-4_issue-174.md): "there should be a share print function in each type to define how something should be printed"
+  - [your first answer](../answers/Q-4_issue-174.md): "there should be a share print function in each type to define how something should be printed"
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/.claude/worktrees/issue-174/DESIGN.md): the new rule ›A value prints the way its type's `share print` function says‹, recorded in your words with these four points marked Open
 
 ## Question

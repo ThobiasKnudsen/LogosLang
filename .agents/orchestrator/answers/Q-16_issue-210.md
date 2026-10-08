@@ -11,7 +11,7 @@
 - **Waiting:** the #211 worker works on; until you answer, it refuses these operands as a stand-in
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [the #197 question](../history/Q-15_issue-197.md): unrelated; answer it first, one letter unblocks a merge
+  - [the #197 question](../answers/Q-15_issue-197.md): unrelated; answer it first, one letter unblocks a merge
   - [the analysis](file:///home/o/.claude/orchestrate/rca/logoslang/free-expression-operand.md): every probe with its output
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. -->

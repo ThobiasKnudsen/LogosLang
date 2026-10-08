@@ -11,8 +11,8 @@
 - **Waiting:** nobody is idle; the `.type` rename is drafted and waits for point 2
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your four answers](../history/Q-18_issue-199.md): what these follow up
-  - [the #197 points](../history/Q-19_issue-197.md) and [the `i32 m` points](../history/Q-20_issue-212.md): unrelated
+  - [your four answers](../answers/Q-18_issue-199.md): what these follow up
+  - [the #197 points](../answers/Q-19_issue-197.md) and [the `i32 m` points](../answers/Q-20_issue-212.md): unrelated
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. "all recommended" also works. -->
 

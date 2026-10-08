@@ -94,6 +94,6 @@ not allowed: each if-else branch in an assignment must return something to the a
 - **Waiting:** #82's worker, which re-plans the slice under 45002b6 meanwhile
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-61_issue-82.md](../history/Q-61_issue-82.md): your answers this round builds on
+  - [Q-61_issue-82.md](../answers/Q-61_issue-82.md): your answers this round builds on
   - [63_Q-62_issue-82.md](./63_Q-62_issue-82.md): its `=` point moved here as point 1
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›`if` reads its own right side‹ and ›A type with a `run` whose field is `?` mints too, so its `run` body is parsed once per mint‹, whose Open lines these are

@@ -38,4 +38,4 @@ Recommended: (a). It keeps the shared causes the run is good at finding and tell
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
   - [SKILL.md](file:///home/o/.claude/skills/orchestrate/SKILL.md): ›The why run‹, step 4, the test each why passes
-  - [Q-48_W75.md](../history/Q-48_W75.md): Q-48, where W75's solution agent says its fix alone leaves P29
+  - [Q-48_W75.md](../answers/Q-48_W75.md): Q-48, where W75's solution agent says its fix alone leaves P29

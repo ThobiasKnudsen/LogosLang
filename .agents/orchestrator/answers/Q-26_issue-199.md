@@ -11,7 +11,7 @@
 - **Waiting:** the reviewer is paused until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [your three `.type` answers](../history/Q-22_issue-199.md): ".type reads the fields of what is evaluated, not the LG … if f returns a type with the fields x and y then f().x would access that value the same way"
+  - [your three `.type` answers](../answers/Q-22_issue-199.md): ".type reads the fields of what is evaluated, not the LG … if f returns a type with the fields x and y then f().x would access that value the same way"
 
 <!-- Write your answer on the **Answer** line, or anywhere else in the file, and save. -->
 

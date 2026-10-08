@@ -11,7 +11,7 @@
 - **Waiting:** nobody
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [the `i32 m` points](../history/Q-20_issue-212.md): unrelated
+  - [the `i32 m` points](../answers/Q-20_issue-212.md): unrelated
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save. -->
 

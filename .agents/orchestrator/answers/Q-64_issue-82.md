@@ -35,5 +35,5 @@ b
 - **Waiting:** #82's worker, which builds the half that is already decided meanwhile (statement words give their line nothing)
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [05_Q-63_issue-82.md](../history/Q-63_issue-82.md): the type rules the slice's `if` waits for
+  - [05_Q-63_issue-82.md](../answers/Q-63_issue-82.md): the type rules the slice's `if` waits for
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›A type with a `run` whose field is `?` mints too, so its `run` body is parsed once per mint‹, whose Seed line this decides
