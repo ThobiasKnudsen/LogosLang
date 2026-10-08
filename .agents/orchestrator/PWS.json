@@ -19755,7 +19755,8 @@
     "text": "handed_ends lets an if's arms differ wherever one arm's answer is None, a call the parse cannot see into or a value with no end (its (a, b) => Ok(a.or(b)) arm), so the then arm's answer is not the if's: moved_out, though its comment says the then arm's is it, walks the else arm too, to hand on that arm's Unknown or Stays",
     "proposed_for": "W205",
     "why": [
-      "W215"
+      "W215",
+      "W217"
     ],
     "anchors": [
       "handed_ends",
@@ -19846,6 +19847,15 @@
         "effort": "xhigh",
         "commit": "3f50afb",
         "change": "why + W215",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T01:30+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "8994869",
+        "change": "why + W217",
         "reason": null
       }
     ]
@@ -20388,10 +20398,10 @@
     "id": "W215",
     "kind": "why",
     "status": "accepted",
-    "text": "Neither DESIGN.md nor a spec page it points to says what a call the parse cannot see through hands on, made or borrowed: a function's call to itself, whose FN_BODY fn_over_body writes only after the body closes, or a call nested past MOVES_OUT_DEPTH, both Out::Unknown in moved_out; the Q72 line of ›`move` and `free` are static: the parse marks the name dead‹ asks every arm to make or every arm to borrow but is silent on an arm with no answer, its Seed line records this only as Not yet, ›A last value moves out‹ reads a body a self-call does not have yet, and ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹ resolves a self-call to its node for the type alone; so handed_ends has no rule to judge that arm by, gives it None, and lets it agree with any arm",
+    "text": "Neither DESIGN.md nor a spec page it points to says what a function's call to itself hands on, made or borrowed, when the answer is needed while that function's own body is still open, as a binding of the call's result inside the body: `mk := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else ( x := mk(n - 1), x ) ), 7` is refused because x reads as a borrow, and in `( y := if (n == 0) (alloc 1 of i32 5) else (mk(n - 1)), y )` y owns nothing; fn_over_body runs handed_ends before it writes FN_BODY, FN_OUTPUT holds only the written `-> @i32`, and the Q72 line of ›`move` and `free` are static: the parse marks the name dead‹ asks every arm to make or every arm to borrow but is silent on an arm with no answer yet. A call nested past MOVES_OUT_DEPTH and a self-call read after its function has closed are not this gap: there ›A last value moves out‹ walks through to the callee's last line, and the seed misses it only because the walk is cut (W217)",
     "proposed_for": "W208",
     "why": [
-      "W207"
+      "W211"
     ],
     "anchors": [
       "handed_ends",
@@ -20479,6 +20489,33 @@
         "commit": "892c9cd",
         "change": "why + W207",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T01:30+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "8994869",
+        "change": "text was \"Neither DESIGN.md nor a spec page it points to says what a call the parse cannot see through hands on, made or borrowed: a function's call to itself, whose FN_BODY fn_over_body writes only after the body closes, or a call nested past MOVES_OUT_DEPTH, both Out::Unknown in moved_out; the Q72 line of ›`move` and `free` are static: the parse marks the name dead‹ asks every arm to make or every arm to borrow but is silent on an arm with no answer, its Seed line records this only as Not yet, ›A last value moves out‹ reads a body a self-call does not have yet, and ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹ resolves a self-call to its node for the type alone; so handed_ends has no rule to judge that arm by, gives it None, and lets it agree with any arm\"",
+        "reason": "one-off E (why-P112-e, 2f88fbe, why-probes/deep-chain.sh, w215.txt): a plain chain h_k := fn () -> @i32 ( h_{k-1}() ) in `x := if (c == 1) (h_k()) else (&y), 7` is refused at k=31 and prints 7 at k=32, and the recursive mk in the same place prints 5 while a plain h making its value is refused; mk's FN_BODY is already written when that line is read, so both cases are the depth cut, which ›A last value moves out‹ does not ask for; the gap with no rule is only the self-call whose answer is needed while its body is open"
+      },
+      {
+        "at": "2026-10-09T01:30+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "8994869",
+        "change": "why - W207",
+        "reason": "one-off E: for a self-call read while its own body is open, no answer exists yet that a kept answer (W207's fix) could hold"
+      },
+      {
+        "at": "2026-10-09T01:30+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "8994869",
+        "change": "why + W211",
+        "reason": "one-off E: while its body is open the only thing a self-call can read is FN_OUTPUT, and W211's last-line rule keeps the made-or-borrowed answer out of it; `-> own @i32` is refused (\"`-> own @T` is not in the seed yet\")"
       }
     ]
   },
@@ -20555,10 +20592,12 @@
   {
     "id": "W217",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "moved_out tells recursion by depth alone: MOVES_OUT_DEPTH, there because a recursive function's body calls itself, counts every node the walk goes down through (a call, a block's last line, by_copy.result, by_copy.out), not whether it meets a function it is already walking, so a chain with no recursion is cut as if it had some: a made value 32 pointer-result calls or 10 record-result calls deep is Out::Unknown, the second kind of call W215 says no rule judges",
     "proposed_for": "W215",
-    "why": null,
+    "why": [
+      "W207"
+    ],
     "anchors": [
       "moved_out",
       "MOVES_OUT_DEPTH",
@@ -20601,6 +20640,25 @@
       "run": "why-P112",
       "agent": "C"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T01:30+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "8994869",
+        "change": "accepted as a why of W208",
+        "reason": "the depth cap, not a missing rule, makes a deep chain and a closed self-call None (C at 90fe8d6: pointer chain refused at 31, accepted at 32; record chain freed at 9, not at 10; E at 2f88fbe the same at 31/32); so W217 explains W208's None arms beside W215, not W215"
+      },
+      {
+        "at": "2026-10-09T01:30+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "8994869",
+        "change": "why + W207",
+        "reason": "one-off E: if the answer were kept at each close, the walk would read it at the call and never go deep, so the cap would never cut; W207 by itself makes the deep and closed cases happen"
+      }
+    ]
   }
 ]
