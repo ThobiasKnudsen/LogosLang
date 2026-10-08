@@ -11678,7 +11678,7 @@
     "status": "accepted",
     "text": "The global CLAUDE.md bars the orchestrator from auto-memory for a reason that holds for every session (auto-memory is read only by sessions started in one folder on this machine, so the team, the agents and other orchestrators never see it), yet its general rules keep auto-memory as the home of a waiting wording and mem0 as the home of a probable decision, a server not connected on this machine; so the orchestrator's home, a Pending line at the rule it touches, is written as an exception instead of as the one rule for every session",
     "proposed_for": "W103",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/CLAUDE.md",
       "~/.claude/skills/orchestrate/SKILL.md",
@@ -11739,6 +11739,15 @@
         "commit": "d0b716e",
         "change": "accepted as a why of W103, same as W186",
         "reason": "C and E: the general homes are one-machine stores though the reason against them holds for every session, so the orchestrator's home is an exception"
+      },
+      {
+        "at": "2026-10-08T22:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fae8206",
+        "change": "asked: no why found",
+        "reason": "why-P74-a and why-P74-b: none"
       }
     ]
   },
@@ -11748,7 +11757,9 @@
     "status": "accepted",
     "text": "The global CLAUDE.md sends a ruling to a file by name, in KNOWLEDGE.md, at the rule it touches, though the rules it imports define the home as the repo's ruling document, .agents/orchestrator/KNOWLEDGE.md unless its conf names another (DESIGN.md in LogosLang), and a ruling on a skill rule touches a rule that stands in SKILL.md; bound to the file name, the rule cannot reach SKILL.md, so the skill's home is written beside it as an exception",
     "proposed_for": "W103",
-    "why": null,
+    "why": [
+      "W131"
+    ],
     "anchors": [
       "~/.claude/CLAUDE.md",
       "~/.claude/skills/orchestrate/agent-agnostic-prompt.md",
@@ -11805,6 +11816,15 @@
         "commit": "d0b716e",
         "change": "accepted as a why of W103, same as W185",
         "reason": "C and E: CLAUDE.md names the home by a fixed file, not by the file that holds the rule a ruling touches, so the skill home is an exception"
+      },
+      {
+        "at": "2026-10-08T22:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fae8206",
+        "change": "why + W131",
+        "reason": null
       }
     ]
   },
@@ -12910,7 +12930,9 @@
     "status": "accepted",
     "text": "How a ruling is recorded (at the rule it touches, a Ruled line with the date, who and the reason, what it supersedes in the history file beside it) is written out in full in four rule files, the global CLAUDE.md's ## Rulings and their records, SKILL.md's Every ruling is recorded in its home, solve/SKILL.md's The rule and the head of setup/KNOWLEDGE.md (the template each repo's ruling document starts from, so the ruling document already states it), instead of standing once at the ruling document's head with the others pointing to it; so CLAUDE.md's copy names its homes itself (KNOWLEDGE.md, KNOWLEDGE_HISTORY.md, and auto-memory for a waiting wording)",
     "proposed_for": "W103",
-    "why": null,
+    "why": [
+      "W108"
+    ],
     "anchors": [
       "~/.claude/CLAUDE.md",
       "~/.claude/skills/orchestrate/SKILL.md",
@@ -12954,6 +12976,15 @@
         "commit": "d0b716e",
         "change": "accepted as a why of W103",
         "reason": "direct test after the fresh agent E: the recording form stands in full in four rule files, so CLAUDE.md's copy names its homes itself"
+      },
+      {
+        "at": "2026-10-08T22:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fae8206",
+        "change": "why + W108",
+        "reason": null
       }
     ]
   },
@@ -13019,7 +13050,9 @@
     "status": "accepted",
     "text": "The global CLAUDE.md says where a decision not yet settled waits in two places with two stores, ## Code Changes (Probable decisions can still be stored in mem0) and ## Rulings and their records (if the wording must wait, as an explicit pending edit in auto-memory), neither pointing to the other; so each copy carries its own orchestrator exception, and the two exceptions say the same thing (a Pending line in the repo's KNOWLEDGE.md)",
     "proposed_for": "W103",
-    "why": null,
+    "why": [
+      "W108"
+    ],
     "anchors": [
       "~/.claude/CLAUDE.md"
     ],
@@ -13055,6 +13088,15 @@
         "commit": "d0b716e",
         "change": "accepted as a why of W103",
         "reason": "direct test after the fresh agent E: where an unsettled decision waits stands in two places of CLAUDE.md with two stores, neither pointing to the other, so each carries its own exception"
+      },
+      {
+        "at": "2026-10-08T22:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fae8206",
+        "change": "why + W108",
+        "reason": null
       }
     ]
   },
@@ -17233,7 +17275,7 @@
     "status": "accepted",
     "text": "The Operand that numtype_of gives a node does two jobs at once: it is the type the node is checked as while a body is built (resolve_binary refuses any Pointer operand; build_write's fits match) and it says what the i64 from the node's run leaf means (an operator computes over the bits rt.run returns; run_store stores rt.run(v) as the field's type); Operand has only Concrete, Literal, Pointer and NonNumeric, with no case for a node handed over as graph whose yield is a number, so a read that returns the slot's node can only report Pointer(dyad_), and a read that reports i32 must return i32 bits, which run_load gets by running the node",
     "proposed_for": "W173",
-    "why": null,
+    "why": [],
     "anchors": [
       "Operand",
       "numtype_of",
@@ -17304,6 +17346,15 @@
         "commit": "d0b716e",
         "change": "accepted as a why of W173, same as W174",
         "reason": "A and D: no run-time value or Operand case stands for a node whose yield is a number, so a slot read reports Pointer(dyad_) and a number read must run the node"
+      },
+      {
+        "at": "2026-10-08T22:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fae8206",
+        "change": "asked: no why found",
+        "reason": "why-P47-a and why-P47-b: none; W187 is itself the structural fact, and no DESIGN rule asks a run result to carry its type"
       }
     ]
   },
@@ -17313,7 +17364,7 @@
     "status": "accepted",
     "text": "slot_body_fill builds a type's parse body once, at the type's definition, through fn_over_body with tape[0] as a bare dyad_ parameter, so numtype_of types each tape[0].f read (through resolve_binary and this::build_write) before any appearance hands the parse a node, from the read's kind and the field's declared type alone; DESIGN's path rule types the read by the node the slot holds (a literal stands as itself, an operator node as its @dyad address), which differs from one appearance to the next, and DESIGN's rule on when a body is built (where it is written when the build has all it needs, else where that arrives) names only a fn body and a type's run body, so no rule says when a parse body's reads are typed",
     "proposed_for": "W173",
-    "why": null,
+    "why": [],
     "anchors": [
       "slot_body_fill",
       "fn_over_body",
@@ -17386,6 +17437,15 @@
         "commit": "d0b716e",
         "change": "accepted as a why of W173, same as W180",
         "reason": "C and D: the parse body is built once at the type's definition, typed before any appearance hands it a node; no DESIGN rule says when a parse body is built"
+      },
+      {
+        "at": "2026-10-08T22:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fae8206",
+        "change": "asked: no why found",
+        "reason": "why-P47-a and why-P47-b: none; a rule DESIGN does not have yet (when a parse body is built)"
       }
     ]
   },
@@ -17438,6 +17498,104 @@
       "commit": "b101dfd",
       "run": "why-P74",
       "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W190",
+    "kind": "why",
+    "status": "draft",
+    "text": "DESIGN defines liveness as the parse's present state: ›A binding is live while its scope is open and it is not dead; it carries a range‹ makes the range a walk over the body for reflection, with the index's two pointers its derived fast path, and ›A call is a use of every outer name the callee's body reads‹ checks at elaboration; so the seed tests a binding as it stands now (scopes.is_open, is_dead), in check_call_reads as in ScopeStack::select, and the test is right only while the parse stands at the read",
+    "proposed_for": "W178",
+    "why": null,
+    "anchors": [
+      "check_call_reads",
+      "is_dead",
+      "ScopeStack",
+      "src/identities/binding.rs",
+      "src/parse/scopes.rs"
+    ],
+    "design": [
+      "A binding is live while its scope is open and it is not dead; it carries a range",
+      "A call is a use of every outer name the callee's body reads"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "awk 'NR>=2145 && NR<=2148' DESIGN.md; rg -n 'range lookup per outer name per call' DESIGN.md",
+        "output": "2145: ### A binding is live while its scope is open and it is not dead; it carries a range\n2146: `move` or `free` make a name dead. A binding carries a range in its scope's body order: from the declaring node to the item of that body holding the ending move/free …, else to the scope's end. While that item is being parsed the slot holds the move/free node, so a later read in the same line already fails.\n2147: - Reflection reads the graph, not the index: the declare and ending nodes are body items, so birth and death are a walk over the body; the index's two pointers are the derived fast path. …\n410: - **Why:** … The check is a range lookup per outer name per call, at elaboration; running code checks nothing.",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n 'keying by scope makes liveness an O\\(1\\) test against the open scopes|pub fn is_dead|!self.end.is_null\\(\\)' src/identities/binding.rs",
+        "output": "src/identities/binding.rs: /// The enclosing scope, not the declaration node: a dyad has no parent pointer, and\nsrc/identities/binding.rs: /// keying by scope makes liveness an O(1) test against the open scopes.\nsrc/identities/binding.rs:78:    pub fn is_dead(&self) -> bool {\nsrc/identities/binding.rs:79:        !self.end.is_null()",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:57+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W191",
+    "kind": "why",
+    "status": "draft",
+    "text": "The seed keeps ›A binding is live while its scope is open and it is not dead; it carries a range‹ only in its state form: Binding records start and end as body items, but every liveness reader (ScopeStack's resolution three times, regex_trie::is_live_in, check_call_reads) tests is_open on the scope and is_dead (end not null) as they stand now, and none compares a point with the start..end range DESIGN gives (A use keeps candidates whose scope is open and whose range covers the point); so a liveness answer is right only at the moment the parse stands at the point asked about",
+    "proposed_for": "W178",
+    "why": null,
+    "anchors": [
+      "Binding",
+      "is_dead",
+      "is_live_in",
+      "check_call_reads",
+      "ScopeStack",
+      "src/identities/binding.rs",
+      "src/parse/scopes.rs",
+      "src/regex_trie.rs",
+      "src/parse/operands.rs"
+    ],
+    "design": [
+      "A binding is live while its scope is open and it is not dead; it carries a range",
+      "Name resolution is scope-filtered, and shadowing is disallowed"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'is_dead\\(\\)' src --type rust | rg -v tests   (dev 896f9a6: every liveness read; the 722 hit is a unit test's assert)",
+        "output": "src/regex_trie.rs:536:    fields.scope == scope && !fields.is_dead()\nsrc/regex_trie.rs:722:        assert!(f(m.bindings[0]).is_dead());\nsrc/parse/scopes.rs:280:                .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())\nsrc/parse/scopes.rs:370:            if bindings.iter().any(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead()) {\nsrc/parse/scopes.rs:473:                Ok(m.bindings.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()))\nsrc/parse/operands.rs:498:            if fields.is_dead() {\n(no reader compares a point with Binding.start..Binding.end)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "sed -n 24,29p src/identities/binding.rs; the range sentences of DESIGN.md (dev 896f9a6)",
+        "output": "    /// The body item of `scope` that declares the name; null until the parser fills it, and at\n    /// top level.\n    pub start: DyadPtr,\n    /// The body item holding the `move` or `free` that made the name dead (the node itself\n    /// while that item is still parsing); null while the name is alive.\n    pub end: DyadPtr,\nDESIGN 2146: A binding carries a **range** in its scope's body order: from the declaring node to the **item of that body** holding the ending move/free ...\nDESIGN 2133: A use keeps candidates whose scope is open (ancestor on the scope stack) *and* whose range covers the point.",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:57+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
     },
     "history": []
   }
