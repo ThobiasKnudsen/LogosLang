@@ -20818,5 +20818,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P125",
+    "kind": "problem",
+    "status": "open",
+    "text": "A question Thobias writes inside his answer in a question file goes unanswered, and he has to ask it again: in Q85 (relayed 9 October 2026 00:46) he asked what core facts Rust's borrow checker rests on and whether a common output_type per if would make Logos fast again, and no file or chat message answered it; in Q81 (relayed 8 October 2026 23:29) his answer described a startup idea, the question was closed, and he asked \"where is the answer on the startupidea?\"",
+    "program": "Steps: read his text under each Answer line of answers/Q85-R4-I82.md and answers/Q81-O.md; search the orchestrator's transcript and the question and answer files for a reply to each question in it",
+    "output": "answers/Q85-R4-I82.md, his text under Answer 2: \"how does rust do this? i asked ealier about this but i havent read an answer for this. what are the core facts needed in the rust borrowchecker which is the basis for all borrow checking rules which is new in the new rust release? ... btw you think having common output_type is the solution for making Logos fast again?\"\ngrep -i polonius over the orchestrator's transcript: no hit between 29 September 2026 and his second asking, in chat at about 01:47 on 9 October: \"i earlier asked about what the core facts for the borrowchecker in rust is because Logos also must have these facts but i dont know where you have answered that or if you have answered it at all\"\nanswers/Q81-O.md, his Answer (Decided): the startup idea; closed and relayed 2026-10-08 23:29; then in chat: \"where is the answer on the startupidea?\"",
+    "expected": "Every question he writes in a question file, inside an answer or a comment, gets an answer he can find, before or when the file is closed. Thobias, 9 October 2026: 'i earlier asked about what the core facts for the borrowchecker in rust is because Logos also must have these facts but i dont know where you have answered that or if you have answered it at all'",
+    "tier": "orchestrator",
+    "found": "orchestrator LogosLang, when Thobias asked again in chat, 9 Oct 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T01:49+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "64835cc",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
