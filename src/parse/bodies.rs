@@ -577,15 +577,19 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
-    /// A `return` just built: inside a function it leaves every scope open
-    /// since the body began, so it may not hand out a place one of them holds,
-    /// nor an owning value; the body's close commits it to the result type.
+    /// A `return` just built, its word at `at`, written only inside a function: it leaves
+    /// every scope open since the body began, so it may not hand out a place one of them
+    /// holds, nor an owning value; the body's close commits it to the result type.
     ///
     /// # Safety
     /// `node` must be a `return` node `[value, op]` from the store.
-    pub(crate) unsafe fn note_return(&mut self, node: DyadPtr) -> Result<(), ParseError> {
+    pub(crate) unsafe fn note_return(
+        &mut self,
+        node: DyadPtr,
+        at: usize,
+    ) -> Result<(), ParseError> {
         let Some(frame) = self.cx.frames.last() else {
-            return Ok(());
+            return Err(self.fail_at(at, ParseError::ReturnOutsideFunction));
         };
         let types = self.types;
         let value = *(dyad::value(node) as *const DyadPtr);
@@ -869,12 +873,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_while_parts();
         self.cx.scopes.pop_barrier();
         let (cond, body) = body?;
-        let types = self.types;
-        // SAFETY: `body` is the reduced dyad just parsed.
-        if self.cx.frames.is_empty() && unsafe { contains_return(types, body) } {
-            return Err(ParseError::EarlyReturn);
-        }
-        Ok(self.rt.store.alloc_words(while_id, &[cond, body, types.ops.while_]))
+        Ok(self.rt.store.alloc_words(while_id, &[cond, body, self.types.ops.while_]))
     }
 
     fn parse_while_parts(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
@@ -978,10 +977,6 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         self.cx.scopes.pop_barrier();
         let body = body?;
-        // SAFETY: `body` is the reduced dyad just parsed.
-        if self.cx.frames.is_empty() && unsafe { contains_return(types, body) } {
-            return Err(ParseError::EarlyReturn);
-        }
 
         let ops = [var, start, end, step, body, types.ops.for_];
         Ok(self.rt.store.alloc_words(for_id, &ops))
@@ -1194,19 +1189,8 @@ impl<'a> Parser<'a> {
         };
         let values = exprs.iter().filter(|&&e| is_value(e)).count();
         if values > 0 {
-            // Outside a function a `return` before the tail has nothing to leave.
             let types = self.types;
             let tail = exprs.iter().rposition(|&e| is_value(e)).expect("values >= 1");
-            for (i, &e) in exprs.iter().enumerate() {
-                if i != tail
-                    && self.cx.frames.is_empty()
-                    // SAFETY: `e` is a reduced dyad just parsed.
-                    && unsafe { contains_return(types, e) }
-                {
-                    self.end_after_fault(&closed);
-                    return Err(ParseError::EarlyReturn);
-                }
-            }
             // A last value that is a place this scope holds moves out to whoever takes the
             // value, so the scope's end holds it no longer; a `return` of one would hand out
             // freed memory. An enclosing scope's place is an ordinary borrow.

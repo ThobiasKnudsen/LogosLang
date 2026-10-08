@@ -85,9 +85,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::UncomputableLiteral => {
             "this literal has no exact value in the type it lands in".into()
         }
-        ParseError::EarlyReturn => {
-            "outside a function, `return` must be the last expression of its scope".into()
-        }
+        ParseError::ReturnOutsideFunction => "`return` is written only inside a function".into(),
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
         ParseError::AssignToLiteral(lit) => format!(

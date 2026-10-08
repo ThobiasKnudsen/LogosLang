@@ -119,8 +119,8 @@ pub enum ParseError {
     TypeMismatch,
     /// A number literal had no exact value in the type it was committed to.
     UncomputableLiteral,
-    /// A `return` before the tail with no function around it to leave.
-    EarlyReturn,
+    /// A `return` with no function around it to leave.
+    ReturnOutsideFunction,
     /// A node that gives nothing (a statement, a `-> void` call) stood where a value is
     /// required.
     StatementAsValue,

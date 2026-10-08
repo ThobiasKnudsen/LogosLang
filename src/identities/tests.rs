@@ -121,42 +121,19 @@ fn runs_a_compound_function_by_walking_its_body() {
 }
 
 #[test]
-fn runs_a_returning_scope() {
-    let (mut store, mut trie, core) = new_core();
-    let mut scopes = ScopeStack::new();
-    scopes.push(core.root_scope);
-
-    let node = {
-        let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, &core, scopes);
-        p.parse_expression().unwrap()
-    };
-
-    let mut rt = Runtime::new(&core, &mut store);
-    // SAFETY: `node` is the valid dyad tree just parsed.
-    let result = unsafe { rt.run(node) }.unwrap();
-    assert_eq!(result, 42);
-}
-
-#[test]
-fn nested_scopes_and_bare_return() {
-    let (mut store, mut trie, core) = new_core();
-
-    let bare = {
-        let mut s = ScopeStack::new();
-        s.push(core.root_scope);
-        let mut p = Parser::new("return 7", &mut store, &mut trie, &core, s);
-        p.parse_expression().unwrap()
-    };
-    let mut rt = Runtime::new(&core, &mut store);
-    assert_eq!(unsafe { rt.run(bare) }.unwrap(), 7);
-
-    let nested = {
-        let mut s = ScopeStack::new();
-        s.push(core.root_scope);
-        let mut p = Parser::new("( ( return 5 ) )", rt.store, &mut trie, &core, s);
-        p.parse_expression().unwrap()
-    };
-    assert_eq!(unsafe { rt.run(nested) }.unwrap(), 5);
+fn a_return_is_written_only_inside_a_function() {
+    for src in [
+        "return 7",
+        "( return 40 + 2 )",
+        "( ( return 5 ) )",
+        "( x := i32 4, return x )",
+        "( return 5, 6 )",
+        "if (1 < 2) (return 1)",
+    ] {
+        assert_eq!(parse_err(src), ParseError::ReturnOutsideFunction, "{src}");
+    }
+    diff_nullary_fn("fn () -> i32 ( ( return 40 + 2 ) )", 42);
+    diff_nullary_fn("fn () -> i32 ( ( ( return 5 ) ) )", 5);
 }
 
 #[test]
@@ -165,7 +142,7 @@ fn unclosed_bracket_is_an_error() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
 
-    let mut p = Parser::new("( return 1", &mut store, &mut trie, &core, scopes);
+    let mut p = Parser::new("( 40 + 2", &mut store, &mut trie, &core, scopes);
     assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnclosedBracket));
 }
 
@@ -1631,7 +1608,7 @@ fn for_loop_shapes_are_checked() {
     assert_eq!(parse_err("for i in 0..10..0 ( 1 )"), ParseError::BadStep);
     assert_eq!(parse_err("for i in 10..0..-1 ( 1 )"), ParseError::BadStep);
     assert_eq!(parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"), ParseError::StatementAsValue);
-    assert_eq!(parse_err("for i in 0..3 ( return 1 )"), ParseError::EarlyReturn);
+    assert_eq!(parse_err("for i in 0..3 ( return 1 )"), ParseError::ReturnOutsideFunction);
     assert_eq!(parse_err("for i 0..3 ( 1 )"), ParseError::ExpectedIn);
     assert_eq!(parse_err("for i in 0 ( 1 )"), ParseError::ExpectedRange);
     assert_eq!(parse_err("fn () -> i32 ( for 0..3 ( 1 ) )"), ParseError::StatementAsValue);
@@ -1654,7 +1631,7 @@ fn a_while_loop_is_not_a_value() {
 
 #[test]
 fn a_return_inside_a_loop_leaves_the_function() {
-    assert_eq!(parse_err("while (1 < 2) (return 1)"), ParseError::EarlyReturn);
+    assert_eq!(parse_err("while (1 < 2) (return 1)"), ParseError::ReturnOutsideFunction);
     diff_typed_call(
         "fn (n := i32 ?) -> i32 ( mut k := i32 0, while (k < 100) ( k = k + 1, if (k == n) (return k * 2) ), 0 )",
         "f(7)",
@@ -2762,7 +2739,7 @@ fn block_local_declarations_do_not_leak() {
 
 #[test]
 fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
-    assert_eq!(parse_err("( return 1, 2 )"), ParseError::EarlyReturn);
+    assert_eq!(parse_err("( return 1, 2 )"), ParseError::ReturnOutsideFunction);
     diff_nullary_fn("fn () -> i32 ( if (true) (return 1) else (0), 2 )", 1);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(5)", 7);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(1)", 2);

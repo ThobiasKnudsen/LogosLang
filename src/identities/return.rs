@@ -1,9 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `return`: the node `[value, ends, op]`. Inside a call it leaves the function with the
-//! operand's value, from wherever it stands, freeing on its way the names its own line ends
-//! after it. Its own line gets nothing from it, inside a function or outside any.
+//! `return`: the node `[value, ends, op]`, written only inside a function. Inside a call it
+//! leaves the function with the operand's value, from wherever it stands, freeing on its way
+//! the names its own line ends after it. Its own line gets nothing from it.
 //! DESIGN ›A scope's value is what it evaluates to, and `return` is an optional
 //! early exit from the enclosing function‹, ›A value's teardown runs where its life ends;
 //! the ending identity reads the type's `free` slot‹
@@ -45,11 +45,12 @@ fn construct(
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
+    let at = tape.at(0).map_or(0, |cell| cell.start);
     let operand = p.take_right(tape)?;
     let leaf = p.types().ops.return_;
     let node = p.store().alloc_words(id, &[operand, std::ptr::null_mut(), leaf]);
     // SAFETY: `node` is the `return` node just built.
-    unsafe { p.note_return(node) }?;
+    unsafe { p.note_return(node, at) }?;
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
 }

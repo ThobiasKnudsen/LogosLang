@@ -2430,7 +2430,7 @@ fn a_line_that_gives_nothing_echoes_nothing_and_no_value_reads_it() {
         "x := f(), x",
         "print «{f()}»",
         "f() + 1",
-        "y := (return n), y",
+        "g := fn () -> i32 ( y := (return n), y ), g()",
         "f().type",
         "g := fn (a := i32 ?) -> i32 ( a ), g(f())",
         "g := fn (a := i32 ?) -> i32 ( a ), g(x := i32 5)",
@@ -2440,6 +2440,27 @@ fn a_line_that_gives_nothing_echoes_nothing_and_no_value_reads_it() {
         assert_eq!(code, Some(1), "{tail}");
         assert!(stderr.contains("gives nothing"), "{tail}: stderr: {stderr}");
     }
+}
+
+#[test]
+fn a_return_outside_every_function_is_refused_where_it_is_written() {
+    for (src, operand) in [
+        ("x := i32 4, return x", "return"),
+        ("return 5, 6", "return"),
+        ("mut c := true, if c (return 1), 2", "return"),
+        ("for i in 0..3 ( print «{i}», return i )", "return"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+        assert_eq!(stdout, "", "{src}");
+        let at = src.find(operand).expect("the word is in the program");
+        let col = src[..at].chars().count() + 1;
+        let head =
+            format!("<command line>:1:{col}: error: `return` is written only inside a function");
+        assert!(stderr.starts_with(&head), "{src}: stderr: {stderr}");
+    }
+    let (_, _, stderr) = run_line("x := i32 4,\n  return x");
+    assert!(stderr.starts_with("<command line>:2:3: error: `return`"), "stderr: {stderr}");
 }
 
 #[test]
@@ -4580,9 +4601,8 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
         ("x := i32 1, mut a := i32 0, a = x == 1, a", "these types do not match"),
         ("x := i32 1, mut a := x == 1, a = i32 1, a", "these types do not match"),
         // A `return` gives its own line nothing.
-        ("x := f64 2.5, (return x) + 1.0", "gives nothing"),
-        ("x := f64 2.5, y := (return x), y", "gives nothing"),
         ("f := fn (x := f64 ?) -> f64 ( (return x) + 1.0 ), f(2.5)", "gives nothing"),
+        ("f := fn (x := f64 ?) -> f64 ( y := (return x), y ), f(2.5)", "gives nothing"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}");
