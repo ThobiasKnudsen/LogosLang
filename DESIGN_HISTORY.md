@@ -331,7 +331,8 @@ Nothing moved from this section.
 
 ## Error handling
 
-### Target: errors are values (`T!`), handled by `match`, passed on by `try`
+### Target: errors are values (`T!`), handled by `if`, passed on by `try` (handled by `match` until 9 October 2026)
+- **History:** 30 August to 9 October 2026: "Callers handle results with `match`", and `try` was "sugar over `match`"; `match` had no form written. Superseded by Q62 (Thobias, 9 October 2026), since `if` does the same job and a library can still define a `match`: "why not just NOT have match at all? i dont see why not if else can be used instead." What `match` alone gave, a name for the piece it finds that exists only in its own arm, is given up.
 - **Seed detail (27 September 2026):** none of it in v0.1.0 (see next rules). It lands later as library and driver work over tagged unions; these shapes stay the target.
 
 ### Target: a constructor returns `void!`, so a user's syntax error is a recoverable value

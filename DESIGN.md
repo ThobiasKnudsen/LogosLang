@@ -830,10 +830,12 @@ Logos ships as a standalone interpreter. Native code comes in four ways: compile
 
 ## Error handling
 
-### Target: errors are values (`T!`), handled by `match`, passed on by `try`
-Errors are tagged unions `(T | Error)`, spelled `T!`: `fn () -> i32!` hands a recoverable error to its caller. A fallible function declares its error types. Callers handle results with `match`, with `success` / `fails` combinators for yes/no outcomes. No exceptions, no hidden propagation: `try f()` inside a `!` function hands the callee's error to the enclosing function's caller, sugar over `match` (Zig's shape). `T!` is for declared fallibility only.
+### Target: errors are values (`T!`), handled by `if`, passed on by `try` (handled by `match` until 9 October 2026)
+Errors are tagged unions `(T | Error)`, spelled `T!`: `fn () -> i32!` hands a recoverable error to its caller. A fallible function declares its error types. Callers handle results with `if`: a `T!` value has fields for whether it is an error, its value and its error, and reading the value of an error, or the error of a value, is the checked error when the line runs; `success` / `fails` combinators serve yes/no outcomes. No exceptions, no hidden propagation: `try f()` inside a `!` function hands the callee's error to the enclosing function's caller, sugar over `if` (Zig's shape). `T!` is for declared fallibility only. The core has no `match`; a library may define one as its own type with its own `parse` (›A type's `parse` is unrestricted code‹).
 - **Why:** one visible word per call site.
 - **Ruled:** `T!` 30 August 2026; `try` 31 August 2026, in discussion.
+- **Ruled (9 October 2026, Thobias, Q62):** no `match` in the core; a `T!` result is handled with `if`. **Why:** Thobias: "why not just NOT have match at all? i dont see why not if else can be used instead." Chosen knowing that `if` cannot keep a read of the value out of the error arm, as a name bound by a `match` arm would; that mistake is found when the line runs.
+- **Open:** the names of the three fields of a `T!` value.
 - **Seed:** not yet (see the next rules).
 
 ### A checked error is a fault: the task that hit it is cancelled
