@@ -11,8 +11,8 @@
 - **Waiting:** the reviewer is idle until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-38_issue-197.md](file:///home/o/.claude/orchestrate/history/Q-38_issue-197.md): Q-38, the answers these points come from
-  - [Q-28_issue-197.md](file:///home/o/.claude/orchestrate/history/Q-28_issue-197.md): Q-28, where a `share` line in a body is made at the definition
+  - [Q-38_issue-197.md](file:///home/o/Personal/Code/LogosLang/.agents/orchestrator/answers/Q-38_issue-197.md): Q-38, the answers these points come from
+  - [Q-28_issue-197.md](file:///home/o/Personal/Code/LogosLang/.agents/orchestrator/answers/Q-28_issue-197.md): Q-28, where a `share` line in a body is made at the definition
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›Two muts, and the storage partition‹, ›The pass runs only as far as it must, in order, and never twice‹, ›`fn` is not a primitive: a function is a type in this same shape‹
   - [Round 3's comment on #197](https://github.com/ThobiasKnudsen/LogosLang/issues/197#issuecomment-5920953964): what the round recorded and fixed
   - [#202](https://github.com/ThobiasKnudsen/LogosLang/issues/202), the seed builds a generic `fn` body at its definition, not once per set of argument types; [#231](https://github.com/ThobiasKnudsen/LogosLang/issues/231), your idea that a `-> type ( … )` body is itself the type's scope

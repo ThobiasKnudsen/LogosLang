@@ -11,7 +11,7 @@
 - **Waiting:** answers 1 and 2 are built on #192. Question 3 no longer holds #192 back: #192 merges with a stand-in, and question 3 is filed as [#240](https://github.com/ThobiasKnudsen/LogosLang/issues/240), a record kept in its own bytes has no NULL. Its fix waits for your answer.
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-43_issue-192.md](file:///home/o/.claude/orchestrate/history/Q-43_issue-192.md): Q-43, your NULL-check answers this question comes from
+  - [Q-43_issue-192.md](file:///home/o/Personal/Code/LogosLang/.agents/orchestrator/answers/Q-43_issue-192.md): Q-43, your NULL-check answers this question comes from
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›`free` and `move` end a name; no drop flag‹, ›A filled `share free` is the value's teardown; one name owns each value‹, ›A field is filled at run, per evaluation; its type decides how the operand is used‹, ›A last value moves out‹, ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save.

@@ -11,8 +11,8 @@
 - **Waiting:** the reviewer is idle until this is answered
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
-  - [Q-44_issue-197.md](file:///home/o/.claude/orchestrate/history/Q-44_issue-197.md): Q-44, your answers 5 and 6, which these points come from
-  - [Q-38_issue-197.md](file:///home/o/.claude/orchestrate/history/Q-38_issue-197.md): Q-38, your answer 1, which point 1 weighs against answer 5
+  - [Q-44_issue-197.md](file:///home/o/Personal/Code/LogosLang/.agents/orchestrator/answers/Q-44_issue-197.md): Q-44, your answers 5 and 6, which these points come from
+  - [Q-38_issue-197.md](file:///home/o/Personal/Code/LogosLang/.agents/orchestrator/answers/Q-38_issue-197.md): Q-38, your answer 1, which point 1 weighs against answer 5
   - [DESIGN.md](file:///home/o/Personal/Code/LogosLang/DESIGN.md): ›A `type (…)` inside a body is built once per set of the values it reads‹, the rule both points change
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save.

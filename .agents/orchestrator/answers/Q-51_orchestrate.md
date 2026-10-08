@@ -12,7 +12,7 @@
 - **Orchestrator:** Orchestrator (2)
 - **Related:**
   - [SKILL.md](file:///home/o/.claude/skills/orchestrate/SKILL.md): how rulings are recorded today
-  - [Q-46_issue-197.md](file:///home/o/.claude/orchestrate/history/Q-46_issue-197.md): Q-46, the ruling the W9 agent did not see
+  - [Q-46_issue-197.md](file:///home/o/Personal/Code/LogosLang/.agents/orchestrator/answers/Q-46_issue-197.md): Q-46, the ruling the W9 agent did not see
 
 <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save.
      Every save wakes the orchestrator; it relays once each question has an answer. -->
