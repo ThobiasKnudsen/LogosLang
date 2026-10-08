@@ -118,7 +118,8 @@ unsafe fn arm_type(types: &Core, arm: DyadPtr) -> DyadPtr {
 }
 
 /// The type an `if` gives where its value is used, or why it gives none: it needs an `else`,
-/// every arm must give a value, and the arms one type. DESIGN ›`if` reads its own right side‹.
+/// every arm must give a value, the arms one type, and every arm make its value or every arm
+/// borrow one. DESIGN ›`if` reads its own right side‹.
 ///
 /// # Safety
 /// `node` must be an `if` node [`build`] made.
@@ -139,10 +140,12 @@ pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, 
         }
     }
     differ?;
-    match output_type(types, node) {
-        out if out == types.void_ => Err(ParseError::ArmsDiffer),
-        out => Ok(out),
+    let out = output_type(types, node);
+    if out == types.void_ {
+        return Err(ParseError::ArmsDiffer);
     }
+    super::drop_model::handed_ends(types, node)?;
+    Ok(out)
 }
 
 /// # Safety

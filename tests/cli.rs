@@ -2426,7 +2426,16 @@ fn a_line_that_gives_nothing_echoes_nothing_and_no_value_reads_it() {
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert_eq!(stdout, "", "{tail}");
     }
-    for tail in ["x := f(), x", "print «{f()}»", "f() + 1", "y := (return n), y", "f().type"] {
+    for tail in [
+        "x := f(), x",
+        "print «{f()}»",
+        "f() + 1",
+        "y := (return n), y",
+        "f().type",
+        "g := fn (a := i32 ?) -> i32 ( a ), g(f())",
+        "g := fn (a := i32 ?) -> i32 ( a ), g(x := i32 5)",
+        "h := fn () -> i32 ( return f() ), h()",
+    ] {
         let (code, _, stderr) = run_line(&format!("{void_fn}, {tail}"));
         assert_eq!(code, Some(1), "{tail}");
         assert!(stderr.contains("gives nothing"), "{tail}: stderr: {stderr}");
@@ -4153,7 +4162,7 @@ fn free_and_move_refuse_what_they_cannot_take_where_it_stands() {
         (
             "c := i32 1, p := alloc 1 of i32 7, free (if (c == 1) (alloc 1 of i32 5) else (p)), 1",
             "(if",
-            "`free` runs a value and then its type's `free`",
+            "make a value in every arm, or borrow in every arm",
         ),
     ] {
         let (code, stdout, stderr) = run_line(src);

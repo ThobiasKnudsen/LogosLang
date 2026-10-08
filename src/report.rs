@@ -73,6 +73,11 @@ pub fn parse_message(e: &ParseError) -> String {
              as in `if c (i64 (i32 1)) else (i64 2)`"
                 .into()
         }
+        ParseError::ArmsMakeAndBorrow => {
+            "make a value in every arm, or borrow in every arm: one arm of this `if` makes its \
+             value and another borrows one, so who owns it would be known only when it runs"
+                .into()
+        }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
             "these types do not match (crossing types needs an explicit cast)".into()
@@ -346,12 +351,6 @@ pub fn parse_message(e: &ParseError) -> String {
             "`{name}` is a name the run starts with, which every imported file reads too, so \
              this program cannot end it: give it a name of your own, `t := {name}`, and end that"
         ),
-        ParseError::FreeOfUndecidedValue => {
-            "`free` runs a value and then its type's `free`, and one arm of this `if` makes its value \
-             while another borrows one, so whether it is one to free is known only when it runs: \
-             free it inside the arm that makes it, `if c (free (a())) else (b)`"
-                .into()
-        }
     }
 }
 

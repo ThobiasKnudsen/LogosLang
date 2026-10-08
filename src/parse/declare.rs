@@ -705,7 +705,7 @@ impl<'a> Parser<'a> {
                     .max(1);
                 let place = self.place_for(binding, t, width);
                 *(dyad::value(read) as *mut DyadPtr) = place;
-                if let Some(Teardown::Node(_)) = teardown_of(self.types, value) {
+                if let Teardown::Node(_) = teardown_of(self.types, value) {
                     self.hold_node(binding);
                 }
                 value
@@ -730,11 +730,11 @@ impl<'a> Parser<'a> {
                 // and a value just made or moved makes the name its owner.
                 let place = self.place_for(binding, t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                if let Some(Teardown::Node(_)) = teardown_of(self.types, value) {
+                if let Teardown::Node(_) = teardown_of(self.types, value) {
                     self.hold_node(binding);
                 }
                 init
-            } else if let Some(Teardown::Block(pointee)) = teardown_of(self.types, value) {
+            } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {
                 // An owning value lands in a place of an owning `@pointee`, which the scope holds.
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
                     self.rt.store,

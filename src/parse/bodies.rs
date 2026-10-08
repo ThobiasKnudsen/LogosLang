@@ -534,6 +534,11 @@ impl<'a> Parser<'a> {
         let OpenFn { size: frame_size, outer, returns, .. } =
             self.cx.frames.pop().expect("parse_fn pushed a frame");
         let body = body?;
+        if output != self.types.void_ {
+            // The last line's value is the call's, so an `if` there is a used one.
+            // SAFETY: `body` is the valid dyad just built.
+            unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?;
+        }
 
         // A comptime-rational tail commits to the declared return type here,
         // so `fn () -> i64 (…)` returns i64 rather than the i32 default.
@@ -592,7 +597,8 @@ impl<'a> Parser<'a> {
         if crate::identities::drop_model::lent_place(types, place).is_some_and(left) {
             return Err(ParseError::AddressOfHeld);
         }
-        if crate::identities::drop_model::may_own_block(types, value) {
+        crate::identities::read::value_type(types, value)?;
+        if crate::identities::drop_model::is_owning_value(types, value) {
             return Err(ParseError::OwnershipAcrossReturn);
         }
         let live = self.cx.open[frame.open_below..]
@@ -1022,11 +1028,13 @@ impl<'a> Parser<'a> {
                 return crate::identities::group::join(self.rt.store, self.types, connective, a, b);
             }
         }
-        // Fail-closed until ownership-gated parameters let the callee declare
-        // that it takes the value.
         for &arg in &args {
             // SAFETY: `args` are reduced dyads just parsed.
-            if unsafe { crate::identities::drop_model::may_own_block(self.types, arg) } {
+            unsafe { crate::identities::read::value_type(self.types, arg) }?;
+            // Fail-closed until ownership-gated parameters let the callee declare
+            // that it takes the value.
+            // SAFETY: as above.
+            if unsafe { crate::identities::drop_model::is_owning_value(self.types, arg) } {
                 return Err(ParseError::UnboundOwningValue);
             }
         }

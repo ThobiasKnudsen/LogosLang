@@ -109,6 +109,9 @@ pub enum ParseError {
     /// The arms of an `if` whose value is used give different types, and no type
     /// written in front of it says which one it gives.
     ArmsDiffer,
+    /// One arm of an `if` whose value is used makes its value and another borrows one: who
+    /// owns it would show only when it runs.
+    ArmsMakeAndBorrow,
     /// A logical operator applied to a non-`bool` operand.
     NonBoolOperands,
     /// A binary operator's operands were two different concrete numeric
@@ -258,9 +261,6 @@ pub enum ParseError {
     MoveOfValue,
     /// `free` of a hole, which holds no value.
     FreeOfHole,
-    /// `free` of a value whose teardown is known only when it runs: an `if` one of whose arms
-    /// makes or moves its value and another borrows.
-    FreeOfUndecidedValue,
     /// `move` or `free` of a name the run starts with (`i32`), which every section reads;
     /// carries the name.
     EndsPrimordialName(Box<String>),
