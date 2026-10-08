@@ -208,6 +208,10 @@ pub enum ParseError {
     /// A declaration's type position, or a type variable's fill, held
     /// something that does not evaluate to a type.
     BadDeclaredType,
+    /// A `-> dyad` function gives back what `=` refuses into a `dyad ?` place, or a
+    /// parameter, which a call may fill with a number: every reader of the result follows
+    /// it as a node's address. stand-in for #198
+    DyadResultNotNode,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,

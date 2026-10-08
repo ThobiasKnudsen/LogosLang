@@ -2066,6 +2066,34 @@ fn a_type_returning_body_must_hand_back_a_type() {
 }
 
 #[test]
+fn a_dyad_returning_body_hands_back_what_equals_writes_into_a_dyad_box() {
+    // A number, or a parameter a call may fill with one, was followed as a node's address.
+    for src in [
+        "fn () -> dyad ( i32 5 )",
+        "fn () -> dyad ( 5 )",
+        "fn () -> dyad ( alloc 1 of i32 5 )",
+        "fn (a) -> dyad ( a )",
+        "fn (q := dyad ?) -> dyad ( q )",
+        "fn (b := i32 ?) -> dyad ( if (b < 1) (i32) else (5) )",
+        "fn (b := i32 ?) -> dyad ( if (b < 1) (return i32 5), i32 )",
+    ] {
+        assert_eq!(parse_err(src), ParseError::DyadResultNotNode, "{src}");
+    }
+
+    assert_eq!(run_script("f := fn () -> dyad ( i32 ), g := f(), x := g 5, x"), 5);
+    assert_eq!(
+        run_script("f := fn () -> dyad ( mut d := dyad ?, d = i64, d ),\nt := f(), x := t 9, x"),
+        9
+    );
+    assert_eq!(
+        run_script(
+            "g := fn () -> dyad ( i64 ), f := fn () -> dyad ( g() ),\nt := f(), x := t 7, x"
+        ),
+        7
+    );
+}
+
+#[test]
 fn runaway_depth_is_a_checked_error_not_an_abort() {
     on_work_stack(|| {
         let deep = "(".repeat(crate::parse::MAX_BRACKET_DEPTH + 1);

@@ -215,28 +215,12 @@ pub(super) fn build_store(
             super::pointer::build_storeptr(store, types, place, rhs)
         };
     }
-    // A number into a node box would be followed as an address by every later reader.
     // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
     let (target, marked) = unsafe { (read_kind(types, lhs_d), types.is_storage(lhs_d)) };
     match target {
         Read::Container(t) if t == types.type_ || t == types.dyad_ => {
             // SAFETY: as above.
-            let value_read = unsafe { read_kind(types, rhs) };
-            let ok = match value_read {
-                Read::Identity => true,
-                Read::Container(c) => {
-                    if t == types.type_ {
-                        c == types.type_
-                    } else {
-                        !c.is_null()
-                    }
-                }
-                Read::Address => t == types.dyad_,
-                // SAFETY: as above.
-                Read::Executable(_) => unsafe { super::read::output_type(types, rhs) == t },
-                _ => false,
-            };
-            if !ok {
+            if !unsafe { box_takes(types, t, rhs) } {
                 return Err(ParseError::BadDeclaredType);
             }
             return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
@@ -294,6 +278,28 @@ pub(super) fn build_store(
     // SAFETY: `lhs` is a typed variable checked assignable above.
     let nt = unsafe { of_type_node(lhs_type) };
     Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(nt)]))
+}
+
+/// Whether a `t` box, `type` or `dyad`, takes `value`: a type, a name whose place holds one,
+/// or into a `dyad` box a node. A number would be followed as a node's address by every later
+/// reader. DESIGN ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn box_takes(types: &Core, t: DyadPtr, value: DyadPtr) -> bool {
+    match read_kind(types, value) {
+        Read::Identity => true,
+        Read::Container(c) => {
+            if t == types.type_ {
+                c == types.type_
+            } else {
+                !c.is_null()
+            }
+        }
+        Read::Address => t == types.dyad_,
+        Read::Executable(_) => super::read::output_type(types, value) == t,
+        _ => false,
+    }
 }
 
 /// Guards a null storage address like the interpreter's `Uninitialized`; the

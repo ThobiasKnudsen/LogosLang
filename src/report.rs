@@ -167,6 +167,11 @@ pub fn parse_message(e: &ParseError) -> String {
             "the declared or assigned type must be a type value"
                 .into()
         }
+        ParseError::DyadResultNotNode => {
+            "a `-> dyad` function gives back only what `=` writes into a `dyad ?` place, as a \
+             type, and not a number or a parameter yet"
+                .into()
+        }
         ParseError::NonNumericDeclaredType => {
             "declarations of non-numeric types are not in the seed yet"
                 .into()

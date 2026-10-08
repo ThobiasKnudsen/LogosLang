@@ -1109,8 +1109,8 @@ pub(crate) unsafe fn commit_call_args(
     Ok(())
 }
 
-/// Commit the body's tail literals to the declared return type; a `-> type` body is
-/// checked instead.
+/// Commit the body's tail literals to the declared return type; a `-> type` or `-> dyad`
+/// body is checked instead.
 ///
 /// # Safety
 /// `body`/`output` are valid dyads from the store.
@@ -1123,6 +1123,10 @@ pub(crate) unsafe fn commit_fn_body(
     // A `-> type` result is read back as a node address, so every tail leaf must be a type.
     if output == types.type_ {
         check_type_tail(types, body)?;
+        return Ok(body);
+    }
+    if output == types.dyad_ {
+        check_dyad_tail(types, body)?;
         return Ok(body);
     }
     if by_copy::record_width(types, output).is_some() {
@@ -1256,6 +1260,41 @@ unsafe fn check_type_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError>
         }
     })?;
     Ok(())
+}
+
+/// A `-> dyad` call's result is followed as a node's address too, so every tail leaf must be
+/// what `=` writes into a `dyad ?` place, and no parameter, which a call may fill with a
+/// number. DESIGN ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹.
+///
+/// # Safety
+/// `node` is a valid dyad from the store.
+unsafe fn check_dyad_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
+    walk_tail(types, node, &mut |leaf| {
+        refuse_statement(types, leaf)?;
+        if is_parameter(types, leaf) || !assign::box_takes(types, types.dyad_, leaf) {
+            return Err(ParseError::DyadResultNotNode);
+        }
+        Ok(leaf)
+    })?;
+    Ok(())
+}
+
+/// Whether `node` names a parameter of the function whose call frame holds it.
+///
+/// # Safety
+/// `node` is a valid dyad from the store.
+unsafe fn is_parameter(types: &Core, node: DyadPtr) -> bool {
+    if dyad::ty(node) != types.binding_ {
+        return false;
+    }
+    let b = crate::binding::Binding::read(node);
+    match b.storage(types) {
+        Some(crate::binding::Frame::Call(f)) => {
+            let input = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_INPUT);
+            b.scope == meta::record_scope_of(input)
+        }
+        _ => false,
+    }
 }
 
 /// The `T(value)` conversion, the only cross-type path: a literal folds now with `as`
