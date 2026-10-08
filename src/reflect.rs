@@ -486,7 +486,6 @@ mod tests {
                 (core.ne, meta::TUPLE_TAG, 4),
                 (core.and_, meta::TUPLE_TAG, 4),
                 (core.or_, meta::TUPLE_TAG, 4),
-                (core.if_, meta::TUPLE_TAG, 8),
                 (core.convert, meta::TUPLE_TAG, 5),
                 (core.deref_, meta::TUPLE_TAG, 5),
                 (core.not_, meta::TUPLE_TAG, 3),
@@ -502,6 +501,7 @@ mod tests {
                 (core.for_, 6),
                 (core.storeptr_, 5),
                 (core.return_, 3),
+                (core.if_, 7),
             ] {
                 assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
                 assert_eq!(meta::arity_of(id), arity);

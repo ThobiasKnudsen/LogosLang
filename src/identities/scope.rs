@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `scope`: the type of a scope node, the parser's membership marker and, for
-//! a block, the sequence node itself: `[exprs, op, output_type, parent, exit]`, the
-//! parent link set at [`mint`], the expressions (the `dyads` field) pushed as each line
-//! completes, the op and output set at [`fill`] when the block closes, and the exit, what
-//! the scope's end runs, set when it closes.
+//! a block, the sequence node itself: `[exprs, op, parent, exit]`, the parent link
+//! set at [`mint`], the expressions (the `dyads` field) pushed as each line
+//! completes, the op set at [`fill`] when the block closes, and the exit, what the
+//! scope's end runs, set when it closes.
 //! DESIGN ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹
 
 use cranelift_codegen::ir::Value;
@@ -47,13 +47,12 @@ pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> Dya
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }
 
-/// The slots of a scope node's value, `[exprs, op, output_type, parent, exit]`.
+/// The slots of a scope node's value, `[exprs, op, parent, exit]`.
 const EXPRS: usize = 0;
 const OP: usize = 1;
-const OUTPUT: usize = 2;
-const PARENT: usize = 3;
+const PARENT: usize = 2;
 /// Null, or an `array` of exit items (`drop_model::exit_item`) in line order.
-const EXIT: usize = 4;
+const EXIT: usize = 3;
 pub(crate) const SLOTS: usize = EXIT + 1;
 
 /// The block's membership key while it parses, and the sequence node once
@@ -61,37 +60,27 @@ pub(crate) const SLOTS: usize = EXIT + 1;
 /// holds names alone (the root, a type's member scope) is minted with no parent.
 pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> DyadPtr {
     let none = std::ptr::null_mut();
-    store.alloc_words(scope_ty, &[none, none, none, parent, none])
+    store.alloc_words(scope_ty, &[none, none, parent, none])
 }
 
-/// The block closed: it runs as a sequence over its `dyads`, and gives back what its last
-/// line does.
+/// The block closed: it runs as a sequence over its `dyads`.
 ///
 /// # Safety
 /// `node` must be a scope [`mint`] built; nothing else may hold its slots.
 pub(crate) unsafe fn fill(types: &Core, node: DyadPtr) {
-    let slots = dyad::value(node) as *mut DyadPtr;
-    *slots.add(OP) = types.ops.scope_;
-    *slots.add(OUTPUT) = tail_output(types, node);
+    *(dyad::value(node) as *mut DyadPtr).add(OP) = types.ops.scope_;
 }
 
-/// What a sequence gives back: what its last line hands on, `void` for none.
+/// What a block gives back, worked out from its last line when asked: what that line hands
+/// on, `void` for none. DESIGN ›A node's output type is per node, and its parse writes it‹.
 ///
 /// # Safety
 /// `node` must be a scope node from the store.
-unsafe fn tail_output(types: &Core, node: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
     match crate::parse::last_sequence_expr(node) {
         Some(last) => super::read::handed_on(types, last),
         None => types.void_,
     }
-}
-
-/// After a line of a closed sequence was rewritten in place.
-///
-/// # Safety
-/// As [`fill`].
-pub(crate) unsafe fn refresh_output(types: &Core, node: DyadPtr) {
-    *(dyad::value(node) as *mut DyadPtr).add(OUTPUT) = tail_output(types, node);
 }
 
 /// The scope's `dyads`, made empty on first read.
@@ -151,13 +140,8 @@ pub(crate) unsafe fn with_exprs(
 ) -> DyadPtr {
     let slots = dyad::value(node) as *const DyadPtr;
     let lines = array::build(store, types.array_, exprs);
-    let none = std::ptr::null_mut();
-    let copy = store.alloc_words(
-        dyad::ty(node),
-        &[lines, *slots.add(OP), none, *slots.add(PARENT), *slots.add(EXIT)],
-    );
-    refresh_output(types, copy);
-    copy
+    store
+        .alloc_words(dyad::ty(node), &[lines, *slots.add(OP), *slots.add(PARENT), *slots.add(EXIT)])
 }
 
 /// # Safety

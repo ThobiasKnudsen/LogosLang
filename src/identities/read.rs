@@ -155,10 +155,11 @@ pub(crate) unsafe fn handed_on(types: &Core, node: DyadPtr) -> DyadPtr {
 
 /// The type `node` gives back when it runs, read from the node: a place's declared type, a
 /// call's `-> T`, the output a Logos-written type's set was built for, the `output_type` slot
-/// a built-in's parse wrote, `void` for a node that runs and declares no `output_type`; a node
-/// of no other kind is a value and gives back its own type. Null where nothing knows it before
-/// the program runs. DESIGN ›A node's output type is per node, and its parse writes it‹, ›`=`
-/// sits beside `:=`, and returns nothing‹.
+/// a built-in's parse wrote, what an `if`'s arms or a block's last line give, `void` for a
+/// node that runs and declares no `output_type`; a node of no other kind is a value and gives
+/// back its own type. Null where nothing knows it before the program runs. DESIGN ›A node's
+/// output type is per node, and its parse writes it‹, ›`=` sits beside `:=`, and returns
+/// nothing‹.
 ///
 /// # Safety
 /// `node` must be null or a reduced dyad from the store.
@@ -187,6 +188,12 @@ pub unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
         } else {
             *(dyad::value(spec) as *const DyadPtr).add(FN_OUTPUT)
         };
+    }
+    if op == types.if_ {
+        return super::if_mod::output_type(types, node);
+    }
+    if op == types.scope {
+        return super::scope::output_type(types, node);
     }
     match meta::output_slot_of(op) {
         Some(i) => *(dyad::value(node) as *const DyadPtr).add(i),

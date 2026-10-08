@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `if cond then` with an optional `else else`, each branch a bracket or the
-//! next expression: the node is `[cond, then, else, then_ends, else_ends, condition_ends, op,
-//! output_type]`,
+//! next expression: the node is `[cond, then, else, then_ends, else_ends, condition_ends, op]`,
 //! the else slot null when absent, each arm's `_ends` the names it frees at its end because
 //! the other arm moved or freed them, and `condition_ends` both, freed by a condition that
 //! leaves before either arm runs (DESIGN ›`move` and `free` are static: the parse marks the
@@ -29,7 +28,6 @@ const IF_ELSE: usize = 2;
 const IF_THEN_ENDS: usize = 3;
 const IF_ELSE_ENDS: usize = 4;
 const IF_CONDITION_ENDS: usize = 5;
-const IF_OUTPUT: usize = 7;
 
 /// Returns `(identity, leaf, else token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
@@ -38,16 +36,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         meta::TUPLE_TAG,
         meta::prec::READER,
         Assoc::Left,
-        &[
-            "condition",
-            "then",
-            "else",
-            "then_ends",
-            "else_ends",
-            "condition_ends",
-            "op",
-            "output_type",
-        ],
+        &["condition", "then", "else", "then_ends", "else_ends", "condition_ends", "op"],
     );
     let if_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("if", if_);
@@ -76,26 +65,17 @@ pub(crate) fn build(
     els: DyadPtr,
 ) -> DyadPtr {
     let none = std::ptr::null_mut();
-    // SAFETY: `then` and `els` are null or reduced dyads from the store.
-    let output = unsafe { arms_output(types, then, els) };
-    store.alloc_words(types.if_, &[cond, then, els, none, none, none, types.ops.if_, output])
+    store.alloc_words(types.if_, &[cond, then, els, none, none, none, types.ops.if_])
 }
 
-/// After an arm was rewritten in place.
+/// What an `if` gives back, worked out from its arms when asked: their one type, else `void`.
+/// DESIGN ›`if` reads its own right side‹, ›A node's output type is per node, and its parse
+/// writes it‹.
 ///
 /// # Safety
 /// `node` must be an `if` node [`build`] made.
-pub(crate) unsafe fn refresh_output(types: &Core, node: DyadPtr) {
+pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
     let (_, then, els) = branches(node);
-    *(dyad::value(node) as *mut DyadPtr).add(IF_OUTPUT) = arms_output(types, then, els);
-}
-
-/// What the arms give when every one gives the same type, else `void`. DESIGN ›`if` reads its
-/// own right side‹.
-///
-/// # Safety
-/// `then` must be a reduced dyad from the store, `els` null or one.
-unsafe fn arms_output(types: &Core, then: DyadPtr, els: DyadPtr) -> DyadPtr {
     if arms_type(types, then, els) == types.void_ {
         return types.void_;
     }
@@ -105,7 +85,7 @@ unsafe fn arms_output(types: &Core, then: DyadPtr, els: DyadPtr) -> DyadPtr {
 /// The arms' one type before a plain number is handed on, else `void`.
 ///
 /// # Safety
-/// As [`arms_output`].
+/// `then` must be a reduced dyad from the store, `els` null or one.
 unsafe fn arms_type(types: &Core, then: DyadPtr, els: DyadPtr) -> DyadPtr {
     if els.is_null() {
         return types.void_;
@@ -159,7 +139,7 @@ pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, 
         }
     }
     differ?;
-    match *(dyad::value(node) as *const DyadPtr).add(IF_OUTPUT) {
+    match output_type(types, node) {
         out if out == types.void_ => Err(ParseError::ArmsDiffer),
         out => Ok(out),
     }
