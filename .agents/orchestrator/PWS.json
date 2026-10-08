@@ -16860,7 +16860,7 @@
       "W123",
       "W150"
     ],
-    "assessment": "Root fix for W123 and W150: the pair 'flagged and holds a node' is checked at whichever of the two writes comes second, in one place (src/parse/tape.rs set_constructed/set_dyad, reported by run_flag_write/run_write in src/identities/tape.rs), so W127's reader copies of !c.dyad.is_null() and the SAFETY lines 'null or a node' can go and as_operand's trust becomes true. Removes all three flag routes to P31 at dev 5dbf3b2 (flag cell 1; remove(0) then flag 0; tape[0] = tape[1] then flag 0, each exit 139 today). Keeps ›The constructor sets the flag itself; a tape write never sets it‹ (a write refuses, never sets). Leaves W157 (tape[1].type on a fresh spelling crashes with no flag write, exit 139) and W126 (which index may be flagged): other questions decide those. Rust's Cell::built(null) in bodies.rs:1196 must stop flagging null. Small: two setters, two natives, a reader sweep; issue-82-output-type touches driver.rs/operands.rs",
+    "assessment": "Superseded by Thobias's Q82 ruling (9 October 2026, ›An unknown spelling stays text on the tape‹): a fresh spelling is a node of type unknown_name, so under S56 no tape node is ever empty and a write can only store a node; the write check this solution adds would guard a state that no longer exists. Kept for the record; not proposed again. Its earlier assessment: root fix for W123 and W150 by checking the pair 'flagged and holds a node' in ParsingTape's two setters",
     "decision": null,
     "design": [
       "The tape is Logic Graph with a string extension",
@@ -16877,7 +16877,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Root fix for W123 and W150: the pair 'flagged and holds a node' is checked at whichever of the two writes comes second, in one place (src/parse/tape.rs set_constructed/set_dyad, reported by run_flag_write/run_write in src/identities/tape.rs), so W127's reader copies of !c.dyad.is_null() and the SAFETY lines 'null or a node' can go and as_operand's trust becomes true. Removes all three flag routes to P31 at dev 5dbf3b2 (flag cell 1; remove(0) then flag 0; tape[0] = tape[1] then flag 0, each exit 139 today). Keeps ›The constructor sets the flag itself; a tape write never sets it‹ (a write refuses, never sets). Leaves W157 (tape[1].type on a fresh spelling crashes with no flag write, exit 139) and W126 (which index may be flagged): other questions decide those. Rust's Cell::built(null) in bodies.rs:1196 must stop flagging null. Small: two setters, two natives, a reader sweep; issue-82-output-type touches driver.rs/operands.rs\"",
+        "reason": "Q82 (9 Oct 2026): a fresh spelling is a node of type unknown_name, so the tape holds no empty node"
+      }
+    ]
   },
   {
     "id": "S38",
@@ -16913,7 +16923,7 @@
     "fixes": [
       "W157"
     ],
-    "assessment": "Root fix for W157: one rule for the read, from ›What still holds of the old lifecycle‹ ('undefined is a null slot, and reading it is a checked error') and the 25 September line that a read needing more than a cell has is 'the error it is on any cell without one'. Lands once in read_cell/run_slot (src/identities/tape.rs), so tape[1].type and tape[0] = tape[1] on a fresh spelling (exit 139 at dev 5dbf3b2) become errors, and no null pointer can reach a tape write any more. A Logos constructor still tells a fresh spelling apart without a fault through tape.spelling[k] and tape.is_constructed[k]; nothing in identities/*.logos reads tape[k] of a fresh spelling. Leaves W123/W150 (a flag write on a fresh cell needs no read) and W126",
+    "assessment": "Superseded by Thobias's Q82 ruling (9 October 2026): its premise, a fresh spelling's node holding nothing, no longer holds; Thobias: 'an undefined node like zz does not have no type. it should have the unknown_name type'. Under S56 tape[k] gives unknown_name itself and reads without error. Not proposed again",
     "decision": null,
     "design": [
       "What still holds of the old lifecycle",
@@ -16930,7 +16940,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Root fix for W157: one rule for the read, from ›What still holds of the old lifecycle‹ ('undefined is a null slot, and reading it is a checked error') and the 25 September line that a read needing more than a cell has is 'the error it is on any cell without one'. Lands once in read_cell/run_slot (src/identities/tape.rs), so tape[1].type and tape[0] = tape[1] on a fresh spelling (exit 139 at dev 5dbf3b2) become errors, and no null pointer can reach a tape write any more. A Logos constructor still tells a fresh spelling apart without a fault through tape.spelling[k] and tape.is_constructed[k]; nothing in identities/*.logos reads tape[k] of a fresh spelling. Leaves W123/W150 (a flag write on a fresh cell needs no read) and W126\"",
+        "reason": "Q82 (9 Oct 2026): a fresh spelling is a node of type unknown_name"
+      }
+    ]
   },
   {
     "id": "S40",
@@ -16940,7 +16960,7 @@
     "fixes": [
       "W157"
     ],
-    "assessment": "Also removes W157's crash, and gives a constructor a no-fault test for a fresh spelling. But it reverses the 29 September 2026 ruling of ›An unknown spelling stays text on the tape‹ ('The cell holds the spelling and no node', #166) and ›Unknown spellings are two pattern identities‹ ('Each leaves the cell holding its spelling and no node'), and a flagged pattern cell would then pass every node check as a value nobody declared, so W123 would need its own rule anyway. Bigger (lexer, driver, :=) and not recommended",
+    "assessment": "Superseded by Thobias's Q82 ruling (9 October 2026), which takes its direction further: not the word or symbol-run pattern itself, but one type unknown_name that both patterns name; S56 carries that form. Its premise that this reverses the 29 September form is now the ruling itself. Not proposed again",
     "decision": null,
     "design": [
       "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
@@ -16957,7 +16977,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Also removes W157's crash, and gives a constructor a no-fault test for a fresh spelling. But it reverses the 29 September 2026 ruling of ›An unknown spelling stays text on the tape‹ ('The cell holds the spelling and no node', #166) and ›Unknown spellings are two pattern identities‹ ('Each leaves the cell holding its spelling and no node'), and a flagged pattern cell would then pass every node check as a value nobody declared, so W123 would need its own rule anyway. Bigger (lexer, driver, :=) and not recommended\"",
+        "reason": "Q82 (9 Oct 2026): a fresh spelling is a node of type unknown_name"
+      }
+    ]
   },
   {
     "id": "S41",
@@ -16967,7 +16997,7 @@
     "fixes": [
       "W126"
     ],
-    "assessment": "Settles W126 on the side of ›Two levels‹ ('none is ever assigned (one exception, ruled 19 September 2026: a constructor writes its own cell's flag, tape.is_constructed[0] = true …)', Thobias) and strikes 'tape.is_constructed[k] = …' from the Open line of ›A tape[k] read past the lexed frontier‹ (Claude's, open to Thobias). Matches every flag write in identities/*.logos, tests/fixtures and tests/cli.rs except the P31 test at cli.rs:2878. Makes run_ctor's judgment of the own cell the only judgment a flag gets; today a flag on cell 1 is judged by nobody (x := 3, … h x, 5 prints 5). Lands in run_flag_write (src/identities/tape.rs), which then needs the own cell's mark from the driver. Alone it does not stop P31's crash: remove(0) moves a fresh spelling into index 0, which only the 'removed its own cell' clause or S37 refuses; W123, W150 and W157 need the other questions",
+    "assessment": "Settles W126 on the side of ›Two levels‹ (Thobias, 19 September 2026: 'a constructor writes its own cell's flag, tape.is_constructed[0] = true'), the Open line of ›A tape[k] read past the lexed frontier‹ being Claude's proposal; decided so by the orchestrator in Q82, which Thobias did not read, so it is asked again for his ok. Under S56 a flag on another node no longer crashes, but it hides an error: h flagging zz makes zz stand as unknown_name, so 'unknown name zz' is never reported and the line runs; x := 3 … h x, 5 already prints 5 with x's constructor never run. Lands in run_flag_write (src/identities/tape.rs), which needs the own node's mark from the driver; every flag write in identities/*.logos and the tests writes index 0 except the P31 test (tests/cli.rs:2878)",
     "decision": null,
     "design": [
       "Two levels: the binding is the lex level, the dyad is the value level",
@@ -16984,7 +17014,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Settles W126 on the side of ›Two levels‹ ('none is ever assigned (one exception, ruled 19 September 2026: a constructor writes its own cell's flag, tape.is_constructed[0] = true …)', Thobias) and strikes 'tape.is_constructed[k] = …' from the Open line of ›A tape[k] read past the lexed frontier‹ (Claude's, open to Thobias). Matches every flag write in identities/*.logos, tests/fixtures and tests/cli.rs except the P31 test at cli.rs:2878. Makes run_ctor's judgment of the own cell the only judgment a flag gets; today a flag on cell 1 is judged by nobody (x := 3, … h x, 5 prints 5). Lands in run_flag_write (src/identities/tape.rs), which then needs the own cell's mark from the driver. Alone it does not stop P31's crash: remove(0) moves a fresh spelling into index 0, which only the 'removed its own cell' clause or S37 refuses; W123, W150 and W157 need the other questions\"",
+        "reason": "Q82 (9 Oct 2026): under S56 a foreign flag no longer crashes but hides the unknown-name error; the orchestrator's decision was not seen by Thobias"
+      }
+    ]
   },
   {
     "id": "S42",
@@ -18905,7 +18945,9 @@
     "expected": "7 in about the time dev takes (0.01 s): nothing is called, so each function's body is walked once, not once per path into it",
     "tier": "interpreted",
     "found": "logoslang-issue-82-review-4 (finding I, comment 6069556531), branch 080906e: the ownership walk goes into the body of every function an arm calls",
-    "why": null,
+    "why": [
+      "W205"
+    ],
     "issue": 82,
     "fixed": null,
     "made": {
@@ -18917,7 +18959,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T00:45+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fca360c",
+        "change": "why + W205",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P113",
@@ -19181,5 +19233,309 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P116",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch a recursive maker whose else arm binds its own call to a name is refused as mixing made and borrowed arms, though both arms make their value",
+    "program": "mk := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else ( x := mk(n - 1), x ) ), y := mk(3), print «{y@}»",
+    "output": "error: make a value in every arm, or borrow in every arm (branch issue-82-output-type c32cf74); dev runs it and leaks the value; the same with move x and with the boxed fixture",
+    "expected": "5, with the value freed when y's life ends: both arms make their value (›`move` and `free` are static: the parse marks the name dead‹, Ruled 8 October 2026, Thobias, Q72: an if makes in every arm or borrows in every arm)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-5, branch c32cf74, row 1 of comment 6069945355: the ownership walk stops at a call to itself, so a name bound to it owns nothing and reads as a borrow",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T00:06+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d9a7fb7",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P117",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch an if whose one arm calls a function that makes its value and whose other arm borrows is accepted, and the made block leaks, when the walk cannot see through the call",
+    "program": "mk as in the problem above, c := i32 1, y := i32 4, x := if (c == 1) (mk(3)) else (&y)   (with a chain of 15 calling functions in place of mk(3) it is refused; with 40 it is accepted)",
+    "output": "accepted, and the block mk made is never freed (branch issue-82-output-type c32cf74); dev refuses the line for another reason",
+    "expected": "refused where it is written, \"make a value in every arm, or borrow in every arm\" (›`move` and `free` are static: the parse marks the name dead‹, Ruled 8 October 2026, Thobias, Q72)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-5, branch c32cf74, row 2 of comment 6069945355: the walk stops at a call to itself and after 32 levels of calls",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T00:06+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d9a7fb7",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P118",
+    "kind": "problem",
+    "status": "open",
+    "text": "On the issue 82 branch an if whose arms both make their value, one through a recursive call, is accepted but the name it binds owns nothing, so the value leaks",
+    "program": "mk as in the problems above, c := i32 1, x := if (c == 1) (mk(3)) else (alloc 1 of i32 6)",
+    "output": "accepted, and x owns nothing, so the value is never freed (branch issue-82-output-type c32cf74)",
+    "expected": "accepted, and x owns the made value and frees it when its life ends (›`move` and `free` are static: the parse marks the name dead‹, Q72)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-5, branch c32cf74, row 3 of comment 6069945355",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T00:06+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d9a7fb7",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S56",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A fresh spelling lexes like every spelling: the word and symbol-run patterns are names of one type, unknown_name, so the tape holds unknown_name itself, unbuilt, for zz (its text in tape.spelling[k]), as it holds the number pattern for 5; unknown_name's parse, at the lowest parse_rank, is the error 'unknown name zz'; regex «…» gives a node of type unknown_name holding the literal or the pattern; := takes its name from either",
+    "fixes": [
+      "W123",
+      "W150",
+      "W157"
+    ],
+    "assessment": "Root fix for W123, W150 and W157, from Thobias's Q82 ruling (9 Oct, ›An unknown spelling stays text on the tape‹): no tape node is ever empty, because the lexer keeps the binding the trie already finds for the two fresh-spelling patterns (src/identities/fresh.rs mints them; src/parse/lex.rs:63 throws it away for null) instead of a null. All four P31 routes stop crashing at dev 35cdb52: flagging zz makes it stand as unknown_name, like a declined i32; tape[1].type is type; tape[0] = tape[1] copies unknown_name. Deletes the null branch, the reader null checks W127/W135 name, and the leftover check's fresh-spelling case (now unknown_name's own parse); S37's write check is not needed. Every is_fresh() reader (operands.rs, fields.rs, declare.rs, types.rs, lex.rs) asks one predicate, 'its identity is unknown_name'; the REPL feed's re-resolution (feed_resolve) and its unbuilt-name null must keep working; regex_ merges into unknown_name. Leaves W126 (S41): without it a constructor can flag zz and hide the error. Medium; issue-82-output-type touches driver.rs/operands.rs",
+    "decision": null,
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
+      "Unknown spellings are two pattern identities",
+      "A pattern identity is declared `regex «…» := type (…)`"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T00:21+02:00",
+      "by": "logoslang-solve-W123",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "35cdb52",
+      "run": "solve-W123",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S57",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Each fresh spelling lexes to a new node of type unknown_name whose value is its text; tape[k] gives that node",
+    "fixes": [
+      "W123",
+      "W150",
+      "W157"
+    ],
+    "assessment": "Also removes every null from the tape and gives a constructor the text through the node. But it makes one graph node per fresh word at lex time, in the store that persists while the tape is thrown away (›The tape is Logic Graph‹: 'The tape is throwaway'); it keeps the text twice, in the node and in tape.spelling[k]; it builds a value before any constructor runs, unlike every other spelling (5 is built by its pattern's parse); and the unknown-name error then needs a new check on unknown_name values reaching an operand or a line's end, a special case. Not recommended over S56",
+    "decision": null,
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T00:21+02:00",
+      "by": "logoslang-solve-W123",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "35cdb52",
+      "run": "solve-W123",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Also removes every null from the tape and gives a constructor the text through the node. But it makes one graph node per fresh word at lex time, in the store that persists while the tape is thrown away (›The tape is Logic Graph‹: 'The tape is throwaway'); it keeps the text twice, in the node and in tape.spelling[k]; it builds a value before any constructor runs, unlike every other spelling (5 is built by its pattern's parse); and the unknown-name error then needs a new check on unknown_name values reaching an operand or a line's end, a special case. Not recommended over S43\"",
+        "reason": "the recommended solution's id is S56, not S43"
+      }
+    ]
+  },
+  {
+    "id": "W204",
+    "kind": "why",
+    "status": "merged",
+    "text": "moved_out keeps no answer per function: at each call it meets it walks the callee's FN_BODY again, and at an if with an else it walks both arms, so the walk handed_ends starts at each fn's close (fn_over_body) visits f(k-1)'s body twice and f(k-2)'s four times, one walk per path through the chain, 2^k; handed_ends asks it twice per arm (directly and through teardown_of)",
+    "proposed_for": "P112",
+    "why": null,
+    "anchors": [
+      "moved_out",
+      "handed_ends",
+      "teardown_of",
+      "owning_pointee_of",
+      "fn_over_body",
+      "FN_BODY",
+      "src/identities/drop_model.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "Reading a program takes time in step with its size; no walk runs once per path",
+      "`move` and `free` are static: the parse marks the name dead"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'logos == types.if_|let then_out = moved_out|match moved_out\\(types, els|FN_BODY\\);|moved_out\\(types, body, depth \\+ 1\\)|handed_ends\\(self.types, body\\)|moved_out\\(types, node, 0\\) == Out::Unknown|teardown_of\\(types, node\\) != Teardown::Nothing' src/identities/drop_model.rs src/parse/bodies.rs; git show dev:src/identities/drop_model.rs | rg -n 'fn moves_out_within|FN_BODY|moves_out_within\\(types, body'",
+        "output": "src/parse/bodies.rs:540: unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?;   (in fn_over_body, when output != void)\nsrc/identities/drop_model.rs:930: if logos == types.if_ {\nsrc/identities/drop_model.rs:936: let then_out = moved_out(types, then, depth);\nsrc/identities/drop_model.rs:940: return match moved_out(types, els, depth) {\nsrc/identities/drop_model.rs:960: let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);\nsrc/identities/drop_model.rs:961: return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };\nsrc/identities/drop_model.rs:1056: if !has_end || moved_out(types, node, 0) == Out::Unknown {\nsrc/identities/drop_model.rs:1059: Ok(Some(teardown_of(types, node) != Teardown::Nothing))   (teardown_of -> owning_pointee_of -> moved_out again)\n---dev: moves_out_within (lines 895-940) has no if arm; an if gives false, so its walk stops there---\n935: let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);\n936: return !body.is_null() && moves_out_within(types, body, depth + 1);",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "c32cf74, release: gdb -batch -nx -ex 'break seed::identities::drop_model::moved_out' -ex 'break seed::identities::drop_model::handed_ends' -ex 'ignore 1 100000000' -ex 'ignore 2 100000000' -ex run -ex 'info breakpoints' --args target/release/logos \"<line>\" for each line of why-probes/count.txt (chain of 8 and 10 fns, both arms calling; 10 fns, then arm only)",
+        "output": "both-arms-8: 7; moved_out hit 8045 times, handed_ends 49\nboth-arms-10: 7; moved_out hit 32591 times, handed_ends 61\nthen-arm-only-10: 7; moved_out hit 675 times, handed_ends 61\n(moved_out x4 for two more functions; handed_ends grows by 6 per function)",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "c32cf74, interpreted, release: timeout 60 target/release/logos \"<line>\", timed, for each line of why-probes/chain.txt",
+        "output": "both-arms-12: 7 (0.015 s)\nboth-arms-16: 7 (0.026 s)\nboth-arms-20: 7 (0.263 s)\nboth-arms-22: 7 (1.039 s)\nthen-arm-only-22 (else arm is alloc 1 of i32 1): 7 (0.013 s)\ni32-result-22 (f0 := fn () -> i32 ( 5 ), arms call f(k-1), -> i32; handed_ends returns before moved_out, no end): 7 (0.013 s)",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W205",
+    "made": {
+      "at": "2026-10-09T00:36+02:00",
+      "by": "logoslang-why-P112-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T00:45+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fca360c",
+        "change": "merged into W205",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W205",
+    "kind": "why",
+    "status": "accepted",
+    "text": "moved_out walks both arms of an if and, at every call, the callee's whole FN_BODY again, keeping no answer per function, so the walk handed_ends starts on f_n's arm calls reaches f0's body once per path, 2^n times; MOVES_OUT_DEPTH caps depth (one per function), not paths",
+    "proposed_for": "P112",
+    "why": null,
+    "anchors": [
+      "moved_out",
+      "handed_ends",
+      "teardown_of",
+      "owning_pointee_of",
+      "FN_BODY",
+      "MOVES_OUT_DEPTH",
+      "src/identities/drop_model.rs",
+      "fn_over_body",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "Reading a program takes time in step with its size; no walk runs once per path",
+      "`move` and `free` are static: the parse marks the name dead"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'moved_out\\(types, (then|els|body), depth' src/identities/drop_model.rs",
+        "output": "936:        let then_out = moved_out(types, then, depth);\n940:        return match moved_out(types, els, depth) {\n961:            return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "git show origin/dev:src/identities/drop_model.rs | sed -n '895,940p' | rg -c 'types.if_' || echo 0   (dev's moves_out_within: no if case, so dev's walk stops at an if)",
+        "output": "0",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "for n in 1 2 3 4 8; do bash why-probes/gdb-chain.sh $n why-probes/count.gdb | rg 'already hit'; done   (breakpoints 1 moved_out, 2 handed_ends; chain of n functions)",
+        "output": "n=1: moved_out 22, handed_ends 7\nn=2: moved_out 71, handed_ends 13\nn=3: moved_out 184, handed_ends 19\nn=4: moved_out 425, handed_ends 25\nn=8: moved_out 8045, handed_ends 49",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "bash why-probes/gdb-chain.sh 2 why-probes/regs.gdb | rg 'rdx=' | sort | uniq -c   (rdx = moved_out's depth argument)",
+        "output": "23 rdx=0\n32 rdx=1\n16 rdx=2",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "bash why-probes/variants.sh 22   (each f_i := fn () <body>, PREV = f_{i-1})",
+        "output": "both-arms  -> @i32 ( if (c == 1) (PREV()) else (PREV()) )          out=7 time=1.013s\nthen-only  -> @i32 ( if (c == 1) (PREV()) else (alloc 1 of i32 6) ) out=7 time=0.013s\nno-if      -> @i32 ( PREV() )                                         out=7 time=0.012s\ni32-both   -> i32 ( if (c == 1) (PREV()) else (PREV()) ), f0 -> i32 out=7 time=0.012s",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "for n in 21 22 23; do bash why-probes/chain.sh $n; done",
+        "output": "n=21 out=7 exit=0 time=0.520s\nn=22 out=7 exit=0 time=0.973s\nn=23 out=7 exit=0 time=1.952s",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "rg -n 'logos == types.if_|let then_out = moved_out|match moved_out\\(types, els|FN_BODY\\);|moved_out\\(types, body, depth \\+ 1\\)|handed_ends\\(self.types, body\\)|moved_out\\(types, node, 0\\) == Out::Unknown|teardown_of\\(types, node\\) != Teardown::Nothing' src/identities/drop_model.rs src/parse/bodies.rs; git show dev:src/identities/drop_model.rs | rg -n 'fn moves_out_within|FN_BODY|moves_out_within\\(types, body'",
+        "output": "src/parse/bodies.rs:540: unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?;   (in fn_over_body, when output != void)\nsrc/identities/drop_model.rs:930: if logos == types.if_ {\nsrc/identities/drop_model.rs:936: let then_out = moved_out(types, then, depth);\nsrc/identities/drop_model.rs:940: return match moved_out(types, els, depth) {\nsrc/identities/drop_model.rs:960: let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);\nsrc/identities/drop_model.rs:961: return if body.is_null() { Out::Unknown } else { moved_out(types, body, depth + 1) };\nsrc/identities/drop_model.rs:1056: if !has_end || moved_out(types, node, 0) == Out::Unknown {\nsrc/identities/drop_model.rs:1059: Ok(Some(teardown_of(types, node) != Teardown::Nothing))   (teardown_of -> owning_pointee_of -> moved_out again)\n---dev: moves_out_within (lines 895-940) has no if arm; an if gives false, so its walk stops there---\n935: let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);\n936: return !body.is_null() && moves_out_within(types, body, depth + 1);",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "c32cf74, release: gdb -batch -nx -ex 'break seed::identities::drop_model::moved_out' -ex 'break seed::identities::drop_model::handed_ends' -ex 'ignore 1 100000000' -ex 'ignore 2 100000000' -ex run -ex 'info breakpoints' --args target/release/logos \"<line>\" for each line of why-probes/count.txt (chain of 8 and 10 fns, both arms calling; 10 fns, then arm only)",
+        "output": "both-arms-8: 7; moved_out hit 8045 times, handed_ends 49\nboth-arms-10: 7; moved_out hit 32591 times, handed_ends 61\nthen-arm-only-10: 7; moved_out hit 675 times, handed_ends 61\n(moved_out x4 for two more functions; handed_ends grows by 6 per function)",
+        "commit": "c32cf74"
+      },
+      {
+        "command": "c32cf74, interpreted, release: timeout 60 target/release/logos \"<line>\", timed, for each line of why-probes/chain.txt",
+        "output": "both-arms-12: 7 (0.015 s)\nboth-arms-16: 7 (0.026 s)\nboth-arms-20: 7 (0.263 s)\nboth-arms-22: 7 (1.039 s)\nthen-arm-only-22 (else arm is alloc 1 of i32 1): 7 (0.013 s)\ni32-result-22 (f0 := fn () -> i32 ( 5 ), arms call f(k-1), -> i32; handed_ends returns before moved_out, no end): 7 (0.013 s)",
+        "commit": "c32cf74"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "moved_out keeps no answer per function: at each call it meets it walks the callee's FN_BODY again, and at an if with an else it walks both arms, so the walk handed_ends starts at each fn's close (fn_over_body) visits f(k-1)'s body twice and f(k-2)'s four times, one walk per path through the chain, 2^k; handed_ends asks it twice per arm (directly and through teardown_of)"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T00:45+02:00",
+      "by": "logoslang-why-P112-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c32cf74",
+      "run": "why-P112",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T00:45+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fca360c",
+        "change": "accepted as a why of P112, same as W204",
+        "reason": null
+      }
+    ]
   }
 ]

@@ -331,7 +331,8 @@ Nothing moved from this section.
 
 ## Error handling
 
-### Target: errors are values (`T!`), handled by `match`, passed on by `try`
+### Target: errors are values (`T!`), handled by `if`, passed on by `try` (handled by `match` until 9 October 2026)
+- **History:** 30 August to 9 October 2026: "Callers handle results with `match`", and `try` was "sugar over `match`"; `match` had no form written. Superseded by Q62 (Thobias, 9 October 2026), since `if` does the same job and a library can still define a `match`: "why not just NOT have match at all? i dont see why not if else can be used instead." What `match` alone gave, a name for the piece it finds that exists only in its own arm, is given up.
 - **Seed detail (27 September 2026):** none of it in v0.1.0 (see next rules). It lands later as library and driver work over tagged unions; these shapes stay the target.
 
 ### Target: a constructor returns `void!`, so a user's syntax error is a recoverable value
@@ -901,6 +902,7 @@ Nothing moved from this section.
 
 ### An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value
 - **History:** until 29 September 2026 the heading read ›An unknown spelling lexes to a fresh dyad with both slots `undefined`‹ (ruled 2 September 2026): "The cell holds a pointer to the fresh dyad; the spelling is kept tape-side. `:=` fills that dyad and enters the spelling into the trie at declaration (`key := ?` of *Declarations are immutable by default* binds exactly such a dyad)." It was the one rule that made a node before its type. Superseded by the one-word node (#166), which cannot fill a node born without its size; the binding is the early home instead. Seed at the ruling: the fresh null node in src/parse/lex.rs and the placeholder copy in declare_here (src/parse/declare.rs, the first half of #179) were what this rule licensed.
+- **History:** from 29 September to 9 October 2026 the rule's first sentence read "The cell holds the spelling and no node." Superseded by Q82 (9 October 2026): a fresh spelling is a node of type `unknown_name`, with a type and a value like any other. Thobias did not recognise the 29 September form as his: "i dont even know what a cell is so i dont think i made this rule consciouslly then". The null pointer this form left in the tape is what four ways of making a constructor crash read (P31).
 
 ## Identity recognition
 
