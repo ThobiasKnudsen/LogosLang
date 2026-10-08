@@ -18581,5 +18581,29 @@
         "reason": "A and C, blind: no point has a place in a scope's body order and the walk DESIGN names was never written, so only the frontier can be asked"
       }
     ]
+  },
+  {
+    "id": "P109",
+    "kind": "problem",
+    "status": "open",
+    "text": "A `return` inside an `immediate` in a function body runs while the body is parsed, with no call to leave: it is passed over, and the lines after it go on running",
+    "program": "f := fn () -> i32 ( k := immediate ( print «a», if (1 < 2) (return 5), 7 ), k ), print «{f()}»",
+    "output": "a\n7\nexit 0",
+    "expected": "an error where the `return` is written, as at the top level (`k := immediate ( print «a», if (1 < 2) (return 5), 7 ), print «{k}»` is refused at the `return` word): an `immediate` runs where it is written, while no call of `f` runs, and one whose operand needs what a call supplies is an error where it is written (›`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value‹); `return` exits the enclosing function (›A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function‹), and here there is no call of it to exit",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-4, on dev 5dbf3b2 and branch issue-82-output-type alike; the run branch is src/identities/return.rs:87 (if !rt.in_call() { return Ok(value); })",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T23:38+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "40a62ca",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
