@@ -2933,7 +2933,9 @@
     "expected": "The checked error, as a single wall of brackets gets (`if true (` and 2,500 `(` is \"scopes nested deeper than 2000\"), or the program runs; never an abort. DESIGN has no rule on nesting depth; ›A checked error is a fault: the task that hit it is cancelled‹",
     "tier": "interpreted",
     "found": "queue nested-context-depth: #233 review round 2 (session bf1d53eb, 30 September 2026, dev 67f873e and #233's branch at 224ea38), recorded in rca-queue.md; rerun by logoslang-pws-migration on dev 9fc7634, release, the generator ~/.claude/orchestrate/state/logoslang/pws-migration/nested-context-depth.py",
-    "why": null,
+    "why": [
+      "W120"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -2954,6 +2956,15 @@
         "commit": "9c123fb",
         "change": "program was \"python3 nested-context-depth.py target/release/logos 18 1990   (17 is the control; the generator prints the exit code and two lines of output)\\n\\nimport subprocess, sys\\nBIN, N, DEPTH = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])\\ndef ty(i, body):\\n    return (f\\\"t{i} := type (a := i32 ?, share run = ( {body} ), \\\"\\n            f\\\"share parse_rank = *.parse_rank + 1, \\\"\\n            f\\\"share parse = ( tape[0]:type = t{i}, tape[0].a = tape[-1], \\\"\\n            f\\\"tape.is_constructed[0] = true, tape.remove(-1) ))\\\")\\nlines = [ty(N, \\\"print «leaf»\\\")]\\nfor i in range(N - 1, -1, -1):\\n    lines.append(ty(i, \\\"(\\\" * DEPTH + f\\\"3 t{i + 1}\\\" + \\\")\\\" * DEPTH))\\nlines.append(\\\"3 t0\\\")\\np = subprocess.run([BIN, \\\", \\\".join(lines)], capture_output=True, text=True)\\nprint(p.returncode, (p.stdout + p.stderr).strip().splitlines()[:2])\"",
         "reason": "dev renamed x:type to x.type on 1 October (#215, 0388214); the old spelling is now refused as written. Respelled, the program gives the recorded failure again on dev b101dfd (logoslang-help-3's rerun, 8 Oct 2026)"
+      },
+      {
+        "at": "2026-10-08T22:03+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "why + W120",
+        "reason": null
       }
     ]
   },
@@ -6039,7 +6050,9 @@
     "expected": "a checked error with a message (exit 1), never a crash: ›The tape is Logic Graph with a string extension‹, \"A constructed cell is already a graph dyad\"",
     "tier": "interpreted (command line); the analysis saw the same crash on every entry point and in the compiled tier, the REPL alone giving a checked error",
     "found": "logoslang-rca-constructed-null-cell-worker (session cf0f45fd), RCA constructed-null-cell, 30 September 2026, dev 1f68f83, first seen by the #225 worker; about twenty programs crash this way (RCA.md §4); rerun by Orchestrator (2) on dev bb1c561, release",
-    "why": null,
+    "why": [
+      "W112"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -6051,7 +6064,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:03+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "why + W112",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P32",
@@ -8452,7 +8475,10 @@
     "expected": "`8`: the parse filled `rhs` with what `lhs` holds, the parameter `x` (4), as the top level gives `6` for `x := i32 3` and the function gives `8` with `tape[0].rhs = tape[-1]`. DESIGN ›A parse connects each operand to a field by name and removes the cells it took‹: \"the parse writes `tape[0].lhs = tape[-1]` and removes the consumed cells\".",
     "tier": "interpreted and compiled",
     "found": "logoslang-issue-215-review-1, reviewing #215, on dev b4c6bf4 (release built from git archive) and on issue-215-type-dot-rename spelled `.type`; rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build)",
-    "why": null,
+    "why": [
+      "W16",
+      "W111"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -8473,6 +8499,24 @@
         "commit": "9c123fb",
         "change": "program was \"pr := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, share run = ( lhs + rhs ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = pr, tape[0].lhs = tape[-1], tape[0].rhs = tape[0].lhs, tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) ), f := fn (x := i32 ?) -> i32 ( x pr ), f(4)\"",
         "reason": "dev renamed x:type to x.type on 1 October (#215, 0388214); the old spelling is now refused as written. Respelled, the program gives the recorded failure again on dev b101dfd (logoslang-help-3's rerun, 8 Oct 2026)"
+      },
+      {
+        "at": "2026-10-08T22:02+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "why + W16",
+        "reason": "both why agents report existing W16 and reran its evidence on dev 9c123fb: tape[0].rhs = tape[0].lhs becomes a this.store that keeps the bits read in the parse"
+      },
+      {
+        "at": "2026-10-08T22:02+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "why + W111",
+        "reason": null
       }
     ]
   },
@@ -11046,6 +11090,768 @@
         "commit": "896f9a6",
         "change": "why + W103",
         "reason": "W103 states the cause: CLAUDE.md's general rules send records to fixed homes, a ruling to KNOWLEDGE.md, instead of to the home the session's own rules name"
+      }
+    ]
+  },
+  {
+    "id": "W110",
+    "kind": "why",
+    "status": "draft",
+    "text": "as_operand, the one seam every constructor and construct_segment read operands through, returns a cell's dyad unread whenever Cell::constructed is true, so a flagged cell holding null leaves the segment as the line's item and close_line (or declare_here for :=, numtype_of for +) dereferences it; the leftover-cell error for an undeclared spelling (resolve_fresh, unknown name) is the other arm of the same match and never runs; only two readers (construct_segment's comment lift, the woke read in src/parse/fields.rs) check the null themselves",
+    "proposed_for": "P31",
+    "why": null,
+    "anchors": [
+      "as_operand",
+      "construct_segment",
+      "close_line",
+      "declare_here",
+      "numtype_of",
+      "resolve_fresh",
+      "src/parse/operands.rs",
+      "src/parse/driver.rs",
+      "src/parse/fields.rs"
+    ],
+    "design": [
+      "The tape is Logic Graph with a string extension",
+      "A constructor's outcome is read off its own cell; no holding, no re-invocation"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "gdb -batch -ex run -ex bt --args target/debug/logos '<P31 program>' (dev 9c123fb, debug build)",
+        "output": "panicked at src/identities/dyad.rs:29:5 (null pointer dereference)\n#12 seed::identities::dyad::ty (p=0x0) at src/identities/dyad.rs:29\n#13 seed::parse::Parser::close_line (item=0x0) at src/parse/bodies.rs:1342\n#15 logos::run_line at src/main.rs:154",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "sed -n 190,194p src/parse/operands.rs; rg -n 'constructed && !c\\.dyad\\.is_null|c if c\\.constructed =>' src/parse",
+        "output": "pub(crate) fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {\n    match cell {\n        c if c.constructed => Ok(c.dyad),\n        c => { let (id, binding) = if c.is_fresh() { match self.resolve_fresh(c.spelling()) {\nsrc/parse/operands.rs:193:            c if c.constructed => Ok(c.dyad),\nsrc/parse/fields.rs:694:        let woke = tape.at(-1).filter(|c| c.constructed && !c.dyad.is_null()).map(|c| c.dyad);\nsrc/parse/driver.rs:292:                    c.constructed && !c.dyad.is_null() && unsafe { dyad::ty(c.dyad) } == comment_",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "target/release/logos on: 'H, x := h zz, 5' and 'H, 1 + h zz, 5' (H = the P31 type h), then gdb frame #13 of each (debug)",
+        "output": "both: exit 139 (release)\nx := h zz, 5  -> #13 seed::parse::Parser::declare_here at src/parse/declare.rs:641 (dyad::ty p=0x0)\n1 + h zz, 5   -> #13 seed::identities::Core::logos_of (p=0x0), #14 numtype_of (node=0x0)\nh 7, 5 (a cell that already holds a node, flagged the same way) -> 5, exit 0",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:01+02:00",
+      "by": "logoslang-why-P31-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P31",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W111",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A function's local is read at the innermost activation whatever call that is: `Runtime::place_addr` matches `Frame::Call(_)`, dropping the function the binding names, and takes `frame_base()`, and `Activation` keeps only a base, so a parse that runs the read of `x` (W16's `store`) while its own call is innermost reads the parse call's frame at `x`'s offset instead of failing with `NoActivation`",
+    "proposed_for": "P47",
+    "why": null,
+    "anchors": [
+      "place_addr",
+      "frame_base",
+      "Activation",
+      "Frame",
+      "in_call",
+      "src/run.rs",
+      "run_logos_body",
+      "NoActivation"
+    ],
+    "design": [
+      "A scope lays out its declarations; a use reaches the offset through its binding"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 689,698p src/run.rs; sed -n 329,333p src/run.rs",
+        "output": "        let node = self.through(node);\n        match self.types.frame_of(node) {\n            Some((crate::binding::Frame::Root, off)) => Some(self.store.arena_at(off)),\n            Some((crate::binding::Frame::Call(_), off)) => {\n                self.in_call().then(|| self.frame_base().add(off))\n            }\n            // A literal's own bytes.\n            None => Some(dyad::value(node)),\n        }\n    }\nstruct Activation {\n    /// The frame's base: a place reads `base + offset`.\n    base: *mut u8,\n    cursors: Vec<(DyadPtr, usize)>,\n}",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "logos '<pr with tape[0].rhs = tape[0].lhs>, f := fn (x := i32 ?) -> i32 ( x pr ), f(4)'; same with ( y := i32 5, y pr ); same at top level x := i32 3, x pr; and mut x := i32 3, g := fn () -> i32 ( x pr ), x = 10, g() (pr as in P47)",
+        "output": "f(4), x a parameter (Frame::Call): -1706254236, exit 0\nlocal y := i32 5 (Frame::Call): 32711, exit 0\ntop level x := i32 3 (Frame::Root): 6, exit 0\ntop-level x set to 10 after the parse: 13, exit 0 (tape[0].rhs = tape[-1] gives 20): rhs kept the parse-time 3, so the parse ran the read (W16), and a Root place reads correctly at parse time\nliteral 7 pr in f: 14, exit 0",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "rg -n 'fn in_call|activations.len\\(\\) > 1|Frame::Call\\(_\\), off\\)\\) =>|in_call\\(\\)\\.then|Activation::new\\(base\\)' src/run.rs; rg -n 'build_call\\(self.rt.store, f, &\\[handle, this_arg\\]\\)|self.run_on_pass\\(call\\)' src/parse/driver.rs",
+        "output": "src/run.rs:670:    pub(crate) fn in_call(&self) -> bool {\nsrc/run.rs:671:        self.activations.len() > 1\nsrc/run.rs:693:            Some((crate::binding::Frame::Call(_), off)) => {\nsrc/run.rs:694:                self.in_call().then(|| self.frame_base().add(off))\nsrc/run.rs:776:        self.activations.push(Activation::new(base));\nsrc/parse/driver.rs:885:        let call = build_call(self.rt.store, f, &[handle, this_arg]);\nsrc/parse/driver.rs:889:        let out = unsafe { self.run_on_pass(call) };",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "why-probes/p47.txt: the P47 program run three times, and with a local y := i32 4 in place of the parameter, and at top level",
+        "output": "f(4): -225058716 / 1055543396 (after f.compile()) / 1602048100\nf := fn () -> i32 ( y := i32 4, y pr ), f(): 200302692\ntop level x := i32 3, x pr: 6 (a Frame::Root place, read at the arena)",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "Runtime::place_addr reads a Frame::Call place at the innermost activation's base whatever function that activation runs (Activation keeps no function, in_call only counts activations), and a parse runs as a call of its own (run_logos_body), so reading f's parameter x while the parse runs reads the parse's own frame at x's offset instead of failing with NoActivation"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P47-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P47",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:02+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "accepted as a why of P47, same as W115",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W112",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The tape's two writes let a constructor make a cell that is flagged constructed and holds no node: run_flag_write calls ParsingTape::set_constructed on any cell k, so tape.is_constructed[1] = true marks a fresh spelling whose dyad is null, and set_dyad stores any pointer, so tape[0] = tape[1] copies that null into the constructor's own cell, which tape.is_constructed[0] = true then marks; neither write checks the cell holds a node, which ›The tape is Logic Graph with a string extension‹ says a constructed cell is, and the write on k other than 0 goes past ›Two levels‹, which lets a constructor write only its own cell's flag",
+    "proposed_for": "P31",
+    "why": null,
+    "anchors": [
+      "run_flag_write",
+      "set_constructed",
+      "set_dyad",
+      "ParsingTape",
+      "Cell",
+      "src/parse/tape.rs",
+      "src/identities/tape.rs",
+      "as_operand",
+      "close_line",
+      "declare_here"
+    ],
+    "design": [
+      "The tape is Logic Graph with a string extension",
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
+      "The constructor sets `tape.is_constructed[0] = true` itself; a tape write never sets it"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 199,217p src/parse/tape.rs; sed -n 597,600p src/identities/tape.rs",
+        "output": "pub fn set_dyad(&mut self, offset: isize, dyad: DyadPtr) -> bool {\n    let Some(c) = self.at_mut(offset) else { return false; };\n    c.dyad = dyad;\npub fn set_constructed(&mut self, offset: isize, flag: bool) -> bool {\n    let Some(c) = self.at_mut(offset) else { return false; };\n    c.constructed = flag;\n        let (tape, k) = tape_at(rt, ops)?;\n        let flag = rt.run(*ops.add(2))? != 0;\n        if !(*tape).set_constructed(k, flag) {",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "target/release/logos 'h := type (share parse_rank = *.parse_rank + 1, share parse = ( <BODY> )), <USE>, 5' for each BODY/USE (dev 9c123fb)",
+        "output": "tape.is_constructed[1] = true, tape.remove(0) / h zz -> exit 139\ntape.is_constructed[-1] = true, tape.remove(0) / zz h -> exit 139\ntape[0] = tape[1], tape.is_constructed[0] = true, tape.remove(1) / h zz -> exit 139 (own cell only)\ntape.remove(0) / h zz -> error: unknown name `zz`, exit 1\ntape.is_constructed[1] = true, tape.remove(0) / h 7 -> 5, exit 0",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "sed -n 210,218p src/parse/tape.rs; sed -n 593,603p src/identities/tape.rs; sed -n 191,193p src/parse/operands.rs",
+        "output": "pub fn set_constructed(&mut self, offset: isize, flag: bool) -> bool {\n    let Some(c) = self.at_mut(offset) else { return false; };\n    c.constructed = flag;      (no check of c.dyad; Cell::dyad doc: \"null for a fresh spelling\")\nfn run_flag_write(...) { ... if !(*tape).set_constructed(k, flag) { return Err(RunError::OffTape); } Ok(0) }\npub(crate) fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {\n    match cell { c if c.constructed => Ok(c.dyad), ...",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "target/release/logos on dev 9c123fb, named against unnamed cell, flag at [1] and at [0] after remove (H := type (share parse_rank = *.parse_rank + 1, share parse = ( <body> )))",
+        "output": "x := 3, H[tape.is_constructed[1] = true, tape.remove(0)], h x, 5   -> 5, exit 0\nH[tape.is_constructed[1] = true, tape.remove(0)], h zz, 5          -> exit 139\nH[tape.remove(0), tape.is_constructed[0] = true], h zz, 5          -> exit 139\nx := 3, H[tape.remove(0), tape.is_constructed[0] = true], h x, 5   -> 5, exit 0\nH[tape.is_constructed[1] = true, tape.remove(0)], h 7, 5           -> 5, exit 0\nH[tape.remove(0)], h zz, 5  -> error: unknown name `zz`, exit 1 (unflagged: checked error)",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "gdb -batch -ex run -ex bt --args target/debug/logos '<program>' for three readers of the flagged zz cell",
+        "output": "h zz, 5        -> seed::identities::dyad::ty (p=0x0) <- seed::parse::Parser::close_line (item=0x0) src/parse/bodies.rs:1342 <- logos::run_line src/main.rs:154\nh zz + 1, 5    -> dyad::ty (p=0x0) <- Core::logos_of <- numtype_of <- binary::pointer_step (lhs=0x0) <- binary::build_op\ny := h zz, 5   -> dyad::ty (p=0x0) <- Parser::declare_here src/parse/declare.rs:641 <- construct_decl\nalso exit 139 inside a fn body, interpreted (f()) and compiled (f.compile(), f())",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "ParsingTape::set_constructed, called by the native run_flag_write behind tape.is_constructed[k] = true, sets Cell::constructed on whatever cell the index names without looking at Cell::dyad, so a constructor can flag a fresh spelling (zz, whose dyad is null) as constructed; every reader of a constructed cell (as_operand, declare_here, binary::build_op) then takes that null as a graph dyad, which «The tape is Logic Graph with a string extension» says a constructed cell always is"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P31-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P31",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:03+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "accepted as a why of P31, same as W119",
+        "reason": "both state the write side: set_constructed flags a cell without looking at its dyad, so a flagged cell can hold no node; compare paired W119 with W110 by words, but W110 is the reader side"
+      }
+    ]
+  },
+  {
+    "id": "W113",
+    "kind": "why",
+    "status": "draft",
+    "text": "Inside a parse, this::build_field_read reads tape[0].lhs of a field declared i32 ? as a this.load, the number the slot's node gives when the parse runs, not as the slot holding the operand node, so tape[0].rhs = tape[0].lhs stores that number (this.store, run_store) while a field declared ? is read as its slot and keeps the node",
+    "proposed_for": "P47",
+    "why": null,
+    "anchors": [
+      "build_field_read",
+      "build_load",
+      "build_slot",
+      "this_field",
+      "run_store",
+      "src/identities/this.rs"
+    ],
+    "design": [
+      "A field is filled at run, per evaluation; its type decides how the operand is used"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'let typed = |build_load\\(store|build_slot\\(store, types, this|build_field_read\\(' src/identities/this.rs src/parse/fields.rs",
+        "output": "src/identities/this.rs:156:    let typed = !declared.is_null()\nsrc/identities/this.rs:163:        build_load(store, types, this, k, declared, binding, fill, owner)\nsrc/identities/this.rs:165:        build_slot(store, types, this, k, binding, fill, owner)\nsrc/parse/fields.rs:170:            crate::identities::this::build_field_read(   (this_field: a parse's tape[0].f, with fill)",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "logos 'pr := type ( lhs := i32 ?, rhs := i32 ?, ... tape[0].rhs = tape[0].lhs ... ), mut x := i32 3, g := fn () -> i32 ( x pr ), x = 10, g()'  then the same with lhs := ?, rhs := ?  (why-probes/p47b.txt line 1, p47c.txt line 2)",
+        "output": "i32 fields: 13 (rhs kept 3, the value x had at parse; lhs read 10 at run)\n? fields: 20\nin f := fn (x := i32 ?) ( x pr ), f(4): i32 fields give a different number each run (-225058716, 1055543396), ? fields give 8",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P47-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P47",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W114",
+    "kind": "why",
+    "status": "merged",
+    "text": "check_depth counts only self.cx.open, the scopes of the one parse Context, and Context::nested gives each sub-parse a fresh open list, so construct_run_body (and construct_held_type) start the bracket count again at 1 while the outer body's brackets stay on the same Rust stack; only the import opener in quotes.rs carries open across",
+    "proposed_for": "P23",
+    "why": null,
+    "anchors": [
+      "check_depth",
+      "MAX_BRACKET_DEPTH",
+      "Context::nested",
+      "construct_run_body",
+      "construct_held_type",
+      "resolve_specialization",
+      "src/parse/quotes.rs"
+    ],
+    "design": [
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"self.cx.open.len\\(\\) \\+ unopened|open: vec!\\[OpenScope::default\\(\\)\\]|\\.\\.Context::nested\\(|g.0.cx.open = std::mem::take\" src/parse",
+        "output": "src/parse/mod.rs:173:            open: vec![OpenScope::default()],\nsrc/parse/types.rs:800:            ..Context::nested(&self.cx, text, nested)\nsrc/parse/quotes.rs:304:            ..Context::nested(&self.cx, text, nested)\nsrc/parse/quotes.rs:311:        g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect(\"pushed by enter\").open);\nsrc/parse/bodies.rs:348:            ..Context::nested(&self.cx, text, nested)\nsrc/parse/bodies.rs:1181:        if self.cx.open.len() + unopened >= MAX_BRACKET_DEPTH {",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "python3 why-probes/nested-context-depth.py target/release/logos N DEPTH (N links, DEPTH brackets per run body; dev 896f9a6, release, interpreted) and why-probes/chain-modes.py ... uncalled (the same chain inside f := fn (x := i32 ?) -> void ( 3 t0 ), never called)",
+        "output": "1 2500       -> 1 \"scopes nested deeper than 2000\"   (one wall: the checked error)\n17 1990      -> 0 leaf\n18 1990      -> -6 stack overflow, aborting\n35 995       -> 0 leaf\n36 995       -> -6 stack overflow   (about 35,000 brackets in all aborts, whatever the split)\n70 500       -> -6 stack overflow\n400 10       -> 0 leaf\n17 1990 uncalled -> 0 built\n18 1990 uncalled -> -6 stack overflow   (the abort is while the run bodies are built, before any run)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W120",
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:03+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "merged into W120",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W115",
+    "kind": "why",
+    "status": "merged",
+    "text": "Runtime::place_addr reads a Frame::Call place at the innermost activation's base whatever function that activation runs (Activation keeps no function, in_call only counts activations), and a parse runs as a call of its own (run_logos_body), so reading f's parameter x while the parse runs reads the parse's own frame at x's offset instead of failing with NoActivation",
+    "proposed_for": "P47",
+    "why": null,
+    "anchors": [
+      "place_addr",
+      "frame_base",
+      "in_call",
+      "Activation",
+      "Frame",
+      "run_logos_body",
+      "NoActivation",
+      "src/run.rs"
+    ],
+    "design": [
+      "A scope lays out its declarations; a use reaches the offset through its binding"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'fn in_call|activations.len\\(\\) > 1|Frame::Call\\(_\\), off\\)\\) =>|in_call\\(\\)\\.then|Activation::new\\(base\\)' src/run.rs; rg -n 'build_call\\(self.rt.store, f, &\\[handle, this_arg\\]\\)|self.run_on_pass\\(call\\)' src/parse/driver.rs",
+        "output": "src/run.rs:670:    pub(crate) fn in_call(&self) -> bool {\nsrc/run.rs:671:        self.activations.len() > 1\nsrc/run.rs:693:            Some((crate::binding::Frame::Call(_), off)) => {\nsrc/run.rs:694:                self.in_call().then(|| self.frame_base().add(off))\nsrc/run.rs:776:        self.activations.push(Activation::new(base));\nsrc/parse/driver.rs:885:        let call = build_call(self.rt.store, f, &[handle, this_arg]);\nsrc/parse/driver.rs:889:        let out = unsafe { self.run_on_pass(call) };",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "why-probes/p47.txt: the P47 program run three times, and with a local y := i32 4 in place of the parameter, and at top level",
+        "output": "f(4): -225058716 / 1055543396 (after f.compile()) / 1602048100\nf := fn () -> i32 ( y := i32 4, y pr ), f(): 200302692\ntop level x := i32 3, x pr: 6 (a Frame::Root place, read at the arena)",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W111",
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P47-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P47",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:02+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "merged into W111",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W116",
+    "kind": "why",
+    "status": "draft",
+    "text": "The global CLAUDE.md bars the orchestrator from auto-memory for a reason that holds for every session (auto-memory is read only by sessions started in one folder on this machine, so the team, the agents and other orchestrators never see it), yet its general rules keep auto-memory as the home of a waiting wording and mem0 as the home of a probable decision, a server not connected on this machine; so the orchestrator's home, a Pending line at the rule it touches, is written as an exception instead of as the one rule for every session",
+    "proposed_for": "W103",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o \"as an explicit pending edit in auto-memory\\|because auto-memory is read only by sessions started in one folder on this machine[^.]*\\|stored in mem0 for future reference even before confirmation\" ~/.claude/CLAUDE.md",
+        "output": "26:stored in mem0 for future reference even before confirmation\n86:as an explicit pending edit in auto-memory\n86:because auto-memory is read only by sessions started in one folder on this machine, so the team, the agents and other orchestrators never see it",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "claude mcp list",
+        "output": "claude.ai Claude Docs ... Connected\nclaude.ai HubSpot ... Needs authentication\nclaude.ai Gmail ... Connected\nclaude.ai Google Drive ... Connected\nclaude.ai Sanity ... Needs authentication\nclaude.ai Outline ... Connected\nclaude.ai Slack ... Needs authentication\nlinear ... Connected\n(no mem0 server)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P74-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P74",
+      "agent": "C"
+    },
+    "history": []
+  },
+  {
+    "id": "W117",
+    "kind": "why",
+    "status": "draft",
+    "text": "The global CLAUDE.md sends a ruling to a file by name, in KNOWLEDGE.md, at the rule it touches, though the rules it imports define the home as the repo's ruling document, .agents/orchestrator/KNOWLEDGE.md unless its conf names another (DESIGN.md in LogosLang), and a ruling on a skill rule touches a rule that stands in SKILL.md; bound to the file name, the rule cannot reach SKILL.md, so the skill's home is written beside it as an exception",
+    "proposed_for": "W103",
+    "why": null,
+    "anchors": [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/agent-agnostic-prompt.md",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "AGENTS.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o \"record it in the same session: in KNOWLEDGE.md, at the rule it touches\" ~/.claude/CLAUDE.md",
+        "output": "86:record it in the same session: in KNOWLEDGE.md, at the rule it touches",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "grep -n -o \"The repo's ruling document ([^)]*)\" ~/.claude/skills/orchestrate/agent-agnostic-prompt.md; grep -n -o \"DESIGN.md as the ruling document\" AGENTS.md; grep -n -o \"A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill, never in a repo's ruling document\" ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "agent-agnostic-prompt.md:6:The repo's ruling document (`.agents/orchestrator/KNOWLEDGE.md`, unless its conf names another)\nAGENTS.md:3:DESIGN.md as the ruling document\nSKILL.md:10:A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill, never in a repo's ruling document\nSKILL.md:70:(same sentence)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P74-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P74",
+      "agent": "C"
+    },
+    "history": []
+  },
+  {
+    "id": "W118",
+    "kind": "why",
+    "status": "draft",
+    "text": "SKILL.md's rule Every ruling is recorded in its home opens a way for another home to carry its own form only when the ruling document names that home (then record it the way that rule says); the skill's home is named instead by SKILL.md's own sentence A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill, which says where and never how, so the only form left for a skill ruling is the step's next one, a Ruled line with the date, Thobias and his words",
+    "proposed_for": "W107",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o \"Its home is the ruling document, unless the ruling document names another home for that kind of ruling; then record it the way that rule says\\|A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill, never in a repo's ruling document\\|Put it at the rule it touches: a Ruled line ([^)]*)\" ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "10:A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill, never in a repo's ruling document\n70:Its home is the ruling document, unless the ruling document names another home for that kind of ruling; then record it the way that rule says\n70:A ruling on how the orchestrator or its prompts work in every repo is recorded in this skill, never in a repo's ruling document\n70:Put it at the rule it touches: a Ruled line (the date, Thobias, his words as the reason)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P74-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P74",
+      "agent": "C"
+    },
+    "history": []
+  },
+  {
+    "id": "W119",
+    "kind": "why",
+    "status": "merged",
+    "text": "ParsingTape::set_constructed, called by the native run_flag_write behind tape.is_constructed[k] = true, sets Cell::constructed on whatever cell the index names without looking at Cell::dyad, so a constructor can flag a fresh spelling (zz, whose dyad is null) as constructed; every reader of a constructed cell (as_operand, declare_here, binary::build_op) then takes that null as a graph dyad, which «The tape is Logic Graph with a string extension» says a constructed cell always is",
+    "proposed_for": "P31",
+    "why": null,
+    "anchors": [
+      "ParsingTape",
+      "set_constructed",
+      "run_flag_write",
+      "Cell",
+      "as_operand",
+      "close_line",
+      "declare_here",
+      "src/parse/tape.rs",
+      "src/identities/tape.rs"
+    ],
+    "design": [
+      "The tape is Logic Graph with a string extension",
+      "The constructor sets `tape.is_constructed[0] = true` itself; a tape write never sets it"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 210,218p src/parse/tape.rs; sed -n 593,603p src/identities/tape.rs; sed -n 191,193p src/parse/operands.rs",
+        "output": "pub fn set_constructed(&mut self, offset: isize, flag: bool) -> bool {\n    let Some(c) = self.at_mut(offset) else { return false; };\n    c.constructed = flag;      (no check of c.dyad; Cell::dyad doc: \"null for a fresh spelling\")\nfn run_flag_write(...) { ... if !(*tape).set_constructed(k, flag) { return Err(RunError::OffTape); } Ok(0) }\npub(crate) fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {\n    match cell { c if c.constructed => Ok(c.dyad), ...",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "target/release/logos on dev 9c123fb, named against unnamed cell, flag at [1] and at [0] after remove (H := type (share parse_rank = *.parse_rank + 1, share parse = ( <body> )))",
+        "output": "x := 3, H[tape.is_constructed[1] = true, tape.remove(0)], h x, 5   -> 5, exit 0\nH[tape.is_constructed[1] = true, tape.remove(0)], h zz, 5          -> exit 139\nH[tape.remove(0), tape.is_constructed[0] = true], h zz, 5          -> exit 139\nx := 3, H[tape.remove(0), tape.is_constructed[0] = true], h x, 5   -> 5, exit 0\nH[tape.is_constructed[1] = true, tape.remove(0)], h 7, 5           -> 5, exit 0\nH[tape.remove(0)], h zz, 5  -> error: unknown name `zz`, exit 1 (unflagged: checked error)",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "gdb -batch -ex run -ex bt --args target/debug/logos '<program>' for three readers of the flagged zz cell",
+        "output": "h zz, 5        -> seed::identities::dyad::ty (p=0x0) <- seed::parse::Parser::close_line (item=0x0) src/parse/bodies.rs:1342 <- logos::run_line src/main.rs:154\nh zz + 1, 5    -> dyad::ty (p=0x0) <- Core::logos_of <- numtype_of <- binary::pointer_step (lhs=0x0) <- binary::build_op\ny := h zz, 5   -> dyad::ty (p=0x0) <- Parser::declare_here src/parse/declare.rs:641 <- construct_decl\nalso exit 139 inside a fn body, interpreted (f()) and compiled (f.compile(), f())",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W112",
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P31-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P31",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:03+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "merged into W112",
+        "reason": "both state the write side: set_constructed flags a cell without looking at its dyad, so a flagged cell can hold no node; compare paired W119 with W110 by words, but W110 is the reader side"
+      }
+    ]
+  },
+  {
+    "id": "W120",
+    "kind": "why",
+    "status": "accepted",
+    "text": "check_depth counts only self.cx.open, the open scopes of the parse Context in force, and construct_run_body and construct_held_type enter a Context::nested whose open starts at Context::top's one entry (only the import sub-parse moves the outer open stack in), so brackets open in the contexts set aside in Parser.outer are never counted against MAX_BRACKET_DEPTH",
+    "proposed_for": "P23",
+    "why": null,
+    "anchors": [
+      "check_depth",
+      "construct_run_body",
+      "construct_held_type",
+      "MAX_BRACKET_DEPTH",
+      "enter",
+      "src/parse/mod.rs",
+      "src/parse/bodies.rs",
+      "src/parse/quotes.rs",
+      "Context::nested",
+      "resolve_specialization"
+    ],
+    "design": [
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'self.cx.open.len\\(\\) \\+ unopened|open: vec!\\[OpenScope|fn nested|\\.\\.Context::top|Context::nested|g.0.cx.open = std::mem::take' src/parse",
+        "output": "src/parse/quotes.rs:304:            ..Context::nested(&self.cx, text, nested)\nsrc/parse/quotes.rs:311:        g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect(\"pushed by enter\").open);\nsrc/parse/mod.rs:173:            open: vec![OpenScope::default()],\nsrc/parse/mod.rs:196:    fn nested(outer: &Self, source: &'a str, scopes: ScopeStack) -> Self {\nsrc/parse/mod.rs:203:            ..Context::top(source, scopes)\nsrc/parse/bodies.rs:348:            ..Context::nested(&self.cx, text, nested)\nsrc/parse/bodies.rs:1181:        if self.cx.open.len() + unopened >= MAX_BRACKET_DEPTH {\nsrc/parse/types.rs:800:            ..Context::nested(&self.cx, text, nested)",
+        "commit": "50007fb"
+      },
+      {
+        "command": "python3 why-probes/nested-context-depth.py target/release/logos <links> <brackets per link>   (dev 896f9a6, release, interpreted; the problem's generator)",
+        "output": "18 x 1990 = 35,820: -6 thread has overflowed its stack\n36 x 995 = 35,820: -6 thread has overflowed its stack\n35 x 995 = 34,825: 0 leaf\n330 x 99 = 32,670: 0 leaf\n1 x 2500 (one context): 1 error: scopes nested deeper than 2000\n(the total over all contexts decides; each context alone stays under 2000)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n \"self.cx.open.len\\(\\) \\+ unopened|open: vec!\\[OpenScope::default\\(\\)\\]|\\.\\.Context::nested\\(|g.0.cx.open = std::mem::take\" src/parse",
+        "output": "src/parse/mod.rs:173:            open: vec![OpenScope::default()],\nsrc/parse/types.rs:800:            ..Context::nested(&self.cx, text, nested)\nsrc/parse/quotes.rs:304:            ..Context::nested(&self.cx, text, nested)\nsrc/parse/quotes.rs:311:        g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect(\"pushed by enter\").open);\nsrc/parse/bodies.rs:348:            ..Context::nested(&self.cx, text, nested)\nsrc/parse/bodies.rs:1181:        if self.cx.open.len() + unopened >= MAX_BRACKET_DEPTH {",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "python3 why-probes/nested-context-depth.py target/release/logos N DEPTH (N links, DEPTH brackets per run body; dev 896f9a6, release, interpreted) and why-probes/chain-modes.py ... uncalled (the same chain inside f := fn (x := i32 ?) -> void ( 3 t0 ), never called)",
+        "output": "1 2500       -> 1 \"scopes nested deeper than 2000\"   (one wall: the checked error)\n17 1990      -> 0 leaf\n18 1990      -> -6 stack overflow, aborting\n35 995       -> 0 leaf\n36 995       -> -6 stack overflow   (about 35,000 brackets in all aborts, whatever the split)\n70 500       -> -6 stack overflow\n400 10       -> 0 leaf\n17 1990 uncalled -> 0 built\n18 1990 uncalled -> -6 stack overflow   (the abort is while the run bodies are built, before any run)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "check_depth counts only self.cx.open, the scopes of the one parse Context, and Context::nested gives each sub-parse a fresh open list, so construct_run_body (and construct_held_type) start the bracket count again at 1 while the outer body's brackets stay on the same Rust stack; only the import opener in quotes.rs carries open across"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:02+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:03+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "accepted as a why of P23, same as W114",
+        "reason": null
+      },
+      {
+        "at": "2026-10-08T22:04+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "evidence 1 was {\"command\": \"rg -n 'self.cx.open.len\\\\(\\\\) \\\\+ unopened|open: vec!\\\\[OpenScope|fn nested|\\\\.\\\\.Context::top|Context::nested|g.0.cx.open = std::mem::take' src/parse\", \"output\": \"src/parse/bodies.rs:1181:        if self.cx.open.len() + unopened >= MAX_BRACKET_DEPTH {\\nsrc/parse/mod.rs:173:            open: vec![OpenScope::default()],\\nsrc/parse/mod.rs:196:    fn nested(outer: &Self, source: &'a str, scopes: ScopeStack) -> Self {\\nsrc/parse/mod.rs:203:            ..Context::top(source, scopes)\\nsrc/parse/bodies.rs:347:            ..Context::nested(&self.cx, text, nested)   (construct_run_body)\\nsrc/parse/types.rs:799:            ..Context::nested(&self.cx, text, nested)   (construct_held_type)\\nsrc/parse/quotes.rs:303:            ..Context::nested(&self.cx, text, nested)   (import)\\nsrc/parse/quotes.rs:311:        g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect(\\\"pushed by enter\\\").open);   (import only)\", \"commit\": \"896f9a6\"}",
+        "reason": "the agent's own correction: three line numbers were typed one off (347, 799, 303); the output is now what the command prints on dev 50007fb"
+      }
+    ]
+  },
+  {
+    "id": "W121",
+    "kind": "why",
+    "status": "draft",
+    "text": "When a parse places a node whose type holds a run body, run_ctor calls resolve_specialization, which builds that body's function by construct_run_body as a Rust call nested inside the parse_block of the body being parsed, so each link's brackets stay on the one work thread's stack (WORK_STACK_BYTES) beneath the next link's",
+    "proposed_for": "P23",
+    "why": null,
+    "anchors": [
+      "run_ctor",
+      "resolve_specialization",
+      "construct_run_body",
+      "parse_block",
+      "WORK_STACK_BYTES",
+      "src/parse/driver.rs",
+      "src/parse/types.rs"
+    ],
+    "design": [
+      "Deferral is authored, and unfinished work is visible"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "gdb -batch -ex 'set startup-with-shell off' -ex run -ex 'bt -frame-info short-location' --args target/release/logos \"$(python3 why-probes/nested-context-src.py 18 1990)\" > why-probes/p23-bt.txt; frames tallied by function (dev 896f9a6, release)",
+        "output": "34921 Parser::next_cell\n34920 Parser::run_ctor\n34920 Parser::parse_block\n34903 Parser::lex_next\n34902 identities::paren::register::{closure#0}\n   18 Parser::resolve_specialization\n   18 Parser::fn_over_body\n   18 Parser::bracketed_body\n(no run-tier frame; one link: parse_block <- next_cell <- construct_segment <- run_ctor <- resolve_specialization <- fn_over_body <- bracketed_body <- parse_block)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n 'resolve_specialization\\(cell|spec = self.construct_run_body' src/parse",
+        "output": "src/parse/driver.rs:557:                    unsafe { self.resolve_specialization(cell.dyad, cell.start, &spelling)? };\nsrc/parse/types.rs:1133:            spec = self.construct_run_body(ty, held, &key, at, spelling)?;",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:03+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "P95",
+    "kind": "problem",
+    "status": "open",
+    "text": "Under an orchestrator, the global CLAUDE.md and the file it imports give an agent opposite orders: CLAUDE.md tells every session to record a ruling itself, in KNOWLEDGE.md, while agent-agnostic-prompt.md says only the orchestrator writes the ruling document",
+    "program": "grep -n -o 'record it in the same session: in KNOWLEDGE.md' ~/.claude/CLAUDE.md; grep -n -o 'Only the orchestrator writes the ruling document and its history file' ~/.claude/skills/orchestrate/agent-agnostic-prompt.md",
+    "output": "86:record it in the same session: in KNOWLEDGE.md\n9:Only the orchestrator writes the ruling document and its history file",
+    "expected": "one order per case: an agent under an orchestrator is told only that the orchestrator records rulings; a session without one is told how to record them itself",
+    "tier": null,
+    "found": "logoslang-why-P74-c, 8 Oct 2026",
+    "why": [
+      "W101"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T22:05+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "50007fb",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "why + W101",
+        "reason": "the same cause as P88: a rule written for orchestrated agents reaches every session through the CLAUDE.md import, beside CLAUDE.md's own rule for sessions without an orchestrator"
+      }
+    ]
+  },
+  {
+    "id": "P96",
+    "kind": "problem",
+    "status": "open",
+    "text": "The global CLAUDE.md sends probable decisions to mem0 and asks every hard task to check mem0, but no mem0 server is connected on this machine, so those decisions are kept nowhere",
+    "program": "grep -n -o 'mem0[^.;]\\{0,60\\}' ~/.claude/CLAUDE.md; claude mcp list (the server names only)",
+    "output": "26:mem0 for future reference even before confirmation\n26:mem0 or auto-memory\n58:mem0 memories? If so, investigate whether the conflict is from\nclaude mcp list on 8 Oct 2026 lists Claude Docs, HubSpot, Gmail, Google Drive, Sanity, Outline, Slack and linear, and no mem0",
+    "expected": "every home a rule names exists for the sessions that follow it",
+    "tier": null,
+    "found": "logoslang-why-P74-c (FACT), 8 Oct 2026; the session's own tool list shows the same servers and no mem0",
+    "why": [
+      "W103"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-08T22:05+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "50007fb",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "50007fb",
+        "change": "why + W103",
+        "reason": "the same cause as P94: CLAUDE.md's general rules send records to fixed homes, mem0 among them, instead of to the home the session's own rules name"
       }
     ]
   }
