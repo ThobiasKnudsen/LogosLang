@@ -16860,7 +16860,7 @@
       "W123",
       "W150"
     ],
-    "assessment": "Root fix for W123 and W150: the pair 'flagged and holds a node' is checked at whichever of the two writes comes second, in one place (src/parse/tape.rs set_constructed/set_dyad, reported by run_flag_write/run_write in src/identities/tape.rs), so W127's reader copies of !c.dyad.is_null() and the SAFETY lines 'null or a node' can go and as_operand's trust becomes true. Removes all three flag routes to P31 at dev 5dbf3b2 (flag cell 1; remove(0) then flag 0; tape[0] = tape[1] then flag 0, each exit 139 today). Keeps ›The constructor sets the flag itself; a tape write never sets it‹ (a write refuses, never sets). Leaves W157 (tape[1].type on a fresh spelling crashes with no flag write, exit 139) and W126 (which index may be flagged): other questions decide those. Rust's Cell::built(null) in bodies.rs:1196 must stop flagging null. Small: two setters, two natives, a reader sweep; issue-82-output-type touches driver.rs/operands.rs",
+    "assessment": "Superseded by Thobias's Q82 ruling (9 October 2026, ›An unknown spelling stays text on the tape‹): a fresh spelling is a node of type unknown_name, so under S56 no tape node is ever empty and a write can only store a node; the write check this solution adds would guard a state that no longer exists. Kept for the record; not proposed again. Its earlier assessment: root fix for W123 and W150 by checking the pair 'flagged and holds a node' in ParsingTape's two setters",
     "decision": null,
     "design": [
       "The tape is Logic Graph with a string extension",
@@ -16877,7 +16877,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Root fix for W123 and W150: the pair 'flagged and holds a node' is checked at whichever of the two writes comes second, in one place (src/parse/tape.rs set_constructed/set_dyad, reported by run_flag_write/run_write in src/identities/tape.rs), so W127's reader copies of !c.dyad.is_null() and the SAFETY lines 'null or a node' can go and as_operand's trust becomes true. Removes all three flag routes to P31 at dev 5dbf3b2 (flag cell 1; remove(0) then flag 0; tape[0] = tape[1] then flag 0, each exit 139 today). Keeps ›The constructor sets the flag itself; a tape write never sets it‹ (a write refuses, never sets). Leaves W157 (tape[1].type on a fresh spelling crashes with no flag write, exit 139) and W126 (which index may be flagged): other questions decide those. Rust's Cell::built(null) in bodies.rs:1196 must stop flagging null. Small: two setters, two natives, a reader sweep; issue-82-output-type touches driver.rs/operands.rs\"",
+        "reason": "Q82 (9 Oct 2026): a fresh spelling is a node of type unknown_name, so the tape holds no empty node"
+      }
+    ]
   },
   {
     "id": "S38",
@@ -16913,7 +16923,7 @@
     "fixes": [
       "W157"
     ],
-    "assessment": "Root fix for W157: one rule for the read, from ›What still holds of the old lifecycle‹ ('undefined is a null slot, and reading it is a checked error') and the 25 September line that a read needing more than a cell has is 'the error it is on any cell without one'. Lands once in read_cell/run_slot (src/identities/tape.rs), so tape[1].type and tape[0] = tape[1] on a fresh spelling (exit 139 at dev 5dbf3b2) become errors, and no null pointer can reach a tape write any more. A Logos constructor still tells a fresh spelling apart without a fault through tape.spelling[k] and tape.is_constructed[k]; nothing in identities/*.logos reads tape[k] of a fresh spelling. Leaves W123/W150 (a flag write on a fresh cell needs no read) and W126",
+    "assessment": "Superseded by Thobias's Q82 ruling (9 October 2026): its premise, a fresh spelling's node holding nothing, no longer holds; Thobias: 'an undefined node like zz does not have no type. it should have the unknown_name type'. Under S56 tape[k] gives unknown_name itself and reads without error. Not proposed again",
     "decision": null,
     "design": [
       "What still holds of the old lifecycle",
@@ -16930,7 +16940,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Root fix for W157: one rule for the read, from ›What still holds of the old lifecycle‹ ('undefined is a null slot, and reading it is a checked error') and the 25 September line that a read needing more than a cell has is 'the error it is on any cell without one'. Lands once in read_cell/run_slot (src/identities/tape.rs), so tape[1].type and tape[0] = tape[1] on a fresh spelling (exit 139 at dev 5dbf3b2) become errors, and no null pointer can reach a tape write any more. A Logos constructor still tells a fresh spelling apart without a fault through tape.spelling[k] and tape.is_constructed[k]; nothing in identities/*.logos reads tape[k] of a fresh spelling. Leaves W123/W150 (a flag write on a fresh cell needs no read) and W126\"",
+        "reason": "Q82 (9 Oct 2026): a fresh spelling is a node of type unknown_name"
+      }
+    ]
   },
   {
     "id": "S40",
@@ -16940,7 +16960,7 @@
     "fixes": [
       "W157"
     ],
-    "assessment": "Also removes W157's crash, and gives a constructor a no-fault test for a fresh spelling. But it reverses the 29 September 2026 ruling of ›An unknown spelling stays text on the tape‹ ('The cell holds the spelling and no node', #166) and ›Unknown spellings are two pattern identities‹ ('Each leaves the cell holding its spelling and no node'), and a flagged pattern cell would then pass every node check as a value nobody declared, so W123 would need its own rule anyway. Bigger (lexer, driver, :=) and not recommended",
+    "assessment": "Superseded by Thobias's Q82 ruling (9 October 2026), which takes its direction further: not the word or symbol-run pattern itself, but one type unknown_name that both patterns name; S56 carries that form. Its premise that this reverses the 29 September form is now the ruling itself. Not proposed again",
     "decision": null,
     "design": [
       "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
@@ -16957,7 +16977,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Also removes W157's crash, and gives a constructor a no-fault test for a fresh spelling. But it reverses the 29 September 2026 ruling of ›An unknown spelling stays text on the tape‹ ('The cell holds the spelling and no node', #166) and ›Unknown spellings are two pattern identities‹ ('Each leaves the cell holding its spelling and no node'), and a flagged pattern cell would then pass every node check as a value nobody declared, so W123 would need its own rule anyway. Bigger (lexer, driver, :=) and not recommended\"",
+        "reason": "Q82 (9 Oct 2026): a fresh spelling is a node of type unknown_name"
+      }
+    ]
   },
   {
     "id": "S41",
@@ -16967,7 +16997,7 @@
     "fixes": [
       "W126"
     ],
-    "assessment": "Settles W126 on the side of ›Two levels‹ ('none is ever assigned (one exception, ruled 19 September 2026: a constructor writes its own cell's flag, tape.is_constructed[0] = true …)', Thobias) and strikes 'tape.is_constructed[k] = …' from the Open line of ›A tape[k] read past the lexed frontier‹ (Claude's, open to Thobias). Matches every flag write in identities/*.logos, tests/fixtures and tests/cli.rs except the P31 test at cli.rs:2878. Makes run_ctor's judgment of the own cell the only judgment a flag gets; today a flag on cell 1 is judged by nobody (x := 3, … h x, 5 prints 5). Lands in run_flag_write (src/identities/tape.rs), which then needs the own cell's mark from the driver. Alone it does not stop P31's crash: remove(0) moves a fresh spelling into index 0, which only the 'removed its own cell' clause or S37 refuses; W123, W150 and W157 need the other questions",
+    "assessment": "Settles W126 on the side of ›Two levels‹ (Thobias, 19 September 2026: 'a constructor writes its own cell's flag, tape.is_constructed[0] = true'), the Open line of ›A tape[k] read past the lexed frontier‹ being Claude's proposal; decided so by the orchestrator in Q82, which Thobias did not read, so it is asked again for his ok. Under S56 a flag on another node no longer crashes, but it hides an error: h flagging zz makes zz stand as unknown_name, so 'unknown name zz' is never reported and the line runs; x := 3 … h x, 5 already prints 5 with x's constructor never run. Lands in run_flag_write (src/identities/tape.rs), which needs the own node's mark from the driver; every flag write in identities/*.logos and the tests writes index 0 except the P31 test (tests/cli.rs:2878)",
     "decision": null,
     "design": [
       "Two levels: the binding is the lex level, the dyad is the value level",
@@ -16984,7 +17014,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Settles W126 on the side of ›Two levels‹ ('none is ever assigned (one exception, ruled 19 September 2026: a constructor writes its own cell's flag, tape.is_constructed[0] = true …)', Thobias) and strikes 'tape.is_constructed[k] = …' from the Open line of ›A tape[k] read past the lexed frontier‹ (Claude's, open to Thobias). Matches every flag write in identities/*.logos, tests/fixtures and tests/cli.rs except the P31 test at cli.rs:2878. Makes run_ctor's judgment of the own cell the only judgment a flag gets; today a flag on cell 1 is judged by nobody (x := 3, … h x, 5 prints 5). Lands in run_flag_write (src/identities/tape.rs), which then needs the own cell's mark from the driver. Alone it does not stop P31's crash: remove(0) moves a fresh spelling into index 0, which only the 'removed its own cell' clause or S37 refuses; W123, W150 and W157 need the other questions\"",
+        "reason": "Q82 (9 Oct 2026): under S56 a foreign flag no longer crashes but hides the unknown-name error; the orchestrator's decision was not seen by Thobias"
+      }
+    ]
   },
   {
     "id": "S42",
@@ -19253,5 +19293,73 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "S56",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A fresh spelling lexes like every spelling: the word and symbol-run patterns are names of one type, unknown_name, so the tape holds unknown_name itself, unbuilt, for zz (its text in tape.spelling[k]), as it holds the number pattern for 5; unknown_name's parse, at the lowest parse_rank, is the error 'unknown name zz'; regex «…» gives a node of type unknown_name holding the literal or the pattern; := takes its name from either",
+    "fixes": [
+      "W123",
+      "W150",
+      "W157"
+    ],
+    "assessment": "Root fix for W123, W150 and W157, from Thobias's Q82 ruling (9 Oct, ›An unknown spelling stays text on the tape‹): no tape node is ever empty, because the lexer keeps the binding the trie already finds for the two fresh-spelling patterns (src/identities/fresh.rs mints them; src/parse/lex.rs:63 throws it away for null) instead of a null. All four P31 routes stop crashing at dev 35cdb52: flagging zz makes it stand as unknown_name, like a declined i32; tape[1].type is type; tape[0] = tape[1] copies unknown_name. Deletes the null branch, the reader null checks W127/W135 name, and the leftover check's fresh-spelling case (now unknown_name's own parse); S37's write check is not needed. Every is_fresh() reader (operands.rs, fields.rs, declare.rs, types.rs, lex.rs) asks one predicate, 'its identity is unknown_name'; the REPL feed's re-resolution (feed_resolve) and its unbuilt-name null must keep working; regex_ merges into unknown_name. Leaves W126 (S41): without it a constructor can flag zz and hide the error. Medium; issue-82-output-type touches driver.rs/operands.rs",
+    "decision": null,
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
+      "Unknown spellings are two pattern identities",
+      "A pattern identity is declared `regex «…» := type (…)`"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T00:21+02:00",
+      "by": "logoslang-solve-W123",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "35cdb52",
+      "run": "solve-W123",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S57",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Each fresh spelling lexes to a new node of type unknown_name whose value is its text; tape[k] gives that node",
+    "fixes": [
+      "W123",
+      "W150",
+      "W157"
+    ],
+    "assessment": "Also removes every null from the tape and gives a constructor the text through the node. But it makes one graph node per fresh word at lex time, in the store that persists while the tape is thrown away (›The tape is Logic Graph‹: 'The tape is throwaway'); it keeps the text twice, in the node and in tape.spelling[k]; it builds a value before any constructor runs, unlike every other spelling (5 is built by its pattern's parse); and the unknown-name error then needs a new check on unknown_name values reaching an operand or a line's end, a special case. Not recommended over S56",
+    "decision": null,
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T00:21+02:00",
+      "by": "logoslang-solve-W123",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "35cdb52",
+      "run": "solve-W123",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-09T00:21+02:00",
+        "by": "logoslang-solve-W123",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "35cdb52",
+        "change": "assessment was \"Also removes every null from the tape and gives a constructor the text through the node. But it makes one graph node per fresh word at lex time, in the store that persists while the tape is thrown away (›The tape is Logic Graph‹: 'The tape is throwaway'); it keeps the text twice, in the node and in tape.spelling[k]; it builds a value before any constructor runs, unlike every other spelling (5 is built by its pattern's parse); and the unknown-name error then needs a new check on unknown_name values reaching an operand or a line's end, a special case. Not recommended over S43\"",
+        "reason": "the recommended solution's id is S56, not S43"
+      }
+    ]
   }
 ]
