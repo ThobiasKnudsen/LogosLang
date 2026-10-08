@@ -14208,7 +14208,6 @@
     "proposed_for": "W121",
     "why": [
       "W171",
-      "W161",
       "W163"
     ],
     "anchors": [
@@ -14327,6 +14326,15 @@
         "commit": "7b97e0e",
         "change": "why + W163",
         "reason": null
+      },
+      {
+        "at": "2026-10-08T22:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "5dbf3b2",
+        "change": "why - W161",
+        "reason": "W161 rejected: why-P23-a withdraws it after C's finding: set_spec stores a spec allocated before the build (bodies.rs:343), so neither DESIGN sentence asks the body to be built before the node is placed; B's none says only that nothing lies beneath it"
       }
     ]
   },
@@ -14992,7 +15000,7 @@
   {
     "id": "W161",
     "kind": "why",
-    "status": "accepted",
+    "status": "rejected",
     "text": "DESIGN makes the build due at the node's construction: ›A generic function body is lexed once and built once per set of field types‹ has a call site with known types resolve to the built function and store it in the dyad as the op slot of + stores add_i32, and ›Deferral is authored, and unfinished work is visible‹ has a node move on the moment its input arrives; no rule lets a node stand placed with its types known and its function built after the body holding it is built",
     "proposed_for": "W152",
     "why": null,
@@ -15050,6 +15058,15 @@
         "commit": "7b97e0e",
         "change": "accepted as a why of W152",
         "reason": "direct test after C: ›A generic function body is lexed once…‹ builds when a node supplies the types and stores it in the dyad; ›Deferral is authored…‹ moves a node on when its input arrives"
+      },
+      {
+        "at": "2026-10-08T22:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "5dbf3b2",
+        "change": "rejected",
+        "reason": "why-P23-a withdraws it after C's finding: set_spec stores a spec allocated before the build (bodies.rs:343), so neither DESIGN sentence asks the body to be built before the node is placed; B's none says only that nothing lies beneath it"
       }
     ]
   },
@@ -15174,7 +15191,9 @@
     "status": "accepted",
     "text": "A node of a type with a run body carries no type of what it gives: read_kind reads it as Read::Executable(Call(spec)) and numtype_of (behind yielded_type) as the function built for its field types, both through run_body::spec_of(node), and as nothing while no spec is set; so the enclosing parse cannot type a use of the node, as P23's 3 t{i+1} standing as the tail t{i}'s body yields, until the node's body is built, which is why resolve_specialization builds it in the node's reader",
     "proposed_for": "W152",
-    "why": null,
+    "why": [
+      "W179"
+    ],
     "anchors": [
       "read_kind",
       "numtype_of",
@@ -15232,6 +15251,15 @@
         "commit": "7b97e0e",
         "change": "evidence 1 was {\"command\": \"rg -n -B3 'run_body::spec_of\\\\(node\\\\)' src/identities/read.rs src/identities/mod.rs   (dev 896f9a6)\", \"output\": \"src/identities/read.rs-103-            if !meta::run_body_of(op).is_null() {\\nsrc/identities/read.rs-104-                // The node runs as the function built for its field-type set,\\nsrc/identities/read.rs-105-                // and not at all until one exists.\\nsrc/identities/read.rs:106:                let spec = super::run_body::spec_of(node);   [read_kind]\\nsrc/identities/mod.rs-826-    // A call yields the callee's return type. A node of a type with a run reads as the\\nsrc/identities/mod.rs-827-    // function built for its field types, or as nothing until one exists.\\nsrc/identities/mod.rs:829:            let spec = run_body::spec_of(node);   [numtype_of; yielded_type falls back to it]\\n(spec null: read_kind gives Read::Executable(Dispatch::None), numtype_of Operand::NonNumeric)\", \"commit\": \"896f9a6\"}",
         "reason": "why-P23-b: the exact rg -B3 lines of mod.rs are 826 to 829"
+      },
+      {
+        "at": "2026-10-08T22:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "5dbf3b2",
+        "change": "why + W179",
+        "reason": null
       }
     ]
   },
@@ -15356,7 +15384,9 @@
     "status": "accepted",
     "text": "What a cell gives the constructor that reads it is written twice: as_operand, the parser's one seam for built-in constructors, sends a fresh spelling to resolve_fresh for the unknown-name error, while a Logos-written constructor reads cells through the tape natives (run_slot, slot_cell, run_slot_name), each with its own rule, and the runtime's Host gives them only the parser's lex_on, mint and construct, no door to as_operand; so run_slot has no fresh-spelling branch, against ›A tape[k] read past the lexed frontier lexes on demand for every constructor‹: a cell arrives exactly as it would to : or application, one rule for every reader, built-in or written in Logos",
     "proposed_for": "W156",
-    "why": null,
+    "why": [
+      "W157"
+    ],
     "anchors": [
       "as_operand",
       "resolve_fresh",
@@ -15426,6 +15456,15 @@
         "commit": "2bf390e",
         "change": "accepted as a why of W156, same as W159",
         "reason": "C and B blind to each other: what a cell gives its constructor is decided twice, by as_operand for the built-in readers (a fresh spelling is the unknown-name error) and by each tape native on its own for a constructor written in Logos (run_slot hands the null on, run_slot_name refuses, slot_cell refuses only on its bracket branch); the natives cannot reach as_operand"
+      },
+      {
+        "at": "2026-10-08T22:45+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "5dbf3b2",
+        "change": "why + W157",
+        "reason": null
       }
     ]
   },
@@ -15494,7 +15533,7 @@
     "status": "accepted",
     "text": "DESIGN gives a constructor one invocation that ends with its cell built: ›A constructor's outcome is read off its own cell; no holding, no re-invocation‹ allows only constructed or declined and never runs a constructor again, and ›The scope's constructor is the driver‹ has the scope's own constructor drive its interior, called by its enclosing scope; so an inner scope must be built within the outer constructor's one call, and no rule allows a constructor that stops at an inner opener and resumes at its closer",
     "proposed_for": "W162",
-    "why": null,
+    "why": [],
     "anchors": [
       "ConstructFn",
       "Constructed",
@@ -15561,6 +15600,15 @@
         "commit": "7b97e0e",
         "change": "accepted as a why of W162, same as W169",
         "reason": "A and B: DESIGN gives a constructor one call, no pause and resume; W162 is the Rust shape, this is the rule behind it"
+      },
+      {
+        "at": "2026-10-08T22:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "5dbf3b2",
+        "change": "asked: no why found",
+        "reason": "why-P23-a and why-P23-b: none; DESIGN's own rule, which carries no Why"
       }
     ]
   },
@@ -15626,7 +15674,7 @@
   {
     "id": "W170",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "DESIGN.md hands a Logos constructor a cell as three parallel lists, never as one value: «What `lex` returns: a `parsing_tape` fragment» says cells are `@dyad`, «`is_constructed` is the tape's own list» and `tape.spelling[k]` keep the flag and the text apart, and language_sketch.logos spells them cells := doublylinkedlist @dyad, is_constructed, spelling; so tape[k] (run_slot) can give only the pointer, null for a fresh spelling, while a built-in reader gets the whole Cell and as_operand decides from all three at once (is_fresh: not constructed, null, lexed text), and the two kinds of reader cannot share one decision though «A `tape[k]` read past the lexed frontier» wants the cell to arrive alike to both",
     "proposed_for": "W166",
     "why": null,
@@ -15679,7 +15727,17 @@
       "run": "why-P31",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-08T22:45+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "5dbf3b2",
+        "change": "rejected",
+        "reason": "direct test after C: run_slot holds the whole tape, so the three parallel lists do not keep it from one shared rule; what that rule gives is W157"
+      }
+    ]
   },
   {
     "id": "W171",
@@ -15997,6 +16055,378 @@
       "commit": "7b97e0e",
       "run": null,
       "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W174",
+    "kind": "why",
+    "status": "draft",
+    "text": "The binding's reading rule, a name 'read as a value it yields what that dyad yields' (›`:` reads a name's binding, `.` reads a thing's own fields‹), is applied only at parse, by `through` and `path_operand` putting the node itself into the graph; at run a value is bare `i64` bits (`RunFn` gives `Result<i64, RunError>`), whose meaning the consumer fixed when it was built from `numtype_of`, and no run-time value carries 'a node to be read as what it yields', so a read that gives a node at run can only be its `@dyad` address (`run_slot`: `Ok(*slot as i64)`), and a reader that wants the number must run the node itself (`run_load`), chosen when the body is built",
+    "proposed_for": "W173",
+    "why": null,
+    "anchors": [
+      "path_operand",
+      "through",
+      "run_slot",
+      "run_load",
+      "numtype_of",
+      "RunFn",
+      "src/parse/fields.rs",
+      "src/identities/this.rs",
+      "src/run.rs"
+    ],
+    "design": [
+      "`:` reads a name's binding, `.` reads a thing's own fields",
+      "Reading a path runs nothing"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 1771p DESIGN.md; rg -n 'pub type RunFn' src/run.rs; sed -n 343,356p src/parse/fields.rs; rg -n 'Ok\\(\\*slot as i64\\)|Field::Slot\\(slot, _\\) => rt.run\\(\\*slot\\)' src/identities/this.rs",
+        "output": "A binding is a value: a dyad of type `binding`. Its reading rule is \"the dyad it names\": read as a value it yields what that dyad yields, so a name can stand anywhere a value can.\nRunFn: fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>\n    unsafe fn path_operand(&mut self, node: DyadPtr) -> DyadPtr {   (parse time: returns the node itself for a name, literal or place)\n        ...\n        if runs { self.reach(node) } else { node }\nthis.rs: run_slot  Ok(*slot as i64)                        (the node's address, an @dyad value)\nthis.rs: run_load  Field::Slot(slot, _) => rt.run(*slot)   (runs the node for its number)",
+        "commit": "9c123fb"
+      },
+      {
+        "command": "P47's program, and the same with lhs := ?, rhs := ? (W124's evidence); q's parse with n := ? and tape[0].m = tape[0].n * 2 (W173's evidence)",
+        "output": "i32 fields (this.load, runs x in the parse): garbage in f(4); 13 at top level after x = 10\n? fields (this.slot, the node's address): 8 in f(4), 20 at top level: the copy is right\nn := ?, tape[0].n * 2 (this.slot): error: this operator cannot compute over these operands, exit 1: the address cannot be read as what the node yields",
+        "commit": "9c123fb"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:44+02:00",
+      "by": "logoslang-why-P47-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9c123fb",
+      "run": "why-P47",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W175",
+    "kind": "why",
+    "status": "merged",
+    "text": "resolve_specialization gives the node its spec (set_spec) only after construct_run_body returns, though construct_run_body allocates the spec and enters it in the run-body table before the build, and fn_over_body writes its FN_INPUT and FN_OUTPUT (the output_type field's key entry, else void, from the key alone) at the build's start, before the body is parsed; so what the node gives is known before its body's parse but readable through the node only after it",
+    "proposed_for": "W163",
+    "why": null,
+    "anchors": [
+      "resolve_specialization",
+      "set_spec",
+      "construct_run_body",
+      "construct_run_body_in",
+      "fn_over_body",
+      "FN_OUTPUT",
+      "src/parse/types.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'spec = self.construct_run_body|run_body::set_spec\\(node, spec\\)|let spec = self.rt.store.alloc_words|run_body::insert\\(self.rt.store, types, held, key, spec\\)|let g = self.enter\\(cx\\);|map_or\\(types.void_, \\|i\\| key\\[i\\]\\)|\\*slots.add\\(FN_OUTPUT\\) = output|\\*slots.add\\(FN_BODY\\) = body' src/parse/types.rs src/parse/bodies.rs   (dev 896f9a6)",
+        "output": "src/parse/types.rs:803:        let g = self.enter(cx);\nsrc/parse/types.rs:1133:            spec = self.construct_run_body(ty, held, &key, at, spelling)?;\nsrc/parse/types.rs:1135:        crate::identities::run_body::set_spec(node, spec);\nsrc/parse/bodies.rs:343:        let spec = self.rt.store.alloc_words(types.fn_type, &[std::ptr::null_mut(); FN_SLOTS]);\nsrc/parse/bodies.rs:344:        crate::identities::run_body::insert(self.rt.store, types, held, key, spec);\nsrc/parse/bodies.rs:350:        let g = self.enter(cx);\nsrc/parse/bodies.rs:422:            .map_or(types.void_, |i| key[i]);\nsrc/parse/bodies.rs:531:                *slots.add(FN_OUTPUT) = output;\nsrc/parse/bodies.rs:610:            *slots.add(FN_BODY) = body;\n(order in construct_run_body: alloc spec 342, insert 344, enter 350; in fn_over_body: FN_OUTPUT 531 before the body, FN_BODY 610 after; in resolve_specialization: build 1133, then set_spec 1135)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "target/release/logos '<program>'   (dev 896f9a6, release, interpreted; why-probes/W163-output.txt: the output does not come from the body)",
+        "output": "t1 := type ( a := i32 ?, share run = ( a + 1 ), … ), y := 3 t1, y   -> 0   (no output_type: void, whatever the body yields)\nt1 := type ( a := i32 ?, output_type := type ?, share run = ( a + 1 ), … tape[0].output_type = i32, … ), y := 3 t1, y   -> 4",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W179",
+    "made": {
+      "at": "2026-10-08T22:44+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "5dbf3b2",
+        "change": "merged into W179",
+        "reason": "A and B: the output type is known from the key before the build but reaches the node only as FN_OUTPUT, which only the build fills"
+      }
+    ]
+  },
+  {
+    "id": "W176",
+    "kind": "why",
+    "status": "draft",
+    "text": "DESIGN puts a node's output type on the node only where its type declares output_type and the parse writes it (›A node's output type is per node, and its parse writes it‹, which Q72 holds to such types), and a node type with no output_type gives its line nothing (›= sits beside :=, and returns nothing‹, Q-59/Q-61); P23's types declare none, so their nodes have no field holding what they give, and the seed keeps it only on the function built for the set (FN_OUTPUT)",
+    "proposed_for": "W163",
+    "why": null,
+    "anchors": [
+      "FN_OUTPUT",
+      "construct_run_body_in",
+      "read_kind",
+      "numtype_of",
+      "DESIGN.md"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it",
+      "`=` sits beside `:=`, and returns nothing"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 1121p DESIGN.md; the Q72 line of the same rule; and the Q-59/Q-61 line under ›= sits beside :=, and returns nothing‹ (dev 896f9a6)",
+        "output": "The author declares `output_type := type ?`; the parse writes `tape[0].output_type = tape[-1].type`; use sites and the lowering read it from the node.\nQ72: the rule holds for a type whose author declares `output_type`; an `if` and a block store no type of what they give.\nQ-59/Q-61: :=, return, while, for, defer, free, print «…» and compile f are node types of their own, each with its own fields and no `output_type`, and like `=` they give their line nothing",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "target/release/logos (why-probes/W163-output.txt, dev 896f9a6, release, interpreted)",
+        "output": "no output_type, run = ( a + 1 ): y := 3 t1, y -> 0\noutput_type := type ?, parse writes tape[0].output_type = i32: y := 3 t1, y -> 4",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:45+02:00",
+      "by": "logoslang-why-P23-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W177",
+    "kind": "why",
+    "status": "draft",
+    "text": "›A call is a use of every outer name the callee's body reads‹ makes the list transitive (Calls count too: g(), whose body calls climb(), is refused as climb() is), so a body's own outer list takes in the list of every node it holds; check_call_reads joins the inner list into the frames being built through note_outer_read, and the enclosing build writes its FN_OUTER at its end, so the inner body must be built while the enclosing body is still being built",
+    "proposed_for": "W171",
+    "why": null,
+    "anchors": [
+      "check_call_reads",
+      "note_outer_read",
+      "fn_over_body",
+      "FN_OUTER"
+    ],
+    "design": [
+      "A call is a use of every outer name the callee's body reads"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Calls count too' DESIGN.md; rg -n 'joins the lists of the functions being parsed|self.note_outer_read\\(binding\\)' src/parse/operands.rs",
+        "output": "408 (### A call is a use of every outer name the callee's body reads), its first paragraph: … Calls count too: `g()`, whose body calls `climb()`, is refused as `climb()` is. …\nsrc/parse/operands.rs: /// use here would be, and joins the lists of the functions being parsed.   (check_call_reads' doc)\nsrc/parse/operands.rs: self.note_outer_read(binding);   (check_call_reads, for each binding of the callee's list)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "target/release/logos '<line>' for each line of why-probes/transitive-reads.txt   (t1's run body is ( x + 1 ); t0's run body is ((( 3 t1 ))), which never names x; dev 896f9a6, release, interpreted)",
+        "output": "x := i32 5, t1 := …, t0 := …, 3 t0                  -> 0, exit 0\nx := i32 5, t1 := …, t0 := …, free x, 3 t0          -> error: the run body of `t0` could not be constructed for these field types   (col 418: t1's check fails inside t0's build)\nx := i32 5, t1 := …, t0 := …, 3 t0, free x, 3 t0    -> error: `x` is dead here: it was moved or freed above   (col 424, the second 3 t0: t0's own list took in t1's x while t0's body was built)",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:45+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W178",
+    "kind": "why",
+    "status": "draft",
+    "text": "check_call_reads decides each outer name by its state at the moment it runs, Binding::is_dead (an end set once its free is parsed) and self.cx.scopes.is_open, never by comparing the node's place with the name's range, so it is right only while the parse stands at the node and cannot wait for a body built later; DESIGN's Why calls the check a range lookup per outer name per call, at elaboration",
+    "proposed_for": "W171",
+    "why": null,
+    "anchors": [
+      "check_call_reads",
+      "is_dead",
+      "note_outer_read",
+      "src/identities/binding.rs",
+      "src/parse/operands.rs"
+    ],
+    "design": [
+      "A call is a use of every outer name the callee's body reads"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'pub\\(crate\\) unsafe fn check_call_reads|!self.cx.scopes.is_open\\(fields.scope\\)|if fields.is_dead\\(\\)|self.note_outer_read\\(binding\\);' src/parse/operands.rs; sed -n 78,80p src/identities/binding.rs; rg -n 'range lookup per outer name per call' DESIGN.md",
+        "output": "src/parse/operands.rs:466:    pub(crate) unsafe fn check_call_reads(&mut self, callee: DyadPtr) -> Result<(), ParseError> {\nsrc/parse/operands.rs:492:                && !self.cx.scopes.is_open(fields.scope)\nsrc/parse/operands.rs:498:            if fields.is_dead() {\nsrc/parse/operands.rs:501:            self.note_outer_read(binding);\nsrc/identities/binding.rs:78:    pub fn is_dead(&self) -> bool {\nsrc/identities/binding.rs:79:        !self.end.is_null()\nDESIGN.md:410: - **Why:** … The check is a range lookup per outer name per call, at elaboration; running code checks nothing.",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "why-probes/transitive-reads.txt line 3 (dev 896f9a6, release, interpreted)",
+        "output": "x := i32 5, t1 := …, t0 := …, 3 t0, free x, 3 t0 -> error: `x` is dead here (col 424, the second 3 t0); the first 3 t0 passed because x had no end when the parse stood there",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:46+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W179",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The output type a run node gives is known from the key before the build (construct_run_body_in takes the output_type field's key entry, else void), yet it reaches the node only as the spec's FN_OUTPUT, which construct_run_body allocates with every slot null and only fn_over_body fills, inside the build after enter; no output type is written on the node or the spec at set_spec, so spec_of gives a typed answer only once the build is under way",
+    "proposed_for": "W163",
+    "why": null,
+    "anchors": [
+      "construct_run_body",
+      "construct_run_body_in",
+      "fn_over_body",
+      "FN_OUTPUT",
+      "set_spec",
+      "spec_of",
+      "src/parse/bodies.rs",
+      "resolve_specialization",
+      "src/parse/types.rs"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'let spec = self.rt.store.alloc_words\\(types.fn_type|\\.map_or\\(types.void_, \\|i\\| key\\[i\\]\\)|\\*slots.add\\(FN_OUTPUT\\) = output|let g = self.enter\\(cx\\);|self.fn_over_body\\(types.fn_type, input, &places' src/parse/bodies.rs",
+        "output": "343:        let spec = self.rt.store.alloc_words(types.fn_type, &[std::ptr::null_mut(); FN_SLOTS]);   (construct_run_body, before the build)\n350:        let g = self.enter(cx);   (the build's nested Context)\n422:            .map_or(types.void_, |i| key[i]);   (construct_run_body_in: the output type, from the key alone)\n431:        self.fn_over_body(types.fn_type, input, &places, output, spec, std::ptr::null_mut())\n531:                *slots.add(FN_OUTPUT) = output;   (fn_over_body: the one write of a run spec's output)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n 'The author declares .output_type := type \\?.|the rule holds for a type whose author declares .output_type.' DESIGN.md",
+        "output": "1121: The author declares `output_type := type ?`; the parse writes `tape[0].output_type = tape[-1].type`; use sites and the lowering read it from the node.\n(Q72 line, 8 October 2026: the rule holds for a type whose author declares output_type; P23's types declare none, and the seed then gives void, from the type alone)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "rg -n 'spec = self.construct_run_body|run_body::set_spec\\(node, spec\\)|let spec = self.rt.store.alloc_words|run_body::insert\\(self.rt.store, types, held, key, spec\\)|let g = self.enter\\(cx\\);|map_or\\(types.void_, \\|i\\| key\\[i\\]\\)|\\*slots.add\\(FN_OUTPUT\\) = output|\\*slots.add\\(FN_BODY\\) = body' src/parse/types.rs src/parse/bodies.rs   (dev 896f9a6)",
+        "output": "src/parse/types.rs:803:        let g = self.enter(cx);\nsrc/parse/types.rs:1133:            spec = self.construct_run_body(ty, held, &key, at, spelling)?;\nsrc/parse/types.rs:1135:        crate::identities::run_body::set_spec(node, spec);\nsrc/parse/bodies.rs:343:        let spec = self.rt.store.alloc_words(types.fn_type, &[std::ptr::null_mut(); FN_SLOTS]);\nsrc/parse/bodies.rs:344:        crate::identities::run_body::insert(self.rt.store, types, held, key, spec);\nsrc/parse/bodies.rs:350:        let g = self.enter(cx);\nsrc/parse/bodies.rs:422:            .map_or(types.void_, |i| key[i]);\nsrc/parse/bodies.rs:531:                *slots.add(FN_OUTPUT) = output;\nsrc/parse/bodies.rs:610:            *slots.add(FN_BODY) = body;\n(order in construct_run_body: alloc spec 342, insert 344, enter 350; in fn_over_body: FN_OUTPUT 531 before the body, FN_BODY 610 after; in resolve_specialization: build 1133, then set_spec 1135)",
+        "commit": "896f9a6"
+      },
+      {
+        "command": "target/release/logos '<program>'   (dev 896f9a6, release, interpreted; why-probes/W163-output.txt: the output does not come from the body)",
+        "output": "t1 := type ( a := i32 ?, share run = ( a + 1 ), … ), y := 3 t1, y   -> 0   (no output_type: void, whatever the body yields)\nt1 := type ( a := i32 ?, output_type := type ?, share run = ( a + 1 ), … tape[0].output_type = i32, … ), y := 3 t1, y   -> 4",
+        "commit": "896f9a6"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "resolve_specialization gives the node its spec (set_spec) only after construct_run_body returns, though construct_run_body allocates the spec and enters it in the run-body table before the build, and fn_over_body writes its FN_INPUT and FN_OUTPUT (the output_type field's key entry, else void, from the key alone) at the build's start, before the body is parsed; so what the node gives is known before its body's parse but readable through the node only after it"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:46+02:00",
+      "by": "logoslang-why-P23-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "896f9a6",
+      "run": "why-P23",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-08T22:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "5dbf3b2",
+        "change": "accepted as a why of W163, same as W175",
+        "reason": "A and B: the output type is known from the key before the build but reaches the node only as FN_OUTPUT, which only the build fills"
+      }
+    ]
+  },
+  {
+    "id": "W180",
+    "kind": "why",
+    "status": "draft",
+    "text": "A parse body is built whole at the type's definition, as a fn over two typed parameters, tape (parsing_tape) and the node (dyad), through hidden_param_record and fn_over_body under SlotKind::Parse, so every read in it is typed before any appearance hands it a node; nothing in it waits for what the held node yields, and no DESIGN rule says when a parse body is built: the build-where-written-else-wait rule of A generic function body is lexed once and built once per set of field types names only a fn body and a type's run body",
+    "proposed_for": "W173",
+    "why": null,
+    "anchors": [
+      "hidden_param_record",
+      "fn_over_body",
+      "SlotKind",
+      "in_parse",
+      "src/parse/types.rs"
+    ],
+    "design": [
+      "A generic function body is lexed once and built once per set of field types",
+      "`tape` is a word the `parse` slot declares into its body",
+      "Slots are named for the moment they run: `parse`, `run`, `free`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'SlotKind::Parse => \\{|\\(Some\\(\"tape\"\\), types.tape.parsing_tape\\), \\(None, types.dyad_\\)|def.in_parse = true|self.fn_over_body\\(' src/parse/types.rs",
+        "output": "src/parse/types.rs:975: SlotKind::Parse => {\nsrc/parse/types.rs:980: &[(Some(\"tape\"), types.tape.parsing_tape), (None, types.dyad_)],\nsrc/parse/types.rs:986: def.in_parse = true;\nsrc/parse/types.rs:989: self.fn_over_body(types.fn_type, input, &params, types.void_, null, null)   (built here, at the definition)",
+        "commit": "50007fb"
+      },
+      {
+        "command": "target/release/logos on why-probes/c-w173.txt (dev 50007fb): the two refused parses of W173's evidence, defined only, never used, then print «defined»",
+        "output": "fields ?, tape[0].m = tape[0].n * 2: <command line>:1:143: error: this operator cannot compute over these operands (ParseError::UnsupportedOperands, at the definition; defined is never printed)\nsize := ?, tape[0].size.type: <command line>:1:126: error: this read does not fit the node's type (ParseError::BadReflectRead, at the definition)",
+        "commit": "50007fb"
+      },
+      {
+        "command": "rg -n -i 'one rule for a .fn. body and a type.s .run. body|A .fn. body and a type.s .run. body are built as far as they can be' DESIGN.md; rg -n -i 'parse body.{0,60}(built|lexed)|(built|lexed).{0,40}parse body' DESIGN.md",
+        "output": "1908: ... A fn body and a type's run body are built as far as they can be where they are written: every part whose build needs nothing a call or a node supplies is built there, once, and only the rest is held and built once per set when that arrives ...\n1913: Ruled (29 September 2026, Thobias, #197): one rule for a fn body and a type's run body: built where it is written when everything the build needs is known there, otherwise kept lexed and built where that arrives, a call or the first node.\n(second search: no line on when a parse body is built; 1105 calls share parse = ( … ) a deferred parse body, 1101 binds tape per run, 1228 says parse runs when the spelling appears)",
+        "commit": "50007fb"
+      }
+    ],
+    "found_by": [
+      "C"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-08T22:47+02:00",
+      "by": "logoslang-why-P47-c",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "50007fb",
+      "run": "why-P47",
+      "agent": "C"
     },
     "history": []
   }
