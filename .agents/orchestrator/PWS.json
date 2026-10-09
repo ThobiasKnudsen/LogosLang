@@ -26501,7 +26501,9 @@
     "status": "accepted",
     "text": "Nothing in the orchestrate skill registers watch-guard.sh as a hook: SKILL.md's frontmatter holds only name and description, orchestrate.sh's one setup command, cmd_setup, copies only the repo's .agents/orchestrator files and ruling document and no command names settings.json, and SKILL.md ›Setup, once per session‹ (ListAgents, permission mode, AGENTS.md, status, start the watch) neither registers nor checks the hook, so whether the guard runs rests on a hand edit of ~/.claude/settings.json that no step asks for",
     "proposed_for": "P138",
-    "why": null,
+    "why": [
+      "W286"
+    ],
     "anchors": [
       "cmd_setup",
       "~/.claude/skills/orchestrate/orchestrate.sh",
@@ -26559,6 +26561,15 @@
         "commit": "c732ec5",
         "change": "accepted as a why of P138, same as W272",
         "reason": "A and B state the same fact: no command of orchestrate.sh, no step of SKILL.md and no frontmatter registers watch-guard.sh as a hook; both ran the guard by hand and it works, so registration is the only missing piece"
+      },
+      {
+        "at": "2026-10-09T14:23+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "db11fec",
+        "change": "why + W286",
+        "reason": null
       }
     ]
   },
@@ -27138,7 +27149,7 @@
   {
     "id": "W285",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "The one place SKILL.md gives the guard, ~/.claude/settings.json, is a file the skill's own sessions are refused writing: they run in auto mode (orchestrate.sh MODE defaults ORCH_MODE to auto, which must equal the orchestrator's), Claude Code's auto-mode check refused the orchestrator's Edit of settings.json as Self-Modification at 00:27:36 UTC on 9 October, and 30 seconds later SKILL.md was edited to call the guard a Stop hook in that file; SKILL.md's frontmatter, a skill file the orchestrator edits freely and which Claude Code reads hooks from when the skill is invoked, holds none",
     "proposed_for": "W276",
     "why": null,
@@ -27167,7 +27178,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W286",
     "made": {
       "at": "2026-10-09T14:22+02:00",
       "by": "logoslang-why-P138-a",
@@ -27177,21 +27188,33 @@
       "run": "why-P138",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:23+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "db11fec",
+        "change": "merged into W286",
+        "reason": "A and B state the same fact: SKILL.md puts the guard's registration in ~/.claude/settings.json, outside the skill's own files, which is the one file its auto-mode sessions may not write (refused as [Self-Modification], 9 October 2026 00:27 UTC); nothing the skill does reaches it"
+      }
+    ]
   },
   {
     "id": "W286",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "SKILL.md ›Questions to Thobias‹ puts the guard's registration in ~/.claude/settings.json, outside what ›How you work on his machine‹ names as this skill's files (this one, the script and the prompts beside it, and ~/.claude/skills/solve/SKILL.md), and every way the skill lands a change writes only those: an orchestrator's Edit of them in place, copy_skill's *.md, *.sh, *.py and setup/* for the team's copy, cmd_setup's repo folder; no command writes anywhere under ~/.claude outside skills/, so nothing the skill does reaches the one file its guard is said to be registered in, while a Stop hook in the skill's own frontmatter would be inside its files",
     "proposed_for": "W276",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "copy_skill",
       "cmd_setup",
       "~/.claude/skills/orchestrate/orchestrate.sh",
-      "~/.claude/skills/orchestrate/watch-guard.sh"
+      "~/.claude/skills/orchestrate/watch-guard.sh",
+      "ORCH_MODE",
+      "start_session"
     ],
     "design": [],
     "pages": [],
@@ -27205,12 +27228,25 @@
         "command": "a probe skill in a scratch project, $CLAUDE_JOB_DIR/tmp/skilltest/.claude/skills/stopprobe/SKILL.md, whose frontmatter declares hooks: Stop: [{hooks: [{type: command, command: \"jq -c '{hook_event_name, session_id}' >> stop-log.jsonl\"}]}]; claude 2.1.295, --setting-sources project --model claude-haiku-5-5: (1) claude -p '/stopprobe'; (2) claude -p --continue 'Reply with the single word hi.'; (3) one process, --input-format stream-json < why-probes/two-turns.jsonl (turn 1 /stopprobe, turn 2 'Reply with the single word hi.'); cat stop-log.jsonl",
         "output": "(1) ok -> {\"hook_event_name\":\"Stop\",\"session_id\":\"1f72d8b9-...\"}\n(2) hi -> no new line: a resumed session no longer has the hook until the skill is invoked again\n(3) result: ok, result: hi -> {\"hook_event_name\":\"Stop\",\"session_id\":\"3dffb3cc-...\"} twice: the hook fires at the skill's turn and at the next turn of the same process\n(docs, code.claude.com/docs/en/hooks, Hooks in skills and agents: Skill hooks: Claude Code registers them when you or Claude invoke the skill and keeps running them for the rest of the session)",
         "commit": "776f442"
+      },
+      {
+        "command": "f=~/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl; rg 'toolu_01MKL5pPUzauMQLa2J1oSJhr' $f | jq -c '{type, t: .timestamp, tool: [.message.content[]? | select(.type==\"tool_use\") | .name, .input.file_path], denied: (.toolUseResult | tostring | .[0:110])}'; jq -r 'select(.timestamp==\"2026-10-09T00:28:06.374Z\") | .message.content[]?.input.new_string // empty' $f | rg -o 'watch-guard.sh., a Stop hook in his .~/.claude/settings.json.'; rg -n -o 'MODE=\"\\$\\{ORCH_MODE:-auto\\}\"|--permission-mode \"\\$MODE\"|ORCH_MODE \\(the sessions. permission mode, must equal' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "{\"type\":\"assistant\",\"t\":\"2026-10-09T00:27:13.929Z\",\"tool\":[\"Edit\",\"/home/o/.claude/settings.json\"],\"denied\":\"null\"}\n{\"type\":\"user\",\"t\":\"2026-10-09T00:27:36.429Z\",\"tool\":[],\"denied\":\"Error: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Self-Modificati\"}\nwatch-guard.sh`, a Stop hook in his `~/.claude/settings.json`\n14:MODE=\"${ORCH_MODE:-auto}\"\n113:ORCH_MODE (the sessions' permission mode, must equal\n316:--permission-mode \"$MODE\"",
+        "commit": "776f442"
+      },
+      {
+        "command": "sed -n 1,4p ~/.claude/skills/orchestrate/SKILL.md | cut -c1-40; WebFetch https://code.claude.com/docs/en/skills, frontmatter table, row hooks (read 9 October 2026)",
+        "output": "---\nname: orchestrate\ndescription: Run a repo's issues (GitHub\n---\n`hooks` | No | Hooks that Claude Code registers when the skill is invoked and keeps running for the rest of the session. (The hooks page names no events for skill hooks, so a Stop hook there is untested.)",
+        "commit": "776f442"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "The one place SKILL.md gives the guard, ~/.claude/settings.json, is a file the skill's own sessions are refused writing: they run in auto mode (orchestrate.sh MODE defaults ORCH_MODE to auto, which must equal the orchestrator's), Claude Code's auto-mode check refused the orchestrator's Edit of settings.json as Self-Modification at 00:27:36 UTC on 9 October, and 30 seconds later SKILL.md was edited to call the guard a Stop hook in that file; SKILL.md's frontmatter, a skill file the orchestrator edits freely and which Claude Code reads hooks from when the skill is invoked, holds none"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T14:22+02:00",
@@ -27221,6 +27257,25 @@
       "run": "why-P138",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:23+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "db11fec",
+        "change": "accepted as a why of W276, same as W285",
+        "reason": "A and B state the same fact: SKILL.md puts the guard's registration in ~/.claude/settings.json, outside the skill's own files, which is the one file its auto-mode sessions may not write (refused as [Self-Modification], 9 October 2026 00:27 UTC); nothing the skill does reaches it"
+      },
+      {
+        "at": "2026-10-09T14:23+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "db11fec",
+        "change": "asked: no why found",
+        "reason": "both agents: below it lies only the sentence in SKILL.md that says which files are the skill's; what came after the refusal is a rule not followed, not a fact of structure"
+      }
+    ]
   }
 ]
