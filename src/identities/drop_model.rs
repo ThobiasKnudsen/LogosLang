@@ -382,18 +382,31 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
         if meta::is_node_valued(ty, types.fn_type) && !meta::instances_free_of(ty).is_null() {
             return Ok(true);
         }
-        if !numtype::is_pointer_type(ty) || !meta::destructor_of(ty).is_null() {
-            return Err(ParseError::OwnNeedsPointer);
-        }
-        let owning = super::pointer::make_owning_pointer_type(
-            p.store(),
-            types.type_,
-            numtype::pointee_of(ty),
-            types.ops.teardown_,
-        );
+        let owning = owning_pointer(p.store(), types, ty)?;
         super::hole::set_type(hole, owning);
     }
     Ok(false)
+}
+
+/// The owning `@T` that `own` makes of a plain pointer type `ty`; `OwnNeedsPointer` for
+/// anything else, an owning pointer type or a value that is no type at all (`-> own 5`).
+///
+/// # Safety
+/// `ty` must be a valid dyad from `store`.
+unsafe fn owning_pointer(
+    store: &mut Store,
+    types: &Core,
+    ty: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    if meta::kind_of(ty) != Some(numtype::ADDR_TAG) || !meta::destructor_of(ty).is_null() {
+        return Err(ParseError::OwnNeedsPointer);
+    }
+    Ok(super::pointer::make_owning_pointer_type(
+        store,
+        types.type_,
+        numtype::pointee_of(ty),
+        types.ops.teardown_,
+    ))
 }
 
 /// The result type `-> own T` gives its calls: an owning `@T` for a pointer type, the type
@@ -411,16 +424,7 @@ pub(crate) unsafe fn own_result(
     if meta::is_record_type(ty) && !meta::instances_free_of(ty).is_null() {
         return Ok(ty);
     }
-    // What follows `own` may be no type at all, `-> own 5`, which `kind_of` turns away.
-    if meta::kind_of(ty) != Some(numtype::ADDR_TAG) || !meta::destructor_of(ty).is_null() {
-        return Err(ParseError::OwnNeedsPointer);
-    }
-    Ok(super::pointer::make_owning_pointer_type(
-        store,
-        types.type_,
-        numtype::pointee_of(ty),
-        types.ops.teardown_,
-    ))
+    owning_pointer(store, types, ty)
 }
 
 /// `move` of a place: `[place, type, op]`, `type` the moved value's, from which the name
