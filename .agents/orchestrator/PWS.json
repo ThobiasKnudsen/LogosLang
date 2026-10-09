@@ -23565,5 +23565,125 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "S69",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A message comes first: one paragraph in SKILL.md ›Staying responsive‹ says that a message reaching the orchestrator in the middle of a task, at its next tool call, is acted on before that task's next step, whatever the harness's note on it says (After completing your current task): Thobias's words first, then a question to place, then the agents' messages; only a file the task has changed and the message's step would commit is finished and committed first",
+    "fixes": [
+      "W222"
+    ],
+    "assessment": "Root fix: W222 is a rule the skill lacks, and one rule decides for every sender and every task, no arm per kind. The harness attaches the note 'After completing your current task, decide whether/how to respond' to every message from another session (85 entries of session 79afb672 on 8 October carry it), so without a rule the orchestrator follows that note; with it, why-P112-e's answer, which waited 5 min 46 s behind PolyLogue's setup, waits only for its own judging (about 2 min). Leaves the volume (about 1,400 tool calls a day, W221) and the compactions, so a long step for one message still holds the next. Text only: one paragraph of SKILL.md and its story in SKILL_HISTORY.md, minutes; solve-W243's heartbeat fix (W245) may change the next sentence of the same paragraph; help-5's SKILL.md draft (answer.md l.237) needs the same edit before it is installed.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:20+02:00",
+      "by": "logoslang-solve-W222",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "be2423e",
+      "run": "solve-W222",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S70",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One repo per orchestrator: SKILL.md ›One repo, one orchestrator, several bases‹ says the orchestrator runs only the repo it stands in; another repo, new or not, gets its own orchestrator, which Thobias starts with /orchestrate in its folder; for a new one the orchestrator only makes the folder with what belongs in it and tells him, and that repo's setup is its own orchestrator's",
+    "fixes": [
+      "W250"
+    ],
+    "assessment": "Root fix: deletes the second repo from the session (the clause '-C <repo> names another', used to run another repo) instead of adding a case. Moves out of the session every step of another repo: on 8 October 42 tool calls touched PolyLogue, and its setup (conf, KNOWLEDGE.md, AGENTS.md, push, 23:24:42 to 23:28:41 UTC) is what why-P112-e's answer waited behind. Changes what Thobias can ask: at 23:18:32 UTC on 8 October he asked the LogosLang orchestrator to make PolyLogue and set it up for orchestrating; with this he gets the folder and starts /orchestrate there himself, which a new folder needs once anyway (SKILL.md ›Never‹: claude --bg refuses a folder that is not trusted). Text only: two bullets of that section and SKILL_HISTORY.md, minutes; no script refusal, since orchestrate.sh does not know which repo an orchestrator runs. No other solution agent's root touches that section; help-5's SKILL.md draft needs the same edit.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:20+02:00",
+      "by": "logoslang-solve-W222",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "be2423e",
+      "run": "solve-W222",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S71",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Records written where the work is: an asker places its own question file with the script's question-new from its worktree, and a solution agent (a helper for the orchestrator's own rulings) writes an approved ruling's record on a branch in its own worktree and runs the docs gate; the orchestrator checks the diff against Thobias's words and lands it on the base with one locked script command; helper-prompt.md lets a helper write such a record",
+    "fixes": [
+      "W248"
+    ],
+    "assessment": "Root fix for W248: the rule becomes one on the commands (the folder and the ruling document reach the base only through the script's locked commands, a branch's record only after the orchestrator's check), not one on a session; also removes P130 (SKILL.md lets a helper write a record, helper-prompt.md says Change nothing) by one rule for both. Moves out of the session the ruling-document work (122 tool calls on 8 October) and most question placing (137; placing Q89 took 70 s and 13 calls), about 18% of its calls; the orchestrator keeps the diff check and the points marked (orchestrator). Costs: the orchestrator no longer edits a question before Thobias sees it; script work (question-new runnable from a worktree, a command landing a record branch under the merge lock) and wording in every-prompt.md, solve-prompt.md, helper-prompt.md and agent-agnostic-prompt.md; half a day. Changes the sentence Only the orchestrator writes the ruling document, which S46 (solve-W101) rewords for the case with an orchestrator.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:21+02:00",
+      "by": "logoslang-solve-W222",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "be2423e",
+      "run": "solve-W222",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S72",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The skill gets a repo: ~/.claude/skills (orchestrate and solve) becomes a git repository with its own base and tracker, so a fix to the skill is an issue an implementation agent works on a branch and the script merges after review, which updates the installed files; the orchestrator no longer edits the skill in place",
+    "fixes": [
+      "W249"
+    ],
+    "assessment": "Root fix for W249 (and W242 under it): gives the skill a base and branches, so the in-place edit by whichever orchestrator lands a fix goes. Moves out of the session the skill edits: on 8 October about 100 edits of the skill's files (SKILL.md 33, orchestrate.sh 27, pws.py 15, SKILL_HISTORY.md 12, pws_test.py 6, the prompts) and 54 reads, about 11% of its calls. Costs: a one-time setup (git init, a private GitHub repo or a local base, an .agents/orchestrator folder, and under S70 an orchestrator of its own), every skill fix then waits for a review round, and The installed files are the source becomes the repo's base is the source; about a day. help-5's whole-file cut would land as its first commit. Overlaps W193 (held by solve-W101), whose S46 gives SKILL.md one section on its own files and assumes no git.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:21+02:00",
+      "by": "logoslang-solve-W222",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "be2423e",
+      "run": "solve-W222",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P134",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function that holds a made pointer cannot be compiled: `lower_end_held` refuses an owning place, so a compiled `h` that binds the result of a `-> own @i32` call stays interpreted, as on dev with `-> @i32`; `-> own bag` called from a compiled function works and frees once",
+    "program": "target/release/logos 'mk := fn () -> own @i32 ( alloc 1 of i32 5 ), h := fn () -> i32 ( x := mk(), x@ ), h.compile()'",
+    "output": "\"this cannot be compiled yet\" (issue-82-output-type at fe96f57; dev gives the same with `-> @i32`)",
+    "expected": "the compiled tier runs what the interpreter runs, and `h()` gives 5 and frees the i32 once (›A last value moves out‹; f.compile() compiles a function the interpreter accepts)",
+    "tier": "compiled",
+    "found": "logoslang-issue-82-worker, FOUND in its DONE, 9 October 2026, branch issue-82-output-type at fe96f57",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T03:21+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "84e73d2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
