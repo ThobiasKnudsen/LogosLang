@@ -63,6 +63,21 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::MissingElse => {
             "an `if` used as a value needs an `else` branch".into()
         }
+        ParseError::ArmGivesNothing => {
+            "every arm of an `if` used as a value must give one, and this arm gives nothing \
+             (a statement, a `return` or an `error` gives the `if` no value)"
+                .into()
+        }
+        ParseError::ArmsDiffer => {
+            "the arms of this `if` give different types: convert them to one type, \
+             as in `if c (i64 (i32 1)) else (i64 2)`"
+                .into()
+        }
+        ParseError::ArmsMakeAndBorrow => {
+            "make a value in every arm, or borrow in every arm: one arm of this `if` makes its \
+             value and another borrows one, so who owns it would be known only when it runs"
+                .into()
+        }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
             "these types do not match (crossing types needs an explicit cast)".into()
@@ -70,12 +85,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::UncomputableLiteral => {
             "this literal has no exact value in the type it lands in".into()
         }
-        ParseError::EarlyReturn => {
-            "outside a function, `return` must be the last expression of its scope".into()
-        }
-        ParseError::StatementAsValue => {
-            "a statement yields no value and cannot stand here".into()
-        }
+        ParseError::ReturnOutsideFunction => "`return` is written only inside a function".into(),
+        ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
         ParseError::AssignToLiteral(lit) => format!(
             "`{lit}` is a literal with no storage: `x := {lit}` names the number \
@@ -154,6 +165,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadCast => "a conversion takes exactly one numeric value".into(),
         ParseError::BadDeclaredType => {
             "the declared or assigned type must be a type value"
+                .into()
+        }
+        ParseError::DyadResultNotNode => {
+            "a `-> dyad` function gives back only what `=` writes into a `dyad ?` place, as a \
+             type, and not a number or a parameter yet"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {
@@ -298,13 +314,27 @@ pub fn parse_message(e: &ParseError) -> String {
             "this name borrows what it holds, so it cannot move it; only its owner can".into()
         }
         ParseError::OwnNeedsPointer => {
-            "`own` in a type is written over a pointer hole, `own @T ?`, or a hole of a type \
-             whose body fills `free`, `own t ?`"
+            "`own` in a type is written over a pointer, `own @T ?` or `-> own @T`, or a type \
+             whose body fills `free`, `own t ?` or `-> own t`"
                 .into()
         }
         ParseError::OwnOutsideType => {
-            "`own` marks a hole, `own @T ?` or `own t ?`, and `-> own @T` is not in the seed yet; \
+            "`own` marks a hole, `own @T ?` or `own t ?`, or a function's result, `-> own @T`; \
              `move x` moves a value"
+                .into()
+        }
+        ParseError::HandsOnMade(written) => {
+            format!("this function hands on a value it made: write `-> own {written}`")
+        }
+        ParseError::OwnResultBorrows => {
+            "this function hands on a borrow, but its result says `-> own`, which hands on a \
+             value made here; make or move the value, or write the result without `own`"
+                .into()
+        }
+        ParseError::RunReturnBorrows => {
+            "this `return` hands on a borrow, but this `run` hands on the value it makes as its \
+             last value, and every `return` must do the same; make or move the value, or hand on \
+             only borrows, the last value too"
                 .into()
         }
         ParseError::NoSuchSlot(name) => format!(
@@ -338,11 +368,6 @@ pub fn parse_message(e: &ParseError) -> String {
             "`{name}` is a name the run starts with, which every imported file reads too, so \
              this program cannot end it: give it a name of your own, `t := {name}`, and end that"
         ),
-        ParseError::FreeOfUntypedValue => {
-            "`free` runs a value and then its type's `free`, and which type this value has is \
-             known only when it runs: free it inside each branch, `if c (free (a())) else (free (b()))`"
-                .into()
-        }
     }
 }
 

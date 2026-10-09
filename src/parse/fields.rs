@@ -440,7 +440,7 @@ impl<'a> Parser<'a> {
             }
             // A field holding a node a Logos `parse` built is read when the code runs, even
             // through a node the parse knows: the node it holds may be replaced before then.
-            if let Some(t) = crate::identities::node_type_of(self.types, lhs) {
+            if let Some(t) = crate::identities::node_output(self.types, lhs) {
                 if self.holds_node(t, name) {
                     if let Some(read) = self.run_node_member(lhs, left, t, name, None)? {
                         return Ok(read);
@@ -455,7 +455,7 @@ impl<'a> Parser<'a> {
             if crate::identities::read::read_kind(self.types, lhs)
                 != crate::identities::read::Read::Node
             {
-                if let Some(t) = crate::identities::node_type_of(self.types, lhs) {
+                if let Some(t) = crate::identities::node_output(self.types, lhs) {
                     if let Some(read) = self.run_node_member(lhs, left, t, name, call.clone())? {
                         return Ok(read);
                     }
@@ -490,10 +490,9 @@ impl<'a> Parser<'a> {
             }
             // A place holding a type: its fields are the identity's, which
             // nobody knows until the program runs (DESIGN ›A type is a comptime value‹).
-            if matches!(
-                crate::identities::read::read_kind(self.types, lhs),
-                crate::identities::read::Read::Container(t) if t == self.types.type_ || t == self.types.dyad_
-            ) || crate::identities::yields_type(self.types, lhs)
+            let out = crate::identities::read::output_type(self.types, lhs);
+            if out == self.types.type_
+                || out == self.types.dyad_ && self.types.is_storage(self.types.through(lhs))
             {
                 return Err(ParseError::TypeKnownOnlyAtRun);
             }
@@ -523,12 +522,9 @@ impl<'a> Parser<'a> {
                     0,
                     self.types.conv_container,
                 );
-                return Ok((
-                    self.rt
-                        .store
-                        .alloc_words(self.types.compile_, &[lhs, code, self.types.ops.compile_]),
-                    1,
-                ));
+                let types = self.types;
+                let ops = [lhs, code, types.ops.compile_];
+                return Ok((self.rt.store.alloc_words(types.compile_, &ops), 1));
             }
         }
         // A tape's natives, members of `parsing_tape`'s scope that are not
@@ -824,8 +820,9 @@ impl<'a> Parser<'a> {
         // SAFETY: `scope` is the block `parse_block` minted, closed.
         let dyads =
             unsafe { crate::identities::scope::dyads(self.rt.store, self.types.array_, scope) };
-        let node =
-            self.rt.store.alloc_words(self.types.square_brackets, &[dyads, std::ptr::null_mut()]);
+        // A list standing as a value gives back itself.
+        let sq = self.types.square_brackets;
+        let node = self.rt.store.alloc_words(sq, &[dyads, std::ptr::null_mut(), sq]);
         tape.place(node);
         Ok(Constructed::Placed)
     }
@@ -890,34 +887,20 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The lhs's static type must be a pointer type: a pointer variable or
-    /// `&x`, a pointer field place, or another deref whose pointee is a pointer.
+    /// The lhs must give back a pointer: a pointer variable or `&x`, a pointer field place,
+    /// a pointer step, a call, or another deref whose pointee is a pointer.
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store.
     pub(crate) unsafe fn build_deref(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
-        // The pointer expression is stored as it stands (a use of a name is
-        // its binding); its type is read through the reading rule.
-        let read = self.types.through(lhs);
-        let ptr_ty = if dyad::ty(read) == self.types.deref_ {
-            crate::identities::pointer::deref_parts(read).1
-        } else {
-            self.types.type_of(read)
-        };
-        let pointee = if ptr_ty == self.types.plus || ptr_ty == self.types.minus {
-            // A pointer step, `(p + k)@`: its pointee is the stepped pointer's.
-            match crate::identities::numtype_of(self.types, read) {
-                crate::identities::Operand::Pointer(pointee) => pointee,
-                _ => return Err(ParseError::UnsupportedOperands),
-            }
-        } else {
-            // The pointee rides on the reading rule's answer.
-            let Some((crate::identities::read::Read::Pointer(pointee), _)) =
-                crate::identities::read::place_layout(self.types, ptr_ty)
-            else {
-                return Err(ParseError::UnsupportedOperands);
-            };
-            pointee
+        // The pointer expression is stored as it stands (a use of a name is its binding).
+        let Some((crate::identities::read::Read::Pointer(pointee), _)) =
+            crate::identities::read::place_layout(
+                self.types,
+                crate::identities::read::output_type(self.types, lhs),
+            )
+        else {
+            return Err(ParseError::UnsupportedOperands);
         };
         let types = self.types;
         Ok(crate::identities::pointer::build_deref(self.rt.store, types, lhs, pointee, 0))
@@ -1212,7 +1195,7 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
-        let t = crate::identities::yielded_type(types, lhs);
+        let t = crate::identities::read::value_type(types, lhs)?;
         if t.is_null() {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }

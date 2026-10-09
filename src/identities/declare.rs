@@ -17,6 +17,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
+use crate::Core;
 
 const DECL_LHS: usize = 0;
 const DECL_RHS: usize = 1;
@@ -46,13 +47,12 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
 
 pub(crate) fn build(
     store: &mut Store,
-    declare: DyadPtr,
-    op: DyadPtr,
+    types: &Core,
     lhs: DyadPtr,
     rhs: DyadPtr,
     declared: DyadPtr,
 ) -> DyadPtr {
-    store.alloc_words(declare, &[lhs, rhs, declared, op])
+    store.alloc_words(types.declare_, &[lhs, rhs, declared, types.ops.declare_])
 }
 
 /// # Safety

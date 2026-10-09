@@ -33,6 +33,10 @@ pub(super) struct OpenFn {
 /// teardown runs where its life ends; the ending identity reads the type's `free` slot‹).
 pub(super) struct OpenReturn {
     node: DyadPtr,
+    /// Where its word stands, for an error the body's close finds in it.
+    at: usize,
+    /// Whether its operand is made or borrowed, as `handed_ends` reads it.
+    made: Option<bool>,
     /// The names the scopes it leaves hold at it, in declaration order; an `if` whose arm
     /// frees one on the `return`'s way out takes it off.
     live: Vec<DyadPtr>,
@@ -103,7 +107,36 @@ pub const FN_OUTER: usize = 5;
 /// `share` function's body reads or writes a field of its value; null for neither.
 pub const FN_RECEIVER: usize = 6;
 
-pub const FN_SLOTS: usize = FN_RECEIVER + 1;
+/// The result's gate: the `own` gate word for `-> own T`, else null (DESIGN ›A last value
+/// moves out‹).
+pub const FN_OUTPUT_GATE: usize = 7;
+
+pub const FN_SLOTS: usize = FN_OUTPUT_GATE + 1;
+
+/// The fields' names in slot order, as reflection reads them.
+pub const FN_FIELDS: [&str; FN_SLOTS] =
+    ["input", "output_type", "body", "bcode", "frame", "outer", "receiver", "output_gate"];
+
+/// A function's result as its signature writes it, for the check where its body closes.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct WrittenResult<'s> {
+    /// The source after `->`, as an error names the type.
+    text: &'s str,
+    /// Whether `own` stands in it.
+    owned: bool,
+}
+
+/// Refuses a value a function hands on, `made` as `handed_ends` reads it, that its `own` mark
+/// does not say: a borrow under the mark, or, where the result is written (`written`), a value
+/// made in it without the mark (DESIGN ›A last value moves out‹). No `written` is a `run`.
+fn check_handed(marked: bool, written: Option<&str>, made: Option<bool>) -> Result<(), ParseError> {
+    match (made, written) {
+        (Some(false), Some(_)) if marked => Err(ParseError::OwnResultBorrows),
+        (Some(false), None) if marked => Err(ParseError::RunReturnBorrows),
+        (Some(true), Some(text)) if !marked => Err(ParseError::HandsOnMade(text.to_string())),
+        _ => Ok(()),
+    }
+}
 
 pub const RECEIVER_READS: u64 = 1;
 
@@ -112,7 +145,7 @@ pub const RECEIVER_WRITES: u64 = 2;
 /// `0` when the slot is null (no parameters and no locals).
 ///
 /// # Safety
-/// `fn_node` must be a function node whose value is the seven-slot record
+/// `fn_node` must be a function node whose value is the `FN_SLOTS`-word record
 /// `parse_fn` builds.
 pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     let frame = *(dyad::value(fn_node) as *const DyadPtr).add(FN_FRAME);
@@ -157,48 +190,6 @@ pub(crate) unsafe fn fn_receiver(types: &Core, f: DyadPtr) -> u64 {
 /// so a wall of `(` costs Rust stack like a runaway recursion: sized well
 /// under `crate::WORK_STACK_BYTES` and far past anything a person writes.
 pub const MAX_BRACKET_DEPTH: usize = 2_000;
-
-/// A `bool` value, a comparison, or a logical operator.
-///
-/// # Safety
-/// `node` must be a valid dyad from the store.
-pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
-    let node = types.through(node);
-    let logos = types.type_of(node);
-    // A sequence's value is its trailing expression's.
-    if logos == types.scope {
-        return match last_sequence_expr(node) {
-            Some(last) => is_bool_result(types, last),
-            None => false,
-        };
-    }
-    // `and`/`or` over two booleans is one; over two non-booleans it is a group.
-    if logos == types.and_ || logos == types.or_ {
-        let (lhs, rhs) = crate::identities::operands(node);
-        return is_bool_result(types, lhs) && is_bool_result(types, rhs);
-    }
-    // A call, or a node of a type with a run, is what its function declares it returns.
-    let f = if crate::identities::meta::is_record_type(logos)
-        && !crate::identities::meta::run_body_of(logos).is_null()
-    {
-        crate::identities::run_body::spec_of(node)
-    } else {
-        logos
-    };
-    if !f.is_null() && dyad::ty(f) == types.fn_type {
-        return *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT) == types.bool_;
-    }
-    logos == types.bool_
-        || logos == types.lt
-        || logos == types.gt
-        || logos == types.eq
-        || logos == types.le
-        || logos == types.ge
-        || logos == types.ne
-        || logos == types.not_
-        || logos == types.subset
-        || logos == types.tape.is_constructed
-}
 
 /// Deliberately no scope unwrapping: a sequence-valued condition may carry
 /// effectful non-tail expressions a fold would silently drop.
@@ -428,7 +419,7 @@ impl<'a> Parser<'a> {
             type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
         self.cx.scopes.pop();
         declared?;
-        self.fn_over_body(types.fn_type, input, &places, output, spec, std::ptr::null_mut())
+        self.fn_over_body(types.fn_type, input, &places, output, None, spec, std::ptr::null_mut())
     }
 
     /// `(start, len)` of the text inside the `( … )` at the cursor, consumed
@@ -459,21 +450,35 @@ impl<'a> Parser<'a> {
             && self.cx.definitions.last().is_some_and(|d| d.this_param.is_null());
         let (input, params) = self.parse_record_taking(member.then_some(self.types.dyad_))?;
         self.expect_arrow()?;
-        let output = {
+        self.skip_whitespace();
+        let start = self.cx.pos;
+        let (output, owned) = {
+            let was = std::mem::replace(&mut self.cx.result_type, true);
             let items = self.drive_until_open(RightSide::ReturnType);
-            let out = self.one_of(items?).map(|c| c.dyad).map_err(|e| match e {
+            self.cx.result_type = was;
+            let out = self.one_of(items?).map_err(|e| match e {
                 ParseError::Empty => ParseError::ExpectedReturnType,
                 e => e,
             })?;
             // A named return type is a use of that name: its binding, read
             // through to the type it names.
-            // SAFETY: `out` is a reduced dyad from the store.
-            unsafe { self.types.through(out) }
+            // SAFETY: `out.dyad` is a reduced dyad from the store.
+            (unsafe { self.types.through(out.dyad) }, out.owning)
         };
+        let source = self.cx.source;
+        let result = WrittenResult { text: source[start..self.cx.pos].trim_end(), owned };
         if !member {
             // SAFETY: `input` was just built by `parse_record`; `binding` is the caller's.
             return unsafe {
-                self.fn_over_body(fn_type, input, &params, output, std::ptr::null_mut(), binding)
+                self.fn_over_body(
+                    fn_type,
+                    input,
+                    &params,
+                    output,
+                    Some(result),
+                    std::ptr::null_mut(),
+                    binding,
+                )
             };
         }
         // The value is the first parameter, the one no name declares.
@@ -484,7 +489,15 @@ impl<'a> Parser<'a> {
         def.wrote_receiver = false;
         // SAFETY: as above.
         let f = unsafe {
-            self.fn_over_body(fn_type, input, &params, output, std::ptr::null_mut(), binding)
+            self.fn_over_body(
+                fn_type,
+                input,
+                &params,
+                output,
+                Some(result),
+                std::ptr::null_mut(),
+                binding,
+            )
         };
         let def = self.cx.definitions.last_mut().expect("still open");
         def.this_param = std::ptr::null_mut();
@@ -493,7 +506,7 @@ impl<'a> Parser<'a> {
         if let (Ok(&f), true) = (f.as_ref(), receiver != 0) {
             let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
             let leaf = self.rt.store.alloc_blob(u64_ty, &receiver.to_ne_bytes());
-            // SAFETY: `f` is the node `fn_over_body` just built over its seven-slot record.
+            // SAFETY: `f` is the node `fn_over_body` just built over its `FN_SLOTS` words.
             unsafe { *(dyad::value(f) as *mut DyadPtr).add(FN_RECEIVER) = leaf };
         }
         f
@@ -504,24 +517,30 @@ impl<'a> Parser<'a> {
     /// body parsed deferred with the parameter scope reopened. The node is `spec`, a run
     /// body's node minted for its set, or fresh; its signature is on it, and `binding`
     /// points at it, before the body parses, so a recursive self-call resolves its types.
+    /// `result` is `None` for a type's `run` body, which writes no `->`.
     ///
     /// # Safety
     /// `input` must be a record node and `params` its fields' bindings in order; `spec`
     /// null or a `fn` node minted with `FN_SLOTS` null words that nothing has filled;
     /// `binding` null or a binding dyad from the store.
+    #[allow(clippy::too_many_arguments)]
     pub(super) unsafe fn fn_over_body(
         &mut self,
         fn_type: DyadPtr,
         input: DyadPtr,
         params: &[DyadPtr],
         output: DyadPtr,
+        result: Option<WrittenResult>,
         spec: DyadPtr,
         binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
+        let owned = result.is_some_and(|r| r.owned);
+        let gate = if owned { self.types.own_ } else { std::ptr::null_mut() };
         let node = if spec.is_null() {
             let mut early = [std::ptr::null_mut(); FN_SLOTS];
             early[FN_INPUT] = input;
             early[FN_OUTPUT] = output;
+            early[FN_OUTPUT_GATE] = gate;
             self.rt.store.alloc_words(fn_type, &early)
         } else {
             // SAFETY: `spec` holds `FN_SLOTS` words (the caller's contract).
@@ -529,6 +548,7 @@ impl<'a> Parser<'a> {
                 let slots = dyad::value(spec) as *mut DyadPtr;
                 *slots.add(FN_INPUT) = input;
                 *slots.add(FN_OUTPUT) = output;
+                *slots.add(FN_OUTPUT_GATE) = gate;
             }
             spec
         };
@@ -576,12 +596,44 @@ impl<'a> Parser<'a> {
         let OpenFn { size: frame_size, outer, returns, .. } =
             self.cx.frames.pop().expect("parse_fn pushed a frame");
         let body = body?;
+        // The last line's value is the call's, so an `if` there is a used one.
+        let made = if output == self.types.void_ {
+            None
+        } else {
+            // SAFETY: `body` is the valid dyad just built.
+            unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?
+        };
 
         // A comptime-rational tail commits to the declared return type here,
         // so `fn () -> i64 (…)` returns i64 rather than the i32 default.
         // SAFETY: `body`/`output` are valid dyads just built.
         let body =
             unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };
+        // A type's `run` has no `->` to write `own` in, so its close writes it: stand-in for P128.
+        if result.is_none() && made == Some(true) {
+            // SAFETY: `output` is the type the node was minted with, from the store.
+            let owned = unsafe {
+                crate::identities::drop_model::own_result(self.rt.store, self.types, output)
+            }?;
+            // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
+            unsafe {
+                let slots = dyad::value(node) as *mut DyadPtr;
+                *slots.add(FN_OUTPUT) = owned;
+                *slots.add(FN_OUTPUT_GATE) = self.types.own_;
+            }
+        }
+        // The last value, once its type is, and every `return`'s operand, which a `return` makes
+        // the call's value, are checked against the mark a call reads.
+        if output != self.types.void_ {
+            // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
+            let marked =
+                unsafe { !(*(dyad::value(node) as *const DyadPtr).add(FN_OUTPUT_GATE)).is_null() };
+            let written = result.map(|r| r.text);
+            check_handed(marked, written, made)?;
+            for r in &returns {
+                check_handed(marked, written, r.made).map_err(|e| self.fail_at(r.at, e))?;
+            }
+        }
         for r in returns {
             let ends: Vec<DyadPtr> =
                 r.live.iter().copied().filter(|name| r.ended.contains(name)).collect();
@@ -604,7 +656,7 @@ impl<'a> Parser<'a> {
         } else {
             crate::identities::array::build(self.rt.store, self.types.array_, &outer)
         };
-        // SAFETY: `node`'s value is the seven-slot record written above, nothing else's.
+        // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above, nothing else's.
         unsafe {
             let slots = dyad::value(node) as *mut DyadPtr;
             *slots.add(FN_BODY) = body;
@@ -614,15 +666,19 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
-    /// A `return` just built: inside a function it leaves every scope open
-    /// since the body began, so it may not hand out a place one of them holds,
-    /// nor an owning value; the body's close commits it to the result type.
+    /// A `return` just built, its word at `at`, written only inside a function: it leaves
+    /// every scope open since the body began, so it may not hand out a place one of them
+    /// holds, nor an owning value; the body's close commits it to the result type.
     ///
     /// # Safety
     /// `node` must be a `return` node `[value, op]` from the store.
-    pub(crate) unsafe fn note_return(&mut self, node: DyadPtr) -> Result<(), ParseError> {
+    pub(crate) unsafe fn note_return(
+        &mut self,
+        node: DyadPtr,
+        at: usize,
+    ) -> Result<(), ParseError> {
         let Some(frame) = self.cx.frames.last() else {
-            return Ok(());
+            return Err(self.fail_at(at, ParseError::ReturnOutsideFunction));
         };
         let types = self.types;
         let value = *(dyad::value(node) as *const DyadPtr);
@@ -634,6 +690,8 @@ impl<'a> Parser<'a> {
         if crate::identities::drop_model::lent_place(types, place).is_some_and(left) {
             return Err(ParseError::AddressOfHeld);
         }
+        // Whether the operand is owned is read from one arm, so every arm must agree first.
+        let made = crate::identities::drop_model::handed_ends(types, value)?;
         if crate::identities::drop_model::is_owning_value(types, value) {
             return Err(ParseError::OwnershipAcrossReturn);
         }
@@ -645,6 +703,8 @@ impl<'a> Parser<'a> {
             .collect();
         let open = OpenReturn {
             node,
+            at,
+            made,
             live,
             ended: Vec::new(),
             level: self.cx.open.len() - 1,
@@ -674,7 +734,7 @@ impl<'a> Parser<'a> {
         let cond = self.one_of(items)?.dyad;
         let types = self.types;
         // SAFETY: `cond` is the reduced dyad just parsed.
-        if !unsafe { is_bool_result(types, cond) } {
+        if unsafe { crate::identities::read::output_type(types, cond) } != types.bool_ {
             return Err(ParseError::NonBoolCondition);
         }
 
@@ -869,7 +929,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The node is `{type: not, value: operand}`.
+    /// The node is `[operand, op, bool]`.
     ///
     /// # Safety
     /// `operand` must be a reduced dyad from the store.
@@ -879,7 +939,7 @@ impl<'a> Parser<'a> {
         operand: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        if !is_bool_result(types, operand) {
+        if crate::identities::read::output_type(types, operand) != types.bool_ {
             return Err(ParseError::NonBoolOperands);
         }
         // A bool-literal operand folds now (pure, nothing lost): what keeps a
@@ -891,7 +951,7 @@ impl<'a> Parser<'a> {
                 !v,
             ));
         }
-        Ok(self.rt.store.alloc_words(not_id, &[operand, self.types.ops.not_]))
+        Ok(self.rt.store.alloc_words(not_id, &[operand, types.ops.not_, types.bool_]))
     }
 
     /// `while cond body`: the node is `[cond, body]`, a statement yielding
@@ -905,11 +965,6 @@ impl<'a> Parser<'a> {
         let body = self.parse_while_parts();
         self.cx.scopes.pop_barrier();
         let (cond, body) = body?;
-        let types = self.types;
-        // SAFETY: `body` is the reduced dyad just parsed.
-        if self.cx.frames.is_empty() && unsafe { contains_return(types, body) } {
-            return Err(ParseError::EarlyReturn);
-        }
         Ok(self.rt.store.alloc_words(while_id, &[cond, body, self.types.ops.while_]))
     }
 
@@ -917,7 +972,7 @@ impl<'a> Parser<'a> {
         let items = self.drive_until_open(RightSide::Condition)?;
         let cond = self.one_of(items)?.dyad;
         // SAFETY: `cond` is the reduced dyad just parsed.
-        if !unsafe { is_bool_result(self.types, cond) } {
+        if unsafe { crate::identities::read::output_type(self.types, cond) } != self.types.bool_ {
             return Err(ParseError::NonBoolCondition);
         }
         // A repeated body: parse-time rebinding is off inside.
@@ -1014,12 +1069,9 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         self.cx.scopes.pop_barrier();
         let body = body?;
-        // SAFETY: `body` is the reduced dyad just parsed.
-        if self.cx.frames.is_empty() && unsafe { contains_return(types, body) } {
-            return Err(ParseError::EarlyReturn);
-        }
 
-        Ok(self.rt.store.alloc_words(for_id, &[var, start, end, step, body, self.types.ops.for_]))
+        let ops = [var, start, end, step, body, types.ops.for_];
+        Ok(self.rt.store.alloc_words(for_id, &ops))
     }
 
     /// The cell after `for` decides: a spelling followed by `in` is the name;
@@ -1063,10 +1115,12 @@ impl<'a> Parser<'a> {
                 return crate::identities::group::join(self.rt.store, self.types, connective, a, b);
             }
         }
-        // Fail-closed until ownership-gated parameters let the callee declare
-        // that it takes the value.
         for &arg in &args {
             // SAFETY: `args` are reduced dyads just parsed.
+            unsafe { crate::identities::read::value_type(self.types, arg) }?;
+            // Fail-closed until ownership-gated parameters let the callee declare
+            // that it takes the value.
+            // SAFETY: as above.
             if unsafe { crate::identities::drop_model::is_owning_value(self.types, arg) } {
                 return Err(ParseError::UnboundOwningValue);
             }
@@ -1227,19 +1281,8 @@ impl<'a> Parser<'a> {
         };
         let values = exprs.iter().filter(|&&e| is_value(e)).count();
         if values > 0 {
-            // Outside a function a `return` before the tail has nothing to leave.
             let types = self.types;
             let tail = exprs.iter().rposition(|&e| is_value(e)).expect("values >= 1");
-            for (i, &e) in exprs.iter().enumerate() {
-                if i != tail
-                    && self.cx.frames.is_empty()
-                    // SAFETY: `e` is a reduced dyad just parsed.
-                    && unsafe { contains_return(types, e) }
-                {
-                    self.end_after_fault(&closed);
-                    return Err(ParseError::EarlyReturn);
-                }
-            }
             // A last value that is a place this scope holds moves out to whoever takes the
             // value, so the scope's end holds it no longer; a `return` of one would hand out
             // freed memory. An enclosing scope's place is an ordinary borrow.
@@ -1296,7 +1339,7 @@ impl<'a> Parser<'a> {
             closed.exit.iter().map(|h| h.build(self.rt.store, self.types)).collect();
         // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
         let cell = unsafe {
-            crate::identities::scope::fill(scope, self.types.ops.scope_);
+            crate::identities::scope::fill(self.types, scope);
             crate::identities::scope::extend_exit(self.rt.store, array_, scope, &exit);
             Cell::built(scope)
         };
@@ -1478,7 +1521,7 @@ impl<'a> Parser<'a> {
     unsafe fn immediate_value(&mut self, node: DyadPtr) -> Result<DyadPtr, ParseError> {
         use crate::identities::numtype::NumType;
         use crate::identities::read::{read_kind, Dispatch, Read};
-        use crate::identities::{numtype_of, Operand};
+        use crate::identities::{operand_of, Operand};
         let types = self.types;
         let kind = read_kind(types, node);
         let place = types.is_storage(node);
@@ -1490,8 +1533,8 @@ impl<'a> Parser<'a> {
                 return self.eval_type_call(node);
             }
         }
-        let bool_ = is_bool_result(types, node);
-        let nt = match numtype_of(types, node) {
+        let bool_ = crate::identities::read::output_type(types, node) == types.bool_;
+        let nt = match operand_of(types, node) {
             Operand::Concrete(nt) => nt,
             Operand::Literal => NumType::I32,
             _ if bool_ => NumType::I32,

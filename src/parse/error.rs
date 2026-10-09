@@ -103,6 +103,15 @@ pub enum ParseError {
     /// An `if` without an `else` where a value is required: with no false
     /// branch it yields unit.
     MissingElse,
+    /// An arm of an `if` whose value is used gives nothing, as one ending in `return` or
+    /// `error`.
+    ArmGivesNothing,
+    /// The arms of an `if` whose value is used give different types, and no type
+    /// written in front of it says which one it gives.
+    ArmsDiffer,
+    /// One arm of an `if` whose value is used makes its value and another borrows one: who
+    /// owns it would show only when it runs.
+    ArmsMakeAndBorrow,
     /// A logical operator applied to a non-`bool` operand.
     NonBoolOperands,
     /// A binary operator's operands were two different concrete numeric
@@ -110,9 +119,10 @@ pub enum ParseError {
     TypeMismatch,
     /// A number literal had no exact value in the type it was committed to.
     UncomputableLiteral,
-    /// A `return` before the tail with no function around it to leave.
-    EarlyReturn,
-    /// A unit-valued statement (a `while` loop) stood where a value is required.
+    /// A `return` with no function around it to leave.
+    ReturnOutsideFunction,
+    /// A node that gives nothing (a statement, a `-> void` call) stood where a value is
+    /// required.
     StatementAsValue,
     /// An assignment target that is not a typed numeric variable: a comptime
     /// binding has no machine storage to write.
@@ -198,6 +208,10 @@ pub enum ParseError {
     /// A declaration's type position, or a type variable's fill, held
     /// something that does not evaluate to a type.
     BadDeclaredType,
+    /// A `-> dyad` function gives back what `=` refuses into a `dyad ?` place, or a
+    /// parameter, which a call may fill with a number: every reader of the result follows
+    /// it as a node's address. stand-in for #198
+    DyadResultNotNode,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,
@@ -232,10 +246,21 @@ pub enum ParseError {
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
     /// a `free`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,
-    /// `own` in a type position over something other than a pointer hole, `own @T ?`.
+    /// `own` over a type with nothing to own: neither a pointer nor a type whose body fills
+    /// `free`.
     OwnNeedsPointer,
-    /// `own` before anything but a hole: the word names a state, the act is `move`.
+    /// `own` before anything but a hole or a function's result: the word names a state, the
+    /// act is `move`.
     OwnOutsideType,
+    /// A function hands on a value made in it, as its last value or through a `return`, and its
+    /// result, spelled as written here, lacks `own`.
+    HandsOnMade(String),
+    /// A function whose result says `-> own` hands on a borrow, as its last value or through a
+    /// `return`.
+    OwnResultBorrows,
+    /// A `return` in a type's `run` hands on a borrow, where the `run`'s last value is made there
+    /// and so marks it to hand on what it makes.
+    RunReturnBorrows,
     /// `share w = …` in a type body where `w` is no slot and nothing declared.
     NoSuchSlot(String),
     /// A type body with an `own` field and no `free = (…)` to free it.
@@ -251,8 +276,6 @@ pub enum ParseError {
     MoveOfValue,
     /// `free` of a hole, which holds no value.
     FreeOfHole,
-    /// `free` of a value whose type, and so its `free`, is known only when it runs.
-    FreeOfUntypedValue,
     /// `move` or `free` of a name the run starts with (`i32`), which every section reads;
     /// carries the name.
     EndsPrimordialName(Box<String>),

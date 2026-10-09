@@ -12,13 +12,16 @@ use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
-use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
+use super::{commit_if_literal, meta, operand_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::ParseError;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
+
+/// Where a construct node's arguments begin.
+const ARGS: usize = 4;
 
 /// The handles: `construct` and its leaf, the `field` place, `.`, `square_brackets`, `[`, `]`.
 pub(super) struct InstanceIds {
@@ -39,7 +42,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
         meta::LIST_TAG,
         meta::prec::INERT,
         crate::parse::Assoc::Left,
-        &["target", "type", "op"],
+        &["target", "type", "op", "output_type"],
     );
     let construct = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(construct, lower);
@@ -78,7 +81,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         crate::parse::Assoc::Left,
-        &["dyads", "op"],
+        &["dyads", "op", "output_type"],
     );
     let square_brackets = cx.store.alloc_head(cx.type_, record);
     cx.declare("square_brackets", square_brackets);
@@ -136,8 +139,9 @@ pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseE
     Ok((fields, offset))
 }
 
-/// `[target, type, op, args…, null]`: the value is made into the name `target` when one
-/// takes it (`:=` writes its binding there), else into scratch; the node yields its address.
+/// `[target, type, op, output_type, args…, null]`: the value is made into the name `target`
+/// when one takes it (`:=` writes its binding there), else into scratch; the node yields its
+/// address.
 ///
 /// # Safety
 /// `record_logos` must be a record type node and `args` reduced dyads, all from the store.
@@ -152,33 +156,24 @@ pub(crate) unsafe fn build_ctor(
     if args.len() != fields.len() {
         return Err(ParseError::CtorArity);
     }
-    let mut ops = Vec::with_capacity(args.len() + 4);
+    let mut ops = Vec::with_capacity(ARGS + args.len() + 1);
     ops.push(std::ptr::null_mut());
     ops.push(record_logos);
     ops.push(types.ops.construct_);
+    ops.push(record_logos);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
         let fty = super::hole::type_in(field);
         let field_read = super::read::place_layout(types, fty);
         let field_ptr = matches!(field_read, Some((super::read::Read::Pointer(_), _)));
-        let arg = match numtype_of(types, arg) {
-            Operand::Literal => {
-                if field_ptr {
-                    // A literal into a pointer field would be a wild address.
-                    return Err(ParseError::TypeMismatch);
-                }
-                commit_if_literal(store, types, arg, &Operand::Literal, fty, nt)?
+        let arg = if let Operand::Literal = operand_of(types, arg) {
+            if field_ptr {
+                // A literal into a pointer field would be a wild address.
+                return Err(ParseError::TypeMismatch);
             }
-            Operand::Pointer(pointee) => {
-                // Pointees compare as types, not nodes.
-                if !matches!(field_read, Some((super::read::Read::Pointer(fp), _)) if super::pointee_types_match(fp, pointee))
-                {
-                    return Err(ParseError::TypeMismatch);
-                }
-                arg
-            }
-            Operand::Concrete(a_nt) if !field_ptr && a_nt == nt => arg,
-            Operand::Concrete(_) => return Err(ParseError::TypeMismatch),
-            Operand::NonNumeric => return Err(ParseError::UnsupportedOperands),
+            commit_if_literal(store, types, arg, &Operand::Literal, fty, nt)?
+        } else {
+            super::check_store_type(types, fty, arg)?;
+            arg
         };
         ops.push(arg);
     }
@@ -194,10 +189,9 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let ops = dyad::value(node) as *const DyadPtr;
         let ty = *ops.add(1);
         let (fields, _) = layout(ty).map_err(|_| RunError::NoLayout(ty))?;
-        // The arguments follow the three fixed head slots (target, type, op).
         let mut bits = Vec::with_capacity(fields.len());
         for i in 0..fields.len() {
-            bits.push(rt.run(*ops.add(i + 3))?);
+            bits.push(rt.run(*ops.add(ARGS + i))?);
         }
         let blob = super::by_copy::dest_of(rt, node)?;
         for (&(field, _, offset), &b) in fields.iter().zip(&bits) {
@@ -214,9 +208,8 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let ty = *ops.add(1);
         let (fields, _) = layout(ty).map_err(|_| CompileError::NoLayout(ty))?;
         let base = super::by_copy::lower_dest_of(lw, node)?;
-        // The arguments follow the three fixed head slots (target, type, op).
         for (i, &(_, nt, offset)) in fields.iter().enumerate() {
-            let v = lw.lower(*ops.add(i + 3))?;
+            let v = lw.lower(*ops.add(ARGS + i))?;
             lw.store_at(nt.cranelift_type(), base, offset as i64, v);
         }
         Ok(base)

@@ -57,7 +57,7 @@ pub(super) fn register(
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["pointer", "pointee", "offset", "op"],
+        &["pointer", "pointee", "offset", "op", "output_type"],
     );
     let deref = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(deref, lower_deref);
@@ -74,13 +74,13 @@ pub(super) fn register(
     cx.lower.insert(storeptr, lower_storeptr);
     let storeptr_leaf = callable::mint_native(cx.store, cs.callable, run_storeptr, cs.seed_native);
 
-    // `addr` has no spelling beyond the `&` token; `[place, pointee, op]`.
+    // `addr` has no spelling beyond the `&` token.
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["place", "pointee", "op"],
+        &["place", "pointee", "op", "output_type"],
     );
     let addr = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(addr, lower_addr);
@@ -96,7 +96,8 @@ pub(super) fn register(
 /// `place` must be a storage-backed place node from the store.
 pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let pointee = types.type_of(place);
-    store.alloc_words(types.addr_, &[place, pointee, types.ops.addr_])
+    let output = make_pointer_type(store, types.type_, pointee);
+    store.alloc_words(types.addr_, &[place, pointee, types.ops.addr_, output])
 }
 
 fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -154,6 +155,12 @@ pub(crate) unsafe fn make_pointer_type(
     node
 }
 
+/// `@dyad`, what a read of a cell, a line, a field, a name or a scope gives back.
+pub(crate) fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
+    // SAFETY: `dyad_` is a type node `Core::build` minted.
+    unsafe { make_pointer_type(store, types.type_, types.dyad_) }
+}
+
 /// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,
 /// so `free`/`move` recognize owning-ness by the slot while a borrow's pointer has none.
 /// Never interned.
@@ -182,7 +189,7 @@ pub(crate) fn build_deref(
 ) -> DyadPtr {
     let off_node =
         store.alloc_blob(types.numtypes[NumType::U64 as usize], &(offset as u64).to_ne_bytes());
-    store.alloc_words(types.deref_, &[ptr_expr, pointee, off_node, types.ops.deref_])
+    store.alloc_words(types.deref_, &[ptr_expr, pointee, off_node, types.ops.deref_, pointee])
 }
 
 /// # Safety
@@ -226,7 +233,8 @@ pub(crate) unsafe fn build_storeptr(
         super::check_store_type(types, pointee, rhs)?;
         rhs
     };
-    Ok(store.alloc_words(types.storeptr_, &[ptr_expr, rhs, pointee, off_node, types.ops.storeptr_]))
+    let ops = [ptr_expr, rhs, pointee, off_node, types.ops.storeptr_];
+    Ok(store.alloc_words(types.storeptr_, &ops))
 }
 
 /// The address `p@` names, the base checked as `run_deref` checks it.

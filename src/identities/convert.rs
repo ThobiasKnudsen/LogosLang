@@ -27,7 +27,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["operand", "from", "to", "op"],
+        &["operand", "from", "to", "op", "output_type"],
     );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(id, lower);
@@ -42,7 +42,7 @@ pub(crate) fn build_convert(
     from: DyadPtr,
     to: DyadPtr,
 ) -> DyadPtr {
-    store.alloc_words(types.convert, &[operand, from, to, types.ops.convert_])
+    store.alloc_words(types.convert, &[operand, from, to, types.ops.convert_, to])
 }
 
 /// # Safety

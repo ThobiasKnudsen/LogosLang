@@ -121,42 +121,19 @@ fn runs_a_compound_function_by_walking_its_body() {
 }
 
 #[test]
-fn runs_a_returning_scope() {
-    let (mut store, mut trie, core) = new_core();
-    let mut scopes = ScopeStack::new();
-    scopes.push(core.root_scope);
-
-    let node = {
-        let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, &core, scopes);
-        p.parse_expression().unwrap()
-    };
-
-    let mut rt = Runtime::new(&core, &mut store);
-    // SAFETY: `node` is the valid dyad tree just parsed.
-    let result = unsafe { rt.run(node) }.unwrap();
-    assert_eq!(result, 42);
-}
-
-#[test]
-fn nested_scopes_and_bare_return() {
-    let (mut store, mut trie, core) = new_core();
-
-    let bare = {
-        let mut s = ScopeStack::new();
-        s.push(core.root_scope);
-        let mut p = Parser::new("return 7", &mut store, &mut trie, &core, s);
-        p.parse_expression().unwrap()
-    };
-    let mut rt = Runtime::new(&core, &mut store);
-    assert_eq!(unsafe { rt.run(bare) }.unwrap(), 7);
-
-    let nested = {
-        let mut s = ScopeStack::new();
-        s.push(core.root_scope);
-        let mut p = Parser::new("( ( return 5 ) )", rt.store, &mut trie, &core, s);
-        p.parse_expression().unwrap()
-    };
-    assert_eq!(unsafe { rt.run(nested) }.unwrap(), 5);
+fn a_return_is_written_only_inside_a_function() {
+    for src in [
+        "return 7",
+        "( return 40 + 2 )",
+        "( ( return 5 ) )",
+        "( x := i32 4, return x )",
+        "( return 5, 6 )",
+        "if (1 < 2) (return 1)",
+    ] {
+        assert_eq!(parse_err(src), ParseError::ReturnOutsideFunction, "{src}");
+    }
+    diff_nullary_fn("fn () -> i32 ( ( return 40 + 2 ) )", 42);
+    diff_nullary_fn("fn () -> i32 ( ( ( return 5 ) ) )", 5);
 }
 
 #[test]
@@ -165,7 +142,7 @@ fn unclosed_bracket_is_an_error() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
 
-    let mut p = Parser::new("( return 1", &mut store, &mut trie, &core, scopes);
+    let mut p = Parser::new("( 40 + 2", &mut store, &mut trie, &core, scopes);
     assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnclosedBracket));
 }
 
@@ -1253,7 +1230,51 @@ fn else_less_if_in_a_void_fn_yields_unit_both_tiers() {
 #[test]
 fn an_else_less_if_is_rejected_in_value_positions() {
     assert_eq!(parse_err("fn () -> i32 ( if (1 < 2) (1) )"), ParseError::MissingElse);
-    assert_eq!(parse_err("( if (1 < 2) (1) ) + 1"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err("( if (1 < 2) (1) ) + 1"), ParseError::MissingElse);
+    assert_eq!(parse_err("y := if (1 < 2) (1)"), ParseError::MissingElse);
+}
+
+#[test]
+fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
+    let f = |body: &str| format!("fn (c := bool ?) -> i32 ( {body}, i32 0 )");
+    for (body, error) in [
+        ("x := if c (i32 1) else (i64 2)", ParseError::ArmsDiffer),
+        ("x := if c (i32 1) else (0)", ParseError::ArmsDiffer),
+        ("x := (if c (i32 1) else (i64 2)) + 1", ParseError::ArmsDiffer),
+        ("x := i64 (if c (i32 1) else (i64 2))", ParseError::ArmsDiffer),
+        ("x := if c (i32 1) else if c (i32 2) else (i64 3)", ParseError::ArmsDiffer),
+        ("x := if c (i32 1) else if c (2) else (3)", ParseError::ArmsDiffer),
+        ("x := if c (return 1) else (i32 2)", ParseError::ArmGivesNothing),
+        ("x := if c (i32 1) else (mut y := i32 2, y = 3)", ParseError::ArmGivesNothing),
+        ("x := if c (1) else (error «no»)", ParseError::ArmGivesNothing),
+        // An arm that gives nothing decides before a sibling whose arms differ, either order.
+        ("x := if c (if c (i32 1) else (i64 2)) else (print «b»)", ParseError::ArmGivesNothing),
+        ("x := if c (print «b») else (if c (i32 1) else (i64 2))", ParseError::ArmGivesNothing),
+        // An arm is refused for its own reason, as a block's last line is.
+        ("x := if c (y := i32 1, if c (5)) else (i32 2)", ParseError::MissingElse),
+        ("mut x := i32 1, x = if c (2)", ParseError::MissingElse),
+        ("x := if c (i32 1) else if c (i32 2)", ParseError::MissingElse),
+        // A block's value is its last line's, refused for that line's reason.
+        ("x := ( y := i32 1, if c (i32 1) else (i64 2) )", ParseError::ArmsDiffer),
+        ("x := ( y := i32 1, if c (5) )", ParseError::MissingElse),
+        ("x := (if c (i32 1) else (i64 2)).type", ParseError::ArmsDiffer),
+    ] {
+        assert_eq!(parse_err(&f(body)), error, "{body}");
+    }
+    for body in [
+        "x := if c (1) else (2)",
+        "x := if c (i32 1) else (i32 2)",
+        "x := if c (i32 1) else if c (i32 2) else (i32 3)",
+        // A nested `if`'s plain numbers are read as its arms, not as what it hands on.
+        "x := if c (1) else if c (2) else (3)",
+        "x := if c (1) else (print «a», if c (2) else (3))",
+        "x := if c (y := i32 1, y) else (i32 2)",
+        "if c (return 1) else (mut y := i32 2, y = 3)",
+        // Each `alloc` mints its own owning `@i32`, one type with the other.
+        "x := if c (alloc 1 of i32 5) else (alloc 1 of i32 6)",
+    ] {
+        assert_eq!(parses(&f(body)), Ok(()), "{body}");
+    }
 }
 
 #[test]
@@ -1587,7 +1608,7 @@ fn for_loop_shapes_are_checked() {
     assert_eq!(parse_err("for i in 0..10..0 ( 1 )"), ParseError::BadStep);
     assert_eq!(parse_err("for i in 10..0..-1 ( 1 )"), ParseError::BadStep);
     assert_eq!(parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"), ParseError::StatementAsValue);
-    assert_eq!(parse_err("for i in 0..3 ( return 1 )"), ParseError::EarlyReturn);
+    assert_eq!(parse_err("for i in 0..3 ( return 1 )"), ParseError::ReturnOutsideFunction);
     assert_eq!(parse_err("for i 0..3 ( 1 )"), ParseError::ExpectedIn);
     assert_eq!(parse_err("for i in 0 ( 1 )"), ParseError::ExpectedRange);
     assert_eq!(parse_err("fn () -> i32 ( for 0..3 ( 1 ) )"), ParseError::StatementAsValue);
@@ -1604,12 +1625,13 @@ fn while_condition_must_be_bool() {
 #[test]
 fn a_while_loop_is_not_a_value() {
     assert_eq!(parse_err("fn () -> i32 ( while (1 < 2) (3) )"), ParseError::StatementAsValue);
-    assert_eq!(parse_err("( while (1 < 2) (3) ) + 1"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err("( while (1 < 2) (3) ) + 1"), ParseError::StatementAsValue);
+    assert_eq!(parse_err("y := while (1 < 2) (3)"), ParseError::StatementAsValue);
 }
 
 #[test]
 fn a_return_inside_a_loop_leaves_the_function() {
-    assert_eq!(parse_err("while (1 < 2) (return 1)"), ParseError::EarlyReturn);
+    assert_eq!(parse_err("while (1 < 2) (return 1)"), ParseError::ReturnOutsideFunction);
     diff_typed_call(
         "fn (n := i32 ?) -> i32 ( mut k := i32 0, while (k < 100) ( k = k + 1, if (k == n) (return k * 2) ), 0 )",
         "f(7)",
@@ -2038,6 +2060,34 @@ fn a_type_returning_body_must_hand_back_a_type() {
     assert_eq!(
         run_script(
             "f := fn (b := i32 ?) -> type ( if (b < 1) (i32) else (i64) ),\ng := f(0), x := g 7, x"
+        ),
+        7
+    );
+}
+
+#[test]
+fn a_dyad_returning_body_hands_back_what_equals_writes_into_a_dyad_box() {
+    // A number, or a parameter a call may fill with one, was followed as a node's address.
+    for src in [
+        "fn () -> dyad ( i32 5 )",
+        "fn () -> dyad ( 5 )",
+        "fn () -> dyad ( alloc 1 of i32 5 )",
+        "fn (a) -> dyad ( a )",
+        "fn (q := dyad ?) -> dyad ( q )",
+        "fn (b := i32 ?) -> dyad ( if (b < 1) (i32) else (5) )",
+        "fn (b := i32 ?) -> dyad ( if (b < 1) (return i32 5), i32 )",
+    ] {
+        assert_eq!(parse_err(src), ParseError::DyadResultNotNode, "{src}");
+    }
+
+    assert_eq!(run_script("f := fn () -> dyad ( i32 ), g := f(), x := g 5, x"), 5);
+    assert_eq!(
+        run_script("f := fn () -> dyad ( mut d := dyad ?, d = i64, d ),\nt := f(), x := t 9, x"),
+        9
+    );
+    assert_eq!(
+        run_script(
+            "g := fn () -> dyad ( i64 ), f := fn () -> dyad ( g() ),\nt := f(), x := t 7, x"
         ),
         7
     );
@@ -2717,7 +2767,7 @@ fn block_local_declarations_do_not_leak() {
 
 #[test]
 fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
-    assert_eq!(parse_err("( return 1, 2 )"), ParseError::EarlyReturn);
+    assert_eq!(parse_err("( return 1, 2 )"), ParseError::ReturnOutsideFunction);
     diff_nullary_fn("fn () -> i32 ( if (true) (return 1) else (0), 2 )", 1);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(5)", 7);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(1)", 2);
@@ -2728,7 +2778,15 @@ fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
         5_000_000_000,
     );
     // Through a block bound to a name: the function is left, not the block.
-    diff_typed_call("fn (n := i32 ?) -> i32 ( x := ( return 5 ), x + 1 )", "f(0)", 5);
+    diff_typed_call(
+        "fn (n := i32 ?) -> i32 ( x := ( if (n == 0) (return 5), n ), x + 1 )",
+        "f(0)",
+        5,
+    );
+    assert_eq!(
+        parse_err("fn (n := i32 ?) -> i32 ( x := ( return 5 ), x + 1 )"),
+        ParseError::StatementAsValue
+    );
     assert_eq!(
         parse_err("fn (n := i32 ?) -> type ( if (n > 2) (return 5), i32 )"),
         ParseError::TypeMismatch
@@ -3574,11 +3632,15 @@ fn f64_comparison_matches_between_tiers() {
 
 /// Parse `src` at expression scope and return the error it fails with.
 fn parse_err(src: &str) -> ParseError {
+    parses(src).unwrap_err()
+}
+
+fn parses(src: &str) -> Result<(), ParseError> {
     let (mut store, mut trie, core) = new_core();
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p = Parser::new(src, &mut store, &mut trie, &core, s);
-    p.parse_expression().unwrap_err()
+    p.parse_expression().map(|_| ())
 }
 
 #[test]

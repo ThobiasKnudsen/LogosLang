@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn an_fn_value_reflects_all_six_slots() {
+    fn an_fn_value_reflects_all_its_slots() {
         // A stale fn record would hide a trailing slot from reflection.
         let (_store, core, roots) = parse_all(&["fn (n := i32 ?) -> i32 ( x := n, x )"]);
         // SAFETY: the root is the fn value just parsed, from the store.
@@ -415,7 +415,16 @@ mod tests {
         let roles: Vec<&[u8]> = slots.iter().map(|s| unsafe { text_of(s.role) }).collect();
         assert_eq!(
             roles,
-            [b"input" as &[u8], b"output_type", b"body", b"bcode", b"frame", b"outer", b"receiver"]
+            [
+                b"input" as &[u8],
+                b"output_type",
+                b"body",
+                b"bcode",
+                b"frame",
+                b"outer",
+                b"receiver",
+                b"output_gate"
+            ]
         );
         assert!(!slots[4].node.is_null(), "a fn with locals carries its frame size");
         assert!(!slots[5].node.is_null(), "a fn whose body reads an outer name lists it");
@@ -473,32 +482,39 @@ mod tests {
         // SAFETY: all handles are identities Core::build just allocated.
         unsafe {
             for (id, kind, arity) in [
-                (core.plus, meta::TUPLE_TAG, 3),
-                (core.minus, meta::TUPLE_TAG, 3),
-                (core.times, meta::TUPLE_TAG, 3),
-                (core.div_, meta::TUPLE_TAG, 3),
-                (core.rem_, meta::TUPLE_TAG, 3),
-                (core.lt, meta::TUPLE_TAG, 3),
-                (core.gt, meta::TUPLE_TAG, 3),
-                (core.le, meta::TUPLE_TAG, 3),
-                (core.ge, meta::TUPLE_TAG, 3),
-                (core.eq, meta::TUPLE_TAG, 3),
-                (core.ne, meta::TUPLE_TAG, 3),
-                (core.and_, meta::TUPLE_TAG, 3),
-                (core.or_, meta::TUPLE_TAG, 3),
-                (core.assign, meta::TUPLE_TAG, 3),
-                (core.if_, meta::TUPLE_TAG, 7),
-                (core.while_, meta::TUPLE_TAG, 3),
-                (core.for_, meta::TUPLE_TAG, 6),
-                (core.convert, meta::TUPLE_TAG, 4),
-                (core.deref_, meta::TUPLE_TAG, 4),
-                (core.storeptr_, meta::TUPLE_TAG, 5),
-                (core.return_, meta::TUPLE_TAG, 3),
-                (core.not_, meta::TUPLE_TAG, 2),
-                (core.construct_, meta::LIST_TAG, 3),
+                (core.plus, meta::TUPLE_TAG, 4),
+                (core.minus, meta::TUPLE_TAG, 4),
+                (core.times, meta::TUPLE_TAG, 4),
+                (core.div_, meta::TUPLE_TAG, 4),
+                (core.rem_, meta::TUPLE_TAG, 4),
+                (core.lt, meta::TUPLE_TAG, 4),
+                (core.gt, meta::TUPLE_TAG, 4),
+                (core.le, meta::TUPLE_TAG, 4),
+                (core.ge, meta::TUPLE_TAG, 4),
+                (core.eq, meta::TUPLE_TAG, 4),
+                (core.ne, meta::TUPLE_TAG, 4),
+                (core.and_, meta::TUPLE_TAG, 4),
+                (core.or_, meta::TUPLE_TAG, 4),
+                (core.convert, meta::TUPLE_TAG, 5),
+                (core.deref_, meta::TUPLE_TAG, 5),
+                (core.not_, meta::TUPLE_TAG, 3),
+                (core.construct_, meta::LIST_TAG, 4),
             ] {
                 assert_eq!(meta::kind_of(id), Some(kind));
                 assert_eq!(meta::arity_of(id), arity);
+                assert_eq!(meta::output_slot_of(id), Some(arity - 1));
+            }
+            for (id, arity) in [
+                (core.assign, 3),
+                (core.while_, 3),
+                (core.for_, 6),
+                (core.storeptr_, 5),
+                (core.return_, 3),
+                (core.if_, 7),
+            ] {
+                assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
+                assert_eq!(meta::arity_of(id), arity);
+                assert_eq!(meta::output_slot_of(id), None);
             }
             assert_eq!(meta::kind_of(core.i32_), Some(NumType::I32 as u8));
             assert_eq!(meta::kind_of(core.bool_), Some(NumType::I32 as u8));
@@ -510,7 +526,7 @@ mod tests {
             assert_eq!(meta::kind_of(core.scope), Some(meta::TUPLE_TAG));
             assert_eq!(meta::kind_of(core.array_), Some(meta::ARRAY_TAG));
             assert_eq!(meta::kind_of(core.fn_type), Some(meta::TUPLE_TAG));
-            assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_RECEIVER + 1);
+            assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_SLOTS);
         }
     }
 

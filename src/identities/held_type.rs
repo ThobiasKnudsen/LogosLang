@@ -28,7 +28,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> HeldTypeIds {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         crate::parse::Assoc::Left,
-        &["text", "cells", "scope", "frames", "op"],
+        &["text", "cells", "scope", "frames", "op", "output_type"],
     );
     let held_type = cx.store.alloc_head(cx.type_, record);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
@@ -52,8 +52,8 @@ pub(crate) fn build(
     } else {
         super::array::build(store, types.array_, frames)
     };
-    store
-        .alloc_words(types.held_type.held_type, &[text, cells, scope, frames, types.held_type.leaf])
+    let ops = [text, cells, scope, frames, types.held_type.leaf, types.type_];
+    store.alloc_words(types.held_type.held_type, &ops)
 }
 
 /// The parts `build` stored: text, cells, scope, the open `fn` nodes.

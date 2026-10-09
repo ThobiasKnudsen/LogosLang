@@ -23,7 +23,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         meta::prec::EQUALITY,
         Assoc::Left,
-        &["lhs", "rhs", "op"],
+        &["lhs", "rhs", "op", "output_type"],
     );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("⊆", id);
@@ -48,7 +48,7 @@ fn build(
             return Ok(bool_mod::literal_node(store, types.bool_, truth));
         }
         if type_valued(types, lhs, l) && type_valued(types, rhs, r) {
-            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.subset_]));
+            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.subset_, types.bool_]));
         }
     }
     Err(ParseError::UnsupportedOperands)

@@ -13,7 +13,7 @@ use super::callable::{self, Callables};
 use super::{bool_mod, meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{bool_literal_value, is_bool_result, Assoc, ParseError};
+use crate::parse::{bool_literal_value, Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -24,7 +24,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         meta::prec::AND,
         Assoc::Left,
-        &["lhs", "rhs", "op"],
+        &["lhs", "rhs", "op", "output_type"],
     );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("and", id);
@@ -34,7 +34,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     (id, leaf)
 }
 
-/// The node is `[lhs, rhs, op]`; a group's op slot is null.
+/// The node is `[lhs, rhs, op, output_type]`; a group's op slot is null, and so is its
+/// output: a group has no one type, each operator over it applies per member.
 pub(super) fn build(
     store: &mut Store,
     types: &Core,
@@ -43,12 +44,13 @@ pub(super) fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-    let (lb, rb) = unsafe { (is_bool_result(types, lhs), is_bool_result(types, rhs)) };
+    let is_bool = |n: DyadPtr| unsafe { super::read::output_type(types, n) == types.bool_ };
+    let (lb, rb) = (is_bool(lhs), is_bool(rhs));
     if lb != rb {
         return Err(ParseError::NonBoolOperands);
     }
     if !lb {
-        return Ok(store.alloc_words(and, &[lhs, rhs, std::ptr::null_mut()]));
+        return Ok(store.alloc_words(and, &[lhs, rhs, std::ptr::null_mut(), std::ptr::null_mut()]));
     }
     // Two literals fold now: what keeps a comptime chain comptime.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
@@ -56,7 +58,7 @@ pub(super) fn build(
     if let (Some(a), Some(b)) = literals {
         return Ok(bool_mod::literal_node(store, types.bool_, a && b));
     }
-    Ok(store.alloc_words(and, &[lhs, rhs, types.ops.and_]))
+    Ok(store.alloc_words(and, &[lhs, rhs, types.ops.and_, types.bool_]))
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

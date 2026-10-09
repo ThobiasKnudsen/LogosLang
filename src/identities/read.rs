@@ -141,6 +141,112 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     }
 }
 
+/// What a sequence, an arm or a `move` hands on from `node`: its output, a plain number read
+/// as an `i32`: stand-in for #214.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn handed_on(types: &Core, node: DyadPtr) -> DyadPtr {
+    if dyad::ty(types.through(node)) == types.rational {
+        return types.i32_;
+    }
+    output_type(types, node)
+}
+
+/// The type `node` gives back when it runs, read from the node: a place's declared type, a
+/// call's `-> T`, the output a Logos-written type's set was built for, the `output_type` slot
+/// a built-in's parse wrote, what an `if`'s arms or a block's last line give, `void` for a
+/// node that runs and declares no `output_type`; a node of no other kind is a value and gives
+/// back its own type. Null where nothing knows it before the program runs. DESIGN ›A node's
+/// output type is per node, and its parse writes it‹, ›`=` sits beside `:=`, and returns
+/// nothing‹.
+///
+/// # Safety
+/// `node` must be null or a reduced dyad from the store.
+pub unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
+    use crate::parse::FN_OUTPUT;
+    let node = types.through(node);
+    if node.is_null() {
+        return node;
+    }
+    if let Some(t) = types.storage_type(node) {
+        return t;
+    }
+    let op = dyad::ty(node);
+    if dyad::ty(op) == types.fn_type {
+        return *(dyad::value(op) as *const DyadPtr).add(FN_OUTPUT);
+    }
+    // A function standing as a value is a `fn`; its own `output_type` field is what its calls
+    // give back.
+    if op == types.fn_type {
+        return op;
+    }
+    if meta::is_record_type(op) && !meta::run_body_of(op).is_null() {
+        let spec = super::run_body::spec_of(node);
+        return if spec.is_null() {
+            spec
+        } else {
+            *(dyad::value(spec) as *const DyadPtr).add(FN_OUTPUT)
+        };
+    }
+    if op == types.if_ {
+        return super::if_mod::output_type(types, node);
+    }
+    if op == types.scope {
+        return super::scope::output_type(types, node);
+    }
+    match meta::output_slot_of(op) {
+        Some(i) => *(dyad::value(node) as *const DyadPtr).add(i),
+        None if meta::op_slot_of(op).is_some() => types.void_,
+        None => types.logos_of(node),
+    }
+}
+
+/// The type `node` gives where its value is used, or the error that says why it gives none.
+/// DESIGN ›`=` sits beside `:=`, and returns nothing‹, ›`if` reads its own right side‹.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn value_type(
+    types: &Core,
+    node: DyadPtr,
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    let d = types.through(node);
+    if !d.is_null() && types.storage_type(d).is_none() {
+        if dyad::ty(d) == types.if_ {
+            return super::if_mod::value_type(types, d);
+        }
+        // A block's value is its last line's, refused for that line's reason.
+        if dyad::ty(d) == types.scope {
+            if let Some(last) = crate::parse::last_sequence_expr(d) {
+                value_type(types, last)?;
+            }
+        }
+    }
+    match output_type(types, node) {
+        t if t == types.void_ => Err(crate::parse::ParseError::StatementAsValue),
+        t => Ok(t),
+    }
+}
+
+/// Whether a node gives a value where giving none is allowed, at the echo: a node that gives
+/// nothing gives none, and a value refused anywhere, as an `if` whose arms give two types, is
+/// refused here. DESIGN ›A value is shown as the text its type's `print` slot gives
+/// back‹, ›`if` reads its own right side‹.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub unsafe fn gives_value(types: &Core, node: DyadPtr) -> Result<bool, crate::parse::ParseError> {
+    use crate::parse::ParseError;
+    match value_type(types, node) {
+        Ok(_) => Ok(true),
+        Err(
+            ParseError::StatementAsValue | ParseError::MissingElse | ParseError::ArmGivesNothing,
+        ) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 /// How storage declared `t` reads: at the type's own layout, or as the eight-byte
 /// container every other type's place holds (a node's address, a bare parameter's operand).
 ///
@@ -316,21 +422,22 @@ pub unsafe fn place_node(store: &mut Store, types: &Core, node: DyadPtr) -> Opti
 /// # Safety
 /// `call` must come from `place_of`.
 pub unsafe fn call_place(store: &mut Store, types: &Core, call: CallTail) -> DyadPtr {
-    use crate::parse::{FN_BCODE, FN_BODY, FN_OUTPUT, FN_RECEIVER};
+    use crate::parse::{FN_BCODE, FN_BODY, FN_OUTPUT, FN_OUTPUT_GATE, FN_SLOTS};
     let (address, pointee, offset) = super::pointer::deref_parts(call.tail);
     let body = match call.line {
         None => address,
         Some(i) => {
             let mut lines = super::array::items(super::scope::exprs_array(call.body)).to_vec();
             lines[i] = address;
-            super::scope::with_exprs(store, types.array_, call.body, &lines)
+            super::scope::with_exprs(store, types, call.body, &lines)
         }
     };
     let fields = dyad::value(call.callee) as *const DyadPtr;
-    let mut record: Vec<DyadPtr> = (0..=FN_RECEIVER).map(|k| *fields.add(k)).collect();
+    let mut record: Vec<DyadPtr> = (0..FN_SLOTS).map(|k| *fields.add(k)).collect();
     record[FN_OUTPUT] = super::pointer::make_pointer_type(store, types.type_, pointee);
     record[FN_BODY] = body;
     record[FN_BCODE] = std::ptr::null_mut();
+    record[FN_OUTPUT_GATE] = std::ptr::null_mut();
     let finder = store.alloc_words(dyad::ty(call.callee), &record);
     let args = crate::parse::null_terminated(dyad::value(call.call) as *const DyadPtr);
     let found = crate::parse::build_call(store, finder, args);
@@ -485,8 +592,8 @@ mod tests {
             let spec = crate::identities::run_body::spec_of(exprs[2]);
             assert!(!spec.is_null());
             assert_eq!(read_kind(types, exprs[2]), Read::Executable(Dispatch::Call(spec)));
-            let leafless =
-                store.alloc_words(core.plus, &[exprs[2], exprs[2], std::ptr::null_mut()]);
+            let leafless = store
+                .alloc_words(core.plus, &[exprs[2], exprs[2], std::ptr::null_mut(), core.i32_]);
             assert_eq!(read_kind(types, leafless), Read::Executable(Dispatch::None));
         }
     }

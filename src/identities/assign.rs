@@ -173,6 +173,8 @@ pub(super) fn build_store(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    // SAFETY: `rhs` is a reduced dyad from the store.
+    unsafe { super::read::value_type(types, rhs) }?;
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
     // SAFETY: `through` hands back its argument, the dyad a binding names, or the storage.
@@ -190,7 +192,7 @@ pub(super) fn build_store(
     }
     if lhs_ty == types.tape.is_constructed {
         // SAFETY: `rhs` is a reduced dyad from the store.
-        if !unsafe { crate::parse::is_bool_result(types, rhs) } {
+        if unsafe { super::read::output_type(types, rhs) } != types.bool_ {
             return Err(ParseError::FlagTakesBool);
         }
         // SAFETY: `lhs_d` is a flag slot node, `rhs` a reduced bool dyad.
@@ -213,34 +215,12 @@ pub(super) fn build_store(
             super::pointer::build_storeptr(store, types, place, rhs)
         };
     }
-    // A number into a node box would be followed as an address by every later reader.
     // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
     let (target, marked) = unsafe { (read_kind(types, lhs_d), types.is_storage(lhs_d)) };
     match target {
         Read::Container(t) if t == types.type_ || t == types.dyad_ => {
             // SAFETY: as above.
-            let value_read = unsafe { read_kind(types, rhs) };
-            let ok = match value_read {
-                Read::Identity => true,
-                Read::Container(c) => {
-                    if t == types.type_ {
-                        c == types.type_
-                    } else {
-                        !c.is_null()
-                    }
-                }
-                Read::Address => t == types.dyad_,
-                // SAFETY: as above.
-                Read::Executable(_) => {
-                    // SAFETY: as above.
-                    unsafe {
-                        super::hashmap::box_of(types, rhs) == Some(t)
-                            || (t == types.type_ && super::yields_type(types, rhs))
-                    }
-                }
-                _ => false,
-            };
-            if !ok {
+            if !unsafe { box_takes(types, t, rhs) } {
                 return Err(ParseError::BadDeclaredType);
             }
             return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
@@ -248,7 +228,7 @@ pub(super) fn build_store(
         // SAFETY: as above.
         Read::Container(t) if unsafe { meta::is_node_valued(t, types.fn_type) } => {
             // SAFETY: as above.
-            if unsafe { super::node_type_of(types, rhs) } != Some(t) {
+            if unsafe { super::node_output(types, rhs) } != Some(t) {
                 return Err(ParseError::TypeMismatch);
             }
             return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
@@ -257,7 +237,7 @@ pub(super) fn build_store(
             // SAFETY: `rhs` is a reduced dyad from the store.
             let fits = unsafe {
                 super::rational::is_rational_value(types, rhs)
-                    || matches!(super::numtype_of(types, rhs), super::Operand::Literal)
+                    || matches!(super::operand_of(types, rhs), super::Operand::Literal)
             };
             if !fits {
                 return Err(ParseError::TypeMismatch);
@@ -279,10 +259,6 @@ pub(super) fn build_store(
     if lhs_pointer && rhs_ty == types.rational {
         return Err(ParseError::TypeMismatch);
     }
-    // `=` returns nothing, so `a = b = c` assigns nothing.
-    if rhs_ty == types.assign || rhs_ty == types.storeptr_ {
-        return Err(ParseError::StatementAsValue);
-    }
     // SAFETY: as above.
     let rhs = unsafe {
         if dyad::ty(rhs_d) == types.rational {
@@ -302,6 +278,28 @@ pub(super) fn build_store(
     // SAFETY: `lhs` is a typed variable checked assignable above.
     let nt = unsafe { of_type_node(lhs_type) };
     Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(nt)]))
+}
+
+/// Whether a `t` box, `type` or `dyad`, takes `value`: a type, a name whose place holds one,
+/// or into a `dyad` box a node. A number would be followed as a node's address by every later
+/// reader. DESIGN ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn box_takes(types: &Core, t: DyadPtr, value: DyadPtr) -> bool {
+    match read_kind(types, value) {
+        Read::Identity => true,
+        Read::Container(c) => {
+            if t == types.type_ {
+                c == types.type_
+            } else {
+                !c.is_null()
+            }
+        }
+        Read::Address => t == types.dyad_,
+        Read::Executable(_) => super::read::output_type(types, value) == t,
+        _ => false,
+    }
 }
 
 /// Guards a null storage address like the interpreter's `Uninitialized`; the

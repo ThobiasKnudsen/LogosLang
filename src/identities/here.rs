@@ -8,6 +8,7 @@
 //! DESIGN ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹
 
 use super::callable::{self, Callables};
+use super::pointer::at_dyad;
 use super::{meta, scope, Cx};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -34,8 +35,9 @@ pub struct HereIds {
 /// discovery; `caller.scope` and `.back` inert, since no spelling reaches them.
 pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> HereIds {
     let word = |cx: &mut Cx, rank: f64, roles: &[&str]| {
+        let roles: Vec<&str> = roles.iter().copied().chain(["output_type"]).collect();
         let record =
-            meta::operand_record(cx, meta::TUPLE_TAG, rank, crate::parse::Assoc::Left, roles);
+            meta::operand_record(cx, meta::TUPLE_TAG, rank, crate::parse::Assoc::Left, &roles);
         cx.store.alloc_head(cx.type_, record)
     };
     let here = word(cx, meta::prec::LITERAL, &["scope", "op"]);
@@ -63,23 +65,27 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> HereIds {
     }
 }
 
-/// `[scope, op]`, `scope` the scope open at the appearance.
+/// `[scope, op, output_type]`, `scope` the scope open at the appearance.
 pub(crate) fn build_here(store: &mut Store, types: &Core, scope: DyadPtr) -> DyadPtr {
-    store.alloc_words(types.here.here, &[scope, types.here.here_leaf])
+    let output = at_dyad(store, types);
+    store.alloc_words(types.here.here, &[scope, types.here.here_leaf, output])
 }
 
+/// `caller` alone is no value; only `caller.scope` is.
 pub(crate) fn build_caller(store: &mut Store, types: &Core) -> DyadPtr {
-    store.alloc_words(types.here.caller, &[types.here.caller_leaf])
+    store.alloc_words(types.here.caller, &[types.here.caller_leaf, types.void_])
 }
 
 pub(crate) fn build_caller_scope(store: &mut Store, types: &Core) -> DyadPtr {
-    store.alloc_words(types.here.caller_scope, &[types.here.caller_scope_leaf])
+    let output = at_dyad(store, types);
+    store.alloc_words(types.here.caller_scope, &[types.here.caller_scope_leaf, output])
 }
 
-/// `[scope, op]`, `scope` what stands left of the `.`, read for its address
+/// `[scope, op, output_type]`, `scope` what stands left of the `.`, read for its address
 /// when the node runs.
 pub(crate) fn build_back(store: &mut Store, types: &Core, of: DyadPtr) -> DyadPtr {
-    store.alloc_words(types.here.back, &[of, types.here.back_leaf])
+    let output = at_dyad(store, types);
+    store.alloc_words(types.here.back, &[of, types.here.back_leaf, output])
 }
 
 /// # Safety

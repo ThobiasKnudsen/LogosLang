@@ -417,37 +417,16 @@ pub(crate) unsafe fn slotted(p: &mut Parser, node: DyadPtr) -> DyadPtr {
     super::by_copy::build_result(p.store(), types, std::ptr::null_mut(), node, types.rational)
 }
 
-/// A place of the type, an arithmetic node or a call whose output is the type (each in
-/// its `result` slot once wrapped), or a literal handed on by `rational_number`; a bare
-/// literal is not one, it molds where it lands.
+/// A node that gives back a `rational_number` when it runs; a bare literal is not one, it
+/// molds where it lands.
 ///
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
 pub(crate) unsafe fn is_rational_value(types: &Core, node: DyadPtr) -> bool {
-    let node = types.through(node);
-    if node.is_null() {
-        return false;
-    }
-    let ty = dyad::ty(node);
-    if ty == types.scope {
-        return crate::parse::last_sequence_expr(node)
-            .is_some_and(|last| is_rational_value(types, last));
-    }
-    if ty == types.by_copy.result {
-        return super::by_copy::made_type(types, node) == types.rational;
-    }
-    if ty == types.by_copy.out {
-        let expr = types.through(*(dyad::value(node) as *const DyadPtr));
-        return is_literal(types.rational, expr) || is_rational_value(types, expr);
-    }
-    match read_kind(types, node) {
-        Read::Rational => true,
-        Read::Executable(Dispatch::Call(f)) => {
-            *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_OUTPUT) == types.rational
-        }
-        Read::Executable(Dispatch::Leaf(leaf)) => types.ops.rational_arith_op_of(leaf).is_some(),
-        _ => false,
-    }
+    let read = types.through(node);
+    !read.is_null()
+        && !is_literal(types.rational, read)
+        && super::read::output_type(types, node) == types.rational
 }
 
 /// The fraction a rational operand yields at run: a literal's own, else the sixteen

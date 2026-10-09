@@ -21,11 +21,11 @@ use crate::parse::{Assoc, ParseError, Taken};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// `alloc` is `[pointee, count, init, op]`; `init` is null in the byte form.
+/// `alloc` is `[pointee, count, init, op, output_type]`; `init` is null in the byte form.
 const ALLOC_POINTEE: usize = 0;
 const ALLOC_COUNT: usize = 1;
 const ALLOC_INIT: usize = 2;
-/// `free` and `move` are `[place, pointee, op]`.
+/// `move` is `[place, pointee, op, output_type]`, `free` `[place, pointee, op]`.
 const TEARDOWN_PLACE: usize = 0;
 const TEARDOWN_POINTEE: usize = 1;
 /// `defer` is `[inner, op]`.
@@ -69,7 +69,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         cx,
         "alloc",
         meta::prec::PREFIX,
-        &["pointee", "count", "init", "op"],
+        &["pointee", "count", "init", "op", "output_type"],
         |p, _id, tape| {
             let of_ = p.types().of_;
             if p.marker_right(tape, of_) {
@@ -90,14 +90,24 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     );
     let alloc_leaf = callable::mint_native(cx.store, cs.callable, run_alloc, cs.seed_native);
 
-    // `own` stands only in a type position, `own @T ?`: the word makes the hole an owning one.
+    // `own` stands only in a type position, `own @T ?` or `-> own @T`: the word makes the hole,
+    // or the function's result, an owning one.
     let own_ = super::gate::word(cx, "own");
     cx.metas.insert(own_, |p, _id, tape| {
         let Some(&hole) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
         };
         if !hole.hole {
-            return Err(ParseError::OwnOutsideType);
+            if !p.reads_result_type() {
+                return Err(ParseError::OwnOutsideType);
+            }
+            tape.remove(1);
+            let types = p.types();
+            // SAFETY: `hole.dyad` is what the signature just read after `own`, from the store.
+            let owned = unsafe { own_result(p.store(), types, hole.dyad) }?;
+            tape.place(owned);
+            tape.at_mut(0).expect("placed above").owning = true;
+            return Ok(crate::parse::Constructed::Placed);
         }
         tape.remove(1);
         let owning = own_hole(p, hole.dyad)?;
@@ -108,51 +118,53 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let move_ =
-        keyword(cx, "move", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
-            let (place, ended) = match p.place_operand_cell(tape)? {
-                Taken::Place(place, ended) => (place, ended),
-                Taken::Value(_, at) | Taken::Hole(at) => {
-                    return Err(p.fail_at(at, ParseError::MoveOfValue))
-                }
-            };
-            let types = p.types();
-            // SAFETY: `place` is a resolved dyad whose type is a valid type node.
-            if unsafe { super::this::is_plain(types, types.type_of(place)) } {
-                return Err(ParseError::RecordMoveNotInSeed);
+    let move_roles = ["place", "pointee", "op", "output_type"];
+    let move_ = keyword(cx, "move", meta::prec::PREFIX, &move_roles, |p, _id, tape| {
+        let (place, ended) = match p.place_operand_cell(tape)? {
+            Taken::Place(place, ended) => (place, ended),
+            Taken::Value(_, at) | Taken::Hole(at) => {
+                return Err(p.fail_at(at, ParseError::MoveOfValue))
             }
-            // A name moves whatever it holds, a borrowed node's name excepted: it holds none.
-            // A field or cell moves only what it owns, and is emptied: stand-in for #66.
-            // SAFETY: as above, and `ended` holds the binding the resolver returned for it.
-            let (owner, node_valued) = unsafe {
-                (
-                    ended.as_ref().is_some_and(|e| p.owns_node(e.binding))
-                        || p.is_owning_read(place)
-                        || is_owning_place(types, place),
-                    meta::is_node_valued(types.type_of(place), types.fn_type),
-                )
-            };
-            if !owner && node_valued && ended.is_some() {
-                return Err(ParseError::MoveOfBorrow);
-            }
-            if !owner && ended.is_none() {
-                return Err(ParseError::MoveOfUnownedPath);
-            }
-            // SAFETY: as above.
-            let node = unsafe { build_move(p.store(), types, place) };
-            tape.place(node);
-            if let Some(ended) = ended {
-                p.mark_dead(ended, node);
-            }
-            Ok(crate::parse::Constructed::Placed)
-        });
+        };
+        let types = p.types();
+        // SAFETY: `place` is a resolved dyad from the store.
+        let ty = unsafe { super::read::output_type(types, place) };
+        // SAFETY: `ty` is null or a type node from the store.
+        if unsafe { super::this::is_plain(types, ty) } {
+            return Err(ParseError::RecordMoveNotInSeed);
+        }
+        // A name moves whatever it holds, a borrowed node's name excepted: it holds none.
+        // A field or cell moves only what it owns, and is emptied: stand-in for #66.
+        // SAFETY: as above, and `ended` holds the binding the resolver returned for it.
+        let (owner, node_valued) = unsafe {
+            (
+                ended.as_ref().is_some_and(|e| p.owns_node(e.binding))
+                    || p.is_owning_read(place)
+                    || is_owning_place(types, place),
+                meta::is_node_valued(ty, types.fn_type),
+            )
+        };
+        if !owner && node_valued && ended.is_some() {
+            return Err(ParseError::MoveOfBorrow);
+        }
+        if !owner && ended.is_none() {
+            return Err(ParseError::MoveOfUnownedPath);
+        }
+        // SAFETY: as above.
+        let node = unsafe { build_move(p.store(), types, place) };
+        tape.place(node);
+        if let Some(ended) = ended {
+            p.mark_dead(ended, node);
+        }
+        Ok(crate::parse::Constructed::Placed)
+    });
     cx.lower.insert(move_, lower_move);
     let move_leaf = callable::mint_native(cx.store, cs.callable, run_move, cs.seed_native);
 
     // A place: a name that holds its value, an owning field or an owning cell gets its
     // teardown, and a name, field path or cell whose type fills no `free` the inert `free`. A
-    // value no name holds runs, then its type's `free`. `free = …` never reaches here: `=`
-    // constructs first and takes the lone `free` as the slot's name.
+    // value no name holds is used as any value is: it runs, then its type's `free`. `free = …`
+    // never reaches here: `=` constructs first and takes the lone `free` as the slot's name.
     let free_ =
         keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = match p.place_operand_cell(tape)? {
@@ -161,9 +173,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 Taken::Value(value, at) => {
                     let types = p.types();
                     // SAFETY: `value` is a reduced dyad from the store.
-                    let Some(teardown) = (unsafe { teardown_of(types, value) }) else {
-                        return Err(p.fail_at(at, ParseError::FreeOfUntypedValue));
-                    };
+                    unsafe { super::read::value_type(types, value) }
+                        .map_err(|e| p.fail_at(at, e))?;
+                    // SAFETY: as above.
+                    let teardown = unsafe { teardown_of(types, value) };
                     let node = build_value_free(p.store(), types, value, teardown);
                     tape.place(node);
                     return Ok(crate::parse::Constructed::Placed);
@@ -206,7 +219,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["value", "free", "op"],
+        &["value", "free", "op", "output_type"],
     );
     let displace_ = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(displace_, lower_displace);
@@ -306,7 +319,7 @@ pub(super) fn build_alloc(
     use crate::identities::Operand;
     // SAFETY: `count` and `init` are reduced dyads just parsed.
     unsafe {
-        match crate::identities::numtype_of(types, count) {
+        match crate::identities::operand_of(types, count) {
             Operand::Literal => {}
             Operand::Concrete(nt) if !nt.is_float() => {}
             _ => return Err(ParseError::UnsupportedOperands),
@@ -317,20 +330,25 @@ pub(super) fn build_alloc(
         // SAFETY: as above.
         Some(init) if unsafe { types.is_hole(init) } => unsafe { super::hole::type_in(init) },
         // SAFETY: as above.
-        Some(init) => match unsafe { crate::identities::numtype_of(types, init) } {
-            Operand::Concrete(_) | Operand::Pointer(_) => {
-                // SAFETY: as above; the operand is scalar or pointer, what `scalar_binding_type` takes.
-                unsafe { crate::identities::scalar_binding_type(store, types, init).0 }
-            }
+        Some(init) => match unsafe { crate::identities::scalar_binding_type(store, types, init) } {
+            Some((t, _)) => t,
             // SAFETY: as above.
-            _ => unsafe { crate::identities::node_type_of(types, init) }
+            None => unsafe { crate::identities::node_output(types, init) }
                 .ok_or(ParseError::UnsupportedOperands)?,
         },
     };
     // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
     // SAFETY: `init` is a reduced dyad just parsed.
     let init = init.filter(|&i| unsafe { !types.is_hole(i) }).unwrap_or(std::ptr::null_mut());
-    Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_]))
+    // SAFETY: `pointee` is a type node from the store.
+    let output = unsafe {
+        super::pointer::make_owning_pointer_type(store, types.type_, pointee, types.ops.teardown_)
+    };
+    Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_, output]))
+}
+
+fn free_node(store: &mut Store, types: &Core, slots: [DyadPtr; 3]) -> DyadPtr {
+    store.alloc_words(types.free_, &slots)
 }
 
 /// `free` over an owning pointer reached through a field or cell: `[place, pointee, op]`.
@@ -338,17 +356,17 @@ pub(super) fn build_alloc(
 /// # Safety
 /// `place` must be a reduced dyad from the store whose type is an owning pointer type.
 unsafe fn build_block_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let pointee = numtype::pointee_of(types.type_of(place));
-    store.alloc_words(types.free_, &[place, pointee, types.ops.free_])
+    let pointee = numtype::pointee_of(super::read::output_type(types, place));
+    free_node(store, types, [place, pointee, types.ops.free_])
 }
 
 /// A pointer type whose `destructor` slot is set, as opposed to a borrow or a plain
 /// value. `place` must be a reduced dyad from the store.
 pub(crate) fn is_owning_place(types: &Core, place: DyadPtr) -> bool {
-    // SAFETY: `place` is a reduced dyad; its type is a valid type node.
+    // SAFETY: `place` is a reduced dyad; its output type is null or a type node.
     unsafe {
-        let logos = types.type_of(place);
-        !logos.is_null() && numtype::is_pointer_type(logos) && !meta::destructor_of(logos).is_null()
+        let ty = super::read::output_type(types, place);
+        numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()
     }
 }
 
@@ -364,18 +382,49 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
         if meta::is_node_valued(ty, types.fn_type) && !meta::instances_free_of(ty).is_null() {
             return Ok(true);
         }
-        if !numtype::is_pointer_type(ty) || !meta::destructor_of(ty).is_null() {
-            return Err(ParseError::OwnNeedsPointer);
-        }
-        let owning = super::pointer::make_owning_pointer_type(
-            p.store(),
-            types.type_,
-            numtype::pointee_of(ty),
-            types.ops.teardown_,
-        );
+        let owning = owning_pointer(p.store(), types, ty)?;
         super::hole::set_type(hole, owning);
     }
     Ok(false)
+}
+
+/// The owning `@T` that `own` makes of a plain pointer type `ty`; `OwnNeedsPointer` for
+/// anything else, an owning pointer type or a value that is no type at all (`-> own 5`).
+///
+/// # Safety
+/// `ty` must be a valid dyad from `store`.
+unsafe fn owning_pointer(
+    store: &mut Store,
+    types: &Core,
+    ty: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    if meta::kind_of(ty) != Some(numtype::ADDR_TAG) || !meta::destructor_of(ty).is_null() {
+        return Err(ParseError::OwnNeedsPointer);
+    }
+    Ok(super::pointer::make_owning_pointer_type(
+        store,
+        types.type_,
+        numtype::pointee_of(ty),
+        types.ops.teardown_,
+    ))
+}
+
+/// The result type `-> own T` gives its calls: an owning `@T` for a pointer type, the type
+/// itself for one that fills `free`. DESIGN ›Three fail-closed ownership rules, and `-> own
+/// @T`‹.
+///
+/// # Safety
+/// `written` must be a reduced dyad from `store`.
+pub(crate) unsafe fn own_result(
+    store: &mut Store,
+    types: &Core,
+    written: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    let ty = types.through(written);
+    if meta::is_record_type(ty) && !meta::instances_free_of(ty).is_null() {
+        return Ok(ty);
+    }
+    owning_pointer(store, types, ty)
 }
 
 /// `move` of a place: `[place, type, op]`, `type` the moved value's, from which the name
@@ -384,8 +433,8 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let ty = super::node_type_of(types, place).unwrap_or(types.type_of(place));
-    store.alloc_words(types.move_, &[place, ty, types.ops.move_])
+    let ty = super::read::handed_on(types, place);
+    store.alloc_words(types.move_, &[place, ty, types.ops.move_, ty])
 }
 
 /// What `free` of the place runs: a name that holds its value (`holder`) its teardown, an
@@ -408,9 +457,7 @@ pub(crate) unsafe fn build_place_free(
         build_block_free(p.store(), types, place)
     } else if p.is_owning_read(place) {
         // An owning field reads a node of a type whose body fills `free`.
-        let free = meta::instances_free_of(
-            super::node_type_of(types, place).unwrap_or(types.type_of(place)),
-        );
+        let free = meta::instances_free_of(super::read::output_type(types, place));
         build_instance_free(p.store(), types, place, free)
     } else if let Some(free) = cell_free(types, place) {
         build_instance_free(p.store(), types, place, free)
@@ -436,15 +483,19 @@ pub(crate) unsafe fn displaced_free(
     build_place_free(p, target, named).map(Some)
 }
 
-/// The right side of an `=` over a place that holds: `[value, free, op]` builds the value,
-/// runs the free of the value it displaces, and yields the value for the write.
-pub(crate) fn build_displace(
+/// The right side of an `=` over a place that holds: `[value, free, op, output_type]` builds
+/// the value, runs the free of the value it displaces, and yields the value for the write.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn build_displace(
     store: &mut Store,
     types: &Core,
     value: DyadPtr,
     free: DyadPtr,
 ) -> DyadPtr {
-    store.alloc_words(types.displace_, &[value, free, types.ops.displace_])
+    let output = super::read::output_type(types, value);
+    store.alloc_words(types.displace_, &[value, free, types.ops.displace_, output])
 }
 
 fn run_displace(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -470,7 +521,7 @@ fn lower_displace(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError
 /// `free a` where the name `a` holds its value: `[place, null, op]`, the teardown the scope's
 /// end would have run.
 fn build_held_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    store.alloc_words(types.free_, &[place, std::ptr::null_mut(), types.ops.held_free_])
+    free_node(store, types, [place, std::ptr::null_mut(), types.ops.held_free_])
 }
 
 /// `free` of an owning field's node or a cell's: `[place, free, op]`, the instances' `free`
@@ -481,7 +532,7 @@ pub(crate) fn build_instance_free(
     place: DyadPtr,
     free: DyadPtr,
 ) -> DyadPtr {
-    store.alloc_words(types.free_, &[place, free, types.ops.instance_free_])
+    free_node(store, types, [place, free, types.ops.instance_free_])
 }
 
 /// The instances' `free` of the node a dereference `p@` reads, when its type fills one: the
@@ -515,7 +566,7 @@ unsafe fn owning_field_pointee(types: &Core, place: DyadPtr) -> Option<DyadPtr> 
 
 /// `free` of an owning field: `[field read, pointee, op]`.
 fn build_field_free(store: &mut Store, types: &Core, read: DyadPtr, pointee: DyadPtr) -> DyadPtr {
-    store.alloc_words(types.free_, &[read, pointee, types.ops.field_free_])
+    free_node(store, types, [read, pointee, types.ops.field_free_])
 }
 
 /// `free` of a value no name holds: `[value, free, op]` runs the value, then `free` over
@@ -532,14 +583,14 @@ fn build_value_free(
         Teardown::Node(free) => (free, types.ops.value_free_),
         Teardown::Block(pointee) => (pointee, types.ops.value_release_),
     };
-    store.alloc_words(types.free_, &[value, what, op])
+    free_node(store, types, [value, what, op])
 }
 
 /// `[place, null, op]`: the null pointee marks nothing to free; the run still reaches the
 /// place, the code that finds a cell included. A name's end was done at parse, where it
 /// became dead.
 fn build_inert_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    store.alloc_words(types.free_, &[place, std::ptr::null_mut(), types.ops.free_])
+    free_node(store, types, [place, std::ptr::null_mut(), types.ops.free_])
 }
 
 /// A node's `free` runs in the seed. A cell's or field's free empties a slot no frame holds,
@@ -835,67 +886,40 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
 }
 
 /// What a bound owning pointer points at, so the binding site can mint its owning
-/// `@pointee` type; a scope whose tail is one propagates through.
+/// `@pointee` type: the pointee of the owning type the value that moves out gives back.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    let node = types.through(node);
-    let logos = dyad::ty(node);
-    if logos == types.alloc_ {
-        Some(*(dyad::value(node) as *const DyadPtr).add(ALLOC_POINTEE))
-    } else if logos == types.move_ {
-        let ty = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_POINTEE);
-        (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())
-            .then(|| numtype::pointee_of(ty))
-    } else if let Some(output) = moving_call_output(types, node) {
-        numtype::is_pointer_type(output).then(|| numtype::pointee_of(output))
-    } else if logos == types.scope {
-        // A block that yields an owning value moves ownership to the binder.
-        crate::parse::last_sequence_expr(node).and_then(|tail| owning_pointee_of(types, tail))
-    } else {
-        None
-    }
+    moved_out(types, node).and_then(|out| owning_pointee(super::read::output_type(types, out)))
 }
 
-/// A call whose callee's last value moves out: the callee's declared result.
+/// The pointee of an owning `@pointee` type, one whose record carries a destructor.
 ///
 /// # Safety
-/// `node` must be a reduced dyad from the store.
-unsafe fn moving_call_output(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    use super::read::{read_kind, Dispatch, Read};
-    let Read::Executable(Dispatch::Call(f)) = read_kind(types, node) else {
-        return None;
-    };
-    if dyad::ty(f) != types.fn_type {
-        return None;
-    }
-    let fields = dyad::value(f) as *const DyadPtr;
-    let body = *fields.add(crate::parse::FN_BODY);
-    (!body.is_null() && moves_out_within(types, body, 1))
-        .then(|| *fields.add(crate::parse::FN_OUTPUT))
+/// `ty` must be null or a type node from the store.
+unsafe fn owning_pointee(ty: DyadPtr) -> Option<DyadPtr> {
+    (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())
+        .then(|| numtype::pointee_of(ty))
 }
 
 /// Whether binding `node` makes the binder an owner: a value just constructed (`alloc`, a
-/// type's own `parse` placing a call on its fresh node), a move (`move a`), or a block or
-/// call whose last value is one of these. A name is a borrow. DESIGN ›Memory and
-/// concurrency‹.
+/// type's own `parse` placing a call on its fresh node), a move (`move a`), a call through
+/// `-> own`, or a block whose last value is one of these. A name is a borrow. DESIGN ›A last
+/// value moves out‹.
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
 pub(crate) unsafe fn moves_out(types: &Core, node: DyadPtr) -> bool {
-    moves_out_within(types, node, 0)
+    moved_out(types, node).is_some()
 }
 
-/// A recursive function's body calls itself; past this depth the answer is no.
-const MOVES_OUT_DEPTH: usize = 32;
-
+/// The node whose value moves out when `node` runs, just made or moved; `None` for a borrow
+/// or no value that moves. A call is answered by its callee's written result, never its body.
+///
 /// # Safety
 /// As `moves_out`.
-unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
-    if depth > MOVES_OUT_DEPTH {
-        return false;
-    }
+unsafe fn moved_out(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
     let logos = dyad::ty(node);
     if logos == types.alloc_
@@ -903,40 +927,49 @@ unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
         || logos == types.this.copy
         || logos == types.construct_
     {
-        return true;
+        return Some(node);
     }
     // A record call's result moves out when its callee's value does; a record handed on by
     // its bytes' address, when a name that held it or what it copies does.
     if logos == types.by_copy.result {
         let call = *(dyad::value(node) as *const DyadPtr).add(1);
-        return moves_out_within(types, call, depth + 1);
+        return moved_out(types, call);
     }
     if logos == types.by_copy.out {
         let inner = types.through(*(dyad::value(node) as *const DyadPtr));
-        return (dyad::ty(inner) == types.binding_
-            && crate::binding::Binding::has_gate(inner, types.own_))
-            || moves_out_within(types, inner, depth + 1);
+        if dyad::ty(inner) == types.binding_ && crate::binding::Binding::has_gate(inner, types.own_)
+        {
+            return Some(inner);
+        }
+        return moved_out(types, inner);
     }
     if logos == types.scope {
-        return crate::parse::last_sequence_expr(node)
-            .is_some_and(|tail| moves_out_within(types, tail, depth + 1));
+        return crate::parse::last_sequence_expr(node).and_then(|tail| moved_out(types, tail));
+    }
+    // A used `if` ends its value alike in every arm (`handed_ends`), so the then arm's is it.
+    if logos == types.if_ {
+        let (_, then, els) = super::if_mod::branches(node);
+        if els.is_null() {
+            return None;
+        }
+        let out = moved_out(types, then)?;
+        return moved_out(types, els).map(|_| out);
     }
     if let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
         super::read::read_kind(types, node)
     {
+        let fields = dyad::value(f) as *const DyadPtr;
         // A call a type's own `parse` placed on its fresh node, yielding that node.
         let args = dyad::value(node) as *const DyadPtr;
         if !(*args).is_null() && dyad::ty(*args) == types.this.copy {
             let template = *(dyad::value(*args) as *const DyadPtr);
-            let fields = dyad::value(f) as *const DyadPtr;
-            return *fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template);
+            return (*fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template)).then_some(node);
         }
         if dyad::ty(f) == types.fn_type {
-            let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);
-            return !body.is_null() && moves_out_within(types, body, depth + 1);
+            return (!(*fields.add(crate::parse::FN_OUTPUT_GATE)).is_null()).then_some(node);
         }
     }
-    false
+    None
 }
 
 /// Whether a value owns a block: binding it mints an owning place its scope holds.
@@ -959,39 +992,84 @@ pub(crate) enum Teardown {
     Block(DyadPtr),
 }
 
-/// `None` for an `if` with an `else` whose arms carry a teardown, whose value's type shows
-/// only when it runs: stand-in for #82.
-///
 /// # Safety
 /// `value` must be a reduced dyad from the store.
-pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Option<Teardown> {
+pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Teardown {
     if let Some(pointee) = owning_pointee_of(types, value) {
-        return Some(Teardown::Block(pointee));
-    }
-    // A node, or a plain record in its bytes.
-    let typed = super::node_type_of(types, value).or_else(|| {
-        super::by_copy::record_type_of(types, value).filter(|&t| meta::is_record_type(t))
-    });
-    if let Some(t) = typed {
-        let free = meta::instances_free_of(t);
-        let owned = !free.is_null() && moves_out(types, value);
-        return Some(if owned { Teardown::Node(free) } else { Teardown::Nothing });
+        return Teardown::Block(pointee);
     }
     let node = types.through(value);
     if dyad::ty(node) == types.scope {
         return crate::parse::last_sequence_expr(node)
-            .map_or(Some(Teardown::Nothing), |tail| teardown_of(types, tail));
+            .map_or(Teardown::Nothing, |tail| teardown_of(types, tail));
     }
-    if dyad::ty(node) == types.if_ {
-        let (_, then, els) = super::if_mod::branches(node);
-        // An `if` with no `else` yields unit whichever way it goes.
-        if els.is_null() {
-            return Some(Teardown::Nothing);
+    let free = type_free(types, value, super::read::output_type(types, value));
+    if !free.is_null() && moves_out(types, value) {
+        Teardown::Node(free)
+    } else {
+        Teardown::Nothing
+    }
+}
+
+/// The `free` `value`'s type `t` fills, for a node or a plain record in its bytes; null where
+/// there is none.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store, `t` its output type.
+unsafe fn type_free(types: &Core, value: DyadPtr, t: DyadPtr) -> DyadPtr {
+    let typed = super::node_output(types, value).is_some()
+        || (super::by_copy::record_width(types, t).is_some() && meta::is_record_type(t));
+    if typed {
+        meta::instances_free_of(t)
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+/// Whether the value `node` hands on is made there (`Some(true)`) or borrowed (`Some(false)`),
+/// the same on every path that hands one on: an `if` whose arms make a value in one and borrow
+/// one in another is refused, since who owns it would show only when it runs. `None` where no
+/// path hands on a value with an end, as a copied number; a `return` hands on its operand.
+/// DESIGN ›`move` and `free` are static: the parse marks the name dead‹.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<bool>, ParseError> {
+    let d = types.through(node);
+    let logos = dyad::ty(d);
+    if logos == types.return_ {
+        return handed_ends(types, *(dyad::value(d) as *const DyadPtr));
+    }
+    if logos == types.scope {
+        return match crate::parse::last_sequence_expr(d) {
+            Some(last) => handed_ends(types, last),
+            None => Ok(None),
+        };
+    }
+    if logos == types.if_ {
+        let (_, then, els) = super::if_mod::branches(d);
+        if !els.is_null() {
+            return arms_end_alike(handed_ends(types, then)?, handed_ends(types, els)?);
         }
-        let plain = |arm: DyadPtr| teardown_of(types, arm) == Some(Teardown::Nothing);
-        return (plain(then) && plain(els)).then_some(Teardown::Nothing);
     }
-    Some(Teardown::Nothing)
+    let t = super::read::output_type(types, node);
+    if t == types.void_ {
+        return Ok(None);
+    }
+    let has_end = numtype::is_pointer_type(t) || !type_free(types, node, t).is_null();
+    Ok(has_end.then(|| teardown_of(types, node) != Teardown::Nothing))
+}
+
+/// What two arms hand on together, each as [`handed_ends`] reads it: refused where one makes
+/// its value and the other borrows one.
+pub(crate) fn arms_end_alike(
+    then: Option<bool>,
+    els: Option<bool>,
+) -> Result<Option<bool>, ParseError> {
+    match (then, els) {
+        (Some(a), Some(b)) if a != b => Err(ParseError::ArmsMakeAndBorrow),
+        (a, b) => Ok(a.or(b)),
+    }
 }
 
 /// The runtime notes the live allocation so leaks and double frees are observable.
@@ -1031,7 +1109,7 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_teardown(rt: &mut Runtime, place: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `place` is a place of an owning pointer type.
     unsafe {
-        let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
+        let slot = owned_slot(rt, place)?;
         if slot.is_null() {
             return Err(RunError::Uninitialized);
         }
@@ -1042,7 +1120,7 @@ fn run_teardown(rt: &mut Runtime, place: DyadPtr) -> Result<i64, RunError> {
         // Tests observe teardown order (LIFO) by the value each freed block held.
         #[cfg(test)]
         {
-            let pointee = numtype::pointee_of(rt.types().type_of(place));
+            let pointee = numtype::pointee_of(super::read::output_type(rt.types(), place));
             let held = numtype::read_scalar(pointee, ptr);
             FREE_LOG.with(|log| log.borrow_mut().push(held));
         }
@@ -1066,7 +1144,7 @@ fn run_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             reached_slot(rt, place)?;
             return Ok(0);
         }
-        let dtor = meta::destructor_of(rt.types().type_of(place));
+        let dtor = meta::destructor_of(super::read::output_type(rt.types(), place));
         if dtor.is_null() || !callable::is_callable(dtor) {
             return Err(RunError::NoDestructor(place));
         }
@@ -1416,10 +1494,8 @@ mod tests {
     fn a_return_frees_what_its_line_ends_after_it() {
         // Freed once on each path, by whichever end the path reaches first: the `return`, a
         // block it leaves, the `if` it leaves, or the line's own `free`.
-        let (ret, other) = (
-            "(if (c == 1) (return 5) else (i32 2))",
-            "(if (c == 1) (return 5) else (free a, i32 2))",
-        );
+        let (ret, other) =
+            ("(if (c == 1) (return 5), i32 2)", "(if (c == 1) (return 5) else (free a), i32 2)");
         let bodies = [
             format!("x := {ret} + (free a, i32 1)"),
             format!("x := ( {ret}, 7 ) + (free a, i32 1)"),
@@ -1839,7 +1915,7 @@ mod tests {
     fn free_of_a_value_runs_it_then_frees_what_it_owns() {
         assert_eq!(run("free (alloc 1 of i32 5),\n1"), (1, 0));
         assert_eq!(run("alloc 1 of i32 5,\n1"), (1, 1), "the same value no word takes leaks");
-        assert_eq!(run("mk := fn () -> @i32 ( alloc 1 of i32 7 ),\nfree (mk()),\n1"), (1, 0));
+        assert_eq!(run("mk := fn () -> own @i32 ( alloc 1 of i32 7 ),\nfree (mk()),\n1"), (1, 0));
         assert!(matches!(
             try_run("n := i32 0 - 1,\nfree (alloc n of i32 1),\n1"),
             Err(RunError::BadCount(-1))
@@ -1886,14 +1962,181 @@ mod tests {
         ] {
             assert_eq!(parse_err(src), ParseError::MoveOfValue, "{src}");
         }
+        // `free` uses the value it frees, so it refuses what any use refuses, for that reason.
+        let c = "c := i32 1,\nv := fn () -> void ( y := i32 1 ),\n";
+        for (operand, e) in [
+            ("if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i64 6)", ParseError::ArmsDiffer),
+            ("if (c == 1) (alloc 1 of i32 5) else (i32 6)", ParseError::ArmsDiffer),
+            ("if (c == 1) (i32 5) else (i64 6)", ParseError::ArmsDiffer),
+            ("if (c == 1) (alloc 1 of i32 5)", ParseError::MissingElse),
+            ("if (c == 1) (alloc 1 of i32 5) else (y := i32 2)", ParseError::ArmGivesNothing),
+            ("x := i32 5", ParseError::StatementAsValue),
+            ("v()", ParseError::StatementAsValue),
+        ] {
+            assert_eq!(parse_err(&format!("{c}free ({operand}),\n1")), e, "{operand}");
+        }
+    }
+
+    #[test]
+    fn an_if_whose_every_arm_makes_or_moves_a_value_hands_it_on() {
+        let c = "c := i32 1,\n";
+        let free = "free (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)),\n1";
+        assert_eq!(run(&format!("{c}{free}")), (1, 0));
+        let mk = "mk := fn () -> own @i32 ( alloc 1 of i32 5 ),\n";
+        assert_eq!(run(&format!("{c}{mk}free (if (c == 1) (mk()) else (mk())),\n1")), (1, 0));
+        for (tail, freed) in [
+            ("x := if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6),\n1", vec![5]),
+            (
+                "a := alloc 1 of i32 5,\nb := alloc 1 of i32 6,\n\
+                 x := if (c == 1) (move a) else (move b),\n1",
+                vec![6, 5],
+            ),
+            (
+                "f := fn () -> own @i32 ( if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6) ),\n\
+                 x := f(),\n1",
+                vec![5],
+            ),
+            // A call through `-> own` hands its value on from an arm as it does alone.
+            (
+                "mk := fn () -> own @i32 ( alloc 1 of i32 5 ),\n\
+                 x := if (c == 1) (mk()) else (alloc 1 of i32 6),\n1",
+                vec![5],
+            ),
+        ] {
+            assert_eq!(run(&format!("{c}{tail}")), (1, 0), "{tail}");
+            assert_eq!(free_log(), freed, "{tail}");
+        }
+        // A long `else if` chain hands its block on as a short one does.
+        let mut chain = String::from("x := if (c == 0) (alloc 1 of i32 0)");
+        for k in 1..40 {
+            chain.push_str(&format!(" else if (c == {k}) (alloc 1 of i32 {k})"));
+        }
+        chain.push_str(" else (alloc 1 of i32 40),\n1");
+        assert_eq!(run(&format!("{c}{chain}")), (1, 0));
+        assert_eq!(free_log(), vec![1]);
+    }
+
+    #[test]
+    fn an_if_that_makes_in_one_arm_and_borrows_in_another_is_refused_wherever_it_goes() {
+        let c = "c := i32 1,\ny := i32 4,\nb := &y,\np := alloc 1 of i32 7,\n\
+                 f := fn (q := @i32 ?) -> i32 ( q@ ),\n";
+        for src in [
+            "x := if (c == 1) (alloc 1 of i32 5) else (move b),\n1",
+            "x := if (c == 1) (move b) else (alloc 1 of i32 5),\n1",
+            "x := if (c == 1) (alloc 1 of i32 5) else (p),\n1",
+            "a := alloc 1 of i32 5,\nx := if (c == 1) (move a) else (move b),\n1",
+            "x := (z := i32 1, if (c == 1) (alloc 1 of i32 5) else (move b)),\n1",
+            "x := if (c == 1) (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)) else (b),\n1",
+            "f(if (c == 1) (alloc 1 of i32 5) else (move b))",
+            "f(if (c == 1) (b) else (alloc 1 of i32 5))",
+            "free (if (c == 1) (alloc 1 of i32 5) else (p)),\n1",
+            "free (if (c == 1) (alloc 1 of i32 5) else (move b)),\n1",
+            "g := fn (q := @i32 ?) -> @i32 ( return if (c == 1) (move q) else (alloc 1 of i32 5) )",
+            "g := fn (q := @i32 ?) -> void ( return if (c == 1) (move q) else (alloc 1 of i32 5) )",
+            "g := fn (q := @i32 ?) -> void ( return if (c == 1) (alloc 1 of i32 5) else (move q) )",
+            // A function's last line gives the call its value.
+            "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
+            "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (return move q) else (alloc 1 of i32 5) )",
+            "g := fn (q := @i64 ?) -> dyad ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
+            "g := fn (n := i32 ?, q := @i32 ?) -> @i32 \
+             ( if (n == 0) (q) else (if (n == 1) (alloc 1 of i32 5) else (g(n - 1, q))) )",
+        ] {
+            assert_eq!(parse_err(&format!("{c}{src}")), ParseError::ArmsMakeAndBorrow, "{src}");
+        }
+        // A number has nothing to end, so beside a made value it mixes nothing: the `-> T`
+        // refuses it for its type.
+        for src in [
+            "g := fn () -> i32 ( if (c == 1) (alloc 1 of i32 5) else (i32 6) )",
+            "g := fn () -> i32 ( if (c == 1) (i32 6) else (alloc 1 of i32 5) )",
+        ] {
+            assert_eq!(parse_err(&format!("{c}{src}")), ParseError::TypeMismatch, "{src}");
+        }
+        assert_eq!(
+            parse_err(&format!(
+                "{BAG}c := i32 1,\na := bag (),\nx := if (c == 1) (bag ()) else (a),\n1"
+            )),
+            ParseError::ArmsMakeAndBorrow
+        );
+        // It gives no value, so a reader that asks only its type finds none.
+        assert_eq!(
+            parse_err(&format!("{c}x := (if (c == 1) (alloc 1 of i32 5) else (move b))@,\n1")),
+            ParseError::UnsupportedOperands
+        );
+        assert_eq!(
+            parse_err(&format!(
+                "{BAG}c := i32 1,\na := bag (),\nx := (if (c == 1) (bag ()) else (a)).items,\n1"
+            )),
+            ParseError::UnsupportedOperands
+        );
+        // Arms alike, or one that leaves at a function's end, mix nothing.
+        for (tail, want) in [
+            ("d := &y,\nf(if (c == 1) (move b) else (move d))", 4),
+            ("g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (return q) else (move q) ),\ng(b)@", 4),
+            ("x := if (c == 1) (p) else (b),\nx@", 7),
+        ] {
+            assert_eq!(run(&format!("{c}{tail}")), (want, 0), "{tail}");
+        }
+    }
+
+    #[test]
+    fn a_function_s_call_to_itself_reads_its_written_result() {
+        // The call is answered by `-> own` while the body is still open, at any depth.
+        let mk =
+            "mk := fn (n := i32 ?) -> own @i32 ( if (n == 0) (alloc 1 of i32 5) else (mk(n - 1)) )";
+        for n in [3, 40] {
+            assert_eq!(run(&format!("{mk},\nx := mk({n}),\nx@")), (5, 0));
+            assert_eq!(free_log(), vec![5], "freed once, by `x`");
+        }
+        let held = "mk := fn (n := i32 ?) -> own @i32 \
+                    ( if (n == 0) (alloc 1 of i32 5) else ( x := mk(n - 1), x ) )";
+        assert_eq!(run(&format!("{held},\ny := mk(4),\ny@")), (5, 0));
+        assert_eq!(free_log(), vec![5]);
+        // Beside an arm that makes, the call makes too; beside a borrow it disagrees.
+        let c = "c := i32 1,\ny := i32 4,\n";
+        let made = "x := if (c == 1) (mk(3)) else (alloc 1 of i32 6),\nx@";
+        assert_eq!(run(&format!("{mk},\n{c}{made}")), (5, 0));
+        assert_eq!(free_log(), vec![5], "`x` owns what the call made");
+        assert_eq!(
+            parse_err(&format!("{mk},\n{c}x := if (c == 1) (mk(3)) else (&y)")),
+            ParseError::ArmsMakeAndBorrow
+        );
+        // Without `own` the call borrows, so beside a made arm the two disagree.
         assert_eq!(
             parse_err(
-                "c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)),\n1"
+                "mk := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else (mk(n - 1)) )"
             ),
-            ParseError::FreeOfUntypedValue
+            ParseError::ArmsMakeAndBorrow
         );
-        // With no `else` the value is unit, known at parse.
-        assert_eq!(run("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5)),\n1").0, 1);
+    }
+
+    #[test]
+    fn a_function_s_result_says_whether_it_hands_on_a_made_value() {
+        for (src, e) in [
+            ("mk := fn () -> @i32 ( alloc 1 of i32 5 )", ParseError::HandsOnMade("@i32".into())),
+            (
+                "c := i32 1,\nmk := fn () -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6) )",
+                ParseError::HandsOnMade("@i32".into()),
+            ),
+            ("mk := fn (p := @i32 ?) -> own @i32 ( p )", ParseError::OwnResultBorrows),
+            (
+                "y := i32 4,\nmk := fn (c := i32 ?) -> own @i32 \
+                 ( if (c == 1) (return &y), alloc 1 of i32 6 )",
+                ParseError::OwnResultBorrows,
+            ),
+            ("mk := fn () -> own i32 ( i32 1 )", ParseError::OwnNeedsPointer),
+            ("mk := fn () -> own own @i32 ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
+            ("mk := fn () -> own 5 ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
+            ("mk := fn () -> own «a» ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
+            ("p := alloc 1 of i32 5,\nq := own p", ParseError::OwnOutsideType),
+        ] {
+            assert_eq!(parse_err(src), e, "{src}");
+        }
+        // A block's last value still moves out with no `own`.
+        assert_eq!(run("x := ( a := alloc 1 of i32 8, a ),\nx@"), (8, 0));
+        assert_eq!(free_log(), vec![8]);
+        // A value with no end needs no `own`, and a borrow none.
+        assert_eq!(run("mk := fn () -> i32 ( i32 3 ),\nmk()"), (3, 0));
+        assert_eq!(run("x := i32 4,\nmk := fn () -> @i32 ( &x ),\nmk()@"), (4, 0));
     }
 
     #[test]
@@ -1924,9 +2167,9 @@ mod tests {
     #[test]
     fn a_function_s_last_value_moves_ownership_to_the_caller() {
         for mk in [
-            "mk := fn () -> @i32 ( p := alloc 1 of i32 7, p )",
-            "mk := fn () -> @i32 ( p := alloc 1 of i32 7, move p )",
-            "mk := fn () -> @i32 ( alloc 1 of i32 7 )",
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, p )",
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, move p )",
+            "mk := fn () -> own @i32 ( alloc 1 of i32 7 )",
         ] {
             assert_eq!(run(&format!("{mk},\nm := mk(),\nm@")), (7, 0), "{mk}");
             assert_eq!(free_log(), vec![7], "{mk}: freed once, by the caller's owner");
@@ -1935,8 +2178,8 @@ mod tests {
         assert_eq!(run("b := ( a := alloc 1 of i32 8, a ),\nb@"), (8, 0));
         assert_eq!(free_log(), vec![8]);
         // A moved-out value no name takes is not freed yet; the leak is pinned as a number.
-        assert_eq!(run("mk := fn () -> @i32 ( alloc 1 of i32 7 ),\nmk(),\n1"), (1, 1));
-        // A call's result is owned only when the callee's last value moves out.
+        assert_eq!(run("mk := fn () -> own @i32 ( alloc 1 of i32 7 ),\nmk(),\n1"), (1, 1));
+        // A call's result is owned only through the callee's `-> own`.
         assert_eq!(
             run("id := fn (q := @i32 ?) -> @i32 ( q ),\np := alloc 1 of i32 3,\nr := id(p),\nr@"),
             (3, 0)

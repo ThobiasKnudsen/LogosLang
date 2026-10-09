@@ -19,6 +19,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::Constructed;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
+use crate::Core;
 
 /// Called before the build context exists, since the root scope is itself typed `scope`.
 pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
@@ -52,6 +53,7 @@ const OP: usize = 1;
 const PARENT: usize = 2;
 /// Null, or an `array` of exit items (`drop_model::exit_item`) in line order.
 const EXIT: usize = 3;
+pub(crate) const SLOTS: usize = EXIT + 1;
 
 /// The block's membership key while it parses, and the sequence node once
 /// [`fill`] gives it its expressions; `parent` is null at the arche. A scope that
@@ -65,8 +67,20 @@ pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> Dya
 ///
 /// # Safety
 /// `node` must be a scope [`mint`] built; nothing else may hold its slots.
-pub(crate) unsafe fn fill(node: DyadPtr, op: DyadPtr) {
-    *(dyad::value(node) as *mut DyadPtr).add(OP) = op;
+pub(crate) unsafe fn fill(types: &Core, node: DyadPtr) {
+    *(dyad::value(node) as *mut DyadPtr).add(OP) = types.ops.scope_;
+}
+
+/// What a block gives back, worked out from its last line when asked: what that line hands
+/// on, `void` for none. DESIGN ›A node's output type is per node, and its parse writes it‹.
+///
+/// # Safety
+/// `node` must be a scope node from the store.
+pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
+    match crate::parse::last_sequence_expr(node) {
+        Some(last) => super::read::handed_on(types, last),
+        None => types.void_,
+    }
 }
 
 /// The scope's `dyads`, made empty on first read.
@@ -120,12 +134,12 @@ pub(crate) unsafe fn exprs_of<'a>(node: DyadPtr) -> Option<&'a [DyadPtr]> {
 /// `node` must be a closed sequence node from the store; `exprs` reduced dyads.
 pub(crate) unsafe fn with_exprs(
     store: &mut Store,
-    array_ty: DyadPtr,
+    types: &Core,
     node: DyadPtr,
     exprs: &[DyadPtr],
 ) -> DyadPtr {
     let slots = dyad::value(node) as *const DyadPtr;
-    let lines = array::build(store, array_ty, exprs);
+    let lines = array::build(store, types.array_, exprs);
     store
         .alloc_words(dyad::ty(node), &[lines, *slots.add(OP), *slots.add(PARENT), *slots.add(EXIT)])
 }

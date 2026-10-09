@@ -286,8 +286,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// An infix construct's operands at reduction; `Ok(None)` when either
-    /// side is structurally missing, so the caller declines and the driver
+    /// An infix construct's operands at reduction, each one that gives a value; `Ok(None)`
+    /// when either side is structurally missing, so the caller declines and the driver
     /// shifts the token.
     pub(crate) fn binary_operands(
         &mut self,
@@ -299,7 +299,14 @@ impl<'a> Parser<'a> {
         if !self.is_operand_cell(&l) || !self.is_operand_cell(&r) {
             return Ok(None);
         }
-        Ok(Some((self.as_operand(l)?, self.as_operand(r)?)))
+        let (lhs, rhs) = (self.as_operand(l)?, self.as_operand(r)?);
+        for (cell, operand) in [(l, lhs), (r, rhs)] {
+            // SAFETY: `operand` is a reduced dyad from the store.
+            if let Err(e) = unsafe { crate::identities::read::value_type(self.types, operand) } {
+                return Err(self.fail_at(cell.start, e));
+            }
+        }
+        Ok(Some((lhs, rhs)))
     }
 
     /// `e` with its caret at `at`, for a constructor refusing an operand it read.

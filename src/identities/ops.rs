@@ -331,7 +331,7 @@ mod tests {
         let lhs = store.alloc_blob(core.i32_, &20i32.to_ne_bytes());
         let rhs = store.alloc_blob(core.i32_, &22i32.to_ne_bytes());
         let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
-        let node = store.alloc_words(core.plus, &[lhs, rhs, leaf]);
+        let node = store.alloc_words(core.plus, &[lhs, rhs, leaf, core.i32_]);
 
         let mut rt = Runtime::new(&core, &mut store);
         // SAFETY: the node and its operands were just built; the leaf is a
@@ -348,7 +348,7 @@ mod tests {
         let lhs = store.alloc_blob(core.i32_, &20i32.to_ne_bytes());
         let rhs = store.alloc_blob(core.i32_, &22i32.to_ne_bytes());
         let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
-        let node = store.alloc_words(core.plus, &[lhs, rhs, leaf]);
+        let node = store.alloc_words(core.plus, &[lhs, rhs, leaf, core.i32_]);
 
         let mut rt = Runtime::new(&core, &mut store);
         // SAFETY: the leaf was minted from a seed-native RunFn shim; the node's

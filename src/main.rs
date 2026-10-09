@@ -33,51 +33,21 @@ impl Engine {
     }
 }
 
-/// The echo rule: a declaration, an assignment, a bare fn or type definition,
-/// a compile, an import, or a print is a statement and stays silent; everything else echoes.
+/// The REPL's echo rule: a line that gives nothing, a bare fn or a type definition stays
+/// silent; everything else echoes. Wider than the command line's: a bare type tail prints
+/// its spelling there.
 ///
 /// # Safety
-/// `node` must be a valid dyad.
+/// `node` must be a valid dyad the REPL's [`seed::identities::read::gives_value`] passed.
 unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    let (named, logos) = tail_type(core, node);
+    let named = core.through(node);
+    let logos = core.type_of(named);
     // A bare type definition is a statement; a place holding a type is a value and echoes.
     if logos == core.type_ {
         return seed::identities::read::read_kind(core, named)
             == seed::identities::read::Read::Identity;
     }
-    is_silent_type(core, logos) || logos == core.fn_type || logos == core.free_
-}
-
-/// The dyad a line's tail names (through its binding) and its type.
-///
-/// # Safety
-/// `node` must be a valid dyad.
-unsafe fn tail_type(
-    core: &Core,
-    node: seed::dyad::DyadPtr,
-) -> (seed::dyad::DyadPtr, seed::dyad::DyadPtr) {
-    let named = core.through(node);
-    (named, core.type_of(named))
-}
-
-/// The statement types with no value worth printing in any mode.
-fn is_silent_type(core: &Core, logos: seed::dyad::DyadPtr) -> bool {
-    logos == core.declare_
-        || logos == core.assign
-        || logos == core.storeptr_
-        || logos == core.compile_
-        || logos == core.import_
-        || logos == core.print.print
-        || logos == core.hashmap.put
-}
-
-/// Whether a line prints nothing. Narrower than the REPL's rule: a bare type
-/// tail still prints its spelling.
-///
-/// # Safety
-/// `node` must be a valid dyad.
-unsafe fn is_silent_tail(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    is_silent_type(core, tail_type(core, node).1)
+    !matches!(seed::identities::read::gives_value(core, node), Ok(true)) || logos == core.fn_type
 }
 
 fn main() -> ExitCode {
@@ -146,6 +116,7 @@ fn run_line(source: &str) -> ExitCode {
 
     // The tail is the last non-comment item: prose never becomes the line's value.
     let mut last = None;
+    let mut last_end = 0;
     let mut ran_something = false;
     while let Some(item) = p.parse_next() {
         let node = match item {
@@ -172,6 +143,7 @@ fn run_line(source: &str) -> ExitCode {
         if unsafe { dyad::ty(node) } != types.comment_ {
             ran_something = true;
             last = Some(node);
+            last_end = p.offset();
         }
     }
     // A stray `)` ends the item loop without being consumed.
@@ -184,6 +156,20 @@ fn run_line(source: &str) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    // Asked before the drain runs the tail, as a use is asked where it is written.
+    let last = match last {
+        // SAFETY: `node` is a valid dyad the parser built.
+        Some(node) => match unsafe { seed::identities::read::gives_value(types, node) } {
+            Ok(shown) => shown.then_some(node),
+            Err(e) => {
+                let shown = report::render(path, source, last_end, &report::parse_message(&e));
+                p.exit_after_fault();
+                eprintln!("{shown}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
     // The tail is read after the root's own run and before the teardowns, which may free
     // what it points at, and rendered before the pass's runtime goes: an unnamed result
     // lives in that runtime's scratch.
@@ -196,8 +182,6 @@ fn run_line(source: &str) -> ExitCode {
         }
     };
     let last = match last {
-        // SAFETY: `node` is a valid dyad the parser built.
-        Some(node) if unsafe { is_silent_tail(&engine.core, node) } => None,
         Some(node) => {
             let bits = match ran {
                 Some((tail, bits)) if tail == node => Ok(bits),
@@ -323,7 +307,11 @@ fn repl() -> ExitCode {
             let mut p = Parser::new(&line, &mut engine.store, &mut engine.trie, types, scopes)
                 .with_imports(std::mem::take(&mut imports))
                 .with_lower(&engine.core.lower);
-            let parsed = p.parse_expression();
+            // The echo is a use, so a line whose value is refused there fails as at its parse.
+            // SAFETY: `node` was just parsed into the engine's store.
+            let parsed = p.parse_expression().and_then(|node| unsafe {
+                seed::identities::read::gives_value(types, node).map(|_| node)
+            });
             let end = p.offset();
             let value = match parsed {
                 Ok(node) if line[end..].trim_start().is_empty() => {

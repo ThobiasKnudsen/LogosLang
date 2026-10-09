@@ -37,13 +37,18 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ByCopyIds {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["target", "call", "type", "op"],
+        &["target", "call", "type", "op", "output_type"],
     );
     let result = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(result, lower_result);
     let result_leaf = callable::mint_native(cx.store, cs.callable, run_result, cs.seed_native);
-    let record =
-        meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::INERT, Assoc::Left, &["expr", "op"]);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        Assoc::Left,
+        &["expr", "op", "output_type"],
+    );
     let out = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(out, lower_out);
     let out_leaf = callable::mint_native(cx.store, cs.callable, run_out, cs.seed_native);
@@ -57,16 +62,7 @@ pub(crate) fn build_result(
     call: DyadPtr,
     ty: DyadPtr,
 ) -> DyadPtr {
-    store.alloc_words(types.by_copy.result, &[target, call, ty, types.by_copy.result_leaf])
-}
-
-/// The record type a `construct` or `result` node yields.
-///
-/// # Safety
-/// `node` must be a `construct` node from `instance::build_ctor` or a `result` node.
-pub(crate) unsafe fn made_type(types: &Core, node: DyadPtr) -> DyadPtr {
-    let ops = dyad::value(node) as *const DyadPtr;
-    *ops.add(if dyad::ty(node) == types.construct_ { 1 } else { 2 })
+    store.alloc_words(types.by_copy.result, &[target, call, ty, types.by_copy.result_leaf, ty])
 }
 
 /// Where a `construct` or `result` node puts its value: the name's storage, or scratch
@@ -77,7 +73,7 @@ pub(crate) unsafe fn made_type(types: &Core, node: DyadPtr) -> DyadPtr {
 pub(crate) unsafe fn dest_of(rt: &mut Runtime, node: DyadPtr) -> Result<*mut u8, RunError> {
     let target = *(dyad::value(node) as *const DyadPtr);
     if target.is_null() {
-        let ty = made_type(rt.types(), node);
+        let ty = super::read::output_type(rt.types(), node);
         let width = place_layout(rt.types(), ty).map_or(8, |(_, w)| w).max(1);
         return Ok(rt.scratch(width));
     }
@@ -91,15 +87,18 @@ pub(crate) unsafe fn dest_of(rt: &mut Runtime, node: DyadPtr) -> Result<*mut u8,
 pub(crate) unsafe fn lower_dest_of(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     let target = *(dyad::value(node) as *const DyadPtr);
     if target.is_null() {
-        let ty = made_type(lw.types(), node);
+        let ty = super::read::output_type(lw.types(), node);
         let width = place_layout(lw.types(), ty).map_or(8, |(_, w)| w).max(1);
         return Ok(lw.scratch_slot(width));
     }
     lw.place_addr(target)
 }
 
-pub(crate) fn build_out(store: &mut Store, types: &Core, expr: DyadPtr) -> DyadPtr {
-    store.alloc_words(types.by_copy.out, &[expr, types.by_copy.out_leaf])
+/// # Safety
+/// `expr` must be a reduced dyad from the store.
+pub(crate) unsafe fn build_out(store: &mut Store, types: &Core, expr: DyadPtr) -> DyadPtr {
+    let output = super::read::output_type(types, expr);
+    store.alloc_words(types.by_copy.out, &[expr, types.by_copy.out_leaf, output])
 }
 
 /// The width a value of `t` is copied at: `Some` for a plain record a `type (…)` body
@@ -115,28 +114,6 @@ pub(crate) unsafe fn record_width(types: &Core, t: DyadPtr) -> Option<usize> {
         (Read::Rational, width) => Some(width),
         _ => None,
     }
-}
-
-/// The plain record type `node` yields, if it yields one.
-///
-/// # Safety
-/// `node` must be a valid dyad from the store.
-pub(crate) unsafe fn record_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    let node = types.through(node);
-    let ty = dyad::ty(node);
-    let t = if ty == types.construct_ || ty == types.by_copy.result {
-        made_type(types, node)
-    } else if ty == types.by_copy.out {
-        return record_type_of(types, *(dyad::value(node) as *const DyadPtr));
-    } else {
-        match read_kind(types, node) {
-            Read::Aggregate | Read::Rational => types.type_of(node),
-            // A literal's bytes are a rational value's.
-            Read::Literal => types.rational,
-            _ => return None,
-        }
-    };
-    record_width(types, t).map(|_| t)
 }
 
 /// The width of `f`'s record result, whose slot address rides the block's first word.

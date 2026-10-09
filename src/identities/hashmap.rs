@@ -10,7 +10,7 @@
 
 use super::callable::{self, Callables};
 use super::read::{read_kind, Read};
-use super::{array, meta, numtype_of, Cx, Operand};
+use super::{array, meta, operand_of, Cx, Operand};
 use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
@@ -51,7 +51,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
         let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
         (id, leaf)
     };
-    let (get, get_leaf) = op(cx, &["map", "key", "op"], run_get);
+    let (get, get_leaf) = op(cx, &["map", "key", "op", "output_type"], run_get);
     let (put, put_leaf) = op(cx, &["map", "key", "value", "op"], run_put);
     HashmapIds { hashmap, mints, get, get_leaf, put, put_leaf }
 }
@@ -155,41 +155,6 @@ pub(crate) unsafe fn is_hashmap(types: &Core, t: DyadPtr) -> bool {
     params_of(types, t).is_some()
 }
 
-/// The value type a get node yields; `None` for any other node.
-///
-/// # Safety
-/// `node` must be null or a dyad from the store.
-pub(crate) unsafe fn value_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    let node = types.through(node);
-    if node.is_null() || dyad::ty(node) != types.hashmap.get {
-        return None;
-    }
-    // The map operand is the `&place` node `build_addr` made, its pointee the mint.
-    let addr = *(dyad::value(node) as *const DyadPtr);
-    let mint = *(dyad::value(addr) as *const DyadPtr).add(1);
-    params_of(types, mint).map(|(_, v)| v)
-}
-
-/// A get node of a node-valued map is read into a box of its value type, as a
-/// `type` or `dyad` place is.
-///
-/// # Safety
-/// `node` must be null or a dyad from the store.
-pub(crate) unsafe fn box_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    value_type_of(types, node).filter(|&v| v == types.type_ || v == types.dyad_)
-}
-
-/// # Safety
-/// `node` must be a get node.
-pub(crate) unsafe fn operand_of(types: &Core, node: DyadPtr) -> Operand {
-    match value_type_of(types, node) {
-        Some(v) if v != types.type_ && v != types.dyad_ => {
-            Operand::Concrete(super::numtype::of_type_node(v))
-        }
-        _ => Operand::NonNumeric,
-    }
-}
-
 /// `node` checked against `want`, a literal committed to it.
 ///
 /// # Safety
@@ -211,12 +176,12 @@ unsafe fn accept(
                 }
             }
             Read::Address => want == types.dyad_,
-            Read::Executable(_) => value_type_of(types, node) == Some(want),
+            Read::Executable(_) => super::read::output_type(types, node) == want,
             _ => false,
         };
         return if ok { Ok(node) } else { Err(ParseError::TypeMismatch) };
     }
-    if matches!(numtype_of(types, node), Operand::Literal) {
+    if matches!(operand_of(types, node), Operand::Literal) {
         return super::commit_literal_to(store, types, types.through(node), want);
     }
     super::check_store_type(types, want, node)?;
@@ -237,12 +202,12 @@ pub(crate) unsafe fn build_get(
     if !types.is_storage(place) {
         return Ok(None);
     }
-    let Some((k, _)) = params_of(types, types.type_of(place)) else {
+    let Some((k, v)) = params_of(types, types.type_of(place)) else {
         return Ok(None);
     };
     let key = accept(store, types, k, key)?;
     let map = super::pointer::build_addr(store, types, place);
-    Ok(Some(store.alloc_words(types.hashmap.get, &[map, key, types.hashmap.get_leaf])))
+    Ok(Some(store.alloc_words(types.hashmap.get, &[map, key, types.hashmap.get_leaf, v])))
 }
 
 /// # Safety
@@ -253,10 +218,11 @@ pub(crate) unsafe fn build_put(
     get: DyadPtr,
     value: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    let v = value_type_of(types, get).expect("a get node's map is a hashmap place");
+    let v = super::read::output_type(types, get);
     let value = accept(store, types, v, value)?;
     let ops = dyad::value(get) as *const DyadPtr;
-    Ok(store.alloc_words(types.hashmap.put, &[*ops, *ops.add(1), value, types.hashmap.put_leaf]))
+    let put = [*ops, *ops.add(1), value, types.hashmap.put_leaf];
+    Ok(store.alloc_words(types.hashmap.put, &put))
 }
 
 /// The slot the instance's table pointer lives in.
@@ -281,7 +247,8 @@ fn run_get(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if let Some(&v) = table.as_ref().and_then(|t| t.get(&key)) {
             return Ok(v);
         }
-        if box_of(rt.types(), node).is_some() {
+        let v = super::read::output_type(rt.types(), node);
+        if v == rt.types().type_ || v == rt.types().dyad_ {
             Ok(rt.types().unknown as i64)
         } else {
             Err(RunError::MissingKey)

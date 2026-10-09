@@ -19,7 +19,8 @@
 //!                 extent, or 0
 //! [50..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
-//!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
+//!              TUPLE/LIST         u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
+//!                                 none), then arity × `dyad@` role-name strings
 //! ```
 //!
 //! The kind byte continues `numtype`'s tag space (`NumType` 0–9, `VOID_TAG` 10,
@@ -143,7 +144,8 @@ pub(crate) fn operand_record(
     debug_assert!(matches!(kind, TUPLE_TAG | LIST_TAG), "operand records carry operand kinds");
     debug_assert!(!cx.string_.is_null(), "role names need the string logos registered");
     let mut blob = header(kind, assoc, parse_rank).to_vec();
-    blob.push(roles.len() as u8);
+    let slot_of = |name: &str| roles.iter().position(|&r| r == name).map_or(NO_SLOT, |i| i as u8);
+    blob.extend_from_slice(&[roles.len() as u8, slot_of("op"), slot_of("output_type")]);
     for role in roles {
         let name = string::build_text(cx.store, cx.string_, role.as_bytes());
         blob.extend_from_slice(&(name as usize).to_ne_bytes());
@@ -377,16 +379,34 @@ pub(crate) unsafe fn is_node_valued(id: DyadPtr, fn_type: DyadPtr) -> bool {
     !ctor.is_null() && dyad::ty(ctor) == fn_type
 }
 
-/// The last fixed slot of the type's operand record, where a resolved node stores its
-/// callable leaf; `None` for kinds without fixed slots.
+const NO_SLOT: u8 = u8::MAX;
+const OP_SLOT_OFF: usize = PAYLOAD_OFF + 1;
+const OUTPUT_SLOT_OFF: usize = PAYLOAD_OFF + 2;
+const ROLES_OFF: usize = PAYLOAD_OFF + 3;
+
+/// The slot named `op`, where a resolved node stores its callable leaf; `None` for kinds
+/// without fixed slots and for a record that names none.
 ///
 /// # Safety
 /// `id` must be a valid dyad from the store whose non-null value is a record.
 pub(crate) unsafe fn op_slot_of(id: DyadPtr) -> Option<usize> {
+    named_slot(id, OP_SLOT_OFF)
+}
+
+/// The slot named `output_type`, where the parse writes the type the node gives back.
+/// DESIGN ›A node's output type is per node, and its parse writes it‹.
+///
+/// # Safety
+/// As `op_slot_of`.
+pub(crate) unsafe fn output_slot_of(id: DyadPtr) -> Option<usize> {
+    named_slot(id, OUTPUT_SLOT_OFF)
+}
+
+unsafe fn named_slot(id: DyadPtr, at: usize) -> Option<usize> {
     match kind_of(id) {
         Some(TUPLE_TAG | LIST_TAG) => {
-            let arity = arity_of(id);
-            arity.checked_sub(1)
+            let slot = *dyad::head(id).add(at);
+            (slot != NO_SLOT).then_some(slot as usize)
         }
         _ => None,
     }
@@ -418,6 +438,6 @@ pub(crate) unsafe fn arity_of(id: DyadPtr) -> usize {
 /// # Safety
 /// As `arity_of`, with `i < arity_of(id)`.
 pub(crate) unsafe fn role_of(id: DyadPtr, i: usize) -> DyadPtr {
-    let p = dyad::head(id).add(PAYLOAD_OFF + 1 + i * std::mem::size_of::<DyadPtr>());
+    let p = dyad::head(id).add(ROLES_OFF + i * std::mem::size_of::<DyadPtr>());
     std::ptr::read_unaligned(p as *const DyadPtr)
 }
