@@ -103,7 +103,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             }
             tape.remove(1);
             let types = p.types();
-            // SAFETY: `hole.dyad` is the result type the signature just read, from the store.
+            // SAFETY: `hole.dyad` is what the signature just read after `own`, from the store.
             let owned = unsafe { own_result(p.store(), types, hole.dyad) }?;
             tape.place(owned);
             tape.at_mut(0).expect("placed above").owning = true;
@@ -411,7 +411,8 @@ pub(crate) unsafe fn own_result(
     if meta::is_record_type(ty) && !meta::instances_free_of(ty).is_null() {
         return Ok(ty);
     }
-    if !numtype::is_pointer_type(ty) || !meta::destructor_of(ty).is_null() {
+    // What follows `own` may be no type at all, `-> own 5`, which `kind_of` turns away.
+    if meta::kind_of(ty) != Some(numtype::ADDR_TAG) || !meta::destructor_of(ty).is_null() {
         return Err(ParseError::OwnNeedsPointer);
     }
     Ok(super::pointer::make_owning_pointer_type(
@@ -2115,6 +2116,8 @@ mod tests {
             ("mk := fn (p := @i32 ?) -> own @i32 ( p )", ParseError::OwnResultBorrows),
             ("mk := fn () -> own i32 ( i32 1 )", ParseError::OwnNeedsPointer),
             ("mk := fn () -> own own @i32 ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
+            ("mk := fn () -> own 5 ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
+            ("mk := fn () -> own «a» ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
             ("p := alloc 1 of i32 5,\nq := own p", ParseError::OwnOutsideType),
         ] {
             assert_eq!(parse_err(src), e, "{src}");
