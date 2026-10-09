@@ -16261,7 +16261,7 @@
   {
     "id": "P102",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A function whose early `return` hands out a borrow while its last line makes an owned value gives the caller's name ownership of the borrow, which it then frees: a Rust abort",
     "program": "mut c := true, y := i32 4, f := fn (b := @i32 ?) -> @i32 ( if c (return b), alloc 1 of i32 6 ), x := f(&y), print «{x@}»",
     "output": "4\nfree(): invalid pointer\nAborted (core dumped), exit 134. With `mut c := false` it prints 6, exit 0; `return move b` aborts the same way",
@@ -16270,7 +16270,7 @@
     "found": "logoslang-issue-82-review-3, round-3 review of #82, on dev 6718deb and on issue-82 at c486107 and 90bd6f8",
     "why": null,
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-08T22:36+02:00",
       "by": "orchestrator LogosLang",
@@ -16280,7 +16280,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:49+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "27ed63c",
+        "change": "fixed at 27ed63c",
+        "reason": "issue 82 merged into dev at 27ed63c; review rounds 6 and 7 confirmed it on the branch (issuecomment-6080048423, issuecomment-6080254971)"
+      }
+    ]
   },
   {
     "id": "P103",
@@ -16309,7 +16319,7 @@
   {
     "id": "P104",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A function whose last line is an `if` with an `error` arm hands the other arm's value to no owner, so the value is never freed",
     "program": "<BOX> (tests/cli.rs BOX fixture, its `free` prints «free»; copy in .agents/orchestrator/tmp/issue-82-output-type/BOX.txt), c := i32 1, f := fn () -> boxed ( if (c == 1) (box (1, 2)) else (error «no») ), x := f(), print «b {x.size}»",
     "output": "b 2\nexit 0 (no «free»), on issue-82 c486107 and on dev 3021851. The control with two box arms prints b 2 / free on the branch and b 2 alone on dev. With a block, `f := fn () -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (error «no») ), x := f(), x@` leaves 1 block live in drop_model's harness; two alloc arms leave 0",
@@ -16318,7 +16328,7 @@
     "found": "logoslang-issue-82-review-3, round-3 review of #82, on issue-82 c486107 and dev 3021851",
     "why": null,
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-08T22:37+02:00",
       "by": "orchestrator LogosLang",
@@ -16328,7 +16338,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:49+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "27ed63c",
+        "change": "fixed at 27ed63c",
+        "reason": "issue 82 merged into dev at 27ed63c; review rounds 6 and 7 confirmed it on the branch (issuecomment-6080048423, issuecomment-6080254971)"
+      }
+    ]
   },
   {
     "id": "P105",
@@ -18986,7 +19006,7 @@
   {
     "id": "P112",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "On the issue 82 branch the parse time doubles with each function in a chain where each function calls the one before it in both arms of an `if`, though nothing is called",
     "program": "c := i32 1, f0 := fn () -> @i32 ( alloc 1 of i32 5 ), then f1 to f22, each f_i := fn () -> @i32 ( if (c == 1) (f_{i-1}()) else (f_{i-1}()) ), then 7, as one command line",
     "output": "7, after 1.01 s on branch issue-82-output-type 080906e; 0.27 s on round 3's head; 0.01 s on dev; the time doubles per function",
@@ -18997,7 +19017,7 @@
       "W205"
     ],
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-08T23:43+02:00",
       "by": "orchestrator LogosLang",
@@ -19016,13 +19036,22 @@
         "commit": "fca360c",
         "change": "why + W205",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T13:49+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "27ed63c",
+        "change": "fixed at 27ed63c",
+        "reason": "issue 82 merged into dev at 27ed63c; review rounds 6 and 7 confirmed it on the branch (issuecomment-6080048423, issuecomment-6080254971)"
       }
     ]
   },
   {
     "id": "P113",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "On the issue 82 branch a long `else if` chain of `alloc` arms parses in time that grows with the square of its length",
     "program": "a function whose body is one if with 2000 arms, if (…) (alloc 1 of i32 1) else if (…) (alloc 1 of i32 2) … else (alloc 1 of i32 2000), as one command line",
     "output": "0.28 s on branch issue-82-output-type 080906e (0.25 s on round 3's head); doubling the arms about quadruples the time",
@@ -19031,7 +19060,7 @@
     "found": "logoslang-issue-82-review-4 (finding L, comment 6069556531), branch 080906e: the type, mix and ownership walks each walk every arm again for every question",
     "why": null,
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-08T23:43+02:00",
       "by": "orchestrator LogosLang",
@@ -19041,7 +19070,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:49+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "27ed63c",
+        "change": "fixed at 27ed63c",
+        "reason": "issue 82 merged into dev at 27ed63c; review rounds 6 and 7 confirmed it on the branch (issuecomment-6080048423, issuecomment-6080254971)"
+      }
+    ]
   },
   {
     "id": "P114",
@@ -19309,7 +19348,7 @@
   {
     "id": "P117",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "On the issue 82 branch an if whose one arm calls a function that makes its value and whose other arm borrows is accepted, and the made block leaks, when the walk cannot see through the call",
     "program": "mk as in the problem above, c := i32 1, y := i32 4, x := if (c == 1) (mk(3)) else (&y)   (with a chain of 15 calling functions in place of mk(3) it is refused; with 40 it is accepted)",
     "output": "accepted, and the block mk made is never freed (branch issue-82-output-type c32cf74); dev refuses the line for another reason",
@@ -19318,7 +19357,7 @@
     "found": "logoslang-issue-82-review-5, branch c32cf74, row 2 of comment 6069945355: the walk stops at a call to itself and after 32 levels of calls",
     "why": null,
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-09T00:06+02:00",
       "by": "orchestrator LogosLang",
@@ -19328,12 +19367,22 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:49+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "27ed63c",
+        "change": "fixed at 27ed63c",
+        "reason": "issue 82 merged into dev at 27ed63c; review rounds 6 and 7 confirmed it on the branch (issuecomment-6080048423, issuecomment-6080254971)"
+      }
+    ]
   },
   {
     "id": "P118",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "On the issue 82 branch an if whose arms both make their value, one through a recursive call, is accepted but the name it binds owns nothing, so the value leaks",
     "program": "mk as in the problems above, c := i32 1, x := if (c == 1) (mk(3)) else (alloc 1 of i32 6)",
     "output": "accepted, and x owns nothing, so the value is never freed (branch issue-82-output-type c32cf74)",
@@ -19342,7 +19391,7 @@
     "found": "logoslang-issue-82-review-5, branch c32cf74, row 3 of comment 6069945355",
     "why": null,
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-09T00:06+02:00",
       "by": "orchestrator LogosLang",
@@ -19352,7 +19401,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:49+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "27ed63c",
+        "change": "fixed at 27ed63c",
+        "reason": "issue 82 merged into dev at 27ed63c; review rounds 6 and 7 confirmed it on the branch (issuecomment-6080048423, issuecomment-6080254971)"
+      }
+    ]
   },
   {
     "id": "S56",
@@ -20421,7 +20480,7 @@
   {
     "id": "P123",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A record made 10 record-returning calls deep and bound to a name is never freed; with 8 calls it is freed",
     "program": "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), c := i32 1, f0 := fn () -> bag ( bag(1) ), then f1 to f10 with each f_i := fn () -> bag ( if (c == 1) (f_{i-1}()) else (f_{i-1}()) ), then x := f10(), print «after», as one command line",
     "output": "after (only); with f1 to f8: after, then freed 1; on branch issue-82-output-type 90fe8d6",
@@ -20430,7 +20489,7 @@
     "found": "logoslang-why-P112-c (P112 why round on W211, why-probes/chain.sh and cap.gdb)",
     "why": null,
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-09T01:08+02:00",
       "by": "orchestrator LogosLang",
@@ -20440,7 +20499,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:49+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "27ed63c",
+        "change": "fixed at 27ed63c",
+        "reason": "issue 82 merged into dev at 27ed63c; review rounds 6 and 7 confirmed it on the branch (issuecomment-6080048423, issuecomment-6080254971)"
+      }
+    ]
   },
   {
     "id": "W215",
@@ -24208,7 +24277,7 @@
   {
     "id": "P140",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A type's `run` body whose `return` hands on a borrowed outer value, while its last line makes a value, frees that borrowed value twice: once through the caller's name, once through its real owner",
     "program": "<BOX> is tests/cli.rs's boxed/box fixture, whose `free` prints «free» (runner .agents/orchestrator/tmp/issue-82-output-type/r6-run.sh expands it; probe r6-d2.txt): <BOX>, g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, share run = ( if (elements.dyads.size == 3) (return g), mut v := output_type ?, v.p = mut alloc 1 of i32 ?, v.size = 1, move v ), share parse_rank = dyad.parse_rank, share associativity = left, share parse = ( tape[0].type = pk, tape[0].elements = tape[1], tape[0].output_type = boxed, tape.remove(1), tape.is_constructed[0] = true ) ), x := pk (7, 8, 9), print «{x.size}»",
     "output": "`2`, `free`, `free`, exit 0, on dev 654006f and on issue 82's branch alike; with two elements, `pk (7, 8)`, the made value is taken and two different values are freed, which is right",
@@ -24217,7 +24286,7 @@
     "found": "logoslang-issue-82-review-6, FOUND in review round 6 of issue 82, 9 October 2026, dev at 654006f",
     "why": null,
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-09T13:20+02:00",
       "by": "orchestrator LogosLang",
@@ -24227,7 +24296,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:49+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "27ed63c",
+        "change": "fixed at 27ed63c",
+        "reason": "issue 82 merged into dev at 27ed63c; review rounds 6 and 7 confirmed it on the branch (issuecomment-6080048423, issuecomment-6080254971)"
+      }
+    ]
   },
   {
     "id": "P141",
