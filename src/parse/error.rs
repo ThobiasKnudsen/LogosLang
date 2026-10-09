@@ -255,9 +255,12 @@ pub enum ParseError {
     /// A function hands on a value made in it, as its last value or through a `return`, and its
     /// result, spelled as written here, lacks `own`.
     HandsOnMade(String),
-    /// A function marked to hand on a value made in it, by `-> own` or as a `run` whose last value
-    /// is made, hands on a borrow, as its last value or through a `return`.
+    /// A function whose result says `-> own` hands on a borrow, as its last value or through a
+    /// `return`.
     OwnResultBorrows,
+    /// A `return` in a type's `run` hands on a borrow, where the `run`'s last value is made there
+    /// and so marks it to hand on what it makes.
+    RunReturnBorrows,
     /// `share w = …` in a type body where `w` is no slot and nothing declared.
     NoSuchSlot(String),
     /// A type body with an `own` field and no `free = (…)` to free it.

@@ -327,9 +327,14 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("this function hands on a value it made: write `-> own {written}`")
         }
         ParseError::OwnResultBorrows => {
-            "this function hands on a borrow, but it is marked to hand on a value made here, by \
-             `-> own` or, in a type's `run`, by a last value made there; make or move the value, \
-             or drop `own` and hand on only borrows"
+            "this function hands on a borrow, but its result says `-> own`, which hands on a \
+             value made here; make or move the value, or write the result without `own`"
+                .into()
+        }
+        ParseError::RunReturnBorrows => {
+            "this `return` hands on a borrow, but this `run` hands on the value it makes as its \
+             last value, and every `return` must do the same; make or move the value, or hand on \
+             only borrows, the last value too"
                 .into()
         }
         ParseError::NoSuchSlot(name) => format!(

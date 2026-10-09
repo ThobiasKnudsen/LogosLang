@@ -3761,7 +3761,7 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
                x := pk (7, 8, 9), print «{x.size}»";
     let (code, _, stderr) = run_line(&format!("{BOX}, {run}"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("hands on a borrow"), "{stderr}");
+    assert!(stderr.contains("this `return` hands on a borrow"), "{stderr}");
 }
 
 #[test]

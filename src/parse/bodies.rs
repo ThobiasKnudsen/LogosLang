@@ -128,10 +128,11 @@ pub(super) struct WrittenResult<'s> {
 
 /// Refuses a value a function hands on, `made` as `handed_ends` reads it, that its `own` mark
 /// does not say: a borrow under the mark, or, where the result is written (`written`), a value
-/// made in it without the mark (DESIGN ›A last value moves out‹).
+/// made in it without the mark (DESIGN ›A last value moves out‹). No `written` is a `run`.
 fn check_handed(marked: bool, written: Option<&str>, made: Option<bool>) -> Result<(), ParseError> {
     match (made, written) {
-        (Some(false), _) if marked => Err(ParseError::OwnResultBorrows),
+        (Some(false), Some(_)) if marked => Err(ParseError::OwnResultBorrows),
+        (Some(false), None) if marked => Err(ParseError::RunReturnBorrows),
         (Some(true), Some(text)) if !marked => Err(ParseError::HandsOnMade(text.to_string())),
         _ => Ok(()),
     }
