@@ -20674,7 +20674,7 @@
   {
     "id": "S58",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "A function hands on a value it made only when its result type says so: -> own @T, or -> own t for a type that fills free; the parse checks the body's last value against the written result where the function closes, and a call reads ownership from the callee's written result, never its body; a block keeps ›A last value moves out‹",
     "fixes": [
       "W211",
@@ -20684,7 +20684,12 @@
       "W217"
     ],
     "assessment": "Root fix: the answer is written before the body is parsed, so FN_OUTPUT can hold it. Removes W207, W205, W217 and W215 (a self-call is answered by its signature, written before its body), so P112, P117, P118 and P123 go, and moved_out's walk into FN_BODY, MOVES_OUT_DEPTH and Out::Unknown are deleted; a call into a body built later knows its answer too. Settles P121: a result type carries own. DESIGN: ›A last value moves out‹ narrows to blocks; ›Three fail-closed ownership rules, and -> own @T‹ rule 3 names -> own as the way out; the Open lines at ›Left of := stands one name…‹ and ›A gate word stands only where a binding is being filled‹ close; reverses the 25 September 2026 change that let a bare -> @T hand on an owned place (History). Cost: about 20 test lines in tests/cli.rs gain own; seed small and smaller after (parse -> own, one check at the close, the call arm reads FN_OUTPUT), on #82's branch, where handed_ends lives. Leaves P113 and P122 (an if's answer asked again at each level).",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-09T02:24+02:00",
+      "words": "a but i didnt realy read through the wording because it was too long. btw if not output_type per if else is needed to make Logos fast again then i would rather not have output_type per if else branch.",
+      "reason": "Q89 option (a) as put to him, with no reason of his own: the answer is a written fact on the function's line, known before its body is read, so no call walks into another function, a self-call and a body built later need no new rule, and nothing is kept that a rewrite could leave stale. The wording is the solution agent's, recorded by the orchestrator at 83b5a80 as a restatement of the choice."
+    },
     "design": [
       "A last value moves out",
       "Three fail-closed ownership rules, and `-> own @T`",
@@ -20692,7 +20697,7 @@
       "Left of `:=` stands one name (or regex), with its gate words in front, and nothing else",
       "A gate word stands only where a binding is being filled"
     ],
-    "issue": null,
+    "issue": 82,
     "done": null,
     "made": {
       "at": "2026-10-09T01:36+02:00",
@@ -20703,7 +20708,26 @@
       "run": "solve-W211",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:24+02:00",
+        "by": "logoslang-solve-W211",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "8994869",
+        "change": "chosen by Thobias: \"a but i didnt realy read through the wording because it was too long. btw if not output_type per if else is needed to make Logos fast again then i would rather not have output_type per if else branch.\"",
+        "reason": "Q89 option (a) as put to him, with no reason of his own: the answer is a written fact on the function's line, known before its body is read, so no call walks into another function, a self-call and a body built later need no new rule, and nothing is kept that a rewrite could leave stale. The wording is the solution agent's, recorded by the orchestrator at 83b5a80 as a restatement of the choice."
+      },
+      {
+        "at": "2026-10-09T02:25+02:00",
+        "by": "logoslang-solve-W211",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "8994869",
+        "change": "issue #82",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "S59",
