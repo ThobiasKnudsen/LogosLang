@@ -149,7 +149,7 @@
   {
     "id": "S1",
     "kind": "solution",
-    "status": "chosen",
+    "status": "done",
     "text": "Every built-in's parse writes the type its node gives back, and the five guessing functions become one read of it",
     "fixes": [
       "W2"
@@ -165,7 +165,7 @@
       "A node's output type is per node, and its parse writes it"
     ],
     "issue": 82,
-    "done": null,
+    "done": "27ed63c",
     "made": {
       "at": "2026-10-01T00:21+02:00",
       "by": "logoslang-pws-migration",
@@ -193,6 +193,15 @@
         "commit": "9fc7634",
         "change": "issue #82",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T14:09+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "1d9a3e3",
+        "change": "done at 27ed63c",
+        "reason": "issue 82, S1's issue, merged into dev at 27ed63c after review rounds 1 to 7; P21, P26, P27 under W2 rerun fixed on 86369f0"
       }
     ]
   },
@@ -1525,7 +1534,7 @@
     "id": "W15",
     "kind": "why",
     "status": "accepted",
-    "text": "\"A value lands in a place of type T\" is written separately at eight sites (call argument, `=`, `p@ =`, `m[k] =`, tape operand, constructor field, `this` write, function tail), each with its own arms around `check_store_type`",
+    "text": "\"A value lands in a place of type T\" is written separately at eight sites (call argument, `=`, `p@ =`, `m[k] =`, tape operand, constructor field, `this` write, function tail), each with its own arms around `check_store_type`, and at the function tail in its place: `fn_over_body` calls only `commit_fn_body`, whose own list of result kinds (`type`, `dyad`, a record, a number type) lets every other kind through unchecked",
     "proposed_for": "W14",
     "why": [],
     "anchors": [
@@ -1566,6 +1575,15 @@
         "commit": "9fc7634",
         "change": "asked: no why found",
         "reason": "root cause per #198's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      },
+      {
+        "at": "2026-10-09T14:09+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "1d9a3e3",
+        "change": "text was \"\\\"A value lands in a place of type T\\\" is written separately at eight sites (call argument, `=`, `p@ =`, `m[k] =`, tape operand, constructor field, `this` write, function tail), each with its own arms around `check_store_type`\"",
+        "reason": "why-P111-a and why-P111-b, 9 October 2026: at the function tail the arms replace check_store_type instead of surrounding it (W258)"
       }
     ]
   },
@@ -24755,7 +24773,9 @@
     "expected": "refused where it is written, as `-> type ( i32 5 )` and `-> pt ( i32 5 )` are: a function's result is a place with a type, and a value landing there is checked (›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹)",
     "tier": "interpreted",
     "found": "logoslang-why-P111-a, FOUND in its WHY on P111, 9 October 2026, dev aaf87c2",
-    "why": null,
+    "why": [
+      "W258"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -24767,7 +24787,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:09+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "1d9a3e3",
+        "change": "why + W258",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P146",
@@ -24902,7 +24932,9 @@
     "status": "accepted",
     "text": "`commit_fn_body` checks a function's last value only when its `->` type is `type`, `dyad`, a record or one of the ten `types.numtypes`; `bool_` is not among them, so for `-> bool` (and a pointer or `fn` result) `if !is_numtype_node(types, output)` returns `Ok(body)` unchecked, while `=` and a call argument refuse the same value through `check_store_type`",
     "proposed_for": "P111",
-    "why": null,
+    "why": [
+      "W15"
+    ],
     "anchors": [
       "commit_fn_body",
       "is_numtype_node",
@@ -24976,6 +25008,15 @@
         "commit": "710821b",
         "change": "accepted as a why of P111, same as W255",
         "reason": "A and B state the same fact: commit_fn_body checks a result only for type, dyad, a record or a number type, and returns every other body unchecked (bool is not in types.numtypes)"
+      },
+      {
+        "at": "2026-10-09T14:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "1d9a3e3",
+        "change": "why + W15",
+        "reason": null
       }
     ]
   },
