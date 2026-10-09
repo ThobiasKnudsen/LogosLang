@@ -20905,5 +20905,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P126",
+    "kind": "problem",
+    "status": "open",
+    "text": "Thobias has to check by hand whether the orchestrator followed up on what he saved or said: his saved answers to Q89 and Q90 went unseen until he asked, because questions-watch stopped after each save and the orchestrator had to start it again by hand, and after Q84's save it did not",
+    "program": "9 October 2026, orchestrator session 79afb672 on LogosLang dev: the watch (questions-watch, run in the background) woke on Thobias's save of Q84; the orchestrator ran question-seen and relayed the answer, and started no new watch. Thobias then saved answers in Q89 and Q90. Steps to see it again with the script as it was then: run questions-watch, save a question file, let it wake, save a second question file.",
+    "output": "The first save prints its path and the watch exits (exit 0). The second save prints nothing: no process watches. The orchestrator saw Q89 and Q90 only when Thobias wrote in chat \"i saved a file. didnt you see that?\". Later the same day he wrote: \"im getting really frustrated about these problems and having to manually check if things are followed up or not\". Changed the same day, before this problem was recorded: questions-watch --follow keeps running and prints one line per save, and watch-guard.sh, a Stop hook, blocks the orchestrator's turn from ending while the watch is down; the hook is not in settings.json yet (the edit was refused as self-modification, so Thobias adds it).",
+    "expected": "Every save of a question file and every message from Thobias is acted on without him checking: SKILL.md ›Questions to Thobias‹, \"Every question goes to him as a file\", and the watch line that says the orchestrator hears each save.",
+    "tier": "orchestrator",
+    "found": "Thobias in chat, 9 October 2026, dev 270d299",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T02:32+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
