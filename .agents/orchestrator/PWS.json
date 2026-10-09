@@ -24400,12 +24400,15 @@
     "kind": "problem",
     "status": "open",
     "text": "Reading a long chain of functions, each calling the one before in both arms of an `if`, takes time that grows five to six times per doubling of the chain: 83 ms at 500 functions, 404 ms at 1,000, 2,605 ms at 2,000, on dev and on issue 82's branch alike; nothing is ever called",
-    "program": "target/release/logos 'c := i32 1, h0 := fn () -> @i32 ( alloc 1 of i32 5 ), h1 := fn () -> @i32 ( if (c == 1) (h0()) else (h0()) ), h2 := fn () -> @i32 ( if (c == 1) (h1()) else (h1()) ), … up to hN, 7' (generator: .agents/orchestrator/tmp/issue-82-output-type/speed6.py, `python3 speed6.py chain N '@i32'`)",
-    "output": "`7`, exit 0; median of 7 runs, release build of dev 654006f (startup about 6 ms): 100 functions about 16 ms, 500: 83 ms, 1,000: 404 ms, 2,000: 2,605 ms; issue 82's branch (c016c1a, `-> own @i32`): 83 ms and 404 ms; at 10 and 20 functions both about 10 ms, so the two-point speed probe does not show it",
+    "program": "target/release/logos 'c := i32 1, h0 := fn () -> i32 ( i32 5 ), h1 := fn () -> i32 ( if (c == 1) (h0()) else (h0()) ), h2 := fn () -> i32 ( if (c == 1) (h1()) else (h1()) ), … up to hN, 7' (no alloc; with -> own @i32 and alloc it is as slow: 377 ms at 1,000; the -> @i32 form is refused since issue 82's merge)",
+    "output": "`7`, exit 0: 2,186 ms at 2,000 functions with plain `-> i32`, dev aaf87c2 (logoslang-why-P139-a); the first measure, with `-> @i32` and alloc on dev 654006f: 83 ms at 500, 404 ms at 1,000, 2,605 ms at 2,000",
     "expected": "the time grows about in step with the chain's length (DESIGN.md ›Reading a program takes time in step with its size; no walk runs once per path‹)",
     "tier": "interpreted",
     "found": "logoslang-issue-82-review-6, FOUND in review round 6 of issue 82, 9 October 2026, dev at 654006f",
-    "why": null,
+    "why": [
+      "W259",
+      "W262"
+    ],
     "issue": 82,
     "fixed": null,
     "made": {
@@ -24417,7 +24420,44 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:06+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4683a9d",
+        "change": "program was \"target/release/logos 'c := i32 1, h0 := fn () -> @i32 ( alloc 1 of i32 5 ), h1 := fn () -> @i32 ( if (c == 1) (h0()) else (h0()) ), h2 := fn () -> @i32 ( if (c == 1) (h1()) else (h1()) ), … up to hN, 7' (generator: .agents/orchestrator/tmp/issue-82-output-type/speed6.py, `python3 speed6.py chain N '@i32'`)\"",
+        "reason": "FACT from why-P139-a: the -> @i32 program has been refused since 27ed63c, and the slowdown needs no ownership check: plain -> i32 shows it"
+      },
+      {
+        "at": "2026-10-09T14:06+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4683a9d",
+        "change": "output was \"`7`, exit 0; median of 7 runs, release build of dev 654006f (startup about 6 ms): 100 functions about 16 ms, 500: 83 ms, 1,000: 404 ms, 2,000: 2,605 ms; issue 82's branch (c016c1a, `-> own @i32`): 83 ms and 404 ms; at 10 and 20 functions both about 10 ms, so the two-point speed probe does not show it\"",
+        "reason": "FACT from why-P139-a: the -> @i32 program has been refused since 27ed63c, and the slowdown needs no ownership check: plain -> i32 shows it"
+      },
+      {
+        "at": "2026-10-09T14:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4683a9d",
+        "change": "why + W259",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T14:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4683a9d",
+        "change": "why + W262",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P140",
@@ -24942,7 +24982,7 @@
   {
     "id": "W259",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "check_call_reads walks the callee's whole FN_OUTER list at every call and joins each entry into the caller's open list through note_outer_read, so a function's list holds every outer name read anywhere down its call chain (h_i's holds c and h0 to h_{i-1}) and the chain's 2n calls visit about n² entries, h0's binding at every call, keeping no answer per function between calls, though ›Reading a program takes time in step with its size; no walk runs once per path‹ asks each node visited a bounded number of times",
     "proposed_for": "P139",
     "why": null,
@@ -24974,14 +25014,32 @@
       },
       {
         "command": "python3 why-probes/chain.py <shape> 'own @i32' 7 <n...>, median of 7, release dev aaf87c2; then gdb breakpoint hit counts (why-probes/count.py) and stack samples (why-probes/sample.py)",
-        "output": "single (h_i := fn () -> own @i32 ( h_{i-1}() ), no if): 250: 13 ms, 500: 39 ms, 1000: 193 ms, 2000: 1716 ms\nchain (the problem's if shape): 250: 56 ms, 500: 169 ms, 1000: 1023 ms\nflat (no calls, h_i := fn () -> own @i32 ( alloc 1 of i32 5 )): 1250: 31 ms, 1500: 36 ms, 2000: 45 ms\ncheck_call_reads runs at if-chains of 10, 20, 40: 132, 252, 492 times (linear: the checks' count does not grow, each check's cost does)\nstack samples of single 2000 (3 of 3) and chain 1000 (6 of 8; the others regex setup and one teardown_of, which runs 5 times per function): innermost frame <seed::parse::Parser>::check_call_reads under run_ctor, lex_next, parse_block, fn_over_body",
+        "output": "quiet reruns, median of 7, release dev aaf87c2:\nchain (the problem's if shape): 250: 23 ms, 500: 75 ms, 1000: 374 ms\nsingle (h_i := fn () -> own @i32 ( h_{i-1}() ), no if): 250: 14 ms, 500: 38 ms, 1000: 191 ms\nflat (no calls, h_i := fn () -> own @i32 ( alloc 1 of i32 5 )): 1250: 31 ms, 1500: 36 ms, 2000: 45 ms\ncheck_call_reads runs at if-chains of 10, 20, 40: 132, 252, 492 times (linear: the checks' count does not grow, each check's cost does)\nstack samples of single 2000 (3 of 3) and chain 1000 (6 of 8; the others regex setup and one teardown_of, which runs 5 times per function): innermost frame <seed::parse::Parser>::check_call_reads under run_ctor, lex_next, parse_block, fn_over_body",
+        "commit": "4683a9d"
+      },
+      {
+        "command": "rg -n 'let outer = unsafe \\{ fn_outer\\(callee\\) \\};|for &binding in outer|self\\.note_outer_read\\(binding\\);|\\*slots\\.add\\(FN_OUTER\\) = outer;' src/parse/operands.rs src/parse/bodies.rs",
+        "output": "src/parse/operands.rs:482:        let outer = unsafe { fn_outer(callee) };\nsrc/parse/operands.rs:483:        for &binding in outer {\nsrc/parse/operands.rs:508:            self.note_outer_read(binding);\nsrc/parse/bodies.rs:664:            *slots.add(FN_OUTER) = outer;\n(check_call_reads holds 482-508; fn_over_body holds 664, where outer is the closed OpenFn's list)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "release build of dev aaf87c2, one run each, n = 2000; generator why-probes/gen.py, timer why-probes/time.sh: bash why-probes/time.sh target/release/logos <kind> 2000. plain: c := i32 1, h0 := fn () -> i32 ( i32 5 ), h_i := fn () -> i32 ( if (c == 1) (h_{i-1}()) else (h_{i-1}()) ), 7. callzero: the same with h0() in both arms of every h_i. namedu: h_i := fn () -> i32 ( g_i := h_{i-1}, i32 5 ), naming the one before without calling it",
+        "output": "plain    n=500: 69 ms   n=1000: 331 ms  n=2000: 2186 ms, exit 0, prints 7\ncallzero n=500: 27 ms   n=1000: 44 ms   n=2000: 85 ms, exit 0, prints 7\nnamedu   n=500: 23 ms   n=1000: 38 ms   n=2000: 69 ms, exit 0, prints 7\n(same calls, same bodies: only the callee's depth in the chain, so the length of its list, differs; plain i32 results, no alloc, so the ownership walk plays no part)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh target/release/logos why-probes/transitive.txt (first line: a name read only by h0 is checked at h2's call, two calls down)",
+        "output": "$ logos 'x := alloc 1 of i32 5, h0 := fn () -> i32 ( x@ ), h1 := fn () -> i32 ( h0() ), h2 := fn () -> i32 ( h1() ), free x, h2()'\n<command line>:1:117: error: `x` is dead here: it was moved or freed above\nexit 1",
         "commit": "aaf87c2"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "check_call_reads, run at every call, walks the callee's whole FN_OUTER list and adds each binding to the open function's list through note_outer_read, and fn_over_body stores that list as the new function's FN_OUTER, so in the chain h_i's list holds every outer name read anywhere below it (h_{i-1} down to h0, c and the operator names) and h_i's two calls join about 2i bindings: the chain's reading does about n*n joins and keeps about n*n/2 list entries, where ›Reading a program takes time in step with its size; no walk runs once per path‹ allows each node a bounded number of visits"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T14:05+02:00",
@@ -24992,12 +25050,31 @@
       "run": "why-P139",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4683a9d",
+        "change": "accepted as a why of P139, same as W260",
+        "reason": "A and B state the same fact: check_call_reads walks the callee's whole transitive FN_OUTER list at every call, so a chain of n functions visits about n² entries"
+      },
+      {
+        "at": "2026-10-09T14:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4683a9d",
+        "change": "evidence 3 was {\"command\": \"python3 why-probes/chain.py <shape> 'own @i32' 7 <n...>, median of 7, release dev aaf87c2; then gdb breakpoint hit counts (why-probes/count.py) and stack samples (why-probes/sample.py)\", \"output\": \"single (h_i := fn () -> own @i32 ( h_{i-1}() ), no if): 250: 13 ms, 500: 39 ms, 1000: 193 ms, 2000: 1716 ms\\nchain (the problem's if shape): 250: 56 ms, 500: 169 ms, 1000: 1023 ms\\nflat (no calls, h_i := fn () -> own @i32 ( alloc 1 of i32 5 )): 1250: 31 ms, 1500: 36 ms, 2000: 45 ms\\ncheck_call_reads runs at if-chains of 10, 20, 40: 132, 252, 492 times (linear: the checks' count does not grow, each check's cost does)\\nstack samples of single 2000 (3 of 3) and chain 1000 (6 of 8; the others regex setup and one teardown_of, which runs 5 times per function): innermost frame <seed::parse::Parser>::check_call_reads under run_ctor, lex_next, parse_block, fn_over_body\", \"commit\": \"aaf87c2\"}",
+        "reason": "why-P139-b: the first timings came from a loaded machine; these are quiet reruns, median of 7"
+      }
+    ]
   },
   {
     "id": "W260",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "check_call_reads, run at every call, walks the callee's whole FN_OUTER list and adds each binding to the open function's list through note_outer_read, and fn_over_body stores that list as the new function's FN_OUTER, so in the chain h_i's list holds every outer name read anywhere below it (h_{i-1} down to h0, c and the operator names) and h_i's two calls join about 2i bindings: the chain's reading does about n*n joins and keeps about n*n/2 list entries, where ›Reading a program takes time in step with its size; no walk runs once per path‹ allows each node a bounded number of visits",
     "proposed_for": "P139",
     "why": null,
@@ -25037,7 +25114,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W259",
     "made": {
       "at": "2026-10-09T14:05+02:00",
       "by": "logoslang-why-P139-a",
@@ -25047,12 +25124,22 @@
       "run": "why-P139",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4683a9d",
+        "change": "merged into W259",
+        "reason": "A and B state the same fact: check_call_reads walks the callee's whole transitive FN_OUTER list at every call, so a chain of n functions visits about n² entries"
+      }
+    ]
   },
   {
     "id": "W261",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "note_outer_read keeps the open function's outer list as a Vec (OpenFn's outer) and tests every binding with a linear frame.outer.contains before it pushes, so a call that joins a callee's list of i names costs about i*i/2 pointer compares; over the chain, whose lists grow by one name per function, the compares grow with the cube of its length, which is why the time grows five to eight times per doubling and not four; the other lookups in that loop are a hash set (ScopeStack::is_open) and the short open-scope stack (ScopeStack::position)",
     "proposed_for": "P139",
     "why": null,
@@ -25090,7 +25177,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W262",
     "made": {
       "at": "2026-10-09T14:06+02:00",
       "by": "logoslang-why-P139-a",
@@ -25099,6 +25186,121 @@
       "commit": "aaf87c2",
       "run": "why-P139",
       "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4683a9d",
+        "change": "merged into W262",
+        "reason": "A and B state the same fact: note_outer_read tests each joined name with a linear Vec contains, so joining a list of m names costs about m²/2 compares, lifting the chain past fourfold per doubling"
+      }
+    ]
+  },
+  {
+    "id": "W262",
+    "kind": "why",
+    "status": "accepted",
+    "text": "note_outer_read keeps an open function's outer list each-once by frame.outer.contains, a scan of the whole Vec OpenFn.outer, so joining a callee's list of m names costs about m²/2 comparisons; over the transitive lists of W259 one call in the chain costs about i², and the chain about n³/6, twice that with the if's two calls, whose second finds every name already listed: this is what lifts the growth past fourfold per doubling",
+    "proposed_for": "P139",
+    "why": null,
+    "anchors": [
+      "note_outer_read",
+      "OpenFn",
+      "check_call_reads",
+      "src/parse/operands.rs",
+      "src/parse/bodies.rs",
+      "ScopeStack",
+      "src/parse/scopes.rs"
+    ],
+    "design": [
+      "Reading a program takes time in step with its size; no walk runs once per path"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'pub\\(super\\) outer: Vec<DyadPtr>|frame\\.outer\\.contains|set: HashSet<DyadPtr>|sections: HashSet<DyadPtr>|super::array::items\\(gates\\)\\.contains' src   (dev aaf87c2)",
+        "output": "src/parse/bodies.rs:24:    pub(super) outer: Vec<DyadPtr>,        (OpenFn)\nsrc/parse/operands.rs:461:            if depth < frame.below && !frame.outer.contains(&binding) {   (note_outer_read: scans the whole list per name)\nsrc/parse/scopes.rs:111:    set: HashSet<DyadPtr>,                (is_open: a hash lookup)\nsrc/parse/quotes.rs:21:    pub(super) sections: HashSet<DyadPtr>,  (imports.sections: a hash lookup)\nsrc/identities/binding.rs:214: !gates.is_null() && super::array::items(gates).contains(&gate)   (has_gate: the binding's own gates, not the chain)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "python3 why-probes/chain.py star1000 'own @i32' 7 250 500 1000, against single at the same m: a chain h0..h_m, then 1,000 functions hk_j := fn () -> own @i32 ( h_m() ), each joining h_m's m names into an empty list   (median of 7, release dev aaf87c2, interpreted)",
+        "output": "m = 250: 74 ms against 13 ms alone, so 61 ms for the 1,000 callers\nm = 500: 195 ms against 39 ms, so 156 ms\nm = 1000: 681 ms against 193 ms, so 488 ms\none call grows 2.6 then 3.1 times per doubling of m (3.1 and 3.4 after the callers' own cost, about 15 ms for 1,000 call-free functions), more than the twofold a walk with a constant step gives",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "python3 why-probes/chain.py chain|single 'own @i32' 7 250 500 1000   (the if's two calls against one call per body, same machine, same run)",
+        "output": "chain (if, two calls): 23 ms, 75 ms, 374 ms\nsingle (one call):    14 ms, 38 ms, 191 ms\nthe if chain costs about twice the plain chain, as two scans of h_{i-1}'s list per body predict",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'frame\\.outer\\.contains|frame\\.outer\\.push|pub\\(super\\) outer: Vec<DyadPtr>' src/parse/operands.rs src/parse/bodies.rs; rg -n 'self\\.set\\.contains|self\\.open\\.iter\\(\\)\\.position' src/parse/scopes.rs",
+        "output": "src/parse/operands.rs:461:            if depth < frame.below && !frame.outer.contains(&binding) {\nsrc/parse/operands.rs:462:                frame.outer.push(binding);\nsrc/parse/bodies.rs:24:    pub(super) outer: Vec<DyadPtr>,\n181:        self.open.iter().position(|&s| s == scope)\n189:        self.set.contains(&scope)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "release build of dev aaf87c2, one run each; generator why-probes/gen.py: bash why-probes/time.sh target/release/logos wide <m> 400 makes v_j := i32 j for j < m, h0 := fn () -> i32 ( x_0 := v_0, …, x_{m-1} := v_{m-1}, i32 5 ), and 400 functions h_i := fn () -> i32 ( h0() ), 7; widenocall is the same with i32 5 in place of h0() in the 400",
+        "output": "m=250:  wide 39 ms,  widenocall 20 ms,  extra 19 ms,  0.05 ms per call\nm=500:  wide 81 ms,  widenocall 26 ms,  extra 55 ms,  0.14 ms per call\nm=1000: wide 226 ms, widenocall 33 ms,  extra 193 ms, 0.48 ms per call\nm=2000: wide 544 ms, widenocall 51 ms,  extra 493 ms, 1.23 ms per call\n(all exit 0, print 7; one call into an empty list costs more than its m joins: about 0.6 ns per compare at m*m/2)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "the problem's own program, -> own @i32, three runs each: bash why-probes/time.sh target/release/logos chain <n> 'own @i32'",
+        "output": "n=250: 30, 32, 28 ms; n=500: 83, 71, 80 ms; n=1000: 390, 387, 352 ms; n=1400: 785, 751, 719 ms; all exit 0, print 7\n(n=2000 does not fit one command-line argument: Argument list too long)",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "note_outer_read keeps the open function's outer list as a Vec (OpenFn's outer) and tests every binding with a linear frame.outer.contains before it pushes, so a call that joins a callee's list of i names costs about i*i/2 pointer compares; over the chain, whose lists grow by one name per function, the compares grow with the cube of its length, which is why the time grows five to eight times per doubling and not four; the other lookups in that loop are a hash set (ScopeStack::is_open) and the short open-scope stack (ScopeStack::position)"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:06+02:00",
+      "by": "logoslang-why-P139-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P139",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:07+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4683a9d",
+        "change": "accepted as a why of P139, same as W261",
+        "reason": "A and B state the same fact: note_outer_read tests each joined name with a linear Vec contains, so joining a list of m names costs about m²/2 compares, lifting the chain past fourfold per doubling"
+      }
+    ]
+  },
+  {
+    "id": "P148",
+    "kind": "problem",
+    "status": "open",
+    "text": "A local name declared in many functions makes reading slower than in step with the program's size: one shared name `g` in every function grows about three times per doubling, while a different name in each function grows about in step",
+    "program": "target/release/logos 'c := i32 1, h0 := fn () -> i32 ( g := i32 1, i32 5 ), h1 := fn () -> i32 ( g := i32 1, i32 5 ), … up to hN, 7' (generator: why-probes/gen.py kind localg in logoslang-why-P139-a's worktree; kind localu names them g0, g1, …)",
+    "output": "`7`, exit 0; one name `g`: 74 ms at 700 functions, 227 ms at 1,400, 673 ms at 2,800; a name per function: 29 ms at 700, 48 ms at 1,400; release build of dev aaf87c2, interpreted",
+    "expected": "the time grows about in step with the program's length, whatever the names (DESIGN.md ›Reading a program takes time in step with its size; no walk runs once per path‹)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P139-a, FOUND in its WHY on P139, 9 October 2026, dev aaf87c2",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T14:06+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "4683a9d",
+      "run": null,
+      "agent": null
     },
     "history": []
   }
