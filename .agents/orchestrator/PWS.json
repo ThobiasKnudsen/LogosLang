@@ -5,7 +5,7 @@
     "status": "open",
     "text": "Adding `1.0` to `(return x)` over an `f64` name prints `1`",
     "program": "x := f64 2.5, (return x) + 1.0",
-    "output": "1\nexit 0",
+    "output": "`return` is written only inside a function (dev 86369f0, after issue 82, rerun by logoslang-help-6); the `+` over a `return` node is no longer reached at the top level, and whether it computes at `f64` inside a function is not rerun",
     "expected": "A `+` over an `f64` operand computes at `f64`, as `x := f64 2.5, x + 1.0` prints `3.5`; ›A node's output type is per node, and its parse writes it‹: use sites read the type a node gives back from the node",
     "tier": "interpreted",
     "found": "first example of #82 (seed review of 9 September 2026, dev 64846c7); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
@@ -32,6 +32,15 @@
         "commit": "9fc7634",
         "change": "why + W1",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T13:59+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "152a78c",
+        "change": "output was \"1\\nexit 0\"",
+        "reason": "rerun 9 October 2026 on dev 86369f0: the program is now refused, a different outcome, not the expected one"
       }
     ]
   },
@@ -2876,7 +2885,7 @@
   {
     "id": "P21",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A name bound to a comparison prints `1`",
     "program": "x := i32 1, a := x == 1, a",
     "output": "1\nexit 0",
@@ -2887,7 +2896,7 @@
       "W30"
     ],
     "issue": null,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-01T00:26+02:00",
       "by": "logoslang-pws-migration",
@@ -2906,6 +2915,15 @@
         "commit": "e14738b",
         "change": "why + W30",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T13:59+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "152a78c",
+        "change": "fixed at 27ed63c",
+        "reason": "logoslang-help-6 reran it on a fresh release build of dev 86369f0 (after issue 82's merge, 27ed63c), 9 October 2026; the output now matches the expected (state/help-6/answer.md, entry 4)"
       }
     ]
   },
@@ -4529,7 +4547,7 @@
   {
     "id": "P26",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A comparison adds to a number: `(x == 1) + 1` prints `2`",
     "program": "x := i32 1, (x == 1) + 1",
     "output": "2\nexit 0",
@@ -4541,7 +4559,7 @@
       "W45"
     ],
     "issue": null,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-01T00:57+02:00",
       "by": "Orchestrator (2)",
@@ -4569,13 +4587,22 @@
         "commit": "e14738b",
         "change": "why + W45",
         "reason": "B: the op is looked up by NumType, so + over the comparison's I32 is add_i32, and no rule per type identity refuses a bool"
+      },
+      {
+        "at": "2026-10-09T13:59+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "152a78c",
+        "change": "fixed at 27ed63c",
+        "reason": "logoslang-help-6 reran it on a fresh release build of dev 86369f0 (after issue 82's merge, 27ed63c), 9 October 2026; the output now matches the expected (state/help-6/answer.md, entry 4)"
       }
     ]
   },
   {
     "id": "P27",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A comparison is stored into an `i32` place without a conversion",
     "program": "x := i32 1, mut a := i32 0, a = x == 1, a",
     "output": "1\nexit 0",
@@ -4586,7 +4613,7 @@
       "W37"
     ],
     "issue": null,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-01T00:57+02:00",
       "by": "Orchestrator (2)",
@@ -4605,6 +4632,15 @@
         "commit": "e14738b",
         "change": "why + W37",
         "reason": "A's and B's probes: check_store_type compares the i32 place against numtype_of's answer, I32 for a comparison and NonNumeric for true"
+      },
+      {
+        "at": "2026-10-09T13:59+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "152a78c",
+        "change": "fixed at 27ed63c",
+        "reason": "logoslang-help-6 reran it on a fresh release build of dev 86369f0 (after issue 82's merge, 27ed63c), 9 October 2026; the output now matches the expected (state/help-6/answer.md, entry 4)"
       }
     ]
   },
@@ -8498,7 +8534,7 @@
   {
     "id": "P46",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A name bound to a call of a function declared `-> bool` holds the number `1` of type `i32`, not `true`: it prints `1`, and `if b ( … )` on it is \"this condition must be a bool\", at the top level and in a function body. The same call unbound prints `true`, and `-> f64` binds an `f64`.",
     "program": "f := fn () -> bool ( true ), b := f(), print «{b}», b.type",
     "output": "1\ni32\nexit 0",
@@ -8507,7 +8543,7 @@
     "found": "Orchestrator (2), checking logoslang-issue-215-worker's `if v.ok() ( … )` finding on dev 6b3a673 code (solve-W85 release build): `b := v.ok()` is `1` of type `i32` too",
     "why": null,
     "issue": 209,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-01T22:03+02:00",
       "by": "Orchestrator (2)",
@@ -8526,6 +8562,15 @@
         "commit": "9c123fb",
         "change": "program was \"f := fn () -> bool ( true ), b := f(), print «{b}», b:type\"",
         "reason": "dev renamed x:type to x.type on 1 October (#215, 0388214); the old spelling is now refused as written. Respelled, the program gives the recorded output again on dev b101dfd (logoslang-help-3's rerun, 8 Oct 2026)"
+      },
+      {
+        "at": "2026-10-09T13:59+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "152a78c",
+        "change": "fixed at 27ed63c",
+        "reason": "logoslang-help-6 reran it on a fresh release build of dev 86369f0 (after issue 82's merge, 27ed63c), 9 October 2026; the output now matches the expected (state/help-6/answer.md, entry 4)"
       }
     ]
   },
@@ -8818,7 +8863,7 @@
     "status": "open",
     "text": "At the program's top level a `return` before the last line is taken and the lines after it run: `return 5, 6` prints `6`, and `x := i32 1, return x, print «after», 7` prints `after` then `7`. The same lines in a block, `( return 5, 6 )`, are refused: \"outside a function, `return` must be the last expression of its scope\".",
     "program": "return 5, 6",
-    "output": "6\nexit 0",
+    "output": "`return` is written only inside a function (dev 86369f0, after issue 82, rerun by logoslang-help-6); whether `( return 5, 6 )` gives the same is not rerun",
     "expected": "The same answer as `( return 5, 6 )`: DESIGN ›The pass runs only as far as it must, in order, and never twice‹, Why (2): \"The same text means the same in a block, at top level, in a REPL line and in an imported file\". What a `return` outside every function does is not in DESIGN beyond \"`return X` is written only to leave a function early\" (›A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function‹).",
     "tier": "interpreted",
     "found": "Orchestrator (2), checking the #82 worker's P1 fix (top-level `(return x) + 1.0` prints 3.5 there) on dev 0388214; the same on issue-82-output-type f3e4383",
@@ -8834,7 +8879,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:59+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "152a78c",
+        "change": "output was \"6\\nexit 0\"",
+        "reason": "rerun 9 October 2026 on dev 86369f0: the program is now refused, a different outcome"
+      }
+    ]
   },
   {
     "id": "P56",
@@ -8887,7 +8942,7 @@
   {
     "id": "P58",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A call argument that gives nothing is accepted by a bare parameter: a statement (`x := i32 5`, `y = 5`, `while false (1)`) or a `-> void` call passed to `fn (b)` runs and the call goes on, where a typed parameter refuses the same argument",
     "program": "g := fn (b) -> i32 ( 7 ), g(x := i32 5)",
     "output": "7\nexit 0",
@@ -8896,7 +8951,7 @@
     "found": "logoslang-issue-82-review-1, review round 1 of #82, on dev 2b9b9b2 and on issue-82-output-type 6fe5070",
     "why": null,
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-02T21:06+02:00",
       "by": "Orchestrator (2)",
@@ -8906,7 +8961,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:59+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "152a78c",
+        "change": "fixed at 27ed63c",
+        "reason": "logoslang-help-6 reran it on a fresh release build of dev 86369f0 (after issue 82's merge, 27ed63c), 9 October 2026; the output now matches the expected (state/help-6/answer.md, entry 4)"
+      }
+    ]
   },
   {
     "id": "P59",
@@ -16390,7 +16455,7 @@
     "status": "open",
     "text": "A `mut` name declared from `true` or `false` makes no place, so `=` on it is refused, and `if` over it folds at parse",
     "program": "mut c := true, c = false, print «{c}»",
-    "output": "<command line>:1:25: error: this is not an assignable place, exit 1. `mut c := bool ?, c = true, c = false, print «{c}»` gives: error: declarations of non-numeric types are not in the seed yet, exit 1",
+    "output": "mut c := true, c = false, print «{c}» prints `false` on dev 86369f0 (rerun by logoslang-help-6); the second program, `mut c := bool ?, c = true, c = false, print «{c}»`, is not rerun",
     "expected": "false: `c` is a `bool` place. The issue-82 branch (7eb2f14) prints false for both programs (its f3e4383 and 55441c8)",
     "tier": "interpreted",
     "found": "logoslang-issue-82-review-3, release build of dev 6718deb (seed source as at 3021851)",
@@ -16406,7 +16471,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:59+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "152a78c",
+        "change": "output was \"<command line>:1:25: error: this is not an assignable place, exit 1. `mut c := bool ?, c = true, c = false, print «{c}»` gives: error: declarations of non-numeric types are not in the seed yet, exit 1\"",
+        "reason": "rerun 9 October 2026 on dev 86369f0: the first half is fixed, the second unknown"
+      }
+    ]
   },
   {
     "id": "W174",
@@ -18958,7 +19033,7 @@
   {
     "id": "P110",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A function declared `-> dyad` that gives back a number hands back the bare number, and reading the result follows it as a node address: a panic on dev, a segmentation fault on the issue 82 branch",
     "program": "f := fn () -> dyad ( i32 5 ), x := f(), print «{x}»",
     "output": "dev 5dbf3b2: panic \"invalid NumType tag 24\", exit 1; branch issue-82-output-type 080906e: segmentation fault, exit 139 (also `x`, `x.type`, `y := x`, `-> dyad ( 5 )`, `-> dyad ( alloc 1 of i32 5 )`, and `f := fn (a) -> dyad ( a ), x := f(i32 5), print «{x}»`)",
@@ -18967,7 +19042,7 @@
     "found": "logoslang-issue-82-review-4 (finding N, comment 6069556531), on dev 5dbf3b2 and branch 080906e; QUESTION Q85",
     "why": null,
     "issue": 82,
-    "fixed": null,
+    "fixed": "27ed63c",
     "made": {
       "at": "2026-10-08T23:43+02:00",
       "by": "orchestrator LogosLang",
@@ -18977,7 +19052,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:59+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "152a78c",
+        "change": "fixed at 27ed63c",
+        "reason": "logoslang-help-6 reran it on a fresh release build of dev 86369f0 (after issue 82's merge, 27ed63c), 9 October 2026; the output now matches the expected (state/help-6/answer.md, entry 4)"
+      }
+    ]
   },
   {
     "id": "P111",
