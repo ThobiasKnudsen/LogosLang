@@ -23926,7 +23926,9 @@
     "expected": "his save wakes the orchestrator with no step anyone must remember (Thobias, 9 October 2026: \"make it automatic\", \"build the allways running hook\"); SKILL.md ›Staying responsive‹ today asks for a remembered step: \"Start the question watch again first\"",
     "tier": "orchestrator",
     "found": "Thobias, in chat, 9 October 2026, after a computer restart",
-    "why": null,
+    "why": [
+      "W219"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -23938,7 +23940,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:14+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "792fec2",
+        "change": "why + W219",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "S76",
@@ -23953,7 +23965,7 @@
       "W252",
       "W253"
     ],
-    "assessment": "Root fix, restart included: the waker belongs to the session and is registered by a file Claude Code reads at every start and resume, so no step is remembered after a computer restart (P135) or ever (W244, W245); the watch runs before the first turn, so plan mode does not stop it; the rest as S66 (W243, W252, W251, W253, P126, P129). The report-once record keeps a restarted watch from waking the session again and again for a save left unhandled (plan mode, the harness's 8-block cap), and it is the record solve-W218's S63/S65 need for question-close to refuse a save the watch has not printed, so one record serves both. Follows the global CLAUDE.md ruling (Thobias, 3 October 2026): '.claude/ keeps only the files Claude Code itself reads (settings, skill pointers, the CLAUDE.md bridge)'. Cost: the hooks run in every session in the repo and its worktrees and exit at once there (one bash start per tool call); the file is committed, so it reaches any machine, and does nothing where the skill is not installed; writing it may need Thobias's approval once per repo, as the settings.json edit did. Slice 1 tests asyncRewake at SessionStart and Stop in a scratch repo (fallback PostToolUse, decided in Q95) and which SessionStart field names the session after a forked resume. Opening the orchestrator session after a restart stays his. Lands in .claude/settings.json (about 20 lines), ~/.claude/skills/orchestrate watch-guard.sh (about 35), cmd_questions_watch (about 15), cmd_setup (about 5), SKILL.md (the wording in Q95, restart step deleted); about three hours.",
+    "assessment": "Root fix, restart included: the waker belongs to the session and is registered by a file Claude Code reads at every start and resume, so no step is remembered after a computer restart (P135) or ever (W244, W245); the watch runs before the first turn, so plan mode does not stop it; the rest as S66 (W243, W252, W251, W253, P126, P129). P138 goes too: the new SKILL.md wording drops the untrue 'a Stop hook in his ~/.claude/settings.json' and names the file setup writes. The orchestrator is the session whose id stands in state/orchestrator.session; a plain claude --resume keeps the id, so only a --fork-session resume needs it renewed at SessionStart. The report-once record keeps a restarted watch from waking the session again and again for a save left unhandled (plan mode, the harness's 8-block cap), and it is the record solve-W218's S63/S65 need for question-close to refuse a save the watch has not printed, so one record serves both. Follows the global CLAUDE.md ruling (Thobias, 3 October 2026): '.claude/ keeps only the files Claude Code itself reads (settings, skill pointers, the CLAUDE.md bridge)'. Cost: the hooks run in every session in the repo and its worktrees and exit at once there (one bash start per tool call); the file is committed, so it reaches any machine, and does nothing where the skill is not installed; writing it may need Thobias's approval once per repo, as the settings.json edit did. Slice 1 tests asyncRewake at SessionStart and Stop in a scratch repo (fallback PostToolUse, decided in Q95). Opening the orchestrator session after a restart stays his. Lands in .claude/settings.json (about 20 lines), ~/.claude/skills/orchestrate watch-guard.sh (about 35), cmd_questions_watch (about 15), cmd_setup (about 5), SKILL.md (the wording in Q95, restart step deleted); about three hours.",
     "decision": null,
     "design": [],
     "issue": null,
@@ -23967,7 +23979,17 @@
       "run": "solve-W243",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:12+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "assessment was \"Root fix, restart included: the waker belongs to the session and is registered by a file Claude Code reads at every start and resume, so no step is remembered after a computer restart (P135) or ever (W244, W245); the watch runs before the first turn, so plan mode does not stop it; the rest as S66 (W243, W252, W251, W253, P126, P129). The report-once record keeps a restarted watch from waking the session again and again for a save left unhandled (plan mode, the harness's 8-block cap), and it is the record solve-W218's S63/S65 need for question-close to refuse a save the watch has not printed, so one record serves both. Follows the global CLAUDE.md ruling (Thobias, 3 October 2026): '.claude/ keeps only the files Claude Code itself reads (settings, skill pointers, the CLAUDE.md bridge)'. Cost: the hooks run in every session in the repo and its worktrees and exit at once there (one bash start per tool call); the file is committed, so it reaches any machine, and does nothing where the skill is not installed; writing it may need Thobias's approval once per repo, as the settings.json edit did. Slice 1 tests asyncRewake at SessionStart and Stop in a scratch repo (fallback PostToolUse, decided in Q95) and which SessionStart field names the session after a forked resume. Opening the orchestrator session after a restart stays his. Lands in .claude/settings.json (about 20 lines), ~/.claude/skills/orchestrate watch-guard.sh (about 35), cmd_questions_watch (about 15), cmd_setup (about 5), SKILL.md (the wording in Q95, restart step deleted); about three hours.\"",
+        "reason": "P138 and the fact that a plain resume keeps the session id (why-P135-a, 9 October 2026)"
+      }
+    ]
   },
   {
     "id": "S77",
@@ -24084,6 +24106,82 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "d81ecc0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W254",
+    "kind": "why",
+    "status": "rejected",
+    "text": "watch-guard.sh, which SKILL.md Questions to Thobias calls a Stop hook in his ~/.claude/settings.json, is in no settings file's hooks and nothing in the skill installs it (orchestrate.sh and setup/ never name settings.json), so after the restart of 9 October at 12:23, ten hours after the guard was written, an orchestrator turn that could run a command could still end with the watch down and nothing refused it",
+    "proposed_for": "P135",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/watch-guard.sh",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude && jq -c '.hooks | to_entries | map({(.key): [.value[].hooks[].command | test(\"watch-guard\")]}) | add' settings.json; rg -c watch-guard settings.json settings.local.json remote-settings.json; rg -n 'settings\\.json' skills/orchestrate/orchestrate.sh skills/orchestrate/setup",
+        "output": "{\"Notification\":[false],\"Stop\":[false]}\n(rg: no match in any settings file, exit 1)\n(rg: no match in orchestrate.sh or setup/, exit 1)",
+        "commit": "c0cb235"
+      },
+      {
+        "command": "rg -n -o 'watch-guard.sh., a Stop hook in his .~/.claude/settings.json.' ~/.claude/skills/orchestrate/SKILL.md; uptime -s; stat -c '%y %n' ~/.claude/skills/orchestrate/watch-guard.sh ~/.claude/settings.json",
+        "output": "68:watch-guard.sh`, a Stop hook in his `~/.claude/settings.json`\n2026-10-09 12:23:57\n2026-10-09 02:26:06 +0200 /home/o/.claude/skills/orchestrate/watch-guard.sh\n2026-10-08 18:22:31 +0200 /home/o/.claude/settings.json",
+        "commit": "c0cb235"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T13:13+02:00",
+      "by": "logoslang-why-P135-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c0cb235",
+      "run": "why-P135",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T13:14+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "792fec2",
+        "change": "rejected",
+        "reason": "true, but not a cause of P135: a registered guard acts only when a turn ends, and on 9 October the watch was down from the boot to the orchestrator's first turn, which came in plan mode; both why agents say so. The fact itself is recorded as problem P138 (watch-guard.sh registered nowhere)"
+      }
+    ]
+  },
+  {
+    "id": "P139",
+    "kind": "problem",
+    "status": "open",
+    "text": "Reading a long chain of functions, each calling the one before in both arms of an `if`, takes time that grows five to six times per doubling of the chain: 83 ms at 500 functions, 404 ms at 1,000, 2,605 ms at 2,000, on dev and on issue 82's branch alike; nothing is ever called",
+    "program": "target/release/logos 'c := i32 1, h0 := fn () -> @i32 ( alloc 1 of i32 5 ), h1 := fn () -> @i32 ( if (c == 1) (h0()) else (h0()) ), h2 := fn () -> @i32 ( if (c == 1) (h1()) else (h1()) ), … up to hN, 7' (generator: .agents/orchestrator/tmp/issue-82-output-type/speed6.py, `python3 speed6.py chain N '@i32'`)",
+    "output": "`7`, exit 0; median of 7 runs, release build of dev 654006f (startup about 6 ms): 100 functions about 16 ms, 500: 83 ms, 1,000: 404 ms, 2,000: 2,605 ms; issue 82's branch (c016c1a, `-> own @i32`): 83 ms and 404 ms; at 10 and 20 functions both about 10 ms, so the two-point speed probe does not show it",
+    "expected": "the time grows about in step with the chain's length (DESIGN.md ›Reading a program takes time in step with its size; no walk runs once per path‹)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-6, FOUND in review round 6 of issue 82, 9 October 2026, dev at 654006f",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T13:14+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "792fec2",
       "run": null,
       "agent": null
     },
