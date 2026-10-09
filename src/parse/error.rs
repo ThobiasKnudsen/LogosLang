@@ -246,10 +246,17 @@ pub enum ParseError {
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
     /// a `free`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,
-    /// `own` in a type position over something other than a pointer hole, `own @T ?`.
+    /// `own` over a type with nothing to own: neither a pointer nor a type whose body fills
+    /// `free`.
     OwnNeedsPointer,
-    /// `own` before anything but a hole: the word names a state, the act is `move`.
+    /// `own` before anything but a hole or a function's result: the word names a state, the
+    /// act is `move`.
     OwnOutsideType,
+    /// A function's last value is made in it and its result, spelled as written here, lacks
+    /// `own`.
+    HandsOnMade(String),
+    /// `-> own` over a function whose last value is a borrow.
+    OwnResultBorrows,
     /// `share w = …` in a type body where `w` is no slot and nothing declared.
     NoSuchSlot(String),
     /// A type body with an `own` field and no `free = (…)` to free it.

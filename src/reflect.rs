@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn an_fn_value_reflects_all_six_slots() {
+    fn an_fn_value_reflects_all_its_slots() {
         // A stale fn record would hide a trailing slot from reflection.
         let (_store, core, roots) = parse_all(&["fn (n := i32 ?) -> i32 ( x := n, x )"]);
         // SAFETY: the root is the fn value just parsed, from the store.
@@ -415,7 +415,16 @@ mod tests {
         let roles: Vec<&[u8]> = slots.iter().map(|s| unsafe { text_of(s.role) }).collect();
         assert_eq!(
             roles,
-            [b"input" as &[u8], b"output_type", b"body", b"bcode", b"frame", b"outer", b"receiver"]
+            [
+                b"input" as &[u8],
+                b"output_type",
+                b"body",
+                b"bcode",
+                b"frame",
+                b"outer",
+                b"receiver",
+                b"output_gate"
+            ]
         );
         assert!(!slots[4].node.is_null(), "a fn with locals carries its frame size");
         assert!(!slots[5].node.is_null(), "a fn whose body reads an outer name lists it");
@@ -517,7 +526,7 @@ mod tests {
             assert_eq!(meta::kind_of(core.scope), Some(meta::TUPLE_TAG));
             assert_eq!(meta::kind_of(core.array_), Some(meta::ARRAY_TAG));
             assert_eq!(meta::kind_of(core.fn_type), Some(meta::TUPLE_TAG));
-            assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_RECEIVER + 1);
+            assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_SLOTS);
         }
     }
 

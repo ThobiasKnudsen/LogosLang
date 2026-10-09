@@ -314,16 +314,23 @@ pub fn parse_message(e: &ParseError) -> String {
             "this name borrows what it holds, so it cannot move it; only its owner can".into()
         }
         ParseError::OwnNeedsPointer => {
-            "`own` in a type is written over a pointer hole, `own @T ?`, or a hole of a type \
-             whose body fills `free`, `own t ?`"
+            "`own` in a type is written over a pointer, `own @T ?` or `-> own @T`, or a type \
+             whose body fills `free`, `own t ?` or `-> own t`"
                 .into()
         }
         ParseError::OwnOutsideType => {
-            "`own` marks a hole, `own @T ?` or `own t ?`, and `-> own @T` is not in the seed yet; \
+            "`own` marks a hole, `own @T ?` or `own t ?`, or a function's result, `-> own @T`; \
              `move x` moves a value"
                 .into()
         }
-        ParseError::NoSuchSlot(name) => format!(
+        ParseError::HandsOnMade(written) => {
+            format!("this function hands on a value it made: write `-> own {written}`")
+        }
+        ParseError::OwnResultBorrows => {
+            "`-> own` hands on a value made here, but this function's last value is a borrow; \
+             make or move the value, or write the result without `own`"
+                .into()
+        }        ParseError::NoSuchSlot(name) => format!(
             "`{name}` names no slot: a type body fills `share parse = (…)`, `share run = (…)`, \
              `share free = (…)` and its ranks, and declares a member of its own, `share {name} := …`"
         ),

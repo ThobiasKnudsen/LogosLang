@@ -103,7 +103,24 @@ pub const FN_OUTER: usize = 5;
 /// `share` function's body reads or writes a field of its value; null for neither.
 pub const FN_RECEIVER: usize = 6;
 
-pub const FN_SLOTS: usize = FN_RECEIVER + 1;
+/// The result's gate: the `own` gate word for `-> own T`, else null (DESIGN ›A last value
+/// moves out‹).
+pub const FN_OUTPUT_GATE: usize = 7;
+
+pub const FN_SLOTS: usize = FN_OUTPUT_GATE + 1;
+
+/// The fields' names in slot order, as reflection reads them.
+pub const FN_FIELDS: [&str; FN_SLOTS] =
+    ["input", "output_type", "body", "bcode", "frame", "outer", "receiver", "output_gate"];
+
+/// A function's result as its signature writes it, for the check where its body closes.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct WrittenResult<'s> {
+    /// The source after `->`, as an error names the type.
+    text: &'s str,
+    /// Whether `own` stands in it.
+    owned: bool,
+}
 
 pub const RECEIVER_READS: u64 = 1;
 
@@ -112,7 +129,7 @@ pub const RECEIVER_WRITES: u64 = 2;
 /// `0` when the slot is null (no parameters and no locals).
 ///
 /// # Safety
-/// `fn_node` must be a function node whose value is the seven-slot record
+/// `fn_node` must be a function node whose value is the `FN_SLOTS`-word record
 /// `parse_fn` builds.
 pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     let frame = *(dyad::value(fn_node) as *const DyadPtr).add(FN_FRAME);
@@ -386,7 +403,7 @@ impl<'a> Parser<'a> {
             type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
         self.cx.scopes.pop();
         declared?;
-        self.fn_over_body(types.fn_type, input, &places, output, spec, std::ptr::null_mut())
+        self.fn_over_body(types.fn_type, input, &places, output, None, spec, std::ptr::null_mut())
     }
 
     /// `(start, len)` of the text inside the `( … )` at the cursor, consumed
@@ -417,21 +434,35 @@ impl<'a> Parser<'a> {
             && self.cx.definitions.last().is_some_and(|d| d.this_param.is_null());
         let (input, params) = self.parse_record_taking(member.then_some(self.types.dyad_))?;
         self.expect_arrow()?;
-        let output = {
+        self.skip_whitespace();
+        let start = self.cx.pos;
+        let (output, owned) = {
+            let was = std::mem::replace(&mut self.cx.result_type, true);
             let items = self.drive_until_open(RightSide::ReturnType);
-            let out = self.one_of(items?).map(|c| c.dyad).map_err(|e| match e {
+            self.cx.result_type = was;
+            let out = self.one_of(items?).map_err(|e| match e {
                 ParseError::Empty => ParseError::ExpectedReturnType,
                 e => e,
             })?;
             // A named return type is a use of that name: its binding, read
             // through to the type it names.
-            // SAFETY: `out` is a reduced dyad from the store.
-            unsafe { self.types.through(out) }
+            // SAFETY: `out.dyad` is a reduced dyad from the store.
+            (unsafe { self.types.through(out.dyad) }, out.owning)
         };
+        let source = self.cx.source;
+        let result = WrittenResult { text: source[start..self.cx.pos].trim_end(), owned };
         if !member {
             // SAFETY: `input` was just built by `parse_record`; `binding` is the caller's.
             return unsafe {
-                self.fn_over_body(fn_type, input, &params, output, std::ptr::null_mut(), binding)
+                self.fn_over_body(
+                    fn_type,
+                    input,
+                    &params,
+                    output,
+                    Some(result),
+                    std::ptr::null_mut(),
+                    binding,
+                )
             };
         }
         // The value is the first parameter, the one no name declares.
@@ -442,7 +473,15 @@ impl<'a> Parser<'a> {
         def.wrote_receiver = false;
         // SAFETY: as above.
         let f = unsafe {
-            self.fn_over_body(fn_type, input, &params, output, std::ptr::null_mut(), binding)
+            self.fn_over_body(
+                fn_type,
+                input,
+                &params,
+                output,
+                Some(result),
+                std::ptr::null_mut(),
+                binding,
+            )
         };
         let def = self.cx.definitions.last_mut().expect("still open");
         def.this_param = std::ptr::null_mut();
@@ -451,7 +490,7 @@ impl<'a> Parser<'a> {
         if let (Ok(&f), true) = (f.as_ref(), receiver != 0) {
             let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
             let leaf = self.rt.store.alloc_blob(u64_ty, &receiver.to_ne_bytes());
-            // SAFETY: `f` is the node `fn_over_body` just built over its seven-slot record.
+            // SAFETY: `f` is the node `fn_over_body` just built over its `FN_SLOTS` words.
             unsafe { *(dyad::value(f) as *mut DyadPtr).add(FN_RECEIVER) = leaf };
         }
         f
@@ -462,24 +501,30 @@ impl<'a> Parser<'a> {
     /// body parsed deferred with the parameter scope reopened. The node is `spec`, a run
     /// body's node minted for its set, or fresh; its signature is on it, and `binding`
     /// points at it, before the body parses, so a recursive self-call resolves its types.
+    /// `result` is `None` for a type's `run` body, which writes no `->`.
     ///
     /// # Safety
     /// `input` must be a record node and `params` its fields' bindings in order; `spec`
     /// null or a `fn` node minted with `FN_SLOTS` null words that nothing has filled;
     /// `binding` null or a binding dyad from the store.
+    #[allow(clippy::too_many_arguments)]
     pub(super) unsafe fn fn_over_body(
         &mut self,
         fn_type: DyadPtr,
         input: DyadPtr,
         params: &[DyadPtr],
         output: DyadPtr,
+        result: Option<WrittenResult>,
         spec: DyadPtr,
         binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
+        let owned = result.is_some_and(|r| r.owned);
+        let gate = if owned { self.types.own_ } else { std::ptr::null_mut() };
         let node = if spec.is_null() {
             let mut early = [std::ptr::null_mut(); FN_SLOTS];
             early[FN_INPUT] = input;
             early[FN_OUTPUT] = output;
+            early[FN_OUTPUT_GATE] = gate;
             self.rt.store.alloc_words(fn_type, &early)
         } else {
             // SAFETY: `spec` holds `FN_SLOTS` words (the caller's contract).
@@ -487,6 +532,7 @@ impl<'a> Parser<'a> {
                 let slots = dyad::value(spec) as *mut DyadPtr;
                 *slots.add(FN_INPUT) = input;
                 *slots.add(FN_OUTPUT) = output;
+                *slots.add(FN_OUTPUT_GATE) = gate;
             }
             spec
         };
@@ -534,17 +580,42 @@ impl<'a> Parser<'a> {
         let OpenFn { size: frame_size, outer, returns, .. } =
             self.cx.frames.pop().expect("parse_fn pushed a frame");
         let body = body?;
-        if output != self.types.void_ {
-            // The last line's value is the call's, so an `if` there is a used one.
+        // The last line's value is the call's, so an `if` there is a used one.
+        let made = if output == self.types.void_ {
+            None
+        } else {
             // SAFETY: `body` is the valid dyad just built.
-            unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?;
-        }
+            unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?
+        };
 
         // A comptime-rational tail commits to the declared return type here,
         // so `fn () -> i64 (…)` returns i64 rather than the i32 default.
         // SAFETY: `body`/`output` are valid dyads just built.
         let body =
             unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };
+        // What the last value hands on is checked against the result as written, once its type
+        // is (DESIGN ›A last value moves out‹).
+        match (made, result) {
+            // A type's `run` has no `->` to write `own` in, so its close writes it: stand-in for
+            // P128.
+            (Some(true), None) => {
+                // SAFETY: `output` is the type the node was minted with, from the store.
+                let owned = unsafe {
+                    crate::identities::drop_model::own_result(self.rt.store, self.types, output)
+                }?;
+                // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
+                unsafe {
+                    let slots = dyad::value(node) as *mut DyadPtr;
+                    *slots.add(FN_OUTPUT) = owned;
+                    *slots.add(FN_OUTPUT_GATE) = self.types.own_;
+                }
+            }
+            (Some(true), Some(r)) if !r.owned => {
+                return Err(ParseError::HandsOnMade(r.text.to_string()))
+            }
+            (Some(false), Some(r)) if r.owned => return Err(ParseError::OwnResultBorrows),
+            _ => {}
+        }
         for r in returns {
             let ends: Vec<DyadPtr> =
                 r.live.iter().copied().filter(|name| r.ended.contains(name)).collect();
@@ -567,7 +638,7 @@ impl<'a> Parser<'a> {
         } else {
             crate::identities::array::build(self.rt.store, self.types.array_, &outer)
         };
-        // SAFETY: `node`'s value is the seven-slot record written above, nothing else's.
+        // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above, nothing else's.
         unsafe {
             let slots = dyad::value(node) as *mut DyadPtr;
             *slots.add(FN_BODY) = body;

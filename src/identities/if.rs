@@ -68,57 +68,14 @@ pub(crate) fn build(
     store.alloc_words(types.if_, &[cond, then, els, none, none, none, types.ops.if_])
 }
 
-/// What an `if` gives back, worked out from its arms when asked: their one type where every
-/// arm makes its value or every arm borrows one, else `void`. DESIGN ›`if` reads its own right
-/// side‹, ›A node's output type is per node, and its parse writes it‹.
+/// What an `if` gives back: what its arms hand on where every arm gives a value of one type and
+/// every arm makes its value or every arm borrows one, else `void`. DESIGN ›`if` reads its own
+/// right side‹, ›A node's output type is per node, and its parse writes it‹.
 ///
 /// # Safety
 /// `node` must be an `if` node [`build`] made.
 pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
-    let (_, then, els) = branches(node);
-    let (t, handed) = arms_type(types, then, els);
-    if t == types.void_ || super::drop_model::handed_ends(types, node).is_err() {
-        return types.void_;
-    }
-    handed
-}
-
-/// The arms' one type before a plain number is handed on, and what the then arm hands on;
-/// `void` for both where there is no `else` or the arms' types differ.
-///
-/// # Safety
-/// `then` must be a reduced dyad from the store, `els` null or one.
-unsafe fn arms_type(types: &Core, then: DyadPtr, els: DyadPtr) -> (DyadPtr, DyadPtr) {
-    let none = (types.void_, types.void_);
-    if els.is_null() {
-        return none;
-    }
-    let t = arm_type(types, then);
-    if super::same_type(t.0, arm_type(types, els).0) {
-        t
-    } else {
-        none
-    }
-}
-
-/// Read through a block to its last line and through a nested `if` to its arms, so a plain
-/// number stays a `rational_number` beside an arm of a number type; with it what that line
-/// hands on, read once here so no nested `if` is worked out again.
-///
-/// # Safety
-/// `arm` must be a reduced dyad from the store.
-unsafe fn arm_type(types: &Core, arm: DyadPtr) -> (DyadPtr, DyadPtr) {
-    if dyad::ty(arm) == types.scope {
-        return match crate::parse::last_sequence_expr(arm) {
-            Some(last) => arm_type(types, last),
-            None => (types.void_, types.void_),
-        };
-    }
-    if dyad::ty(arm) == types.if_ {
-        let (_, then, els) = branches(arm);
-        return arms_type(types, then, els);
-    }
-    (super::read::output_type(types, arm), super::read::handed_on(types, arm))
+    value_type(types, node).unwrap_or(types.void_)
 }
 
 /// The type an `if` gives where its value is used, or why it gives none: it needs an `else`,
@@ -128,28 +85,68 @@ unsafe fn arm_type(types: &Core, arm: DyadPtr) -> (DyadPtr, DyadPtr) {
 /// # Safety
 /// `node` must be an `if` node [`build`] made.
 pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, ParseError> {
+    read(types, node).map(|v| v.handed)
+}
+
+/// An `if`'s value as one walk over its arms reads it, each nested `if` read once, so a chain
+/// of `else if` arms reads in time in step with its length (DESIGN ›Reading a program takes
+/// time in step with its size; no walk runs once per path‹).
+#[derive(Clone, Copy)]
+struct ArmsRead {
+    /// The arms' one type before a plain number is handed on, so a plain number stays a
+    /// `rational_number` beside an arm of a number type.
+    ty: DyadPtr,
+    /// What the then arm hands on.
+    handed: DyadPtr,
+    /// Whether every arm makes its value (`Some(true)`) or borrows it, as
+    /// [`super::drop_model::handed_ends`] reads it.
+    made: Option<bool>,
+}
+
+/// # Safety
+/// `node` must be an `if` node [`build`] made.
+unsafe fn read(types: &Core, node: DyadPtr) -> Result<ArmsRead, ParseError> {
     let (_, then, els) = branches(node);
     if els.is_null() {
         return Err(ParseError::MissingElse);
     }
     // An arm that gives nothing makes the `if` give nothing, whichever arm it is, so a sibling
     // arm's two types are no use of a value.
-    let mut differ = Ok(());
+    let mut values = Vec::with_capacity(2);
     for arm in [then, els] {
-        match super::read::value_type(types, arm) {
+        match arm_value(types, arm) {
+            Ok(v) => values.push(v),
             Err(ParseError::StatementAsValue) => return Err(ParseError::ArmGivesNothing),
-            Err(ParseError::ArmsDiffer) => differ = Err(ParseError::ArmsDiffer),
+            Err(ParseError::ArmsDiffer) => {}
             Err(e) => return Err(e),
-            Ok(_) => {}
         }
     }
-    differ?;
-    let (t, handed) = arms_type(types, then, els);
-    if t == types.void_ {
-        return Err(ParseError::ArmsDiffer);
+    match values[..] {
+        [a, b] if super::same_type(a.ty, b.ty) => {
+            let made = super::drop_model::arms_end_alike(a.made, b.made)?;
+            Ok(ArmsRead { made, ..a })
+        }
+        _ => Err(ParseError::ArmsDiffer),
     }
-    super::drop_model::handed_ends(types, node)?;
-    Ok(handed)
+}
+
+/// An arm read through a block to its last line and through a nested `if` to its arms.
+///
+/// # Safety
+/// `arm` must be a reduced dyad from the store.
+unsafe fn arm_value(types: &Core, arm: DyadPtr) -> Result<ArmsRead, ParseError> {
+    if dyad::ty(arm) == types.scope {
+        return match crate::parse::last_sequence_expr(arm) {
+            Some(last) => arm_value(types, last),
+            None => Err(ParseError::StatementAsValue),
+        };
+    }
+    if dyad::ty(arm) == types.if_ {
+        return read(types, arm);
+    }
+    let ty = super::read::value_type(types, arm)?;
+    let made = super::drop_model::handed_ends(types, arm)?;
+    Ok(ArmsRead { ty, handed: super::read::handed_on(types, arm), made })
 }
 
 /// # Safety

@@ -422,7 +422,7 @@ pub unsafe fn place_node(store: &mut Store, types: &Core, node: DyadPtr) -> Opti
 /// # Safety
 /// `call` must come from `place_of`.
 pub unsafe fn call_place(store: &mut Store, types: &Core, call: CallTail) -> DyadPtr {
-    use crate::parse::{FN_BCODE, FN_BODY, FN_OUTPUT, FN_RECEIVER};
+    use crate::parse::{FN_BCODE, FN_BODY, FN_OUTPUT, FN_OUTPUT_GATE, FN_SLOTS};
     let (address, pointee, offset) = super::pointer::deref_parts(call.tail);
     let body = match call.line {
         None => address,
@@ -433,10 +433,11 @@ pub unsafe fn call_place(store: &mut Store, types: &Core, call: CallTail) -> Dya
         }
     };
     let fields = dyad::value(call.callee) as *const DyadPtr;
-    let mut record: Vec<DyadPtr> = (0..=FN_RECEIVER).map(|k| *fields.add(k)).collect();
+    let mut record: Vec<DyadPtr> = (0..FN_SLOTS).map(|k| *fields.add(k)).collect();
     record[FN_OUTPUT] = super::pointer::make_pointer_type(store, types.type_, pointee);
     record[FN_BODY] = body;
     record[FN_BCODE] = std::ptr::null_mut();
+    record[FN_OUTPUT_GATE] = std::ptr::null_mut();
     let finder = store.alloc_words(dyad::ty(call.callee), &record);
     let args = crate::parse::null_terminated(dyad::value(call.call) as *const DyadPtr);
     let found = crate::parse::build_call(store, finder, args);

@@ -984,6 +984,7 @@ impl<'a> Parser<'a> {
                         input,
                         &params,
                         types.void_,
+                        None,
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
                     )
@@ -1029,6 +1030,7 @@ impl<'a> Parser<'a> {
                         input,
                         &params,
                         types.void_,
+                        None,
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
                     )

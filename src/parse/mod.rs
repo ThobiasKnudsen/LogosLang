@@ -146,6 +146,9 @@ struct Context<'a> {
     /// While a type body's field declaration reads its type: a hole there names the
     /// field's type and needs no place, so a type without one, `square_brackets ?`, may stand.
     field_hole: bool,
+    /// While a function's signature reads the `T` of `-> T`, built included: `own` there marks
+    /// the result.
+    result_type: bool,
     /// Every held name a `move` or `free` ended, with the index of the open scope that held
     /// it: an `if` reads which of its arms ended which.
     ended_log: Vec<(DyadPtr, usize)>,
@@ -186,6 +189,7 @@ impl<'a> Context<'a> {
             member_fn_depth: None,
             once_at: None,
             field_hole: false,
+            result_type: false,
             ended_log: Vec::new(),
             dropping: 0,
         }
@@ -296,6 +300,11 @@ impl<'a> Parser<'a> {
     /// Copied out, so a `&mut self` call can follow.
     pub(crate) fn types(&self) -> &'a Core {
         self.types
+    }
+
+    /// Whether the read in hand is a function's result type, the `T` of `-> T`.
+    pub(crate) fn reads_result_type(&self) -> bool {
+        self.cx.result_type
     }
 
     /// The REPL parses each line with a fresh `Parser` over one persistent
