@@ -22059,8 +22059,8 @@
     "kind": "problem",
     "status": "open",
     "text": "A type's `run` body (`share run = (…)`) has no `->`, so there is no place to write `own`; for now (Thobias, Q92, 9 October 2026) the parse marks a `run` whose last value is made as `own` at its close, and how a `run` should say it hands on a made value needs more discussing, so the safety facts are right before the borrow checker is built on them",
-    "program": "none runs today: no test or example has a `run` body whose last value is made; the one `run` body that builds a value (the HOLDER test in tests/cli.rs) builds a `held`, which fills no `free`",
-    "output": "after issue 82's `-> own` slice: refused with \"a type's `run` hands on a value it made; `own` cannot be written there yet\"",
+    "program": "<BOX>, x := box (1, 2), print «{x.size}», with <BOX> the boxed/box fixture of tests/cli.rs, whose `share run = ( mut v := output_type ?, …, move v )` makes its last value (probe r6-d.txt D1 of issue 82 review round 6)",
+    "output": "on issue 82's branch, through the Q92 mark: `2`, `free`, which is right for now; what stays open is where a `run` says it hands on a made value (a `return` in such a run is not checked: P140)",
     "expected": "DESIGN.md says where a `run` body writes `own`, or that a `run` body never hands on a made value (a rule DESIGN does not have yet); ›A last value moves out‹ gives a function the door `-> own`, and a `share run` body has no result type to write it in",
     "tier": "interpreted",
     "found": "logoslang-issue-82-worker, PLAN point 5, 9 October 2026, branch issue-82-output-type",
@@ -22085,6 +22085,24 @@
         "commit": "379347f",
         "change": "text was \"A type's `run` body (`share run = (…)`) has no `->`, so there is no place to write `own`: a `run` body whose last value is made has no way to hand it on, and rule 3 of ›Three fail-closed ownership rules, and `-> own @T`‹ refuses it\"",
         "reason": "Q92, Thobias: \"go for a and file this as a problem for later which needs more discussing\""
+      },
+      {
+        "at": "2026-10-09T13:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9917c02",
+        "change": "program was \"none runs today: no test or example has a `run` body whose last value is made; the one `run` body that builds a value (the HOLDER test in tests/cli.rs) builds a `held`, which fills no `free`\"",
+        "reason": "FACT from logoslang-issue-82-review-6, 9 October 2026: the old program said no run body makes its last value, but tests/cli.rs's BOX fixture does; the old output was the refusal from before Q92 (a) was built"
+      },
+      {
+        "at": "2026-10-09T13:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9917c02",
+        "change": "output was \"after issue 82's `-> own` slice: refused with \\\"a type's `run` hands on a value it made; `own` cannot be written there yet\\\"\"",
+        "reason": "FACT from logoslang-issue-82-review-6, 9 October 2026: the old program said no run body makes its last value, but tests/cli.rs's BOX fixture does; the old output was the refusal from before Q92 (a) was built"
       }
     ]
   },
@@ -24182,6 +24200,30 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "792fec2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P140",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type's `run` body whose `return` hands on a borrowed outer value, while its last line makes a value, frees that borrowed value twice: once through the caller's name, once through its real owner",
+    "program": "<BOX> is tests/cli.rs's boxed/box fixture, whose `free` prints «free» (runner .agents/orchestrator/tmp/issue-82-output-type/r6-run.sh expands it; probe r6-d2.txt): <BOX>, g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, share run = ( if (elements.dyads.size == 3) (return g), mut v := output_type ?, v.p = mut alloc 1 of i32 ?, v.size = 1, move v ), share parse_rank = dyad.parse_rank, share associativity = left, share parse = ( tape[0].type = pk, tape[0].elements = tape[1], tape[0].output_type = boxed, tape.remove(1), tape.is_constructed[0] = true ) ), x := pk (7, 8, 9), print «{x.size}»",
+    "output": "`2`, `free`, `free`, exit 0, on dev 654006f and on issue 82's branch alike; with two elements, `pk (7, 8)`, the made value is taken and two different values are freed, which is right",
+    "expected": "`g` is freed once, by its owner; a `return` of a borrowed value from a `run` that is marked as handing on what it made is refused where it is written, as a function's is (›A last value moves out‹; P102's fix on the branch at 2074fec)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-6, FOUND in review round 6 of issue 82, 9 October 2026, dev at 654006f",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T13:20+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "9917c02",
       "run": null,
       "agent": null
     },
