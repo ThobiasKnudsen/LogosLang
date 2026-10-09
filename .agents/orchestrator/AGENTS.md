@@ -2,7 +2,7 @@
 
 - Words that tripped Thobias. Use one with him only if the same sentence says what it means; every word he asks about is added here (his choice, Q90, 9 October 2026):
   - "local": a name declared inside a function, its parameters and the names its body declares.
-  - "slot": say which: a field's place in a node, or a type's `run`, `parse` or `free` entry.
+  - "slot": never use it; say "field" (Thobias, Q91: "slot is just another word it seems which is unecessary").
   - "held": say what holds what, in plain words.
 - Never name an issue, problem, question, solution, cause or commit by its number alone: the same sentence says what it is. Thobias, 9 October 2026: "what is annoying is how often you refer to issues or other number without explaining what they are."
 

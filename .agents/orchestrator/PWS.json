@@ -18348,7 +18348,7 @@
   {
     "id": "S43",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "In a parse, a field of the node being built, tape[0].f, is read as a tape line is: the node its slot holds, never run there, typed by the field's declared type or, for a ? field, a node until a check narrows it; written into the node, it and graph over it stay graph (#203's one placing operation, with this read moved out of its run-as-placed arm); read for a value in the parse, only a constant gives one; a call-frame place is read only in a call of the function its binding names (an activation records its function, the compiler compares the function it compiles), else the checked error",
     "fixes": [
       "W111",
@@ -18357,7 +18357,12 @@
       "W188"
     ],
     "assessment": "Root fix for all four: one read for every operand node a parse holds (tape cells and the fresh node's slots), so this.load-in-parse (W124), the Pointer(dyad_) typing of a declared field (W173) and build_write's run-now store arm (W16) go, and the parse body keeps being built once where it is written, now by a rule (W188). Satisfies the two-moments sentence of 'A field is filled at run, per evaluation' and 'Reading a path runs nothing', whose P47 divergence line goes; extends the check-then-narrow rule of 'A tape read checked against a number type reads as that number' to the fresh node's slots (Thobias's ruling). P47 gives 8 on both tiers, P10 gives 8, P105 gives the literal's type (rational_number, not u64 as written), P103 as written stays refused at the definition (with the check it gives 6); the test at tests/cli.rs:4264 flips, and #203's case at cli.rs:340-347. W111's owner check is about 15 lines in src/run.rs and src/compile.rs, licensed by 'A scope lays out its declarations' ('the base of the second is the value's or the call's'). Medium: src/parse/fields.rs, src/identities/this.rs, tape.rs, run.rs, compile.rs; runs after #82 (its branch rewrites the same five files) and #198 (#203's wait). Supersedes S12, whose run-as-placed read of tape[0].f is P47 itself.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-09T03:08+02:00",
+      "words": "Q90: \"b, but i dont understand the wording at all- why do you have to make it sound so complicated though?\"; Q91 (9 October 2026), to the rule in plain words: \"ok but i dont see how this is already ruled. its just a bunch of basic facts about how Logos should work.\"",
+      "reason": "He chose (b), a check per type, over (a), parsing a line again at each appearance, and approved the plain wording shown in Q91; minting written like array.logos needs no check, and the check only covers a parse that uses its own ? field as a number"
+    },
     "design": [
       "A tape read checked against a number type reads as that number",
       "A field is filled at run, per evaluation; its type decides how the operand is used",
@@ -18375,7 +18380,17 @@
       "run": "solve-W111",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "logoslang-solve-W111",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "fae8206",
+        "change": "chosen by Thobias: \"Q90: \"b, but i dont understand the wording at all- why do you have to make it sound so complicated though?\"; Q91 (9 October 2026), to the rule in plain words: \"ok but i dont see how this is already ruled. its just a bunch of basic facts about how Logos should work.\"\"",
+        "reason": "He chose (b), a check per type, over (a), parsing a line again at each appearance, and approved the plain wording shown in Q91; minting written like array.logos needs no check, and the check only covers a parse that uses its own ? field as a number"
+      }
+    ]
   },
   {
     "id": "S44",
@@ -20970,7 +20985,10 @@
     "tier": "orchestrator",
     "found": "Thobias in chat, 9 October 2026, dev 270d299",
     "why": [
-      "W219"
+      "W219",
+      "W243",
+      "W251",
+      "W252"
     ],
     "issue": null,
     "fixed": null,
@@ -21001,6 +21019,33 @@
         "commit": "9bee267",
         "change": "text was \"Thobias has to check by hand whether the orchestrator followed up on what he saved or said: his saved answers to Q89 and Q90 went unseen until he asked, because questions-watch stopped after each save and the orchestrator had to start it again by hand, and after Q84's save it did not\"",
         "reason": "why-P126-a's FACT: Q79 is a second case (transcript 79afb672, queue-operation entries)"
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "why + W243",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "why + W251",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "why + W252",
+        "reason": null
       }
     ]
   },
@@ -21094,7 +21139,11 @@
     "status": "accepted",
     "text": "The question watch lives only as long as one tool call in the orchestrator's own session, so it ends at the first save without --follow, at the Monitor tool's 30-minute cap with it, and at every orchestrator restart; nothing in orchestrate.sh starts it again, and SKILL.md makes each start a step the orchestrator must remember (Setup step 5, start it again at its expiry notice, Start the question watch again first, make sure the watch runs)",
     "proposed_for": "P126",
-    "why": null,
+    "why": [
+      "W244",
+      "W245",
+      "W253"
+    ],
     "anchors": [
       "cmd_questions_watch",
       "~/.claude/skills/orchestrate/SKILL.md",
@@ -21149,6 +21198,33 @@
         "effort": "xhigh",
         "commit": "9bee267",
         "change": "accepted as a why of P126, same as W227",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "why + W244",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "why + W245",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "why + W253",
         "reason": null
       }
     ]
@@ -21943,7 +22019,7 @@
   {
     "id": "W234",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "A save the orchestrator has read but not yet relayed is held only in its running turn: cmd_questions shows the file as edited until question-seen or question-close, but nothing that runs at a turn's end checks that (watch-guard.sh reads only watch.lock) and a running --follow watch prints each save once, so a message that comes in mid-turn displaces the relay until the watch is started again or Thobias asks, as with Q79: saved 21:08 UTC, read 21:17:39, his chat message at 21:17:41 taken up instead, relayed 21:29 after he asked",
     "proposed_for": "P126",
     "why": null,
@@ -21971,7 +22047,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W243",
     "made": {
       "at": "2026-10-09T02:53+02:00",
       "by": "logoslang-why-P126-a",
@@ -21981,7 +22057,17 @@
       "run": "why-P126",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "merged into W243",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W235",
@@ -22491,16 +22577,17 @@
   {
     "id": "W243",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "Only the question watch tells the orchestrator that a question file holds a save it has not relayed: edited is read by cmd_questions_watch, by cmd_questions when run by hand and by the question-prio and question-tag refusals, never by cmd_status or any step of the orchestrator's loop, so a save made while the watch is down stays unseen until the watch is started again",
     "proposed_for": "P126",
-    "why": null,
+    "why": [],
     "anchors": [
       "edited",
       "cmd_status",
       "cmd_questions",
       "cmd_questions_watch",
-      "~/.claude/skills/orchestrate/orchestrate.sh"
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/watch-guard.sh"
     ],
     "design": [],
     "pages": [],
@@ -22509,12 +22596,25 @@
         "command": "rg -n '\\bedited\\b' ~/.claude/skills/orchestrate/orchestrate.sh | cut -c1-110",
         "output": "105:  questions                   your open questions in the order they should be answered, edited or waiting\n507:    case $f in \"$QDIR\"/*) edited \"$f\" || mark_seen \"$tmp\" ;; esac\n1354:edited() { [ \"$(sha256sum < \"$1\" | cut -d' ' -f1)\" != \"$(cat \"$SEEN/$(id_of \"$1\")\" 2>/dev/null)\" ]; }\n1374/1413: (question-new and the commit step: mark their own writes seen)\n1450/1469:  edited \"$f\" && die \"$id holds edits by its owner that are not relayed yet; relay them first\"\n1510:    printf ... \"$(edited \"$f\" && echo edited || echo waiting)\"   (cmd_questions)\n1534/1540: ... edited \"$f\" && { echo \"$f\"; ...   (cmd_questions_watch)\n(cmd_status, line 341, has no line in this list)",
         "commit": "270d299"
+      },
+      {
+        "command": "f=~/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl; jq -r 'select(.type==\"queue-operation\" and .timestamp > \"2026-10-08T21:08\" and .timestamp < \"2026-10-08T21:29\" and .operation!=\"dequeue\") | \"\\(.timestamp) \\(.operation) \\(.reason // \"-\") \\(.content|tostring|.[0:60])\"' $f; jq -r 'select(.type==\"assistant\" and .timestamp > \"2026-10-08T21:17:30\" and .timestamp < \"2026-10-08T21:30\") | .timestamp as $t | .message.content[]? | select(.type==\"tool_use\") | \"\\($t) \\(.name) \\(.input.description // \"\")\"' $f",
+        "output": "2026-10-08T21:08:52Z enqueue - <task-notification> bcwvbhs2h: Background command \"Restart the watch on the question files\" completed (exit code 0)\n2026-10-08T21:17:36Z remove absorbed_mid_turn <task-id>bcwvbhs2h\n2026-10-08T21:17:39Z Bash Show which question file Thobias saved and what he wrote\n2026-10-08T21:17:41Z enqueue - doesnt seem like you are removing agents that are done. why not? ...\n2026-10-08T21:17:46Z ListAgents ... 21:18:46Z Bash Remove the stale solve-W75 row ...\n2026-10-08T21:19:01Z AskUserQuestion (answered 21:27:17)\n2026-10-08T21:27:47Z Bash Restart the watch on the question files in the background (fires at 21:27:49: Q79 still edited)\n2026-10-08T21:28:33Z enqueue - didnt you see i answered Q79?\n2026-10-08T21:29:32Z Bash question-close Q79",
+        "commit": "270d299"
+      },
+      {
+        "command": "cd ~/.claude/skills/orchestrate && rg -n 'echo edited|follow\" -eq 1' orchestrate.sh; rg -n 'orchestrator.session|flock -n' watch-guard.sh",
+        "output": "1510:    printf ... \"$(edited \"$f\" && echo edited || echo waiting)\" ...   (cmd_questions)\n1534: (start scan) edited \"$f\" && { echo \"$f\"; [ \"$follow\" -eq 1 ] || ... return; }\n1540: (each inotify event) edited \"$f\" && { echo \"$f\"; [ \"$follow\" -eq 1 ] || ... return; }\nwatch-guard.sh:12:[ \"$(cat \"$dir/state/orchestrator.session\" 2>/dev/null)\" = \"$sid\" ] || exit 0\nwatch-guard.sh:13:flock -n \"$dir/watch.lock\" true 2>/dev/null || exit 0",
+        "commit": "270d299"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "A save the orchestrator has read but not yet relayed is held only in its running turn: cmd_questions shows the file as edited until question-seen or question-close, but nothing that runs at a turn's end checks that (watch-guard.sh reads only watch.lock) and a running --follow watch prints each save once, so a message that comes in mid-turn displaces the relay until the watch is started again or Thobias asks, as with Q79: saved 21:08 UTC, read 21:17:39, his chat message at 21:17:41 taken up instead, relayed 21:29 after he asked"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T02:57+02:00",
@@ -22525,15 +22625,34 @@
       "run": "why-P126",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "accepted as a why of P126, same as W234",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "asked: no why found",
+        "reason": "judged a root on 9 October 2026 after three agents (A, B, standing extra C): its evidence reruns, and below it lies only harness behaviour (no CLI command messages a live session; a Monitor ends after 30 minutes), which no rule file decides"
+      }
+    ]
   },
   {
     "id": "W244",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "Only cmd_questions_watch reads watch.lock: cmd_question_seen, cmd_question_close, cmd_question_new, cmd_resume and cmd_status never do, so no command the orchestrator ran after Q84's wake said the watch was down, not even question-new at 23:52:45 UTC, which placed Q90 for an answer only a running watch could hear",
     "proposed_for": "W219",
-    "why": null,
+    "why": [],
     "anchors": [
       "cmd_questions_watch",
       "cmd_question_seen",
@@ -22571,15 +22690,34 @@
       "run": "why-P126",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "accepted as a why of W219",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "asked: no why found",
+        "reason": "judged a root on 9 October 2026 after three agents (A, B, standing extra C): its evidence reruns, and below it lies only harness behaviour (no CLI command messages a live session; a Monitor ends after 30 minutes), which no rule file decides"
+      }
+    ]
   },
   {
     "id": "W245",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "SKILL.md sets no timed step that checks the watch: its one timer, the heartbeat /loop 30m /orchestrate status under Staying responsive, runs only when Thobias wants one, and its status pass does not include the watch; none ran in session 79afb672 (no CronCreate or ScheduleWakeup call and no /loop since 8 October), so nothing brought the orchestrator back to a watch that had ended at Q84's save between 23:52:53 and 00:15:37 UTC",
     "proposed_for": "W219",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "cmd_status"
@@ -22612,7 +22750,26 @@
       "run": "why-P126",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "accepted as a why of W219",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "asked: no why found",
+        "reason": "judged a root on 9 October 2026 after three agents (A, B, standing extra C): its evidence reruns, and below it lies only harness behaviour (no CLI command messages a live session; a Monitor ends after 30 minutes), which no rule file decides"
+      }
+    ]
   },
   {
     "id": "W246",
@@ -22852,10 +23009,10 @@
   {
     "id": "W251",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "The orchestrator's own session keeps the AskUserQuestion tool: start_session in orchestrate.sh takes it from every session the script starts (--disallowedTools AskUserQuestion), but for the orchestrator SKILL.md forbids it only in a sentence and no hook denies it, so on 8 October its dialog held the orchestrator's turn from 21:19:01 to 21:27:17 while Q79's answer, read at 21:17:42, waited to be relayed",
     "proposed_for": "P126",
-    "why": null,
+    "why": [],
     "anchors": [
       "start_session",
       "~/.claude/skills/orchestrate/orchestrate.sh",
@@ -22890,15 +23047,34 @@
       "run": "why-P126",
       "agent": "C"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "accepted as a why of P126",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "asked: no why found",
+        "reason": "judged a root on 9 October 2026 after three agents (A, B, standing extra C): its evidence reruns, and below it lies only harness behaviour (no CLI command messages a live session; a Monitor ends after 30 minutes), which no rule file decides"
+      }
+    ]
   },
   {
     "id": "W252",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "SKILL.md never says that an answer the orchestrator has read is relayed before other work: Questions to Thobias says what to do with a saved file (read it whole, ANSWER, question-close) but not when, and the message table and Staying responsive order nothing, so on 8 October the orchestrator read Q79's wake at 21:17:42, took up Thobias's chat message of 21:17:41 first, and relayed Q79 only at 21:28:58, all in one turn",
     "proposed_for": "P126",
-    "why": null,
+    "why": [],
     "anchors": [
       "/home/o/.claude/skills/orchestrate/SKILL.md",
       "cmd_questions",
@@ -22932,15 +23108,34 @@
       "run": "why-P126",
       "agent": "C"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "accepted as a why of P126",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "asked: no why found",
+        "reason": "judged a root on 9 October 2026 after three agents (A, B, standing extra C): its evidence reruns, and below it lies only harness behaviour (no CLI command messages a live session; a Monitor ends after 30 minutes), which no rule file decides"
+      }
+    ]
   },
   {
     "id": "W253",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "cmd_questions_watch tells of a save only by printing the file's path on its own output (echo \"$f\"), and orchestrate.sh sends no message to any session (it prints send: SendMessage lines for the orchestrator to send), so a save is heard only while a tool call of the orchestrator's own session runs the watch and reads that output (the Monitor tool, SKILL.md Questions to Thobias); a watch that outlived that call would be heard by no one",
     "proposed_for": "W219",
-    "why": null,
+    "why": [],
     "anchors": [
       "cmd_questions_watch",
       "~/.claude/skills/orchestrate/orchestrate.sh",
@@ -22973,6 +23168,147 @@
       "commit": "9bee267",
       "run": "why-P126",
       "agent": "C"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "accepted as a why of W219",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:08+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3357c2c",
+        "change": "asked: no why found",
+        "reason": "judged a root on 9 October 2026 after three agents (A, B, standing extra C): its evidence reruns, and below it lies only harness behaviour (no CLI command messages a live session; a Monitor ends after 30 minutes), which no rule file decides"
+      }
+    ]
+  },
+  {
+    "id": "S63",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "His questions and ideas get a reply file: one SKILL.md bullet under Questions to Thobias routes each question or idea he writes, in a file or in chat, to a helper, the asker or the graph, and its reply stands in a file of its own in the open folder, read like a receipt; the file he asked in is relayed at once and closed only once its reply files are placed; question-template.md line 4 tells him so; the watch prints his added or changed lines under the path and question-close refuses a save the watch has not printed; the three replies he is owed (Q85's two questions, Q81's idea) are placed first",
+    "fixes": [
+      "W218",
+      "W232"
+    ],
+    "assessment": "Root fix for both: W218 is a rule the skill lacks, and the bullet is the one route for every asker (no arm per kind of asker); W232's wake carries his lines instead of a path and a hash, and the close checks against what the watch printed, so a partial read cannot lose a line. Removes P125 in both cases (Q85 line 63 missed; Q81 read in full yet unanswered). Lands in ~/.claude/skills/orchestrate: SKILL.md (one bullet, two clauses of the watch bullet), question-template.md l.4, orchestrate.sh mark_seen, edited, cmd_questions_watch, cmd_question_close (about ten lines); text and shell, about an hour; no branch touches ~/.claude, S46 edits a neighbouring SKILL.md bullet (l.70). Cost: one more file in his folder per question he asks, and a file he answered stays open while a helper looks the reply up.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:06+02:00",
+      "by": "logoslang-solve-W218",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fbaf028",
+      "run": "solve-W218",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S64",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Reply where he asked: question-close writes the orchestrator's reply under his words in the closed copy in answers/, and the orchestrator says in chat where it stands; plus S63's watch and close change",
+    "fixes": [
+      "W218",
+      "W232"
+    ],
+    "assessment": "Fixes W232 as S63 does, and W218 only in part: a reply exists, but it stands in answers/, which he does not keep open, and the chat line scrolls away or is lost when the session restarts, so P125's expected (an answer he can find) rests on him looking there. Writing the reply into the still-open file is barred (SKILL.md: Never edit a question once it is placed), so a reply that needs a helper still holds the close. Smaller than S63 by the new file only. Not recommended.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:07+02:00",
+      "by": "logoslang-solve-W218",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fbaf028",
+      "run": "solve-W218",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S65",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Only the script: the watch prints his added or changed lines under the file's path, and question-close refuses a save the watch has not printed; no new route for a question or idea of his",
+    "fixes": [
+      "W232"
+    ],
+    "assessment": "Fixes W232 only (Q85's line 63, missed by a partial read). Cannot fix W218, so W218 is left out of --fixes: in Q81 the orchestrator read his idea in full (transcript 21:28:26Z) and closed the file with no reply, because no rule says a question or idea he writes is owed one; P125 stays open for every such question that is read but not seen as owed. About ten lines of shell. Not recommended alone.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:07+02:00",
+      "by": "logoslang-solve-W218",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fbaf028",
+      "run": "solve-W218",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P132",
+    "kind": "problem",
+    "status": "open",
+    "text": "solve/SKILL.md gives two reasons by pointing to a SKILL_HISTORY.md heading, \"The solve skill\", that SKILL_HISTORY.md does not have, so the reason behind its plain-words rule and its confirm-before-recording rule cannot be found",
+    "program": "grep -n 'The solve skill' ~/.claude/skills/solve/SKILL.md; grep -c '^#.*The solve skill' ~/.claude/skills/orchestrate/SKILL_HISTORY.md",
+    "output": "lines 10 and 45 of solve/SKILL.md cite (the orchestrate skill's `SKILL_HISTORY.md`, \"The solve skill\"); the count of such headings in SKILL_HISTORY.md is 0",
+    "expected": "every rule's reason can be found where it points (global CLAUDE.md: \"All rulings MUST have a good reason for existing\")",
+    "tier": "orchestrator",
+    "found": "logoslang-help-5, part 4 of its answer, 9 October 2026, dev 3357c2c",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T03:07+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3357c2c",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P133",
+    "kind": "problem",
+    "status": "open",
+    "text": "A lex fragment's flags cannot be read outside a parse: `t.is_constructed[0]` on a fragment `t := lex «zz 5»` is refused with \"this operator cannot compute over these operands\", at top level and in a fn body",
+    "program": "target/release/logos 't := lex «zz 5», if t.is_constructed[0] ( print «built» ) else ( print «not built» )'",
+    "output": "error: this operator cannot compute over these operands (at the column of `[0]`), exit 1; dev fbaf028, release build, interpreted; the same inside a fn body",
+    "expected": "not built: ›What lex returns: a parsing_tape fragment‹ says the fragment comes \"with their flags and their spellings\"",
+    "tier": "interpreted",
+    "found": "logoslang-solve-W123, FOUND while answering Q88, 9 October 2026, dev fbaf028",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T03:07+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "3357c2c",
+      "run": null,
+      "agent": null
     },
     "history": []
   }
