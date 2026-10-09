@@ -22029,7 +22029,7 @@
     "id": "P128",
     "kind": "problem",
     "status": "open",
-    "text": "A type's `run` body (`share run = (…)`) has no `->`, so there is no place to write `own`: a `run` body whose last value is made has no way to hand it on, and rule 3 of ›Three fail-closed ownership rules, and `-> own @T`‹ refuses it",
+    "text": "A type's `run` body (`share run = (…)`) has no `->`, so there is no place to write `own`; for now (Thobias, Q92, 9 October 2026) the parse marks a `run` whose last value is made as `own` at its close, and how a `run` should say it hands on a made value needs more discussing, so the safety facts are right before the borrow checker is built on them",
     "program": "none runs today: no test or example has a `run` body whose last value is made; the one `run` body that builds a value (the HOLDER test in tests/cli.rs) builds a `held`, which fills no `free`",
     "output": "after issue 82's `-> own` slice: refused with \"a type's `run` hands on a value it made; `own` cannot be written there yet\"",
     "expected": "DESIGN.md says where a `run` body writes `own`, or that a `run` body never hands on a made value (a rule DESIGN does not have yet); ›A last value moves out‹ gives a function the door `-> own`, and a `share run` body has no result type to write it in",
@@ -22047,7 +22047,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:17+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "379347f",
+        "change": "text was \"A type's `run` body (`share run = (…)`) has no `->`, so there is no place to write `own`: a `run` body whose last value is made has no way to hand it on, and rule 3 of ›Three fail-closed ownership rules, and `-> own @T`‹ refuses it\"",
+        "reason": "Q92, Thobias: \"go for a and file this as a problem for later which needs more discussing\""
+      }
+    ]
   },
   {
     "id": "W234",
@@ -23470,6 +23480,88 @@
       "effort": "xhigh",
       "commit": "3357c2c",
       "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S66",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The skill wakes and guards its own session: SKILL.md's frontmatter registers hooks in the session that runs /orchestrate; at every turn's end a background hook (asyncRewake) starts the one-shot question watch, which wakes the orchestrator at a save even when it is idle (exit 2) and is started again at the next turn's end, so the Monitor watch, its 30-minute restarts and every 'start the watch' step go; watch-guard.sh, run at Stop and after every tool call, keeps the turn from ending and reminds while a question file holds a save not yet taken as read or closed (no stop_hook_active escape: the harness caps blocks at 8 in a row); a PreToolUse hook denies AskUserQuestion; no settings.json edit",
+    "fixes": [
+      "W243",
+      "W244",
+      "W245",
+      "W251",
+      "W252",
+      "W253"
+    ],
+    "assessment": "Root fix: the save's waker belongs to the session, registered by the skill, instead of to one Monitor tool call (W253, and W219 above it), so no step has to remember it and nothing has to check it (W244) or time it (W245; the watch exits 2 itself shortly before its hook timeout, one idle wake a day); the unrelayed-save test edited is read at every turn's end and after every tool call (W243, W252: Q79 would have been relayed before the chat work); AskUserQuestion is denied, not only forbidden by SKILL.md line 18 (W251). Removes P126 and both gaps of P129 (the hooks live exactly in sessions that ran the skill; the stop_hook_active exit is deleted, the harness's 8-block cap prevents a loop); P131 is fixed already (shift on line 1601). Fulfils SKILL.md ›Questions to Thobias‹ Reason (Thobias, 9 October 2026): 'build the allways running hook'. Deletes --follow, CLAUDE_CODE_SESSION_ID, and the Monitor steps: Setup step 5, the 30-minute restart sentence, the QUESTION row's 'make sure the watch runs', ›Staying responsive‹ 'Start the question watch again first', ›Never‹ 'Let the question watch stay down'. Risk: the hooks page does not list which events take asyncRewake; slice 1 tests it at Stop in a scratch repo and otherwise starts the watch from PostToolUse (the lock refuses a second watch), or falls back to S-B. Lands in ~/.claude/skills/orchestrate: SKILL.md frontmatter and those 5 edits, watch-guard.sh (about 25 lines), cmd_questions_watch (about 10 lines); about two hours; Claude Code 2.1.295 has both features. Touches solve-W218's S63/S65 at cmd_questions_watch's print line (they change what is printed, this where it goes and that it exits 2) and at edited (the hooks call the script, so their new test is used as is). Adding hooks to SKILL.md may be refused as self-modification like the settings.json edit; then Thobias approves it once.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:16+02:00",
+      "by": "logoslang-solve-W243",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d57a5dd",
+      "run": "solve-W243",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S67",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Keep the Monitor watch and enforce it: SKILL.md's frontmatter registers watch-guard.sh at Stop, which blocks the turn's end while the watch is down or a question file holds a save not yet taken as read or closed (no stop_hook_active escape), the same check after every tool call as a reminder, and a PreToolUse hook that denies AskUserQuestion",
+    "fixes": [
+      "W243",
+      "W244",
+      "W245",
+      "W251",
+      "W252"
+    ],
+    "assessment": "Fixes the same symptoms by enforcement instead of removal: the watch still lives in one Monitor tool call, so W253 (a save is heard only while a tool call runs the watch) stays and is left out of --fixes; the orchestrator restarts the watch at every 30-minute expiry, up to 48 wakes a day while idle, each sending the whole conversation again, and the guard makes each restart unavoidable. Removes P126 and P129 like S66; uses only documented hook behaviour (Stop block, PreToolUse deny, PostToolUse additionalContext, skill frontmatter hooks). Same files as S66 minus the watch change; about an hour and a half. The fallback if S66's asyncRewake test fails.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:16+02:00",
+      "by": "logoslang-solve-W243",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d57a5dd",
+      "run": "solve-W243",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S68",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Smallest: Thobias registers watch-guard.sh as built as a Stop hook in ~/.claude/settings.json; the guard drops its stop_hook_active exit, and every orchestrate.sh call made with ORCH set writes state/orchestrator.session, so the guard knows the orchestrator before its first watch",
+    "fixes": [
+      "W244",
+      "W245"
+    ],
+    "assessment": "Symptom fix: makes the existing guard work, so a watch left down at a turn's end is restarted (the Q84 case) and P129's two gaps close. Leaves W243 and W252 (Q79: a save read but displaced within one turn, which no turn's end checks), W251 (the AskUserQuestion dialog that held Q79 eight minutes) and W253 (the 30-minute Monitor restarts). Needs Thobias's manual settings.json edit, and the hook runs at every Stop of every session on the machine. Minutes of work. Not recommended.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T03:16+02:00",
+      "by": "logoslang-solve-W243",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d57a5dd",
+      "run": "solve-W243",
       "agent": null
     },
     "history": []
