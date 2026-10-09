@@ -24379,5 +24379,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P144",
+    "kind": "problem",
+    "status": "open",
+    "text": "`merge` leaves the sessions of a worktree made under an old worktree root running: it removes the worktree first (retire_branch) and closes the rows after (close_rows), and wt_of finds an old-root worktree only while its folder exists, so rows_in then looks under the new root and matches no row",
+    "program": "orchestrate.sh merge 82 in LogosLang, whose issue-82 worktree stood under the old root .claude/worktrees while WORKTREE_ROOT is .agents/worktrees; then orchestrate.sh status",
+    "output": "\"merged logoslang#82 into dev at 27ed63c; branch and worktree gone; issue closed\", yet status still lists \"logoslang-issue-82-review-7\t5cf32136\tidle\tdone\" (orchestrate.sh cmd_merge lines 882 and 893; wt_of lines 201-207)",
+    "expected": "a merge stops and removes every session of the merged work, wherever its worktree stood (SKILL.md: \"A branch lives only while its work is unmerged: whoever merges it deletes it and its worktree in the same step\")",
+    "tier": "orchestrator",
+    "found": "orchestrator LogosLang, 9 October 2026, after merging issue 82 at 27ed63c",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T13:51+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "86369f0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
