@@ -143,6 +143,10 @@ Nothing moved from this section.
 - **History:** "ownership may not cross a function return at all" and "a bare `-> @T` returning an owned place stays the checked error": superseded for a last value 25 September 2026.
 - **History:** until 30 September 2026 rule 1 read "An owning value must be bound to a name (else no place holds it and nothing runs its `free`)" (July 2026). Superseded by Thobias's Q-25 ruling for the same reason as at ›Holding is decided at the binding site, parameters included‹: the line's end runs the `free`.
 - **History:** rule 1 had no exception until 29 September 2026; `free` and `&` became its exceptions by Thobias's ruling on #210 (›Holding is decided at the binding site, parameters included‹).
+- **History:** from 25 September to 9 October 2026, "Rules 2 and 3 no longer apply to a *last* value": a function's unmarked result handed on its made last value too. Superseded by Thobias's Q89 ruling (›A last value moves out‹): only `-> own` hands one on.
+
+### A last value moves out
+- **History:** from 25 September to 9 October 2026, a function's unmarked result handed on a made last value ("`mk := fn () -> t ( a := array i32 (…), a )` and `-> array i32 ( array i32 (1, 2) )` hand their array to the caller"), because "the parse sees the callee's body at the call". Superseded by Thobias's Q89 ruling, option (a): the answer existed only once the body was read, so every call walked its callee's body, and on issue 82's branch a chain of calls read in time doubling with each function (P112).
 
 ### A pointer steps by whole cells
 - **Seed detail (27 September 2026):** since 25 September 2026 (#137): pointer on the left, integer on the right, k scaled to bytes as an `i64` product in the graph, both tiers. `k + p`, `p - q` and every other pointer operator stay refused.
