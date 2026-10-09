@@ -26416,7 +26416,10 @@
     "status": "accepted",
     "text": "cmd_merge calls close_rows only after the task's worktree is removed (after retire_branch with MERGE=local, after its own git worktree remove with MERGE=pr), while close_why_agent and cmd_solve_done call close_rows before they remove theirs, so merge is the one closing path that looks up a task's session rows when its worktree folder is already gone",
     "proposed_for": "P144",
-    "why": null,
+    "why": [
+      "W278",
+      "W281"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/orchestrate.sh",
       "cmd_merge",
@@ -26471,6 +26474,24 @@
         "commit": "c732ec5",
         "change": "accepted as a why of P144, same as W273",
         "reason": "A and B state the same fact: cmd_merge removes the worktree before close_rows, while close_why_agent and cmd_solve_done close rows first"
+      },
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "why + W278",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "why + W281",
+        "reason": null
       }
     ]
   },
@@ -26547,7 +26568,11 @@
     "status": "accepted",
     "text": "rows_in (like ids_in and live_in) finds a task's sessions by comparing each row's cwd with the path wt_of gives now, and wt_of names a worktree under an earlier root (OLD_WT_ROOTS, such as .claude/worktrees) only while that folder exists and otherwise WT_ROOT/<task>, so once an old-root worktree is removed the same task maps to a new-root path and its rows, whose cwd is the old path, match nothing; a new-root worktree keeps its path and is not hit",
     "proposed_for": "P144",
-    "why": null,
+    "why": [
+      "W283",
+      "W282",
+      "W279"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/orchestrate.sh",
       "wt_of",
@@ -26615,7 +26640,587 @@
         "commit": "c732ec5",
         "change": "accepted as a why of P144, same as W274",
         "reason": "A and B state the same fact: wt_of names an old-root worktree only while its folder exists, and rows_in matches rows by that one path"
+      },
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "why + W283",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "why + W282",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "why + W279",
+        "reason": null
       }
     ]
+  },
+  {
+    "id": "W278",
+    "kind": "why",
+    "status": "accepted",
+    "text": "orchestrate.sh has no one function that ends a task's work: retire_branch, the only shared step, removes the worktree and deletes the branch but never stops sessions or retires state, so cmd_merge (once per MERGE flow), close_why_agent with cmd_why_done, cmd_solve_done and reap_helpers each write their own sequence of stopping rows, git worktree remove and retire_state, and each picks its order there; the one stated order (checks, then stop, then remove) is a comment on cmd_solve_done alone, and SKILL.md says only that a worktree's row goes with it when the work ends",
+    "proposed_for": "W275",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "retire_branch",
+      "cmd_merge",
+      "close_why_agent",
+      "cmd_why_done",
+      "cmd_solve_done",
+      "reap_helpers",
+      "close_rows",
+      "retire_state",
+      "stop_rm"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -E '^(retire_branch|cmd_merge|close_why_agent|cmd_why_done|cmd_solve_done|reap_helpers)\\(\\)|close_rows \"|stop_rm \"\\$id\"$|worktree remove|retire_state \"|retire_branch \"|branch -d \"\\$branch\"' ~/.claude/skills/orchestrate/orchestrate.sh   (from line 761; joined per function)",
+        "output": "761:retire_branch() {  763: worktree remove \"$wt\"  764: branch -d \"$branch\"  (no close_rows, no retire_state)\n854:cmd_merge() {\n875:    worktree remove \"$wt\"  876: branch -d \"$branch\"   (MERGE=pr)\n882:    retire_branch \"$wt\" \"$branch\"                    (MERGE=local)\n893:  close_rows \"$d\" >/dev/null\n894:  retire_state \"$d\"\n998:close_why_agent() {  1001: close_rows \"$d\"  1008: worktree remove \"$wt\"\n1014:cmd_why_done() {  1024: close_why_agent \"$p\" \"$x\"; retire_state \"why-$p-$x\"\n1185:cmd_solve_done() {  1191: close_rows \"$d\"  1198: retire_branch \"$wt\" \"$branch\"  1200: retire_state \"$d\"\n1264:reap_helpers() {  1273: stop_rm \"$id\"  1275: worktree remove \"$wt\"  1279: retire_state",
+        "commit": "776f442"
+      },
+      {
+        "command": "rg -n -o -i '.{0,120}(goes with it|refusal leaves).{0,120}' ~/.claude/skills/orchestrate/SKILL.md ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "SKILL.md:158: ..., so each worktree has one row and goes with it when the work ends.\norchestrate.sh:1184:# the checks come before anything is stopped: a refusal leaves the agent and its worktree as they are   (above cmd_solve_done only)",
+        "commit": "776f442"
+      },
+      {
+        "command": "rg -n 'worktree remove \"\\$(wt|where)\"|close_rows \"\\$d\"|stop_rm \"\\$id\"$|^(retire_branch|cmd_merge|close_why_agent|cmd_solve_done|reap_helpers)\\(\\)' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "761: retire_branch() {\n763:   git -C \"$REPO\" worktree remove \"$wt\" || die ...        (no session stop inside)\n765:   [ \"$where\" = \"$REPO\" ] || git -C \"$REPO\" worktree remove \"$where\"   (the landing worktree)\n854: cmd_merge() {\n875:   git -C \"$REPO\" worktree remove \"$wt\" || die ...        (MERGE=pr)\n882:   retire_branch \"$wt\" \"$branch\"                         (MERGE=local)\n893:   close_rows \"$d\" >/dev/null                            (after the removal)\n998: close_why_agent() {   1001: close_rows \"$d\"   1008: git -C \"$REPO\" worktree remove \"$wt\"\n1185: cmd_solve_done() {   1191: close_rows \"$d\"   1198: retire_branch \"$wt\" \"$branch\"\n1264: reap_helpers() {     1273: stop_rm \"$id\"     1275: git -C \"$REPO\" worktree remove \"$wt\"\n(four removals of a task worktree: 763, 875, 1008, 1275; the session stop is placed by each caller)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "orchestrate.sh has no one step that ends a task: git worktree remove of a task's worktree is written four times (retire_branch, cmd_merge for MERGE=pr, close_why_agent, reap_helpers) and none of them stops the sessions in that worktree, so each closing command places its own close_rows or stop_rm where it chose, before the removal in close_why_agent, cmd_solve_done and reap_helpers, after it in cmd_merge"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:21+02:00",
+      "by": "logoslang-why-P144-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "accepted as a why of W275, same as W280",
+        "reason": "A and B state the same fact: no one function ends a task; retire_branch removes the worktree but stops no session, so each of the closing sequences places its own stop"
+      }
+    ]
+  },
+  {
+    "id": "W279",
+    "kind": "why",
+    "status": "accepted",
+    "text": "No state file records where a task's worktree was made: cmd_spawn_worker, cmd_record, start_why_agent, cmd_spawn_solve and cmd_spawn_helper each run git worktree add at a path they work out (wt_of, or WT_ROOT in cmd_record) and write base, round, prompts and a session id to the task's state folder, never that path, so rows_in, ids_in, live_in, branch_of and cmd_merge must work it out again through wt_of at each lookup, and wt_of can tell an earlier root only by which folder exists then",
+    "proposed_for": "W277",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "cmd_spawn_worker",
+      "cmd_record",
+      "start_why_agent",
+      "cmd_spawn_solve",
+      "cmd_spawn_helper",
+      "state_dir",
+      "wt_of",
+      "rows_in",
+      "OLD_WT_ROOTS",
+      "WT_ROOT",
+      "use_repo",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -E '^(cmd_spawn_worker|cmd_record|cmd_spawn_helper|cmd_spawn_solve|start_why_agent)\\(\\)|wt=\\$\\(wt_of|wt=\"?\\$WT_ROOT|worktree add' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "400:  wt=$(wt_of \"$d\")                     (cmd_spawn_worker)\n412/416:  git -C \"$REPO\" worktree add ... \"$wt\" ...\n564:  ... wt=\"$WT_ROOT/$d\"                (cmd_record)\n565:  git -C \"$REPO\" worktree add -q -b \"$branch\" \"$wt\" \"$BASE\"\n918:  d=\"why-$p-$x\"; wt=$(wt_of \"$d\"); ... (start_why_agent)\n920:    git -C \"$REPO\" worktree add --detach \"$wt\" \"$base\"\n1110:    d=\"solve-$w\"; wt=$(wt_of \"$d\"); ... (cmd_spawn_solve)\n1113:    git -C \"$REPO\" worktree add --detach \"$wt\" \"$BASE\"\n1250:  wt=$(wt_of \"help-$k\")                (cmd_spawn_helper)\n1251:  git -C \"$REPO\" worktree add --detach \"$wt\" \"$BASE\"",
+        "commit": "776f442"
+      },
+      {
+        "command": "grep -c -E '(echo|printf).*\"\\$(wt|where)\" *>' ~/.claude/skills/orchestrate/orchestrate.sh   (a worktree path written to any file)",
+        "output": "0",
+        "commit": "776f442"
+      },
+      {
+        "command": "rg -o -N 'state_dir \"\\$d\"\\)/[a-z$.-]+' ~/.claude/skills/orchestrate/orchestrate.sh | sort -u",
+        "output": "state_dir \"$d\")/base\nstate_dir \"$d\")/review-$round.id\nstate_dir \"$d\")/review-$round.prompt.md\nstate_dir \"$d\")/roots\nstate_dir \"$d\")/round\nstate_dir \"$d\")/rule-open\nstate_dir \"$d\")/rulings\nstate_dir \"$d\")/seed-only\nstate_dir \"$d\")/task.md\nstate_dir \"$d\")/title\nstate_dir \"$d\")/worker.id\nstate_dir \"$d\")/worker.prompt.md\n(12 files; none holds the worktree's path)",
+        "commit": "776f442"
+      },
+      {
+        "command": "sed -n '176p;201,207p' ~/.claude/skills/orchestrate/orchestrate.sh; rg -n -o 'One begun under an earlier root finishes there' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "  # a worktree made under an earlier root finishes where it is\nwt_of() {\n  for r in \"${OLD_WT_ROOTS[@]}\"; do\n    if [ -d \"$r/$1\" ]; then echo \"$r/$1\"; return; fi\n  done\n  echo \"$WT_ROOT/$1\"\n}\n12:One begun under an earlier root finishes there",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "No record keeps where a task's worktree was made: its state folder (state_dir) holds base, round, prompts, title, task, roots, rulings and session ids but no path, so wt_of works the folder out again from the task's name at every call, and the only mark of one made under an earlier root (SKILL.md: One begun under an earlier root finishes there) is that its folder still stands there"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:21+02:00",
+      "by": "logoslang-why-P144-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "accepted as a why of W277, same as W284",
+        "reason": "A and B state the same fact: no state file records where a task's worktree was made, so wt_of works it out again at each call"
+      }
+    ]
+  },
+  {
+    "id": "W280",
+    "kind": "why",
+    "status": "merged",
+    "text": "orchestrate.sh has no one step that ends a task: git worktree remove of a task's worktree is written four times (retire_branch, cmd_merge for MERGE=pr, close_why_agent, reap_helpers) and none of them stops the sessions in that worktree, so each closing command places its own close_rows or stop_rm where it chose, before the removal in close_why_agent, cmd_solve_done and reap_helpers, after it in cmd_merge",
+    "proposed_for": "W275",
+    "why": null,
+    "anchors": [
+      "retire_branch",
+      "cmd_merge",
+      "close_why_agent",
+      "cmd_solve_done",
+      "reap_helpers",
+      "close_rows",
+      "stop_rm",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'worktree remove \"\\$(wt|where)\"|close_rows \"\\$d\"|stop_rm \"\\$id\"$|^(retire_branch|cmd_merge|close_why_agent|cmd_solve_done|reap_helpers)\\(\\)' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "761: retire_branch() {\n763:   git -C \"$REPO\" worktree remove \"$wt\" || die ...        (no session stop inside)\n765:   [ \"$where\" = \"$REPO\" ] || git -C \"$REPO\" worktree remove \"$where\"   (the landing worktree)\n854: cmd_merge() {\n875:   git -C \"$REPO\" worktree remove \"$wt\" || die ...        (MERGE=pr)\n882:   retire_branch \"$wt\" \"$branch\"                         (MERGE=local)\n893:   close_rows \"$d\" >/dev/null                            (after the removal)\n998: close_why_agent() {   1001: close_rows \"$d\"   1008: git -C \"$REPO\" worktree remove \"$wt\"\n1185: cmd_solve_done() {   1191: close_rows \"$d\"   1198: retire_branch \"$wt\" \"$branch\"\n1264: reap_helpers() {     1273: stop_rm \"$id\"     1275: git -C \"$REPO\" worktree remove \"$wt\"\n(four removals of a task worktree: 763, 875, 1008, 1275; the session stop is placed by each caller)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W278",
+    "made": {
+      "at": "2026-10-09T14:21+02:00",
+      "by": "logoslang-why-P144-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "merged into W278",
+        "reason": "A and B state the same fact: no one function ends a task; retire_branch removes the worktree but stops no session, so each of the closing sequences places its own stop"
+      }
+    ]
+  },
+  {
+    "id": "W281",
+    "kind": "why",
+    "status": "accepted",
+    "text": "SKILL.md and the script's help give each closing command its own list of steps and have no rule for the order in which a task's sessions and its worktree end: merge N removes the worktree and branch and stops the last session at the very end (SKILL.md), the merge of the orchestrator's own PR stops every session row before it removes the worktree (SKILL.md), why-done and solve-done stop the agent, keep its files, then remove the worktree (help), and merge's help names no session at all; cmd_merge follows the merge N list",
+    "proposed_for": "W275",
+    "why": null,
+    "anchors": [
+      "cmd_merge",
+      "close_why_agent",
+      "cmd_solve_done",
+      "usage",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o 'the worktree and the merged branch removed.{0,140}last session stopped|stops and removes every session row in the worktree, and removes the worktree and the branch' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "135:the worktree and the merged branch removed with the safe delete, the base pushed, the `in-progress` label off, the issue closed with the merge hash, the last session stopped\n152:stops and removes every session row in the worktree, and removes the worktree and the branch",
+        "commit": "776f442"
+      },
+      {
+        "command": "rg -n '^  (merge N\\|WT|why-done P \\[x\\]|solve-done W) ' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "38:  merge N|WT                  merge the reviewed branch into its base, delete branch + worktree, close #N;\n63:  why-done P [x]              stop all of P's why agents, keep their probes, remove their worktrees, then one\n75:  solve-done W                stop the agent, keep its drafts, remove its worktree",
+        "commit": "776f442"
+      },
+      {
+        "command": "rg -n -i 'sessions? (stop|end)s? before|before (its|the) worktree' ~/.claude/skills/orchestrate/SKILL.md   (a rule for the order, searched in its own words)",
+        "output": "(no output: no rule says a task's sessions stop before its worktree goes; the nearest are the per-command lists above and line 162, which only checks afterwards: status after every merge, why-done and solve-done must show it gone)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:22+02:00",
+      "by": "logoslang-why-P144-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "accepted as a why of W275",
+        "reason": "only A; the rule-file half of W275: SKILL.md and the script's help give each closing command its own steps and no rule orders a task's sessions before its worktree"
+      }
+    ]
+  },
+  {
+    "id": "W282",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The session ids a task's state keeps do not cover its sessions: worker.id and review-N.id are written once, when cmd_spawn_worker, cmd_spawn_reviewer, start_why_agent and cmd_spawn_solve start a session, while cmd_resume starts each resumed copy under a new id in the same folder and writes no state, so the one mark every session of a task shares is its row's cwd, and rows_in, ids_in and live_in match on that path (a session belongs to the worktree it runs in, whatever it is named)",
+    "proposed_for": "W277",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "cmd_resume",
+      "cmd_spawn_worker",
+      "cmd_spawn_reviewer",
+      "start_why_agent",
+      "cmd_spawn_solve",
+      "rows_in",
+      "ids_in",
+      "live_in"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -E '(worker|review-\\$round)\\.id\"|\"\\$d/id\"|^# a session belongs' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "220:# a session belongs to the worktree it runs in, whatever it is named\n431:  echo \"$id\" > \"$(state_dir \"$d\")/worker.id\"          (cmd_spawn_worker)\n489:  echo \"$id\" > \"$(state_dir \"$d\")/review-$round.id\"   (cmd_spawn_reviewer)\n930:  echo \"$id\" > \"$(state_dir \"$d\")/worker.id\"          (start_why_agent)\n1124:    echo \"$id\" > \"$(state_dir \"$d\")/worker.id\"        (cmd_spawn_solve)\n1258:  echo \"$id\" > \"$d/id\"                                (cmd_spawn_helper)",
+        "commit": "776f442"
+      },
+      {
+        "command": "sed -n '598,625p' ~/.claude/skills/orchestrate/orchestrate.sh | grep -c -E 'state_dir|STATE_ROOT'   (cmd_resume's body; it ends: new=$(start_session ...); stop_rm \"$id\")",
+        "output": "0",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:22+02:00",
+      "by": "logoslang-why-P144-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "accepted as a why of W277",
+        "reason": "only B as worded: the ids a task's state keeps miss every resumed session, since cmd_resume writes no new id, so the folder is the only mark all a task's sessions share; explains P151 too"
+      }
+    ]
+  },
+  {
+    "id": "W283",
+    "kind": "why",
+    "status": "accepted",
+    "text": "SKILL.md makes a task's worktree folder the one key to its sessions (A session belongs to the worktree it runs in; the script finds sessions by that, whatever they are named), so close_rows, ids_in and live_in match rows by folder and never read the session ids the spawn commands record (worker.id, review-K.id, written in four places, read nowhere); only reap_helpers stops a session by its recorded id, and cmd_resume starts a session under a new id it records nowhere",
+    "proposed_for": "W277",
+    "why": null,
+    "anchors": [
+      "close_rows",
+      "rows_in",
+      "ids_in",
+      "live_in",
+      "reap_helpers",
+      "cmd_resume",
+      "start_session",
+      "cmd_spawn_worker",
+      "cmd_spawn_reviewer",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o 'A session belongs to the worktree it runs in; the script finds sessions by that, whatever they are named' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "33:A session belongs to the worktree it runs in; the script finds sessions by that, whatever they are named",
+        "commit": "776f442"
+      },
+      {
+        "command": "rg -n 'worker\\.id|review-[^ ]*\\.id|\"\\$d/id\"|new=\\$\\(start_session' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "431:  echo \"$id\" > \"$(state_dir \"$d\")/worker.id\"              (spawn-worker)\n489:  echo \"$id\" > \"$(state_dir \"$d\")/review-$round.id\"       (spawn-reviewer)\n617:  new=$(start_session \"$wt\" \"$name\" \"$msg\" --resume ...)  (cmd_resume: the new id goes to no file)\n930:  echo \"$id\" > \"$(state_dir \"$d\")/worker.id\"              (why agent)\n1124:    echo \"$id\" > \"$(state_dir \"$d\")/worker.id\"            (solve agent)\n1258:  echo \"$id\" > \"$d/id\"                                   (helper)\n1270:    id=$(cat \"$d/id\" 2>/dev/null || true)                (reap_helpers: the only read of a recorded id)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:22+02:00",
+      "by": "logoslang-why-P144-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "accepted as a why of W277",
+        "reason": "only A as worded: SKILL.md makes the worktree folder the one key to a task's sessions, so the recorded ids are never read"
+      }
+    ]
+  },
+  {
+    "id": "W284",
+    "kind": "why",
+    "status": "merged",
+    "text": "No record keeps where a task's worktree was made: its state folder (state_dir) holds base, round, prompts, title, task, roots, rulings and session ids but no path, so wt_of works the folder out again from the task's name at every call, and the only mark of one made under an earlier root (SKILL.md: One begun under an earlier root finishes there) is that its folder still stands there",
+    "proposed_for": "W277",
+    "why": null,
+    "anchors": [
+      "state_dir",
+      "wt_of",
+      "OLD_WT_ROOTS",
+      "WT_ROOT",
+      "use_repo",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -o -N 'state_dir \"\\$d\"\\)/[a-z$.-]+' ~/.claude/skills/orchestrate/orchestrate.sh | sort -u",
+        "output": "state_dir \"$d\")/base\nstate_dir \"$d\")/review-$round.id\nstate_dir \"$d\")/review-$round.prompt.md\nstate_dir \"$d\")/roots\nstate_dir \"$d\")/round\nstate_dir \"$d\")/rule-open\nstate_dir \"$d\")/rulings\nstate_dir \"$d\")/seed-only\nstate_dir \"$d\")/task.md\nstate_dir \"$d\")/title\nstate_dir \"$d\")/worker.id\nstate_dir \"$d\")/worker.prompt.md\n(12 files; none holds the worktree's path)",
+        "commit": "776f442"
+      },
+      {
+        "command": "sed -n '176p;201,207p' ~/.claude/skills/orchestrate/orchestrate.sh; rg -n -o 'One begun under an earlier root finishes there' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "  # a worktree made under an earlier root finishes where it is\nwt_of() {\n  for r in \"${OLD_WT_ROOTS[@]}\"; do\n    if [ -d \"$r/$1\" ]; then echo \"$r/$1\"; return; fi\n  done\n  echo \"$WT_ROOT/$1\"\n}\n12:One begun under an earlier root finishes there",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W279",
+    "made": {
+      "at": "2026-10-09T14:22+02:00",
+      "by": "logoslang-why-P144-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "merged into W279",
+        "reason": "A and B state the same fact: no state file records where a task's worktree was made, so wt_of works it out again at each call"
+      }
+    ]
+  },
+  {
+    "id": "P151",
+    "kind": "problem",
+    "status": "open",
+    "text": "A resumed helper can have its worktree and state folder removed while it still runs: reap_helpers finds a helper by the id in state/help-K/id, and cmd_resume gives the resumed session a new id, removes the old row and records nothing, so the next reap sees the old id as gone",
+    "program": "spawn-helper ORCH TASK (help-K, id A); let its job end; resume A MESSAGE (new id B, row A removed); run any command that reaps helpers while B still works",
+    "output": "not yet run; read in orchestrate.sh (reap_helpers, cmd_resume) by logoslang-why-P144-b, 9 October 2026",
+    "expected": "a running helper keeps its worktree and state folder until its own answer is written and its session ends, whatever its session id",
+    "tier": null,
+    "found": "logoslang-why-P144-b, FOUND in its round 2 on P144, 9 October 2026; same cause as W282 (the recorded session ids miss resumed sessions)",
+    "why": [
+      "W282"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T14:22+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c40483f",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c40483f",
+        "change": "why + W282",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W285",
+    "kind": "why",
+    "status": "draft",
+    "text": "The one place SKILL.md gives the guard, ~/.claude/settings.json, is a file the skill's own sessions are refused writing: they run in auto mode (orchestrate.sh MODE defaults ORCH_MODE to auto, which must equal the orchestrator's), Claude Code's auto-mode check refused the orchestrator's Edit of settings.json as Self-Modification at 00:27:36 UTC on 9 October, and 30 seconds later SKILL.md was edited to call the guard a Stop hook in that file; SKILL.md's frontmatter, a skill file the orchestrator edits freely and which Claude Code reads hooks from when the skill is invoked, holds none",
+    "proposed_for": "W276",
+    "why": null,
+    "anchors": [
+      "ORCH_MODE",
+      "start_session",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/watch-guard.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "f=~/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl; rg 'toolu_01MKL5pPUzauMQLa2J1oSJhr' $f | jq -c '{type, t: .timestamp, tool: [.message.content[]? | select(.type==\"tool_use\") | .name, .input.file_path], denied: (.toolUseResult | tostring | .[0:110])}'; jq -r 'select(.timestamp==\"2026-10-09T00:28:06.374Z\") | .message.content[]?.input.new_string // empty' $f | rg -o 'watch-guard.sh., a Stop hook in his .~/.claude/settings.json.'; rg -n -o 'MODE=\"\\$\\{ORCH_MODE:-auto\\}\"|--permission-mode \"\\$MODE\"|ORCH_MODE \\(the sessions. permission mode, must equal' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "{\"type\":\"assistant\",\"t\":\"2026-10-09T00:27:13.929Z\",\"tool\":[\"Edit\",\"/home/o/.claude/settings.json\"],\"denied\":\"null\"}\n{\"type\":\"user\",\"t\":\"2026-10-09T00:27:36.429Z\",\"tool\":[],\"denied\":\"Error: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Self-Modificati\"}\nwatch-guard.sh`, a Stop hook in his `~/.claude/settings.json`\n14:MODE=\"${ORCH_MODE:-auto}\"\n113:ORCH_MODE (the sessions' permission mode, must equal\n316:--permission-mode \"$MODE\"",
+        "commit": "776f442"
+      },
+      {
+        "command": "sed -n 1,4p ~/.claude/skills/orchestrate/SKILL.md | cut -c1-40; WebFetch https://code.claude.com/docs/en/skills, frontmatter table, row hooks (read 9 October 2026)",
+        "output": "---\nname: orchestrate\ndescription: Run a repo's issues (GitHub\n---\n`hooks` | No | Hooks that Claude Code registers when the skill is invoked and keeps running for the rest of the session. (The hooks page names no events for skill hooks, so a Stop hook there is untested.)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:22+02:00",
+      "by": "logoslang-why-P138-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P138",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W286",
+    "kind": "why",
+    "status": "draft",
+    "text": "SKILL.md ›Questions to Thobias‹ puts the guard's registration in ~/.claude/settings.json, outside what ›How you work on his machine‹ names as this skill's files (this one, the script and the prompts beside it, and ~/.claude/skills/solve/SKILL.md), and every way the skill lands a change writes only those: an orchestrator's Edit of them in place, copy_skill's *.md, *.sh, *.py and setup/* for the team's copy, cmd_setup's repo folder; no command writes anywhere under ~/.claude outside skills/, so nothing the skill does reaches the one file its guard is said to be registered in, while a Stop hook in the skill's own frontmatter would be inside its files",
+    "proposed_for": "W276",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "copy_skill",
+      "cmd_setup",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/watch-guard.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude/skills/orchestrate && rg -n -o \"This skill's files \\([^)]*\\) are edited in place[^.]*\\.|watch-guard.sh., a Stop hook in his .~/.claude/settings.json.\" SKILL.md; sed -n '/^copy_skill()/,/^}/p' orchestrate.sh | rg 'for f in \"\\$SCRIPT_DIR\"|solve/SKILL'; rg -n '(~|\\$HOME)/\\.claude' orchestrate.sh | rg -v skills/",
+        "output": "26:This skill's files (this one, the script and the prompts beside it, and ~/.claude/skills/solve/SKILL.md) are edited in place, with the Edit tool, by whichever orchestrator records the ruling or lands the fix.\n68:watch-guard.sh`, a Stop hook in his `~/.claude/settings.json`\n  for f in \"$SCRIPT_DIR\"/*.md \"$SCRIPT_DIR\"/*.sh \"$SCRIPT_DIR\"/*.py \"$SCRIPT_DIR\"/setup/*; do\n  cp \"$SCRIPT_DIR/../solve/SKILL.md\" \"$dest/solve/SKILL.md\"\n348:    detail=$(jq -r '.detail // empty' \"$HOME/.claude/jobs/$id/state.json\" ...)   (a read)\n604:  ... die \"no transcript of session $id under ~/.claude/projects\"   (a read)\n(the script's other ~/.claude paths are all under skills/; none writes a settings file)",
+        "commit": "776f442"
+      },
+      {
+        "command": "a probe skill in a scratch project, $CLAUDE_JOB_DIR/tmp/skilltest/.claude/skills/stopprobe/SKILL.md, whose frontmatter declares hooks: Stop: [{hooks: [{type: command, command: \"jq -c '{hook_event_name, session_id}' >> stop-log.jsonl\"}]}]; claude 2.1.295, --setting-sources project --model claude-haiku-5-5: (1) claude -p '/stopprobe'; (2) claude -p --continue 'Reply with the single word hi.'; (3) one process, --input-format stream-json < why-probes/two-turns.jsonl (turn 1 /stopprobe, turn 2 'Reply with the single word hi.'); cat stop-log.jsonl",
+        "output": "(1) ok -> {\"hook_event_name\":\"Stop\",\"session_id\":\"1f72d8b9-...\"}\n(2) hi -> no new line: a resumed session no longer has the hook until the skill is invoked again\n(3) result: ok, result: hi -> {\"hook_event_name\":\"Stop\",\"session_id\":\"3dffb3cc-...\"} twice: the hook fires at the skill's turn and at the next turn of the same process\n(docs, code.claude.com/docs/en/hooks, Hooks in skills and agents: Skill hooks: Claude Code registers them when you or Claude invoke the skill and keeps running them for the rest of the session)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:22+02:00",
+      "by": "logoslang-why-P138-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P138",
+      "agent": "B"
+    },
+    "history": []
   }
 ]
