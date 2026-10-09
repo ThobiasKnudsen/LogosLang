@@ -252,10 +252,10 @@ pub enum ParseError {
     /// `own` before anything but a hole or a function's result: the word names a state, the
     /// act is `move`.
     OwnOutsideType,
-    /// A function's last value is made in it and its result, spelled as written here, lacks
-    /// `own`.
+    /// A function hands on a value made in it, as its last value or through a `return`, and its
+    /// result, spelled as written here, lacks `own`.
     HandsOnMade(String),
-    /// `-> own` over a function whose last value is a borrow.
+    /// `-> own` over a function that hands on a borrow, as its last value or through a `return`.
     OwnResultBorrows,
     /// `share w = …` in a type body where `w` is no slot and nothing declared.
     NoSuchSlot(String),

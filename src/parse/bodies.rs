@@ -33,6 +33,8 @@ pub(super) struct OpenFn {
 /// teardown runs where its life ends; the ending identity reads the type's `free` slot‹).
 pub(super) struct OpenReturn {
     node: DyadPtr,
+    /// Whether its operand is made or borrowed, as `handed_ends` reads it.
+    made: Option<bool>,
     /// The names the scopes it leaves hold at it, in declaration order; an `if` whose arm
     /// frees one on the `return`'s way out takes it off.
     live: Vec<DyadPtr>,
@@ -120,6 +122,19 @@ pub(super) struct WrittenResult<'s> {
     text: &'s str,
     /// Whether `own` stands in it.
     owned: bool,
+}
+
+impl WrittenResult<'_> {
+    /// Refuses a value the function hands on, `made` as `handed_ends` reads it, that the result
+    /// does not say: one made in it without `own`, or a borrow under `own` (DESIGN ›A last value
+    /// moves out‹).
+    fn check(self, made: Option<bool>) -> Result<(), ParseError> {
+        match made {
+            Some(true) if !self.owned => Err(ParseError::HandsOnMade(self.text.to_string())),
+            Some(false) if self.owned => Err(ParseError::OwnResultBorrows),
+            _ => Ok(()),
+        }
+    }
 }
 
 pub const RECEIVER_READS: u64 = 1;
@@ -610,11 +625,12 @@ impl<'a> Parser<'a> {
                     *slots.add(FN_OUTPUT_GATE) = self.types.own_;
                 }
             }
-            (Some(true), Some(r)) if !r.owned => {
-                return Err(ParseError::HandsOnMade(r.text.to_string()))
-            }
-            (Some(false), Some(r)) if r.owned => return Err(ParseError::OwnResultBorrows),
-            _ => {}
+            (_, Some(r)) => r.check(made)?,
+            (_, None) => {}
+        }
+        // A `return` makes its operand the call's value, as the last line does.
+        if let (Some(r), false) = (result, output == self.types.void_) {
+            returns.iter().try_for_each(|ret| r.check(ret.made))?;
         }
         for r in returns {
             let ends: Vec<DyadPtr> =
@@ -673,7 +689,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::AddressOfHeld);
         }
         // Whether the operand is owned is read from one arm, so every arm must agree first.
-        crate::identities::drop_model::handed_ends(types, value)?;
+        let made = crate::identities::drop_model::handed_ends(types, value)?;
         if crate::identities::drop_model::is_owning_value(types, value) {
             return Err(ParseError::OwnershipAcrossReturn);
         }
@@ -685,6 +701,7 @@ impl<'a> Parser<'a> {
             .collect();
         let open = OpenReturn {
             node,
+            made,
             live,
             ended: Vec::new(),
             level: self.cx.open.len() - 1,

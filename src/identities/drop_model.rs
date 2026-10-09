@@ -2114,6 +2114,11 @@ mod tests {
                 ParseError::HandsOnMade("@i32".into()),
             ),
             ("mk := fn (p := @i32 ?) -> own @i32 ( p )", ParseError::OwnResultBorrows),
+            (
+                "y := i32 4,\nmk := fn (c := i32 ?) -> own @i32 \
+                 ( if (c == 1) (return &y), alloc 1 of i32 6 )",
+                ParseError::OwnResultBorrows,
+            ),
             ("mk := fn () -> own i32 ( i32 1 )", ParseError::OwnNeedsPointer),
             ("mk := fn () -> own own @i32 ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
             ("mk := fn () -> own 5 ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),

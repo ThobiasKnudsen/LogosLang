@@ -327,8 +327,8 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("this function hands on a value it made: write `-> own {written}`")
         }
         ParseError::OwnResultBorrows => {
-            "`-> own` hands on a value made here, but this function's last value is a borrow; \
-             make or move the value, or write the result without `own`"
+            "`-> own` hands on a value made here, but this function hands on a borrow; make or \
+             move the value, or write the result without `own`"
                 .into()
         }        ParseError::NoSuchSlot(name) => format!(
             "`{name}` names no slot: a type body fills `share parse = (…)`, `share run = (…)`, \

@@ -3734,6 +3734,26 @@ fn a_call_through_own_hands_on_its_made_value_at_any_depth() {
 }
 
 #[test]
+fn a_return_hands_on_its_value_as_the_last_line_does() {
+    let g = "g := bag(9), mk := fn (c := i32 ?) ->";
+    for (tail, refused) in [
+        (
+            format!("{g} own bag ( if (c == 1) (return g), bag(4) ), x := mk(1)"),
+            "hands on a borrow",
+        ),
+        (format!("{g} bag ( if (c == 1) (return bag(3)), g ), x := mk(1)"), "write `-> own bag`"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(refused), "{tail}: {stderr}");
+    }
+    let made = "mk := fn (c := i32 ?) -> own bag ( if (c == 1) (return bag(3)), bag(4) ), \
+                x := mk(1), print «got»";
+    let (code, stdout, stderr) = run_line(&format!("{RECORD}, {made}"));
+    assert_eq!((code, stdout.as_str()), (Some(0), "got\nfreed 3\n"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
     let r = "r := type ( mut p := own @i32 ?, share free = ( free p ), \
              share set := fn () -> i32 ( a := alloc 1 of i32 5, p = move a, 1 ), \
