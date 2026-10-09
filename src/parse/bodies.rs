@@ -33,6 +33,8 @@ pub(super) struct OpenFn {
 /// teardown runs where its life ends; the ending identity reads the type's `free` slot‹).
 pub(super) struct OpenReturn {
     node: DyadPtr,
+    /// Where its word stands, for an error the body's close finds in it.
+    at: usize,
     /// Whether its operand is made or borrowed, as `handed_ends` reads it.
     made: Option<bool>,
     /// The names the scopes it leaves hold at it, in declaration order; an `if` whose arm
@@ -124,16 +126,14 @@ pub(super) struct WrittenResult<'s> {
     owned: bool,
 }
 
-impl WrittenResult<'_> {
-    /// Refuses a value the function hands on, `made` as `handed_ends` reads it, that the result
-    /// does not say: one made in it without `own`, or a borrow under `own` (DESIGN ›A last value
-    /// moves out‹).
-    fn check(self, made: Option<bool>) -> Result<(), ParseError> {
-        match made {
-            Some(true) if !self.owned => Err(ParseError::HandsOnMade(self.text.to_string())),
-            Some(false) if self.owned => Err(ParseError::OwnResultBorrows),
-            _ => Ok(()),
-        }
+/// Refuses a value a function hands on, `made` as `handed_ends` reads it, that its `own` mark
+/// does not say: a borrow under the mark, or, where the result is written (`written`), a value
+/// made in it without the mark (DESIGN ›A last value moves out‹).
+fn check_handed(marked: bool, written: Option<&str>, made: Option<bool>) -> Result<(), ParseError> {
+    match (made, written) {
+        (Some(false), _) if marked => Err(ParseError::OwnResultBorrows),
+        (Some(true), Some(text)) if !marked => Err(ParseError::HandsOnMade(text.to_string())),
+        _ => Ok(()),
     }
 }
 
@@ -608,29 +608,30 @@ impl<'a> Parser<'a> {
         // SAFETY: `body`/`output` are valid dyads just built.
         let body =
             unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };
-        // What the last value hands on is checked against the result as written, once its type
-        // is (DESIGN ›A last value moves out‹).
-        match (made, result) {
-            // A type's `run` has no `->` to write `own` in, so its close writes it: stand-in for
-            // P128.
-            (Some(true), None) => {
-                // SAFETY: `output` is the type the node was minted with, from the store.
-                let owned = unsafe {
-                    crate::identities::drop_model::own_result(self.rt.store, self.types, output)
-                }?;
-                // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
-                unsafe {
-                    let slots = dyad::value(node) as *mut DyadPtr;
-                    *slots.add(FN_OUTPUT) = owned;
-                    *slots.add(FN_OUTPUT_GATE) = self.types.own_;
-                }
+        // A type's `run` has no `->` to write `own` in, so its close writes it: stand-in for P128.
+        if result.is_none() && made == Some(true) {
+            // SAFETY: `output` is the type the node was minted with, from the store.
+            let owned = unsafe {
+                crate::identities::drop_model::own_result(self.rt.store, self.types, output)
+            }?;
+            // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
+            unsafe {
+                let slots = dyad::value(node) as *mut DyadPtr;
+                *slots.add(FN_OUTPUT) = owned;
+                *slots.add(FN_OUTPUT_GATE) = self.types.own_;
             }
-            (_, Some(r)) => r.check(made)?,
-            (_, None) => {}
         }
-        // A `return` makes its operand the call's value, as the last line does.
-        if let (Some(r), false) = (result, output == self.types.void_) {
-            returns.iter().try_for_each(|ret| r.check(ret.made))?;
+        // The last value, once its type is, and every `return`'s operand, which a `return` makes
+        // the call's value, are checked against the mark a call reads.
+        if output != self.types.void_ {
+            // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
+            let marked =
+                unsafe { !(*(dyad::value(node) as *const DyadPtr).add(FN_OUTPUT_GATE)).is_null() };
+            let written = result.map(|r| r.text);
+            check_handed(marked, written, made)?;
+            for r in &returns {
+                check_handed(marked, written, r.made).map_err(|e| self.fail_at(r.at, e))?;
+            }
         }
         for r in returns {
             let ends: Vec<DyadPtr> =
@@ -701,6 +702,7 @@ impl<'a> Parser<'a> {
             .collect();
         let open = OpenReturn {
             node,
+            at,
             made,
             live,
             ended: Vec::new(),

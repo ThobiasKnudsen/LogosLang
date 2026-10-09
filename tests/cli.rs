@@ -3751,6 +3751,17 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
                 x := mk(1), print «got»";
     let (code, stdout, stderr) = run_line(&format!("{RECORD}, {made}"));
     assert_eq!((code, stdout.as_str()), (Some(0), "got\nfreed 3\n"), "stderr: {stderr}");
+    // A type's `run` whose last value is made is marked `own`, and its `return` is held to it.
+    let run = "g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, \
+               share run = ( if (elements.dyads.size == 3) (return g), mut v := output_type ?, \
+               v.p = mut alloc 1 of i32 ?, v.size = 1, move v ), \
+               share parse_rank = dyad.parse_rank, share associativity = left, \
+               share parse = ( tape[0].type = pk, tape[0].elements = tape[1], \
+               tape[0].output_type = boxed, tape.remove(1), tape.is_constructed[0] = true ) ), \
+               x := pk (7, 8, 9), print «{x.size}»";
+    let (code, _, stderr) = run_line(&format!("{BOX}, {run}"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("hands on a borrow"), "{stderr}");
 }
 
 #[test]
