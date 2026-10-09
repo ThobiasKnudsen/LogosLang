@@ -23394,14 +23394,19 @@
   {
     "id": "S63",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "His questions and ideas get a reply file: one SKILL.md bullet under Questions to Thobias routes each question or idea he writes, in a file or in chat, to a helper, the asker or the graph, and its reply stands in a file of its own in the open folder, read like a receipt; the file he asked in is relayed at once and closed only once its reply files are placed; question-template.md line 4 tells him so; the watch prints his added or changed lines under the path and question-close refuses a save the watch has not printed; the three replies he is owed (Q85's two questions, Q81's idea) are placed first",
     "fixes": [
       "W218",
       "W232"
     ],
     "assessment": "Root fix for both: W218 is a rule the skill lacks, and the bullet is the one route for every asker (no arm per kind of asker); W232's wake carries his lines instead of a path and a hash, and the close checks against what the watch printed, so a partial read cannot lose a line. Removes P125 in both cases (Q85 line 63 missed; Q81 read in full yet unanswered). Lands in ~/.claude/skills/orchestrate: SKILL.md (one bullet, two clauses of the watch bullet), question-template.md l.4, orchestrate.sh mark_seen, edited, cmd_questions_watch, cmd_question_close (about ten lines); text and shell, about an hour; no branch touches ~/.claude, S46 edits a neighbouring SKILL.md bullet (l.70). Cost: one more file in his folder per question he asks, and a file he answered stays open while a helper looks the reply up.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-09T13:07+02:00",
+      "words": "Q94 Answer 1: \"a\"; Answer (Decided), on \"the watch shows me what you wrote ... closing a file is refused if you saved it again after I last saw it\": \"ok\"",
+      "reason": "In Q94 he chose (a), a reply file of its own for each question or idea he writes, over (b) and (c), and accepted the orchestrator's decided watch change, which is the script half of S63"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -23414,19 +23419,34 @@
       "run": "solve-W218",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:07+02:00",
+        "by": "logoslang-solve-W218",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fbaf028",
+        "change": "chosen by Thobias: \"Q94 Answer 1: \"a\"; Answer (Decided), on \"the watch shows me what you wrote ... closing a file is refused if you saved it again after I last saw it\": \"ok\"\"",
+        "reason": "In Q94 he chose (a), a reply file of its own for each question or idea he writes, over (b) and (c), and accepted the orchestrator's decided watch change, which is the script half of S63"
+      }
+    ]
   },
   {
     "id": "S64",
     "kind": "solution",
-    "status": "proposed",
+    "status": "rejected",
     "text": "Reply where he asked: question-close writes the orchestrator's reply under his words in the closed copy in answers/, and the orchestrator says in chat where it stands; plus S63's watch and close change",
     "fixes": [
       "W218",
       "W232"
     ],
     "assessment": "Fixes W232 as S63 does, and W218 only in part: a reply exists, but it stands in answers/, which he does not keep open, and the chat line scrolls away or is lost when the session restarts, so P125's expected (an answer he can find) rests on him looking there. Writing the reply into the still-open file is barred (SKILL.md: Never edit a question once it is placed), so a reply that needs a helper still holds the close. Smaller than S63 by the new file only. Not recommended.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-09T13:08+02:00",
+      "words": "Q94 Answer 1: \"a\"",
+      "reason": "In Q94 he chose (a), S63, over (b), this solution: a reply under his words in the closed file plus a line in chat"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -23439,18 +23459,33 @@
       "run": "solve-W218",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:08+02:00",
+        "by": "logoslang-solve-W218",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fbaf028",
+        "change": "rejected by Thobias: \"Q94 Answer 1: \"a\"\"",
+        "reason": "In Q94 he chose (a), S63, over (b), this solution: a reply under his words in the closed file plus a line in chat"
+      }
+    ]
   },
   {
     "id": "S65",
     "kind": "solution",
-    "status": "proposed",
+    "status": "rejected",
     "text": "Only the script: the watch prints his added or changed lines under the file's path, and question-close refuses a save the watch has not printed; no new route for a question or idea of his",
     "fixes": [
       "W232"
     ],
     "assessment": "Fixes W232 only (Q85's line 63, missed by a partial read). Cannot fix W218, so W218 is left out of --fixes: in Q81 the orchestrator read his idea in full (transcript 21:28:26Z) and closed the file with no reply, because no rule says a question or idea he writes is owed one; P125 stays open for every such question that is read but not seen as owed. About ten lines of shell. Not recommended alone.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-09T13:08+02:00",
+      "words": "Q94 Answer 1: \"a\"; Answer (Decided): \"ok\"",
+      "reason": "In Q94 he chose (a), S63, over (c), this solution alone (no reply rule); its watch and close change was accepted with \"ok\" and lands as part of S63"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -23463,7 +23498,17 @@
       "run": "solve-W218",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:08+02:00",
+        "by": "logoslang-solve-W218",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fbaf028",
+        "change": "rejected by Thobias: \"Q94 Answer 1: \"a\"; Answer (Decided): \"ok\"\"",
+        "reason": "In Q94 he chose (a), S63, over (c), this solution alone (no reply rule); its watch and close change was accepted with \"ok\" and lands as part of S63"
+      }
+    ]
   },
   {
     "id": "P132",
@@ -23526,7 +23571,7 @@
       "W252",
       "W253"
     ],
-    "assessment": "Root fix: the save's waker belongs to the session, registered by the skill, instead of to one Monitor tool call (W253, and W219 above it), so no step has to remember it and nothing has to check it (W244) or time it (W245; the watch exits 2 itself shortly before its hook timeout, one idle wake a day); the unrelayed-save test edited is read at every turn's end and after every tool call (W243, W252: Q79 would have been relayed before the chat work); AskUserQuestion is denied, not only forbidden by SKILL.md line 18 (W251). Removes P126 and both gaps of P129 (the hooks live exactly in sessions that ran the skill; the stop_hook_active exit is deleted, the harness's 8-block cap prevents a loop); P131 is fixed already (shift on line 1601). Fulfils SKILL.md ›Questions to Thobias‹ Reason (Thobias, 9 October 2026): 'build the allways running hook'. Deletes --follow, CLAUDE_CODE_SESSION_ID, and the Monitor steps: Setup step 5, the 30-minute restart sentence, the QUESTION row's 'make sure the watch runs', ›Staying responsive‹ 'Start the question watch again first', ›Never‹ 'Let the question watch stay down'. Risk: the hooks page does not list which events take asyncRewake; slice 1 tests it at Stop in a scratch repo and otherwise starts the watch from PostToolUse (the lock refuses a second watch), or falls back to S-B. Lands in ~/.claude/skills/orchestrate: SKILL.md frontmatter and those 5 edits, watch-guard.sh (about 25 lines), cmd_questions_watch (about 10 lines); about two hours; Claude Code 2.1.295 has both features. Touches solve-W218's S63/S65 at cmd_questions_watch's print line (they change what is printed, this where it goes and that it exits 2) and at edited (the hooks call the script, so their new test is used as is). Adding hooks to SKILL.md may be refused as self-modification like the settings.json edit; then Thobias approves it once.",
+    "assessment": "Root fix for a running session: the waker belongs to the session, registered by the skill, instead of to one Monitor tool call (W253, W219), the unrelayed-save test is read at every turn's end and after every tool call (W243, W252), AskUserQuestion is denied (W251), nothing has to check or time the watch (W244, W245), and P129's two gaps go. Fails P135: skill-frontmatter hooks are registered when the skill is invoked, and the hooks page says nothing of a resume, so after a computer restart the hooks and the watch return only when the orchestrator runs the skill again, a step to remember, and a first turn in plan mode starts nothing. Superseded by S76, which keeps every part of S66 but registers the hooks where Claude Code loads them at every start and resume. About two hours; touches solve-W218's S63/S65 at cmd_questions_watch's print line and at edited.",
     "decision": null,
     "design": [],
     "issue": null,
@@ -23540,7 +23585,26 @@
       "run": "solve-W243",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:11+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "assessment was \"Root fix: the save's waker belongs to the session, registered by the skill, instead of to one Monitor tool call (W253, and W219 above it), so no step has to remember it and nothing has to check it (W244) or time it (W245; the watch exits 2 itself shortly before its hook timeout, one idle wake a day); the unrelayed-save test edited is read at every turn's end and after every tool call (W243, W252: Q79 would have been relayed before the chat work); AskUserQuestion is denied, not only forbidden by SKILL.md line 18 (W251). Removes P126 and both gaps of P129 (the hooks live exactly in sessions that ran the skill; the stop_hook_active exit is deleted, the harness's 8-block cap prevents a loop); P131 is fixed already (shift on line 1601). Fulfils SKILL.md ›Questions to Thobias‹ Reason (Thobias, 9 October 2026): 'build the allways running hook'. Deletes --follow, CLAUDE_CODE_SESSION_ID, and the Monitor steps: Setup step 5, the 30-minute restart sentence, the QUESTION row's 'make sure the watch runs', ›Staying responsive‹ 'Start the question watch again first', ›Never‹ 'Let the question watch stay down'. Risk: the hooks page does not list which events take asyncRewake; slice 1 tests it at Stop in a scratch repo and otherwise starts the watch from PostToolUse (the lock refuses a second watch), or falls back to S-B. Lands in ~/.claude/skills/orchestrate: SKILL.md frontmatter and those 5 edits, watch-guard.sh (about 25 lines), cmd_questions_watch (about 10 lines); about two hours; Claude Code 2.1.295 has both features. Touches solve-W218's S63/S65 at cmd_questions_watch's print line (they change what is printed, this where it goes and that it exits 2) and at edited (the hooks call the script, so their new test is used as is). Adding hooks to SKILL.md may be refused as self-modification like the settings.json edit; then Thobias approves it once.\"",
+        "reason": "P135 (9 October 2026): after a computer restart nothing started the watch until the orchestrator got a turn; S66's restart step was 'Run the skill again first', itself a remembered step"
+      },
+      {
+        "at": "2026-10-09T13:11+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "assessment was \"Root fix for a running session: the waker belongs to the session, registered by the skill, instead of to one Monitor tool call (W253, W219), the unrelayed-save test is read at every turn's end and after every tool call (W243, W252), AskUserQuestion is denied (W251), nothing has to check or time the watch (W244, W245), and P129's two gaps go. Fails P135: skill-frontmatter hooks are registered when the skill is invoked, and the hooks page says nothing of a resume, so after a computer restart the hooks and the watch return only when the orchestrator runs the skill again, a step to remember, and a first turn in plan mode starts nothing. Superseded by S69, which keeps every part of S66 but registers the hooks where Claude Code loads them at every start and resume. About two hours; touches solve-W218's S63/S65 at cmd_questions_watch's print line and at edited.\"",
+        "reason": "the superseding solution was recorded as S76, not S69 as the last amend said"
+      }
+    ]
   },
   {
     "id": "S67",
@@ -23554,7 +23618,7 @@
       "W251",
       "W252"
     ],
-    "assessment": "Fixes the same symptoms by enforcement instead of removal: the watch still lives in one Monitor tool call, so W253 (a save is heard only while a tool call runs the watch) stays and is left out of --fixes; the orchestrator restarts the watch at every 30-minute expiry, up to 48 wakes a day while idle, each sending the whole conversation again, and the guard makes each restart unavoidable. Removes P126 and P129 like S66; uses only documented hook behaviour (Stop block, PreToolUse deny, PostToolUse additionalContext, skill frontmatter hooks). Same files as S66 minus the watch change; about an hour and a half. The fallback if S66's asyncRewake test fails.",
+    "assessment": "Fixes the same symptoms by enforcement instead of removal: the watch still lives in one Monitor tool call, so W253 (a save is heard only while a tool call runs the watch) stays and is left out of --fixes; the orchestrator restarts the watch at every 30-minute expiry, up to 48 wakes a day while idle, each sending the whole conversation again. Fails P135: after a computer restart the Monitor call is gone and only a turn of the orchestrator can start a new one, which a first turn in plan mode cannot; with the guard in the skill's frontmatter the guard too is gone until the skill runs again. Uses only documented hook behaviour. About an hour and a half.",
     "decision": null,
     "design": [],
     "issue": null,
@@ -23568,7 +23632,17 @@
       "run": "solve-W243",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:11+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "assessment was \"Fixes the same symptoms by enforcement instead of removal: the watch still lives in one Monitor tool call, so W253 (a save is heard only while a tool call runs the watch) stays and is left out of --fixes; the orchestrator restarts the watch at every 30-minute expiry, up to 48 wakes a day while idle, each sending the whole conversation again, and the guard makes each restart unavoidable. Removes P126 and P129 like S66; uses only documented hook behaviour (Stop block, PreToolUse deny, PostToolUse additionalContext, skill frontmatter hooks). Same files as S66 minus the watch change; about an hour and a half. The fallback if S66's asyncRewake test fails.\"",
+        "reason": "P135 (9 October 2026): a restart ends the Monitor call, and nothing starts it before a turn"
+      }
+    ]
   },
   {
     "id": "S68",
@@ -23579,7 +23653,7 @@
       "W244",
       "W245"
     ],
-    "assessment": "Symptom fix: makes the existing guard work, so a watch left down at a turn's end is restarted (the Q84 case) and P129's two gaps close. Leaves W243 and W252 (Q79: a save read but displaced within one turn, which no turn's end checks), W251 (the AskUserQuestion dialog that held Q79 eight minutes) and W253 (the 30-minute Monitor restarts). Needs Thobias's manual settings.json edit, and the hook runs at every Stop of every session on the machine. Minutes of work. Not recommended.",
+    "assessment": "Symptom fix: makes the existing guard work, so a watch left down at a turn's end is restarted (the Q84 case) and P129's two gaps close. Leaves W243 and W252 (Q79: a save read but displaced within one turn), W251 (the AskUserQuestion dialog) and W253 (the 30-minute Monitor restarts), and fails P135: after a computer restart the watch waits for a turn, since a Stop hook acts only when a turn ends. Needs Thobias's manual settings.json edit, and the hook runs at every Stop of every session on the machine. Minutes of work. Not recommended.",
     "decision": null,
     "design": [],
     "issue": null,
@@ -23593,7 +23667,17 @@
       "run": "solve-W243",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:11+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "assessment was \"Symptom fix: makes the existing guard work, so a watch left down at a turn's end is restarted (the Q84 case) and P129's two gaps close. Leaves W243 and W252 (Q79: a save read but displaced within one turn, which no turn's end checks), W251 (the AskUserQuestion dialog that held Q79 eight minutes) and W253 (the 30-minute Monitor restarts). Needs Thobias's manual settings.json edit, and the hook runs at every Stop of every session on the machine. Minutes of work. Not recommended.\"",
+        "reason": "P135 (9 October 2026): the guard acts only at a turn's end, and after a restart no turn has come"
+      }
+    ]
   },
   {
     "id": "S69",
@@ -23757,13 +23841,18 @@
   {
     "id": "S74",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "No task list: SKILL.md ›How you work on his machine‹, beside Your memory is this skill and the repo's folder, says the orchestrator keeps no task list (TaskCreate, TaskUpdate), since the harness puts the whole list back into its context again and again and status, the question folder and the graph already hold its open work",
     "fixes": [
       "W233"
     ],
     "assessment": "Root fix: the task list is a second home for open work beside the folder the memory rule already names, and its reason (nobody else sees it, and it is lost at a restart, like auto-memory) is the memory rule's own; deleting it removes the cost instead of trimming it. Removes about 490,000 tokens a day (163 task_reminder pastes of a 76-task list on 8 October, about 3,000 tokens each), more than one and a half of the about 295,000 tokens between two compactions, so about one in five of the 8 daily compactions (80 s each, then files read again). Leaves the other context growth (tool results, SKILL.md read again after each compaction). One sentence in SKILL.md and its story in SKILL_HISTORY.md, minutes. The harness's small nudge to use the task tools stays, and a rule alone stops it; a hook denying TaskCreate could join solve-W243's fix for AskUserQuestion (W251) if one is built. help-5's SKILL.md draft needs the same sentence.",
-    "decision": null,
+    "decision": {
+      "by": "orchestrator LogosLang",
+      "at": "2026-10-09T13:11+02:00",
+      "words": "Your point 1 is decided by me: (a) S74, no task list, in Q97's Decided section. It is already in SKILL.md (›How you work on his machine‹, after the auto-memory sentence, with \"whatever Claude Code's reminders to use one say\" added)",
+      "reason": "it removes the whole cost and leaves no step to remember; S75 needs a step at every finished task, the step that was missing"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -23776,18 +23865,33 @@
       "run": "solve-W222",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:11+02:00",
+        "by": "logoslang-solve-W222",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "chosen by orchestrator LogosLang: \"Your point 1 is decided by me: (a) S74, no task list, in Q97's Decided section. It is already in SKILL.md (›How you work on his machine‹, after the auto-memory sentence, with \"whatever Claude Code's reminders to use one say\" added)\"",
+        "reason": "it removes the whole cost and leaves no step to remember; S75 needs a step at every finished task, the step that was missing"
+      }
+    ]
   },
   {
     "id": "S75",
     "kind": "solution",
-    "status": "proposed",
+    "status": "rejected",
     "text": "A short task list: SKILL.md says the orchestrator may keep a task list but deletes each task the moment it is done, so the list holds only open work",
     "fixes": [
       "W233"
     ],
     "assessment": "Trims the cost instead of removing it: with only the 8 open tasks of 8 October, each paste would be about 300 tokens instead of 3,000, about 50,000 tokens a day instead of 490,000. Keeps the list's help with a task of many steps, but keeps a second home for open work beside status, the question folder and the graph, and adds a step the orchestrator must remember at every finished task, the step whose absence let the list grow to 76 (68 done) on 8 October. One sentence, minutes. Not recommended: S74 removes the cost and the step.",
-    "decision": null,
+    "decision": {
+      "by": "orchestrator LogosLang",
+      "at": "2026-10-09T13:11+02:00",
+      "words": "Your point 1 is decided by me: (a) S74, no task list, in Q97's Decided section.",
+      "reason": "it removes the whole cost and leaves no step to remember; S75 needs a step at every finished task, the step that was missing"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -23800,7 +23904,17 @@
       "run": "solve-W222",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T13:11+02:00",
+        "by": "logoslang-solve-W222",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "rejected by orchestrator LogosLang: \"Your point 1 is decided by me: (a) S74, no task list, in Q97's Decided section.\"",
+        "reason": "it removes the whole cost and leaves no step to remember; S75 needs a step at every finished task, the step that was missing"
+      }
+    ]
   },
   {
     "id": "P135",
@@ -23821,6 +23935,155 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "c0cb235",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S76",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "S66 with its hooks in the repo's committed .claude/settings.json, which Claude Code loads at every start and resume of a session in the repo; setup writes the file for a new repo; each hook exits at once unless the session is the repo's orchestrator (the session the script runs for, kept in state/ and renewed at every start or resume); in that session a background hook (asyncRewake) starts the one-shot question watch at SessionStart (startup, resume, fork, compact) and at every turn's end, so the watch runs from the moment the session opens, before any turn and in any mode, and wakes it at a save even when idle; the watch reports each save once and keeps a record of what it reported; watch-guard.sh at Stop and after every tool call keeps the turn from ending and reminds while a save is not yet taken as read or closed, except in plan mode, where the orchestrator cannot act; PreToolUse denies AskUserQuestion",
+    "fixes": [
+      "W243",
+      "W244",
+      "W245",
+      "W251",
+      "W252",
+      "W253"
+    ],
+    "assessment": "Root fix, restart included: the waker belongs to the session and is registered by a file Claude Code reads at every start and resume, so no step is remembered after a computer restart (P135) or ever (W244, W245); the watch runs before the first turn, so plan mode does not stop it; the rest as S66 (W243, W252, W251, W253, P126, P129). The report-once record keeps a restarted watch from waking the session again and again for a save left unhandled (plan mode, the harness's 8-block cap), and it is the record solve-W218's S63/S65 need for question-close to refuse a save the watch has not printed, so one record serves both. Follows the global CLAUDE.md ruling (Thobias, 3 October 2026): '.claude/ keeps only the files Claude Code itself reads (settings, skill pointers, the CLAUDE.md bridge)'. Cost: the hooks run in every session in the repo and its worktrees and exit at once there (one bash start per tool call); the file is committed, so it reaches any machine, and does nothing where the skill is not installed; writing it may need Thobias's approval once per repo, as the settings.json edit did. Slice 1 tests asyncRewake at SessionStart and Stop in a scratch repo (fallback PostToolUse, decided in Q95) and which SessionStart field names the session after a forked resume. Opening the orchestrator session after a restart stays his. Lands in .claude/settings.json (about 20 lines), ~/.claude/skills/orchestrate watch-guard.sh (about 35), cmd_questions_watch (about 15), cmd_setup (about 5), SKILL.md (the wording in Q95, restart step deleted); about three hours.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T13:11+02:00",
+      "by": "logoslang-solve-W243",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d57a5dd",
+      "run": "solve-W243",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S77",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "S76 with its hooks in Thobias's global ~/.claude/settings.json instead of each repo's .claude/settings.json: he adds them once, by hand, and they serve every repo on this machine",
+    "fixes": [
+      "W243",
+      "W244",
+      "W245",
+      "W251",
+      "W252",
+      "W253"
+    ],
+    "assessment": "Fixes the same roots as S76, restart included (global settings also load at every start and resume). Differs in cost only: one manual edit by Thobias, since an agent's edit of his settings.json was refused as self-modification on 9 October, against one committed file per repo that setup writes; the hooks then run in every session on the machine, and they do not travel with a repo to another machine or a teammate. Same code otherwise, minus the setup step. Not recommended: S76 needs no step of his beyond, at most, one approval per repo.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-09T13:11+02:00",
+      "by": "logoslang-solve-W243",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d57a5dd",
+      "run": "solve-W243",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-09T13:11+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "text was \"S69 with its hooks in Thobias's global ~/.claude/settings.json instead of each repo's .claude/settings.json: he adds them once, by hand, and they serve every repo on this machine\"",
+        "reason": "the solution it varies was recorded as S76, not S69"
+      },
+      {
+        "at": "2026-10-09T13:11+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "assessment was \"Fixes the same roots as S69, restart included (global settings also load at every start and resume). Differs in cost only: one manual edit by Thobias, since an agent's edit of his settings.json was refused as self-modification on 9 October, against one committed file per repo that setup writes; the hooks then run in every session on the machine, and they do not travel with a repo to another machine or a teammate. Same code otherwise, minus the setup step. Not recommended: S69 needs no step of his beyond, at most, one approval per repo.\"",
+        "reason": "the solution it varies was recorded as S76, not S69"
+      }
+    ]
+  },
+  {
+    "id": "P136",
+    "kind": "problem",
+    "status": "open",
+    "text": "The orchestrator's skill files and prompts are 19,468 words, and every agent's prompt carries much of them; helper help-5's shortened drafts (17,580 words) wait uninstalled in state/help-5/answer.md, with 9 conflicts and about 600 words of bigger cuts that need his rulings",
+    "program": "wc -w over ~/.claude/skills/orchestrate/*.md and ~/.claude/skills/solve/SKILL.md; compare with state/help-5/answer.md",
+    "output": "19,468 words installed; 17,580 in help-5's drafts, not installed; the drafts replace whole files, so every fix landed since (S69, S74) must go into them first",
+    "expected": "the prompts are as short as possible with nothing relevant lost (Thobias, 8 October 2026: \"the prompts should be cut down as much as possible while keeping all relevant information\")",
+    "tier": "orchestrator",
+    "found": "orchestrator LogosLang, 9 October 2026, moved from its task list (S74)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T13:11+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d81ecc0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P137",
+    "kind": "problem",
+    "status": "open",
+    "text": "LogosLang's ruling document is still DESIGN.md at the repo root (orchestrate.conf: RULING_DOC=DESIGN.md), while the skill's setup keeps a repo's ruling document at .agents/orchestrator/KNOWLEDGE.md; the move, slice 4 of the 3 October 2026 folder plan, waits for issue 82's merge, since issue 82's branch edits DESIGN.md's Seed lines",
+    "program": "grep RULING_DOC .agents/orchestrator/orchestrate.conf; ls .agents/orchestrator/KNOWLEDGE.md",
+    "output": "RULING_DOC=DESIGN.md; \"ls: cannot access 'KNOWLEDGE.md': No such file or directory\"",
+    "expected": "the ruling document stands where the skill's setup puts it, or orchestrate.conf's DESIGN.md is ruled to stay (Thobias, 3 October 2026: the orchestrator's things in `.agents/`, \"a general name\")",
+    "tier": "orchestrator",
+    "found": "orchestrator LogosLang, 9 October 2026, moved from its task list (S74)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T13:11+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d81ecc0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P138",
+    "kind": "problem",
+    "status": "open",
+    "text": "watch-guard.sh is registered as a hook in no settings file, while SKILL.md ›Questions to Thobias‹ says it is \"a Stop hook in his ~/.claude/settings.json\" that \"refuses to end your turn while the watch is down\", so the guard never runs and the skill states a guard that does not exist",
+    "program": "jq -c '[.hooks.Stop[].hooks[].command | test(\"watch-guard\")]' ~/.claude/settings.json; jq .hooks ~/.claude/settings.local.json",
+    "output": "[false] (its only Stop hook is the notify-send line); null",
+    "expected": "what SKILL.md says about the guard is true: either it runs, or SKILL.md does not claim it (Thobias, 9 October 2026: \"build the allways running hook\")",
+    "tier": "orchestrator",
+    "found": "logoslang-why-P135-a, FOUND in its WHY on P135, 9 October 2026, dev at c0cb235",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T13:12+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d81ecc0",
       "run": null,
       "agent": null
     },
