@@ -24228,5 +24228,77 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P141",
+    "kind": "problem",
+    "status": "open",
+    "text": "A `-> void` function whose `return` hands on a value it made leaks that value: nothing frees it, since a `-> void` function has no written result to check a made `return` against",
+    "program": "<BAG> is tests/cli.rs's bag fixture, whose `free` prints «freed {n}» (probe r6-g.txt G4 in .agents/orchestrator/tmp/issue-82-output-type/): <BAG>, mk := fn (c := i32 ?) -> void ( if (c == 1) (return bag(3)), print «v» ), mk(1), print «got»",
+    "output": "`got`, exit 0, and never `freed 3`; on dev 654006f and on issue 82's branch alike",
+    "expected": "the made `bag(3)` is freed once, or the `return` of a made value in a `-> void` function is refused where it is written (›A last value moves out‹; a value is freed at its life's end)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-6, `/code-review high` finding 1 in review round 6 of issue 82, 9 October 2026, dev at 654006f",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T13:33+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8f1619f",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P142",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type's `run` whose last line borrows, so the Q92 own-mark is not written, leaks a value that a `return` in it made: the mark is read from the last value alone",
+    "program": "<BOX> is tests/cli.rs's boxed/box fixture, whose `free` prints «free» (probe r6-h.txt H1 in .agents/orchestrator/tmp/issue-82-output-type/): <BOX>, g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, share run = ( if (elements.dyads.size == 3) (return box (5, 6, 7)), g ), share parse_rank = dyad.parse_rank, share associativity = left, share parse = ( tape[0].type = pk, tape[0].elements = tape[1], tape[0].output_type = boxed, tape.remove(1), tape.is_constructed[0] = true ) ), x := pk (7, 8, 9), print «{x.size}»",
+    "output": "`3`, `free`, exit 0: one free, `g`'s; the box the `return` made is never freed; on dev 654006f and on issue 82's branch alike",
+    "expected": "the made `box (5, 6, 7)` is freed once, or the `run` is refused where it is written; the other direction of P140 (a `return` of a borrow in a `run` marked own); how a `run` says it hands on a made value is open in P128",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-6, `/code-review high` finding 3 in review round 6 of issue 82, 9 October 2026, dev at 654006f",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T13:33+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8f1619f",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P143",
+    "kind": "problem",
+    "status": "open",
+    "text": "A `return` of a made value from a function marked to hand on what it made is refused for a pointer and accepted for a record: `note_return`'s `is_owning_value` test is older than `-> own` and decides by the value's kind",
+    "program": "on issue 82's branch (probe r6-h.txt H3 in .agents/orchestrator/tmp/issue-82-output-type/): mk := fn (c := i32 ?) -> own @i32 ( if (c == 1) (return alloc 1 of i32 3), alloc 1 of i32 4 ), x := mk(1), print «{x@}»; and, <BAG> being tests/cli.rs's bag fixture whose `free` prints «freed {n}»: <BAG>, mk := fn (c := i32 ?) -> own bag ( if (c == 1) (return bag(3)), bag(4) ), x := mk(1), print «got»",
+    "output": "the pointer one is refused: \"a `return` cannot hand ownership out yet; make it the function's last value, which moves out to the caller\"; the record one prints `got`, `freed 3`; dev 654006f has the same split with `-> @i32` refused and `-> bag` accepted and freed",
+    "expected": "one rule decides a made `return` for every type a function hands on, the pointer and the record alike (›A last value moves out‹)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-82-review-6, review round 6 of issue 82, 9 October 2026, dev at 654006f",
+    "why": null,
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T13:33+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8f1619f",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
