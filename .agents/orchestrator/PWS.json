@@ -24368,7 +24368,9 @@
     "expected": "what SKILL.md says about the guard is true: either it runs, or SKILL.md does not claim it (Thobias, 9 October 2026: \"build the allways running hook\")",
     "tier": "orchestrator",
     "found": "logoslang-why-P135-a, FOUND in its WHY on P135, 9 October 2026, dev at c0cb235",
-    "why": null,
+    "why": [
+      "W276"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -24380,7 +24382,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c732ec5",
+        "change": "why + W276",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W254",
@@ -24636,7 +24648,10 @@
     "expected": "a merge stops and removes every session of the merged work, wherever its worktree stood (SKILL.md: \"A branch lives only while its work is unmerged: whoever merges it deletes it and its worktree in the same step\")",
     "tier": "orchestrator",
     "found": "orchestrator LogosLang, 9 October 2026, after merging issue 82 at 27ed63c",
-    "why": null,
+    "why": [
+      "W275",
+      "W277"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -24648,7 +24663,26 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c732ec5",
+        "change": "why + W275",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T14:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c732ec5",
+        "change": "why + W277",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W255",
@@ -26208,7 +26242,7 @@
   {
     "id": "W272",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "No command of orchestrate.sh and no step of SKILL.md writes watch-guard.sh into a settings file's hooks.Stop: the script's only mention of it is a comment in cmd_questions_watch, ›Setup, once per session‹ has five steps and none names a hook or a settings file, and ›Questions to Thobias‹ states the registration as a fact of his ~/.claude/settings.json instead of as a step anyone takes, so the guard script exists and works but nothing ever calls it",
     "proposed_for": "P138",
     "why": null,
@@ -26236,7 +26270,7 @@
       "B"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W276",
     "made": {
       "at": "2026-10-09T14:17+02:00",
       "by": "logoslang-why-P138-b",
@@ -26246,12 +26280,22 @@
       "run": "why-P138",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c732ec5",
+        "change": "merged into W276",
+        "reason": "A and B state the same fact: no command of orchestrate.sh, no step of SKILL.md and no frontmatter registers watch-guard.sh as a hook; both ran the guard by hand and it works, so registration is the only missing piece"
+      }
+    ]
   },
   {
     "id": "W273",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "cmd_merge removes the merged task's worktree (retire_branch when MERGE=local, git worktree remove when MERGE=pr) before it stops the sessions in it with close_rows \"$d\", in the order SKILL.md gives for merge N (the worktree and the merged branch removed ..., the last session stopped), while close_why_agent and cmd_solve_done call close_rows while the worktree still stands; so merge asks for the sessions of a worktree that is already gone",
     "proposed_for": "P144",
     "why": null,
@@ -26282,7 +26326,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W275",
     "made": {
       "at": "2026-10-09T14:18+02:00",
       "by": "logoslang-why-P144-a",
@@ -26292,12 +26336,22 @@
       "run": "why-P144",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c732ec5",
+        "change": "merged into W275",
+        "reason": "A and B state the same fact: cmd_merge removes the worktree before close_rows, while close_why_agent and cmd_solve_done close rows first"
+      }
+    ]
   },
   {
     "id": "W274",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "wt_of tells that a task's worktree stands under an older root (OLD_WT_ROOTS) only while its folder exists there, and otherwise names the folder under WT_ROOT; rows_in, which close_rows reads, keeps a session row only when its cwd equals that one path; so once an old-root worktree is removed, close_rows looks under WT_ROOT and matches none of the sessions that ran in the old folder",
     "proposed_for": "P144",
     "why": null,
@@ -26334,7 +26388,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W277",
     "made": {
       "at": "2026-10-09T14:18+02:00",
       "by": "logoslang-why-P144-a",
@@ -26344,6 +26398,224 @@
       "run": "why-P144",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c732ec5",
+        "change": "merged into W277",
+        "reason": "A and B state the same fact: wt_of names an old-root worktree only while its folder exists, and rows_in matches rows by that one path"
+      }
+    ]
+  },
+  {
+    "id": "W275",
+    "kind": "why",
+    "status": "accepted",
+    "text": "cmd_merge calls close_rows only after the task's worktree is removed (after retire_branch with MERGE=local, after its own git worktree remove with MERGE=pr), while close_why_agent and cmd_solve_done call close_rows before they remove theirs, so merge is the one closing path that looks up a task's session rows when its worktree folder is already gone",
+    "proposed_for": "P144",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "cmd_merge",
+      "close_rows",
+      "retire_branch",
+      "close_why_agent",
+      "cmd_solve_done",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -E '^(cmd_merge|close_why_agent|cmd_solve_done)\\(\\)|close_rows \"\\$d\"|worktree remove \"\\$wt\"|retire_branch \"\\$wt\"' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "763:  git -C \"$REPO\" worktree remove \"$wt\" || die ...   (inside retire_branch)\n854:cmd_merge() {\n875:    git -C \"$REPO\" worktree remove \"$wt\" || die ...   (MERGE=pr)\n882:    retire_branch \"$wt\" \"$branch\"                      (MERGE=local)\n893:  close_rows \"$d\" >/dev/null\n998:close_why_agent() {\n1001:  close_rows \"$d\"\n1008:  git -C \"$REPO\" worktree remove \"$wt\" \\\n1185:cmd_solve_done() {\n1191:  close_rows \"$d\"\n1198:    retire_branch \"$wt\" \"$branch\"",
+        "commit": "776f442"
+      },
+      {
+        "command": "rg -n 'retire_branch \"\\$wt\"|worktree remove \"\\$wt\"|close_rows \"\\$d\"|^(cmd_merge|close_why_agent|cmd_solve_done)\\(\\)' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "763:  git -C \"$REPO\" worktree remove \"$wt\" || die ...   (inside retire_branch)\n854:cmd_merge() {\n875:    git -C \"$REPO\" worktree remove \"$wt\" || die ...   (MERGE=pr)\n882:    retire_branch \"$wt\" \"$branch\"                     (MERGE=local)\n893:  close_rows \"$d\" >/dev/null                          (after both)\n998:close_why_agent() {\n1001:  close_rows \"$d\"\n1008:  git -C \"$REPO\" worktree remove \"$wt\" \\\n1185:cmd_solve_done() {\n1191:  close_rows \"$d\"\n1198:    retire_branch \"$wt\" \"$branch\"",
+        "commit": "776f442"
+      },
+      {
+        "command": "rg -n -o 'the worktree and the merged branch removed.{0,140}last session stopped|stops and removes every session row in the worktree, and removes the worktree and the branch' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "135:the worktree and the merged branch removed with the safe delete, the base pushed, the `in-progress` label off, the issue closed with the merge hash, the last session stopped\n152:stops and removes every session row in the worktree, and removes the worktree and the branch\n(line 135 is merge N, the order the code follows; line 152 is merge of the orchestrator's own PR, which says sessions first, yet the code removes the worktree first there too, line 875)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "cmd_merge removes the merged task's worktree (retire_branch when MERGE=local, git worktree remove when MERGE=pr) before it stops the sessions in it with close_rows \"$d\", in the order SKILL.md gives for merge N (the worktree and the merged branch removed ..., the last session stopped), while close_why_agent and cmd_solve_done call close_rows while the worktree still stands; so merge asks for the sessions of a worktree that is already gone"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:18+02:00",
+      "by": "logoslang-why-P144-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c732ec5",
+        "change": "accepted as a why of P144, same as W273",
+        "reason": "A and B state the same fact: cmd_merge removes the worktree before close_rows, while close_why_agent and cmd_solve_done close rows first"
+      }
+    ]
+  },
+  {
+    "id": "W276",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Nothing in the orchestrate skill registers watch-guard.sh as a hook: SKILL.md's frontmatter holds only name and description, orchestrate.sh's one setup command, cmd_setup, copies only the repo's .agents/orchestrator files and ruling document and no command names settings.json, and SKILL.md ›Setup, once per session‹ (ListAgents, permission mode, AGENTS.md, status, start the watch) neither registers nor checks the hook, so whether the guard runs rests on a hand edit of ~/.claude/settings.json that no step asks for",
+    "proposed_for": "P138",
+    "why": null,
+    "anchors": [
+      "cmd_setup",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/watch-guard.sh",
+      "cmd_questions_watch"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "cd ~/.claude/skills/orchestrate && sed -n 1,4p SKILL.md | cut -c1-40; rg -n 'settings\\.json|watch-guard' orchestrate.sh setup; sed -n '/^cmd_setup()/,/^}/p' orchestrate.sh | rg -o 'cp \"[^\"]*\" \"[^\"]*\"|pws.py\" init'; sed -n '/^## Setup, once per session/,/^## Picking/p' SKILL.md | rg -o '^[0-9]\\. .{0,45}'",
+        "output": "---\nname: orchestrate\ndescription: Run a repo's issues (GitHub\n---\norchestrate.sh:1523:  # watch-guard.sh, the Stop hook, keeps this session from ending a turn while the watch is down\ncp \"$SCRIPT_DIR/setup/$f\" \"$ORCH_DIR/$f\"\ncp \"$SCRIPT_DIR/setup/gitattributes\" \"$ORCH_DIR/.gitattributes\"\npws.py\" init\ncp \"$SCRIPT_DIR/setup/KNOWLEDGE.md\" \"$REPO/$RULING_DOC\"\n1. Run ListAgents. Its first line is this sessio\n2. Sessions run in the same permission mode as y\n3. Read the repo's `.agents/orchestrator/AGENTS.\n4. `status`. A live session in a worktree means\n5. Start the question watch (below). It runs for",
+        "commit": "776f442"
+      },
+      {
+        "command": "the guard called as a Stop hook would be: bash why-probes/P138-guard.sh <scratch git repo whose .agents/orchestrator/state/orchestrator.session holds probe-sid>",
+        "output": "== watch down, the orchestrator's session\n{\"decision\": \"block\", \"reason\": \"The question watch of .../fakerepo is down, so Thobias's saved answers reach no one. Start it with the Monitor tool, ...\"}\nexit 0\n== watch down, another session\nexit 0\n== watch up (watch.lock held), the orchestrator's session\nexit 0\n(so the script works when called; only its registration is missing)",
+        "commit": "776f442"
+      },
+      {
+        "command": "cd ~/.claude/skills/orchestrate && rg -n 'hooks|settings(\\.local)?\\.json|watch-guard' orchestrate.sh setup; sed -n '/^## Setup, once per session/,/^## Picking/p' SKILL.md | rg -c '^[0-9]+\\. '; sed -n '/^## Setup, once per session/,/^## Picking/p' SKILL.md | rg -ci 'hook|settings'; for f in ~/.claude/settings.json ~/.claude/settings.local.json .claude/settings.json /etc/claude-code/managed-settings.json; do jq -c '[.hooks.Stop[]?.hooks[].command | test(\"watch-guard\")]' $f; done",
+        "output": "orchestrate.sh:1523:  # watch-guard.sh, the Stop hook, keeps this session from ending a turn while the watch is down\n(nothing in setup/)\n5   (numbered steps in Setup, once per session)\n    (rg -ci hook|settings: no match, exit 1)\n[false]   (~/.claude/settings.json: its one Stop hook is the notify-send line)\n[]        (~/.claude/settings.local.json: no hooks)\n(the repo's .claude/settings.json and /etc/claude-code/managed-settings.json do not exist)",
+        "commit": "776f442"
+      },
+      {
+        "command": "git init -q $CLAUDE_JOB_DIR/tmp/guardrepo, with .agents/orchestrator/state/orchestrator.session holding S1 and no watch.lock held; bash ~/.claude/skills/orchestrate/watch-guard.sh < why-probes/guard-input.json  (input: {\"session_id\":\"S1\",\"cwd\":\"<guardrepo>\",\"stop_hook_active\":false})",
+        "output": "{ \"decision\": \"block\", \"reason\": \"The question watch of .../guardrepo is down, so Thobias's saved answers reach no one. Start it with the Monitor tool, timeout_ms 1800000: ...questions-watch --follow\" }\nexit 0   (the script blocks a turn when called; only its registration is missing)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "No command of orchestrate.sh and no step of SKILL.md writes watch-guard.sh into a settings file's hooks.Stop: the script's only mention of it is a comment in cmd_questions_watch, ›Setup, once per session‹ has five steps and none names a hook or a settings file, and ›Questions to Thobias‹ states the registration as a fact of his ~/.claude/settings.json instead of as a step anyone takes, so the guard script exists and works but nothing ever calls it"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:18+02:00",
+      "by": "logoslang-why-P138-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P138",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c732ec5",
+        "change": "accepted as a why of P138, same as W272",
+        "reason": "A and B state the same fact: no command of orchestrate.sh, no step of SKILL.md and no frontmatter registers watch-guard.sh as a hook; both ran the guard by hand and it works, so registration is the only missing piece"
+      }
+    ]
+  },
+  {
+    "id": "W277",
+    "kind": "why",
+    "status": "accepted",
+    "text": "rows_in (like ids_in and live_in) finds a task's sessions by comparing each row's cwd with the path wt_of gives now, and wt_of names a worktree under an earlier root (OLD_WT_ROOTS, such as .claude/worktrees) only while that folder exists and otherwise WT_ROOT/<task>, so once an old-root worktree is removed the same task maps to a new-root path and its rows, whose cwd is the old path, match nothing; a new-root worktree keeps its path and is not hit",
+    "proposed_for": "P144",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "wt_of",
+      "rows_in",
+      "ids_in",
+      "live_in",
+      "OLD_WT_ROOTS",
+      "WT_ROOT",
+      "close_rows",
+      "roots_json",
+      "cmd_status"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n '201,207p;233,236p' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "wt_of() {\n  local r\n  for r in \"${OLD_WT_ROOTS[@]}\"; do\n    if [ -d \"$r/$1\" ]; then echo \"$r/$1\"; return; fi\n  done\n  echo \"$WT_ROOT/$1\"\n}\nrows_in() {\n  all_rows | jq -r --arg d \"$(wt_of \"$1\")\" \\\n    '.[] | select(.kind == \"background\" and (.cwd // \"\") == $d) | .id'\n}",
+        "commit": "776f442"
+      },
+      {
+        "command": "bash why-probes/wt_of_probe.sh <scratch folder>   (loads the real wt_of, roots set as use_repo sets them; one old-root and one new-root worktree, asked before and after rmdir)",
+        "output": "issue-82 while its folder exists: <scratch>/.claude/worktrees/issue-82\nissue-83 while its folder exists: <scratch>/.agents/worktrees/issue-83\nissue-82 after its folder is removed: <scratch>/.agents/worktrees/issue-82\nissue-83 after its folder is removed: <scratch>/.agents/worktrees/issue-83",
+        "commit": "776f442"
+      },
+      {
+        "command": "bash why-probes/wt_of_flip.sh   (loads orchestrate.sh's own wt_of with OLD_WT_ROOTS=(<repo>/.claude/worktrees), WT_ROOT=<repo>/.agents/worktrees, then removes the old folder)",
+        "output": "folder stands:  wt_of issue-82 = <repo>/.claude/worktrees/issue-82\nfolder removed: wt_of issue-82 = <repo>/.agents/worktrees/issue-82",
+        "commit": "776f442"
+      },
+      {
+        "command": "rg -n '\\.cwd // \"\"\\) == \\$d|roots_json\\)|startswith\\(\\$r\\)' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "223/229/235 (ids_in, live_in, rows_in):  select(.kind == \"background\" and (.cwd // \"\") == $d)   with $d = wt_of\n350-351 (cmd_status):  any($rs[]; . as $r | $c | startswith($r))   with $rs = roots_json, every root\n628-629 (dup_rows):    the same prefix match over every root\n(so status, matching by any root, still lists the row that close_rows, matching one path, missed)",
+        "commit": "776f442"
+      },
+      {
+        "command": "git worktree list | rg '/\\.claude/worktrees/issue-'",
+        "output": "/home/o/Personal/Code/LogosLang/.claude/worktrees/issue-175     461870f [issue-175-void-echo]\n/home/o/Personal/Code/LogosLang/.claude/worktrees/issue-176     03bce0a [issue-176-drain-scratch]\n/home/o/Personal/Code/LogosLang/.claude/worktrees/issue-177     0df3e23 [issue-177-unnamed-record-field]\n(three issue worktrees still under the old root; a merge of any of them repeats P144)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "wt_of tells that a task's worktree stands under an older root (OLD_WT_ROOTS) only while its folder exists there, and otherwise names the folder under WT_ROOT; rows_in, which close_rows reads, keeps a session row only when its cwd equals that one path; so once an old-root worktree is removed, close_rows looks under WT_ROOT and matches none of the sessions that ran in the old folder"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:18+02:00",
+      "by": "logoslang-why-P144-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "c732ec5",
+        "change": "accepted as a why of P144, same as W274",
+        "reason": "A and B state the same fact: wt_of names an old-root worktree only while its folder exists, and rows_in matches rows by that one path"
+      }
+    ]
   }
 ]
