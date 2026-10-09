@@ -460,9 +460,7 @@
     "status": "accepted",
     "text": "A line's end only gives back the line's scratch bytes (`stack_release`, once per construct and tier) and records nothing of the values the line made",
     "proposed_for": "P3",
-    "why": [
-      "W6"
-    ],
+    "why": null,
     "anchors": [
       "stack_release",
       "src/identities/scope.rs",
@@ -502,16 +500,25 @@
         "commit": "9fc7634",
         "change": "why + W6",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "why - W6",
+        "reason": "W6 rejected: no longer holds on dev 710821b: its evidence command, rg own_node/take_pending_defers/session_defers, finds nothing (exit 1); since #192 (ac86218) a value's teardown runs where its life ends (scope::exit_items, end_held, teardown_of); found stale by why-P143-a, 9 October 2026"
       }
     ]
   },
   {
     "id": "W6",
     "kind": "why",
-    "status": "accepted",
+    "status": "rejected",
     "text": "A teardown runs only where the code that took the value inserted one (`own_node`, or a `defer free` built by `declare_here`); the identities that end a value's life run none",
     "proposed_for": "W5",
-    "why": [],
+    "why": null,
     "anchors": [
       "own_node",
       "declare_here",
@@ -550,6 +557,15 @@
         "commit": "9fc7634",
         "change": "asked: no why found",
         "reason": "root cause per #192's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      },
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "rejected, its whys were none",
+        "reason": "no longer holds on dev 710821b: its evidence command, rg own_node/take_pending_defers/session_defers, finds nothing (exit 1); since #192 (ac86218) a value's teardown runs where its life ends (scope::exit_items, end_held, teardown_of); found stale by why-P143-a, 9 October 2026"
       }
     ]
   },
@@ -564,8 +580,7 @@
     "tier": "interpreted",
     "found": "first example of #218 (review round 1 of #211, 29 September 2026; RCA block-tail-owner on dev 1922c65); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
     "why": [
-      "W7",
-      "W6"
+      "W7"
     ],
     "issue": 218,
     "fixed": null,
@@ -596,6 +611,15 @@
         "commit": "9fc7634",
         "change": "why + W6",
         "reason": "a parameter is a taker that inserts no teardown, so the box it takes is never freed"
+      },
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "why - W6",
+        "reason": "W6 rejected: no longer holds on dev 710821b: its evidence command, rg own_node/take_pending_defers/session_defers, finds nothing (exit 1); since #192 (ac86218) a value's teardown runs where its life ends (scope::exit_items, end_held, teardown_of); found stale by why-P143-a, 9 October 2026"
       }
     ]
   },
@@ -605,9 +629,7 @@
     "status": "accepted",
     "text": "Whether a value carries a teardown is tested at each site that takes it, each with its own reader: the call argument and `return` ask `is_owning_value`, which answers for owning pointers only",
     "proposed_for": "P4",
-    "why": [
-      "W6"
-    ],
+    "why": null,
     "anchors": [
       "is_owning_value",
       "src/parse/bodies.rs"
@@ -645,6 +667,15 @@
         "commit": "9fc7634",
         "change": "why + W6",
         "reason": "each taking site tests the value itself because the teardown is inserted by the taker (cross-root review, group C, \"#218 (its argument half)\")"
+      },
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "why - W6",
+        "reason": "W6 rejected: no longer holds on dev 710821b: its evidence command, rg own_node/take_pending_defers/session_defers, finds nothing (exit 1); since #192 (ac86218) a value's teardown runs where its life ends (scope::exit_items, end_held, teardown_of); found stale by why-P143-a, 9 October 2026"
       }
     ]
   },
@@ -653,9 +684,7 @@
     "kind": "solution",
     "status": "chosen",
     "text": "The identities that end a value's life (a scope's exit, `=`, `free`, an `if`'s close) read the type's `free` slot and run it there; nothing is inserted at `:=`",
-    "fixes": [
-      "W6"
-    ],
+    "fixes": [],
     "assessment": "Removes own_node, OpenScope.defers and owned, teardown_scope, retire_teardown, retire_inserted, take_pending_defers, session_defers and the null stand-in; makes #192 and #224 impossible only if built whole, the line end included, while its plan walks named values only; #218's return box (1, 2) rows still need rule 3's refusal, a separate test",
     "decision": {
       "by": "Thobias",
@@ -695,6 +724,15 @@
         "commit": "9fc7634",
         "change": "issue #192",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "fixes - W6, rejected",
+        "reason": "no longer holds on dev 710821b: its evidence command, rg own_node/take_pending_defers/session_defers, finds nothing (exit 1); since #192 (ac86218) a value's teardown runs where its life ends (scope::exit_items, end_held, teardown_of); found stale by why-P143-a, 9 October 2026"
       }
     ]
   },
@@ -19074,7 +19112,10 @@
     "expected": "both refused where `f` is defined (›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹, Ruled 8 October 2026, Thobias, Q79: a `bool` lies inside no number type, and no number lies inside `bool`)",
     "tier": "interpreted",
     "found": "logoslang-issue-82-review-4 (FACT), on dev 5dbf3b2 and branch 080906e; the reviewer names #198's unchecked function result",
-    "why": null,
+    "why": [
+      "W258",
+      "W14"
+    ],
     "issue": 82,
     "fixed": null,
     "made": {
@@ -19086,7 +19127,26 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "why + W258",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "why + W14",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P112",
@@ -24451,7 +24511,10 @@
     "expected": "one rule decides a made `return` for every type a function hands on, the pointer and the record alike (›A last value moves out‹)",
     "tier": "interpreted",
     "found": "logoslang-issue-82-review-6, review round 6 of issue 82, 9 October 2026, dev at 654006f",
-    "why": null,
+    "why": [
+      "W257",
+      "W7"
+    ],
     "issue": 82,
     "fixed": null,
     "made": {
@@ -24463,7 +24526,26 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "why + W257",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "why + W7",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P144",
@@ -24486,6 +24568,537 @@
       "commit": "86369f0",
       "run": null,
       "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W255",
+    "kind": "why",
+    "status": "merged",
+    "text": "commit_fn_body, the only check fn_over_body makes of a body's last value and each return operand against the -> type, checks a -> type, -> dyad or record result and hands a number result to commit_tail, but returns the body unchecked for every other type (if !is_numtype_node(types, output) { return Ok(body) }); types.numtypes holds the ten number types and not bool, so -> bool ( i32 5 ), -> bool ( 5 ) and -> @i32 ( i32 5 ) all pass",
+    "proposed_for": "P111",
+    "why": null,
+    "anchors": [
+      "commit_fn_body",
+      "is_numtype_node",
+      "fn_over_body",
+      "commit_tail",
+      "NumType",
+      "src/identities/mod.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'if output == types\\.(type_|dyad_)|record_width\\(types, output\\)|!is_numtype_node\\(types, output\\)|^        return Ok\\(body\\);|commit_tail\\(store, types, body, output\\)|types\\.numtypes\\.iter' src/identities/mod.rs",
+        "output": "763:    types.numtypes.iter().any(|&t| !t.is_null() && t == node)\n1124:    if output == types.type_ {\n1126:        return Ok(body);\n1128:    if output == types.dyad_ {\n1130:        return Ok(body);\n1132:    if by_copy::record_width(types, output).is_some() {\n1146:    if !is_numtype_node(types, output) {\n1147:        return Ok(body);\n1149:    commit_tail(store, types, body, output)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n -A 11 '^pub enum NumType' src/identities/numtype.rs",
+        "output": "19:pub enum NumType {\n20-    I8,\n21-    I16,\n22-    I32,\n23-    I64,\n24-    U8,\n25-    U16,\n26-    U32,\n27-    U64,\n28-    F32,\n29-    F64,\n30-}",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'commit_fn_body|check_store_type' src/parse/bodies.rs",
+        "output": "611:            unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };\n643:                crate::identities::commit_fn_body(self.rt.store, self.types, r.node, output)?;",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p3.txt   (target/release/logos at aaf87c2, interpreted unless f.compile())",
+        "output": "f := fn () -> bool ( i32 5 ), print «{f()}»  => true, exit 0\nf := fn () -> bool ( 5 ), print «{f()}»  => true, exit 0\nf := fn () -> bool ( n := i32 5, n ), print «{f()}»  => true, exit 0\nf := fn () -> bool ( return i32 5 ), print «{f()}»  => true, exit 0\nf := fn () -> bool ( i32 5 ), f.compile(), print «{f()}»  => true, exit 0\nf := fn () -> @i32 ( i32 5 ), print «{f()@}»  => Segmentation fault, exit 139\nf := fn () -> type ( i32 5 ), 7  => error: these types do not match (crossing types needs an explicit cast), exit 1\npt := type ( a := i32 ?, b := i32 ? ), f := fn () -> pt ( i32 5 ), 7  => error: these types do not match (crossing types needs an explicit cast), exit 1",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W258",
+    "made": {
+      "at": "2026-10-09T14:03+02:00",
+      "by": "logoslang-why-P111-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P111",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "merged into W258",
+        "reason": "A and B state the same fact: commit_fn_body checks a result only for type, dyad, a record or a number type, and returns every other body unchecked (bool is not in types.numtypes)"
+      }
+    ]
+  },
+  {
+    "id": "W256",
+    "kind": "why",
+    "status": "merged",
+    "text": "Whether a `return` may hand on a value it made is decided in two places that read different things: `note_return`, as the `return` is parsed, refuses an operand that `is_owning_value` reads as owning, which it answers only for a made value whose type is an owning pointer, never for a record, and it never reads the own mark `FN_OUTPUT_GATE`, though `fn_over_body` writes that mark before the body is parsed; where the body closes, `fn_over_body` checks the made answer of every `return` against that mark with `check_handed`, for every type; so under `-> own @i32` a made pointer is refused at the first place, and under `-> own bag` a made record passes the first and the second accepts it",
+    "proposed_for": "P143",
+    "why": null,
+    "anchors": [
+      "note_return",
+      "is_owning_value",
+      "owning_pointee",
+      "check_handed",
+      "fn_over_body",
+      "FN_OUTPUT_GATE",
+      "OwnershipAcrossReturn",
+      "src/parse/bodies.rs",
+      "src/identities/drop_model.rs"
+    ],
+    "design": [
+      "A last value moves out",
+      "Three fail-closed ownership rules, and `-> own @T`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'is_owning_value\\(types, value\\)|OwnershipAcrossReturn|fn check_handed|check_handed\\(marked|early\\[FN_OUTPUT_GATE\\]|let body = self.bracketed_body|fn note_return|fn fn_over_body' src/parse/bodies.rs",
+        "output": "132:fn check_handed(marked: bool, written: Option<&str>, made: Option<bool>) -> Result<(), ParseError> {\n527:    pub(super) unsafe fn fn_over_body(\n543:            early[FN_OUTPUT_GATE] = gate;\n592:        let body = self.bracketed_body();\n632:            check_handed(marked, written, made)?;\n634:                check_handed(marked, written, r.made).map_err(|e| self.fail_at(r.at, e))?;\n675:    pub(crate) unsafe fn note_return(\n695:        if crate::identities::drop_model::is_owning_value(types, value) {\n696:            return Err(ParseError::OwnershipAcrossReturn);",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'fn owning_pointee\\b' -A3 src/identities/drop_model.rs",
+        "output": "901:unsafe fn owning_pointee(ty: DyadPtr) -> Option<DyadPtr> {\n902-    (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())\n903-        .then(|| numtype::pointee_of(ty))\n904-}",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p143.txt (each line one program; <BAG> is bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ))",
+        "output": "mk := fn (c := i32 ?) -> own @i32 ( if (c == 1) (return alloc 1 of i32 3), alloc 1 of i32 4 ), x := mk(1), print «{x@}»\n  error: a `return` cannot hand ownership out yet; make it the function's last value, which moves out to the caller (exit 1)\n<BAG>, mk := fn (c := i32 ?) -> own bag ( if (c == 1) (return bag(3)), bag(4) ), x := mk(1), print «got»\n  got, freed 3 (exit 0; the same with mk.compile() before the call)\nh0 := fn () -> own @i32 ( alloc 1 of i32 5 ), mk := fn (c := i32 ?) -> own @i32 ( if (c == 1) (return h0()), h0() ), x := mk(1), print «{x@}»\n  error: a `return` cannot hand ownership out yet; ... (exit 1)\n<BAG>, h0 := fn () -> own bag ( bag(5) ), mk := fn (c := i32 ?) -> own bag ( if (c == 1) (return h0()), h0() ), x := mk(1), print «got»\n  got, freed 5 (exit 0)\nwithout own, -> @i32: error at the return: a `return` cannot hand ownership out yet\nwithout own, -> bag: error: this function hands on a value it made: write `-> own bag`\nmk := fn (c := i32 ?) -> own @i32 ( alloc 1 of i32 4 ), x := mk(1), print «{x@}»\n  4 (exit 0: the last value of a pointer passes -> own)",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W257",
+    "made": {
+      "at": "2026-10-09T14:04+02:00",
+      "by": "logoslang-why-P143-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P143",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "merged into W257",
+        "reason": "A and B state the same fact: a made return is checked twice, by note_return (by kind, without reading the own mark FN_OUTPUT_GATE) and by check_handed at the close (by the mark)"
+      }
+    ]
+  },
+  {
+    "id": "P145",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function declared to give a pointer may give back a number, and reading through the result crashes: `-> @i32 ( i32 5 )` is accepted unchecked",
+    "program": "target/release/logos 'f := fn () -> @i32 ( i32 5 ), print «{f()@}»'",
+    "output": "segmentation fault, exit 139, interpreted, dev aaf87c2 (dev 710821b with only a question file moved)",
+    "expected": "refused where it is written, as `-> type ( i32 5 )` and `-> pt ( i32 5 )` are: a function's result is a place with a type, and a value landing there is checked (›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P111-a, FOUND in its WHY on P111, 9 October 2026, dev aaf87c2",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T14:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "710821b",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P146",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function's number result of another number type is reinterpreted as the declared type, and the two tiers disagree: the interpreter prints garbage bits, the compiler fails in the backend's verifier",
+    "program": "target/release/logos 'f := fn () -> f64 ( i32 5 ), print «{f()}»'; the same with `f.compile(), ` before the print; also `-> u8 ( i32 300 )` and `-> f32 ( f64 1.5 )`",
+    "output": "interpreted: `2.5e-323`; compiled: \"compile() failed: the backend rejected this: Compilation error: Verifier errors\", exit 1; `-> u8 ( i32 300 )` prints `44` on both tiers; `-> f32 ( f64 1.5 )` prints `0.0`; dev aaf87c2",
+    "expected": "`-> f64 ( i32 5 )` gives `5.0` on both tiers, since an `i32` lies inside `f64`; `-> u8 ( i32 300 )` and `-> f32 ( f64 1.5 )` are refused, since the value cannot be held exactly (›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹); the compiled tier runs what the interpreter runs",
+    "tier": "interpreted",
+    "found": "logoslang-why-P111-a, FOUND in its WHY on P111, 9 October 2026, dev aaf87c2",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T14:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "710821b",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P147",
+    "kind": "problem",
+    "status": "open",
+    "text": "A number place takes only its exact type: `x = f32 9` into an `f64` place is refused, though DESIGN uses this very line as its example of a conversion that writes `9.0`",
+    "program": "target/release/logos 'mut x := f64 0.0, x = f32 9, print «{x}»'",
+    "output": "error: these types do not match (crossing types needs an explicit cast), dev aaf87c2 (check_store_type accepts only the exact type)",
+    "expected": "`9.0`: \"with `mut x := f64 0.0`, `x = f32 9` writes `9.0`\" (DESIGN.md ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P111-a, FOUND in its WHY on P111, 9 October 2026, dev aaf87c2",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T14:04+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "710821b",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W257",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A made `return` operand is checked twice with two answers: `note_return` refuses it where it is written without reading the function's `own` mark (`FN_OUTPUT_GATE`, set by `fn_over_body` before the body is parsed), and the body's close runs `check_handed` over every `return`'s `made` and accepts it under `-> own`; wherever the first check fires, `-> own` changes nothing",
+    "proposed_for": "P143",
+    "why": null,
+    "anchors": [
+      "note_return",
+      "check_handed",
+      "FN_OUTPUT_GATE",
+      "fn_over_body",
+      "is_owning_value",
+      "owning_pointee",
+      "OwnershipAcrossReturn",
+      "src/parse/bodies.rs",
+      "src/identities/drop_model.rs"
+    ],
+    "design": [
+      "A last value moves out",
+      "Three fail-closed ownership rules, and `-> own @T`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'early\\[FN_OUTPUT_GATE\\] = gate|check_handed\\(marked, written, r\\.made\\)|Some\\(true\\), Some\\(text\\)\\) if !marked|is_owning_value\\(types, value\\)|OwnershipAcrossReturn\\);' src/parse/bodies.rs",
+        "output": "136:        (Some(true), Some(text)) if !marked => Err(ParseError::HandsOnMade(text.to_string())),\n543:            early[FN_OUTPUT_GATE] = gate;\n634:                check_handed(marked, written, r.made).map_err(|e| self.fail_at(r.at, e))?;\n695:        if crate::identities::drop_model::is_owning_value(types, value) {\n696:            return Err(ParseError::OwnershipAcrossReturn);",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "target/release/logos '<P>' at aaf87c2, interpreted, P = mk := fn (c := i32 ?) -> own @i32 ( if (c == 1) (return alloc 1 of i32 3), alloc 1 of i32 4 ), x := mk(1), print «{x@}»; then the same with -> @i32; then <BAG>, mk := fn (c := i32 ?) -> own bag ( if (c == 1) (return bag(3)), bag(4) ), x := mk(1), print «got»",
+        "output": "-> own @i32: 1:73: error: a `return` cannot hand ownership out yet; make it the function's last value, which moves out to the caller\n-> @i32: 1:69: error: a `return` cannot hand ownership out yet; make it the function's last value, which moves out to the caller\n-> own bag: got\nfreed 3",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'is_owning_value\\(types, value\\)|OwnershipAcrossReturn|fn check_handed|check_handed\\(marked|early\\[FN_OUTPUT_GATE\\]|let body = self.bracketed_body|fn note_return|fn fn_over_body' src/parse/bodies.rs",
+        "output": "132:fn check_handed(marked: bool, written: Option<&str>, made: Option<bool>) -> Result<(), ParseError> {\n527:    pub(super) unsafe fn fn_over_body(\n543:            early[FN_OUTPUT_GATE] = gate;\n592:        let body = self.bracketed_body();\n632:            check_handed(marked, written, made)?;\n634:                check_handed(marked, written, r.made).map_err(|e| self.fail_at(r.at, e))?;\n675:    pub(crate) unsafe fn note_return(\n695:        if crate::identities::drop_model::is_owning_value(types, value) {\n696:            return Err(ParseError::OwnershipAcrossReturn);",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'fn owning_pointee\\b' -A3 src/identities/drop_model.rs",
+        "output": "901:unsafe fn owning_pointee(ty: DyadPtr) -> Option<DyadPtr> {\n902-    (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())\n903-        .then(|| numtype::pointee_of(ty))\n904-}",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p143.txt (each line one program; <BAG> is bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ))",
+        "output": "mk := fn (c := i32 ?) -> own @i32 ( if (c == 1) (return alloc 1 of i32 3), alloc 1 of i32 4 ), x := mk(1), print «{x@}»\n  error: a `return` cannot hand ownership out yet; make it the function's last value, which moves out to the caller (exit 1)\n<BAG>, mk := fn (c := i32 ?) -> own bag ( if (c == 1) (return bag(3)), bag(4) ), x := mk(1), print «got»\n  got, freed 3 (exit 0; the same with mk.compile() before the call)\nh0 := fn () -> own @i32 ( alloc 1 of i32 5 ), mk := fn (c := i32 ?) -> own @i32 ( if (c == 1) (return h0()), h0() ), x := mk(1), print «{x@}»\n  error: a `return` cannot hand ownership out yet; ... (exit 1)\n<BAG>, h0 := fn () -> own bag ( bag(5) ), mk := fn (c := i32 ?) -> own bag ( if (c == 1) (return h0()), h0() ), x := mk(1), print «got»\n  got, freed 5 (exit 0)\nwithout own, -> @i32: error at the return: a `return` cannot hand ownership out yet\nwithout own, -> bag: error: this function hands on a value it made: write `-> own bag`\nmk := fn (c := i32 ?) -> own @i32 ( alloc 1 of i32 4 ), x := mk(1), print «{x@}»\n  4 (exit 0: the last value of a pointer passes -> own)",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "Whether a `return` may hand on a value it made is decided in two places that read different things: `note_return`, as the `return` is parsed, refuses an operand that `is_owning_value` reads as owning, which it answers only for a made value whose type is an owning pointer, never for a record, and it never reads the own mark `FN_OUTPUT_GATE`, though `fn_over_body` writes that mark before the body is parsed; where the body closes, `fn_over_body` checks the made answer of every `return` against that mark with `check_handed`, for every type; so under `-> own @i32` a made pointer is refused at the first place, and under `-> own bag` a made record passes the first and the second accepts it"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:04+02:00",
+      "by": "logoslang-why-P143-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P143",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "accepted as a why of P143, same as W256",
+        "reason": "A and B state the same fact: a made return is checked twice, by note_return (by kind, without reading the own mark FN_OUTPUT_GATE) and by check_handed at the close (by the mark)"
+      }
+    ]
+  },
+  {
+    "id": "W258",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`commit_fn_body` checks a function's last value only when its `->` type is `type`, `dyad`, a record or one of the ten `types.numtypes`; `bool_` is not among them, so for `-> bool` (and a pointer or `fn` result) `if !is_numtype_node(types, output)` returns `Ok(body)` unchecked, while `=` and a call argument refuse the same value through `check_store_type`",
+    "proposed_for": "P111",
+    "why": null,
+    "anchors": [
+      "commit_fn_body",
+      "is_numtype_node",
+      "bool_",
+      "check_store_type",
+      "fn_over_body",
+      "commit_tail",
+      "NumType",
+      "src/identities/mod.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'pub numtypes|pub bool_' src/identities/mod.rs; rg -n 'fn commit_fn_body|if output == types\\.(type_|dyad_)|record_width\\(types, output\\)|is_numtype_node\\(types, output\\)|return Ok\\(body\\);|commit_tail\\(store, types, body, output\\)' src/identities/mod.rs",
+        "output": "88:    pub numtypes: [DyadPtr; 10],\n89:    pub bool_: DyadPtr,\n1117:pub(crate) unsafe fn commit_fn_body(\n1124:    if output == types.type_ {\n1126:        return Ok(body);\n1128:    if output == types.dyad_ {\n1130:        return Ok(body);\n1132:    if by_copy::record_width(types, output).is_some() {\n1146:    if !is_numtype_node(types, output) {\n1147:        return Ok(body);\n1149:    commit_tail(store, types, body, output)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p111-b.txt (and p111-c.txt, p111-d.txt), interpreted, dev aaf87c2",
+        "output": "f := fn () -> bool ( i32 5 ), print «{f()}»                      -> true, exit 0\nf := fn () -> bool ( return i32 5 ), print «{f()}»               -> true, exit 0\nf := fn () -> bool ( f64 0.5 ), print «{f()}»                    -> true, exit 0\ng := fn () -> i32 ( i32 1 ), h := fn () -> bool ( g ), print «{h()}»  -> false, exit 0\nh := fn () -> @i32 ( i32 5 ), print «{h()@}»                     -> Segmentation fault, exit 139\nmut b := bool ?, b = i32 5, print «{b}»                          -> error: these types do not match, exit 1\nf := fn (a := bool ?) -> i32 ( i32 1 ), print «{f(i32 5)}»       -> error: these types do not match, exit 1",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'if output == types\\.(type_|dyad_)|record_width\\(types, output\\)|!is_numtype_node\\(types, output\\)|^        return Ok\\(body\\);|commit_tail\\(store, types, body, output\\)|types\\.numtypes\\.iter' src/identities/mod.rs",
+        "output": "763:    types.numtypes.iter().any(|&t| !t.is_null() && t == node)\n1124:    if output == types.type_ {\n1126:        return Ok(body);\n1128:    if output == types.dyad_ {\n1130:        return Ok(body);\n1132:    if by_copy::record_width(types, output).is_some() {\n1146:    if !is_numtype_node(types, output) {\n1147:        return Ok(body);\n1149:    commit_tail(store, types, body, output)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n -A 11 '^pub enum NumType' src/identities/numtype.rs",
+        "output": "19:pub enum NumType {\n20-    I8,\n21-    I16,\n22-    I32,\n23-    I64,\n24-    U8,\n25-    U16,\n26-    U32,\n27-    U64,\n28-    F32,\n29-    F64,\n30-}",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'commit_fn_body|check_store_type' src/parse/bodies.rs",
+        "output": "611:            unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };\n643:                crate::identities::commit_fn_body(self.rt.store, self.types, r.node, output)?;",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p3.txt   (target/release/logos at aaf87c2, interpreted unless f.compile())",
+        "output": "f := fn () -> bool ( i32 5 ), print «{f()}»  => true, exit 0\nf := fn () -> bool ( 5 ), print «{f()}»  => true, exit 0\nf := fn () -> bool ( n := i32 5, n ), print «{f()}»  => true, exit 0\nf := fn () -> bool ( return i32 5 ), print «{f()}»  => true, exit 0\nf := fn () -> bool ( i32 5 ), f.compile(), print «{f()}»  => true, exit 0\nf := fn () -> @i32 ( i32 5 ), print «{f()@}»  => Segmentation fault, exit 139\nf := fn () -> type ( i32 5 ), 7  => error: these types do not match (crossing types needs an explicit cast), exit 1\npt := type ( a := i32 ?, b := i32 ? ), f := fn () -> pt ( i32 5 ), 7  => error: these types do not match (crossing types needs an explicit cast), exit 1",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "commit_fn_body, the only check fn_over_body makes of a body's last value and each return operand against the -> type, checks a -> type, -> dyad or record result and hands a number result to commit_tail, but returns the body unchecked for every other type (if !is_numtype_node(types, output) { return Ok(body) }); types.numtypes holds the ten number types and not bool, so -> bool ( i32 5 ), -> bool ( 5 ) and -> @i32 ( i32 5 ) all pass"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:05+02:00",
+      "by": "logoslang-why-P111-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P111",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "710821b",
+        "change": "accepted as a why of P111, same as W255",
+        "reason": "A and B state the same fact: commit_fn_body checks a result only for type, dyad, a record or a number type, and returns every other body unchecked (bool is not in types.numtypes)"
+      }
+    ]
+  },
+  {
+    "id": "W259",
+    "kind": "why",
+    "status": "draft",
+    "text": "check_call_reads walks the callee's whole FN_OUTER list at every call and joins each entry into the caller's open list through note_outer_read, so a function's list holds every outer name read anywhere down its call chain (h_i's holds c and h0 to h_{i-1}) and the chain's 2n calls visit about n² entries, h0's binding at every call, keeping no answer per function between calls, though ›Reading a program takes time in step with its size; no walk runs once per path‹ asks each node visited a bounded number of times",
+    "proposed_for": "P139",
+    "why": null,
+    "anchors": [
+      "check_call_reads",
+      "note_outer_read",
+      "fn_outer",
+      "FN_OUTER",
+      "fn_over_body",
+      "OpenFn",
+      "src/parse/operands.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "A call is a use of every outer name the callee's body reads",
+      "Reading a program takes time in step with its size; no walk runs once per path"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'let outer = unsafe \\{ fn_outer\\(callee\\) \\}|for &binding in outer|self\\.note_outer_read\\(binding\\)|frame\\.outer\\.push|\\*slots\\.add\\(FN_OUTER\\) = outer' src/parse   (dev aaf87c2)",
+        "output": "src/parse/operands.rs:482:        let outer = unsafe { fn_outer(callee) };      (check_call_reads: the callee's whole list)\nsrc/parse/operands.rs:483:        for &binding in outer {\nsrc/parse/operands.rs:508:            self.note_outer_read(binding);              (each entry joins the open function's list)\nsrc/parse/operands.rs:462:                frame.outer.push(binding);                (note_outer_read)\nsrc/parse/bodies.rs:664:            *slots.add(FN_OUTER) = outer;                 (fn_over_body: the open list becomes the function's FN_OUTER)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "target/release/logos 'x := alloc 1 of i32 5, a := fn () -> i32 ( x@ ), b := fn () -> i32 ( a() ), g := fn () -> i32 ( b() ), free x, g()'   (why-probes/transitive.txt, dev aaf87c2, release, interpreted)",
+        "output": "<command line>:1:112: error: `x` is dead here: it was moved or freed above   (at g(): g's list holds x, read by a two calls down)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "python3 why-probes/chain.py <shape> 'own @i32' 7 <n...>, median of 7, release dev aaf87c2; then gdb breakpoint hit counts (why-probes/count.py) and stack samples (why-probes/sample.py)",
+        "output": "single (h_i := fn () -> own @i32 ( h_{i-1}() ), no if): 250: 13 ms, 500: 39 ms, 1000: 193 ms, 2000: 1716 ms\nchain (the problem's if shape): 250: 56 ms, 500: 169 ms, 1000: 1023 ms\nflat (no calls, h_i := fn () -> own @i32 ( alloc 1 of i32 5 )): 1250: 31 ms, 1500: 36 ms, 2000: 45 ms\ncheck_call_reads runs at if-chains of 10, 20, 40: 132, 252, 492 times (linear: the checks' count does not grow, each check's cost does)\nstack samples of single 2000 (3 of 3) and chain 1000 (6 of 8; the others regex setup and one teardown_of, which runs 5 times per function): innermost frame <seed::parse::Parser>::check_call_reads under run_ctor, lex_next, parse_block, fn_over_body",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:05+02:00",
+      "by": "logoslang-why-P139-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P139",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W260",
+    "kind": "why",
+    "status": "draft",
+    "text": "check_call_reads, run at every call, walks the callee's whole FN_OUTER list and adds each binding to the open function's list through note_outer_read, and fn_over_body stores that list as the new function's FN_OUTER, so in the chain h_i's list holds every outer name read anywhere below it (h_{i-1} down to h0, c and the operator names) and h_i's two calls join about 2i bindings: the chain's reading does about n*n joins and keeps about n*n/2 list entries, where ›Reading a program takes time in step with its size; no walk runs once per path‹ allows each node a bounded number of visits",
+    "proposed_for": "P139",
+    "why": null,
+    "anchors": [
+      "check_call_reads",
+      "note_outer_read",
+      "fn_outer",
+      "FN_OUTER",
+      "fn_over_body",
+      "OpenFn",
+      "src/parse/operands.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "A call is a use of every outer name the callee's body reads",
+      "Reading a program takes time in step with its size; no walk runs once per path"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'let outer = unsafe \\{ fn_outer\\(callee\\) \\};|for &binding in outer|self\\.note_outer_read\\(binding\\);|\\*slots\\.add\\(FN_OUTER\\) = outer;' src/parse/operands.rs src/parse/bodies.rs",
+        "output": "src/parse/operands.rs:482:        let outer = unsafe { fn_outer(callee) };\nsrc/parse/operands.rs:483:        for &binding in outer {\nsrc/parse/operands.rs:508:            self.note_outer_read(binding);\nsrc/parse/bodies.rs:664:            *slots.add(FN_OUTER) = outer;\n(check_call_reads holds 482-508; fn_over_body holds 664, where outer is the closed OpenFn's list)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "release build of dev aaf87c2, one run each, n = 2000; generator why-probes/gen.py, timer why-probes/time.sh: bash why-probes/time.sh target/release/logos <kind> 2000. plain: c := i32 1, h0 := fn () -> i32 ( i32 5 ), h_i := fn () -> i32 ( if (c == 1) (h_{i-1}()) else (h_{i-1}()) ), 7. callzero: the same with h0() in both arms of every h_i. namedu: h_i := fn () -> i32 ( g_i := h_{i-1}, i32 5 ), naming the one before without calling it",
+        "output": "plain    n=500: 69 ms   n=1000: 331 ms  n=2000: 2186 ms, exit 0, prints 7\ncallzero n=500: 27 ms   n=1000: 44 ms   n=2000: 85 ms, exit 0, prints 7\nnamedu   n=500: 23 ms   n=1000: 38 ms   n=2000: 69 ms, exit 0, prints 7\n(same calls, same bodies: only the callee's depth in the chain, so the length of its list, differs; plain i32 results, no alloc, so the ownership walk plays no part)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh target/release/logos why-probes/transitive.txt (first line: a name read only by h0 is checked at h2's call, two calls down)",
+        "output": "$ logos 'x := alloc 1 of i32 5, h0 := fn () -> i32 ( x@ ), h1 := fn () -> i32 ( h0() ), h2 := fn () -> i32 ( h1() ), free x, h2()'\n<command line>:1:117: error: `x` is dead here: it was moved or freed above\nexit 1",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:05+02:00",
+      "by": "logoslang-why-P139-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P139",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W261",
+    "kind": "why",
+    "status": "draft",
+    "text": "note_outer_read keeps the open function's outer list as a Vec (OpenFn's outer) and tests every binding with a linear frame.outer.contains before it pushes, so a call that joins a callee's list of i names costs about i*i/2 pointer compares; over the chain, whose lists grow by one name per function, the compares grow with the cube of its length, which is why the time grows five to eight times per doubling and not four; the other lookups in that loop are a hash set (ScopeStack::is_open) and the short open-scope stack (ScopeStack::position)",
+    "proposed_for": "P139",
+    "why": null,
+    "anchors": [
+      "note_outer_read",
+      "OpenFn",
+      "check_call_reads",
+      "ScopeStack",
+      "src/parse/operands.rs",
+      "src/parse/bodies.rs",
+      "src/parse/scopes.rs"
+    ],
+    "design": [
+      "Reading a program takes time in step with its size; no walk runs once per path"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'frame\\.outer\\.contains|frame\\.outer\\.push|pub\\(super\\) outer: Vec<DyadPtr>' src/parse/operands.rs src/parse/bodies.rs; rg -n 'self\\.set\\.contains|self\\.open\\.iter\\(\\)\\.position' src/parse/scopes.rs",
+        "output": "src/parse/operands.rs:461:            if depth < frame.below && !frame.outer.contains(&binding) {\nsrc/parse/operands.rs:462:                frame.outer.push(binding);\nsrc/parse/bodies.rs:24:    pub(super) outer: Vec<DyadPtr>,\n181:        self.open.iter().position(|&s| s == scope)\n189:        self.set.contains(&scope)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "release build of dev aaf87c2, one run each; generator why-probes/gen.py: bash why-probes/time.sh target/release/logos wide <m> 400 makes v_j := i32 j for j < m, h0 := fn () -> i32 ( x_0 := v_0, …, x_{m-1} := v_{m-1}, i32 5 ), and 400 functions h_i := fn () -> i32 ( h0() ), 7; widenocall is the same with i32 5 in place of h0() in the 400",
+        "output": "m=250:  wide 39 ms,  widenocall 20 ms,  extra 19 ms,  0.05 ms per call\nm=500:  wide 81 ms,  widenocall 26 ms,  extra 55 ms,  0.14 ms per call\nm=1000: wide 226 ms, widenocall 33 ms,  extra 193 ms, 0.48 ms per call\nm=2000: wide 544 ms, widenocall 51 ms,  extra 493 ms, 1.23 ms per call\n(all exit 0, print 7; one call into an empty list costs more than its m joins: about 0.6 ns per compare at m*m/2)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "the problem's own program, -> own @i32, three runs each: bash why-probes/time.sh target/release/logos chain <n> 'own @i32'",
+        "output": "n=250: 30, 32, 28 ms; n=500: 83, 71, 80 ms; n=1000: 390, 387, 352 ms; n=1400: 785, 751, 719 ms; all exit 0, print 7\n(n=2000 does not fit one command-line argument: Argument list too long)",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:06+02:00",
+      "by": "logoslang-why-P139-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P139",
+      "agent": "A"
     },
     "history": []
   }
