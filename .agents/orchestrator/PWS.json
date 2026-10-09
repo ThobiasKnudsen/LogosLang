@@ -638,7 +638,10 @@
     "status": "accepted",
     "text": "Whether a value carries a teardown is tested at each site that takes it, each with its own reader: the call argument and `return` ask `is_owning_value`, which answers for owning pointers only",
     "proposed_for": "P4",
-    "why": null,
+    "why": [
+      "W268",
+      "W269"
+    ],
     "anchors": [
       "is_owning_value",
       "src/parse/bodies.rs"
@@ -685,6 +688,24 @@
         "commit": "710821b",
         "change": "why - W6",
         "reason": "W6 rejected: no longer holds on dev 710821b: its evidence command, rg own_node/take_pending_defers/session_defers, finds nothing (exit 1); since #192 (ac86218) a value's teardown runs where its life ends (scope::exit_items, end_held, teardown_of); found stale by why-P143-a, 9 October 2026"
+      },
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "why + W268",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "why + W269",
+        "reason": null
       }
     ]
   },
@@ -24853,7 +24874,9 @@
     "status": "accepted",
     "text": "A made `return` operand is checked twice with two answers: `note_return` refuses it where it is written without reading the function's `own` mark (`FN_OUTPUT_GATE`, set by `fn_over_body` before the body is parsed), and the body's close runs `check_handed` over every `return`'s `made` and accepts it under `-> own`; wherever the first check fires, `-> own` changes nothing",
     "proposed_for": "P143",
-    "why": null,
+    "why": [
+      "W267"
+    ],
     "anchors": [
       "note_return",
       "check_handed",
@@ -24923,6 +24946,15 @@
         "commit": "710821b",
         "change": "accepted as a why of P143, same as W256",
         "reason": "A and B state the same fact: a made return is checked twice, by note_return (by kind, without reading the own mark FN_OUTPUT_GATE) and by check_handed at the close (by the mark)"
+      },
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "why + W267",
+        "reason": null
       }
     ]
   },
@@ -25026,7 +25058,10 @@
     "status": "accepted",
     "text": "check_call_reads walks the callee's whole FN_OUTER list at every call and joins each entry into the caller's open list through note_outer_read, so a function's list holds every outer name read anywhere down its call chain (h_i's holds c and h0 to h_{i-1}) and the chain's 2n calls visit about n² entries, h0's binding at every call, keeping no answer per function between calls, though ›Reading a program takes time in step with its size; no walk runs once per path‹ asks each node visited a bounded number of times",
     "proposed_for": "P139",
-    "why": null,
+    "why": [
+      "W177",
+      "W263"
+    ],
     "anchors": [
       "check_call_reads",
       "note_outer_read",
@@ -25109,6 +25144,24 @@
         "commit": "4683a9d",
         "change": "evidence 3 was {\"command\": \"python3 why-probes/chain.py <shape> 'own @i32' 7 <n...>, median of 7, release dev aaf87c2; then gdb breakpoint hit counts (why-probes/count.py) and stack samples (why-probes/sample.py)\", \"output\": \"single (h_i := fn () -> own @i32 ( h_{i-1}() ), no if): 250: 13 ms, 500: 39 ms, 1000: 193 ms, 2000: 1716 ms\\nchain (the problem's if shape): 250: 56 ms, 500: 169 ms, 1000: 1023 ms\\nflat (no calls, h_i := fn () -> own @i32 ( alloc 1 of i32 5 )): 1250: 31 ms, 1500: 36 ms, 2000: 45 ms\\ncheck_call_reads runs at if-chains of 10, 20, 40: 132, 252, 492 times (linear: the checks' count does not grow, each check's cost does)\\nstack samples of single 2000 (3 of 3) and chain 1000 (6 of 8; the others regex setup and one teardown_of, which runs 5 times per function): innermost frame <seed::parse::Parser>::check_call_reads under run_ctor, lex_next, parse_block, fn_over_body\", \"commit\": \"aaf87c2\"}",
         "reason": "why-P139-b: the first timings came from a loaded machine; these are quiet reruns, median of 7"
+      },
+      {
+        "at": "2026-10-09T14:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "why + W177",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T14:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "why + W263",
+        "reason": null
       }
     ]
   },
@@ -25246,7 +25299,7 @@
     "status": "accepted",
     "text": "note_outer_read keeps an open function's outer list each-once by frame.outer.contains, a scan of the whole Vec OpenFn.outer, so joining a callee's list of m names costs about m²/2 comparisons; over the transitive lists of W259 one call in the chain costs about i², and the chain about n³/6, twice that with the if's two calls, whose second finds every name already listed: this is what lifts the growth past fourfold per doubling",
     "proposed_for": "P139",
-    "why": null,
+    "why": [],
     "anchors": [
       "note_outer_read",
       "OpenFn",
@@ -25318,6 +25371,15 @@
         "commit": "4683a9d",
         "change": "accepted as a why of P139, same as W261",
         "reason": "A and B state the same fact: note_outer_read tests each joined name with a linear Vec contains, so joining a list of m names costs about m²/2 compares, lifting the chain past fourfold per doubling"
+      },
+      {
+        "at": "2026-10-09T14:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "asked: no why found",
+        "reason": "both agents, round 2: nothing asks for a scan; the first-read order is promised only by two code comments, the one reader checks every entry, and the one test sorts; W177 explains only the lists' length, already under W259"
       }
     ]
   },
@@ -25344,5 +25406,578 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "W263",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Neither DESIGN.md nor a spec page it points to says what a function keeps from checking its outer names, or what voids it: ›A call is a use of every outer name the callee's body reads‹ gives the check as a range lookup per outer name per call, ›A binding is live while its scope is open and it is not dead; it carries a range‹ tests one name at one point, and ›Reading a program takes time in step with its size; no walk runs once per path‹ asks an answer needed again kept without saying when a later move, free or scope close voids it (b() passes, then is refused after free x); so check_call_reads keeps nothing, no field of FN_SLOTS holds an answer, and every listed name is looked up again at every call",
+    "proposed_for": "W259",
+    "why": [],
+    "anchors": [
+      "check_call_reads",
+      "FN_OUTER",
+      "FN_SLOTS",
+      "src/parse/operands.rs",
+      "src/parse/bodies.rs",
+      "DESIGN.md",
+      "fn_outer"
+    ],
+    "design": [
+      "A call is a use of every outer name the callee's body reads",
+      "A binding is live while its scope is open and it is not dead; it carries a range",
+      "Reading a program takes time in step with its size; no walk runs once per path",
+      "Identification is incremental",
+      "The reader–writer rule is transitive, and resolution is a read"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -i 'per call|answer .*kept|is kept, not walked|cache|memo|checked once' DESIGN.md, each hit read from its heading to the next   (dev aaf87c2)",
+        "output": "413 (›A call is a use…‹, Why): The check is a range lookup per outer name per call, at elaboration; running code checks nothing.\n1011 (›Reading a program…‹): An answer a walk needs again for the same node is kept, not walked again.   (says nothing of what voids it)\n2165 (›A binding is live…‹): a range per binding, from the declaring node to the item holding the ending move/free   (one name, no per-function answer)\n2111 (›Identification is incremental‹): each cached identity reads the source span and rules it consulted; a write invalidates exactly its readers   (source edits only, not a name ending later in the same read)\nthe other hits are durable-store caches, the array chooser's memo and gate caches on a binding: none is a per-function answer of the call check",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n '^pub const FN_[A-Z_]+: usize' src/parse/bodies.rs   (dev aaf87c2)",
+        "output": "FN_INPUT 0, FN_OUTPUT 1, FN_BODY 2, FN_BCODE 3, FN_FRAME 4, FN_OUTER 5, FN_RECEIVER 6, FN_OUTPUT_GATE 7, FN_SLOTS = 8: no field holds a checked answer",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "target/release/logos '<line>' for each line of why-probes/voided.txt   (dev aaf87c2, release, interpreted)",
+        "output": "x := alloc 1 of i32 5, a := fn () -> i32 ( x@ ), b := fn () -> i32 ( a() ), print «{b()}», b()   -> 5, 5, exit 0\nx := alloc 1 of i32 5, a := fn () -> i32 ( x@ ), b := fn () -> i32 ( a() ), print «{b()}», free x, b()   -> <command line>:1:100: error: `x` is dead here: it was moved or freed above (at the second b()), exit 1\nthe same call is right at one point and wrong at a later one, so an answer kept for b must be voided by free x",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'range lookup per outer name|An answer a walk needs again|Calls count too|no per-name list of users' DESIGN.md; rg -n 'per-binding list of' DESIGN.md   (dev aaf87c2)",
+        "output": "412 (›A call is a use…‹): … Calls count too: `g()`, whose body calls `climb()`, is refused as `climb()` is. …\n413 (its Why): … The list is the function's own, filled by the parse it already makes, so no per-name list of users (declined in ›Meta-navigation‹). The check is a range lookup per outer name per call, at elaboration; running code checks nothing.\n1011 (›Reading a program takes time…‹): Every walk the reading adds (a check over a body, an ownership walk, a search for a name) visits each node a bounded number of times. An answer a walk needs again for the same node is kept, not walked again. …\n2072 (›Reflection is over structure…‹): - **Rejected:** a per-binding list of a name's users (8 September 2026, see *Identification is incremental*).\n2120 (›The reader–writer rule is transitive…‹): - **Rejected, to stay declined:** a per-binding list of the declarations using a name …",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "searches for a rule that keeps a call check's answer: rg -n -i 'kept|cache' DESIGN.md | rg -i 'call|outer|use'; also read ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹ whole",
+        "output": "8 hits (lines 24, 234, 322, 338, 535, 598, 740, 753): old spellings kept, a proof's kept alternatives, own over ?, a NULL form, sealed regions, key := ?, share, array's memo; none about a call's use check. ›Meta-navigation…‹ is two lines (the walk up the spine, an O(1) open-scope set) and holds no decline of a users list, though line 413 points there for it",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh target/release/logos why-probes/keep.txt   (one function's answer differs at two calls: both checks run at parse, before anything runs)",
+        "output": "$ logos 'x := alloc 1 of i32 5, h0 := fn () -> i32 ( x@ ), h1 := fn () -> i32 ( h0() ), print «{h1()}», free x, h1()'\n<command line>:1:104: error: `x` is dead here: it was moved or freed above\n(column 104 is the second h1(); the first, inside print, passed)\nexit 1",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "›A call is a use of every outer name the callee's body reads‹ keeps nothing for the check but the function's own list (no per-name list of users, declined at ›The reader–writer rule is transitive, and resolution is a read‹) and prices it as a range lookup per outer name per call, and no rule says what answer a function may keep so that a later call need not look up again each name its callees read, an answer a free between two calls changes; so check_call_reads looks up the callee's whole reach at every call, about n*n/2 lookups over a chain, where ›Reading a program takes time in step with its size; no walk runs once per path‹ asks that an answer a walk needs again be kept: as worded, the two rules disagree for a chain"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:10+02:00",
+      "by": "logoslang-why-P139-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P139",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "accepted as a why of W259, same as W266",
+        "reason": "A and B state the same fact: no rule says what a function may keep from its call check, or what voids it; ›A call is a use of every outer name the callee's body reads‹ prices the check per outer name per call, while ›Reading a program takes time in step with its size…‹ asks an answer needed again to be kept"
+      },
+      {
+        "at": "2026-10-09T14:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "asked: no why found",
+        "reason": "a rule DESIGN.md does not have yet is a root by the roots rule; both agents quote the two rules that together leave it open, and A raises it as a question for Thobias, which the solution agent puts to him with both quotes"
+      }
+    ]
+  },
+  {
+    "id": "W264",
+    "kind": "why",
+    "status": "merged",
+    "text": "The seed records who owns two ways, one per kind: an owning pointer in its type, a minted `@T` whose `destructor_of` is set (`owning_pointer`), and a value whose type fills `free` in its owner binding's `own` gate (`owns_node`), its type kept as it is (`own_result`); `is_owning_value` is `owning_pointee_of`, which reads only the type, so it answers for pointers alone, and each reader that needs the pointer arm carries its own copy of it",
+    "proposed_for": "W7",
+    "why": null,
+    "anchors": [
+      "owning_pointer",
+      "own_result",
+      "owns_node",
+      "name_holds",
+      "owning_pointee",
+      "is_owning_value",
+      "destructor_of",
+      "is_owning_place"
+    ],
+    "design": [
+      "Gate spelling: words left of `:=`; ownership in the reference type",
+      "A field may be `own t ?`, `t` a type whose body fills `share free`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Whether the binding site made the name an owner|is_owning_place\\(self.types, binding\\)$|\\|\\| self.owns_node\\(binding\\)|Binding::has_gate\\(binding, self.types.own_\\)|Null on every identity but an owning pointer type|is_record_type\\(ty\\) && !meta::instances_free_of\\(ty\\).is_null\\(\\) \\{|^    owning_pointer\\(store, types, ty\\)' src",
+        "output": "src/identities/meta.rs:263:/// Null on every identity but an owning pointer type; never faked with a no-op.\nsrc/parse/declare.rs:216:        Binding::has_gate(binding, self.types.own_)\nsrc/parse/declare.rs:219:    /// Whether the binding site made the name an owner: of a block, its place an owning\nsrc/parse/declare.rs:225:        crate::identities::drop_model::is_owning_place(self.types, binding)\nsrc/parse/declare.rs:226:            || self.owns_node(binding)\nsrc/identities/drop_model.rs:424:    if meta::is_record_type(ty) && !meta::instances_free_of(ty).is_null() {\nsrc/identities/drop_model.rs:427:    owning_pointer(store, types, ty)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'is_pointer_type\\(ty\\) && !meta::destructor_of\\(ty\\)' src",
+        "output": "src/identities/drop_model.rs:369:        numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()\nsrc/identities/drop_model.rs:563:    (numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())\nsrc/identities/drop_model.rs:816:        && (numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()\nsrc/identities/drop_model.rs:902:    (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "target/release/logos at aaf87c2, interpreted: h := fn (p := @i32 ?) -> i32 ( p@ ), print «{h(alloc 1 of i32 5)}»; then <BAG>, h := fn (b := bag ?) -> i32 ( b.n ), print «{h(bag(3))}»",
+        "output": "pointer: 1:65: error: an owning value must be bound to a name, which is where its `free` attaches; bind it first (`a := alloc …`) and pass the name\nrecord: 3   (exit 0, no `freed 3`)",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W268",
+    "made": {
+      "at": "2026-10-09T14:10+02:00",
+      "by": "logoslang-why-P143-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P143",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "merged into W268",
+        "reason": "A and B state the same fact: the seed records ownership by kind, a pointer through its type, a record through its binding's own gate or the function's mark, so is_owning_value answers for pointers only"
+      }
+    ]
+  },
+  {
+    "id": "W265",
+    "kind": "why",
+    "status": "merged",
+    "text": "DESIGN.md does not say whether `-> own` hands on a made value that a `return` gives: rule 3's one door hands on \"the function's last value\", the close check under `-> own` names only the last value, and ›A last value moves out‹ refuses only \"a `return` of an owned place\", a phrase it never defines; so `note_return` keeps rule 3's refusal while `check_handed` applies the mark to every `return`",
+    "proposed_for": "W257",
+    "why": null,
+    "anchors": [
+      "note_return",
+      "check_handed",
+      "OwnershipAcrossReturn"
+    ],
+    "design": [
+      "Three fail-closed ownership rules, and `-> own @T`",
+      "A last value moves out",
+      "A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o \"rule 3 has one door: .-> own @T., or .-> own t. for a type that fills .free., hands the function's last value to the caller|A function hands on a value it made only when its result type says so|under .-> own., the last value is made or moved in every arm|A .return. of an owned place before the last line stays the checked error|and makes .X. its result\" DESIGN.md",
+        "output": "354:rule 3 has one door: `-> own @T`, or `-> own t` for a type that fills `free`, hands the function's last value to the caller\n379:A function hands on a value it made only when its result type says so\n379:under `-> own`, the last value is made or moved in every arm\n379:A `return` of an owned place before the last line stays the checked error\n1208:and makes `X` its result",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n -o -i '.{60}owned place.{60}' DESIGN.md",
+        "output": "379: is answered while its body is still open. A `return` of an owned place before the last line stays the checked error; the teardowns",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W267",
+    "made": {
+      "at": "2026-10-09T14:10+02:00",
+      "by": "logoslang-why-P143-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P143",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "merged into W267",
+        "reason": "A and B state the same fact: DESIGN.md does not say whether -> own hands on a value a return made; rule 3's door names the last value only, ›A last value moves out‹ refuses only an undefined 'owned place'"
+      }
+    ]
+  },
+  {
+    "id": "W266",
+    "kind": "why",
+    "status": "merged",
+    "text": "›A call is a use of every outer name the callee's body reads‹ keeps nothing for the check but the function's own list (no per-name list of users, declined at ›The reader–writer rule is transitive, and resolution is a read‹) and prices it as a range lookup per outer name per call, and no rule says what answer a function may keep so that a later call need not look up again each name its callees read, an answer a free between two calls changes; so check_call_reads looks up the callee's whole reach at every call, about n*n/2 lookups over a chain, where ›Reading a program takes time in step with its size; no walk runs once per path‹ asks that an answer a walk needs again be kept: as worded, the two rules disagree for a chain",
+    "proposed_for": "W259",
+    "why": null,
+    "anchors": [
+      "check_call_reads",
+      "fn_outer",
+      "FN_OUTER",
+      "DESIGN.md",
+      "src/parse/operands.rs"
+    ],
+    "design": [
+      "A call is a use of every outer name the callee's body reads",
+      "Reading a program takes time in step with its size; no walk runs once per path",
+      "The reader–writer rule is transitive, and resolution is a read"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'range lookup per outer name|An answer a walk needs again|Calls count too|no per-name list of users' DESIGN.md; rg -n 'per-binding list of' DESIGN.md   (dev aaf87c2)",
+        "output": "412 (›A call is a use…‹): … Calls count too: `g()`, whose body calls `climb()`, is refused as `climb()` is. …\n413 (its Why): … The list is the function's own, filled by the parse it already makes, so no per-name list of users (declined in ›Meta-navigation‹). The check is a range lookup per outer name per call, at elaboration; running code checks nothing.\n1011 (›Reading a program takes time…‹): Every walk the reading adds (a check over a body, an ownership walk, a search for a name) visits each node a bounded number of times. An answer a walk needs again for the same node is kept, not walked again. …\n2072 (›Reflection is over structure…‹): - **Rejected:** a per-binding list of a name's users (8 September 2026, see *Identification is incremental*).\n2120 (›The reader–writer rule is transitive…‹): - **Rejected, to stay declined:** a per-binding list of the declarations using a name …",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "searches for a rule that keeps a call check's answer: rg -n -i 'kept|cache' DESIGN.md | rg -i 'call|outer|use'; also read ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹ whole",
+        "output": "8 hits (lines 24, 234, 322, 338, 535, 598, 740, 753): old spellings kept, a proof's kept alternatives, own over ?, a NULL form, sealed regions, key := ?, share, array's memo; none about a call's use check. ›Meta-navigation…‹ is two lines (the walk up the spine, an O(1) open-scope set) and holds no decline of a users list, though line 413 points there for it",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh target/release/logos why-probes/keep.txt   (one function's answer differs at two calls: both checks run at parse, before anything runs)",
+        "output": "$ logos 'x := alloc 1 of i32 5, h0 := fn () -> i32 ( x@ ), h1 := fn () -> i32 ( h0() ), print «{h1()}», free x, h1()'\n<command line>:1:104: error: `x` is dead here: it was moved or freed above\n(column 104 is the second h1(); the first, inside print, passed)\nexit 1",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W263",
+    "made": {
+      "at": "2026-10-09T14:10+02:00",
+      "by": "logoslang-why-P139-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P139",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "merged into W263",
+        "reason": "A and B state the same fact: no rule says what a function may keep from its call check, or what voids it; ›A call is a use of every outer name the callee's body reads‹ prices the check per outer name per call, while ›Reading a program takes time in step with its size…‹ asks an answer needed again to be kept"
+      }
+    ]
+  },
+  {
+    "id": "W267",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Neither DESIGN.md nor a spec page it points to says whether `-> own` hands on a value a `return` made: rule 3 of ›Three fail-closed ownership rules, and `-> own @T`‹ opens its one door to the function's last value only, and DESIGN_HISTORY.md records rule 3 superseded for a last value only; ›A last value moves out‹ checks only the last value under `-> own` and refuses only a `return` of an owned place, which `alloc …`, `bag(3)`, `move p` and a call are not; the `return` rule says only that `return X` makes X the result; yet rule 3's reason, a return type that cannot yet say it transfers ownership, no longer holds under `-> own`; so `note_return` keeps rule 3 with no door for a `return`, `check_handed` at the close reads the door for every `return`, and no rule names one of them right",
+    "proposed_for": "W257",
+    "why": [],
+    "anchors": [
+      "note_return",
+      "check_handed",
+      "OwnershipAcrossReturn",
+      "DESIGN.md"
+    ],
+    "design": [
+      "Three fail-closed ownership rules, and `-> own @T`",
+      "A last value moves out",
+      "A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o (the door, the reason of rule 3, the return sentence and the -> own check of ›A last value moves out‹, the return rule, the Seed line of ›`move` is the act‹) DESIGN.md",
+        "output": "324:the close checks the last value and every `return`'s operand against that result or mark   (a Seed line: what the seed does, not a rule)\n352:a call hides its body behind a return type that cannot yet say it transfers ownership\n354:rule 3 has one door: `-> own @T`, or `-> own t` for a type that fills `free`, hands the function's last value to the caller\n379:under `-> own`, the last value is made or moved in every arm\n379:A `return` of an owned place before the last line stays the checked error\n1208:makes `X` its result\n1208:A value that is only a block's result is the block's last expression, never a `return`",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n -o \"superseded for a last value 25 September 2026\" DESIGN_HISTORY.md",
+        "output": "143:superseded for a last value 25 September 2026   (the History line under ### Three fail-closed ownership rules, and `-> own @T`: \"ownership may not cross a function return at all\" ... superseded for a last value)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n -i \"return`'s operand|return of a|a made .?return|early .?return|return.{0,30}-> own|-> own.{0,60}return|cross a function return\" DESIGN.md DESIGN_HISTORY.md",
+        "output": "DESIGN_HISTORY.md:143 (the superseded line above)\nDESIGN.md:324 (the Seed line above)\nDESIGN.md:352 (rule 3)\nDESIGN.md:1659 (a Seed line on `if` arms)\nno rule sentence on a `return` that hands on a made value under `-> own`",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n -o \"rule 3 has one door: .-> own @T., or .-> own t. for a type that fills .free., hands the function's last value to the caller|A function hands on a value it made only when its result type says so|under .-> own., the last value is made or moved in every arm|A .return. of an owned place before the last line stays the checked error|and makes .X. its result\" DESIGN.md",
+        "output": "354:rule 3 has one door: `-> own @T`, or `-> own t` for a type that fills `free`, hands the function's last value to the caller\n379:A function hands on a value it made only when its result type says so\n379:under `-> own`, the last value is made or moved in every arm\n379:A `return` of an owned place before the last line stays the checked error\n1208:and makes `X` its result",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n -o -i '.{60}owned place.{60}' DESIGN.md",
+        "output": "379: is answered while its body is still open. A `return` of an owned place before the last line stays the checked error; the teardowns",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "DESIGN.md does not say whether `-> own` hands on a made value that a `return` gives: rule 3's one door hands on \"the function's last value\", the close check under `-> own` names only the last value, and ›A last value moves out‹ refuses only \"a `return` of an owned place\", a phrase it never defines; so `note_return` keeps rule 3's refusal while `check_handed` applies the mark to every `return`"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:11+02:00",
+      "by": "logoslang-why-P143-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P143",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "accepted as a why of W257, same as W265",
+        "reason": "A and B state the same fact: DESIGN.md does not say whether -> own hands on a value a return made; rule 3's door names the last value only, ›A last value moves out‹ refuses only an undefined 'owned place'"
+      },
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "asked: no why found",
+        "reason": "a rule DESIGN.md does not have yet is a root; both agents say only Thobias can choose accept or refuse"
+      }
+    ]
+  },
+  {
+    "id": "W268",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The seed records ownership by kind: a pointer owns through its type, an owning `@T` whose `destructor` is set (`make_owning_pointer_type`, minted by `own_hole` and `own_result`, read by `owning_pointee` and `is_owning_place`), while a record owns through the binding that holds it (`own_hole` returns true and keeps the type, `owns_node` reads the `own` gate) or the function mark (`own_result` gives `-> own bag` the type `bag` itself); so `is_owning_value`, which reads a made value by its type, answers for pointers only, and an ownership check is written once per kind, as `=` is (`assign::build` asks `is_owning_place` and `is_owning_value`, the `=` constructor asks `owns_node` and `moves_out`), or for pointers alone, as the call argument and `note_return` are",
+    "proposed_for": "W7",
+    "why": null,
+    "anchors": [
+      "is_owning_value",
+      "owning_pointee",
+      "is_owning_place",
+      "own_hole",
+      "own_result",
+      "owns_node",
+      "name_holds",
+      "make_owning_pointer_type",
+      "moves_out",
+      "src/identities/assign.rs",
+      "src/identities/drop_model.rs",
+      "src/parse/declare.rs",
+      "src/parse/bodies.rs",
+      "owning_pointer",
+      "destructor_of"
+    ],
+    "design": [
+      "Gate spelling: words left of `:=`; ownership in the reference type",
+      "A filled `share free` is the value's teardown; one name owns each value",
+      "A field may be `own t ?`, `t` a type whose body fills `share free`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'numtype::is_pointer_type\\(ty\\) && !meta::destructor_of|return Ok\\(true\\);|set_type\\(hole, owning\\)|is_record_type\\(ty\\) && !meta::instances_free_of|Binding::has_gate\\(binding, self.types.own_\\)' src/identities/drop_model.rs src/parse/declare.rs",
+        "output": "src/parse/declare.rs:216:        Binding::has_gate(binding, self.types.own_)            (owns_node: a record owner)\nsrc/identities/drop_model.rs:369:        numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()   (is_owning_place)\nsrc/identities/drop_model.rs:383:            return Ok(true);                                  (own_hole, a type that fills free: type kept)\nsrc/identities/drop_model.rs:386:        super::hole::set_type(hole, owning);                  (own_hole, a pointer: owning type)\nsrc/identities/drop_model.rs:424:    if meta::is_record_type(ty) && !meta::instances_free_of(ty).is_null() {   (own_result: -> own bag gives bag)\nsrc/identities/drop_model.rs:902:    (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())   (owning_pointee, read by is_owning_value)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'is_owning_value\\(|owns_node\\(target\\)|moves_out\\(types, value\\)$' src/identities/assign.rs src/parse/bodies.rs",
+        "output": "src/identities/assign.rs:97:            (dyad::ty(target) == types.binding_ && p.owns_node(target) || p.is_owning_read(target))\nsrc/identities/assign.rs:98:                && !super::drop_model::moves_out(types, value)\nsrc/identities/assign.rs:274:    let rhs_owning = unsafe { super::drop_model::is_owning_value(types, rhs) };\nsrc/parse/bodies.rs:695:        if crate::identities::drop_model::is_owning_value(types, value) {     (note_return)\nsrc/parse/bodies.rs:1124:            if unsafe { crate::identities::drop_model::is_owning_value(self.types, arg) } {   (the call argument)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/w7-assign.txt; bash why-probes/run.sh why-probes/p143-arg.txt (lines 1 and 2 of each; <BAG> is bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ))",
+        "output": "mut p := alloc 1 of i32 1, q := alloc 1 of i32 2, p = q, print «{p@}»\n  error: this place owns what it holds, so what is assigned must own too (`alloc …`, or `move x`)   (the pointer copy, assign::build)\n<BAG>, mut a := bag(1), b := bag(2), a = b, print «after»\n  error: this place owns what it holds, so what is assigned must own too (`alloc …`, or `move x`)   (the record copy, the = constructor)\ng := fn (p := @i32 ?) -> i32 ( p@ ), y := g(alloc 1 of i32 3), print «{y}»\n  error: an owning value must be bound to a name, which is where its `free` attaches; ...\n<BAG>, g := fn (b := bag ?) -> i32 ( b.n ), y := g(bag(3)), print «{y}»\n  3   (exit 0, no freed 3: the call argument has no record copy)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'Whether the binding site made the name an owner|is_owning_place\\(self.types, binding\\)$|\\|\\| self.owns_node\\(binding\\)|Binding::has_gate\\(binding, self.types.own_\\)|Null on every identity but an owning pointer type|is_record_type\\(ty\\) && !meta::instances_free_of\\(ty\\).is_null\\(\\) \\{|^    owning_pointer\\(store, types, ty\\)' src",
+        "output": "src/identities/meta.rs:263:/// Null on every identity but an owning pointer type; never faked with a no-op.\nsrc/parse/declare.rs:216:        Binding::has_gate(binding, self.types.own_)\nsrc/parse/declare.rs:219:    /// Whether the binding site made the name an owner: of a block, its place an owning\nsrc/parse/declare.rs:225:        crate::identities::drop_model::is_owning_place(self.types, binding)\nsrc/parse/declare.rs:226:            || self.owns_node(binding)\nsrc/identities/drop_model.rs:424:    if meta::is_record_type(ty) && !meta::instances_free_of(ty).is_null() {\nsrc/identities/drop_model.rs:427:    owning_pointer(store, types, ty)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n 'is_pointer_type\\(ty\\) && !meta::destructor_of\\(ty\\)' src",
+        "output": "src/identities/drop_model.rs:369:        numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()\nsrc/identities/drop_model.rs:563:    (numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())\nsrc/identities/drop_model.rs:816:        && (numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()\nsrc/identities/drop_model.rs:902:    (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "target/release/logos at aaf87c2, interpreted: h := fn (p := @i32 ?) -> i32 ( p@ ), print «{h(alloc 1 of i32 5)}»; then <BAG>, h := fn (b := bag ?) -> i32 ( b.n ), print «{h(bag(3))}»",
+        "output": "pointer: 1:65: error: an owning value must be bound to a name, which is where its `free` attaches; bind it first (`a := alloc …`) and pass the name\nrecord: 3   (exit 0, no `freed 3`)",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The seed records who owns two ways, one per kind: an owning pointer in its type, a minted `@T` whose `destructor_of` is set (`owning_pointer`), and a value whose type fills `free` in its owner binding's `own` gate (`owns_node`), its type kept as it is (`own_result`); `is_owning_value` is `owning_pointee_of`, which reads only the type, so it answers for pointers alone, and each reader that needs the pointer arm carries its own copy of it"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:11+02:00",
+      "by": "logoslang-why-P143-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P143",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "accepted as a why of W7, same as W264",
+        "reason": "A and B state the same fact: the seed records ownership by kind, a pointer through its type, a record through its binding's own gate or the function's mark, so is_owning_value answers for pointers only"
+      }
+    ]
+  },
+  {
+    "id": "P149",
+    "kind": "problem",
+    "status": "open",
+    "text": "A call whose one argument is a bracket reads that bracket's commas as the call's own argument separators, so a scope or a pair passed as one argument becomes several arguments",
+    "program": "target/release/logos 'g := fn (b := i32 ?) -> i32 ( b ), g((i32 4, i32 5))'; target/release/logos 'g := fn (b := i32 ?) -> i32 ( b ), g(( y := i32 1, y + 4 ))'; control: target/release/logos 'g := fn (b := i32 ?, c := i32 ?) -> i32 ( b + c ), g(( y := i32 1, y ), 2)'",
+    "output": "\"run error: a call's argument count does not match its function\", exit 1; \"1:60: error: this gives nothing, and a value is needed here\", exit 1; the control prints `3`; `g((i32 5))` prints `5` and `x := (y := i32 1, i32 5), g(x)` prints `5`; dev aaf87c2, interpreted",
+    "expected": "`g(( y := i32 1, y + 4 ))` passes the scope's value, `5`, as one argument, as `x := (y := i32 1, i32 5), g(x)` does; a `( … )` inside the call's parentheses is one expression (›A scope's value is what it evaluates to, and `return` is an optional early exit…‹); whether `g((a, b))` is one argument or two is not looked up yet",
+    "tier": "interpreted",
+    "found": "logoslang-help-7, FOUND while rerunning #217 after issue 82's merge, 9 October 2026, dev aaf87c2; it is why #217's row `g((y := i32 1, box (1, 2)))` still fails",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T14:11+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "209fd88",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P150",
+    "kind": "problem",
+    "status": "open",
+    "text": "A node's read is still decided by its kind byte, apart from its type's place layout, though issue 82 is closed: a `[…]` node, a text node and a fraction literal each get their own answer from `read_kind`, and no open issue holds this root",
+    "program": "target/release/logos '[1, 2]'; target/release/logos 's := «a», 0'; target/release/logos 'r := 1/2, 0'",
+    "output": "\"run error: this node was built with no operation to run\", exit 1; \"run error: a record, text or hole is not read as one value; read a field or take its address\", exit 1; \"run error: a literal here has no exact value in the type it lands in\", exit 1; dev aaf87c2; read.rs:116-125 gives a TUPLE_TAG node with a null op `Dispatch::None`, read.rs:126 gives FRACTION_TAG `Read::Literal` (read.rs:145 \"stand-in for #214\"), read.rs:128-140 lets STRING_TAG fall to `Read::Opaque`",
+    "expected": "each type gives one read kind for its node and its place alike, as #195 (\"#82's open half (the type's record states its read kind…)\"), #213 and #214 (\"#82's fix gives the type one read kind for both\") expect; ›A node's output type is per node, and its parse writes it‹",
+    "tier": "interpreted",
+    "found": "logoslang-help-7, FOUND while rerunning the issues blocked by #82, 9 October 2026, dev aaf87c2",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T14:11+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "209fd88",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W269",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The call argument tests ownership only as a fail-closed stand-in for a rule the seed has not built: `build_call` refuses an argument that `is_owning_value` reads as owning with `UnboundOwningValue`, whose message is rule 1 as it read until 30 September 2026 (an owning value must be bound to a name) and whose comment waits on ownership-gated parameters, while ›Holding is decided at the binding site, parameters included‹ has the callee's parameter hold a constructor result passed straight, `f(alloc 1 of i32 5)`, with no `own` gate, and its Seed line calls the parameter case a bug against the ruling; so the argument has a test of its own in place of the parameter holding the value",
+    "proposed_for": "W7",
+    "why": [],
+    "anchors": [
+      "build_call",
+      "UnboundOwningValue",
+      "is_owning_value",
+      "src/parse/bodies.rs",
+      "src/report.rs",
+      "DESIGN.md"
+    ],
+    "design": [
+      "Holding is decided at the binding site, parameters included",
+      "Three fail-closed ownership rules, and `-> own @T`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n 1121,1126p src/parse/bodies.rs; sed -n 284,285p src/report.rs",
+        "output": "            // Fail-closed until ownership-gated parameters let the callee declare\n            // that it takes the value.\n            // SAFETY: as above.\n            if unsafe { crate::identities::drop_model::is_owning_value(self.types, arg) } {\n                return Err(ParseError::UnboundOwningValue);\n            }\n        ParseError::UnboundOwningValue => {\n            \"an owning value must be bound to a name, which is where its `free` \\",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "rg -n -o (the parameter sentence and the Seed line of ›Holding is decided at the binding site, parameters included‹) DESIGN.md; rg -n -o \"An owning value must be bound to a name\" DESIGN_HISTORY.md",
+        "output": "DESIGN.md:342:A constructor result passed straight as an argument, `f(alloc 1 of i32 5)`, is bound to the parameter in the callee's frame, which holds it; no `own` gate is needed\nDESIGN.md:346:named bindings only; the parameter case is a bug against the ruling\nDESIGN_HISTORY.md:144:An owning value must be bound to a name   (rule 1 until 30 September 2026, superseded by Q-25)",
+        "commit": "aaf87c2"
+      },
+      {
+        "command": "target/release/logos at aaf87c2, interpreted: g := fn (p := @i32 ?) -> i32 ( p@ ), y := g(alloc 1 of i32 3), print «{y}»",
+        "output": "1:62: error: an owning value must be bound to a name, which is where its `free` attaches; bind it first (`a := alloc …`) and pass the name   (DESIGN rules this program in: the parameter holds the value)",
+        "commit": "aaf87c2"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T14:11+02:00",
+      "by": "logoslang-why-P143-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "aaf87c2",
+      "run": "why-P143",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "accepted as a why of W7",
+        "reason": "only B; checked by the orchestrator on dev 710821b: DESIGN.md ›Holding is decided at the binding site, parameters included‹ Seed: 'the parameter case is a bug against the ruling'; bodies.rs:1121 'Fail-closed until ownership-gated parameters'"
+      },
+      {
+        "at": "2026-10-09T14:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "209fd88",
+        "change": "asked: no why found",
+        "reason": "a mechanism DESIGN.md has superseded is a root: the parameter case of the binding-site rule (ruled 30 August 2026) is not built, and the stand-in refuses in its place"
+      }
+    ]
   }
 ]
