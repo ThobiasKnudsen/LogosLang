@@ -18369,7 +18369,7 @@
       "Reading a path runs nothing",
       "A scope lays out its declarations; a use reaches the offset through its binding"
     ],
-    "issue": null,
+    "issue": 203,
     "done": null,
     "made": {
       "at": "2026-10-08T23:02+02:00",
@@ -18389,13 +18389,22 @@
         "commit": "fae8206",
         "change": "chosen by Thobias: \"Q90: \"b, but i dont understand the wording at all- why do you have to make it sound so complicated though?\"; Q91 (9 October 2026), to the rule in plain words: \"ok but i dont see how this is already ruled. its just a bunch of basic facts about how Logos should work.\"\"",
         "reason": "He chose (b), a check per type, over (a), parsing a line again at each appearance, and approved the plain wording shown in Q91; minting written like array.logos needs no check, and the check only covers a parse that uses its own ? field as a number"
+      },
+      {
+        "at": "2026-10-09T03:13+02:00",
+        "by": "logoslang-solve-W111",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "fae8206",
+        "change": "issue #203",
+        "reason": null
       }
     ]
   },
   {
     "id": "S44",
     "kind": "solution",
-    "status": "proposed",
+    "status": "rejected",
     "text": "As S43, except that a part of a parse body that reads a ? field of the node being built is built at each appearance, where the node the slot holds is known, so tape[0].m = tape[0].n * 2 is typed by what n holds there and needs no check; the rest of the parse body is built where it is written",
     "fixes": [
       "W111",
@@ -18404,7 +18413,12 @@
       "W188"
     ],
     "assessment": "Also fixes all four, and P103 as written gives 6 with no check; it is the direction Thobias described first in Q84 ('if there is a ? which makes the type unknown then it should not parse at that point'): the state that makes the line parsable is the parse reaching it at an appearance, after it has written the field. P105's line needs no type (.type always gives a type), so it parses where written and prints rational_number. It extends 'A generic function body is lexed once and built once per set of field types' (built where written when the build has all it needs, else where that arrives) from fn and run bodies to the parse body. Costs: the line is parsed again at every appearance (no memo, since nothing a body runs is minted unless it says what it mints on, Q-44/Q-46), so a parse used often is slower; an error in such a line shows only where the type is used; and it needs a builder that can build one line of a body later, which is W9's open S28/S30 and #219, so it waits for those besides #82 and #198. Bigger: src/parse/types.rs (slot_body_fill), src/parse/bodies.rs, plus S43's files.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-09T03:13+02:00",
+      "words": "b",
+      "reason": "Q90, 9 October 2026: he chose (b), S43, over (a), S44"
+    },
     "design": [
       "A generic function body is lexed once and built once per set of field types",
       "A field is filled at run, per evaluation; its type decides how the operand is used",
@@ -18431,6 +18445,15 @@
         "commit": "fae8206",
         "change": "assessment was \"Also fixes all four, and P103 as written gives 6 with no check. It extends 'A generic function body is lexed once and built once per set of field types' (built where written when the build has all it needs, else where that arrives) from fn and run bodies to the parse body, so the three body kinds share one build rule. Costs: a build at every appearance (no memo, since nothing a body runs is minted unless it says what it mints on, Q-44/Q-46), so a parse used often is slower; an error in such a part shows only where the type is used, not where it is defined; and it needs a held-body builder that can build part of a body later, which is W9's open S28/S30 and #219, so it waits for those besides #82 and #198. Bigger: src/parse/types.rs (slot_body_fill), src/parse/bodies.rs, plus S43's files. Not recommended over S43.\"",
         "reason": "Q84 answer: P105 parses where written under this option too; the option is Thobias's own first direction"
+      },
+      {
+        "at": "2026-10-09T03:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa6c751",
+        "change": "rejected by Thobias: \"b\"",
+        "reason": "Q90, 9 October 2026: he chose (b), S43, over (a), S44"
       }
     ]
   },
