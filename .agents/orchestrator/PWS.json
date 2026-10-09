@@ -20833,13 +20833,16 @@
     "id": "P124",
     "kind": "problem",
     "status": "open",
-    "text": "The orchestrator session is slow to answer Thobias, to place questions and to act on agents' messages: one session does every step of every task in turn (1,365 tool calls on 8 October 2026), reads a message only between its own steps, so an agent's answer waits while another task runs (why-P112-e's answer waited almost 6 minutes behind PolyLogue's setup), and its context fills and is compacted again and again (31 times in this session, a pause of about 80 seconds each, 31 minutes in all, then files read again)",
+    "text": "The orchestrator session is slow to answer Thobias, to place questions and to act on agents' messages: one session does every step of every task in turn (1,365 tool calls on 8 October 2026), and a message that reaches it in the middle of a task, at its next tool call, is acted on only once that task is done, so an agent's answer waits while another task runs (why-P112-e's answer waited almost 6 minutes behind PolyLogue's setup); and its context fills and is compacted again and again (31 times in this session, a pause of about 80 seconds each, 31 minutes in all, then files read again)",
     "program": "Steps: in the orchestrator session's transcript, ~/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl (46,347 lines, 113 MB), count the assistant entries with a tool call dated 2026-10-08; for each entry with isCompactSummary, the time from the last entry more than 1 second before it; the entries that contain the harness reminder \"hasn't heard from you in a while\"; and the timestamps at which an agent's message first appears and at which the orchestrator's reply to it first appears",
     "output": "tool calls dated 2026-10-08: 1365\ncompactions in the session: 31; pause before each summary: median 79 s, max 123 s, 31 min in all; on 2026-10-08 at 17:03, 19:07, 19:39, 20:07, 20:34, 21:31, 22:15 and 23:24 UTC (8 in 6.5 hours)\ntranscript entries containing \"hasn't heard from you in a while\": 195\nWHY logoslang/why-P112-e first appears 23:25:17 UTC; DONE logoslang/why-P112-e sent 23:31:03 (5 min 46 s, while PolyLogue's KNOWLEDGE.md was being written)\nQUESTION logoslang/solve-W211 first appears 23:38:29 UTC; placed as Q89 23:39:39 (70 s, 13 tool calls: read the draft, 5 searches of DESIGN.md, 5 edits, place, message)",
     "expected": "The orchestrator answers Thobias, places a question and acts on an agent's message promptly, whatever else it is doing. Thobias, 9 October 2026: 'there have been may times you have been slow at answering and creating new questions and other things. why is this happening? its definetively an issue you should record'",
     "tier": "orchestrator",
     "found": "orchestrator LogosLang, from its own session transcript at Thobias's request, 9 Oct 2026",
-    "why": null,
+    "why": [
+      "W221",
+      "W222"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -20851,7 +20854,35 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "why + W221",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "why + W222",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "text was \"The orchestrator session is slow to answer Thobias, to place questions and to act on agents' messages: one session does every step of every task in turn (1,365 tool calls on 8 October 2026), reads a message only between its own steps, so an agent's answer waits while another task runs (why-P112-e's answer waited almost 6 minutes behind PolyLogue's setup), and its context fills and is compacted again and again (31 times in this session, a pause of about 80 seconds each, 31 minutes in all, then files read again)\"",
+        "reason": "why-P124-b's FACT: a message reaches a busy session at its next tool call (344 mid-turn deliveries in transcript 79afb672), so the wait comes from the session going on with its task, not from reading only between steps"
+      }
+    ]
   },
   {
     "id": "P125",
@@ -20863,7 +20894,9 @@
     "expected": "Every question he writes in a question file, inside an answer or a comment, gets an answer he can find, before or when the file is closed. Thobias, 9 October 2026: 'i earlier asked about what the core facts for the borrowchecker in rust is because Logos also must have these facts but i dont know where you have answered that or if you have answered it at all'",
     "tier": "orchestrator",
     "found": "orchestrator LogosLang, when Thobias asked again in chat, 9 Oct 2026",
-    "why": null,
+    "why": [
+      "W218"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -20875,7 +20908,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "why + W218",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "S62",
@@ -20933,14 +20976,15 @@
   {
     "id": "W218",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "SKILL.md's rule Questions to Thobias handles every word Thobias writes in a question file only as an answer or a ruling: the watch step relays his words verbatim to the asker and runs question-close once each asked question has an answer, a receipt file takes anything but ok as his ruling, and no step picks out a question or an idea he asks back, says who answers it, or holds the close until he has a reply",
     "proposed_for": "P125",
     "why": null,
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "~/.claude/skills/orchestrate/question-template.md",
-      "~/.claude/skills/orchestrate/orchestrate.sh"
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "cmd_question_close"
     ],
     "design": [],
     "pages": [],
@@ -20954,12 +20998,25 @@
         "command": "rg -n -i 'his question|he asks|asks back|question of his|answer him|reply to him' over SKILL.md, SKILL_HISTORY.md, every agent prompt, solve/SKILL.md and ~/.claude/CLAUDE.md; then the Status lines of answers/Q85-R4-I82.md and answers/Q81-O.md",
         "output": "(no hit: no rule anywhere for a question Thobias asks inside an answer; nearest: SKILL.md l.66 sends facts an AGENT needs to a helper, l.87 makes his chat findings problems, l.130 lists what the orchestrator may answer an agent)\nQ85 Answer 2 ends: 'how does rust do this? ... btw you think having common output_type is the solution for making Logos fast again?'  Status: answered, relayed 2026-10-09 00:46\nQ81 Answer (Decided): 'maybe it would be a create startup idea ...' (not ok)  Status: answered, relayed 2026-10-08 23:29; asker O, the orchestrator itself",
         "commit": "270d299"
+      },
+      {
+        "command": "zsh: rg -n -o 'Read the whole file.{0,330}' ~/.claude/skills/orchestrate/SKILL.md; rg -c -i 'his question|he asks|questions he|asks back|question in his' SKILL.md question-template.md every-prompt.md",
+        "output": "68: Read the whole file: his words may stand on the Answer lines, under an option, or beside the question. When every question has an answer, SendMessage ANSWER <tag>: with his words verbatim, point by point, to the asker (notify_when_idle: true), and question-close ID ... 67: ... Ok closes the file; anything else he writes is his ruling, recorded and relayed like any other, and the asker redoes what it built on yours. | no hit in any rule file for a question he asks (only SKILL_HISTORY.md:91, a story)",
+        "commit": "270d299"
+      },
+      {
+        "command": "rg -n -A 16 '^cmd_question_close' orchestrate.sh; rg -n Status: answers/Q85-R4-I82.md answers/Q81-O.md",
+        "output": "cmd_question_close: rewrites the Status line, moves the file to answers/, commits; no check of the file's content | Q85 Answer 2: 'how does rust do this? i asked ealier about this but i havent read an answer for this ... btw you think having common output_type is the solution for making Logos fast again?' Status: answered, relayed 2026-10-09 00:46 | Q81 Answer (Decided): the startup idea (not ok); Status: answered, relayed 2026-10-08 23:29, Asked by orchestrator LogosLang | Q-45 Answer 5 (1 Oct): 'i just know the borrow checker is rewritten to only need some few facts about each name', Status: answers 3 to 5 recorded on #240",
+        "commit": "270d299"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "SKILL.md's Questions to Thobias gives his words in a question file only two outcomes, an answer the watch step relays verbatim to the asker as ANSWER before question-close (When every question has an answer), or, in a receipt, a ruling (Ok closes the file; anything else he writes is his ruling, recorded and relayed like any other); no step looks for a question or request he writes inside an answer, says who answers it or where, or keeps the file open until it is answered, and cmd_question_close checks nothing, so Q85 (relayed 00:46) and Q81 (relayed 23:29) closed with his questions unanswered"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T02:34+02:00",
@@ -20970,7 +21027,17 @@
       "run": "why-P125",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "accepted as a why of P125, same as W225",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W219",
@@ -21058,7 +21125,7 @@
   {
     "id": "W221",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "SKILL.md gives the orchestrator session itself every step of the pipeline (each why round's compare, accept, reject and ASK; filling and placing each question file; recording each ruling in DESIGN.md with its history, gate and commit; editing the skill and orchestrate.sh as whichever orchestrator lands the fix), and its Staying responsive section moves only builds, tests and reviews out of the session, so one session makes about 1,400 tool calls a day",
     "proposed_for": "P124",
     "why": null,
@@ -21074,12 +21141,25 @@
         "command": "python3 -I why-probes/calls.py <orchestrator transcript> 2026-10-08",
         "output": "tool calls dated 2026-10-08 1411; SendMessage 181; pws.py add 54, show 45, amend 24, compare 23, similar 18, accept 14; Edit SKILL.md 45, orchestrate.sh 27, prompts 10; search DESIGN 33, Read DESIGN 24, Edit DESIGN 17; Write tmp (question drafts) 36, question-new 18, question-close 13, question-seen 10; questions-watch restarts 26; calls naming PolyLogue 33",
         "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/calls_by_step.py /home/o/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl 2026-10-08; python3 -I why-probes/calls_detail.py /home/o/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl 2026-10-08",
+        "output": "tool calls on 2026-10-08: 1411; result chars: 2084806 | 106 Edit skill files, 75 Bash read skill files (201424 chars), 54 Read skill files (324736 chars): 235 calls, 26% of all result chars, on the skill itself | by file: 33 Edit SKILL.md, 27 Edit orchestrate.sh, 15 Edit pws.py, 12 Edit SKILL_HISTORY.md, 11 Read SKILL.md (136961 chars) | 45 Bash search + 26 Read + 21 Edit ruling document | 8 Read + 10 Bash + 6 Edit another repo (PolyLogue setup)",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/timeline.py /home/o/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl 2026-10-08T23:24:30 2026-10-08T23:29:00",
+        "output": "23:24:42 Edit PolyLogue/.agents/orchestrator/orchestrate.conf | 23:24:43 Read PolyLogue/PLAN.md (21053 chars) | 23:24:55 Read PolyLogue/CLAUDE_LOG/Session_2026-06-20_20-10-10.md (30580 chars) | 23:27:27 Write PolyLogue/.agents/orchestrator/KNOWLEDGE.md | 23:28:41 git push PolyLogue | 23:28:57 first pws.py call on why-P112-e's answer",
+        "commit": "270d299"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "SKILL.md gives the one session that reads every message long steps of its own: setting up a new repo (fill the conf with him, then its ruling document), editing the skill and its script in place (This skill's files ... are edited ... by whichever orchestrator records the ruling or lands the fix), recording each ruling, and judging every why round; its Staying responsive section moves only builds, tests and reviews out of the session, and a helper takes only a lookup or a record too big to write well here"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T02:35+02:00",
@@ -21090,12 +21170,22 @@
       "run": "why-P124",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "accepted as a why of P124, same as W223",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W222",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "No rule in SKILL.md says an agent's message is handled before the task in hand: Staying responsive assumes the session is idle between messages, so a message delivered mid-turn between tool calls waits until the current task ends",
     "proposed_for": "P124",
     "why": null,
@@ -21109,12 +21199,20 @@
         "command": "python3 -I why-probes/waits.py <orchestrator transcript> 2026-10-08",
         "output": "agent messages enqueued on 2026-10-08: 46; delivered mid-turn (remove) 23, at a new turn (dequeue) 8; enqueue to delivery median 14 s; enqueue to first tool call naming the sender median 143 s, over 2 min: 23, over 5 min: 9; why-P112-e WHY at 23:25:17 delivered +13 s mid-turn, first call naming it +313 s",
         "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/timeline.py /home/o/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl 2026-10-08T23:25:00 2026-10-08T23:31:05",
+        "output": "23:25:17 queue enqueue logoslang-why-P112-e | 23:25:30 queue remove absorbed_mid_turn logoslang-why-P112-e | 23:26:27 TEXT E's answer is in; I'll finish writing PolyLogue's knowledge file first, then judge it. | 23:27:27 Write PolyLogue/.agents/orchestrator/KNOWLEDGE.md | 23:28:41 git push PolyLogue | 23:28:56 TEXT PolyLogue is pushed. Now judging the one-off why agent's answer on P112. | 23:31:03 SendMessage to logoslang-why-P112-e: DONE",
+        "commit": "270d299"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "No rule in SKILL.md says what the orchestrator does with an agent's message that arrives while it is in the middle of a step: Staying responsive says only Between messages you are idle; the messages and the question watch wake you, so a message the harness absorbs mid-turn is put after the step in hand"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T02:35+02:00",
@@ -21125,12 +21223,22 @@
       "run": "why-P124",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "accepted as a why of P124, same as W224",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W223",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "SKILL.md gives the one session that reads every message long steps of its own: setting up a new repo (fill the conf with him, then its ruling document), editing the skill and its script in place (This skill's files ... are edited ... by whichever orchestrator records the ruling or lands the fix), recording each ruling, and judging every why round; its Staying responsive section moves only builds, tests and reviews out of the session, and a helper takes only a lookup or a record too big to write well here",
     "proposed_for": "P124",
     "why": null,
@@ -21155,7 +21263,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W221",
     "made": {
       "at": "2026-10-09T02:35+02:00",
       "by": "logoslang-why-P124-a",
@@ -21165,12 +21273,22 @@
       "run": "why-P124",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "merged into W221",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W224",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "No rule in SKILL.md says what the orchestrator does with an agent's message that arrives while it is in the middle of a step: Staying responsive says only Between messages you are idle; the messages and the question watch wake you, so a message the harness absorbs mid-turn is put after the step in hand",
     "proposed_for": "P124",
     "why": null,
@@ -21190,7 +21308,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W222",
     "made": {
       "at": "2026-10-09T02:35+02:00",
       "by": "logoslang-why-P124-a",
@@ -21200,12 +21318,22 @@
       "run": "why-P124",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "merged into W222",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W225",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "SKILL.md's Questions to Thobias gives his words in a question file only two outcomes, an answer the watch step relays verbatim to the asker as ANSWER before question-close (When every question has an answer), or, in a receipt, a ruling (Ok closes the file; anything else he writes is his ruling, recorded and relayed like any other); no step looks for a question or request he writes inside an answer, says who answers it or where, or keeps the file open until it is answered, and cmd_question_close checks nothing, so Q85 (relayed 00:46) and Q81 (relayed 23:29) closed with his questions unanswered",
     "proposed_for": "P125",
     "why": null,
@@ -21233,7 +21361,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W218",
     "made": {
       "at": "2026-10-09T02:35+02:00",
       "by": "logoslang-why-P125-a",
@@ -21243,12 +21371,22 @@
       "run": "why-P125",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "merged into W218",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W226",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "No agent prompt says what to do with a question of his inside an ANSWER, and the message protocol has no tag that carries an answer to him: worker-prompt.md, reviewer-prompt.md and solve-prompt.md read an ANSWER only as his answer or ruling to the asker's own questions, and every tag an agent sends (QUESTION, PLAN, DONE, REVIEW, FOUND, BLOCKED, SOLVED, PROGRESS, WHY) goes to the orchestrator for its own use, so his Q85 question relayed to the issue 82 reviewer had no way back to him",
     "proposed_for": "P125",
     "why": null,
@@ -21281,7 +21419,17 @@
       "run": "why-P125",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:52+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "805746f",
+        "change": "rejected",
+        "reason": "its own evidence fails: the Q85 relay to logoslang-issue-82-review-5 at 2026-10-08T22:46:48Z (orchestrator transcript 79afb672) holds neither 'how does rust' nor 'borrowchecker', so his question never reached an agent; Q81 was the orchestrator's own receipt, with no agent. A missing way back to Thobias explains neither case"
+      }
+    ]
   },
   {
     "id": "W227",
