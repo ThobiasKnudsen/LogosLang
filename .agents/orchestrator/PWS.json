@@ -21288,7 +21288,8 @@
     "proposed_for": "P124",
     "why": [
       "W241",
-      "W242"
+      "W242",
+      "W250"
     ],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
@@ -21357,6 +21358,15 @@
         "effort": "xhigh",
         "commit": "9bee267",
         "change": "why + W242",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "why + W250",
         "reason": null
       }
     ]
@@ -22411,7 +22421,9 @@
     "status": "accepted",
     "text": "The rule files let no session but the orchestrator write a record: SKILL.md (You alone write the repo's ruling document; Only the main checkout writes the folder; PWS.json, which only pws.py writes, run in the main checkout), every-prompt.md (only {{ORCH}} writes them) and pws.py (a session with PWS_AGENT set may add draft whys and nothing else); and the helper, the one session SKILL.md starts for a side task, is told Change nothing anywhere: no edits, no commits, no graph writes, though SKILL.md lets A record too big to write well here go to a short helper session; so every step that writes a record (placing a question, accepting a why, writing a ruling, setting up a repo's folder) can only be the orchestrator's own",
     "proposed_for": "W221",
-    "why": null,
+    "why": [
+      "W248"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "~/.claude/skills/orchestrate/every-prompt.md",
@@ -22480,6 +22492,15 @@
         "commit": "9bee267",
         "change": "accepted as a why of W221, same as W238, W239",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "why + W248",
+        "reason": null
       }
     ]
   },
@@ -22489,7 +22510,9 @@
     "status": "accepted",
     "text": "The skill's files (~/.claude/skills/orchestrate and ~/.claude/skills/solve) are in no git repository, while every session orchestrate.sh starts works in a worktree of the repo (git -C \"$REPO\" worktree add, in cmd_spawn_worker and cmd_spawn_helper alike), so no implementation agent can work a fix to the skill on a branch of its own, and SKILL.md has those files edited in place by whichever orchestrator records the ruling or lands the fix",
     "proposed_for": "W221",
-    "why": null,
+    "why": [
+      "W249"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "~/.claude/skills/orchestrate/orchestrate.sh",
@@ -22546,6 +22569,15 @@
         "effort": "xhigh",
         "commit": "9bee267",
         "change": "accepted as a why of W221, same as W240",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "why + W249",
         "reason": null
       }
     ]
@@ -22774,7 +22806,7 @@
   {
     "id": "W246",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "orchestrate.sh finds a session by the folder it runs in (sessions_json rows selected by .cwd), so every session it starts gets a worktree of its own and the main checkout holds the orchestrator alone; SKILL.md's rule on a place, Only the main checkout writes the folder, so becomes a rule on one session, though writing there from another worktree is safe: pws.py finds the main checkout's PWS.json itself (main_checkout) and writes under a lock (locked), and the script's question commands and merges take flock too",
     "proposed_for": "W241",
     "why": null,
@@ -22804,7 +22836,7 @@
       "B"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W248",
     "made": {
       "at": "2026-10-09T02:59+02:00",
       "by": "logoslang-why-P124-b",
@@ -22814,12 +22846,22 @@
       "run": "why-P124",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "merged into W248",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W247",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "SKILL.md makes the installed, untracked files the skill's source, edited in place by every orchestrator (The installed files are the source: a copy kept in a repo is made from them, and nothing is ever moved over them whole, since that loses what another orchestrator changed in between), and no repo holds such a copy; so a fix has no history and no branch to be made on, and the only way a change lands is a live orchestrator's in-place edit",
     "proposed_for": "W242",
     "why": null,
@@ -22846,7 +22888,7 @@
       "B"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W249",
     "made": {
       "at": "2026-10-09T02:59+02:00",
       "by": "logoslang-why-P124-b",
@@ -22856,15 +22898,25 @@
       "run": "why-P124",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "merged into W249",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W248",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "The ruling document and the .agents/orchestrator/ folder can be written only in the main checkout (SKILL.md: Only the main checkout writes the folder, on the base; the question commands commit on the base in the main checkout and refuse while it stands on another branch; merge refuses a branch's change to the folder beyond Seed lines and its own question files, through folder_changes), and every other session is barred from the main checkout (agent-agnostic-prompt.md: Never work in the main checkout; worker-prompt.md and why-prompt.md: never run git there), so the one place a ruling or a question file can be written holds one session, the orchestrator; PWS.json alone is reached from any worktree, through pws.py's lock in git's common directory, where only pws.py's caller check stands in the way",
     "proposed_for": "W241",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "~/.claude/skills/orchestrate/agent-agnostic-prompt.md",
@@ -22872,7 +22924,10 @@
       "~/.claude/skills/orchestrate/why-prompt.md",
       "~/.claude/skills/orchestrate/orchestrate.sh",
       "folder_changes",
-      "~/.claude/skills/orchestrate/pws.py"
+      "~/.claude/skills/orchestrate/pws.py",
+      "cmd_spawn_helper",
+      "main_checkout",
+      "locked"
     ],
     "design": [],
     "pages": [],
@@ -22881,12 +22936,25 @@
         "command": "loop over why-probes/w241_probes.txt (eval each line)",
         "output": "SKILL.md:59: commit the files they wrote, and only those, on the base in the main checkout, and refuse to write while the main checkout stands on another branch. | SKILL.md:134: merge refuses anything more and prints what it found, since only the main checkout writes the folder | orchestrate.sh:780 folder_changes() ; 862-863: if seed-only, changes=$(folder_changes ...) | agent-agnostic-prompt.md:26: Never work in the main checkout. | worker-prompt.md:3: never run git there, never touch {{BASE}} | why-prompt.md:3: is the orchestrator's: never run git there | pws.py:231-232: open(os.path.join(common, \"pws.lock\")) ; fcntl.flock(lock, fcntl.LOCK_EX) (common = git rev-parse --git-common-dir) | pws.py:1569-1571: if caller_agent() is not None and args.command not in READS and not add why: a why agent reads PWS and adds draft whys; everything else is the orchestrator's",
         "commit": "270d299"
+      },
+      {
+        "command": "rg -n 'finds a session by its folder|select\\(.kind == \"background\" and \\(.cwd' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "223: '.[] | select(.kind == \"background\" and (.cwd // \"\") == $d) | .id'\n229: '.[] | select(.kind == \"background\" and (.cwd // \"\") == $d and .status != null) | .id'\n1236: # a helper looks in the asker's checkout but runs in a small detached worktree of its own, help-K, since the\n1237: # script finds a session by its folder and the main checkout is the orchestrator's",
+        "commit": "270d299"
+      },
+      {
+        "command": "rg -n 'def pws_path|main_checkout\\(\\), ORCH_DIR, \"PWS.json\"|def locked|LOCK_EX' ~/.claude/skills/orchestrate/pws.py; rg -c 'flock' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "85:def pws_path():\n86:    return os.environ.get(\"PWS_FILE\") or os.path.join(main_checkout(), ORCH_DIR, \"PWS.json\")\n229:def locked():\n232:        fcntl.flock(lock, fcntl.LOCK_EX)\norchestrate.sh: 10 flock lines (738 and 830 the merge lock, 1429 to 1476 the question files, 1522 the watch)",
+        "commit": "270d299"
       }
     ],
     "found_by": [
-      "A"
+      "A",
+      "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "orchestrate.sh finds a session by the folder it runs in (sessions_json rows selected by .cwd), so every session it starts gets a worktree of its own and the main checkout holds the orchestrator alone; SKILL.md's rule on a place, Only the main checkout writes the folder, so becomes a rule on one session, though writing there from another worktree is safe: pws.py finds the main checkout's PWS.json itself (main_checkout) and writes under a lock (locked), and the script's question commands and merges take flock too"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T02:59+02:00",
@@ -22897,19 +22965,39 @@
       "run": "why-P124",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "accepted as a why of W241, same as W246",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "asked: no why found",
+        "reason": "judged a root on 9 October 2026 after round 3: below it lie only Thobias's earlier rulings (one writer, the installed files are the source, one orchestrator per repo), history the stop rule does not count as a why; W250's evidence is the orchestrator's own PolyLogue setup on 8 October 23:24-23:28 while why-P112-e's answer waited"
+      }
+    ]
   },
   {
     "id": "W249",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "SKILL.md makes the installed files the skill's source (The installed files are the source: a copy kept in a repo is made from them, and nothing is ever moved over them whole), and no rule file puts ~/.claude/skills under version control or names a repository for the skill, so the skill has no repo, no base and no branch that an implementation agent's fix could be worked on and merged into",
     "proposed_for": "W242",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "~/.claude/skills/orchestrate/SKILL_HISTORY.md",
-      "~/.claude/CLAUDE.md"
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
     ],
     "design": [],
     "pages": [],
@@ -22923,12 +23011,25 @@
         "command": "rg -n -o -i '[^.]*(git init|under git|version control|its own repo|skill.s repo|a repo of its own)[^.]*' /home/o/.claude/skills/orchestrate/SKILL.md /home/o/.claude/skills/orchestrate/SKILL_HISTORY.md ~/.claude/CLAUDE.md; git -C /home/o/.claude/skills/orchestrate rev-parse --show-toplevel",
         "output": "(no match, exit 1) | fatal: not a git repository (or any parent up to mount point /)",
         "commit": "270d299"
+      },
+      {
+        "command": "rg -n -o 'The installed files are the source[^.]*' ~/.claude/skills/orchestrate/SKILL.md; git -C ~/.claude/skills/orchestrate rev-parse --show-toplevel",
+        "output": "26:The installed files are the source: a copy kept in a repo is made from them, and nothing is ever moved over them whole, since that loses what another orchestrator changed in between\nfatal: not a git repository (or any parent up to mount point /)",
+        "commit": "270d299"
+      },
+      {
+        "command": "rg --files --hidden --no-ignore -g '**/orchestrate/SKILL.md' -g '**/orchestrate/orchestrate.sh' ~/Personal/Code | rg -v '/worktrees/'",
+        "output": "(no output: no repo under ~/Personal/Code holds a copy of the skill)",
+        "commit": "270d299"
       }
     ],
     "found_by": [
-      "A"
+      "A",
+      "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "SKILL.md makes the installed, untracked files the skill's source, edited in place by every orchestrator (The installed files are the source: a copy kept in a repo is made from them, and nothing is ever moved over them whole, since that loses what another orchestrator changed in between), and no repo holds such a copy; so a fix has no history and no branch to be made on, and the only way a change lands is a live orchestrator's in-place edit"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T02:59+02:00",
@@ -22939,15 +23040,34 @@
       "run": "why-P124",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "accepted as a why of W242, same as W247",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "asked: no why found",
+        "reason": "judged a root on 9 October 2026 after round 3: below it lie only Thobias's earlier rulings (one writer, the installed files are the source, one orchestrator per repo), history the stop rule does not count as a why; W250's evidence is the orchestrator's own PolyLogue setup on 8 October 23:24-23:28 while why-P112-e's answer waited"
+      }
+    ]
   },
   {
     "id": "W250",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "SKILL.md allows one orchestrator per repo (One orchestrator per repo: its question watch takes a lock on the repo's folder, so a second orchestrator's watch is refused) and lets that one session take other repos as well (A repo is the one you stand in; -C <repo> names another; In a new repo, setup makes the folder ...; fill the conf with him), so every orchestrator step of a repo, and of a new repo it sets up, runs in the one session",
     "proposed_for": "W221",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "~/.claude/skills/orchestrate/orchestrate.sh"
@@ -22980,7 +23100,26 @@
       "run": "why-P124",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "accepted as a why of W221",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T03:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "asked: no why found",
+        "reason": "judged a root on 9 October 2026 after round 3: below it lie only Thobias's earlier rulings (one writer, the installed files are the source, one orchestrator per repo), history the stop rule does not count as a why; W250's evidence is the orchestrator's own PolyLogue setup on 8 October 23:24-23:28 while why-P112-e's answer waited"
+      }
+    ]
   },
   {
     "id": "P131",
