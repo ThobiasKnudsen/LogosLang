@@ -20953,13 +20953,15 @@
     "id": "P126",
     "kind": "problem",
     "status": "open",
-    "text": "Thobias has to check by hand whether the orchestrator followed up on what he saved or said: his saved answers to Q89 and Q90 went unseen until he asked, because questions-watch stopped after each save and the orchestrator had to start it again by hand, and after Q84's save it did not",
+    "text": "Thobias has to check by hand whether the orchestrator followed up on what he saved or said: his saved answers to Q89 and Q90 went unseen until he asked, because questions-watch stopped after each save and the orchestrator had to start it again by hand, and after Q84's save it did not; and his saved answer to Q79 (8 October 2026, saved 21:08 UTC) was read at 21:17 and relayed only at 21:29, after he asked \"didnt you see i answered Q79?\"",
     "program": "9 October 2026, orchestrator session 79afb672 on LogosLang dev: the watch (questions-watch, run in the background) woke on Thobias's save of Q84; the orchestrator ran question-seen and relayed the answer, and started no new watch. Thobias then saved answers in Q89 and Q90. Steps to see it again with the script as it was then: run questions-watch, save a question file, let it wake, save a second question file.",
     "output": "The first save prints its path and the watch exits (exit 0). The second save prints nothing: no process watches. The orchestrator saw Q89 and Q90 only when Thobias wrote in chat \"i saved a file. didnt you see that?\". Later the same day he wrote: \"im getting really frustrated about these problems and having to manually check if things are followed up or not\". Changed the same day, before this problem was recorded: questions-watch --follow keeps running and prints one line per save, and watch-guard.sh, a Stop hook, blocks the orchestrator's turn from ending while the watch is down; the hook is not in settings.json yet (the edit was refused as self-modification, so Thobias adds it).",
     "expected": "Every save of a question file and every message from Thobias is acted on without him checking: SKILL.md ›Questions to Thobias‹, \"Every question goes to him as a file\", and the watch line that says the orchestrator hears each save.",
     "tier": "orchestrator",
     "found": "Thobias in chat, 9 October 2026, dev 270d299",
-    "why": null,
+    "why": [
+      "W219"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -20971,13 +20973,32 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "why + W219",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T02:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "text was \"Thobias has to check by hand whether the orchestrator followed up on what he saved or said: his saved answers to Q89 and Q90 went unseen until he asked, because questions-watch stopped after each save and the orchestrator had to start it again by hand, and after Q84's save it did not\"",
+        "reason": "why-P126-a's FACT: Q79 is a second case (transcript 79afb672, queue-operation entries)"
+      }
+    ]
   },
   {
     "id": "W218",
     "kind": "why",
     "status": "accepted",
-    "text": "SKILL.md's rule Questions to Thobias handles every word Thobias writes in a question file only as an answer or a ruling: the watch step relays his words verbatim to the asker and runs question-close once each asked question has an answer, a receipt file takes anything but ok as his ruling, and no step picks out a question or an idea he asks back, says who answers it, or holds the close until he has a reply",
+    "text": "The orchestrate skill has no route for a question or idea Thobias asks: every route runs from an agent's question to him and his answer back to that agent (the orchestrator's job in SKILL.md, relay every question to him and every answer back; the message protocol; a helper, which answers only the session that asked it, helper-prompt.md; a question file's sections, one asker's questions with his Answer lines), so SKILL.md's rule Questions to Thobias handles every word he writes in a question file only as an answer to relay or a ruling, and no step picks out a question or idea he asks back, says who answers it, or holds the close until he has a reply",
     "proposed_for": "P125",
     "why": null,
     "anchors": [
@@ -21036,13 +21057,22 @@
         "commit": "805746f",
         "change": "accepted as a why of P125, same as W225",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "text was \"SKILL.md's rule Questions to Thobias handles every word Thobias writes in a question file only as an answer or a ruling: the watch step relays his words verbatim to the asker and runs question-close once each asked question has an answer, a receipt file takes anything but ok as his ruling, and no step picks out a question or an idea he asks back, says who answers it, or holds the close until he has a reply\"",
+        "reason": "W235 (B) and W237 (A) show the fact is wider than one rule: no route in the whole skill carries a question of his"
       }
     ]
   },
   {
     "id": "W219",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "The question watch lives only as long as one tool call in the orchestrator's own session, so it ends at the first save without --follow, at the Monitor tool's 30-minute cap with it, and at every orchestrator restart; nothing in orchestrate.sh starts it again, and SKILL.md makes each start a step the orchestrator must remember (Setup step 5, start it again at its expiry notice, Start the question watch again first, make sure the watch runs)",
     "proposed_for": "P126",
     "why": null,
@@ -21063,12 +21093,25 @@
         "command": "rg -n 'questions-watch|cmd_questions_watch' ~/.claude/skills/orchestrate/orchestrate.sh",
         "output": "106:  questions-watch [--follow]  wait until the owner saves an edit anywhere in one of your questions;\n1516:cmd_questions_watch() {\n1534/1540: ... edited \"$f\" && { echo \"$f\"; [ \"$follow\" -eq 1 ] || { kill \"$pid\" ...; return; }; }\n1601:  questions-watch)    use_repo; cmd_questions_watch \"$@\" ;;\n(no other command, question-seen, question-close or status, starts the watch; Monitor tool: Deadlines above 1800000ms are capped to 1800000ms)",
         "commit": "270d299"
+      },
+      {
+        "command": "rg -n 'timeout_ms|start it again|Start the question watch|runs for as long' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "43:5. Start the question watch (below). It runs for as long as you do.\n68:- questions-watch --follow, run with the Monitor tool (timeout_ms 1800000) ... A monitor ends after 30 minutes: start it again at its expiry notice. watch-guard.sh, a Stop hook in his ~/.claude/settings.json, refuses to end your turn while the watch is down.\n157:After a restart ... Start the question watch again first.",
+        "commit": "270d299"
+      },
+      {
+        "command": "Monitor tool schema, timeout_ms; and rg -c watch-guard ~/.claude/settings.json ~/.claude/settings.local.json",
+        "output": "Every monitor expires after timeout_ms (default 5 minutes, at most 30 minutes): it is killed and you get one notice with the event count. Re-arm it if you still need the watch.\nsettings.json watch-guard matches: 0; settings.local.json: 0",
+        "commit": "270d299"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "Every start of questions-watch is a step the orchestrator takes by hand in its own turn: SKILL.md Questions to Thobias runs it in a Monitor the harness kills after 30 minutes (timeout_ms 1800000) and says start it again at its expiry notice, Setup step 5 and the restart paragraph of Staying responsive leave its first start to the orchestrator too, and nothing outside the orchestrator's turns starts it, so one missed start, as after Q84's wake, leaves every later save unheard"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T02:35+02:00",
@@ -21079,12 +21122,22 @@
       "run": "why-P126",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "accepted as a why of P126, same as W227",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W220",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "watch-guard.sh, the Stop hook that SKILL.md says refuses to end the orchestrator's turn while the watch is down, is not in ~/.claude/settings.json, so a missed start of the watch is caught by nothing until Thobias asks",
     "proposed_for": "P126",
     "why": null,
@@ -21120,7 +21173,17 @@
       "run": "why-P126",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "rejected",
+        "reason": "fails the direct test for P126's cases: watch-guard.sh was written on 9 October 2026 after the Q84, Q89 and Q90 saves were missed, so its absence from settings.json made none of them happen; why a missed start goes unnoticed is asked under W219 next round"
+      }
+    ]
   },
   {
     "id": "W221",
@@ -21128,7 +21191,10 @@
     "status": "accepted",
     "text": "SKILL.md gives the orchestrator session itself every step of the pipeline (each why round's compare, accept, reject and ASK; filling and placing each question file; recording each ruling in DESIGN.md with its history, gate and commit; editing the skill and orchestrate.sh as whichever orchestrator lands the fix), and its Staying responsive section moves only builds, tests and reviews out of the session, so one session makes about 1,400 tool calls a day",
     "proposed_for": "P124",
-    "why": null,
+    "why": [
+      "W241",
+      "W242"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "~/.claude/skills/orchestrate/orchestrate.sh",
@@ -21179,6 +21245,24 @@
         "commit": "805746f",
         "change": "accepted as a why of P124, same as W223",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "why + W241",
+        "reason": null
+      },
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "why + W242",
+        "reason": null
       }
     ]
   },
@@ -21188,7 +21272,7 @@
     "status": "accepted",
     "text": "No rule in SKILL.md says an agent's message is handled before the task in hand: Staying responsive assumes the session is idle between messages, so a message delivered mid-turn between tool calls waits until the current task ends",
     "proposed_for": "P124",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md"
     ],
@@ -21232,6 +21316,15 @@
         "commit": "805746f",
         "change": "accepted as a why of P124, same as W224",
         "reason": null
+      },
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "asked: no why found",
+        "reason": "both agents searched SKILL.md, every-prompt.md, agent-agnostic-prompt.md and ~/.claude/CLAUDE.md: no rule orders the orchestrator's own steps against a message that arrives mid-task; a rule the skill does not have yet"
       }
     ]
   },
@@ -21434,7 +21527,7 @@
   {
     "id": "W227",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "Every start of questions-watch is a step the orchestrator takes by hand in its own turn: SKILL.md Questions to Thobias runs it in a Monitor the harness kills after 30 minutes (timeout_ms 1800000) and says start it again at its expiry notice, Setup step 5 and the restart paragraph of Staying responsive leave its first start to the orchestrator too, and nothing outside the orchestrator's turns starts it, so one missed start, as after Q84's wake, leaves every later save unheard",
     "proposed_for": "P126",
     "why": null,
@@ -21461,7 +21554,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W219",
     "made": {
       "at": "2026-10-09T02:35+02:00",
       "by": "logoslang-why-P126-a",
@@ -21471,7 +21564,17 @@
       "run": "why-P126",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "merged into W219",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W228",
@@ -21565,7 +21668,7 @@
   {
     "id": "W230",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "watch-guard.sh knows the orchestrator only by state/orchestrator.session, which only cmd_questions_watch writes when a watch starts, so an orchestrator session that has not started the watch yet (a new session, or one after a restart) ends every turn unrefused, and its first start stays the remembered SKILL.md Setup step 5",
     "proposed_for": "P126",
     "why": null,
@@ -21602,12 +21705,22 @@
       "run": "why-P126",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "rejected",
+        "reason": "fails the direct test: the guard never ran in any of P126's cases (it was written after them and is not registered); the gap is real and confirmed by the agent's runs, so it is recorded as problem P129 for the fix to cover"
+      }
+    ]
   },
   {
     "id": "W231",
     "kind": "why",
-    "status": "draft",
+    "status": "rejected",
     "text": "watch-guard.sh exits 0 whenever stop_hook_active is true, so it refuses only the first end of a turn: an orchestrator that ends its turn again without starting the watch ends it with the watch down, and nothing wakes it before the next message",
     "proposed_for": "P126",
     "why": null,
@@ -21643,7 +21756,17 @@
       "run": "why-P126",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-09T02:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "rejected",
+        "reason": "fails the direct test: the guard never ran in any of P126's cases (it was written after them and is not registered); the gap is real and confirmed by the agent's runs, so it is recorded as problem P129 for the fix to cover"
+      }
+    ]
   },
   {
     "id": "W232",
@@ -21774,6 +21897,544 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "769e608",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W234",
+    "kind": "why",
+    "status": "draft",
+    "text": "A save the orchestrator has read but not yet relayed is held only in its running turn: cmd_questions shows the file as edited until question-seen or question-close, but nothing that runs at a turn's end checks that (watch-guard.sh reads only watch.lock) and a running --follow watch prints each save once, so a message that comes in mid-turn displaces the relay until the watch is started again or Thobias asks, as with Q79: saved 21:08 UTC, read 21:17:39, his chat message at 21:17:41 taken up instead, relayed 21:29 after he asked",
+    "proposed_for": "P126",
+    "why": null,
+    "anchors": [
+      "cmd_questions",
+      "cmd_questions_watch",
+      "~/.claude/skills/orchestrate/watch-guard.sh",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "f=~/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl; jq -r 'select(.type==\"queue-operation\" and .timestamp > \"2026-10-08T21:08\" and .timestamp < \"2026-10-08T21:29\" and .operation!=\"dequeue\") | \"\\(.timestamp) \\(.operation) \\(.reason // \"-\") \\(.content|tostring|.[0:60])\"' $f; jq -r 'select(.type==\"assistant\" and .timestamp > \"2026-10-08T21:17:30\" and .timestamp < \"2026-10-08T21:30\") | .timestamp as $t | .message.content[]? | select(.type==\"tool_use\") | \"\\($t) \\(.name) \\(.input.description // \"\")\"' $f",
+        "output": "2026-10-08T21:08:52Z enqueue - <task-notification> bcwvbhs2h: Background command \"Restart the watch on the question files\" completed (exit code 0)\n2026-10-08T21:17:36Z remove absorbed_mid_turn <task-id>bcwvbhs2h\n2026-10-08T21:17:39Z Bash Show which question file Thobias saved and what he wrote\n2026-10-08T21:17:41Z enqueue - doesnt seem like you are removing agents that are done. why not? ...\n2026-10-08T21:17:46Z ListAgents ... 21:18:46Z Bash Remove the stale solve-W75 row ...\n2026-10-08T21:19:01Z AskUserQuestion (answered 21:27:17)\n2026-10-08T21:27:47Z Bash Restart the watch on the question files in the background (fires at 21:27:49: Q79 still edited)\n2026-10-08T21:28:33Z enqueue - didnt you see i answered Q79?\n2026-10-08T21:29:32Z Bash question-close Q79",
+        "commit": "270d299"
+      },
+      {
+        "command": "cd ~/.claude/skills/orchestrate && rg -n 'echo edited|follow\" -eq 1' orchestrate.sh; rg -n 'orchestrator.session|flock -n' watch-guard.sh",
+        "output": "1510:    printf ... \"$(edited \"$f\" && echo edited || echo waiting)\" ...   (cmd_questions)\n1534: (start scan) edited \"$f\" && { echo \"$f\"; [ \"$follow\" -eq 1 ] || ... return; }\n1540: (each inotify event) edited \"$f\" && { echo \"$f\"; [ \"$follow\" -eq 1 ] || ... return; }\nwatch-guard.sh:12:[ \"$(cat \"$dir/state/orchestrator.session\" 2>/dev/null)\" = \"$sid\" ] || exit 0\nwatch-guard.sh:13:flock -n \"$dir/watch.lock\" true 2>/dev/null || exit 0",
+        "commit": "270d299"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T02:53+02:00",
+      "by": "logoslang-why-P126-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": "why-P126",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W235",
+    "kind": "why",
+    "status": "rejected",
+    "text": "Every route the orchestrate skill has for a question runs one way, an agent's question to Thobias and his answer back to that agent: the orchestrator's job in SKILL.md is to relay every question to him and every answer back, The message protocol takes messages only from sessions, a HELP's helper answers only the session that sent it, and a question file's sections are one asker's questions with his Answer lines; no route carries a question of his to whoever can answer it and the answer back to him, so the rule that handles his save has nothing to do with his question but pass it on as an answer",
+    "proposed_for": "W218",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/helper-prompt.md",
+      "~/.claude/skills/orchestrate/question-template.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o 'relay every question to him and every answer back|Sessions write to you with SendMessage|The helper answers the sender itself|One file holds all of one asker.s batched questions|SendMessage .to: \"\\{\\{ASKER\\}\\}\". with .HELPED|## 1\\. <the first question' ~/.claude/skills/orchestrate/{SKILL,helper-prompt,question-template}.md",
+        "output": "SKILL.md:12: relay every question to him and every answer back\nSKILL.md:64: One file holds all of one asker's batched questions\nSKILL.md:109: Sessions write to you with SendMessage\nSKILL.md:114: The helper answers the sender itself\nhelper-prompt.md:5: SendMessage `to: \"{{ASKER}}\"` with `HELPED\nquestion-template.md:6: ## 1. <the first question",
+        "commit": "270d299"
+      },
+      {
+        "command": "rg -n -i 'his question|he asks|asks back|question of his|answer him|reply to him' over SKILL.md, SKILL_HISTORY.md, every agent prompt, helper-prompt.md, solve/SKILL.md and ~/.claude/CLAUDE.md; then SKILL.md l.130 in its section",
+        "output": "(no hit: no route for a question Thobias asks)\nSKILL.md:130 (under ## The message protocol, so about agents' questions): What you may answer yourself: where a file is, what a script prints, what another implementation agent already landed.",
+        "commit": "270d299"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T02:55+02:00",
+      "by": "logoslang-why-P125-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": "why-P125",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "rejected",
+        "reason": "restates W218, whose text is amended to carry this wider wording"
+      }
+    ]
+  },
+  {
+    "id": "W236",
+    "kind": "why",
+    "status": "draft",
+    "text": "The one step the skills have for an idea or fix Thobias proposes is the solve skill's Assess each solution he gives, done by a solution agent on a root cause, which SKILL.md starts only after the why agents reach that root and the bottleneck order picks it (What runs next is the biggest bottleneck); so an idea he writes in a question file about something else is filed for that later agent, the file is closed meanwhile, and nothing tells him where or when it will be answered",
+    "proposed_for": "W218",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/solve/SKILL.md",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/solve-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o 'assess every solution he proposes|## 3. Assess each solution he gives|Every root cause with no solution gets a solution agent|What runs next is the biggest bottleneck|Which problem.s why agents start, and when, is the bottleneck order' ~/.claude/skills/solve/SKILL.md ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "solve/SKILL.md:3: assess every solution he proposes\nsolve/SKILL.md:32: ## 3. Assess each solution he gives\norchestrate/SKILL.md:49: What runs next is the biggest bottleneck\norchestrate/SKILL.md:90: Which problem's why agents start, and when, is the bottleneck order\norchestrate/SKILL.md:103: Every root cause with no solution gets a solution agent",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/window.py over the orchestrator's transcript 79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl, 2026-10-08T21:28Z to 21:31Z; answers/Q81-O.md, Decided",
+        "output": "21:28:26Z reads his Q81 answer ('maybe it would be a create startup idea ... remote postgresql instance ...')\n21:29:32Z question-close Q79, question-close Q81\n21:29:34Z TaskUpdate: 'P85's solution agent starts from his Q78 ideas ... AND his Q81 idea: a remote PostgreSQL server ... possibly a startup. Point it to answers/Q78-O.md and answers/Q81-O.md.'\n(no SendMessage or chat reply to him about the idea)\nQ81 Decided: 'P85 waits its turn in the bottleneck order. Nothing is slow yet'",
+        "commit": "270d299"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T02:55+02:00",
+      "by": "logoslang-why-P125-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": "why-P125",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "P129",
+    "kind": "problem",
+    "status": "open",
+    "text": "watch-guard.sh, the Stop hook meant to keep an orchestrator session from ending a turn while its question watch is down, misses two cases: a session that has not started the watch yet, since it knows the orchestrator only from state/orchestrator.session and only questions-watch writes that file; and a second end of the same turn, since it exits 0 when stop_hook_active is true",
+    "program": "logoslang-why-P126-b's runs in scratch repos (why-probes/guard-cases.txt in its worktree), with the watch down: input {\"session_id\":\"S-NEW\",\"cwd\":\"<scratch repo>\",\"stop_hook_active\":false} on stdin of bash ~/.claude/skills/orchestrate/watch-guard.sh while state/orchestrator.session names another session; then the named session with \"stop_hook_active\":true",
+    "output": "both print nothing, exit 0 (the turn may end); the named session with \"stop_hook_active\":false gets {\"decision\":\"block\",…}",
+    "expected": "an orchestrator session cannot end a turn while its repo's watch is down, as SKILL.md ›Questions to Thobias‹ says of watch-guard.sh; Thobias, 9 October 2026: \"make it automatic\"",
+    "tier": "orchestrator",
+    "found": "logoslang-why-P126-b, 9 October 2026, dev 769e608",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T02:55+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "9bee267",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W237",
+    "kind": "why",
+    "status": "rejected",
+    "text": "SKILL.md casts Thobias only as the one who answers, rules and finds, never as one who asks: its head lists the orchestrator's jobs (relay every question to him and every answer back, the review loop, merging, the graph, propose the next issue) with none that answers him; Facts are the asker's job, decisions are his sends facts to agents and their helpers, and helper-prompt.md answers a session ({{ASKER}}), never him; his chat words count only as an answer (An answer he types in chat counts the same) or a finding (Thobias's own findings in chat count the same); and What you may answer yourself allows only where a file is, what a script prints, what an agent landed, a design question being still his; so a fact he asks for (Rust's borrow-checker facts) or an opinion (would a common output_type make Logos fast) has no job, owner or route, and Questions to Thobias, which carries out the relay job, sorts his words into its two payloads, answer or ruling",
+    "proposed_for": "W218",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/helper-prompt.md",
+      "spawn-helper"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "/usr/bin/grep -n -o -E 'relay every question to him and every answer back|Facts are the asker.s job, decisions are his|An answer he types in chat counts the same|Thobias.s own findings in chat count the same|Ok closes the file; anything else he writes is his ruling|What you may answer yourself: [^.]*\\.' /home/o/.claude/skills/orchestrate/SKILL.md; /usr/bin/grep -n -o -E 'SendMessage .to: \"\\{\\{ASKER\\}\\}\". with .HELPED' /home/o/.claude/skills/orchestrate/helper-prompt.md",
+        "output": "12:relay every question to him and every answer back\n66:Facts are the asker's job, decisions are his\n67:Ok closes the file; anything else he writes is his ruling\n69:An answer he types in chat counts the same\n87:Thobias's own findings in chat count the same\n130:What you may answer yourself: where a file is, what a script prints, what another implementation agent already landed.\nhelper-prompt.md: Then SendMessage to: \"{{ASKER}}\" with HELPED {{TAG}}: {{ANSWER}} (a helper answers a session, never Thobias)",
+        "commit": "270d299"
+      },
+      {
+        "command": "/usr/bin/grep -c -i -E 'answer (him|thobias|his)|reply to (him|thobias)|questions? (from|of) (him|thobias)|he asks|asks you' /home/o/.claude/skills/orchestrate/SKILL.md /home/o/.claude/skills/orchestrate/helper-prompt.md /home/o/.claude/skills/orchestrate/bottleneck-task.md; /usr/bin/grep -n -o -E '^## [A-Za-z ,]+' /home/o/.claude/skills/orchestrate/SKILL.md",
+        "output": "SKILL.md:0 helper-prompt.md:0 bottleneck-task.md:0\nsections: How you work on his machine, One repo one orchestrator several bases, Setup, Picking work, Questions to Thobias, Spawning an implementation agent, The review loop, The why agents, The message protocol, Merging, A Linear repo and the PR flow, Staying responsive, Never (no section for a question from him)",
+        "commit": "270d299"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T02:55+02:00",
+      "by": "logoslang-why-P125-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": "why-P125",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "rejected",
+        "reason": "restates W218, whose text is amended to carry this wider wording"
+      }
+    ]
+  },
+  {
+    "id": "W238",
+    "kind": "why",
+    "status": "merged",
+    "text": "SKILL.md reserves every write to the repo's .agents/orchestrator/ folder and its ruling document to the orchestrator (You alone write the repo's ruling document; Only the main checkout writes the folder; pws.py run in the main checkout; each why round's compare, accept, reject and link under The why agents, step 4), so the why rounds, the question files and the recording of rulings, which all write there, stay in its session: 340, 194 and 139 of its 1,411 calls on 8 October",
+    "proposed_for": "W221",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/pws.py",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o '[^.]*(You alone|Only the main checkout)[^.]*' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "12: You alone write the repo's ruling document; the sessions read it\n32: Only the main checkout writes the folder, on the base (in a MERGE=pr repo, through record, A Linear repo and the PR flow)",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/groups.py <orchestrator transcript> 2026-10-08",
+        "output": "tool calls dated 2026-10-08 1411: why rounds (pws.py, why-more, why-done) 340; the skill's own files (read, edit, test) 243; question files (draft, place, watch, close) 194; SendMessage to a session 181; recording in the ruling document and committing 139; another repo's setup (PolyLogue) 40; orchestrate.sh spawn, status, merge, resume 29",
+        "commit": "270d299"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W241",
+    "made": {
+      "at": "2026-10-09T02:55+02:00",
+      "by": "logoslang-why-P124-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": "why-P124",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "merged into W241",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W239",
+    "kind": "why",
+    "status": "merged",
+    "text": "The only session kind the orchestrator can hand a step of its own to is the helper, and helper-prompt.md forbids it every write (Change nothing anywhere: no edits, no commits, no graph writes); every other kind orchestrate.sh starts is bound to an issue, a review, a problem or a root (spawn-worker, spawn-reviewer, record, spawn-why, why-more, spawn-solve), so a task of the orchestrator's own, such as setting up another repo and writing its ruling document, has no session to go to and is done in its own session (40 calls for PolyLogue on 8 October)",
+    "proposed_for": "W221",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/helper-prompt.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o 'Change nothing anywhere[^.]*' ~/.claude/skills/orchestrate/helper-prompt.md; rg -n -o '^\\s*(spawn-[\\w-]+|why-more|record)\\)' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "3:Change nothing anywhere: no edits, no commits, no graph writes\n1572:  spawn-worker)\n1573:  spawn-reviewer)\n1574:  record)\n1579:  spawn-why)\n1580:  why-more)\n1583:  spawn-solve)\n1592:  spawn-helper)",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/polylogue.py <orchestrator transcript>",
+        "output": "HUMAN 2026-10-08T23:18:32 you should rather create a new folder under the Code repo called Polylogue ... set up things needed for orchistrator as it works today there\nCALL 23:18:55 to 23:28:41 in the orchestrator session itself: orchestrate.sh -C PolyLogue setup, Read PLAN.md (40 KB), Write .agents/orchestrator/KNOWLEDGE.md, KNOWLEDGE_HISTORY.md, AGENTS.md, CLAUDE.md, git commit, git push; meanwhile WHY logoslang/why-P112-e enqueued 23:25:17",
+        "commit": "270d299"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W241",
+    "made": {
+      "at": "2026-10-09T02:55+02:00",
+      "by": "logoslang-why-P124-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": "why-P124",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "merged into W241",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W240",
+    "kind": "why",
+    "status": "merged",
+    "text": "The skill's own files (SKILL.md, orchestrate.sh, pws.py, the prompts) lie in no git repo, so no issue, branch or implementation agent can carry a fix to them, and SKILL.md has them edited in place by whichever orchestrator records the ruling or lands the fix: 243 of the orchestrator's 1,411 calls on 8 October read, edited or tested them",
+    "proposed_for": "W221",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/pws.py"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "git -C ~/.claude/skills/orchestrate rev-parse --show-toplevel; rg -n -o '[^.]*by whichever orchestrator[^.]*' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "fatal: not a git repository (or any parent up to mount point /)\n26: This skill's files (this one, the script and the prompts beside it, and ~/.claude/skills/solve/SKILL.md) are edited in place, with the Edit tool, by whichever orchestrator records the ruling or lands the fix",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/groups.py <orchestrator transcript> 2026-10-08",
+        "output": "the skill's own files (read, edit, test) 243 of 1411; among them Edit SKILL.md 45, Edit orchestrate.sh 27, Edit prompts 10, Read SKILL.md 10, Read pws.py 13, Read SKILL_HISTORY.md 6 (calls.py, reads.py)",
+        "commit": "270d299"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W242",
+    "made": {
+      "at": "2026-10-09T02:55+02:00",
+      "by": "logoslang-why-P124-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": "why-P124",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "merged into W242",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W241",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The rule files let no session but the orchestrator write a record: SKILL.md (You alone write the repo's ruling document; Only the main checkout writes the folder; PWS.json, which only pws.py writes, run in the main checkout), every-prompt.md (only {{ORCH}} writes them) and pws.py (a session with PWS_AGENT set may add draft whys and nothing else); and the helper, the one session SKILL.md starts for a side task, is told Change nothing anywhere: no edits, no commits, no graph writes, though SKILL.md lets A record too big to write well here go to a short helper session; so every step that writes a record (placing a question, accepting a why, writing a ruling, setting up a repo's folder) can only be the orchestrator's own",
+    "proposed_for": "W221",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/every-prompt.md",
+      "~/.claude/skills/orchestrate/helper-prompt.md",
+      "~/.claude/skills/orchestrate/pws.py",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "bash why-probes loop over why-probes/w221_probes.txt (lines 1-4); sed -n 4p /home/o/.claude/skills/orchestrate/pws.py",
+        "output": "SKILL.md:12: You alone write the repo's ruling document; the sessions read it. | SKILL.md:32: Only the main checkout writes the folder, on the base | SKILL.md:87: which only `pws.py` beside this file writes: run it in the main checkout | SKILL.md:70: A record too big to write well here (a heading renamed with all its pointers) may go to a short helper session | helper-prompt.md:3: Change nothing anywhere: no edits, no commits, no graph writes. | every-prompt.md:10: only `{{ORCH}}` writes them, in the main checkout or ... as its own commit on that issue's branch | why-prompt.md:7: the orchestrator accepts, links and merges. | pws.py:4: a session with PWS_AGENT set may add draft whys and nothing else.",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/calls_by_step.py /home/o/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl 2026-10-08",
+        "output": "record-writing steps the orchestrator took itself on 8 October: ruling document 45 Bash searches, 26 Reads, 21 Edits | pws.py add 54, show 45, amend 24, compare 23, similar 18, accept 14, list 6, check 6, none 6, link 5, pending 5 | question files 33 Writes, 17 Edits, 18 Reads, question-new 18, question-close 13, question-seen 10 | another repo's setup 8 Reads, 10 Bash, 6 Edits",
+        "commit": "270d299"
+      },
+      {
+        "command": "rg -n -o '[^.]*(You alone|Only the main checkout)[^.]*' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "12: You alone write the repo's ruling document; the sessions read it\n32: Only the main checkout writes the folder, on the base (in a MERGE=pr repo, through record, A Linear repo and the PR flow)",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/groups.py <orchestrator transcript> 2026-10-08",
+        "output": "tool calls dated 2026-10-08 1411: why rounds (pws.py, why-more, why-done) 340; the skill's own files (read, edit, test) 243; question files (draft, place, watch, close) 194; SendMessage to a session 181; recording in the ruling document and committing 139; another repo's setup (PolyLogue) 40; orchestrate.sh spawn, status, merge, resume 29",
+        "commit": "270d299"
+      },
+      {
+        "command": "rg -n -o 'Change nothing anywhere[^.]*' ~/.claude/skills/orchestrate/helper-prompt.md; rg -n -o '^\\s*(spawn-[\\w-]+|why-more|record)\\)' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "3:Change nothing anywhere: no edits, no commits, no graph writes\n1572:  spawn-worker)\n1573:  spawn-reviewer)\n1574:  record)\n1579:  spawn-why)\n1580:  why-more)\n1583:  spawn-solve)\n1592:  spawn-helper)",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/polylogue.py <orchestrator transcript>",
+        "output": "HUMAN 2026-10-08T23:18:32 you should rather create a new folder under the Code repo called Polylogue ... set up things needed for orchistrator as it works today there\nCALL 23:18:55 to 23:28:41 in the orchestrator session itself: orchestrate.sh -C PolyLogue setup, Read PLAN.md (40 KB), Write .agents/orchestrator/KNOWLEDGE.md, KNOWLEDGE_HISTORY.md, AGENTS.md, CLAUDE.md, git commit, git push; meanwhile WHY logoslang/why-P112-e enqueued 23:25:17",
+        "commit": "270d299"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "SKILL.md reserves every write to the repo's .agents/orchestrator/ folder and its ruling document to the orchestrator (You alone write the repo's ruling document; Only the main checkout writes the folder; pws.py run in the main checkout; each why round's compare, accept, reject and link under The why agents, step 4), so the why rounds, the question files and the recording of rulings, which all write there, stay in its session: 340, 194 and 139 of its 1,411 calls on 8 October",
+      "The only session kind the orchestrator can hand a step of its own to is the helper, and helper-prompt.md forbids it every write (Change nothing anywhere: no edits, no commits, no graph writes); every other kind orchestrate.sh starts is bound to an issue, a review, a problem or a root (spawn-worker, spawn-reviewer, record, spawn-why, why-more, spawn-solve), so a task of the orchestrator's own, such as setting up another repo and writing its ruling document, has no session to go to and is done in its own session (40 calls for PolyLogue on 8 October)"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T02:56+02:00",
+      "by": "logoslang-why-P124-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": "why-P124",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "accepted as a why of W221, same as W238, W239",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W242",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The skill's files (~/.claude/skills/orchestrate and ~/.claude/skills/solve) are in no git repository, while every session orchestrate.sh starts works in a worktree of the repo (git -C \"$REPO\" worktree add, in cmd_spawn_worker and cmd_spawn_helper alike), so no implementation agent can work a fix to the skill on a branch of its own, and SKILL.md has those files edited in place by whichever orchestrator records the ruling or lands the fix",
+    "proposed_for": "W221",
+    "why": null,
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "cmd_spawn_worker",
+      "cmd_spawn_helper",
+      "~/.claude/skills/orchestrate/pws.py"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "git -C /home/o/.claude/skills/orchestrate rev-parse --show-toplevel; git -C ~/.claude rev-parse --show-toplevel; grep -n 'worktree add' /home/o/.claude/skills/orchestrate/orchestrate.sh; grep -n -o 'edited in place, with the Edit tool, by whichever orchestrator[^.]*' /home/o/.claude/skills/orchestrate/SKILL.md",
+        "output": "fatal: not a git repository (or any parent up to mount point /) (both) | orchestrate.sh:412,416 (cmd_spawn_worker), 565, 743, 920, 1113, 1251 (cmd_spawn_helper): git -C \"$REPO\" worktree add ... | SKILL.md:26: edited in place, with the Edit tool, by whichever orchestrator records the ruling or lands the fix",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/calls_detail.py /home/o/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl 2026-10-08",
+        "output": "skill-file steps on 8 October: 106 Edits (33 SKILL.md, 27 orchestrate.sh, 15 pws.py, 12 SKILL_HISTORY.md, ...), 54 Reads and 75 Bash reads, 235 calls in all, 526,160 of the day's 2,084,806 result characters",
+        "commit": "270d299"
+      },
+      {
+        "command": "git -C ~/.claude/skills/orchestrate rev-parse --show-toplevel; rg -n -o '[^.]*by whichever orchestrator[^.]*' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "fatal: not a git repository (or any parent up to mount point /)\n26: This skill's files (this one, the script and the prompts beside it, and ~/.claude/skills/solve/SKILL.md) are edited in place, with the Edit tool, by whichever orchestrator records the ruling or lands the fix",
+        "commit": "270d299"
+      },
+      {
+        "command": "python3 -I why-probes/groups.py <orchestrator transcript> 2026-10-08",
+        "output": "the skill's own files (read, edit, test) 243 of 1411; among them Edit SKILL.md 45, Edit orchestrate.sh 27, Edit prompts 10, Read SKILL.md 10, Read pws.py 13, Read SKILL_HISTORY.md 6 (calls.py, reads.py)",
+        "commit": "270d299"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The skill's own files (SKILL.md, orchestrate.sh, pws.py, the prompts) lie in no git repo, so no issue, branch or implementation agent can carry a fix to them, and SKILL.md has them edited in place by whichever orchestrator records the ruling or lands the fix: 243 of the orchestrator's 1,411 calls on 8 October read, edited or tested them"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-09T02:56+02:00",
+      "by": "logoslang-why-P124-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "270d299",
+      "run": "why-P124",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-09T02:56+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9bee267",
+        "change": "accepted as a why of W221, same as W240",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P130",
+    "kind": "problem",
+    "status": "open",
+    "text": "Two rule files disagree on what a helper may do: SKILL.md lets a record too big to write well in the orchestrator's session go to a short helper session, whose diff the orchestrator checks before it lands, while helper-prompt.md tells every helper to change nothing anywhere, with no edits, no commits and no graph writes; so the one way SKILL.md offers to hand a record off cannot be used",
+    "program": "grep -n 'too big to write well' ~/.claude/skills/orchestrate/SKILL.md; grep -n 'Change nothing anywhere' ~/.claude/skills/orchestrate/helper-prompt.md",
+    "output": "SKILL.md:70 \"A record too big to write well here (a heading renamed with all its pointers) may go to a short helper session; check its diff against his words before it lands\"; helper-prompt.md:3 \"Change nothing anywhere: no edits, no commits, no graph writes\"",
+    "expected": "one rule for what a helper may write, stated in one place (agent-agnostic-prompt.md: two sources that disagree are a question, never a side picked)",
+    "tier": "orchestrator",
+    "found": "logoslang-why-P124-a, FOUND in its round on W221, 9 October 2026, dev 769e608",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-09T02:57+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "9bee267",
       "run": null,
       "agent": null
     },
