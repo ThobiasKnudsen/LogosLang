@@ -351,7 +351,7 @@ Each guards a place where ownership would escape the machinery that frees it:
 2. A scope's value may not be a place the scope owns: the teardown would free it on the way out and hand back freed memory; `move` is how ownership leaves a scope.
 3. Ownership may not cross a function return: a block hands ownership to its binder in plain view of the parse, but a call hides its body behind a return type that cannot yet say it transfers ownership, so the caller would not know it owes a `free`.
 
-Rules 2 and 3 no longer apply to a *last* value since 25 September 2026 (›A last value moves out‹). `-> own @T` hands ownership to the caller, whose bound name holds the value (`own` as a gate on a reference, the same primitive as `pub`/`mut`).
+Rule 2 does not apply to a block's last value, and rule 3 has one door: `-> own @T`, or `-> own t` for a type that fills `free`, hands the function's last value to the caller, whose bound name holds it (›A last value moves out‹; `own` as a gate on a reference, the same primitive as `pub`/`mut`).
 - **Ruled:** rules, July 2026; `-> own @T`, 30 August 2026.
 - **Ruled (29 September 2026, Thobias, #210):** rule 1's exceptions, `free` and `&`, from the ruling recorded at ›Holding is decided at the binding site, parameters included‹.
 - **Ruled (30 September 2026, Thobias, Q-25):** rule 1 no longer refuses: the line's end runs the `free` whose absence it guarded (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹). The heading keeps its name, as rules 2 and 3 still refuse.
@@ -374,9 +374,10 @@ Binding a value just made by a type whose body fills `share free = (…)`, e.g. 
 - **Seed:** since 25 September 2026; the owner's binding carries `own` in its gate set, read by `a:gate` (Claude's choice, open to Thobias); a plain record's owner since 30 September 2026 (#192, #178): `a := bag(1)`, `mut a := bag ?` and a call whose last value moves out, its free run over the record's bytes as a `share` function takes its receiver; not yet: a value that reaches no name, freed at its line's end (#224), a value just made passed straight to a call, `own` on a parameter.
 
 ### A last value moves out
-A function's or block's last value, when it is a place that scope owns, moves to whoever takes the value, an `alloc`'s owning `@T` included. `mk := fn () -> t ( a := array i32 (…), a )` and `-> array i32 ( array i32 (1, 2) )` hand their array to the caller, whose name becomes the owner. A `return` of an owned place before the last line stays the checked error; the teardowns of the scopes it leaves run on the way out.
-- **Why:** the caller knows it owes the teardown, because the parse sees the callee's body at the call.
+A block's last value, when it is a place the block owns, moves to whoever takes the value, an `alloc`'s owning `@T` included: `x := ( a := array i32 [1, 2], a )` makes `x` the owner. A function hands on a value it made only when its result type says so, with `own`: `mk := fn () -> own @i32 ( alloc 1 of i32 5 )`, and `mk := fn () -> own t ( a := array i32 [1, 2], a )` with `t := array i32`. The parse checks the body against the result where the function closes: under `-> own`, the last value is made or moved in every arm; without it, the last value is a borrow or a value with no end, and `fn () -> @i32 ( alloc 1 of i32 5 )` is the checked error "this function hands on a value it made: write `-> own @i32`". A call reads whether it hands on a made value from the callee's written result, never from its body, so a function's call to itself is answered while its body is still open. A `return` of an owned place before the last line stays the checked error; the teardowns of the scopes it leaves run on the way out.
+- **Why:** the caller knows it owes the teardown from the line of the function it calls, as a block's binder sees the block's last line; a call needs no walk into its callee, so a chain of calls reads in time in step with its length (›Reading a program takes time in step with its size; no walk runs once per path‹), and a call whose callee is still open or not built yet has its answer.
 - **Ruled:** 25 September 2026, Thobias.
+- **Ruled (9 October 2026, Thobias, Q89):** a function hands on a made value only through `-> own`; this wording is the solution agent's, chosen with option (a) ("a but i didnt realy read through the wording because it was too long"). Rust does the same: `fn mk() -> Box<i32>` owns and `fn get(&self) -> &i32` lends, and a caller never looks at a body.
 
 ### A field may be `own @T ?`
 The field owns what it points to, so `free ptr` in the type's `share free` is the owner's free. An `own` field with no `share free` is the checked error of ›A type whose fields carry teardowns must write its own destructor‹.
@@ -577,7 +578,7 @@ A dyad is a type slot and a value slot. `:=` introduces a name and binds it to a
 `pub x := 5`, `pub mut y := i32 5`, `pub math := type (…)`. The binding is filled where the gate words and `:=` meet on the tape. Nothing on the value side reaches across `:=` to the binding. A gate word anywhere else, `f(mut i32 5)`, is a gate value where none is accepted: the checked error (see ›A gate word stands only where a binding is being filled‹).
 - **Why:** a gate is name data, an entry on the binding, never on the value. So it stands on the name's side of `:=`. This also closes for gates the "reach" question *The constructor is a field* had left open, and `pub x := a + b` still gates `x`.
 - **Ruled:** 15 September 2026.
-- **Open:** a gated return type (it has no name to stand beside). Whether the reference words `own` and `share`, which spell what a reference *does* on binding and stand in its type (*Sections, the arche, and effect identities*), keep that place ("unsure", 15 September 2026).
+- **Ruled (9 October 2026, Thobias, Q89):** `own` keeps its place in a result type, `-> own @T` (›A last value moves out‹); `share` in a result waits for ›Shared ownership through `share` (direction)‹.
 
 ### A gate word reads the declaration to its right
 Each gate is a prefix constructor over the declaration: `pub mut x := 5` is `pub` reading `mut` reading `x := 5`, each filling the binding of the declaration it read. A gate that reads otherwise is that gate's own rule, not a second grammar ("a gate's spelling belongs to its constructor", *Sections, the arche, and effect identities*).
@@ -686,7 +687,7 @@ The trie entry itself, named **`binding`**, holds the name's scope, its liveness
 - **Ruled:** 7 September 2026.
 
 ### A gate word stands only where a binding is being filled
-Left of the name in `:=`; in a field or parameter declaration (the same operator); and a return type (open, see above). On a constructed node a gate word is the checked error: `f(mut i32 5)` is written as the gate on the parameter, `fn (mut a := i32 ?)`.
+Left of the name in `:=`; in a field or parameter declaration (the same operator); and a result type's `own` (›A last value moves out‹). On a constructed node a gate word is the checked error: `f(mut i32 5)` is written as the gate on the parameter, `fn (mut a := i32 ?)`.
 - **Why:** a constructed node has no binding (›Substrate vocabulary‹). What guards it is that almost nothing knows where it is. A gate needs a binding, and a binding per calculation step is a cost the substrate refuses.
 - **Ruled:** 7 September 2026, restated 20 September 2026.
 
