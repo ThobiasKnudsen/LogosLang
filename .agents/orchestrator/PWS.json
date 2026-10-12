@@ -9869,7 +9869,7 @@
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
-    "issue": null,
+    "issue": 198,
     "done": null,
     "made": {
       "at": "2026-10-08T21:36+02:00",
@@ -9934,6 +9934,15 @@
         "commit": "783d78a",
         "change": "chosen by Thobias: \"Q106, 12 October 2026: Answer 1: \"b\". Answer 2: \"approx is more intuitive in different cases i think. lossy could read as you are loosing more than precicion. but you are supposed to write like this then: «i32 approx (f64 2.5)» so that approx consumes (f64 2.5) and i32 consumes that approx instance and since i32 then knows its approx it can apply its approximations\". Answer 3: \"a\"\"",
         "reason": "He chose Q106's 3(a), 'Yes: build this fix, and write these words with your answers to points 1 and 2 put in where marked', after Q83 (12 October 2026): the type decides, not the value ('ill go for option a because return type of g is known at parse time'), a written conversion is checked the same way ('b because it looks most consistent'), and a node only where a conversion happens ('a')"
+      },
+      {
+        "at": "2026-10-12T10:36+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "e84fed3",
+        "change": "issue #198",
+        "reason": null
       }
     ]
   },
@@ -32840,6 +32849,30 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "e84fed3",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P172",
+    "kind": "problem",
+    "status": "open",
+    "text": "An error a Logos-written type raises at parse about an operand points at the type's own word, not at the operand: the operand's tape node, with its start, was removed by the type's parse (tape.remove(-1)), and a node keeps no source position; a built-in operator, whose Rust constructor still holds the node, points at the operand",
+    "program": "the issue's pass type (gh issue view 209), then '(x = i32 3) pass' on branch issue-209-field-key-every-type at 2848e98; control '(x = i32 3) + 1'",
+    "output": "this gives nothing, and a value is needed here, caret under pass (column 307); the control puts the caret under the operand's ( ",
+    "expected": "the caret under the operand (column 295), as for a built-in operator: a Logos-written type and a built-in one report the same error at the same place",
+    "tier": "interpreted",
+    "found": "logoslang-issue-209-worker, QUESTION while working #209, 12 October 2026; the orchestrator accepted the caret under pass for #209",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "287a176",
       "run": null,
       "agent": null
     },
