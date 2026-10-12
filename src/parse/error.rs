@@ -114,8 +114,7 @@ pub enum ParseError {
     ArmsMakeAndBorrow,
     /// A logical operator applied to a non-`bool` operand.
     NonBoolOperands,
-    /// A binary operator's operands were two different concrete numeric
-    /// types: cross-type arithmetic needs an explicit cast.
+    /// A value lands in a type that is not its own and does not hold every value of it.
     TypeMismatch,
     /// A number literal had no exact value in the type it was committed to.
     UncomputableLiteral,
@@ -208,10 +207,10 @@ pub enum ParseError {
     /// A declaration's type position, or a type variable's fill, held
     /// something that does not evaluate to a type.
     BadDeclaredType,
-    /// A `-> dyad` function gives back what `=` refuses into a `dyad ?` place, or a
-    /// parameter, which a call may fill with a number: every reader of the result follows
-    /// it as a node's address. stand-in for #198
-    DyadResultNotNode,
+    /// A number lands in a `dyad ?` place, or a `-> dyad` function gives back a parameter, which
+    /// a call may fill with a number: every reader follows the place as a node's address.
+    /// stand-in for #216
+    DyadTakesNode,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,

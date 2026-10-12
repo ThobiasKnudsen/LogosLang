@@ -80,7 +80,9 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
-            "these types do not match (crossing types needs an explicit cast)".into()
+            "these types do not match: unwritten, a value converts only into a type that holds \
+             every value of it"
+                .into()
         }
         ParseError::UncomputableLiteral => {
             "this literal has no exact value in the type it lands in".into()
@@ -167,9 +169,9 @@ pub fn parse_message(e: &ParseError) -> String {
             "the declared or assigned type must be a type value"
                 .into()
         }
-        ParseError::DyadResultNotNode => {
-            "a `-> dyad` function gives back only what `=` writes into a `dyad ?` place, as a \
-             type, and not a number or a parameter yet"
+        ParseError::DyadTakesNode => {
+            "a `dyad ?` place takes only a node, not a number yet, and a `-> dyad` function does \
+             not give back a parameter, which a call may fill with a number"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {

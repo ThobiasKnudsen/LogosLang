@@ -758,6 +758,7 @@ fn an_array_element_is_written_where_the_read_finds_it() {
              g := fn (r := @i32 ?) -> i32 ( q := alloc 1 of i32 1, free q, r@ ), g(p) = 5, p@",
             "5",
         ),
+        ("x := u8 3, a[0] = x, a[0]", "3"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -774,7 +775,7 @@ fn an_array_element_is_written_where_the_read_finds_it() {
             "index out of range",
         ),
         ("a[0] = i64 4", "these types do not match"),
-        ("x := u8 3, a[0] = x", "these types do not match"),
+        ("x := u32 3, a[0] = x", "these types do not match"),
         ("a[0] = 1.5", "this literal has no exact value"),
         ("b := array u8 [1, 2], b[1] = 300", "this literal has no exact value"),
         ("a[-1] = 1", "the index type is not within the size type"),
@@ -1498,6 +1499,80 @@ fn a_line_checked_against_a_float_reads_as_that_float() {
 }
 
 #[test]
+fn a_value_lands_unwritten_only_in_a_type_that_holds_every_value_of_it() {
+    let pt = "pt := type ( a := i64 ?, output_type := type ?, share run = ( a + a ), \
+              share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = pt, \
+              tape[0].a = tape[-1], tape[0].output_type = i64, tape.is_constructed[0] = true, \
+              tape.remove(-1) ) )";
+    for compile in ["", "f.compile(), "] {
+        for (src, printed) in [
+            ("f := fn () -> f64 ( i32 3 ), {c}f()", "3.0"),
+            ("f := fn () -> f64 ( u32 4000000000 ), {c}f()", "4000000000.0"),
+            ("f := fn () -> i64 ( mut x := i64 0, y := i32 -9, x = y, x ), {c}f()", "-9"),
+            ("f := fn (a := f64 ?) -> f64 ( a ), {c}f(i32 3)", "3.0"),
+            ("f := fn (b := i32 ?) -> i64 ( if (b < 1) (return i32 4), i64 2 ), {c}f(0)", "4"),
+            ("f := fn () -> f64 ( mut a := f64 0.0, p := &a, p@ = i32 5, a ), {c}f()", "5.0"),
+            ("f := fn () -> i64 ( x := i32 3, x pt ), {c}f()", "6"),
+            ("f := fn (a) -> i64 ( a ), {c}f(42)", "42"),
+        ] {
+            let src = format!("{pt}, {}", src.replace("{c}", compile));
+            let out = logos().arg(&src).output().unwrap();
+            assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+        }
+    }
+    for (src, printed) in [
+        ("rec := type ( a := i64 ?, b := f64 ? ), v := rec (i32 3, i32 4), v.b", "4.0"),
+        ("m := hashmap i64 -> i64 ?, m[i32 3] = i16 4, m[3]", "4"),
+        ("x := i32 3, x pt", "6"),
+    ] {
+        let out = logos().arg(format!("{pt}, {src}")).output().unwrap();
+        assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+    }
+    for src in [
+        "f := fn () -> i32 ( f64 2.5 ), f()",
+        "f := fn () -> i32 ( true ), f()",
+        "f := fn () -> @i32 ( i32 5 ), f()",
+        "f := fn () -> f32 ( i32 3 ), f()",
+        "mut x := i32 0, y := i64 9, x = y",
+        "mut b := bool ?, b = i32 1",
+        "f := fn (a := i64 ?) -> i64 ( a ), f(f64 3.0)",
+        "mut a := i32 0, p := &a, p@ = i64 5",
+        "rec := type ( a := i64 ?, b := f64 ? ), v := rec (i32 3, i64 4)",
+        "m := hashmap i32 -> i32 ?, m[i64 3] = 4",
+        "x := f64 3.5, x pt",
+    ] {
+        let out = logos().arg(format!("{pt}, {src}")).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("these types do not match"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_dyad_place_takes_every_node_named_or_not_and_no_number() {
+    let array = "import ./identities/array.logos";
+    for tail in
+        ["mut d := dyad ?, d = array i32 [1, 2]", "a := array i32 [1, 2], mut d := dyad ?, d = a"]
+    {
+        let out = logos().arg(format!("{array}, {tail}, print «taken»")).output().unwrap();
+        assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "taken\n", "{tail}");
+    }
+    for src in [
+        "mut d := dyad ?, d = 5",
+        "mut d := dyad ?, d = i32 5",
+        "f := fn (q := dyad ?) -> i32 ( 1 ), f(5)",
+        "fn () -> dyad ( i32 5 )",
+        "fn (q := dyad ?) -> dyad ( q )",
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("takes only a node, not a number"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn inclusion_the_design_leaves_open_is_a_checked_error() {
     for src in ["i32 ⊆ type\n", "u8 ⊆ dyad\n", "bool ⊆ type\n"] {
         let (echoes, stderr) = repl(src.as_bytes());
@@ -1590,11 +1665,17 @@ fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
         let (_echoes, stderr) = repl(format!("{line}\n").as_bytes());
         assert!(stderr.contains("`hashmap` is followed by `K -> V`"), "{line}: {stderr}");
     }
-    for line in ["m[i32] = 1", "m[1] = i32", "n[1] = 2", "n[i32] = 2"] {
+    for (line, expect) in [
+        ("m[i32] = 1", "these types do not match"),
+        ("m[1] = i32", "these types do not match"),
+        ("m[i64 1] = 1", "these types do not match"),
+        ("n[1] = 2", "must be a type value"),
+        ("n[i32] = 2", "must be a type value"),
+    ] {
         let (_echoes, stderr) = repl(
             format!("m := hashmap i32 -> i32\nn := hashmap type -> type\n{line}\n").as_bytes(),
         );
-        assert!(stderr.contains("these types do not match"), "{line}: {stderr}");
+        assert!(stderr.contains(expect), "{line}: {stderr}");
     }
 }
 
@@ -2066,7 +2147,7 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
             format!("{g}, r := type ( share parse_rank = fn.parse_rank, share parse = ( {body} {tail}, r i32");
         let out = logos().args([&src]).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("these types do not match"), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("must be a type value"), "{src}: stderr: {stderr}");
     }
     // A loop edits the tape after the read was checked: the read checks again when it runs.
     let src = format!(
@@ -2659,7 +2740,7 @@ fn the_dyad_box_says_what_it_holds() {
     );
 
     let (_e, stderr) = repl(b"mut a := dyad ?\na = 5\n");
-    assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
+    assert!(stderr.contains("takes only a node, not a number"), "stderr: {stderr}");
 }
 
 #[test]

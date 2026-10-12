@@ -11,7 +11,7 @@ use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
-use super::{commit_if_literal, meta, Cx, Operand};
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -200,9 +200,7 @@ pub(crate) unsafe fn deref_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u64) {
     (*p, *p.add(1), off)
 }
 
-/// The pointee must be a place with a whole-value store (a whole record cannot be stored);
-/// a literal rhs commits to a numeric pointee and is refused for an address pointee, where
-/// it would become a wild address.
+/// The pointee must be a place with a whole-value store (a whole record cannot be stored).
 ///
 /// # Safety
 /// `deref` must be a deref node; `rhs` a reduced dyad, both from the store.
@@ -214,24 +212,14 @@ pub(crate) unsafe fn build_storeptr(
 ) -> Result<DyadPtr, ParseError> {
     let (ptr_expr, pointee, _) = deref_parts(deref);
     let off_node = *((dyad::value(deref) as *const DyadPtr).add(2));
-    // SAFETY: `pointee` is the deref node's pointee type, a node from the store.
-    let scalar_pointee = unsafe { super::read::place_layout(types, pointee) }
-        .is_some_and(|(read, _)| matches!(read, super::read::Read::Scalar(_)));
     if super::read::cell_numtype(types, pointee).is_none() {
         return Err(ParseError::BadAssignTarget);
     }
-    let rhs = if dyad::ty(types.through(rhs)) == types.rational {
-        if !scalar_pointee {
-            return Err(ParseError::TypeMismatch);
-        }
-        let nt = numtype::of_type_node(pointee);
-        commit_if_literal(store, types, rhs, &Operand::Literal, pointee, nt)?
-    } else if dyad::ty(types.through(rhs)) == types.tape.cell_dyad_at {
+    let rhs = if dyad::ty(types.through(rhs)) == types.tape.cell_dyad_at {
         // A line no check narrowed: what it holds is known only when the store runs.
         super::tape::build_cell_into(store, types, types.through(rhs), pointee)
     } else {
-        super::check_store_type(types, pointee, rhs)?;
-        rhs
+        super::land(store, types, rhs, pointee)?
     };
     let ops = [ptr_expr, rhs, pointee, off_node, types.ops.storeptr_];
     Ok(store.alloc_words(types.storeptr_, &ops))

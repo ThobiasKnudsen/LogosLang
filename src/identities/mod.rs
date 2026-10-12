@@ -728,31 +728,77 @@ pub(crate) unsafe fn resolve_binary(
         (Operand::Literal, Operand::Literal) => NumType::I32,
     };
     let type_node = types.numtypes[nt as usize];
-    let lhs = commit_if_literal(store, types, lhs, &a, type_node, nt)?;
-    let rhs = commit_if_literal(store, types, rhs, &b, type_node, nt)?;
+    let lhs = land(store, types, lhs, type_node)?;
+    let rhs = land(store, types, rhs, type_node)?;
     Ok(([lhs, rhs], nt))
 }
 
-unsafe fn commit_if_literal(
+/// What lands in a place of type `ty`: the value itself where its type is `ty`, a plain number
+/// converted exactly, a value whose type lies inside `ty` under the conversion node a written
+/// `ty (value)` builds; anything else is refused where it is written. A type no place can have
+/// takes the value as it stands. DESIGN ›A type's `parse` decides what converts into it;
+/// unwritten, a value converts only into a type that holds it exactly‹.
+///
+/// # Safety
+/// `value` must be a reduced dyad and `ty` null or a type node, both from the store.
+pub(crate) unsafe fn land(
     store: &mut Store,
     types: &Core,
-    node: DyadPtr,
-    op: &Operand,
-    type_node: DyadPtr,
-    nt: NumType,
+    value: DyadPtr,
+    ty: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    if let Operand::Literal = op {
-        // `bool` shares `i32`'s machine form, so the type decides: a plain number lands only in
-        // a number type.
-        if !is_numtype_node(types, type_node) {
-            return Err(ParseError::UncomputableLiteral);
+    let Some((ty, (place, _))) =
+        type_identity_of(types, ty).and_then(|t| Some((t, read::place_layout(types, t)?)))
+    else {
+        return Ok(value);
+    };
+    read::value_type(types, value)?;
+    // A comptime name used here is its binding; the literal folds through it.
+    let plain = types.through(value);
+    let plain_number = dyad::ty(plain) == types.rational;
+    let from = read::output_type(types, value);
+    let fits = match place {
+        read::Read::Scalar(nt) if plain_number => {
+            // `bool` shares `i32`'s machine form, so the type decides.
+            if !is_numtype_node(types, ty) {
+                return Err(ParseError::UncomputableLiteral);
+            }
+            let bits = rational::mold_to(plain, nt).ok_or(ParseError::UncomputableLiteral)?;
+            return Ok(store.alloc_blob(ty, &bits.to_ne_bytes()[..nt.bytes()]));
         }
-        // A comptime name used here is its binding; the literal folds through it.
-        let bits =
-            rational::mold_to(types.through(node), nt).ok_or(ParseError::UncomputableLiteral)?;
-        Ok(store.alloc_blob(type_node, &bits.to_ne_bytes()[..nt.bytes()]))
+        // What a bare parameter or a `dyad` holds is known only at the call: stand-in for #216.
+        read::Read::Scalar(_) if from.is_null() || from == types.dyad_ => true,
+        read::Read::Scalar(_) => {
+            if from != ty && subset::includes(types, from, ty) == Some(true) {
+                return Ok(convert::build_convert(store, types, value, from, ty));
+            }
+            from == ty
+        }
+        read::Read::Pointer(pointee) => {
+            numtype::is_pointer_type(from) && same_type(pointee, numtype::pointee_of(from))
+        }
+        read::Read::Container(t) if t == types.type_ => {
+            if !assign::box_takes(types, t, value) {
+                return Err(ParseError::BadDeclaredType);
+            }
+            true
+        }
+        // A number would be followed as a node's address: stand-in for #216.
+        read::Read::Container(t) if t == types.dyad_ => {
+            if !assign::box_takes(types, t, value) {
+                return Err(ParseError::DyadTakesNode);
+            }
+            true
+        }
+        read::Read::Container(t) => node_output(types, value) == Some(t),
+        read::Read::Rational => plain_number || rational::is_rational_value(types, value),
+        read::Read::Aggregate => from == ty,
+        _ => false,
+    };
+    if fits {
+        Ok(value)
     } else {
-        Ok(node)
+        Err(ParseError::TypeMismatch)
     }
 }
 
@@ -857,36 +903,6 @@ pub(crate) fn build_init(
     value: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     assign::build_store(store, types, types.assign, place, value)
-}
-
-/// The no-coercion rule for `=`: a number or `bool` target takes exactly its own type, a
-/// pointer target a pointer to a matching pointee. Literals never reach here; the
-/// callers commit them first.
-///
-/// # Safety
-/// `target_ty` must be a numeric or pointer type node and `rhs` a reduced dyad,
-/// both from the store.
-pub(crate) unsafe fn check_store_type(
-    types: &Core,
-    target_ty: DyadPtr,
-    rhs: DyadPtr,
-) -> Result<(), ParseError> {
-    let out = read::output_type(types, rhs);
-    let ok = match read::place_layout(types, target_ty) {
-        Some((read::Read::Pointer(tp), _)) => {
-            numtype::is_pointer_type(out) && same_type(tp, numtype::pointee_of(out))
-        }
-        Some((read::Read::Scalar(_), _)) => out == target_ty,
-        Some((read::Read::Container(t), _)) if meta::is_node_valued(t, types.fn_type) => {
-            node_output(types, rhs) == Some(t)
-        }
-        _ => false,
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(ParseError::TypeMismatch)
-    }
 }
 
 /// Same type, not same node: an owning `@T` and the plain `@T` name one pointee.
@@ -1004,14 +1020,12 @@ pub(crate) unsafe fn resolve_loop_parts(
     let nt = nt.unwrap_or(NumType::I32);
     let logos = types.numtypes[nt as usize];
     for p in parts.iter_mut() {
-        if let Operand::Literal = operand_of(types, *p) {
-            *p = commit_if_literal(store, types, *p, &Operand::Literal, logos, nt)?;
-        }
+        *p = land(store, types, *p, logos)?;
     }
     Ok(logos)
 }
 
-/// The `i32 32` juxtaposition: a literal committed exactly to a numeric type.
+/// The `i32 32` juxtaposition: a plain number landed in a number type.
 ///
 /// # Safety
 /// `lit` must be a rational literal from the store; `ty_node` a numeric type node.
@@ -1021,13 +1035,11 @@ pub(crate) unsafe fn commit_literal_to(
     lit: DyadPtr,
     ty_node: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    let nt = numtype::of_type_node(ty_node);
-    commit_if_literal(store, types, lit, &Operand::Literal, ty_node, nt)
+    land(store, types, lit, ty_node)
 }
 
-/// Commit a call's literal arguments to their parameters' declared numeric types, so
-/// `f(3000000000)` is exact for an i64 parameter. Extra arguments are left for the
-/// arity check.
+/// Land a call's arguments in their parameters' types, so `f(3000000000)` is exact for an `i64`
+/// parameter. Extra arguments are left for the arity check.
 ///
 /// # Safety
 /// `callee` and `args` must be valid dyads from the store.
@@ -1042,75 +1054,18 @@ pub(crate) unsafe fn commit_call_args(
     }
     let input = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_INPUT);
     let params = array::items(meta::record_fields_of(input));
-    for (i, arg) in args.iter_mut().enumerate() {
-        let Some(&param) = params.get(i) else {
-            break;
-        };
-        let pty = hole::type_in(param);
+    for (arg, &param) in args.iter_mut().zip(params) {
         // A bare `name` parameter accepts any dyad.
-        if pty.is_null() {
-            continue;
-        }
-        // A code-carrying parameter has no whole read here; it is checked where its
-        // type is built.
-        match read::place_layout(types, pty) {
-            Some((read::Read::Aggregate, _)) if by_copy::record_width(types, pty).is_some() => {
-                if read::output_type(types, *arg) != pty {
-                    return Err(ParseError::TypeMismatch);
-                }
-            }
-            // A literal committed into a pointer parameter would be dereferenced as a wild address.
-            Some((read::Read::Pointer(pp), _)) => match operand_of(types, *arg) {
-                Operand::Pointer(pointee) if same_type(pp, pointee) => {}
-                _ => return Err(ParseError::TypeMismatch),
-            },
-            Some((read::Read::Container(t), _)) if t == types.dyad_ => {
-                // A value made when the call runs, a run's own or a record's place, is a
-                // node's address too.
-                let ok = dyad::ty(*arg) == types.this.pack
-                    || dyad::ty(*arg) == types.by_copy.out
-                    || match read::read_kind(types, *arg) {
-                        read::Read::Identity | read::Read::Address => true,
-                        read::Read::Container(c) => !c.is_null(),
-                        _ => node_output(types, *arg).is_some(),
-                    };
-                if !ok {
-                    return Err(ParseError::TypeMismatch);
-                }
-            }
-            Some((read::Read::Container(t), _)) if meta::is_node_valued(t, types.fn_type) => {
-                if node_output(types, *arg) != Some(t) {
-                    return Err(ParseError::TypeMismatch);
-                }
-            }
-            // A number into a `type` parameter would travel as an address.
-            Some((read::Read::Container(t), _)) if t == types.type_ => {
-                if read::output_type(types, *arg) != types.type_ {
-                    return Err(ParseError::TypeMismatch);
-                }
-            }
-            Some((read::Read::Scalar(nt), _)) => {
-                if dyad::ty(types.through(*arg)) == types.rational {
-                    *arg = commit_if_literal(store, types, *arg, &Operand::Literal, pty, nt)?;
-                } else {
-                    check_store_type(types, pty, *arg)?;
-                }
-            }
-            // A literal's bytes are a rational value's; a concrete number is not.
-            Some((read::Read::Rational, _))
-                if !rational::is_rational_value(types, *arg)
-                    && !matches!(operand_of(types, *arg), Operand::Literal) =>
-            {
-                return Err(ParseError::TypeMismatch);
-            }
-            _ => {}
+        let pty = hole::type_in(param);
+        if !pty.is_null() {
+            *arg = land(store, types, *arg, pty)?;
         }
     }
     Ok(())
 }
 
-/// Commit the body's tail literals to the declared return type; a `-> type` or `-> dyad`
-/// body is checked instead.
+/// Land every value a body gives, its last line's and each `return`'s, in the declared output
+/// type.
 ///
 /// # Safety
 /// `body`/`output` are valid dyads from the store.
@@ -1120,33 +1075,27 @@ pub(crate) unsafe fn commit_fn_body(
     body: DyadPtr,
     output: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // A `-> type` result is read back as a node address, so every tail leaf must be a type.
-    if output == types.type_ {
-        check_type_tail(types, body)?;
+    if output == types.void_ || read::place_layout(types, output).is_none() {
         return Ok(body);
     }
-    if output == types.dyad_ {
-        check_dyad_tail(types, body)?;
-        return Ok(body);
-    }
-    if by_copy::record_width(types, output).is_some() {
+    walk_tail(types, body, &mut |leaf| {
+        refuse_statement(types, leaf)?;
+        // A call may fill a parameter with a number, which the result's reader would follow as
+        // a node's address.
+        if output == types.dyad_ && is_parameter(types, leaf) {
+            return Err(ParseError::DyadTakesNode);
+        }
+        // An `out` already hands back its bytes.
+        if dyad::ty(leaf) == types.by_copy.out {
+            return Ok(leaf);
+        }
+        let landed = land(store, types, leaf, output)?;
         // A record result is handed back as the address of its bytes, which the call copies.
-        return walk_tail(types, body, &mut |leaf| {
-            refuse_statement(types, leaf)?;
-            // An `out` already hands back its bytes.
-            if dyad::ty(leaf) == types.by_copy.out {
-                return Ok(leaf);
-            }
-            if read::output_type(types, leaf) != output {
-                return Err(ParseError::TypeMismatch);
-            }
-            Ok(by_copy::build_out(store, types, leaf))
-        });
-    }
-    if !is_numtype_node(types, output) {
-        return Ok(body);
-    }
-    commit_tail(store, types, body, output)
+        if by_copy::record_width(types, output).is_some() {
+            return Ok(by_copy::build_out(store, types, landed));
+        }
+        Ok(landed)
+    })
 }
 
 /// Walk the value-producing positions of `node` (itself, a `return`'s operand, both
@@ -1201,39 +1150,6 @@ unsafe fn walk_tail(
     leaf(node)
 }
 
-/// A rational leaf molds to `output`, exactly or not at all; everything else passes through.
-///
-/// # Safety
-/// `node`/`output` are valid dyads from the store; `output` is a numeric type node.
-unsafe fn commit_tail(
-    store: &mut Store,
-    types: &Core,
-    node: DyadPtr,
-    output: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    walk_tail(types, node, &mut |leaf| {
-        refuse_statement(types, leaf)?;
-        if dyad::ty(leaf) == types.rational {
-            let nt = numtype::of_type_node(output);
-            let bits = rational::mold_to(leaf, nt).ok_or(ParseError::UncomputableLiteral)?;
-            return Ok(store.alloc_blob(output, &bits.to_ne_bytes()[..nt.bytes()]));
-        }
-        // Refused here rather than as an invalid widen at the ABI.
-        if let Operand::Pointer(_) = operand_of(types, leaf) {
-            return Err(ParseError::TypeMismatch);
-        }
-        // A record's bytes are no number: stand-in for #198.
-        if by_copy::record_width(types, read::output_type(types, leaf)).is_some() {
-            return Err(ParseError::TypeMismatch);
-        }
-        // A run-time rational has no machine form until it is converted explicitly.
-        if rational::is_rational_value(types, leaf) {
-            return Err(ParseError::TypeMismatch);
-        }
-        Ok(leaf)
-    })
-}
-
 /// A node that gives nothing is no value's tail.
 ///
 /// # Safety
@@ -1242,40 +1158,6 @@ unsafe fn refuse_statement(types: &Core, node: DyadPtr) -> Result<(), ParseError
     if read::output_type(types, node) == types.void_ {
         return Err(ParseError::StatementAsValue);
     }
-    Ok(())
-}
-
-/// A `-> type` call's result bits are read as a node address, so a non-type tail
-/// would be a wild address.
-///
-/// # Safety
-/// `node` is a valid dyad from the store.
-unsafe fn check_type_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
-    walk_tail(types, node, &mut |leaf| {
-        refuse_statement(types, leaf)?;
-        if read::output_type(types, leaf) == types.type_ {
-            Ok(leaf)
-        } else {
-            Err(ParseError::TypeMismatch)
-        }
-    })?;
-    Ok(())
-}
-
-/// A `-> dyad` call's result is followed as a node's address too, so every tail leaf must be
-/// what `=` writes into a `dyad ?` place, and no parameter, which a call may fill with a
-/// number. DESIGN ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹.
-///
-/// # Safety
-/// `node` is a valid dyad from the store.
-unsafe fn check_dyad_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
-    walk_tail(types, node, &mut |leaf| {
-        refuse_statement(types, leaf)?;
-        if is_parameter(types, leaf) || !assign::box_takes(types, types.dyad_, leaf) {
-            return Err(ParseError::DyadResultNotNode);
-        }
-        Ok(leaf)
-    })?;
     Ok(())
 }
 

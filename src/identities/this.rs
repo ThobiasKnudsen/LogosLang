@@ -260,9 +260,7 @@ pub(crate) unsafe fn build_write(
     if let Some(ty) = load_type(types, read) {
         // The slot holds the node the right side yields, its address, never the expression.
         if meta::is_node_valued(ty, types.fn_type) {
-            if super::node_output(types, value) != Some(ty) {
-                return Err(crate::parse::ParseError::TypeMismatch);
-            }
+            let value = super::land(store, types, value, ty)?;
             let ops = [this, k, value, owner];
             return Ok(act(store, types.this.write, types.this.write_leaf, &ops));
         }
@@ -274,7 +272,6 @@ pub(crate) unsafe fn build_write(
             };
         if yields_value {
             let value = super::commit_fn_body(store, types, value, ty)?;
-            super::check_store_type(types, ty, value)?;
             let ops = [this, k, value, ty, owner];
             return Ok(act(store, types.this.store, types.this.store_leaf, &ops));
         }

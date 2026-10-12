@@ -803,11 +803,11 @@ fn multiplication_overflow_matches_between_interpreter_and_jit() {
 
 #[test]
 fn less_than_matches_between_tiers() {
-    diff_nullary_fn("fn () -> i32 ( 3 < 5 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 5 < 3 )", 0);
-    diff_nullary_fn("fn () -> i32 ( 5 < 5 )", 0);
+    diff_nullary_fn("fn () -> bool ( 3 < 5 )", 1);
+    diff_nullary_fn("fn () -> bool ( 5 < 3 )", 0);
+    diff_nullary_fn("fn () -> bool ( 5 < 5 )", 0);
     // `<` binds looser than arithmetic: (2 + 3) < (4 * 2) = 5 < 8 = 1.
-    diff_nullary_fn("fn () -> i32 ( 2 + 3 < 4 * 2 )", 1);
+    diff_nullary_fn("fn () -> bool ( 2 + 3 < 4 * 2 )", 1);
 }
 
 #[test]
@@ -818,7 +818,7 @@ fn less_than_is_abstract_and_resolves_to_lt_i32() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p =
-            Parser::new("fn (a := i32 ?) -> i32 ( a < 5 )", &mut store, &mut trie, &core, s);
+            Parser::new("fn (a := i32 ?) -> bool ( a < 5 )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
     unsafe {
@@ -833,21 +833,21 @@ fn less_than_is_abstract_and_resolves_to_lt_i32() {
 
 #[test]
 fn comparison_siblings_match_between_tiers() {
-    diff_nullary_fn("fn () -> i32 ( 5 > 3 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 3 > 5 )", 0);
-    diff_nullary_fn("fn () -> i32 ( 5 > 5 )", 0);
-    diff_nullary_fn("fn () -> i32 ( 4 == 4 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 4 == 5 )", 0);
-    diff_nullary_fn("fn () -> i32 ( 3 <= 3 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 4 <= 3 )", 0);
-    diff_nullary_fn("fn () -> i32 ( 2 <= 3 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 3 >= 3 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 2 >= 3 )", 0);
-    diff_nullary_fn("fn () -> i32 ( 4 >= 3 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 4 != 5 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 4 != 4 )", 0);
-    diff_nullary_fn("fn () -> i32 ( 0 - 1 < 0 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 2 + 3 == 10 - 5 )", 1);
+    diff_nullary_fn("fn () -> bool ( 5 > 3 )", 1);
+    diff_nullary_fn("fn () -> bool ( 3 > 5 )", 0);
+    diff_nullary_fn("fn () -> bool ( 5 > 5 )", 0);
+    diff_nullary_fn("fn () -> bool ( 4 == 4 )", 1);
+    diff_nullary_fn("fn () -> bool ( 4 == 5 )", 0);
+    diff_nullary_fn("fn () -> bool ( 3 <= 3 )", 1);
+    diff_nullary_fn("fn () -> bool ( 4 <= 3 )", 0);
+    diff_nullary_fn("fn () -> bool ( 2 <= 3 )", 1);
+    diff_nullary_fn("fn () -> bool ( 3 >= 3 )", 1);
+    diff_nullary_fn("fn () -> bool ( 2 >= 3 )", 0);
+    diff_nullary_fn("fn () -> bool ( 4 >= 3 )", 1);
+    diff_nullary_fn("fn () -> bool ( 4 != 5 )", 1);
+    diff_nullary_fn("fn () -> bool ( 4 != 4 )", 0);
+    diff_nullary_fn("fn () -> bool ( 0 - 1 < 0 )", 1);
+    diff_nullary_fn("fn () -> bool ( 2 + 3 == 10 - 5 )", 1);
 }
 
 #[test]
@@ -1004,11 +1004,11 @@ fn comparison_siblings_resolve_to_their_concrete_ops() {
 
     use numtype::CmpOp;
     let cases: [(&str, DyadPtr, DyadPtr); 5] = [
-        ("fn (a := i32 ?) -> i32 ( a > 2 )", core.gt, core.ops.cmp_leaf(CmpOp::Gt, NumType::I32)),
-        ("fn (a := i32 ?) -> i32 ( a == 2 )", core.eq, core.ops.cmp_leaf(CmpOp::Eq, NumType::I32)),
-        ("fn (a := i32 ?) -> i32 ( a <= 2 )", core.le, core.ops.cmp_leaf(CmpOp::Le, NumType::I32)),
-        ("fn (a := i32 ?) -> i32 ( a >= 2 )", core.ge, core.ops.cmp_leaf(CmpOp::Ge, NumType::I32)),
-        ("fn (a := i32 ?) -> i32 ( a != 2 )", core.ne, core.ops.cmp_leaf(CmpOp::Ne, NumType::I32)),
+        ("fn (a := i32 ?) -> bool ( a > 2 )", core.gt, core.ops.cmp_leaf(CmpOp::Gt, NumType::I32)),
+        ("fn (a := i32 ?) -> bool ( a == 2 )", core.eq, core.ops.cmp_leaf(CmpOp::Eq, NumType::I32)),
+        ("fn (a := i32 ?) -> bool ( a <= 2 )", core.le, core.ops.cmp_leaf(CmpOp::Le, NumType::I32)),
+        ("fn (a := i32 ?) -> bool ( a >= 2 )", core.ge, core.ops.cmp_leaf(CmpOp::Ge, NumType::I32)),
+        ("fn (a := i32 ?) -> bool ( a != 2 )", core.ne, core.ops.cmp_leaf(CmpOp::Ne, NumType::I32)),
     ];
     for (src, abstract_op, concrete) in cases {
         let func = {
@@ -1032,23 +1032,23 @@ fn comparison_siblings_resolve_to_their_concrete_ops() {
 
 #[test]
 fn logical_operators_match_between_tiers() {
-    diff_nullary_fn("fn () -> i32 ( true and true )", 1);
-    diff_nullary_fn("fn () -> i32 ( true and false )", 0);
-    diff_nullary_fn("fn () -> i32 ( false and true )", 0);
-    diff_nullary_fn("fn () -> i32 ( false and false )", 0);
-    diff_nullary_fn("fn () -> i32 ( true or true )", 1);
-    diff_nullary_fn("fn () -> i32 ( true or false )", 1);
-    diff_nullary_fn("fn () -> i32 ( false or true )", 1);
-    diff_nullary_fn("fn () -> i32 ( false or false )", 0);
-    diff_nullary_fn("fn () -> i32 ( not (true) )", 0);
-    diff_nullary_fn("fn () -> i32 ( not (false) )", 1);
-    diff_nullary_fn("fn () -> i32 ( 1 < 2 and 3 < 4 )", 1);
-    diff_nullary_fn("fn () -> i32 ( 1 < 2 and 3 > 4 )", 0);
-    diff_nullary_fn("fn () -> i32 ( 1 > 2 or 3 < 4 )", 1);
-    diff_nullary_fn("fn () -> i32 ( not (1 < 2) )", 0);
+    diff_nullary_fn("fn () -> bool ( true and true )", 1);
+    diff_nullary_fn("fn () -> bool ( true and false )", 0);
+    diff_nullary_fn("fn () -> bool ( false and true )", 0);
+    diff_nullary_fn("fn () -> bool ( false and false )", 0);
+    diff_nullary_fn("fn () -> bool ( true or true )", 1);
+    diff_nullary_fn("fn () -> bool ( true or false )", 1);
+    diff_nullary_fn("fn () -> bool ( false or true )", 1);
+    diff_nullary_fn("fn () -> bool ( false or false )", 0);
+    diff_nullary_fn("fn () -> bool ( not (true) )", 0);
+    diff_nullary_fn("fn () -> bool ( not (false) )", 1);
+    diff_nullary_fn("fn () -> bool ( 1 < 2 and 3 < 4 )", 1);
+    diff_nullary_fn("fn () -> bool ( 1 < 2 and 3 > 4 )", 0);
+    diff_nullary_fn("fn () -> bool ( 1 > 2 or 3 < 4 )", 1);
+    diff_nullary_fn("fn () -> bool ( not (1 < 2) )", 0);
     // Comparisons bind tighter than `and`, which binds tighter than `or`.
-    diff_nullary_fn("fn () -> i32 ( 1 < 2 and 3 > 4 or 5 < 6 )", 1);
-    diff_nullary_fn("fn () -> i32 ( not (1 < 2) or not (3 < 4) )", 0);
+    diff_nullary_fn("fn () -> bool ( 1 < 2 and 3 > 4 or 5 < 6 )", 1);
+    diff_nullary_fn("fn () -> bool ( not (1 < 2) or not (3 < 4) )", 0);
     diff_nullary_fn("fn () -> i32 ( if (1 < 2 and 3 < 4) (100) else (200) )", 100);
 }
 
@@ -2023,7 +2023,7 @@ fn a_type_is_a_value_a_place_can_hold() {
     );
     assert_eq!(
         parse_err_after(&["f := fn (t := type ?) -> i32 ( 1 )"], "f(5)"),
-        ParseError::TypeMismatch
+        ParseError::BadDeclaredType
     );
 
     assert_eq!(
@@ -2048,12 +2048,15 @@ fn a_type_is_a_value_a_place_can_hold() {
 #[test]
 fn a_type_returning_body_must_hand_back_a_type() {
     // A number handed back as a node address used to take the process down.
-    assert_eq!(parse_err("fn () -> type ( 5 )"), ParseError::TypeMismatch);
-    assert_eq!(parse_err_after(&["x := i32 5"], "fn () -> type ( x )"), ParseError::TypeMismatch);
-    assert_eq!(parse_err("fn () -> type ( return 5 )"), ParseError::TypeMismatch);
+    assert_eq!(parse_err("fn () -> type ( 5 )"), ParseError::BadDeclaredType);
+    assert_eq!(
+        parse_err_after(&["x := i32 5"], "fn () -> type ( x )"),
+        ParseError::BadDeclaredType
+    );
+    assert_eq!(parse_err("fn () -> type ( return 5 )"), ParseError::BadDeclaredType);
     assert_eq!(
         parse_err("fn (b := i32 ?) -> type ( if (b < 1) (i32) else (5) )"),
-        ParseError::TypeMismatch
+        ParseError::BadDeclaredType
     );
 
     assert_eq!(run_script("f := fn () -> type ( i32 ), g := f(), x := g 5, x"), 5);
@@ -2077,7 +2080,7 @@ fn a_dyad_returning_body_hands_back_what_equals_writes_into_a_dyad_box() {
         "fn (b := i32 ?) -> dyad ( if (b < 1) (i32) else (5) )",
         "fn (b := i32 ?) -> dyad ( if (b < 1) (return i32 5), i32 )",
     ] {
-        assert_eq!(parse_err(src), ParseError::DyadResultNotNode, "{src}");
+        assert_eq!(parse_err(src), ParseError::DyadTakesNode, "{src}");
     }
 
     assert_eq!(run_script("f := fn () -> dyad ( i32 ), g := f(), x := g 5, x"), 5);
@@ -2789,7 +2792,7 @@ fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
     );
     assert_eq!(
         parse_err("fn (n := i32 ?) -> type ( if (n > 2) (return 5), i32 )"),
-        ParseError::TypeMismatch
+        ParseError::BadDeclaredType
     );
 }
 
@@ -3433,10 +3436,10 @@ fn parse_err_after(defs: &[&str], src: &str) -> ParseError {
 }
 
 #[test]
-fn assignment_rejects_a_cross_type_right_side() {
+fn assignment_converts_only_into_a_type_that_holds_the_value() {
     let defs = &["mut a := i64 1", "mut b := i32 2"];
-    assert_eq!(parse_err_after(defs, "a = b"), ParseError::TypeMismatch);
     assert_eq!(parse_err_after(defs, "b = a"), ParseError::TypeMismatch);
+    assert_eq!(run_script("mut a := i64 1, mut b := i32 -2, a = b, a"), -2);
 }
 
 #[test]

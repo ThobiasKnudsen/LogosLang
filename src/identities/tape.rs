@@ -937,7 +937,7 @@ unsafe fn narrowed_operand(rt: &mut Runtime, read: DyadPtr, operand: DyadPtr) ->
     }
 }
 
-/// A literal molds to the parameter's type; any other operand must already be of it.
+/// The operand landed in the parameter's type.
 ///
 /// # Safety
 /// `operand` must be a dyad from the store; `ty` a number type node.
@@ -946,15 +946,9 @@ unsafe fn typed_operand(
     operand: DyadPtr,
     ty: DyadPtr,
 ) -> Result<DyadPtr, RunError> {
-    let types = rt.types();
-    let typed = if let Operand::Literal = operand_of(types, operand) {
-        let types: *const crate::Core = types;
-        // SAFETY: the `Core` outlives the runtime that borrowed it.
-        super::commit_literal_to(rt.store(), &*types, operand, ty)
-    } else {
-        super::check_store_type(types, ty, operand).map(|()| operand)
-    };
-    typed.map_err(|e| RunError::Parse(Box::new(e)))
+    let types: *const crate::Core = rt.types();
+    // SAFETY: the `Core` outlives the runtime that borrowed it.
+    super::land(rt.store(), &*types, operand, ty).map_err(|e| RunError::Parse(Box::new(e)))
 }
 
 /// An argument read from the tape is the operand it names, typed now and run when the placed
