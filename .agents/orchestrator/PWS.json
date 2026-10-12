@@ -33927,7 +33927,7 @@
     "id": "P177",
     "kind": "problem",
     "status": "open",
-    "text": "Whether a quote's {…} over a -> void call shows no text or is refused is read two ways: ›A value is shown as the text its type's `print` slot gives back‹ says \"`void`'s slot gives back no text, so a `void` value shows nothing\", while ›A scope's value is what it evaluates to…‹ says \"A `-> void` function, or a scope whose last form yields nothing, has no value\" and the #82 Seed lines list \"a `{…}` in a quote\" among the readers that refuse a value that gives nothing; no rule says whether a -> void call gives a void value or nothing",
+    "text": "Whether a quote's {…} over a -> void call shows no text or is refused is read two ways: ›A value is shown as the text its type's `print` slot gives back‹ says \"`void`'s slot gives back no text, so a `void` value shows nothing\", while ›A scope's value is what it evaluates to…‹ says \"A `-> void` function, or a scope whose last form yields nothing, has no value\" and the #82 Seed lines list \"a `{…}` in a quote\" among the readers that refuse a value that gives nothing; no rule says whether a -> void call gives a void value or nothing. The same read two ways on the issue-234 branch: print «a{}b» gives ab, while print «a{ ( ) }b» and print «a{ ( # c⏎) }b» are \"this gives nothing, and a value is needed here\"",
     "program": "logos 'f := fn () -> void ( ), print «{f()}»'",
     "output": "<command line>:1:33: error: this gives nothing, and a value is needed here; dd87f48, interpreted",
     "expected": "one rule: either an empty line (a void value shows nothing) or this refusal, stated in DESIGN; #174 (the print slot) builds on it",
@@ -33945,7 +33945,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T11:35+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "da29b7a",
+        "change": "text was \"Whether a quote's {…} over a -> void call shows no text or is refused is read two ways: ›A value is shown as the text its type's `print` slot gives back‹ says \\\"`void`'s slot gives back no text, so a `void` value shows nothing\\\", while ›A scope's value is what it evaluates to…‹ says \\\"A `-> void` function, or a scope whose last form yields nothing, has no value\\\" and the #82 Seed lines list \\\"a `{…}` in a quote\\\" among the readers that refuse a value that gives nothing; no rule says whether a -> void call gives a void value or nothing\"",
+        "reason": "logoslang-issue-234-review-1's extra row, 12 October 2026"
+      }
+    ]
   },
   {
     "id": "P178",
@@ -34088,5 +34098,53 @@
         "reason": null
       }
     ]
+  },
+  {
+    "id": "P183",
+    "kind": "problem",
+    "status": "open",
+    "text": "A failed REPL line is undone in pieces written by hand in repl() (src/main.rs): the scope stack's journal undoes the names, keep_scope_lines the session's lines, the list of ended names the ends; each new thing a line can do needs its own undo there, and the import registry was left out, so a file imported on a failed line is freed while still counted as loaded",
+    "program": "REPL on the issue-234 branch: import ./held.logos, error «boom» (held.logos: bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), pub h := bag(9)); then import ./held.logos; then h.n",
+    "output": "freed 9 / <repl>: run error: boom / then h.n echoes 9 from the freed bag; issue-234 branch at ab73ebe, release, interpreted",
+    "expected": "one undo that every piece a line changes joins, so nothing a line does can be left out; Q114 (e4a932e): the file stays loaded for the session",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-1, code review point 5, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T11:35+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "da29b7a",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P184",
+    "kind": "problem",
+    "status": "open",
+    "text": "The released docs say the REPL takes one expression per line (docs/v0.0.4/getting-started/install.md:24), which #234 makes false: a REPL line is a line of the program; the folder is frozen, so the next version's docs folder must not copy the line",
+    "program": "sed -n 24p docs/v0.0.4/getting-started/install.md",
+    "output": "… one expression per line …",
+    "expected": "the next docs folder says a REPL line is a line of the program, any number of items separated by ,",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-1, FACT, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T11:35+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "da29b7a",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
