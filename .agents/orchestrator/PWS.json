@@ -32063,5 +32063,167 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "W331",
+    "kind": "why",
+    "status": "draft",
+    "text": "declare_here decides whether a declaration gets a place by a chain of arms over kinds of right side, the first match winning (read_kind's Read::Identity before the box arm; the box arm only for an output of type, dyad or a run-time rational, is_rational_value refusing a literal; then node_output, a Teardown::Block, scalar_binding_type), not by place_layout of the type the right side gives, which := decides nothing about copy or reference makes the decider ('the type's reading rule does'); so a type written directly is rebound though place_layout gives type an eight-byte Container and a type held in a place works as a type, a fraction literal falls past the box arm though place_layout gives rational_number sixteen bytes, and fn and string, which place_layout gives no layout, fall to set_dyad",
+    "proposed_for": "W329",
+    "why": null,
+    "anchors": [
+      "declare_here",
+      "place_layout",
+      "is_rational_value",
+      "scalar_binding_type",
+      "node_output",
+      "rebind",
+      "set_dyad",
+      "src/parse/declare.rs",
+      "src/identities/read.rs",
+      "src/identities/rational.rs"
+    ],
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does",
+      "A function reads as a copy"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n '268,290p' src/identities/read.rs   (place_layout); sed -n '425,430p' src/identities/rational.rs   (is_rational_value)",
+        "output": "meta::FRACTION_TAG => Some((Read::Rational, 16)),\nk if k < VOID_TAG => Some((Read::Scalar(nt), nt.bytes())),\nADDR_TAG => Some((Read::Pointer(..), 8)),\nmeta::TYPEREC_TAG | meta::DYAD_TAG => Some((Read::Container(t), 8)),\nmeta::RECORD_TAG => Container 8 for a Logos-parse node type, None for a type with a run, else Some((Read::Aggregate, record_size_of(t)))\n_ => None,   (fn's operand record, STRING_TAG)\nis_rational_value: !read.is_null() && !is_literal(types.rational, read) && output_type(types, node) == types.rational",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'Read::Identity|let box_ty|is_rational_value|node_output\\(self.types, value\\)|Teardown::Block\\(pointee\\) = teardown_of|scalar_binding_type\\(self.rt.store|Binding::set_dyad\\(binding, read\\)' src/parse/declare.rs   (declare_here's arm order)",
+        "output": "636: let box_ty = ... (rational || out == self.types.type_ || out == self.types.dyad_).then_some(out)\n638:     let rational = crate::identities::rational::is_rational_value(self.types, read);\n713: } else if read_kind(self.types, read) == Read::Identity {   (rebind, before the box arm)\n719: } else if let Some(t) = box_ty {\n725: } else if let Some(t) = node_output(self.types, value) ...\n737: } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {\n750: } else if let Some((ty_node, width)) = scalar_binding_type(self.rt.store, self.types, value) {\n766:     Binding::set_dyad(binding, read);   (every other right side)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w329-b.txt, then why-probes/w329-a.txt   (release build of dev 39f2d7e, interpreted)",
+        "output": "mut t := type ?, t = i32, print «{t:offset}» -> 39312   (a type in a place: place_layout's Container)\nmut t := type ?, t = i32, y := t 5, print «{y}» -> 5   (and it works as a type)\nk := i32, print «{k:offset}» -> 0   (a type written directly: rebound, no place)\nx := i32 3, print «{x:offset}» -> 39328   (scalar arm)\nr := 2/1, print «{r:offset}» -> 0 ; r := 1/2 + 1/2, print «{r:offset}» -> 0   (fraction literals: last arm, no place)\ng := fn () -> i32 ( 1 ), print «{g:offset}» -> 0   (fn: no layout, last arm)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:17+02:00",
+      "by": "logoslang-why-P157-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W332",
+    "kind": "why",
+    "status": "draft",
+    "text": "How a value wider than one word is handed on whole is decided by each reader, not by its read kind: by_copy::record_addr and lower_record_addr hand on the address of a Read::Aggregate place exactly as of a Read::Rational one (and a Read::Literal's own bytes), while Runtime::run and Lowerer::lower, which hand back one i64, give a Rational its address, mold a Literal at i32 and refuse an Aggregate; so q := p copies a whole record through by_copy while the line p, read by Runtime::run, is refused, and W296's split over a fraction literal is the same split over another kind",
+    "proposed_for": "W324",
+    "why": null,
+    "anchors": [
+      "record_addr",
+      "lower_record_addr",
+      "Runtime",
+      "Lowerer",
+      "read_kind",
+      "place_addr",
+      "NoWholeRead",
+      "src/identities/by_copy.rs",
+      "src/run.rs",
+      "src/compile.rs"
+    ],
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data",
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n '196,201p;224,229p' src/identities/by_copy.rs; rg -n 'Read::Rational => Ok\\(self.place_addr|Read::Literal => crate::identities::rational::mold|Read::Aggregate \\| Read::Opaque \\| Read::Undefined|pub unsafe fn run\\(&mut self, node: DyadPtr\\) -> Result<i64' src/run.rs src/compile.rs",
+        "output": "by_copy.rs record_addr:      Read::Aggregate | Read::Rational => node,   (then place_addr: the address)\n                             Read::Literal => return Ok(dyad::value(node)),   (its own sixteen bytes)\nby_copy.rs lower_record_addr: Read::Aggregate | Read::Rational => lw.place_addr(node),\n                             Read::Literal => Ok(lw.const_i64(dyad::value(node) as usize as i64)),\nsrc/run.rs:831: pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {\nsrc/run.rs:853:            Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),\nsrc/run.rs:855:            Read::Literal => crate::identities::rational::mold(node)\nsrc/run.rs:865:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),\nsrc/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w324-a.txt   (release build of dev 39f2d7e, interpreted lines)",
+        "output": "pt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), q := p, print «{q.b}» -> 2, exit 0   (by_copy::record_addr reads the whole record by address)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), p, 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (Runtime::run refuses it)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:17+02:00",
+      "by": "logoslang-why-P157-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W333",
+    "kind": "why",
+    "status": "draft",
+    "text": "How a value wider than a word is read whole is written twice: Runtime::run and Lowerer::lower give a rational place its address (Read::Rational, place_addr) and refuse a record place (Read::Aggregate), while by_copy::record_addr and lower_record_addr give both kinds their address (Read::Aggregate | Read::Rational => place_addr); only a call's record parameter (eval_args, the compiler's argument loop) and by_copy's out node ask the second, so a record reaches a record parameter whole and is refused as a line, at a declaration's run and as a bare parameter's argument",
+    "proposed_for": "W324",
+    "why": null,
+    "anchors": [
+      "record_addr",
+      "lower_record_addr",
+      "eval_args",
+      "Runtime",
+      "Lowerer",
+      "place_addr",
+      "Aggregate",
+      "Rational",
+      "src/identities/by_copy.rs",
+      "src/run.rs",
+      "src/compile.rs"
+    ],
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does",
+      "Operands travel on the stack, so `run` and `compile` take no arguments"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Read::Rational => Ok\\(self.place_addr|Read::Aggregate \\| Read::Opaque \\| Read::Undefined =>|Read::Rational => self.place_addr' src/run.rs src/compile.rs; rg -n 'Read::Aggregate \\| Read::Rational =>' src/identities/by_copy.rs; rg -n 'by_copy::(lower_)?record_addr\\(self, arg\\)' src/run.rs src/compile.rs",
+        "output": "src/run.rs:853:            Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),\nsrc/run.rs:865:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),\nsrc/compile.rs:172:            Read::Rational => self.place_addr(node),\nsrc/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),\nsrc/identities/by_copy.rs:197:        Read::Aggregate | Read::Rational => node,          (record_addr, then place_addr)\nsrc/identities/by_copy.rs:226:        Read::Aggregate | Read::Rational => lw.place_addr(node),   (lower_record_addr)\nsrc/run.rs:906:                    let src = by_copy::record_addr(self, arg)?;          (eval_args, a record parameter)\nsrc/compile.rs:1026:                    let src = by_copy::lower_record_addr(self, arg)?;\nsrc/identities/by_copy.rs:270, 275: record_addr / lower_record_addr for by_copy's out node",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p157-b-r4.txt   (lines 6-8; each one program through target/release/logos, release build of 39f2d7e)",
+        "output": "pt := type ( a := i32 ?, b := i32 ? ), h := fn (r := pt ?) -> i32 ( r.a ), p := pt(1, 2), h(p) -> 1   (record parameter: record_addr)\npt := type ( a := i32 ?, b := i32 ? ), h := fn (r) -> i32 ( 0 ), p := pt(1, 2), h(p) -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (bare parameter: Runtime::run)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), p, 0 -> the same error, exit 1   (a line: Runtime::run)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:19+02:00",
+      "by": "logoslang-why-P157-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "B"
+    },
+    "history": []
   }
 ]
