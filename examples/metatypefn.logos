@@ -7,9 +7,9 @@
 # `if` dispatches on that type, compared by identity with `==`,
 # dropping the untaken branches unparsed — each arm parses only in the world
 # where it can run. Every argument works: 0 → i32 place, prints 9; 1/2 →
-# f32/f64 place, prints 9.9; 3 → `type`, so `a` is a TYPE
+# f32/f64 place, prints 9.5; 3 → `type`, so `a` is a TYPE
 # VARIABLE the last arm fills with i32 at parse, and the program's value is a
-# type (prints i32). Currently metatype(2): prints 9.9.
+# type (prints i32). Currently metatype(2): prints 9.5.
 
 metatype := fn (i := i32 ?) -> type (
     if (i==0) (i32)
@@ -25,6 +25,6 @@ b := type,
 t := metatype(2),
 mut a := t ?,
 a = if (t == i32) (9)
-    else if (t == f32 or t == f64) (9.9)
+    else if (t == f32 or t == f64) (9.5)
     else (i32),
 print «{a}»

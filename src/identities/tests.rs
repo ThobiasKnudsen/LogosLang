@@ -1241,7 +1241,7 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         ("x := if c (i32 1) else (i64 2)", ParseError::ArmsDiffer),
         ("x := if c (i32 1) else (0)", ParseError::ArmsDiffer),
         ("x := (if c (i32 1) else (i64 2)) + 1", ParseError::ArmsDiffer),
-        ("x := i64 (if c (i32 1) else (i64 2))", ParseError::ArmsDiffer),
+        ("x := i32 (if c (i32 1) else (i64 2))", ParseError::TypeMismatch),
         ("x := if c (i32 1) else if c (i32 2) else (i64 3)", ParseError::ArmsDiffer),
         ("x := if c (i32 1) else if c (2) else (3)", ParseError::ArmsDiffer),
         ("x := if c (return 1) else (i32 2)", ParseError::ArmGivesNothing),
@@ -1712,10 +1712,10 @@ fn float_division_is_ieee_and_float_remainder_is_rejected() {
 #[test]
 fn comptime_division_is_exact_fractions() {
     diff_typed_call("fn () -> f64 ( f64(1 / 3 * 3) )", "f()", 1.0f64.to_bits() as i64);
-    diff_typed_call("fn () -> i32 ( i32(10 / 3) )", "f()", 3);
+    diff_typed_call("fn () -> i32 ( i32 lossy (10 / 3) )", "f()", 3);
     diff_typed_call("fn () -> i32 ( 10 % 3 )", "f()", 1);
-    assert_eq!(parse_err("i32(1 / 0)"), ParseError::UncomputableLiteral);
-    assert_eq!(parse_err("i32(1 % 0)"), ParseError::UncomputableLiteral);
+    assert_eq!(parse_err("i32(1 / 0)"), ParseError::LiteralArithmetic);
+    assert_eq!(parse_err("i32(1 % 0)"), ParseError::LiteralArithmetic);
 }
 
 #[test]
@@ -2203,6 +2203,14 @@ fn a_pointer_steps_by_whole_cells_both_tiers() {
     let walk = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), mut s := i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
     assert_eq!(run_script(&format!("{walk}, a := alloc 4 of i32 0, f(a, 4)")), 60);
     assert_eq!(run_script(&format!("{walk}, f.compile(), a := alloc 4 of i32 0, f(a, 4)")), 60);
+    // A step of any integer type counts cells: an unsigned one too.
+    let step = "f := fn (p := @i32 ?, k := u64 ?, j := u8 ?) -> i32 ( (p + k)@ = 9, (p + 2 - j)@ )";
+    assert_eq!(run_script(&format!("{step}, a := alloc 3 of i32 7, f(a, 1, 1)")), 9);
+    assert_eq!(run_script(&format!("{step}, f.compile(), a := alloc 3 of i32 7, f(a, 1, 1)")), 9);
+    assert_eq!(
+        run_script("a := alloc 3 of i32 7, (a + (u64 1))@ = 9, b := a + 2, (b - (u8 1))@"),
+        9
+    );
 }
 
 #[test]
@@ -3565,8 +3573,12 @@ fn integer_width_arithmetic_matches_between_tiers() {
 
 #[test]
 fn signed_vs_unsigned_comparison_matches_between_tiers() {
-    // 255 has no exact i8, so the i8 side takes it through the explicit wrapping cast.
-    diff_typed_call("fn (x := i8 ?) -> i32 ( if (x < 1) (100) else (200) )", "f(i8(255))", 100);
+    // 255 has no exact i8, so the i8 side takes it through `lossy`, which wraps it.
+    diff_typed_call(
+        "fn (x := i8 ?) -> i32 ( if (x < 1) (100) else (200) )",
+        "f(i8 lossy 255)",
+        100,
+    );
     diff_typed_call("fn (x := u8 ?) -> i32 ( if (x < 1) (100) else (200) )", "f(255)", 200);
 }
 
@@ -3574,6 +3586,17 @@ fn signed_vs_unsigned_comparison_matches_between_tiers() {
 /// type `nt` initialised to the low bytes of `init`. Floats cannot ride the
 /// argument path, so a float operand must be a stored variable.
 fn diff_var_fn(nt: NumType, init: i64, fn_src: &str, expect: i64) {
+    let (interp, jit) = var_fn_on_both_tiers(nt, init, fn_src);
+    assert_eq!(interp, Ok(expect), "interpreter: {fn_src}");
+    assert_eq!(jit, interp, "jit != interpreter: {fn_src}");
+}
+
+/// `fn_src` over a place `a` of type `nt` holding `init`, run interpreted, then compiled.
+fn var_fn_on_both_tiers(
+    nt: NumType,
+    init: i64,
+    fn_src: &str,
+) -> (Result<i64, crate::run::RunError>, Result<i64, crate::run::RunError>) {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
@@ -3587,12 +3610,11 @@ fn diff_var_fn(nt: NumType, init: i64, fn_src: &str, expect: i64) {
     let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
-    let interp = unsafe { rt.run(call) }.unwrap();
+    let interp = unsafe { rt.run(call) };
     // SAFETY: `func`/`a` live in `store`, which outlives the call.
     unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
-    let jit = unsafe { rt.run(call) }.unwrap();
-    assert_eq!(interp, expect, "interpreter: {fn_src}");
-    assert_eq!(jit, interp, "jit != interpreter: {fn_src}");
+    let jit = unsafe { rt.run(call) };
+    (interp, jit)
 }
 
 #[test]
@@ -3653,58 +3675,120 @@ fn parses(src: &str) -> Result<(), ParseError> {
 
 #[test]
 fn casts_between_integer_widths_match_between_tiers() {
-    diff_typed_call("fn (x := i8 ?) -> i32 ( i32(x) )", "f(i8(255))", -1);
-    diff_typed_call("fn (x := i32 ?) -> i8 ( i8(x) )", "f(300)", 44);
-    diff_typed_call("fn (x := i8 ?) -> u8 ( u8(x) )", "f(i8(255))", 255);
+    diff_typed_call("fn (x := i8 ?) -> i32 ( i32(x) )", "f(i8 lossy 255)", -1);
+    diff_typed_call("fn (x := i32 ?) -> i8 ( i8 lossy (x) )", "f(300)", 44);
+    diff_typed_call("fn (x := i8 ?) -> u8 ( u8 lossy (x) )", "f(i8 lossy 255)", 255);
     diff_typed_call("fn (x := i32 ?) -> i32 ( i32(x) )", "f(42)", 42);
     diff_var_fn(
         NumType::U32,
         3_000_000_000,
-        "fn () -> i32 ( i32(a) )",
+        "fn () -> i32 ( i32 lossy (a) )",
         3_000_000_000i64 - 4_294_967_296,
     );
-    diff_var_fn(NumType::U64, 300, "fn () -> u8 ( u8(a) )", 44);
+    diff_var_fn(NumType::U64, 300, "fn () -> u8 ( u8 lossy (a) )", 44);
 }
 
 #[test]
 fn casts_between_int_and_float_match_between_tiers() {
-    // float -> int truncates toward zero and saturates out of range, matching Rust `as`.
     diff_typed_call("fn (x := i32 ?) -> f64 ( f64(x) )", "f(3)", 3.0f64.to_bits() as i64);
-    diff_var_fn(NumType::F64, 3.7f64.to_bits() as i64, "fn () -> i32 ( i32(a) )", 3);
-    diff_var_fn(NumType::F64, (-3.7f64).to_bits() as i64, "fn () -> i32 ( i32(a) )", -3);
-    diff_var_fn(
-        NumType::F64,
-        1e20f64.to_bits() as i64,
-        "fn () -> i32 ( i32(a) )",
-        i64::from(i32::MAX),
-    );
-    diff_var_fn(
-        NumType::F64,
-        (-1e20f64).to_bits() as i64,
-        "fn () -> i32 ( i32(a) )",
-        i64::from(i32::MIN),
-    );
+    diff_var_fn(NumType::F64, 3.7f64.to_bits() as i64, "fn () -> i32 ( i32 lossy (a) )", 3);
+    diff_var_fn(NumType::F64, (-3.7f64).to_bits() as i64, "fn () -> i32 ( i32 lossy (a) )", -3);
     diff_var_fn(
         NumType::F64,
         1.5f64.to_bits() as i64,
-        "fn () -> f32 ( f32(a) )",
+        "fn () -> f32 ( f32 lossy (a) )",
         i64::from(1.5f32.to_bits()),
     );
+    diff_var_fn(
+        NumType::F64,
+        1e45f64.to_bits() as i64,
+        "fn () -> f32 ( f32 lossy (a) )",
+        i64::from(f32::INFINITY.to_bits()),
+    );
+}
+
+#[test]
+fn lossy_keeps_a_floats_whole_part_wrapped_exactly_on_both_tiers() {
+    // Every value here has an exact whole part below 2^127, so `as i128` computes the
+    // unwrapped integer independently of the seed.
+    let two_63 = 9_223_372_036_854_775_808f64;
+    let two_64 = 18_446_744_073_709_551_616f64;
+    for f in [3000000000.0, 1e20, -1e20, 1e30, -1e30, two_63, -two_63, two_64 + 4096.0] {
+        let whole = f as i128;
+        for (ty, nt, expect) in [
+            ("i32", NumType::I32, i64::from(whole as i32)),
+            ("i64", NumType::I64, whole as i64),
+            ("u64", NumType::U64, whole as u64 as i64),
+        ] {
+            let src = format!("fn () -> {ty} ( {ty} lossy (a) )");
+            let (interp, jit) = var_fn_on_both_tiers(NumType::F64, f.to_bits() as i64, &src);
+            assert_eq!(interp, Ok(expect), "interpreter: {src} of {f:e} as {nt:?}");
+            assert_eq!(jit, interp, "jit != interpreter: {src} of {f:e}");
+        }
+    }
+    // Past 2^64 every f64 is a multiple of 2^64, so it wraps to zero.
+    diff_var_fn(NumType::F64, 1e300f64.to_bits() as i64, "fn () -> i64 ( i64 lossy (a) )", 0);
+}
+
+#[test]
+fn lossy_of_nan_or_an_infinity_into_an_integer_fails_on_both_tiers() {
+    for f in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for ty in ["i32", "u8", "u64"] {
+            let src = format!("fn () -> {ty} ( {ty} lossy (a) )");
+            let (interp, jit) = var_fn_on_both_tiers(NumType::F64, f.to_bits() as i64, &src);
+            assert_eq!(
+                interp,
+                Err(crate::run::RunError::NoWholeNumber),
+                "interpreter: {src} of {f}"
+            );
+            assert_eq!(jit, interp, "jit != interpreter: {src} of {f}");
+        }
+    }
+    let src = "fn () -> i32 ( i32 lossy (a) )";
+    let (interp, jit) = var_fn_on_both_tiers(NumType::F32, i64::from(f32::NAN.to_bits()), src);
+    assert_eq!(interp, Err(crate::run::RunError::NoWholeNumber), "interpreter: f32 NaN");
+    assert_eq!(jit, interp, "jit != interpreter: f32 NaN");
 }
 
 #[test]
 fn casts_fold_literal_operands() {
     diff_typed_call("fn () -> i32 ( i32(3) )", "f()", 3);
-    diff_typed_call("fn () -> i32 ( i32(3.5) )", "f()", 3);
-    diff_typed_call("fn () -> u8 ( u8(300) )", "f()", 44);
+    diff_typed_call("fn () -> i32 ( i32 lossy (3.5) )", "f()", 3);
+    diff_typed_call("fn () -> i32 ( i32 lossy -3.5 )", "f()", -3);
+    diff_typed_call("fn () -> u8 ( u8 lossy 300 )", "f()", 44);
     diff_typed_call("fn () -> f64 ( f64(2) )", "f()", 2.0f64.to_bits() as i64);
+    diff_typed_call("fn () -> f64 ( f64 1/2 )", "f()", 0.5f64.to_bits() as i64);
+    diff_typed_call("fn () -> f64 ( f64 lossy 0.1 )", "f()", 0.1f64.to_bits() as i64);
+    diff_typed_call("fn () -> f32 ( f32 lossy 0.1 )", "f()", i64::from(0.1f32.to_bits()));
+}
+
+#[test]
+fn a_written_conversion_is_checked_as_an_unwritten_one() {
+    for src in ["i32 (i64 4)", "i32 (f64 2.5)", "f32 (i32 1)", "i64 (f64 2.0)", "i32 (true)"] {
+        assert_eq!(parse_err(src), ParseError::TypeMismatch, "{src}");
+    }
+    for src in ["i32 (2.5)", "f64 0.1", "f64 (1/3)", "f32 16777217", "u8 (300)"] {
+        assert_eq!(parse_err(src), ParseError::UncomputableLiteral, "{src}");
+    }
+    diff_nullary_fn("fn () -> i64 ( i64 (i32 3) )", 3);
+    diff_nullary_fn("fn () -> f64 ( f64 16777217 )", 16777217.0f64.to_bits() as i64);
+    diff_typed_call("fn (c := bool ?) -> i64 ( i64 (if c (i32 1) else (i64 2)) )", "f(true)", 1);
+}
+
+#[test]
+fn lossy_stands_only_between_a_number_type_and_its_value() {
+    for src in ["x := lossy (f64 2.5)", "m := f64 2.5, i32 lossy m", "lossy 1"] {
+        assert_eq!(script_parse_err(src), ParseError::LossyOutOfPlace, "{src}");
+    }
+    assert_eq!(parse_err("i32 lossy (true)"), ParseError::TypeMismatch);
+    assert_eq!(parse_err("i32 lossy (1, 2)"), ParseError::BadCast);
 }
 
 #[test]
 fn malformed_casts_are_rejected() {
     assert_eq!(parse_err("i32()"), ParseError::BadCast);
     assert_eq!(parse_err("i32(1, 2)"), ParseError::BadCast);
-    assert_eq!(parse_err("i32(logos ())"), ParseError::BadCast);
+    assert_eq!(parse_err("i32(logos ())"), ParseError::TypeMismatch);
 }
 
 #[test]
@@ -3792,7 +3876,7 @@ fn comptime_rational_comparison_folds() {
 #[test]
 fn a_comptime_rational_that_overflows_i64_is_rejected() {
     // The seed's rationals are i64 fractions.
-    assert_eq!(parse_err("i64(10000000000 * 10000000000)"), ParseError::UncomputableLiteral);
+    assert_eq!(parse_err("i64(10000000000 * 10000000000)"), ParseError::LiteralArithmetic);
 }
 
 #[test]

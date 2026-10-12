@@ -120,6 +120,10 @@ pub enum ParseError {
     TypeMismatch,
     /// A number literal had no exact value in the type it was committed to.
     UncomputableLiteral,
+    /// Arithmetic on plain numbers with no value: a division by zero, or past an `i64` fraction.
+    LiteralArithmetic,
+    /// `lossy` not between a number type and a bracketed value or a plain number.
+    LossyOutOfPlace,
     /// A `return` with no function around it to leave.
     ReturnOutsideFunction,
     /// A node that gives nothing (a statement, a `-> void` call) stood where a value is
@@ -203,8 +207,7 @@ pub enum ParseError {
     BadStep,
     /// An `&` of something without storage to point at.
     BadAddressOf,
-    /// A numeric conversion `logos(value)` with not exactly one operand, or a
-    /// non-numeric one.
+    /// A numeric conversion `T(value)` with not exactly one operand.
     BadCast,
     /// A declaration's type position, or a type variable's fill, held
     /// something that does not evaluate to a type.

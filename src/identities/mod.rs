@@ -86,6 +86,7 @@ pub struct Core {
     pub i32_: DyadPtr,
     /// Indexed by `NumType`; an unregistered type is null.
     pub numtypes: [DyadPtr; 10],
+    pub lossy: DyadPtr,
     pub bool_: DyadPtr,
     pub void_: DyadPtr,
     pub assign: DyadPtr,
@@ -237,6 +238,7 @@ impl Core {
             numtypes[nt as usize] = numtype::register_type(&mut cx, spelling, nt);
         }
         let i32_ = numtypes[NumType::I32 as usize];
+        let lossy = numtype::register_lossy(&mut cx);
         let void = numtype::register_void(&mut cx);
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
@@ -391,6 +393,7 @@ impl Core {
             fn_type,
             i32_,
             numtypes,
+            lossy,
             bool_,
             void_: void,
             assign,
@@ -777,6 +780,32 @@ pub(crate) unsafe fn land(
     value: DyadPtr,
     ty: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    land_as(store, types, value, ty, false)
+}
+
+/// What `ty lossy (value)` gives: as [`land`], and a number of any number type, a plain number
+/// or a rational value converts into the number type `ty`, losing what `ty` cannot hold.
+///
+/// # Safety
+/// As [`land`].
+pub(crate) unsafe fn land_lossy(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    ty: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    land_as(store, types, value, ty, true)
+}
+
+/// # Safety
+/// As [`land`].
+unsafe fn land_as(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    ty: DyadPtr,
+    lossy: bool,
+) -> Result<DyadPtr, ParseError> {
     let Some((ty, (place, _))) =
         type_identity_of(types, ty).and_then(|t| Some((t, read::place_layout(types, t)?)))
     else {
@@ -786,7 +815,8 @@ pub(crate) unsafe fn land(
         Ok(_) | Err(ParseError::ArmsDiffer) => {}
         Err(e) => return Err(e),
     }
-    let landed = walk_tail(types, value, &mut |leaf| land_leaf(store, types, leaf, ty, place))?;
+    let landed =
+        walk_tail(types, value, &mut |leaf| land_leaf(store, types, leaf, ty, place, lossy))?;
     read::value_type(types, landed)?;
     Ok(landed)
 }
@@ -801,6 +831,7 @@ unsafe fn land_leaf(
     value: DyadPtr,
     ty: DyadPtr,
     place: read::Read,
+    lossy: bool,
 ) -> Result<DyadPtr, ParseError> {
     // A comptime name used here is its binding; the literal folds through it.
     let plain = types.through(value);
@@ -812,11 +843,16 @@ unsafe fn land_leaf(
             if !is_numtype_node(types, ty) {
                 return Err(ParseError::UncomputableLiteral);
             }
-            let bits = rational::mold_to(plain, nt).ok_or(ParseError::UncomputableLiteral)?;
+            let bits =
+                if lossy { rational::cast_to(plain, nt) } else { rational::mold_to(plain, nt) }
+                    .ok_or(ParseError::UncomputableLiteral)?;
             return Ok(store.alloc_blob(ty, &bits.to_ne_bytes()[..nt.bytes()]));
         }
         read::Read::Scalar(_) => {
-            if from != ty && subset::includes(types, from, ty) == Some(true) {
+            let number = is_numtype_node(types, from) || from == types.rational;
+            let converts = subset::includes(types, from, ty) == Some(true)
+                || lossy && number && is_numtype_node(types, ty);
+            if from != ty && converts {
                 return Ok(convert::build_convert(store, types, value, from, ty));
             }
             from == ty
@@ -1230,9 +1266,7 @@ unsafe fn is_parameter(types: &Core, node: DyadPtr) -> bool {
     }
 }
 
-/// The `T(value)` conversion, the only cross-type path: a literal folds now with `as`
-/// semantics, a runtime operand of another type or a rational value becomes a `convert`
-/// node, the same type passes through.
+/// The written `T(value)`, checked as an unwritten value landing in `T` is.
 ///
 /// # Safety
 /// `target` is a numeric type node; `args` are valid dyads from the store.
@@ -1245,29 +1279,7 @@ pub(crate) unsafe fn build_cast(
     let [operand] = args else {
         return Err(ParseError::BadCast);
     };
-    let operand = *operand;
-    read::value_type(types, operand)?;
-    let to = numtype::of_type_node(target);
-    match operand_of(types, operand) {
-        Operand::Concrete(from) => {
-            if from == to {
-                Ok(operand)
-            } else {
-                let from_node = types.numtypes[from as usize];
-                Ok(convert::build_convert(store, types, operand, from_node, target))
-            }
-        }
-        Operand::Literal => {
-            let bits = rational::cast_to(types.through(operand), to)
-                .ok_or(ParseError::UncomputableLiteral)?;
-            Ok(store.alloc_blob(target, &bits.to_ne_bytes()[..to.bytes()]))
-        }
-        _ if rational::is_rational_value(types, operand) => {
-            Ok(convert::build_convert(store, types, operand, types.rational, target))
-        }
-        // Pointer-to-integer casts are deferred with the rest of pointer math.
-        Operand::Pointer(_) | Operand::NonNumeric => Err(ParseError::BadCast),
-    }
+    land(store, types, *operand, target)
 }
 
 #[cfg(test)]

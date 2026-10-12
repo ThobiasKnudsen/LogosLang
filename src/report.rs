@@ -83,12 +83,24 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
-            "these types do not match: unwritten, a value converts only into a type known to hold \
-             every value of it"
+            "these types do not match: a value converts only into a type known to hold every value \
+             of it; a number that may lose part of itself converts with `lossy`, as `i32 lossy (x)`"
                 .into()
         }
         ParseError::UncomputableLiteral => {
-            "this literal has no exact value in the type it lands in".into()
+            "this literal has no exact value in the type it lands in; `lossy` converts it anyway, \
+             as `f64 lossy 0.1`"
+                .into()
+        }
+        ParseError::LiteralArithmetic => {
+            "this arithmetic on plain numbers has no value: a division by zero, or a result past \
+             what a fraction of two i64s holds"
+                .into()
+        }
+        ParseError::LossyOutOfPlace => {
+            "`lossy` stands between a number type and the value it converts, as `i32 lossy (x)` or \
+             `f64 lossy 0.1`"
+                .into()
         }
         ParseError::ReturnOutsideFunction => "`return` is written only inside a function".into(),
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
@@ -167,7 +179,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ExpectedRange => "expected a range like `0..10` here".into(),
         ParseError::BadStep => "a literal loop step must be positive".into(),
         ParseError::BadAddressOf => "`&` needs a variable to take the address of".into(),
-        ParseError::BadCast => "a conversion takes exactly one numeric value".into(),
+        ParseError::BadCast => "a conversion takes exactly one value".into(),
         ParseError::BadDeclaredType => {
             "the declared or assigned type must be a type value"
                 .into()
@@ -465,6 +477,10 @@ pub fn run_message(e: &RunError) -> String {
         RunError::UncomputableLiteral => {
             "a literal here has no exact value in the type it lands in".into()
         }
+        RunError::NoWholeNumber => "a float that is not a number (NaN) or is infinite has no \
+                                    whole number, so `lossy` cannot convert it into an integer \
+                                    type"
+            .into(),
         RunError::ArityMismatch => "a call's argument count does not match its function".into(),
         RunError::CompilerUnavailable => {
             "compile() is not available here (parse-time evaluation runs without the compiler)"

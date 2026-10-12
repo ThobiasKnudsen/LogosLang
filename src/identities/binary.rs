@@ -225,11 +225,22 @@ unsafe fn pointer_step(
         super::Operand::Literal => {
             let k = rational::mold_to(types.through(rhs), NumType::I64)
                 .ok_or(ParseError::UncomputableLiteral)?;
-            let bytes = k.checked_mul(width as i64).ok_or(ParseError::UncomputableLiteral)?;
+            let bytes = k.checked_mul(width as i64).ok_or(ParseError::LiteralArithmetic)?;
             store.alloc_blob(i64_ty, &bytes.to_ne_bytes())
         }
         super::Operand::Concrete(nt) if !nt.is_float() => {
-            let k = super::build_cast(store, types, i64_ty, &[rhs])?;
+            // The step's own reading: an index of any integer type counts cells as an `i64`.
+            let k = if nt == NumType::I64 {
+                rhs
+            } else {
+                super::convert::build_convert(
+                    store,
+                    types,
+                    rhs,
+                    types.numtypes[nt as usize],
+                    i64_ty,
+                )
+            };
             let w = store.alloc_blob(i64_ty, &(width as i64).to_ne_bytes());
             store.alloc_words(
                 types.times,

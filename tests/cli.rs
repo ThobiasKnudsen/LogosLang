@@ -272,6 +272,14 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
         ("2 ^ 0.5", "1.4142135623730954"),
         ("g := fn (x := f64 ?) -> f64 ( x ^ 1.5 ), g.compile(), g(f64 4.0)", "8.0"),
         ("f(2) + 2 ^ 3 ^ 2", "521"),
+        ("x := f64 2.0, x ^ (f64 0.0 / 0.0)", "NaN"),
+        ("x := f64 2.0, x ^ (f64 1.0 / 0.0)", "inf"),
+        ("x := f64 2.0, x ^ (f64 -1.0 / 0.0)", "0.0"),
+        ("x := f64 1.0, x ^ (f64 0.0 / 0.0)", "NaN"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 0.0 / 0.0)", "NaN"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 1.0 / 0.0)", "inf"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 -1.0 / 0.0)", "0.0"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 3.0)", "8.0"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{body}\n{tail}"));
         assert_eq!((code, stdout.trim()), (Some(0), want), "{tail}: stderr: {stderr}");
@@ -287,13 +295,20 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
 }
 
 #[test]
-fn a_conversion_reads_a_rational_value_when_it_runs() {
-    let (code, stdout, stderr) = run_line(
-        "q := type ( a := ?, output_type := type ?, share run = ( f64(a) * 2.0 ), \
-         share parse_rank = 60, share parse = ( tape[0].type = q, tape[0].a = tape[1], \
-         tape[0].output_type = f64, tape.remove(1), tape.is_constructed[0] = true ) ), q 0.75",
-    );
+fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
+    let q = |conversion: &str| {
+        format!(
+            "q := type ( a := ?, output_type := type ?, share run = ( {conversion} * 2.0 ), \
+             share parse_rank = 60, share parse = ( tape[0].type = q, tape[0].a = tape[1], \
+             tape[0].output_type = f64, tape.remove(1), tape.is_constructed[0] = true ) ), q 0.75"
+        )
+    };
+    let (code, stdout, stderr) = run_line(&q("f64 lossy (a)"));
     assert_eq!((code, stdout.as_str()), (Some(0), "1.5\n"), "stderr: {stderr}");
+    // A `rational_number` lies inside no float type: 1/3 has no `f64`.
+    let (code, _, stderr) = run_line(&q("f64 (a)"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
 }
 
 #[test]
@@ -1129,7 +1144,7 @@ fn prose_may_stand_before_a_field_a_member_or_a_slot_fill() {
                share y := i32 2,\n\
                # a slot\n\
                share parse_rank = 5\n\
-               ), q := t (4), q.x + t.y + i32 (t.parse_rank)";
+               ), q := t (4), q.x + t.y + i32 lossy (t.parse_rank)";
     let (code, stdout, stderr) = run_line(src);
     assert_eq!((code, stdout.as_str()), (Some(0), "11\n"), "stderr: {stderr}");
 }
@@ -1496,6 +1511,40 @@ fn a_line_checked_against_a_float_reads_as_that_float() {
     let out = logos().args([&format!("{q}, q (i64 3)")]).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success() && stderr.contains("not within f64"), "stderr: {stderr}");
+}
+
+#[test]
+fn lossy_gives_what_each_number_type_defines_on_both_tiers() {
+    let huge = "f64 4000000000.0 * 4000000000.0 * 4000000000.0 * 4000000000.0 * 4000000000.0";
+    for (ty, from, value, expect) in [
+        ("i32", "f64", "f64 2.5", "2"),
+        ("f32", "i32", "i32 16777217", "16777216.0"),
+        ("i32", "i64", "i64 5000000000", "705032704"),
+        ("i32", "f64", "f64 3000000000", "-1294967296"),
+        ("f32", "f64", huge, "inf"),
+        ("i32", "i32", "i32 7", "7"),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            let src =
+                format!("g := fn (x := {from} ?) -> {ty} ( {ty} lossy (x) ), {compile}g({value})");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.trim()), (Some(0), expect), "{src}: stderr: {stderr}");
+        }
+    }
+    for (src, expect) in
+        [("f64 lossy 0.1", "0.1"), ("i32 lossy -2.5", "-2"), ("u8 lossy 300", "44")]
+    {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.trim()), (Some(0), expect), "{src}: stderr: {stderr}");
+    }
+    for compile in ["", "g.compile(), "] {
+        for x in ["f64 1.0 / 0.0", "f64 -1.0 / 0.0", "f64 0.0 / 0.0"] {
+            let src = format!("g := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), {compile}g({x})");
+            let (code, _, stderr) = run_line(&src);
+            assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+            assert!(stderr.contains("has no whole number"), "{src}: stderr: {stderr}");
+        }
+    }
 }
 
 #[test]
@@ -2369,7 +2418,7 @@ fn the_metatypefn_example_runs() {
     // The expected value tracks the file's current argument; the deep arm is pinned by the metalogos_arm fixture.
     let out = logos().args(["import", "examples/metatypefn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "9.9\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "9.5\n");
 }
 
 #[test]

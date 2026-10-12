@@ -788,7 +788,10 @@ pub(crate) unsafe fn constant_number(types: &Core, cell: DyadPtr, ty: DyadPtr) -
     }
     let inside = super::is_numtype_node(types, from)
         && super::subset::includes(types, from, ty) == Some(true);
-    inside.then(|| apply_cast(of_type_node(from), nt, read_scalar(from, v as *const u8)))
+    if !inside {
+        return None;
+    }
+    apply_cast(of_type_node(from), nt, read_scalar(from, v as *const u8))
 }
 
 /// Checked again here, as `run_cell_value` is.

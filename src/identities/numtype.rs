@@ -137,9 +137,19 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
     id
 }
 
-/// Juxtaposition: a directly following rational literal (or `- <rational>`) commits
-/// exactly to this type; a following `(` is the conversion `i32(x)`; anything else
-/// declines the right and the type stands as a value, so `f(i32, 3)` passes the type.
+/// `lossy`, read only by the number type to its left: standing anywhere else it is refused.
+pub(crate) fn register_lossy(cx: &mut Cx) -> DyadPtr {
+    let record = super::meta::record(cx.store, super::meta::TOKEN_TAG, super::meta::prec::PREFIX);
+    let id = cx.store.alloc_head(cx.type_, record);
+    cx.declare("lossy", id);
+    cx.metas.insert(id, |_, _, _| Err(crate::parse::ParseError::LossyOutOfPlace));
+    id
+}
+
+/// Juxtaposition: a directly following rational literal (or `- <rational>`) converts
+/// exactly to this type; a following `(` is the conversion `i32(x)`; `lossy` before either
+/// converts what may lose part of the value; anything else declines the right and the type
+/// stands as a value, so `f(i32, 3)` passes the type.
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
@@ -150,6 +160,12 @@ fn construct(
     // belongs to the literal after it, which folds it at its own discovery, so that
     // literal is lexed too.
     let mut right = p.cell_at(tape, 1)?;
+    // A number type reads `lossy` itself: stand-in for #212.
+    let lossy = matches!(right, Some(c) if !c.constructed && c.identity(types) == types.lossy);
+    if lossy {
+        tape.remove(1);
+        right = p.cell_at(tape, 1)?;
+    }
     if matches!(right, Some(c) if !c.constructed && c.identity(types) == types.minus) {
         p.cell_at(tape, 2)?;
         right = tape.at(1).copied();
@@ -162,7 +178,13 @@ fn construct(
             let l = c.dyad;
             tape.remove(1);
             // SAFETY: `l` is rational-typed by the guard; `id` is this numeric type's node.
-            unsafe { super::commit_literal_to(p.store(), types, l, id) }?
+            unsafe {
+                if lossy {
+                    super::land_lossy(p.store(), types, l, id)
+                } else {
+                    super::commit_literal_to(p.store(), types, l, id)
+                }
+            }?
         }
         // `i32(x)`: the bracket is this type's to read, a conversion, never `(`'s call.
         Some(c) if c.is_bracket() => {
@@ -170,9 +192,18 @@ fn construct(
             // SAFETY: `scope` is the bracket's node from the store.
             let args = unsafe { p.args_of(scope) };
             tape.remove(1);
-            // SAFETY: `id` is this numeric type's node; `args` are reduced dyads.
-            unsafe { p.build_call(id, &args) }?
+            if lossy {
+                let [operand] = args[..] else {
+                    return Err(crate::parse::ParseError::BadCast);
+                };
+                // SAFETY: `operand` is a reduced dyad; `id` is this numeric type's node.
+                unsafe { super::land_lossy(p.store(), types, operand, id) }?
+            } else {
+                // SAFETY: `id` is this numeric type's node; `args` are reduced dyads.
+                unsafe { p.build_call(id, &args) }?
+            }
         }
+        _ if lossy => return Err(crate::parse::ParseError::LossyOutOfPlace),
         _ => p.stand_as_value(tape, id),
     };
     tape.place(node);
@@ -480,9 +511,12 @@ pub(crate) fn apply_compare(op: CmpOp, logos: NumType, l: i64, r: i64) -> i64 {
     }
 }
 
-/// Rust `as` semantics. The compiler's `emit_cast` must stay bit-for-bit identical: the
-/// interpreter is the compiler's oracle.
-pub(crate) fn apply_cast(from: NumType, to: NumType, v: i64) -> i64 {
+/// What a conversion gives: an integer wraps to an integer type's width and rounds to the
+/// nearest value of a float type; a float rounds to the nearest value of a float type, infinity
+/// past its largest, and keeps its whole part in an integer type, wrapped. `None` for NaN or an
+/// infinity into an integer type, which have no whole part. The compiler's `emit_cast` must stay
+/// bit-for-bit identical: the interpreter is the compiler's oracle.
+pub(crate) fn apply_cast(from: NumType, to: NumType, v: i64) -> Option<i64> {
     use NumType::*;
     if from.is_float() {
         let f = match from {
@@ -504,10 +538,10 @@ pub(crate) fn apply_cast(from: NumType, to: NumType, v: i64) -> i64 {
         U64 => i128::from(v as u64),
         _ => unreachable!("from is an int here"),
     };
-    encode_from_i128(to, i)
+    Some(encode_from_i128(to, i))
 }
 
-fn encode_from_i128(to: NumType, i: i128) -> i64 {
+pub(crate) fn encode_from_i128(to: NumType, i: i128) -> i64 {
     use NumType::*;
     match to {
         I8 => i64::from(i as i8),
@@ -523,18 +557,18 @@ fn encode_from_i128(to: NumType, i: i128) -> i64 {
     }
 }
 
-fn encode_from_f64(to: NumType, f: f64) -> i64 {
-    use NumType::*;
+const TWO_TO_64: f64 = 18_446_744_073_709_551_616.0;
+
+fn encode_from_f64(to: NumType, f: f64) -> Option<i64> {
     match to {
-        I8 => i64::from(f as i8),
-        I16 => i64::from(f as i16),
-        I32 => i64::from(f as i32),
-        I64 => f as i64,
-        U8 => i64::from(f as u8),
-        U16 => i64::from(f as u16),
-        U32 => i64::from(f as u32),
-        U64 => (f as u64) as i64,
-        F32 => i64::from((f as f32).to_bits()),
-        F64 => f.to_bits() as i64,
+        NumType::F32 => Some(i64::from((f as f32).to_bits())),
+        NumType::F64 => Some(f.to_bits() as i64),
+        _ if !f.is_finite() => None,
+        _ => {
+            // `%` on floats is exact, so the whole part wraps modulo 2^64 with nothing rounded.
+            let m = (f.trunc().abs() % TWO_TO_64) as u64;
+            let w = if f < 0.0 { m.wrapping_neg() } else { m };
+            Some(encode_from_i128(to, i128::from(w as i64)))
+        }
     }
 }
