@@ -9820,11 +9820,12 @@
     "id": "S36",
     "kind": "solution",
     "status": "proposed",
-    "text": "One landing function, land(value, place_type), asked by all eight sites and by every if arm: a value of the place's type passes; a plain number converts exactly by the type's definition; a value whose type lies inside the place's type gets the node a written conversion T(value) builds; anything else is refused. Each site loses its own arms",
+    "text": "One conversion step wherever a value meets a number type it is not: land(value, type) hands back the value itself, a plain number converted exactly, or the node a written T(value) builds when the value's type lies inside the type, and refuses anything else; the eight check_store_type sites call it and keep what it hands back, resolve_binary converts the operand whose type lies inside the other's, and a landing walks an if's arms as the tail walk does; subset::includes, today private to ⊆, is the one lies-inside test",
     "fixes": [
-      "W15"
+      "W15",
+      "W313"
     ],
-    "assessment": "Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32 gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and makes the 2 October conversion rule (Q-63) true at every landing, where the seed refuses it today: x = f32 9 into an f64 gives 9.0, -> f64 ( u32 4000000000 ) gives 4000000000.0. The 'lies inside' test is one function over the number types' sign, width and float bits, beside their parse in numtype.rs, never a table. Tests that pin a widening's refusal change. W19 (#212) and #242's operand conversion reuse land. Leaves the ? and bare-parameter tails (#202)",
+    "assessment": "Removes the eight copies and the tail's unchecked arm (-> i32 ( f64 2.5 ) gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and the superseded exact-type test at all three meeting places, so P147 (x = f32 9 gives 9.0), P160 (i32 1 + i64 2 gives 3) and P161 (an if of 1 and f64 2.5 into an f64 gives 1.0) go with P9 and P90. One test, no copy: includes gains the integer-into-float pairs once Q83's point 2 is answered, and ⊆ then answers them too (i32 ⊆ f64 is 'not settled yet' at 783d78a). Where nothing requires a type (x := if …) the if's same-type check stays, as Q-63 and Q-65 rule. resolve_binary's conversion is the step #242's mint keeps as its field; tests that pin a widening's refusal change; W19 (#212) reuses land. Leaves the ? and bare-parameter tails (#202)",
     "decision": null,
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
@@ -9840,7 +9841,35 @@
       "run": "solve-W15",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "fixes was [\"W15\"]",
+        "reason": "W313 merged into solve-W15 (12 October 2026): the same conversion step serves resolve_binary and the if arms; and the lies-inside test already exists as subset::includes, so writing a new one in numtype.rs would have copied it"
+      },
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "text was \"One landing function, land(value, place_type), asked by all eight sites and by every if arm: a value of the place's type passes; a plain number converts exactly by the type's definition; a value whose type lies inside the place's type gets the node a written conversion T(value) builds; anything else is refused. Each site loses its own arms\"",
+        "reason": "W313 merged into solve-W15 (12 October 2026): the same conversion step serves resolve_binary and the if arms; and the lies-inside test already exists as subset::includes, so writing a new one in numtype.rs would have copied it"
+      },
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "assessment was \"Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32 gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and makes the 2 October conversion rule (Q-63) true at every landing, where the seed refuses it today: x = f32 9 into an f64 gives 9.0, -> f64 ( u32 4000000000 ) gives 4000000000.0. The 'lies inside' test is one function over the number types' sign, width and float bits, beside their parse in numtype.rs, never a table. Tests that pin a widening's refusal change. W19 (#212) and #242's operand conversion reuse land. Leaves the ? and bare-parameter tails (#202)\"",
+        "reason": "W313 merged into solve-W15 (12 October 2026): the same conversion step serves resolve_binary and the if arms; and the lies-inside test already exists as subset::includes, so writing a new one in numtype.rs would have copied it"
+      }
+    ]
   },
   {
     "id": "P86",
@@ -18644,9 +18673,10 @@
     "status": "proposed",
     "text": "Thobias's idea (Q79, 8 October 2026, an idea, not a ruling): every spot a value goes into with a type (argument, return value, field, pointer write) runs the same conversion path as =, and the graph holds an explicit = node there, which the code leaves unwritten",
     "fixes": [
-      "W15"
+      "W15",
+      "W313"
     ],
-    "assessment": "Same one-path shape as S36, so it removes the eight copies and the tail's missing check. Today = is itself one of the eight copies and refuses a = i64 4, so the path must be built first either way. An = node at every argument, return and field is built once per call site at parse, never per run, but adds a node where nothing converts and repeats what a call's argument already is (the fill of its parameter field); S36 puts a node only where a conversion happens, the T(value) node a written conversion builds, which is the part of = that converts. Whether i64 4 converts into i32 waits on by-type against by-value",
+    "assessment": "Same one-path shape as S36, so it removes the eight copies, the tail's missing check and the superseded exact-type test (an operation's operand and an if's arm go through the same path). Today = is itself one of the eight copies and refuses a = i64 4, so the path must be built first either way. An = node at every argument, return and field is built once per call site at parse, never per run, but adds a node where nothing converts and repeats what a call's argument already is (the fill of its parameter field); S36 puts a node only where a conversion happens, the T(value) node a written conversion builds, which is the part of = that converts. Whether i64 4 converts into i32 waits on by-type against by-value (Q83)",
     "decision": null,
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
@@ -18662,7 +18692,26 @@
       "run": "solve-W15",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "fixes was [\"W15\"]",
+        "reason": "W313 merged into solve-W15 (12 October 2026); every solution recorded now names every root it fixes"
+      },
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "assessment was \"Same one-path shape as S36, so it removes the eight copies and the tail's missing check. Today = is itself one of the eight copies and refuses a = i64 4, so the path must be built first either way. An = node at every argument, return and field is built once per call site at parse, never per run, but adds a node where nothing converts and repeats what a call's argument already is (the fill of its parameter field); S36 puts a node only where a conversion happens, the T(value) node a written conversion builds, which is the part of = that converts. Whether i64 4 converts into i32 waits on by-type against by-value\"",
+        "reason": "W313 merged into solve-W15 (12 October 2026); every solution recorded now names every root it fixes"
+      }
+    ]
   },
   {
     "id": "W199",
