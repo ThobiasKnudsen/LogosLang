@@ -19699,7 +19699,7 @@
       "W150",
       "W157"
     ],
-    "assessment": "Root fix for W123, W150 and W157, from Thobias's Q82 ruling (9 Oct, ›An unknown spelling stays text on the tape‹): no tape node is ever empty, because the lexer keeps the binding the trie already finds for the two fresh-spelling patterns (src/identities/fresh.rs mints them; src/parse/lex.rs:63 throws it away for null) instead of a null. All four P31 routes stop crashing at dev 35cdb52: flagging zz makes it stand as unknown_name, like a declined i32; tape[1].type is type; tape[0] = tape[1] copies unknown_name. Deletes the null branch, the reader null checks W127/W135 name, and the leftover check's fresh-spelling case (now unknown_name's own parse); S37's write check is not needed. Every is_fresh() reader (operands.rs, fields.rs, declare.rs, types.rs, lex.rs) asks one predicate, 'its identity is unknown_name'; the REPL feed's re-resolution (feed_resolve) and its unbuilt-name null must keep working; regex_ merges into unknown_name. Leaves W126 (S41): without it a constructor can flag zz and hide the error. Medium; issue-82-output-type touches driver.rs/operands.rs",
+    "assessment": "Root fix for W123, W150 and W157, from Thobias's Q82 ruling (9 Oct, ›An unknown spelling stays text on the tape‹): no tape node is ever empty, because the lexer keeps the binding the trie already finds for the two fresh-spelling patterns (src/identities/fresh.rs mints them; src/parse/lex.rs:63 throws it away for null) instead of a null. All four P31 routes stop crashing at dev 35cdb52: flagging zz makes it stand as unknown_name, like a declined i32; tape[1].type is type; tape[0] = tape[1] copies unknown_name. Deletes the null branch, the reader null checks W127/W135 name, and the leftover check's fresh-spelling case (now unknown_name's own parse); S37's write check is not needed. Every is_fresh() reader (operands.rs, fields.rs, declare.rs, types.rs, lex.rs) asks one predicate, 'its identity is unknown_name'; the REPL feed's re-resolution (feed_resolve) and its unbuilt-name null must keep working; regex_ merges into unknown_name. Leaves W126 (S41): without it a constructor can flag zz and hide the error. Medium; issue-82-output-type touches driver.rs/operands.rs Hazard (logoslang-solve-W322, 12 October 2026, not a fault in today's code): the unknown-word patterns as names of unknown_word give them the shape P159 has for «; a name bound to unknown_word (u := unknown_word, u) gets unknown_word's parse, the 'unknown name u' error, unless that parse tells a declared name from a fresh word, as rational_number's parse tells 5 from rational_number by its first character.",
     "decision": null,
     "design": [
       "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
@@ -19717,7 +19717,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:25+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f043e0c",
+        "change": "assessment was \"Root fix for W123, W150 and W157, from Thobias's Q82 ruling (9 Oct, ›An unknown spelling stays text on the tape‹): no tape node is ever empty, because the lexer keeps the binding the trie already finds for the two fresh-spelling patterns (src/identities/fresh.rs mints them; src/parse/lex.rs:63 throws it away for null) instead of a null. All four P31 routes stop crashing at dev 35cdb52: flagging zz makes it stand as unknown_name, like a declined i32; tape[1].type is type; tape[0] = tape[1] copies unknown_name. Deletes the null branch, the reader null checks W127/W135 name, and the leftover check's fresh-spelling case (now unknown_name's own parse); S37's write check is not needed. Every is_fresh() reader (operands.rs, fields.rs, declare.rs, types.rs, lex.rs) asks one predicate, 'its identity is unknown_name'; the REPL feed's re-resolution (feed_resolve) and its unbuilt-name null must keep working; regex_ merges into unknown_name. Leaves W126 (S41): without it a constructor can flag zz and hide the error. Medium; issue-82-output-type touches driver.rs/operands.rs\"",
+        "reason": "solve-W322's note for solve-W123, which is stopped until Q93"
+      }
+    ]
   },
   {
     "id": "S57",
