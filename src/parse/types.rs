@@ -1120,8 +1120,13 @@ impl<'a> Parser<'a> {
         if held.is_null() {
             return Ok(None);
         }
-        let Some(key) = self.field_type_key(ty, node)? else {
-            return Ok(None);
+        let key = match self.field_type_key(ty, node) {
+            Ok(Some(key)) => key,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                self.cx.pos = at;
+                return Err(e);
+            }
         };
         let mut spec = crate::identities::run_body::lookup(held, &key);
         if spec.is_null() {
@@ -1254,45 +1259,23 @@ impl<'a> Parser<'a> {
                     }
                 }
                 declared
-            } else if crate::identities::rational::is_rational_value(types, slot) {
-                types.rational
-            } else if let Some(bracket) = self.bracket_type(slot) {
+            } else if let Some(bracket) = crate::identities::tape::bracket_kind(types, slot) {
                 if dyad::ty(slot) != types.tape.bracket_arg {
                     *slots.add(i) =
                         crate::identities::tape::build_bracket_arg(self.rt.store, types, slot)?;
                 }
                 bracket
             } else {
-                // A literal's own type is `rational_number`; its bytes are the value the call
-                // copies.
-                let out = crate::identities::read::output_type(types, slot);
-                match crate::identities::read::place_layout(types, out) {
-                    Some((
-                        crate::identities::read::Read::Scalar(_)
-                        | crate::identities::read::Read::Rational,
-                        _,
-                    )) => out,
-                    _ => return Ok(None),
+                // The operand's value at its own type: a literal's is `rational_number`, its
+                // bytes the value the call copies.
+                let given = crate::identities::read::value_type(types, slot)?;
+                if given.is_null() {
+                    return Ok(None);
                 }
+                given
             };
             key.push(entry);
         }
         Ok(Some(key))
-    }
-
-    /// The kind of bracket an untyped field holds, written or already wrapped to run per node.
-    ///
-    /// # Safety
-    /// `slot` must be a dyad from the store.
-    unsafe fn bracket_type(&self, slot: DyadPtr) -> Option<DyadPtr> {
-        let types = self.types;
-        let slot = types.through(slot);
-        let bracket = if dyad::ty(slot) == types.tape.bracket_arg {
-            *(dyad::value(slot) as *const DyadPtr)
-        } else {
-            slot
-        };
-        let ty = dyad::ty(bracket);
-        (ty == types.scope || ty == types.square_brackets).then_some(ty)
     }
 }
