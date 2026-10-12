@@ -9853,14 +9853,19 @@
   {
     "id": "S36",
     "kind": "solution",
-    "status": "proposed",
-    "text": "One conversion step wherever a value meets a number type it is not: land(value, type) hands back the value itself, a plain number converted exactly, or the node a written T(value) builds when the value's type lies inside the type, and refuses anything else; the eight check_store_type sites call it and keep what it hands back, resolve_binary converts the operand whose type lies inside the other's, and a landing walks an if's arms as the tail walk does; subset::includes, today private to ⊆, is the one lies-inside test",
+    "status": "chosen",
+    "text": "One conversion step wherever a value meets a number type it is not, written or not: land(value, type) hands back the value itself, or the node a written T(value) builds when the value's type lies inside the type, a plain number only when exact, and refuses anything else; the eight check_store_type sites, resolve_binary, an if's arms where its value lands and build_cast (a written T(value)) call it; subset::includes, with the integer-into-float pairs added, is the one lies-inside test; T approx v builds the conversion node without the test, the type applying its own approximation",
     "fixes": [
       "W15",
       "W313"
     ],
-    "assessment": "Removes the eight copies and the tail's unchecked arm (-> i32 ( f64 2.5 ) gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and the superseded exact-type test at all three meeting places, so P147 (x = f32 9 gives 9.0), P160 (i32 1 + i64 2 gives 3) and P161 (an if of 1 and f64 2.5 into an f64 gives 1.0) go with P9 and P90. One test, no copy: includes gains the integer-into-float pairs once Q83's point 2 is answered, and ⊆ then answers them too (i32 ⊆ f64 is 'not settled yet' at 783d78a). Where nothing requires a type (x := if …) the if's same-type check stays, as Q-63 and Q-65 rule. resolve_binary's conversion is the step #242's mint keeps as its field; tests that pin a widening's refusal change; W19 (#212) reuses land. Leaves the ? and bare-parameter tails (#202)",
-    "decision": null,
+    "assessment": "Removes the eight copies and the tail's unchecked arm (-> i32 ( f64 2.5 ) gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and the superseded exact-type test at all three meeting places: P147 (x = f32 9 gives 9.0), P160 (i32 1 + i64 2 gives 3), P161 (an if of 1 and f64 2.5 into an f64 gives 1.0), P9 and P90 go, and i32 ⊆ f64 answers true. A written narrowing becomes an error (i32 (i64 4), i32 (f64 2.5)) and an inexact decimal into a float too (f64 0.1); approx goes in at identities/exp.logos:5-6, ln.logos:21, power.logos:48-68 (i64(rhs), f64(lhs), output_type (exp(...))), array.logos:27,29 (u64(index)), examples/metatypefn.logos:28 and tests/fixtures/metalogos_arm.logos:14 (9.9), and the tests pinning i32(a) over an f64 (src/identities/tests.rs:3663-3667). resolve_binary's step is the one #242's mint keeps; W19 (#212) reuses land. Leaves the ? and bare-parameter tails (#202), and what approx gives out of range (Open)",
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T10:32+02:00",
+      "words": "Q106, 12 October 2026: Answer 1: \"b\". Answer 2: \"approx is more intuitive in different cases i think. lossy could read as you are loosing more than precicion. but you are supposed to write like this then: «i32 approx (f64 2.5)» so that approx consumes (f64 2.5) and i32 consumes that approx instance and since i32 then knows its approx it can apply its approximations\". Answer 3: \"a\"",
+      "reason": "He chose Q106's 3(a), 'Yes: build this fix, and write these words with your answers to points 1 and 2 put in where marked', after Q83 (12 October 2026): the type decides, not the value ('ill go for option a because return type of g is known at parse time'), a written conversion is checked the same way ('b because it looks most consistent'), and a node only where a conversion happens ('a')"
+    },
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
@@ -9902,6 +9907,33 @@
         "commit": "783d78a",
         "change": "assessment was \"Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32 gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and makes the 2 October conversion rule (Q-63) true at every landing, where the seed refuses it today: x = f32 9 into an f64 gives 9.0, -> f64 ( u32 4000000000 ) gives 4000000000.0. The 'lies inside' test is one function over the number types' sign, width and float bits, beside their parse in numtype.rs, never a table. Tests that pin a widening's refusal change. W19 (#212) and #242's operand conversion reuse land. Leaves the ? and bare-parameter tails (#202)\"",
         "reason": "W313 merged into solve-W15 (12 October 2026): the same conversion step serves resolve_binary and the if arms; and the lies-inside test already exists as subset::includes, so writing a new one in numtype.rs would have copied it"
+      },
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "text was \"One conversion step wherever a value meets a number type it is not: land(value, type) hands back the value itself, a plain number converted exactly, or the node a written T(value) builds when the value's type lies inside the type, and refuses anything else; the eight check_store_type sites call it and keep what it hands back, resolve_binary converts the operand whose type lies inside the other's, and a landing walks an if's arms as the tail walk does; subset::includes, today private to ⊆, is the one lies-inside test\"",
+        "reason": "Thobias's Q106 answers (12 October 2026): 1(b) a float takes a plain number only exactly, 2 the word is approx after the type, 3(a) build it; a written conversion is checked as an unwritten one (Q83 2(b))"
+      },
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "assessment was \"Removes the eight copies and the tail's unchecked arm (-> i32 ( f64 2.5 ) gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and the superseded exact-type test at all three meeting places, so P147 (x = f32 9 gives 9.0), P160 (i32 1 + i64 2 gives 3) and P161 (an if of 1 and f64 2.5 into an f64 gives 1.0) go with P9 and P90. One test, no copy: includes gains the integer-into-float pairs once Q83's point 2 is answered, and ⊆ then answers them too (i32 ⊆ f64 is 'not settled yet' at 783d78a). Where nothing requires a type (x := if …) the if's same-type check stays, as Q-63 and Q-65 rule. resolve_binary's conversion is the step #242's mint keeps as its field; tests that pin a widening's refusal change; W19 (#212) reuses land. Leaves the ? and bare-parameter tails (#202)\"",
+        "reason": "Thobias's Q106 answers (12 October 2026): 1(b) a float takes a plain number only exactly, 2 the word is approx after the type, 3(a) build it; a written conversion is checked as an unwritten one (Q83 2(b))"
+      },
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "chosen by Thobias: \"Q106, 12 October 2026: Answer 1: \"b\". Answer 2: \"approx is more intuitive in different cases i think. lossy could read as you are loosing more than precicion. but you are supposed to write like this then: «i32 approx (f64 2.5)» so that approx consumes (f64 2.5) and i32 consumes that approx instance and since i32 then knows its approx it can apply its approximations\". Answer 3: \"a\"\"",
+        "reason": "He chose Q106's 3(a), 'Yes: build this fix, and write these words with your answers to points 1 and 2 put in where marked', after Q83 (12 October 2026): the type decides, not the value ('ill go for option a because return type of g is known at parse time'), a written conversion is checked the same way ('b because it looks most consistent'), and a node only where a conversion happens ('a')"
       }
     ]
   },
@@ -18704,14 +18736,19 @@
   {
     "id": "S45",
     "kind": "solution",
-    "status": "proposed",
+    "status": "rejected",
     "text": "Thobias's idea (Q79, 8 October 2026, an idea, not a ruling): every spot a value goes into with a type (argument, return value, field, pointer write) runs the same conversion path as =, and the graph holds an explicit = node there, which the code leaves unwritten",
     "fixes": [
       "W15",
       "W313"
     ],
     "assessment": "Same one-path shape as S36, so it removes the eight copies, the tail's missing check and the superseded exact-type test (an operation's operand and an if's arm go through the same path). Today = is itself one of the eight copies and refuses a = i64 4, so the path must be built first either way. An = node at every argument, return and field is built once per call site at parse, never per run, but adds a node where nothing converts and repeats what a call's argument already is (the fill of its parameter field); S36 puts a node only where a conversion happens, the T(value) node a written conversion builds, which is the part of = that converts. Whether i64 4 converts into i32 waits on by-type against by-value (Q83)",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T10:32+02:00",
+      "words": "Q83, 12 October 2026, Answer 3: \"a\"",
+      "reason": "Q83 point 3 put his idea's form, (b) 'An = node at every spot, even where nothing converts', against (a) 'A node only where a conversion happens'; he chose (a). The one conversion path of his idea lives on in S36"
+    },
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
@@ -18744,6 +18781,15 @@
         "commit": "783d78a",
         "change": "assessment was \"Same one-path shape as S36, so it removes the eight copies and the tail's missing check. Today = is itself one of the eight copies and refuses a = i64 4, so the path must be built first either way. An = node at every argument, return and field is built once per call site at parse, never per run, but adds a node where nothing converts and repeats what a call's argument already is (the fill of its parameter field); S36 puts a node only where a conversion happens, the T(value) node a written conversion builds, which is the part of = that converts. Whether i64 4 converts into i32 waits on by-type against by-value\"",
         "reason": "W313 merged into solve-W15 (12 October 2026); every solution recorded now names every root it fixes"
+      },
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "rejected by Thobias: \"Q83, 12 October 2026, Answer 3: \"a\"\"",
+        "reason": "Q83 point 3 put his idea's form, (b) 'An = node at every spot, even where nothing converts', against (a) 'A node only where a conversion happens'; he chose (a). The one conversion path of his idea lives on in S36"
       }
     ]
   },
@@ -32593,7 +32639,7 @@
     "fixes": [
       "W334"
     ],
-    "assessment": "Removes P168: q := p of a record copies its bytes (&p == &q false, q.a stays 1 after p.a = 9) and g := f is an independent fn record, as ›:= decides nothing about copy or reference‹ and ›A function reads as a copy‹ say (both 'Seed: done'). The reading is the history's: DESIGN_HISTORY records that the sentence replaced ' fills that dyad', the placeholder copy declare_here made, so it never spoke of y := x. DESIGN: one sentence reworded at ›An unknown spelling stays text on the tape…‹, which Q82's next round rewords anyway; declare.rs's two comments that repeat the old sentence go with the arms. Seed: declare_here's arm over storage and its last arm (set_dyad) copy by the type's layout, which S99 makes the one decider.",
+    "assessment": "Removes P168: q := p of a record copies its bytes (&p == &q false, q.a stays 1 after p.a = 9) and g := f is an independent fn record, as ›:= decides nothing about copy or reference‹ and ›A function reads as a copy‹ say (both 'Seed: done'). The reading is the history's: DESIGN_HISTORY records that the sentence replaced '`:=` fills that dyad', the placeholder copy declare_here made, so it never spoke of y := x. DESIGN: one sentence reworded at ›An unknown spelling stays text on the tape…‹, which Q82's next round rewords anyway; declare.rs's two comments that repeat the old sentence go with the arms. Seed: declare_here's arm over storage and its last arm (set_dyad) copy by the type's layout, which S99 makes the one decider.",
     "decision": null,
     "design": [
       "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
@@ -32610,7 +32656,17 @@
       "run": "solve-W54",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "0c73e38",
+        "change": "assessment was \"Removes P168: q := p of a record copies its bytes (&p == &q false, q.a stays 1 after p.a = 9) and g := f is an independent fn record, as ›:= decides nothing about copy or reference‹ and ›A function reads as a copy‹ say (both 'Seed: done'). The reading is the history's: DESIGN_HISTORY records that the sentence replaced ' fills that dyad', the placeholder copy declare_here made, so it never spoke of y := x. DESIGN: one sentence reworded at ›An unknown spelling stays text on the tape…‹, which Q82's next round rewords anyway; declare.rs's two comments that repeat the old sentence go with the arms. Seed: declare_here's arm over storage and its last arm (set_dyad) copy by the type's layout, which S99 makes the one decider.\"",
+        "reason": "solve-W54: an unescaped backtick in its shell call dropped ':='"
+      }
+    ]
   },
   {
     "id": "S101",
