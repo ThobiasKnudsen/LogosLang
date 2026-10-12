@@ -1,0 +1,4 @@
+# A file whose top level holds a value with a `free` field that prints: the file's scope
+# lives as long as the run, so the value is freed once, where the run ends.
+bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ),
+pub h := bag(9)

@@ -1549,7 +1549,7 @@ fn a_declared_hashmap_is_empty_and_readable_at_once() {
     );
     assert_eq!(echoes, ["type ?", "2"], "stderr: {stderr}");
     assert!(stderr.contains("the map holds no value at this key"), "stderr: {stderr}");
-    assert!(!stderr.contains("<repl>"), "no line is refused at parse: {stderr}");
+    assert!(!stderr.contains("<repl>:1:"), "no line is refused at parse: {stderr}");
 }
 
 #[test]
@@ -2864,8 +2864,6 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
         ("print «{x»", "this `{` has no `}`"),
         ("print «x}»", "this `}` closes no `{`"),
         ("print «{nope}»", "unknown name `nope`"),
-        ("print «{1, 2}»", "expected one expression"),
-        ("print «{}»", "nothing to evaluate"),
     ] {
         let out = logos().arg(src).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -4846,4 +4844,173 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
     let (code, _, stderr) = run_line(&src);
     assert_eq!(code, Some(1), "{src}: {stderr}");
     assert!(stderr.contains("this gives nothing"), "{src}: {stderr}");
+}
+
+#[test]
+fn an_input_with_nothing_in_it_has_no_value_on_the_command_line_and_in_a_file() {
+    for src in [
+        "# hi",
+        "# «x»",
+        "# a\n# b",
+        "",
+        "   ",
+        "import tests/fixtures/only_prose.logos",
+        "import tests/fixtures/empty.logos",
+    ] {
+        assert_eq!(run_line(src), (Some(0), String::new(), String::new()), "{src:?}");
+    }
+    // The same lines read as a block, after other lines, and before a value.
+    for (src, want) in [
+        ("( # note\n), 7", "7"),
+        ("x := 1,\n# hi", ""),
+        ("1, # done", "1"),
+        ("( y := i32 2, y + 1 )", "3"),
+        ("x := 1, y := 2, x + y", "3"),
+        ("import tests/fixtures/only_prose.logos, 1", "1"),
+        ("import tests/fixtures/empty.logos, 1", "1"),
+    ] {
+        assert_eq!(line(src), want, "{src:?}");
+    }
+}
+
+#[test]
+fn a_closer_no_bracket_opened_is_one_error_naming_it() {
+    for (src, message) in [
+        ("1 )", "<command line>:1:3: error: this `)` closes nothing: no bracket is open here"),
+        ("1 ], 5", "<command line>:1:3: error: this `]` closes nothing: no bracket is open here"),
+        (")", "<command line>:1:1: error: this `)` closes nothing: no bracket is open here"),
+        (
+            "import tests/fixtures/stray_closer.logos, 2",
+            "stray_closer.logos:1:3: error: this `)` closes nothing: no bracket is open here",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stdout: {stdout}");
+        assert!(stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_repl_line_is_a_line_of_the_program() {
+    let (echoes, stderr) = repl(
+        b"# hello\n\
+          # \xc2\xabx\xc2\xbb\n\
+          \n   \n\
+          x := 1, y := 2\n\
+          x + y\n\
+          1, # done\n\
+          z := i32 1,\n\
+          z\n\
+          import tests/fixtures/only_prose.logos, 7\n\
+          w := i32 1, 5\n\
+          6, v := i32 1\n\
+          v\n",
+    );
+    assert_eq!(echoes, ["3", "1", "1", "7", "5", "1"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"1 )\n)\n2\n");
+    assert_eq!(echoes, ["2"], "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:3: error: this `)` closes nothing"), "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:1: error: this `)` closes nothing"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_failed_repl_line_leaves_no_trace() {
+    // Neither declaration of a line that fails is known after it.
+    let (echoes, stderr) = repl(b"x := i32 1, y := zz\nx\ny\nx := i32 3, y := i32 4\nx + y\n");
+    assert_eq!(echoes, ["7"], "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `zz`"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `x`"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `y`"), "stderr: {stderr}");
+    // What the line's own lines hold ends at its fault; what an earlier line holds ends only
+    // where the failing line reached its `free`.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let (echoes, stderr) = repl(
+        format!(
+            "{bag}\nc := bag(7), error «boom»\nc\nk := bag(1)\nfree k, error «x»\n\
+             m := bag(2)\nerror «y», free m\nm.n\n"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(echoes, ["freed 7", "freed 1", "2", "freed 2"], "stderr: {stderr}");
+    assert!(stderr.contains("<repl>: run error: boom"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `c`"), "stderr: {stderr}");
+    // Its lines leave the session's scope.
+    let (echoes, stderr) = repl(b"a := i32 1\nb := i32 2, zz\nhere.scope.dyads.size\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
+    let held = "import ./tests/fixtures/held.logos";
+    // Neither a fault, a failed parse after the import, nor a `free` the line parsed and never
+    // ran ends the file: the session does, once.
+    for failing in [
+        format!("{held}, error «boom»"),
+        format!("{held}, zz"),
+        format!("{held}, error «boom», free h"),
+        format!("{held}, free h, zz"),
+    ] {
+        let (echoes, stderr) = repl(format!("{failing}\n{held}\nh.n\n").as_bytes());
+        assert_eq!(echoes, ["9", "freed 9"], "{failing}: stderr: {stderr}");
+    }
+    // A `free` the line ran before its fault ended the value there.
+    let (echoes, stderr) = repl(format!("{held}, free h, error «boom»\n1\n").as_bytes());
+    assert_eq!(echoes, ["freed 9", "1"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(
+        b"import ./tests/fixtures/owning_pub.logos, error \xc2\xabboom\xc2\xbb\n\
+          import ./tests/fixtures/owning_pub.logos, p@\n",
+    );
+    assert_eq!(echoes, ["7"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(
+        b"import ./tests/fixtures/counter.logos, error \xc2\xabboom\xc2\xbb\n\
+          import ./tests/fixtures/counter.logos\nc@\n",
+    );
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+    // The line's own holds still end at its fault, and the names it published roll back.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let line_holds = format!("c := bag(1), {held}, d := bag(2), error «boom»");
+    let (echoes, stderr) = repl(format!("{bag}\n{line_holds}\nh.n\n").as_bytes());
+    assert_eq!(echoes, ["freed 2", "freed 1", "freed 9"], "stderr: {stderr}");
+    assert!(stderr.contains("`h` is not in scope here"), "stderr: {stderr}");
+    // On the command line the run ends at the fault, and the file with it.
+    let (code, stdout, _) = run_line("import ./tests/fixtures/deferring.logos, error «x»");
+    assert_eq!((code, stdout.as_str()), (Some(1), "file ends\n"));
+}
+
+#[test]
+fn a_quote_s_braces_are_a_scope_whose_text_is_its_tail() {
+    for (src, printed) in [
+        ("print «a{ y := i32 2, y + 1 }b»", "a3b\n"),
+        ("print «a{ # c\n}b»", "ab\n"),
+        ("print «a{ # «c» }b»", "ab\n"),
+        ("print «a{}b»", "ab\n"),
+        ("print «{1, 2}»", "2\n"),
+        ("print «{}»", "\n"),
+        ("f := fn () -> void ( print «a{ y := i32 2, y + 1 }b» ), f()", "a3b\n"),
+        ("f := fn () -> void ( print «a{ # c\n}b» ), f()", "ab\n"),
+        ("f := fn () -> void ( print «a{ # «c» }b», print «a{}b» ), f()", "ab\nab\n"),
+        // A comment in the braces is a line of their scope, not of the one around them.
+        ("print «{5 # «c» * 2}», here.scope.dyads.size", "10\n1\n"),
+        ("( print «{5 # «c» * 2}», here.scope.dyads.size )", "10\n1\n"),
+    ] {
+        assert_eq!(run_line(src), (Some(0), printed.to_string(), String::new()), "{src:?}");
+    }
+    for (src, message) in [("error «a{ y := 2, y }b»", "a2b"), ("error «a{ # «c» }b»", "ab")]
+    {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains(&format!("run error: {message}")), "{src}: stderr: {stderr}");
+    }
+    // A tail that gives nothing is no tail missing: a value is read there.
+    for src in ["print «a{ x := i32 1 }b»", "print «a{ y := i32 1, print «in» }b»"] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains("gives nothing, and a value is needed here"), "{src}: {stderr}");
+    }
+    // Its names are its own, and a closer in it closes nothing.
+    let (_, _, stderr) = run_line("print «a{ y := i32 2, y }b», y");
+    assert!(stderr.contains("`y` is not in scope here"), "stderr: {stderr}");
+    let (_, _, stderr) = run_line("print «{ 1 ) }»");
+    assert!(stderr.contains("1:12: error: this `)` closes nothing"), "stderr: {stderr}");
 }

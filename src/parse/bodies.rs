@@ -49,11 +49,23 @@ pub(super) struct OpenReturn {
     cursor: usize,
 }
 
+/// Where a scope's lines end.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LinesEnd {
+    /// At a closer, which the bracket that opened the scope takes.
+    Closer,
+    /// At the end of the text: a root scope or a quote's `{…}`, where a closer closes nothing.
+    TextEnd,
+}
+
 #[derive(Default)]
 pub(super) struct OpenScope {
     /// What the scope's end runs, in line order: the names it holds, which no tail or
     /// `return` leaving the scope may hand out, and its `defer` lines.
     pub(super) exit: Vec<ExitItem>,
+    /// At the top level: what the `exit` items an imported file added hold or defer, which
+    /// are the run's and not the line's.
+    pub(super) imported: HashSet<DyadPtr>,
     /// The lines closed so far, so the index of the one being parsed.
     pub(super) lines: usize,
     /// Held names a `move` or `free` in the line being parsed ended; the line's close
@@ -1225,7 +1237,30 @@ impl<'a> Parser<'a> {
 
     /// [`Self::parse_sequence`] as the cell, its facts with it.
     pub(crate) fn parse_sequence_cell(&mut self) -> Result<Cell, ParseError> {
-        self.parse_block(false).map(|(_, value)| value)
+        self.parse_block(false, LinesEnd::Closer).map(|(_, value)| value)
+    }
+
+    /// The lines of the open scope, each closed as it completes, read to the scope's end
+    /// (DESIGN ›The scope's constructor is the driver‹). Returns the scope's tail, its last line
+    /// that is not prose, with where that line ended; none when there is no such line.
+    pub fn read_lines(&mut self, end: LinesEnd) -> Result<Option<(Cell, usize)>, ParseError> {
+        let mut tail = None;
+        while let Some(item) = self.next_cell() {
+            let line = item?;
+            // SAFETY: `line` is the line `next_cell` just returned.
+            unsafe { self.close_line(line.dyad) };
+            // SAFETY: a line is a reduced dyad from the store.
+            if !unsafe { crate::identities::numtype::is_comment_type(dyad::ty(line.dyad)) } {
+                tail = Some((line, self.cx.pos));
+            }
+        }
+        if end == LinesEnd::TextEnd {
+            if let Some((_, len)) = self.peek_token().filter(|&(id, _)| self.is_closer(id)) {
+                let closer = &self.cx.source[self.cx.pos..self.cx.pos + len];
+                return Err(ParseError::StrayCloser(Box::new(closer.to_string())));
+            }
+        }
+        Ok(tail)
     }
 
     /// `open` has one entry per open scope, and `unopened` counts the skipped brackets it
@@ -1240,27 +1275,25 @@ impl<'a> Parser<'a> {
 
     /// [`Parser::parse_sequence`], with the scope the block opened, whose `dyads` hold
     /// every line whatever the value collapsed to.
-    pub(super) fn parse_block(&mut self, list: bool) -> Result<(DyadPtr, Cell), ParseError> {
+    pub(super) fn parse_block(
+        &mut self,
+        list: bool,
+        end: LinesEnd,
+    ) -> Result<(DyadPtr, Cell), ParseError> {
         self.check_depth(0)?;
         let scope = self.open_scope();
         let narrowed = self.cx.narrow_next.take().into_iter().collect();
         self.cx.open.push(OpenScope { narrowed, scope: Some(scope), list, ..OpenScope::default() });
         let array_ = self.types.array_;
-        // SAFETY: null is a legal cell dyad.
-        let mut last = unsafe { Cell::built(std::ptr::null_mut()) };
-        while let Some(item) = self.next_cell() {
-            last = match item {
-                Ok(cell) => cell,
-                Err(e) => {
-                    self.cx.scopes.pop();
-                    let open = self.cx.open.pop().expect("pushed above");
-                    self.end_after_fault(&open);
-                    return Err(e);
-                }
-            };
-            // SAFETY: `last` is the line `next_cell` just returned.
-            unsafe { self.close_line(last.dyad) };
-        }
+        let tail = match self.read_lines(end) {
+            Ok(tail) => tail,
+            Err(e) => {
+                self.cx.scopes.pop();
+                let open = self.cx.open.pop().expect("pushed above");
+                self.end_after_fault(&open);
+                return Err(e);
+            }
+        };
         self.cx.scopes.pop();
         // SAFETY: `scope` was minted by `open_scope` with a value, so it has an
         // array; the store outlives the slice and nothing pushes to it below.
@@ -1331,9 +1364,9 @@ impl<'a> Parser<'a> {
         // One line, and nothing for the end to run: the line stands as itself.
         let ends_run = closed.exit.iter().any(ExitItem::held_somewhere);
         if values > 0 && exprs.len() == 1 && !ends_run {
+            let line = tail.map(|(cell, _)| cell).filter(|c| c.dyad == exprs[0]);
             // SAFETY: `exprs` are reduced dyads from the store.
-            let expr = unsafe { Cell::built(exprs[0]) };
-            return Ok((scope, if last.dyad == exprs[0] { last } else { expr }));
+            return Ok((scope, line.unwrap_or_else(|| unsafe { Cell::built(exprs[0]) })));
         }
         let exit: Vec<DyadPtr> =
             closed.exit.iter().map(|h| h.build(self.rt.store, self.types)).collect();
@@ -1397,15 +1430,6 @@ impl<'a> Parser<'a> {
             r.line_closed = false;
             r.cursor = log_len;
         }
-    }
-
-    /// A driver's top-level line is complete: see [`Parser::close_line`].
-    ///
-    /// # Safety
-    /// `item` must be a line this parser just returned.
-    pub unsafe fn close_item(&mut self, item: DyadPtr) {
-        // SAFETY: the caller's contract.
-        unsafe { self.close_line(item) }
     }
 
     /// Run everything parsed and not yet run, outermost scope first, and hand
@@ -1473,18 +1497,12 @@ impl<'a> Parser<'a> {
     /// holds a name alone decides: a name held from the scope's start is an enclosing
     /// scope's, and one a nested line the pass ran ended is not held.
     pub(super) fn end_after_fault(&mut self, open: &OpenScope) {
-        let types = self.types;
-        // SAFETY: held places and reached names are dyads from the store.
-        let reached =
-            |item: &ExitItem| open.reached.iter().any(|&n| unsafe { self.holds(item, n) });
         let ends: Vec<ExitItem> = open
             .exit
             .iter()
             .rev()
-            // SAFETY: as above.
-            .filter(|item| unsafe {
-                item.from > 0 && item.held_at_fault(types, open.ran) && !reached(item)
-            })
+            // SAFETY: held places and reached names are dyads from the store.
+            .filter(|item| item.from > 0 && unsafe { self.held_after_fault(open, item) })
             .copied()
             .collect();
         for item in ends {
@@ -1493,6 +1511,16 @@ impl<'a> Parser<'a> {
                 return;
             }
         }
+    }
+
+    /// Whether `item` is still held where `open`'s pass stopped on a fault or a failed parse:
+    /// held at that line, and not ended by a nested line the pass ran.
+    ///
+    /// # Safety
+    /// `item`'s place and `open`'s reached names must be dyads from the store.
+    unsafe fn held_after_fault(&self, open: &OpenScope, item: &ExitItem) -> bool {
+        item.held_at_fault(self.types, open.ran)
+            && !open.reached.iter().any(|&n| self.holds(item, n))
     }
 
     /// `immediate x` (DESIGN ›`immediate x` runs the expression to its right as soon as
@@ -1593,6 +1621,36 @@ impl<'a> Parser<'a> {
         top
     }
 
+    /// What the files a failed REPL line imported still hold, and what they defer, leaves the
+    /// line's end and joins `session`'s, as a kept line's does: a file loads once per run, and
+    /// the run is the session (DESIGN ›Importing is dropping the text there, wrapped in its own
+    /// scope‹).
+    ///
+    /// # Safety
+    /// `session` must be the scope node the driver minted for the session.
+    pub unsafe fn hand_imported_exit(&mut self, session: DyadPtr) {
+        let open = &mut self.cx.open[0];
+        let imported = std::mem::take(&mut open.imported);
+        let (files, own): (Vec<ExitItem>, Vec<ExitItem>) =
+            std::mem::take(&mut open.exit).into_iter().partition(|h| imported.contains(&h.what));
+        open.exit = own;
+        // A file's holds start at its import, which ran at parse whatever line the pass reached;
+        // whether the line's own `free` or `move` of one ended it is read as the fault's end reads
+        // the line's own holds.
+        let top = &self.cx.open[0];
+        let held: Vec<ExitItem> = files
+            .into_iter()
+            // SAFETY: the files' places and the reached names are dyads from the store.
+            .filter(|&item| unsafe { self.held_after_fault(top, &ExitItem { from: 0, ..item }) })
+            .map(|item| ExitItem { end: None, ..item })
+            .collect();
+        let items: Vec<DyadPtr> = held.iter().map(|h| h.build(self.rt.store, self.types)).collect();
+        // SAFETY: the caller's contract; `items` are exit items just built.
+        unsafe {
+            crate::identities::scope::extend_exit(self.rt.store, self.types.array_, session, &items)
+        };
+    }
+
     /// The names an earlier REPL line holds that this parse ended: the top scope's end frees
     /// them no more. Returns them.
     pub fn end_earlier_holds(&mut self) -> Vec<DyadPtr> {
@@ -1611,23 +1669,17 @@ impl<'a> Parser<'a> {
         ended
     }
 
-    /// [`Self::end_earlier_holds`] for a line that ran and failed: only the names whose `free` or
-    /// `move` it reached (DESIGN ›`free` and `move` end a name; no drop flag‹).
+    /// [`Self::end_earlier_holds`] for a line that failed: only the names whose ending line the
+    /// pass ran, and whose `free` or `move` it reached there (DESIGN ›`free` and `move` end a
+    /// name; no drop flag‹).
     pub fn end_failed_earlier_holds(&mut self) -> Vec<DyadPtr> {
+        use crate::identities::drop_model::ended_at_run;
         let rt = &self.rt;
-        // SAFETY: the ended names are places an earlier line laid out in the program frame.
-        self.cx.open[0]
-            .ended_earlier
-            .retain(|&name| unsafe { crate::identities::drop_model::ended_at_run(rt, name) });
-        self.end_earlier_holds()
-    }
-
-    /// [`Self::end_earlier_holds`] for a line that never ran as a whole: only the names whose
-    /// ending line the pass ran.
-    pub fn end_reached_earlier_holds(&mut self) -> Vec<DyadPtr> {
         let top = &mut self.cx.open[0];
-        let reached = std::mem::take(&mut top.reached);
-        top.ended_earlier.retain(|name| reached.contains(name));
+        let reached = &top.reached;
+        // SAFETY: the ended names are places an earlier line laid out in the program frame.
+        top.ended_earlier
+            .retain(|&name| reached.contains(&name) && unsafe { ended_at_run(rt, name) });
         self.end_earlier_holds()
     }
 }

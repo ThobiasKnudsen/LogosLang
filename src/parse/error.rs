@@ -86,6 +86,8 @@ pub enum ParseError {
     BadLiteral,
     /// An opener whose closer never came, or a mismatched one (`)` for `[`).
     UnclosedBracket,
+    /// A closer where a scope's lines read to the end of the text; carries its spelling.
+    StrayCloser(Box<String>),
     /// A construct that requires a `(` (a `record`/parameter list) was not
     /// followed by one.
     ExpectedOpen,
