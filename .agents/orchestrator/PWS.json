@@ -2402,7 +2402,8 @@
     "text": "`declare_here` has no case for a bare `?`: it falls to the arm for a type value and `rebind`s the name as another spelling of `?`, which is no place",
     "proposed_for": "P14",
     "why": [
-      "W25"
+      "W25",
+      "W331"
     ],
     "anchors": [
       "declare_here",
@@ -2440,6 +2441,15 @@
         "effort": "high",
         "commit": "9fc7634",
         "change": "why + W25",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W331",
         "reason": null
       }
     ]
@@ -30943,8 +30953,7 @@
     "text": "A declare node's declared field holds one of three kinds of thing and nothing on the node says which: an initializer that runs (the = store build_init makes, a construct or by_copy result), storage (a hole's place, the binding of x := y over storage, a share's binding that construct_decl writes with set_declared), or the node the name denotes (a type identity, a fn literal, a text, a fraction literal, from declare_here's last arm); its doc says the run executes it, so declare::run and declare::lower must sort the three by the node's read kind, and is_slot_fill reads the same field as the denoted slot marker",
     "proposed_for": "W314",
     "why": [
-      "W329",
-      "W330"
+      "W329"
     ],
     "anchors": [
       "declare_here",
@@ -31030,6 +31039,15 @@
         "commit": "2cf09e4",
         "change": "why + W330",
         "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why - W330",
+        "reason": "W330 rejected: its author withdrew it (why-P157-a) and B agrees: ›A scope lays out its declarations‹ and ›The pass runs only as far as it must‹ decide that a declaration's run writes into the name's place or does nothing for ?; what the node keeps of the outcome DESIGN leaves to the seed on purpose; the 'denotes the node' outcome is W334"
       }
     ]
   },
@@ -31525,7 +31543,9 @@
     "status": "accepted",
     "text": "Runtime::run and Lowerer::lower refuse to read a record place whole (Read::Aggregate gives NoWholeRead and NotLowerable, the read kind's doc saying 'read by field or by address, never whole'), while a run-time rational, sixteen bytes that DESIGN calls 'copied like a record', is read as the address of its bytes (Read::Rational, place_addr); DESIGN reads a data type's value as bytes, a copy, and refuses no whole read of a record, so the refusal is the seed's own, and declare::run's test names Read::Aggregate, the kind this read refuses, and a bare record line, which no runner tests for, fails on both tiers",
     "proposed_for": "W316",
-    "why": null,
+    "why": [
+      "W333"
+    ],
     "anchors": [
       "Runtime",
       "Lowerer",
@@ -31601,6 +31621,15 @@
         "commit": "2cf09e4",
         "change": "accepted as a why of W316",
         "reason": "A's fact: the seed's whole read refuses a record place (Read::Aggregate), where DESIGN reads a data value as bytes; declare::run's Aggregate test names it, and a bare record line fails on both tiers"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W333",
+        "reason": null
       }
     ]
   },
@@ -31920,7 +31949,12 @@
     "status": "accepted",
     "text": "declare_here gives a name no offset in two of its arms: the type arm rebinds the name to the type (scopes.rebind) and the last arm points the binding at the value node (Binding::set_dyad, which leaves frame and offset unset) and keeps that node as declared, for every value no arm above gives a place (a fn literal, a text, a fraction literal); every other arm calls place_for; ›A scope lays out its declarations‹ gives every declaration an offset in the scope's storage and ›The pass runs only as far as it must‹ writes a named result into the name's slot, which together leave a declaration's third slot a write into the name's place, or nothing for a ?, never the value node itself",
     "proposed_for": "W318",
-    "why": null,
+    "why": [
+      "W331",
+      "W334",
+      "W303",
+      "W302"
+    ],
     "anchors": [
       "declare_here",
       "place_for",
@@ -31972,13 +32006,49 @@
         "commit": "2cf09e4",
         "change": "accepted as a why of W318",
         "reason": "B's fact: declare_here's type arm (rebind) and last arm (Binding::set_dyad) give the name no offset and keep the value node as declared, where ›A scope lays out its declarations‹ gives every declaration an offset"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W331",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W334",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W303",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W302",
+        "reason": null
       }
     ]
   },
   {
     "id": "W330",
     "kind": "why",
-    "status": "accepted",
+    "status": "rejected",
     "text": "Neither DESIGN.md nor a page it points to says what a := node keeps beside lhs and rhs, or whether it has work left when it runs: A := node's fields are lhs and rhs names the third slot only as 'What the seed made of the right side'; the rules that decide what a declaration does give it several outcomes by kind, the name denoting the node the value built (An unknown spelling stays text on the tape), a copy into a fresh place for a data name or the type itself for a type (:= decides nothing about copy or reference), no value for key := T ? (? is one value), and none says what the node records of the outcome; so declare_here stores each arm's own product in that slot, unmarked",
     "proposed_for": "W318",
     "why": null,
@@ -32037,6 +32107,15 @@
         "commit": "2cf09e4",
         "change": "accepted as a why of W318",
         "reason": "A's fact, beside W329: DESIGN does not say what a := node keeps beside lhs and rhs (›A := node's fields are lhs and rhs‹: 'What the seed made of the right side'), so declare_here keeps each arm's own product unmarked"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "rejected",
+        "reason": "its author withdrew it (why-P157-a) and B agrees: ›A scope lays out its declarations‹ and ›The pass runs only as far as it must‹ decide that a declaration's run writes into the name's place or does nothing for ?; what the node keeps of the outcome DESIGN leaves to the seed on purpose; the 'denotes the node' outcome is W334"
       }
     ]
   },
@@ -32067,10 +32146,10 @@
   {
     "id": "W331",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "declare_here decides whether a declaration gets a place by a chain of arms over kinds of right side, the first match winning (read_kind's Read::Identity before the box arm; the box arm only for an output of type, dyad or a run-time rational, is_rational_value refusing a literal; then node_output, a Teardown::Block, scalar_binding_type), not by place_layout of the type the right side gives, which := decides nothing about copy or reference makes the decider ('the type's reading rule does'); so a type written directly is rebound though place_layout gives type an eight-byte Container and a type held in a place works as a type, a fraction literal falls past the box arm though place_layout gives rational_number sixteen bytes, and fn and string, which place_layout gives no layout, fall to set_dyad",
     "proposed_for": "W329",
-    "why": null,
+    "why": [],
     "anchors": [
       "declare_here",
       "place_layout",
@@ -32096,8 +32175,8 @@
       },
       {
         "command": "rg -n 'Read::Identity|let box_ty|is_rational_value|node_output\\(self.types, value\\)|Teardown::Block\\(pointee\\) = teardown_of|scalar_binding_type\\(self.rt.store|Binding::set_dyad\\(binding, read\\)' src/parse/declare.rs   (declare_here's arm order)",
-        "output": "636: let box_ty = ... (rational || out == self.types.type_ || out == self.types.dyad_).then_some(out)\n638:     let rational = crate::identities::rational::is_rational_value(self.types, read);\n713: } else if read_kind(self.types, read) == Read::Identity {   (rebind, before the box arm)\n719: } else if let Some(t) = box_ty {\n725: } else if let Some(t) = node_output(self.types, value) ...\n737: } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {\n750: } else if let Some((ty_node, width)) = scalar_binding_type(self.rt.store, self.types, value) {\n766:     Binding::set_dyad(binding, read);   (every other right side)",
-        "commit": "39f2d7e"
+        "output": "635: let box_ty = ... (rational || out == self.types.type_ || out == self.types.dyad_).then_some(out)\n637:     let rational = crate::identities::rational::is_rational_value(self.types, read);\n713: } else if read_kind(self.types, read) == Read::Identity {   (rebind, before the box arm)\n718: } else if let Some(t) = box_ty {\n725: } else if let Some(t) = node_output(self.types, value) ...\n737: } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {\n751: } else if let Some((ty_node, width)) = scalar_binding_type(self.rt.store, self.types, value) {\n766:     Binding::set_dyad(binding, read);   (every other right side)",
+        "commit": "fe9ae1d"
       },
       {
         "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w329-b.txt, then why-probes/w329-a.txt   (release build of dev 39f2d7e, interpreted)",
@@ -32119,12 +32198,40 @@
       "run": "why-P157",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "evidence 2 was {\"command\": \"rg -n 'Read::Identity|let box_ty|is_rational_value|node_output\\\\(self.types, value\\\\)|Teardown::Block\\\\(pointee\\\\) = teardown_of|scalar_binding_type\\\\(self.rt.store|Binding::set_dyad\\\\(binding, read\\\\)' src/parse/declare.rs   (declare_here's arm order)\", \"output\": \"636: let box_ty = ... (rational || out == self.types.type_ || out == self.types.dyad_).then_some(out)\\n638:     let rational = crate::identities::rational::is_rational_value(self.types, read);\\n713: } else if read_kind(self.types, read) == Read::Identity {   (rebind, before the box arm)\\n719: } else if let Some(t) = box_ty {\\n725: } else if let Some(t) = node_output(self.types, value) ...\\n737: } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {\\n750: } else if let Some((ty_node, width)) = scalar_binding_type(self.rt.store, self.types, value) {\\n766:     Binding::set_dyad(binding, read);   (every other right side)\", \"commit\": \"39f2d7e\"}",
+        "reason": "why-P157-a: wrong line numbers (636, 638, 719, 750); checked against git show 39f2d7e:src/parse/declare.rs"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "accepted as a why of W329",
+        "reason": "A's fact: declare_here decides whether a declaration gets a place by a first-match chain of branches over kinds of right side, not by place_layout of the type it gives, though ›:= decides nothing about copy or reference‹ makes the type the decider; a type is rebound, a fraction literal, a text and a fn get no place"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "asked: no why found",
+        "reason": "a root by the repo's list (AGENTS.md: a Rust match/if on node kind where DESIGN says the record decides): ›:= decides nothing about copy or reference‹ makes the type's reading rule the decider, and declare_here branches on kinds of right side"
+      }
+    ]
   },
   {
     "id": "W332",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "How a value wider than one word is handed on whole is decided by each reader, not by its read kind: by_copy::record_addr and lower_record_addr hand on the address of a Read::Aggregate place exactly as of a Read::Rational one (and a Read::Literal's own bytes), while Runtime::run and Lowerer::lower, which hand back one i64, give a Rational its address, mold a Literal at i32 and refuse an Aggregate; so q := p copies a whole record through by_copy while the line p, read by Runtime::run, is refused, and W296's split over a fraction literal is the same split over another kind",
     "proposed_for": "W324",
     "why": null,
@@ -32161,7 +32268,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W333",
     "made": {
       "at": "2026-10-12T10:17+02:00",
       "by": "logoslang-why-P157-a",
@@ -32171,15 +32278,25 @@
       "run": "why-P157",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "merged into W333",
+        "reason": "A and B state the same fact: how a value wider than one word is read whole is written twice; Runtime::run and lower give a rational place its address and refuse a record place, while by_copy::record_addr and lower_record_addr give both their address (a record parameter of a call works, a bare record line fails)"
+      }
+    ]
   },
   {
     "id": "W333",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "How a value wider than a word is read whole is written twice: Runtime::run and Lowerer::lower give a rational place its address (Read::Rational, place_addr) and refuse a record place (Read::Aggregate), while by_copy::record_addr and lower_record_addr give both kinds their address (Read::Aggregate | Read::Rational => place_addr); only a call's record parameter (eval_args, the compiler's argument loop) and by_copy's out node ask the second, so a record reaches a record parameter whole and is refused as a line, at a declaration's run and as a bare parameter's argument",
     "proposed_for": "W324",
-    "why": null,
+    "why": [],
     "anchors": [
       "record_addr",
       "lower_record_addr",
@@ -32191,11 +32308,14 @@
       "Rational",
       "src/identities/by_copy.rs",
       "src/run.rs",
-      "src/compile.rs"
+      "src/compile.rs",
+      "read_kind",
+      "NoWholeRead"
     ],
     "design": [
       "`:=` decides nothing about copy or reference; the type's reading rule does",
-      "Operands travel on the stack, so `run` and `compile` take no arguments"
+      "Operands travel on the stack, so `run` and `compile` take no arguments",
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data"
     ],
     "pages": [],
     "evidence": [
@@ -32207,6 +32327,87 @@
       {
         "command": "bash why-probes/run.sh why-probes/p157-b-r4.txt   (lines 6-8; each one program through target/release/logos, release build of 39f2d7e)",
         "output": "pt := type ( a := i32 ?, b := i32 ? ), h := fn (r := pt ?) -> i32 ( r.a ), p := pt(1, 2), h(p) -> 1   (record parameter: record_addr)\npt := type ( a := i32 ?, b := i32 ? ), h := fn (r) -> i32 ( 0 ), p := pt(1, 2), h(p) -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (bare parameter: Runtime::run)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), p, 0 -> the same error, exit 1   (a line: Runtime::run)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "sed -n '196,201p;224,229p' src/identities/by_copy.rs; rg -n 'Read::Rational => Ok\\(self.place_addr|Read::Literal => crate::identities::rational::mold|Read::Aggregate \\| Read::Opaque \\| Read::Undefined|pub unsafe fn run\\(&mut self, node: DyadPtr\\) -> Result<i64' src/run.rs src/compile.rs",
+        "output": "by_copy.rs record_addr:      Read::Aggregate | Read::Rational => node,   (then place_addr: the address)\n                             Read::Literal => return Ok(dyad::value(node)),   (its own sixteen bytes)\nby_copy.rs lower_record_addr: Read::Aggregate | Read::Rational => lw.place_addr(node),\n                             Read::Literal => Ok(lw.const_i64(dyad::value(node) as usize as i64)),\nsrc/run.rs:831: pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {\nsrc/run.rs:853:            Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),\nsrc/run.rs:855:            Read::Literal => crate::identities::rational::mold(node)\nsrc/run.rs:865:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),\nsrc/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w324-a.txt   (release build of dev 39f2d7e, interpreted lines)",
+        "output": "pt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), q := p, print «{q.b}» -> 2, exit 0   (by_copy::record_addr reads the whole record by address)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), p, 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (Runtime::run refuses it)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "How a value wider than one word is handed on whole is decided by each reader, not by its read kind: by_copy::record_addr and lower_record_addr hand on the address of a Read::Aggregate place exactly as of a Read::Rational one (and a Read::Literal's own bytes), while Runtime::run and Lowerer::lower, which hand back one i64, give a Rational its address, mold a Literal at i32 and refuse an Aggregate; so q := p copies a whole record through by_copy while the line p, read by Runtime::run, is refused, and W296's split over a fraction literal is the same split over another kind"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:19+02:00",
+      "by": "logoslang-why-P157-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "accepted as a why of W324, same as W332",
+        "reason": "A and B state the same fact: how a value wider than one word is read whole is written twice; Runtime::run and lower give a rational place its address and refuse a record place, while by_copy::record_addr and lower_record_addr give both their address (a record parameter of a call works, a bare record line fails)"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "asked: no why found",
+        "reason": "a root by the repo's list (AGENTS.md: one rule written twice): the whole read of a value wider than a word is written in Runtime::run/Lowerer::lower and again in by_copy::record_addr/lower_record_addr, and they disagree"
+      }
+    ]
+  },
+  {
+    "id": "W334",
+    "kind": "why",
+    "status": "accepted",
+    "text": "DESIGN gives a declaration two outcomes and no rule for which a value takes: ›An unknown spelling stays text on the tape‹ says 'Nothing is copied from one node into another; the name denotes the node the value built', while ›:= decides nothing about copy or reference‹ says 'A data type reads its value as bytes, stored in a fresh place: y := x is a copy … &x != &y' and ›A scope lays out its declarations‹ gives every declaration an offset; declare_here keeps both, one per arm: a place and a copy where an arm above finds the value a layout (a number), and the first rule elsewhere, in its last arm, whose comment repeats it ('The name denotes the node the value built, never a copy of it'), and in its arm over storage ('a second name for the same bytes'), which a record's q := p takes",
+    "proposed_for": "W329",
+    "why": [],
+    "anchors": [
+      "declare_here",
+      "set_dyad",
+      "lay_out",
+      "place_for",
+      "src/parse/declare.rs",
+      "DESIGN.md"
+    ],
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
+      "`:=` decides nothing about copy or reference; the type's reading rule does",
+      "A scope lays out its declarations; a use reaches the offset through its binding"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Nothing is copied from one node into another|A \\*\\*data\\*\\* type reads its value as bytes|Every declaration of a scope, shared or not' DESIGN.md; rg -n 'The name denotes the node the value built|over storage no rule above copies|the same bytes\\.$' src/parse/declare.rs",
+        "output": "DESIGN.md:620: - A **data** type reads its value as bytes, stored in a fresh place: `y := x` is a **copy**. Own address, own binding, `y = 7` leaves x at 5, `&x != &y`. …\nDESIGN.md:1572: … from then on the binding is the name's home, and it points at the value's node as soon as that node exists … Nothing is copied from one node into another; the name denotes the node the value built. …\nDESIGN.md:1887: Every declaration of a scope, shared or not, has an offset in the scope's own storage, …\nsrc/parse/declare.rs:759:                // `x := y` over storage no rule above copies: the name is a second name for\nsrc/parse/declare.rs:760:                // the same bytes.\nsrc/parse/declare.rs:765:                // The name denotes the node the value built, never a copy of it.",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p157-b-r4.txt; bash why-probes/run.sh why-probes/p157-b-alias.txt; bash why-probes/run.sh why-probes/p157-b-alias2.txt   (each line one program through target/release/logos, release build of 39f2d7e)",
+        "output": "x := i32 5, y := x, print «{x:offset} {y:offset}» -> 39328 39584;  … print «{&x == &y}» -> false   (a copy)\nmut x := i32 1, y := x, x = 9, print «{y}» -> 1\nf := fn () -> i32 ( 1 ), g := f, print «{f:offset} {g:offset}» -> 0 0   (the last arm: g names f's node)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), q := p, print «{p:offset} {q:offset}» -> 41408 41408;  … print «{&p == &q}» -> true\npt := type ( mut a := i32 ?, b := i32 ? ), mut p := pt(1, 2), q := p, p.a = 9, print «{q.a}» -> 9   (no copy)",
         "commit": "39f2d7e"
       }
     ],
@@ -32223,6 +32424,154 @@
       "commit": "39f2d7e",
       "run": "why-P157",
       "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "accepted as a why of W329",
+        "reason": "B's fact, beside W331: DESIGN gives a declaration two outcomes, a copy into a fresh place (›:= decides nothing about copy or reference‹) and the name denoting the node the value built (›An unknown spelling stays text on the tape‹), and no rule for which a value takes; declare_here keeps both, one per arm"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "asked: no why found",
+        "reason": "a rule DESIGN does not have, or two rules in conflict: both why agents quote ›An unknown spelling stays text on the tape‹ ('the name denotes the node the value built') against ›:= decides nothing about copy or reference‹ ('y := x is a copy … &x != &y') and ›A scope lays out its declarations‹; only Thobias decides"
+      }
+    ]
+  },
+  {
+    "id": "P168",
+    "kind": "problem",
+    "status": "open",
+    "text": "A record or a fn declared from another name shares its bytes instead of copying: `q := p` of a record is a second name for the same bytes, and `g := f` names the same fn node",
+    "program": "target/release/logos 'pt := type ( mut a := i32 ?, b := i32 ? ), mut p := pt(1, 2), q := p, p.a = 9, print «{q.a}»'; target/release/logos 'pt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), q := p, print «{&p == &q}»'; and f := fn () -> i32 ( 1 ), g := f gives both offset 0",
+    "output": "9, exit 0; true, exit 0; release build of dev 39f2d7e, interpreted. declare_here's arm over storage (declare.rs:759-762): \"the name is a second name for the same bytes\"",
+    "expected": "1 and false: ›`:=` decides nothing about copy or reference‹ (\"`y := x` is a **copy**. Own address, own binding, `y = 7` leaves x at 5, `&x != &y`\"; its Seed line says done); ›A function reads as a copy‹ (\"`g := f` is an independent function record\")",
+    "tier": "interpreted",
+    "found": "logoslang-why-P157-b, FOUND in round 4 on P157, 12 October 2026, release build of dev 39f2d7e",
+    "why": [
+      "W334"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:22+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fe9ae1d",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W334",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "S97",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "« is an identity of its own, a token apart from the text type, as # is apart from the comment type and ( from scope; the text type is named string and stands as itself, so a name bound to it is the type; how far a token reads past its spelling is part of its parse and crosses := with it, the reader handed the text after the spelling that matched; one function tests whether a quote starts at a position",
+    "fixes": [
+      "W322",
+      "W323",
+      "W311",
+      "W325",
+      "W328",
+      "W310"
+    ],
+    "assessment": "Root fix: removes P159 (all three programs) and P164. Tried at 2cf09e4 and restored (string::register mints a token node for « and declares string on the text type; quote_after in quotes.rs uses the token): t := «a».type, t gives type; t xyz» and t» give 'unknown name »'; the fn-parameter program gives the seed's 'declarations of non-numeric types are not in the seed yet', as «a».type ? does; string and «a».type == string give type and true; quotes, nesting, interpolation, # comments, regex, lex and error unchanged; cargo test --release: 566 passed. The rest is how a reader starts: ExtentFn and both constructors take the text after the matched spelling, the constructor reading the spelling's length off its cell's binding, so string::read and comment's text_start stop stepping past an assumed « or # (W325); one quote_at(text, at) holds the quote-start test the five callers copy (W328), and read's debug_assert goes (W310). W308's crossing becomes the rule and is harmless, since only « carries the quote reader. Agrees with S23 (W54), which lists extent among a type record's fields. DESIGN: a new rule beside ›Strings nest by depth…‹ and a sentence at ›Two levels‹. Leaves the number and unknown-word patterns names of their type (Q88 (a)); string (n) as a conversion stays #174's. Small: string.rs, comment.rs, lex.rs, quotes.rs, mod.rs, about 100 lines; no open branch touches them.",
+    "decision": null,
+    "design": [
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling",
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "`lex_rank` belongs to the binding, not the type",
+      "Every identity has a `parse_rank`, and `(` works in two steps"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:23+02:00",
+      "by": "logoslang-solve-W322",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2cf09e4",
+      "run": "solve-W322",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S98",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "« stays the text type's own spelling, as the number pattern names rational_number: the text type gets the second name string, and its parse and its reach each test whether the spelling that matched is «, standing as the type when it is not",
+    "fixes": [
+      "W322",
+      "W323",
+      "W311",
+      "W310"
+    ],
+    "assessment": "Symptom fix: removes P159 and P164 with two branches on the spelling, one in the extent reader and one in string::construct, the shape rational::construct has for 5 against rational_number. A hand-kept test of the character « then decides which names open a text, so no other spelling can ever open one (a language that gives « a spelling of its own), and every name of the text type still carries the quote reader, against ›lex_rank belongs to the binding‹'s 'pow parses exactly as ^ does'. Against language_sketch.logos (lex «\\«» := ? beside string := type ?). Leaves W325 and adds a sixth copy of W328's quote-start test. Smallest: string.rs, about 15 lines. Not recommended.",
+    "decision": null,
+    "design": [
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling",
+      "`lex_rank` belongs to the binding, not the type"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:23+02:00",
+      "by": "logoslang-solve-W322",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2cf09e4",
+      "run": "solve-W322",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S99",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "« is an identity of its own as in S97, but how far a token reads past its spelling is the name's: Binding gets an extent reader field, and := gives a new name none",
+    "fixes": [
+      "W322",
+      "W323",
+      "W311"
+    ],
+    "assessment": "Removes P159 and P164 as S97 does, since the split alone stops t from reading a quote. But it puts one unit on two levels: a second name of « gets «'s parse, which crosses :=, without its reach, so that parse finds no quote the lexer took (the 'W323 alone' failure the why agents note). Against ›Two levels‹ ('Parse behaviour is not a third level. It is content of a value') and ›Every identity has a parse_rank, and ( works in two steps‹, where a raw-text consumer is built at discovery, its reading part of its parse. Adds a field to every binding, and contradicts S23's extent field in a type's record (W54). Leaves W325 and W328. Not recommended.",
+    "decision": null,
+    "design": [
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "Every identity has a `parse_rank`, and `(` works in two steps"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:23+02:00",
+      "by": "logoslang-solve-W322",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2cf09e4",
+      "run": "solve-W322",
+      "agent": null
     },
     "history": []
   }
