@@ -24993,7 +24993,9 @@
     "expected": "`9.0`: \"with `mut x := f64 0.0`, `x = f32 9` writes `9.0`\" (DESIGN.md ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹)",
     "tier": "interpreted",
     "found": "logoslang-why-P111-a, FOUND in its WHY on P111, 9 October 2026, dev aaf87c2",
-    "why": null,
+    "why": [
+      "W306"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -25005,7 +25007,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:39+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "39f2d7e",
+        "change": "why + W306",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W257",
@@ -29511,5 +29523,238 @@
         "reason": "both agents, round 3: for the built-in types that do not mint, the op word goes against ›Execution is function application‹ and Q-61 ('the operation is kept on the mint, not in an op slot of each node'); a mechanism DESIGN has superseded, with no field on the type to replace it"
       }
     ]
+  },
+  {
+    "id": "W306",
+    "kind": "why",
+    "status": "accepted",
+    "text": "assign::build_store converts only a rational_number literal where it lands (commit_if_literal); a typed value such as `f32 9` goes to check_store_type, whose number arm `Read::Scalar(_) => out == target_ty` accepts the place's own type alone and builds no convert node, so `x = f32 9` into an `f64` place is TypeMismatch",
+    "proposed_for": "P147",
+    "why": null,
+    "anchors": [
+      "build_store",
+      "check_store_type",
+      "commit_if_literal",
+      "src/identities/assign.rs",
+      "src/identities/mod.rs"
+    ],
+    "design": [
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'fn check_store_type|Read::Scalar\\(_\\), _\\)\\) => out == target_ty|commit_if_literal\\(store, types, rhs|super::check_store_type\\(types, lhs_type, rhs\\)|The no-coercion rule' src/identities/mod.rs src/identities/assign.rs",
+        "output": "src/identities/assign.rs:266:            commit_if_literal(store, types, rhs, &Operand::Literal, lhs_type, nt)?\nsrc/identities/assign.rs:268:            super::check_store_type(types, lhs_type, rhs)?;\nsrc/identities/mod.rs:862:/// The no-coercion rule for `=`: a number or `bool` target takes exactly its own type, a\nsrc/identities/mod.rs:869:pub(crate) unsafe fn check_store_type(\nsrc/identities/mod.rs:879:        Some((read::Read::Scalar(_), _)) => out == target_ty,",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run-b.sh why-probes/p147-b-ev.txt (dev 39f2d7e, interpreted; each line one program); plus compiled: target/release/logos 'h := fn () -> f64 ( mut x := f64 0.0, x = f32 9, x ), h.compile(), print «{h()}»'",
+        "output": "mut x := f64 0.0, x = f32 9 -> error: these types do not match (crossing types needs an explicit cast), exit 1\ny := f32 9, mut x := f64 0.0, x = y -> same error (named value), exit 1\np := alloc 1 of f64 0.0, p@ = f32 9 -> same error (pointer store, pointer.rs calls check_store_type), exit 1\npt := type ( a := f64 ? ), q := pt(f32 9) -> same error (field fill, instance.rs), exit 1\nh := fn (a := f64 ?) -> f64 ( a ), h(f32 9) -> same error (call argument, mod.rs), exit 1\nmut x := f64 0.0, x = f64 (f32 9) -> 9.0 (written conversion builds a convert node), exit 0\nmut x := f64 0.0, x = 9 -> 9.0 (literal converted by commit_if_literal), exit 0\ncompiled: h := fn () -> f64 ( mut x := f64 0.0, x = f32 9, x ), h.compile() -> same error at parse, before either tier runs, exit 1",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n \"dyad::ty\\(rhs_d\\) == types.rational|commit_if_literal\\(store, types, rhs|check_store_type\\(types, lhs_type|Some\\(\\(read::Read::Scalar\\(_\\), _\\)\\) => out == target_ty\" src/identities/assign.rs src/identities/mod.rs",
+        "output": "src/identities/assign.rs:264:        if dyad::ty(rhs_d) == types.rational {\nsrc/identities/assign.rs:266:            commit_if_literal(store, types, rhs, &Operand::Literal, lhs_type, nt)?\nsrc/identities/assign.rs:268:            super::check_store_type(types, lhs_type, rhs)?;\nsrc/identities/mod.rs:879:        Some((read::Read::Scalar(_), _)) => out == target_ty,",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p1.txt; bash why-probes/run.sh why-probes/p2.txt (dev 39f2d7e, release)",
+        "output": "mut x := f64 0.0, x = f32 9 -> error: these types do not match (crossing types needs an explicit cast)\nmut x := i64 0, x = i32 9 -> same error (one type against another)\ny := f32 9, mut x := f64 0.0, x = y -> same error (named value)\nh := fn () -> f64 ( mut x := f64 0.0, x = f32 9, x ), h.compile() -> same error (compiled tier)\nmut x := f64 0.0, x = 9/2 -> 4.5 (a rational_number converts where it lands)\nmut x := f64 0.0, x = f64 (f32 9) -> 9.0 (only the written conversion crosses)\nf := fn (a := i64 ?) -> i64 ( a ), f(i32 9) -> same error; pt := type ( a := i64 ? ), pt(i32 9) -> same error",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "`assign::build_store` converts a right side into the place's type only when it is a `rational_number` (`commit_if_literal`); every other right side goes to `check_store_type`, whose scalar arm accepts only `read::output_type(rhs) == target_ty` and builds no `convert` node, so an `f32` value meeting an `f64` place is `TypeMismatch`, never converted"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:34+02:00",
+      "by": "logoslang-why-P147-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P147",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:39+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "39f2d7e",
+        "change": "accepted as a why of P147, same as W307",
+        "reason": "A and B state the same fact: = converts only a rational_number literal (commit_if_literal); any other value goes to check_store_type, which accepts only the place's exact number type and builds no conversion"
+      }
+    ]
+  },
+  {
+    "id": "W307",
+    "kind": "why",
+    "status": "merged",
+    "text": "`assign::build_store` converts a right side into the place's type only when it is a `rational_number` (`commit_if_literal`); every other right side goes to `check_store_type`, whose scalar arm accepts only `read::output_type(rhs) == target_ty` and builds no `convert` node, so an `f32` value meeting an `f64` place is `TypeMismatch`, never converted",
+    "proposed_for": "P147",
+    "why": null,
+    "anchors": [
+      "build_store",
+      "commit_if_literal",
+      "check_store_type",
+      "src/identities/assign.rs",
+      "src/identities/mod.rs"
+    ],
+    "design": [
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"dyad::ty\\(rhs_d\\) == types.rational|commit_if_literal\\(store, types, rhs|check_store_type\\(types, lhs_type|Some\\(\\(read::Read::Scalar\\(_\\), _\\)\\) => out == target_ty\" src/identities/assign.rs src/identities/mod.rs",
+        "output": "src/identities/assign.rs:264:        if dyad::ty(rhs_d) == types.rational {\nsrc/identities/assign.rs:266:            commit_if_literal(store, types, rhs, &Operand::Literal, lhs_type, nt)?\nsrc/identities/assign.rs:268:            super::check_store_type(types, lhs_type, rhs)?;\nsrc/identities/mod.rs:879:        Some((read::Read::Scalar(_), _)) => out == target_ty,",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p1.txt; bash why-probes/run.sh why-probes/p2.txt (dev 39f2d7e, release)",
+        "output": "mut x := f64 0.0, x = f32 9 -> error: these types do not match (crossing types needs an explicit cast)\nmut x := i64 0, x = i32 9 -> same error (one type against another)\ny := f32 9, mut x := f64 0.0, x = y -> same error (named value)\nh := fn () -> f64 ( mut x := f64 0.0, x = f32 9, x ), h.compile() -> same error (compiled tier)\nmut x := f64 0.0, x = 9/2 -> 4.5 (a rational_number converts where it lands)\nmut x := f64 0.0, x = f64 (f32 9) -> 9.0 (only the written conversion crosses)\nf := fn (a := i64 ?) -> i64 ( a ), f(i32 9) -> same error; pt := type ( a := i64 ? ), pt(i32 9) -> same error",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W306",
+    "made": {
+      "at": "2026-10-12T09:36+02:00",
+      "by": "logoslang-why-P147-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P147",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:39+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "39f2d7e",
+        "change": "merged into W306",
+        "reason": "A and B state the same fact: = converts only a rational_number literal (commit_if_literal); any other value goes to check_store_type, which accepts only the place's exact number type and builds no conversion"
+      }
+    ]
+  },
+  {
+    "id": "P160",
+    "kind": "problem",
+    "status": "open",
+    "text": "An operation over two number types is refused: `i32 1 + i64 2` gives a type error, where DESIGN makes it `i64` addition with the `i32` side converted",
+    "program": "target/release/logos 'print «{i32 1 + i64 2}»'",
+    "output": "error: these types do not match (crossing types needs an explicit cast)",
+    "expected": "`3`: \"`i32 1 + i64 2` is `i64` addition, its `i32` side converted\" (›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P147-b, FOUND in round 1 on P147, 12 October 2026, dev 39f2d7e",
+    "why": [
+      "W304"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:36+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "39f2d7e",
+        "change": "why + W304",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P161",
+    "kind": "problem",
+    "status": "open",
+    "text": "An `if` whose arms give a plain number and an `f64` is refused where its value lands in an `f64` place, though DESIGN names that line as writing an `f64` either way",
+    "program": "target/release/logos 'c := i32 1, mut x := f64 0.0, x = if (c == 1) (1) else (f64 2.5), print «{x}»'",
+    "output": "error: the arms of this `if` give different types (the same with an `f32 9` arm)",
+    "expected": "`1.0`: ›`if` reads its own right side‹, Ruled Q-61: \"With `mut x := f64 0.0`, `x = if c (1) else (f64 2.5)` writes an `f64` either way\"",
+    "tier": "interpreted",
+    "found": "logoslang-why-P147-b, FOUND in round 1 on P147, 12 October 2026, dev 39f2d7e",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P162",
+    "kind": "problem",
+    "status": "open",
+    "text": "A number type applied to an `if` is refused as two expressions, though DESIGN names `x := i64 if c (i32 1) else (i64 2)` as the way to write differing arms",
+    "program": "target/release/logos 'c := i32 1, x := i64 if (c == 1) (i32 1) else (i64 2), print «{x}»'",
+    "output": "error: expected one expression, found more",
+    "expected": "`1`: ›`if` reads its own right side‹, Ruled Q-63, names `x := i64 if c (i32 1) else (i64 2)`",
+    "tier": "interpreted",
+    "found": "logoslang-why-P147-b, FOUND in round 1 on P147, 12 October 2026, dev 39f2d7e",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P163",
+    "kind": "problem",
+    "status": "open",
+    "text": "`⊆` refuses every pair of number types but a type and itself or two integer types, so `f32 ⊆ f64` is refused though DESIGN uses `f32` into `f64` as its example of a value held exactly",
+    "program": "target/release/logos 'print «{f32 ⊆ f64}»'",
+    "output": "error: `⊆` answers only for a type and itself or two integer types; between other types what each can hold is not settled yet (`i32 ⊆ i64` gives `true`)",
+    "expected": "`true`: ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly‹ uses `x = f32 9` writing `9.0` into an `f64` place; only integer inside a float is open there (Q79)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P147-b, FOUND in round 1 on P147, 12 October 2026, dev 39f2d7e",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
