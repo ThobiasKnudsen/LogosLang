@@ -34222,5 +34222,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P186",
+    "kind": "problem",
+    "status": "open",
+    "text": "A second import of a file gives back a pub name the importer already freed, as if it were alive: after free p, p@ is a parse error (\"`p` is dead here\"), but a second import of the same file makes p readable again, and the read reaches the freed value",
+    "program": "logos 'import ./tests/fixtures/owning_pub.logos, free p, import ./tests/fixtures/owning_pub.logos, p@'; REPL: import ./held.logos, free h, import ./held.logos, h.n (held.logos: bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), pub h := bag(9))",
+    "output": "<command line>: run error: this pointer holds nothing yet, exit 1; REPL: freed 9, then h.n echoes 9 from the freed bag; dev 1bfb2d7 and the issue-234 branch, release, interpreted",
+    "expected": "the second import publishes nothing alive for a name its importer freed: p stays dead (a parse error), as after free p alone (›Importing is dropping the text there, wrapped in its own scope‹, once per run)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-2, FOUND by /code-review in review round 2 of #234, 12 October 2026 (near P93 and #78)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:17+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "5c5e0a2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
