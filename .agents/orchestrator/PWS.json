@@ -29530,7 +29530,9 @@
     "status": "accepted",
     "text": "assign::build_store converts only a rational_number literal where it lands (commit_if_literal); a typed value such as `f32 9` goes to check_store_type, whose number arm `Read::Scalar(_) => out == target_ty` accepts the place's own type alone and builds no convert node, so `x = f32 9` into an `f64` place is TypeMismatch",
     "proposed_for": "P147",
-    "why": null,
+    "why": [
+      "W313"
+    ],
     "anchors": [
       "build_store",
       "check_store_type",
@@ -29590,6 +29592,15 @@
         "commit": "39f2d7e",
         "change": "accepted as a why of P147, same as W307",
         "reason": "A and B state the same fact: = converts only a rational_number literal (commit_if_literal); any other value goes to check_store_type, which accepts only the place's exact number type and builds no conversion"
+      },
+      {
+        "at": "2026-10-12T09:46+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "06d47f5",
+        "change": "why + W313",
+        "reason": null
       }
     ]
   },
@@ -29660,7 +29671,8 @@
     "tier": "interpreted",
     "found": "logoslang-why-P147-b, FOUND in round 1 on P147, 12 October 2026, dev 39f2d7e",
     "why": [
-      "W304"
+      "W304",
+      "W313"
     ],
     "issue": null,
     "fixed": null,
@@ -29682,6 +29694,15 @@
         "commit": "39f2d7e",
         "change": "why + W304",
         "reason": null
+      },
+      {
+        "at": "2026-10-12T09:46+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "06d47f5",
+        "change": "why + W313",
+        "reason": null
       }
     ]
   },
@@ -29695,7 +29716,9 @@
     "expected": "`1.0`: ›`if` reads its own right side‹, Ruled Q-61: \"With `mut x := f64 0.0`, `x = if c (1) else (f64 2.5)` writes an `f64` either way\"",
     "tier": "interpreted",
     "found": "logoslang-why-P147-b, FOUND in round 1 on P147, 12 October 2026, dev 39f2d7e",
-    "why": null,
+    "why": [
+      "W313"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -29707,7 +29730,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:46+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "06d47f5",
+        "change": "why + W313",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P162",
@@ -29756,5 +29789,387 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "W308",
+    "kind": "why",
+    "status": "draft",
+    "text": "lex::token picks a token's extent reader off Resolved.identity, the dyad the matched name yields, so an extent reader crosses := with the value: the name t, bound to the text type, lexes with the quote reader string::register installs on the text type, read(text, 0), which reads the text from t on as a «…» quote: past the end for t alone (the panic), to the next » for t xyz» (one cell, built as the text «xyz»), or to no » at all (\"this `«` has no `»`\")",
+    "proposed_for": "P159",
+    "why": null,
+    "anchors": [
+      "token",
+      "extent_reader",
+      "Resolved",
+      "src/parse/lex.rs",
+      "src/parse/scopes.rs",
+      "src/identities/string.rs"
+    ],
+    "design": [
+      "Unknown spellings are two pattern identities",
+      "Two levels: the binding is the lex level, the dyad is the value level"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "RUST_BACKTRACE=1 target/release/logos 't := «a».type, t' 2>&1 | rg 'panicked|seed::'",
+        "output": "thread '<unnamed>' (123971) panicked at src/identities/string.rs:106:31:\n   4: seed::identities::string::read\n   5: <seed::identities::string::register::{closure#0} as core::ops::function::FnOnce<(&str,)>>::call_once\n   6: seed::parse::lex::token\n   7: <seed::parse::Parser>::peek_token\n   8: <seed::parse::Parser>::next_cell",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'extent_reader\\(r\\.identity\\)|let identity = unsafe|pub identity|cx\\.extents\\.insert\\(id|cx\\.declare\\(\"«\"' src/parse/lex.rs src/parse/scopes.rs src/identities/string.rs",
+        "output": "src/parse/lex.rs:35:    let Some(read) = (unsafe { crate::identities::meta::extent_reader(r.identity) }) else {\nsrc/parse/scopes.rs:21:    pub identity: DyadPtr,\nsrc/parse/scopes.rs:308:                let identity = unsafe { f.names(binding) };\nsrc/identities/string.rs:25:    cx.declare(\"«\", id);\nsrc/identities/string.rs:27:    cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/e1.txt",
+        "output": "== t := «a».type, x := t xyz, 0\n<command line>:1:21: error: this `«` has no `»`: write `\\«` for one as text\nexit 1\n== t := «a».type, x := t xyz», 0\n<command line>: run error: a record, text or hole is not read as one value; read a field or take its address\nexit 1\n== x := «xyz», 0\n<command line>: run error: a record, text or hole is not read as one value; read a field or take its address\nexit 1\n== t := i32, x := t 5, print «{x}»\n5\nexit 0",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:43+02:00",
+      "by": "logoslang-why-P159-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W309",
+    "kind": "why",
+    "status": "draft",
+    "text": "declare::run decides whether to run the declared field by a list of its own, skipping only storage (is_storage) and Read::Aggregate, instead of the reading rule's split, where read_kind gives Read::Executable to a node that runs and one of 12 other kinds to data; so the text or rational_number literal that declare_here's last arm binds with Binding::set_dyad and keeps as declared is run at its declaration, though declare::run's own comment calls a node with no run data built whole at parse and Execution is function application runs only a fn or a type's run",
+    "proposed_for": "P157",
+    "why": null,
+    "anchors": [
+      "src/identities/declare.rs",
+      "read_kind",
+      "is_storage",
+      "declare_here",
+      "set_dyad",
+      "src/identities/read.rs"
+    ],
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n '85,92p' src/identities/declare.rs",
+        "output": "        let declared = declared_of(node);\n        // The storage a hole laid out, `x := ?` or `x := T ?`, has nothing to run: nothing\n        // initializes it. Nor has a node with no run, which is data and was built whole at parse.\n        if !rt.types().is_storage(declared)\n            && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate\n        {\n            rt.run(declared)?;\n        }",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n '^    (Scalar|Pointer|Container|Identity|Node|Address|Literal|Rational|Aggregate|Opaque|Unit|Executable|Undefined)\\b' src/identities/read.rs",
+        "output": "22:    Scalar(NumType),\n24:    Pointer(DyadPtr),\n27:    Container(DyadPtr),\n29:    Identity,\n31:    Node,\n33:    Address,\n35:    Literal,\n38:    Rational,\n40:    Aggregate,\n43:    Opaque,\n45:    Unit,\n46:    Executable(Dispatch),\n48:    Undefined,",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "for l in 's := «a», 0' 'r := 1/2, 0' 'k := i32, 0' 'r := 4/2, 0' 'g := fn () -> i32 ( s := «a», 0 ), g.compile(), g()'; do target/release/logos \"$l\"; echo \"exit $?\"; done   (release build of dev 39f2d7e, interpreted unless g.compile())",
+        "output": "s := «a», 0 -> run error: a record, text or hole is not read as one value; read a field or take its address; exit 1\nr := 1/2, 0 -> run error: a literal here has no exact value in the type it lands in; exit 1\nk := i32, 0 -> 0; exit 0   (a type is data too, but Runtime::run gives its address without failing)\nr := 4/2, 0 -> 0; exit 0   (a whole fraction molds to i32)\ncompiled: g := fn () -> i32 ( s := «a», 0 ), g.compile(), g() -> run error: compile() failed: this cannot be compiled yet; exit 1   (declare's lower lowers declared with no skip at all, W3's tier copy)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:43+02:00",
+      "by": "logoslang-why-P157-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W310",
+    "kind": "why",
+    "status": "draft",
+    "text": "string::read steps two bytes past the « it takes to stand at from without checking it is there, its one check a debug_assert! that a release build drops; so handed the text at the name t it slices source[2..] past the end (t alone) or inside a » (t») and panics, where the comment reader in comment.rs and print's quote_span_after first check that the text starts with « and answer a non-quote with an error",
+    "proposed_for": "P159",
+    "why": null,
+    "anchors": [
+      "read",
+      "quote_span_after",
+      "src/identities/string.rs",
+      "src/identities/comment.rs",
+      "src/parse/quotes.rs"
+    ],
+    "design": [
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"debug_assert!\\(source\\[from|let mut i = from \\+|while let Some\\(c\\) = source\\[i|starts_with\\('«'\\)\" src/identities/string.rs src/identities/comment.rs src/parse/quotes.rs",
+        "output": "src/identities/string.rs:98:    debug_assert!(source[from..].starts_with('«'));\nsrc/identities/string.rs:105:    let mut i = from + '«'.len_utf8();\nsrc/identities/string.rs:106:    while let Some(c) = source[i..].chars().next() {\nsrc/identities/comment.rs:27:        if text[at..].starts_with('«') {\nsrc/identities/comment.rs:53:    let text = if spelling[at..].starts_with('«') {\nsrc/parse/quotes.rs:105:        if !source[start..].starts_with('«') {\nsrc/parse/quotes.rs:245:        if !source[start..].starts_with('«') {",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/e2.txt",
+        "output": "== t := «a».type, t\nthread '<unnamed>' panicked at src/identities/string.rs:106:31:\nstart byte index 2 is out of bounds for string of length 1\nexit 1\n== t := «a».type, t»\nthread '<unnamed>' panicked at src/identities/string.rs:106:31:\nstart byte index 2 is not a char boundary; it is inside '»' (bytes 1..3 of string)\nexit 1\n== t := «a».type, print t»\n<command line>:1:22: error: `print` must be followed by a «…» quote\nexit 1",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:43+02:00",
+      "by": "logoslang-why-P159-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W311",
+    "kind": "why",
+    "status": "draft",
+    "text": "string::construct, the text type's constructor, reads its quote from the cell's own spelling (tape.own_text()) and has no case for a cell spelled other than «…», though ctor_of wakes it for every cell whose dyad is the text type, since a type's parse crosses := (›Two levels‹); so the cell the lexer made of t xyz» is built as the text «xyz», and with the lexer fixed alone the cell t would still reach read(\"t\", 0) here, while the sibling rational::construct reads a spelling that is not a number as the type's name, the conversion form (r := rational_number, r 5 gives 5)",
+    "proposed_for": "P159",
+    "why": null,
+    "anchors": [
+      "construct",
+      "own_text",
+      "ctor_of",
+      "construct_of",
+      "src/identities/string.rs",
+      "src/identities/rational.rs",
+      "src/parse/driver.rs"
+    ],
+    "design": [
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'own_text\\(\\)|starts_with\\(\\|c: char\\| c.is_ascii_digit|return convert\\(p, tape\\)|return self.construct_of\\(id\\)|self.construct_of\\(id\\)$' src/identities/string.rs src/identities/rational.rs src/parse/driver.rs",
+        "output": "src/identities/string.rs:36:    let spelling = tape.own_text().ok_or(ParseError::BadLiteral)?;\nsrc/parse/driver.rs:423:                return self.construct_of(id).or(Some(application));\nsrc/parse/driver.rs:425:            self.construct_of(id)\nsrc/identities/rational.rs:39:    let span = tape.own_text().ok_or(ParseError::BadLiteral)?;\nsrc/identities/rational.rs:40:    if !span.starts_with(|c: char| c.is_ascii_digit()) {\nsrc/identities/rational.rs:43:        return convert(p, tape);",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/e3.txt",
+        "output": "== x := «a».type, 0\n0\nexit 0\n== t := «a».type, x := t xyz», 0\n<command line>: run error: a record, text or hole is not read as one value; read a field or take its address\nexit 1\n== r := rational_number, r 5\n5\nexit 0",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:43+02:00",
+      "by": "logoslang-why-P159-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W312",
+    "kind": "why",
+    "status": "merged",
+    "text": "The seed still implements ›No implicit coercion; a numeric type applied to a value is the conversion‹, the heading DESIGN superseded on 2 October 2026: a value crosses number types only through a written `T(value)` (`build_cast`, \"the only cross-type path\") or as a `rational_number` where it lands (`commit_if_literal`), and every place two number types meet tests equality (`check_store_type`'s `out == target_ty`, a yes/no `Result<(), ParseError>` that cannot hand back a converted value; `resolve_binary`'s `x != y`; `if.rs` `read`'s `same_type`), while the seed's one lies-inside test, `subset::includes`, is private to `⊆`",
+    "proposed_for": "W306",
+    "why": null,
+    "anchors": [
+      "check_store_type",
+      "resolve_binary",
+      "build_cast",
+      "commit_if_literal",
+      "includes",
+      "same_type",
+      "src/identities/mod.rs",
+      "src/identities/if.rs",
+      "src/identities/subset.rs",
+      "src/identities/convert.rs"
+    ],
+    "design": [
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"=> out == target_ty|if x != y|same_type\\(a.ty, b.ty\\)|^unsafe fn includes|^pub\\(crate\\) unsafe fn check_store_type|no-coercion rule|no implicit coercion|only cross-type path\" src/identities/{mod,if,subset,convert}.rs; rg -n \"supersedes the heading ›No implicit coercion\" DESIGN.md; rg -n \"x = f32 9. was refused\" DESIGN_HISTORY.md",
+        "output": "src/identities/mod.rs:700:/// Two different concrete types are a mismatch (no implicit coercion); a literal\nsrc/identities/mod.rs:722:            if x != y {\nsrc/identities/mod.rs:862:/// The no-coercion rule for `=`: a number or `bool` target takes exactly its own type, a\nsrc/identities/mod.rs:869:pub(crate) unsafe fn check_store_type(\nsrc/identities/mod.rs:873:) -> Result<(), ParseError> {\nsrc/identities/mod.rs:879:        Some((read::Read::Scalar(_), _)) => out == target_ty,\nsrc/identities/mod.rs:1300:/// The `T(value)` conversion, the only cross-type path: a literal folds now with `as`\nsrc/identities/subset.rs:73:unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {\nsrc/identities/if.rs:125:        [a, b] if super::same_type(a.ty, b.ty) => {\nsrc/identities/convert.rs:7://! at run. The only cross-type path; there is no implicit coercion.\nDESIGN.md:932: (Q-63) ... It supersedes the heading ›No implicit coercion; a numeric type applied to a value is the conversion‹, under which only a plain number converted without its type written.\nDESIGN_HISTORY.md:371: until 2 October 2026 the heading read ›No implicit coercion ...‹: a value converted only by its type written, `i64 m`, or as a plain number where it lands, and `mut x := f64 0.0, x = f32 9` was refused.",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p3.txt (dev 39f2d7e, release): the three meeting places DESIGN line 930 names, each refused",
+        "output": "print «{i32 1 + i64 2}» -> error: these types do not match (crossing types needs an explicit cast) (resolve_binary; DESIGN: i64 addition)\nc := i32 1, x := if (c == 1) (f32 1) else (f64 2) -> error: the arms of this `if` give different types (if.rs read; Q-63: arms convert)\np := alloc 1 of f64 0.0, p@ = f32 9 -> error: these types do not match (check_store_type through pointer.rs)\nprint «{i32 ⊆ i64}» -> true (includes answers, but only `⊆` asks it)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W313",
+    "made": {
+      "at": "2026-10-12T09:44+02:00",
+      "by": "logoslang-why-P147-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P147",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:46+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "06d47f5",
+        "change": "merged into W313",
+        "reason": "A and B state the same fact: the seed still implements the superseded heading ›No implicit coercion; a numeric type applied to a value is the conversion‹ (replaced by Q-63, 2 October 2026): check_store_type returns () and refuses every other type, resolve_binary and the if arms test the same exact equality, and only build_cast and narrowed_operand build a conversion"
+      }
+    ]
+  },
+  {
+    "id": "P164",
+    "kind": "problem",
+    "status": "open",
+    "text": "The text type has no name: the seed declares it only under the spelling `«` (string::register: cx.declare(\"«\", id)), so `string`, the name DESIGN gives it, is unknown, and a program can name the text type only through a value, as `«a».type`",
+    "program": "target/release/logos 'string'",
+    "output": "error: unknown name `string`, exit 1; dev 39f2d7e, interpreted",
+    "expected": "the text type value: DESIGN calls the text type `string` and has `string(n)` turn a value into text (›`{ }` is text interpolation‹)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P159-b, FOUND in round 1 on P159, 12 October 2026, dev 39f2d7e",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:44+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "06d47f5",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W313",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The seed still implements ›No implicit coercion; a numeric type applied to a value is the conversion‹, the heading Q-63 superseded on 2 October 2026 (DESIGN_HISTORY: under it `mut x := f64 0.0, x = f32 9` was refused): check_store_type, documented as 'The no-coercion rule for `=`', returns `Result<(), ParseError>`, so every caller hands on its own operand unconverted and the check can only refuse another type; the same exact-type test stands in resolve_binary (`x != y`, 'no implicit coercion') and in the `if` arms (`same_type(a.ty, b.ty)`); a convert node is built only for a written `T(value)` (build_cast, 'the only cross-type path') and for a tape line narrowed by `⊆` (narrowed_operand)",
+    "proposed_for": "W306",
+    "why": [],
+    "anchors": [
+      "check_store_type",
+      "resolve_binary",
+      "build_cast",
+      "build_convert",
+      "narrowed_operand",
+      "src/identities/mod.rs",
+      "src/identities/convert.rs",
+      "src/identities/if.rs",
+      "src/identities/tape.rs",
+      "commit_if_literal",
+      "includes",
+      "same_type",
+      "src/identities/subset.rs"
+    ],
+    "design": [
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly",
+      "`if` reads its own right side"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'The no-coercion rule|only cross-type path|no implicit coercion|=> out == target_ty|if x != y \\{|\\[a, b\\] if super::same_type\\(a.ty, b.ty\\)' src/identities/mod.rs src/identities/convert.rs src/identities/if.rs; rg -n -A4 '^pub\\(crate\\) unsafe fn check_store_type' src/identities/mod.rs | rg 'fn check_store_type|-> Result'",
+        "output": "src/identities/convert.rs:7://! at run. The only cross-type path; there is no implicit coercion.\nsrc/identities/mod.rs:700:/// Two different concrete types are a mismatch (no implicit coercion); a literal   (resolve_binary)\nsrc/identities/mod.rs:722:            if x != y {\nsrc/identities/mod.rs:862:/// The no-coercion rule for `=`: a number or `bool` target takes exactly its own type, a\nsrc/identities/mod.rs:879:        Some((read::Read::Scalar(_), _)) => out == target_ty,\nsrc/identities/mod.rs:1300:/// The `T(value)` conversion, the only cross-type path: a literal folds now with `as`   (build_cast)\nsrc/identities/if.rs:125:        [a, b] if super::same_type(a.ty, b.ty) => {\n869:pub(crate) unsafe fn check_store_type(\n873-) -> Result<(), ParseError> {",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -A1 'check_store_type\\(types' src --glob '!**/tests.rs'; rg -n 'build_convert\\(' src",
+        "output": "src/identities/this.rs:277: check_store_type(types, ty, value)?;  278: let ops = [this, k, value, ty, owner];\nsrc/identities/tape.rs:946: check_store_type(types, ty, operand).map(|()| operand)\nsrc/identities/pointer.rs:233: check_store_type(types, pointee, rhs)?;  234: rhs\nsrc/identities/assign.rs:268: check_store_type(types, lhs_type, rhs)?;  269: rhs\nsrc/identities/mod.rs:1096: check_store_type(types, pty, *arg)?;  (the argument itself is kept)\nsrc/identities/hashmap.rs:187: check_store_type(types, want, node)?;  188: Ok(node)\nsrc/identities/instance.rs:175: check_store_type(types, fty, arg)?;  176: arg\nbuild_convert callers: src/identities/mod.rs:1324 and :1333 (build_cast, a written T(value)); src/identities/tape.rs:925 (narrowed_operand, a tape line after a ⊆ check)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -o 'the heading read ›No implicit coercion; a numeric type applied to a value is the conversion‹|x = f32 9. was refused' DESIGN_HISTORY.md",
+        "output": "371:the heading read ›No implicit coercion; a numeric type applied to a value is the conversion‹\n371:x = f32 9` was refused",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run-b.sh why-probes/p147-b-found.txt (dev 39f2d7e, interpreted): one copy per site",
+        "output": "print «{i32 1 + i64 2}» -> error: these types do not match (crossing types needs an explicit cast)   (resolve_binary)\nc := i32 1, mut x := f64 0.0, x = if (c == 1) (1) else (f64 2.5) -> error: the arms of this `if` give different types   (if.rs read)\nmut x := f64 0.0, x = f32 9 -> error: these types do not match   (check_store_type)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n \"=> out == target_ty|if x != y|same_type\\(a.ty, b.ty\\)|^unsafe fn includes|^pub\\(crate\\) unsafe fn check_store_type|no-coercion rule|no implicit coercion|only cross-type path\" src/identities/{mod,if,subset,convert}.rs; rg -n \"supersedes the heading ›No implicit coercion\" DESIGN.md; rg -n \"x = f32 9. was refused\" DESIGN_HISTORY.md",
+        "output": "src/identities/mod.rs:700:/// Two different concrete types are a mismatch (no implicit coercion); a literal\nsrc/identities/mod.rs:722:            if x != y {\nsrc/identities/mod.rs:862:/// The no-coercion rule for `=`: a number or `bool` target takes exactly its own type, a\nsrc/identities/mod.rs:869:pub(crate) unsafe fn check_store_type(\nsrc/identities/mod.rs:873:) -> Result<(), ParseError> {\nsrc/identities/mod.rs:879:        Some((read::Read::Scalar(_), _)) => out == target_ty,\nsrc/identities/mod.rs:1300:/// The `T(value)` conversion, the only cross-type path: a literal folds now with `as`\nsrc/identities/subset.rs:73:unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {\nsrc/identities/if.rs:125:        [a, b] if super::same_type(a.ty, b.ty) => {\nsrc/identities/convert.rs:7://! at run. The only cross-type path; there is no implicit coercion.\nDESIGN.md:932: (Q-63) ... It supersedes the heading ›No implicit coercion; a numeric type applied to a value is the conversion‹, under which only a plain number converted without its type written.\nDESIGN_HISTORY.md:371: until 2 October 2026 the heading read ›No implicit coercion ...‹: a value converted only by its type written, `i64 m`, or as a plain number where it lands, and `mut x := f64 0.0, x = f32 9` was refused.",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p3.txt (dev 39f2d7e, release): the three meeting places DESIGN line 930 names, each refused",
+        "output": "print «{i32 1 + i64 2}» -> error: these types do not match (crossing types needs an explicit cast) (resolve_binary; DESIGN: i64 addition)\nc := i32 1, x := if (c == 1) (f32 1) else (f64 2) -> error: the arms of this `if` give different types (if.rs read; Q-63: arms convert)\np := alloc 1 of f64 0.0, p@ = f32 9 -> error: these types do not match (check_store_type through pointer.rs)\nprint «{i32 ⊆ i64}» -> true (includes answers, but only `⊆` asks it)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The seed still implements ›No implicit coercion; a numeric type applied to a value is the conversion‹, the heading DESIGN superseded on 2 October 2026: a value crosses number types only through a written `T(value)` (`build_cast`, \"the only cross-type path\") or as a `rational_number` where it lands (`commit_if_literal`), and every place two number types meet tests equality (`check_store_type`'s `out == target_ty`, a yes/no `Result<(), ParseError>` that cannot hand back a converted value; `resolve_binary`'s `x != y`; `if.rs` `read`'s `same_type`), while the seed's one lies-inside test, `subset::includes`, is private to `⊆`"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:45+02:00",
+      "by": "logoslang-why-P147-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P147",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:46+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "06d47f5",
+        "change": "accepted as a why of W306, same as W312",
+        "reason": "A and B state the same fact: the seed still implements the superseded heading ›No implicit coercion; a numeric type applied to a value is the conversion‹ (replaced by Q-63, 2 October 2026): check_store_type returns () and refuses every other type, resolve_binary and the if arms test the same exact equality, and only build_cast and narrowed_operand build a conversion"
+      },
+      {
+        "at": "2026-10-12T09:46+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "06d47f5",
+        "change": "asked: no why found",
+        "reason": "both agents: the only answer to why the code still follows the old heading is history; DESIGN already has the rule, and its one open point (Q79) does not touch f32 into f64 or i32 into i64"
+      }
+    ]
   }
 ]
