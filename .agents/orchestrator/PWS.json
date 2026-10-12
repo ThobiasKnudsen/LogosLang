@@ -29909,7 +29909,9 @@
     "status": "accepted",
     "text": "lex::token picks a token's extent reader off Resolved.identity, the dyad the matched name yields, so an extent reader crosses := with the value: the name t, bound to the text type, lexes with the quote reader string::register installs on the text type, read(text, 0), which reads the text from t on as a «…» quote: past the end for t alone (the panic), to the next » for t xyz» (one cell, built as the text «xyz»), or to no » at all (\"this `«` has no `»`\")",
     "proposed_for": "P159",
-    "why": null,
+    "why": [
+      "W323"
+    ],
     "anchors": [
       "token",
       "extent_reader",
@@ -29985,6 +29987,15 @@
         "commit": "3d0655b",
         "change": "accepted as a why of P159, same as W317",
         "reason": "A and B state the same fact: lex::token finds a token's extent reader through the identity the name resolves to, so the reader crosses := with the value"
+      },
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "why + W323",
+        "reason": null
       }
     ]
   },
@@ -30056,7 +30067,10 @@
     "status": "accepted",
     "text": "string::read steps two bytes past the « it takes to stand at from without checking it is there, its one check a debug_assert! that a release build drops; so handed the text at the name t it slices source[2..] past the end (t alone) or inside a » (t») and panics, where the comment reader in comment.rs and print's quote_span_after first check that the text starts with « and answer a non-quote with an error",
     "proposed_for": "P159",
-    "why": null,
+    "why": [
+      "W325",
+      "W328"
+    ],
     "anchors": [
       "read",
       "quote_span_after",
@@ -30122,6 +30136,24 @@
         "commit": "3d0655b",
         "change": "accepted as a why of P159, same as W319",
         "reason": "A and B state the same fact: string::read checks the « only by debug_assert! and slices two bytes on unchecked, so a release build panics where the comment reader and quotes.rs check first"
+      },
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "why + W325",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "why + W328",
+        "reason": null
       }
     ]
   },
@@ -30131,7 +30163,9 @@
     "status": "accepted",
     "text": "The text type and the « quote opener are one identity: string::register declares the spelling « on the string type node cx.string_ and puts the quote reader on that record as its constructor (construct) and its extent reader (read), where comment::register gives # a token node of its own apart from the comment type; since a type's parse crosses := (`pow := ^` parses as ^ does) and := binds a second name to the type's own dyad, a name bound to the text type (t := «a».type) is lexed and constructed as a «, and the quote reader reads the name's own text as a quote",
     "proposed_for": "P159",
-    "why": null,
+    "why": [
+      "W322"
+    ],
     "anchors": [
       "construct",
       "own_text",
@@ -30211,6 +30245,15 @@
         "commit": "3d0655b",
         "change": "text was \"string::construct, the text type's constructor, reads its quote from the cell's own spelling (tape.own_text()) and has no case for a cell spelled other than «…», though ctor_of wakes it for every cell whose dyad is the text type, since a type's parse crosses := (›Two levels‹); so the cell the lexer made of t xyz» is built as the text «xyz», and with the lexer fixed alone the cell t would still reach read(\\\"t\\\", 0) here, while the sibling rational::construct reads a spelling that is not a number as the type's name, the conversion form (r := rational_number, r 5 gives 5)\"",
         "reason": "why-P159-a's wording (W315, merged) names the deeper fact, the one identity for the text type and the « opener; B's constructor half follows from it"
+      },
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "why + W322",
+        "reason": null
       }
     ]
   },
@@ -31161,10 +31204,10 @@
   {
     "id": "W322",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "Neither DESIGN.md nor a page it points to says whether a literal's opener is a spelling of the type its literal builds or an identity of its own that builds a value of that type: DESIGN names both `«` and `#` a constructor (›Strings nest by depth…‹ \"The `«` constructor\", ›Text literals are plain values; `#` is the one comment constructor‹) and `(` the scope identity's constructor, and the seed answers each its own way: `#`, `(` and `[` are token nodes apart from the comment, scope and square_brackets types, while string::register declares `«` on the text type node itself and rational::register declares the number pattern on rational_number's node",
     "proposed_for": "W311",
-    "why": null,
+    "why": [],
     "anchors": [
       "src/identities/string.rs",
       "src/identities/comment.rs",
@@ -31172,7 +31215,9 @@
       "src/identities/instance.rs",
       "src/identities/scope.rs",
       "src/identities/rational.rs",
-      "DESIGN.md"
+      "DESIGN.md",
+      "string_",
+      "language_sketch.logos"
     ],
     "design": [
       "Strings nest by depth; only five escapes; `«…»` is the only spelling",
@@ -31181,7 +31226,8 @@
       "Strings and comments are near-degenerate scopes",
       "`{ }` is text interpolation",
       "A constructor that finds nothing to consume sets its flag and stands as itself",
-      "`lex_rank` belongs to the binding, not the type"
+      "`lex_rank` belongs to the binding, not the type",
+      "A language is a section with an authored start of five names"
     ],
     "pages": [],
     "evidence": [
@@ -31199,12 +31245,35 @@
         "command": "target/release/logos 'scope'; target/release/logos 'square_brackets'; target/release/logos 'string'",
         "output": "type      (a named type apart from its opener (\ntype      (a named type apart from its opener [\nerror: unknown name `string`   (the text type's only spelling is «)",
         "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -o -e '`logos \\(«\\)` would open a string' -e 'The `«` constructor counts `«`/`»` and `\\{`/`\\}`' -e 'The conversion is the text type applied to the value \\(`string\\(n\\)`' -e '`#` takes a following `«…»` or the raw text to end of line \\(sugar for the string form\\) and builds a \\*\\*comment node\\*\\*' DESIGN.md; rg -n -F -e 'lex «\\«»' -e 'string := ' DESIGN.md; echo \"exit $?\"",
+        "output": "523:`logos («)` would open a string\n963:`#` takes a following `«…»` or the raw text to end of line (sugar for the string form) and builds a **comment node**\n970:The `«` constructor counts `«`/`»` and `{`/`}`\n1614:The conversion is the text type applied to the value (`string(n)`\nexit 1",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -F -e 'lex «\\«» := ?' -e 'lex «#» := ?' -e 'string := type ?' language_sketch.logos",
+        "output": "89:lex «\\«» := ?\n91:lex «#» := ?   # the one comment constructor: takes a «…» string or raw text to end of line; builds a reflectable, void-valued comment node\n117:string := type ?",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'let id = cx\\.string_|cx\\.declare\\(\"«\", id\\)|cx\\.metas\\.insert\\(id, construct\\)|cx\\.extents\\.insert\\(id|let hash = |cx\\.declare\\(\"#\", hash\\)|cx\\.metas\\.insert\\(hash' src/identities/string.rs src/identities/comment.rs",
+        "output": "src/identities/comment.rs:22:    let hash = cx.store.alloc_head(cx.type_, record);\nsrc/identities/comment.rs:23:    cx.declare(\"#\", hash);\nsrc/identities/comment.rs:24:    cx.metas.insert(hash, construct);\nsrc/identities/string.rs:22:    let id = cx.string_;\nsrc/identities/string.rs:25:    cx.declare(\"«\", id);\nsrc/identities/string.rs:26:    cx.metas.insert(id, construct);\nsrc/identities/string.rs:27:    cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/e4.txt",
+        "output": "== plus := +, print «{2 plus 3}»\n5\nexit 0\n== t := i32, x := t 5, print «{x}»\n5\nexit 0\n== t := «a».type, x := t xyz», 0\n<command line>: run error: a record, text or hole is not read as one value; read a field or take its address\nexit 1",
+        "commit": "39f2d7e"
       }
     ],
     "found_by": [
-      "A"
+      "A",
+      "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "Neither DESIGN.md nor a page it links says what the start name « is bound to, the text type itself or an identity of its own whose parse reads the quote and builds a text: ›A language is a section with an authored start of five names‹ makes « a start name that opens a string, ›Strings nest by depth‹ speaks only of \"the « constructor\", ›`{ }` is text interpolation‹ names the text type string with the conversion string(n) as what it does to a value, and ›Text literals are plain values‹ gives # a constructor that builds a comment node but says nothing of «; only language_sketch.logos declares them apart (lex «\\«» := ? beside string := type ?), the opener's value left ?; so string::register binding « to cx.string_ breaks no rule, and ›`lex_rank` belongs to the binding‹ then lets the quote reader cross := to every name of the text type"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T10:01+02:00",
@@ -31214,6 +31283,487 @@
       "commit": "39f2d7e",
       "run": "why-P159",
       "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "accepted as a why of W311, same as W326",
+        "reason": "A and B state the same missing rule: DESIGN does not say whether a literal's opener (« here) is a spelling of the type it builds or an identity of its own; A's wording covers #, ( and [ too, which the seed answers the other way"
+      },
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "asked: no why found",
+        "reason": "both agents: a rule DESIGN does not have yet; every nearby rule (›Strings nest by depth‹, ›Text literals are plain values‹, ›A language is a section with an authored start of five names‹) holds under either answer"
+      }
+    ]
+  },
+  {
+    "id": "W323",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Neither DESIGN.md nor a page it points to says whether the reach of a token that reads its own extent is a fact of the name that matched or of the identity: ›Two levels‹ ties everything the lexer owns to a name or an appearance, and its per-name list (binding, name, lex_rank, scope, start, end, gate) has no extent, while ›Every identity has a parse_rank, and ( works in two steps‹ counts # and « among the raw-text consumers built at discovery, behaviour of the identity, which crosses :=; so the seed keeps one reader per identity, at EXTENT_OFF in the type's record (meta::install_extent), Binding has no field for one, and lex::token can only find it through r.identity",
+    "proposed_for": "W308",
+    "why": [],
+    "anchors": [
+      "install_extent",
+      "extent_reader",
+      "EXTENT_OFF",
+      "Binding",
+      "src/identities/binding.rs",
+      "src/identities/meta.rs",
+      "src/parse/lex.rs",
+      "DESIGN.md",
+      "extent_of"
+    ],
+    "design": [
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "Every identity has a `parse_rank`, and `(` works in two steps",
+      "Unknown spellings are two pattern identities",
+      "`lex_rank` belongs to the binding, not the type",
+      "Strings and comments are near-degenerate scopes"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n '^\\s+pub [a-z_]+: ' src/identities/binding.rs; rg -n 'EXTENT_OFF' src/identities/meta.rs",
+        "output": "binding.rs: pub dyad, scope, start, end, gate, name, lex_rank, frame, offset, unwritten, unmade   (11 fields, no extent reader)\nmeta.rs:70:const EXTENT_OFF: usize = 42;\nmeta.rs:318:    std::ptr::read_unaligned(dyad::head(id).add(EXTENT_OFF) as *const DyadPtr)\nmeta.rs:324:    std::ptr::write_unaligned(dyad::head(id).add(EXTENT_OFF) as *mut DyadPtr, leaf);",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'Everything the lexer owns|raw-text consumers|read their own extent' DESIGN.md (the nearest rules)",
+        "output": "›Two levels‹: \"Everything the lexer owns is tied to a name or to an appearance. Per name: the binding, name, lex_rank, scope, start, end, gate.\"   (the extent is in neither list)\n›Every identity has a parse_rank, and ( works in two steps‹: \"A token whose parse_rank is at or above ('s is built at discovery ...: the raw-text consumers #, «, import, a hosted-clause opener, and ( itself\"   (reading raw text is the constructor's, which crosses :=)\n›Unknown spellings are two pattern identities‹: \"« and # read their own extent and need no pattern\"; its Seed line: \"the record of each carries an extent reader\"   (describes the seed, not whose the reach is)\n›lex_rank belongs to the binding‹: parse, parse_rank, associativity cross :=, lex_rank does not; the extent is in neither list",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -o -e 'Everything the lexer owns is tied to a name or to an appearance\\. Per name: [^.]*\\.' -e '`parse_rank`, `associativity` and `parse` stay in the identity.s value, so they cross `:=`' -e 'Brackets, strings and comments are one family, differing only in how far they lex and how much they build' -e '`«` and `#` read their own extent and need no pattern' -e 'the record of each carries an extent reader' DESIGN.md",
+        "output": "1273:`parse_rank`, `associativity` and `parse` stay in the identity's value, so they cross `:=`\n1578:`«` and `#` read their own extent and need no pattern\n1580:the record of each carries an extent reader\n1610:Brackets, strings and comments are one family, differing only in how far they lex and how much they build\n1798:Everything the lexer owns is tied to a name or to an appearance. Per name: the binding, `name`, `lex_rank`, `scope`, `start`, `end`, `gate`.",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'const (PREC|CTOR|EXTENT)_OFF|add\\(EXTENT_OFF\\)' src/identities/meta.rs; rg -n '^    pub [a-z_]+:' src/identities/binding.rs",
+        "output": "63:const PREC_OFF: usize = 2;\n64:const CTOR_OFF: usize = 10;\n70:const EXTENT_OFF: usize = 42;\n318:    std::ptr::read_unaligned(dyad::head(id).add(EXTENT_OFF) as *const DyadPtr)\n324:    std::ptr::write_unaligned(dyad::head(id).add(EXTENT_OFF) as *mut DyadPtr, leaf);\n20:    pub dyad: DyadPtr,\n23:    pub scope: DyadPtr,\n26:    pub start: DyadPtr,\n29:    pub end: DyadPtr,\n31:    pub gate: DyadPtr,\n34:    pub name: DyadPtr,\n37:    pub lex_rank: f64,\n42:    pub frame: DyadPtr,\n43:    pub offset: usize,\n46:    pub unwritten: DyadPtr,",
+        "commit": "52c858c"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "Neither DESIGN.md nor a page it links says at which level an own-extent reader lives, with the name or with the value: ›Two levels‹ says everything the lexer owns is tied to a name or an appearance and lists lex_rank, not an extent reader, per name; ›`lex_rank` belongs to the binding, not the type‹ keeps a spelling's rank off := because a second name is a different spelling, and lets exactly parse_rank, associativity and parse cross; ›Strings and comments are near-degenerate scopes‹ puts how far a string lexes in the « scope beside how much it builds; ›Unknown spellings are two pattern identities‹ says only that « and # read their own extent, its Seed line placing the reader on the record; so meta::install_extent writes it into the identity's record at EXTENT_OFF beside the constructor and parse_rank, the value a := shares, and Binding has no field for one"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:02+02:00",
+      "by": "logoslang-why-P159-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "accepted as a why of W308, same as W327",
+        "reason": "A and B state the same missing rule: DESIGN does not say whether an own-extent reader belongs to the name or to the identity; ›Two levels‹ lists no extent per name, and the seed keeps one per identity at EXTENT_OFF"
+      },
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "asked: no why found",
+        "reason": "both agents: a rule DESIGN does not have yet; ›Two levels‹ ties the lexer's facts to a name but lists no extent, and ›Every identity has a parse_rank‹ counts # and « among raw-text consumers of the identity; A reads it as a gap, not a disagreement"
+      }
+    ]
+  },
+  {
+    "id": "W324",
+    "kind": "why",
+    "status": "draft",
+    "text": "Runtime::run and Lowerer::lower refuse to read a record place whole (Read::Aggregate gives NoWholeRead and NotLowerable, the read kind's doc saying 'read by field or by address, never whole'), while a run-time rational, sixteen bytes that DESIGN calls 'copied like a record', is read as the address of its bytes (Read::Rational, place_addr); DESIGN reads a data type's value as bytes, a copy, and refuses no whole read of a record, so the refusal is the seed's own, and a caller that drops a record's value must keep it from the read with a test of its own, as declare::run's Read::Aggregate exclusion does, while a bare record line, which no runner tests, fails on both tiers",
+    "proposed_for": "W316",
+    "why": null,
+    "anchors": [
+      "Runtime",
+      "Lowerer",
+      "read_kind",
+      "NoWholeRead",
+      "NotLowerable",
+      "place_addr",
+      "src/run.rs",
+      "src/compile.rs",
+      "src/identities/read.rs",
+      "src/identities/declare.rs"
+    ],
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does",
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Read::Rational => Ok\\(self.place_addr|Read::Aggregate \\| Read::Opaque \\| Read::Undefined|/// A record instance place|/// A run-time rational: sixteen' src/run.rs src/compile.rs src/identities/read.rs",
+        "output": "src/run.rs:853:            Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),\nsrc/run.rs:865:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),\nsrc/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),\nsrc/identities/read.rs:36:    /// A run-time rational: sixteen bytes `[num, den]` in a place, read by address and\nsrc/identities/read.rs:39:    /// A record instance place: read by field or by address, never whole.",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -i 'record.{0,60}whole|whole.{0,40}record|copied like a record|as bytes' DESIGN.md",
+        "output": "620:- A **data** type reads its value as bytes, stored in a fresh place: `y := x` is a **copy**. ...\n924:- **Ruled:** 28 September 2026, Thobias: a run-time rational is a 16-byte value `[num, den]` in its place, copied like a record; ...\n(no rule refuses a whole read of a record)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w316-a.txt   (release build of dev 39f2d7e; pt := type ( a := i32 ?, b := i32 ? ) before each)",
+        "output": "p := pt(1, 2), p, 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (drain reads the bare line whole)\nh := fn () -> i32 ( p := pt(1, 2), p, 0 ), h() -> the same error, exit 1   (scope::run)\nthe same with h.compile() before h() -> run error: compile() failed: this cannot be compiled yet, exit 1\nh := fn () -> i32 ( p := pt(1, 2), 0 ), h.compile(), h() -> 0, exit 0   (the declaration alone: declare::run skips Read::Aggregate)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:03+02:00",
+      "by": "logoslang-why-P157-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W325",
+    "kind": "why",
+    "status": "accepted",
+    "text": "An extent reader is handed the token's text from its start, its own spelling included, and gives back one length for spelling and quote together that replaces the trie's match (ExtentFn is fn(&str); lex::token runs read(text) then sets r.matched = extent.len), and the constructor likewise reads tape.own_text(), the whole cell; so a reader is never told how long the spelling that matched was and must step past an opener it assumes: string::read steps '«'.len_utf8(), comment's text_start steps '#'.len_utf8(), right only when the name that matched is « or # itself",
+    "proposed_for": "W310",
+    "why": null,
+    "anchors": [
+      "ExtentFn",
+      "Extent",
+      "Resolved",
+      "src/parse/lex.rs",
+      "src/identities/string.rs",
+      "src/identities/comment.rs",
+      "text_start",
+      "own_text"
+    ],
+    "design": [
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "`x:name` is the name's spelling, held by the binding",
+      "Unknown spellings are two pattern identities"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"pub type ExtentFn|let extent = read\\(text\\)|r.matched = extent.len|let mut i = from \\+ '«'|spelling\\['#'.len_utf8|let spelling = tape.own_text\" src/parse/lex.rs src/identities/string.rs src/identities/comment.rs",
+        "output": "src/parse/lex.rs:21:pub type ExtentFn = fn(&str) -> Result<Extent, ResolveError>;\nsrc/parse/lex.rs:38:    let extent = read(text)?;\nsrc/parse/lex.rs:39:    r.matched = extent.len;\nsrc/identities/string.rs:36:    let spelling = tape.own_text().ok_or(ParseError::BadLiteral)?;\nsrc/identities/string.rs:105:    let mut i = from + '«'.len_utf8();\nsrc/identities/comment.rs:39:    let rest = spelling['#'.len_utf8()..].trim_start_matches([' ', '\\t']);\nsrc/identities/comment.rs:51:    let spelling = tape.own_text().ok_or(ParseError::BadLiteral)?;",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "target/release/logos 't := «a».type, t»'",
+        "output": "panicked at src/identities/string.rs:106:31: start byte index 2 is not a char boundary; it is inside '»' (bytes 1..3 of string)\n(the trie matched t, one byte; the reader stepped two, the length of «)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:03+02:00",
+      "by": "logoslang-why-P159-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "accepted as a why of W310",
+        "reason": "A's fact: an extent reader gets the text from the token's start and returns one length for spelling and quote together, so it is never told the matched spelling's length and must assume it (2 bytes for «)"
+      }
+    ]
+  },
+  {
+    "id": "W326",
+    "kind": "why",
+    "status": "merged",
+    "text": "Neither DESIGN.md nor a page it links says what the start name « is bound to, the text type itself or an identity of its own whose parse reads the quote and builds a text: ›A language is a section with an authored start of five names‹ makes « a start name that opens a string, ›Strings nest by depth‹ speaks only of \"the « constructor\", ›`{ }` is text interpolation‹ names the text type string with the conversion string(n) as what it does to a value, and ›Text literals are plain values‹ gives # a constructor that builds a comment node but says nothing of «; only language_sketch.logos declares them apart (lex «\\«» := ? beside string := type ?), the opener's value left ?; so string::register binding « to cx.string_ breaks no rule, and ›`lex_rank` belongs to the binding‹ then lets the quote reader cross := to every name of the text type",
+    "proposed_for": "W311",
+    "why": null,
+    "anchors": [
+      "string_",
+      "src/identities/string.rs",
+      "src/identities/comment.rs",
+      "language_sketch.logos",
+      "DESIGN.md"
+    ],
+    "design": [
+      "A language is a section with an authored start of five names",
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling",
+      "`{ }` is text interpolation",
+      "Text literals are plain values; `#` is the one comment constructor",
+      "`lex_rank` belongs to the binding, not the type"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o -e '`logos \\(«\\)` would open a string' -e 'The `«` constructor counts `«`/`»` and `\\{`/`\\}`' -e 'The conversion is the text type applied to the value \\(`string\\(n\\)`' -e '`#` takes a following `«…»` or the raw text to end of line \\(sugar for the string form\\) and builds a \\*\\*comment node\\*\\*' DESIGN.md; rg -n -F -e 'lex «\\«»' -e 'string := ' DESIGN.md; echo \"exit $?\"",
+        "output": "523:`logos («)` would open a string\n963:`#` takes a following `«…»` or the raw text to end of line (sugar for the string form) and builds a **comment node**\n970:The `«` constructor counts `«`/`»` and `{`/`}`\n1614:The conversion is the text type applied to the value (`string(n)`\nexit 1",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -F -e 'lex «\\«» := ?' -e 'lex «#» := ?' -e 'string := type ?' language_sketch.logos",
+        "output": "89:lex «\\«» := ?\n91:lex «#» := ?   # the one comment constructor: takes a «…» string or raw text to end of line; builds a reflectable, void-valued comment node\n117:string := type ?",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'let id = cx\\.string_|cx\\.declare\\(\"«\", id\\)|cx\\.metas\\.insert\\(id, construct\\)|cx\\.extents\\.insert\\(id|let hash = |cx\\.declare\\(\"#\", hash\\)|cx\\.metas\\.insert\\(hash' src/identities/string.rs src/identities/comment.rs",
+        "output": "src/identities/comment.rs:22:    let hash = cx.store.alloc_head(cx.type_, record);\nsrc/identities/comment.rs:23:    cx.declare(\"#\", hash);\nsrc/identities/comment.rs:24:    cx.metas.insert(hash, construct);\nsrc/identities/string.rs:22:    let id = cx.string_;\nsrc/identities/string.rs:25:    cx.declare(\"«\", id);\nsrc/identities/string.rs:26:    cx.metas.insert(id, construct);\nsrc/identities/string.rs:27:    cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/e4.txt",
+        "output": "== plus := +, print «{2 plus 3}»\n5\nexit 0\n== t := i32, x := t 5, print «{x}»\n5\nexit 0\n== t := «a».type, x := t xyz», 0\n<command line>: run error: a record, text or hole is not read as one value; read a field or take its address\nexit 1",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W322",
+    "made": {
+      "at": "2026-10-12T10:03+02:00",
+      "by": "logoslang-why-P159-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "merged into W322",
+        "reason": "A and B state the same missing rule: DESIGN does not say whether a literal's opener (« here) is a spelling of the type it builds or an identity of its own; A's wording covers #, ( and [ too, which the seed answers the other way"
+      }
+    ]
+  },
+  {
+    "id": "W327",
+    "kind": "why",
+    "status": "merged",
+    "text": "Neither DESIGN.md nor a page it links says at which level an own-extent reader lives, with the name or with the value: ›Two levels‹ says everything the lexer owns is tied to a name or an appearance and lists lex_rank, not an extent reader, per name; ›`lex_rank` belongs to the binding, not the type‹ keeps a spelling's rank off := because a second name is a different spelling, and lets exactly parse_rank, associativity and parse cross; ›Strings and comments are near-degenerate scopes‹ puts how far a string lexes in the « scope beside how much it builds; ›Unknown spellings are two pattern identities‹ says only that « and # read their own extent, its Seed line placing the reader on the record; so meta::install_extent writes it into the identity's record at EXTENT_OFF beside the constructor and parse_rank, the value a := shares, and Binding has no field for one",
+    "proposed_for": "W308",
+    "why": null,
+    "anchors": [
+      "install_extent",
+      "extent_of",
+      "EXTENT_OFF",
+      "Binding",
+      "src/identities/meta.rs",
+      "src/identities/binding.rs",
+      "DESIGN.md"
+    ],
+    "design": [
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "`lex_rank` belongs to the binding, not the type",
+      "Strings and comments are near-degenerate scopes",
+      "Unknown spellings are two pattern identities"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -o -e 'Everything the lexer owns is tied to a name or to an appearance\\. Per name: [^.]*\\.' -e '`parse_rank`, `associativity` and `parse` stay in the identity.s value, so they cross `:=`' -e 'Brackets, strings and comments are one family, differing only in how far they lex and how much they build' -e '`«` and `#` read their own extent and need no pattern' -e 'the record of each carries an extent reader' DESIGN.md",
+        "output": "1273:`parse_rank`, `associativity` and `parse` stay in the identity's value, so they cross `:=`\n1578:`«` and `#` read their own extent and need no pattern\n1580:the record of each carries an extent reader\n1610:Brackets, strings and comments are one family, differing only in how far they lex and how much they build\n1798:Everything the lexer owns is tied to a name or to an appearance. Per name: the binding, `name`, `lex_rank`, `scope`, `start`, `end`, `gate`.",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'const (PREC|CTOR|EXTENT)_OFF|add\\(EXTENT_OFF\\)' src/identities/meta.rs; rg -n '^    pub [a-z_]+:' src/identities/binding.rs",
+        "output": "63:const PREC_OFF: usize = 2;\n64:const CTOR_OFF: usize = 10;\n70:const EXTENT_OFF: usize = 42;\n318:    std::ptr::read_unaligned(dyad::head(id).add(EXTENT_OFF) as *const DyadPtr)\n324:    std::ptr::write_unaligned(dyad::head(id).add(EXTENT_OFF) as *mut DyadPtr, leaf);\n20:    pub dyad: DyadPtr,\n23:    pub scope: DyadPtr,\n26:    pub start: DyadPtr,\n29:    pub end: DyadPtr,\n31:    pub gate: DyadPtr,\n34:    pub name: DyadPtr,\n37:    pub lex_rank: f64,\n42:    pub frame: DyadPtr,\n43:    pub offset: usize,\n46:    pub unwritten: DyadPtr,",
+        "commit": "52c858c"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W323",
+    "made": {
+      "at": "2026-10-12T10:03+02:00",
+      "by": "logoslang-why-P159-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "evidence 2 was {\"command\": \"rg -n 'const (PREC|CTOR|EXTENT)_OFF|add\\\\(EXTENT_OFF\\\\)' src/identities/meta.rs; rg -n '^    pub [a-z_]+:' src/identities/binding.rs\", \"output\": \"src/identities/meta.rs:63:const PREC_OFF: usize = 2;\\nsrc/identities/meta.rs:64:const CTOR_OFF: usize = 10;\\nsrc/identities/meta.rs:70:const EXTENT_OFF: usize = 42;\\nsrc/identities/meta.rs:318:    std::ptr::read_unaligned(dyad::head(id).add(EXTENT_OFF) as *const DyadPtr)\\nsrc/identities/meta.rs:324:    std::ptr::write_unaligned(dyad::head(id).add(EXTENT_OFF) as *mut DyadPtr, leaf);\\nbinding.rs fields: dyad, scope, start, end, gate, name, lex_rank, frame, offset, unwritten, unmade\", \"commit\": \"39f2d7e\"}",
+        "reason": "why-P159-b: the output was a summary typed before running; this is the command's exact output, trimmed to 15 lines"
+      },
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "merged into W323",
+        "reason": "A and B state the same missing rule: DESIGN does not say whether an own-extent reader belongs to the name or to the identity; ›Two levels‹ lists no extent per name, and the seed keeps one per identity at EXTENT_OFF"
+      }
+    ]
+  },
+  {
+    "id": "W328",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Whether a quote starts at a position is tested at each caller of string::read, not in read: the comment reader's extent reader and construct, import's path, construct_regex and print/error's quote_span_after each test that the source text starts with « before they read (five copies of the test), while the « identity's own two readers, its extent reader and string::construct, which lex::token and ctor_of reach by the identity a name yields, test nothing and hand read the text as found; read's own test is a debug_assert!",
+    "proposed_for": "W310",
+    "why": null,
+    "anchors": [
+      "read",
+      "quote_span_after",
+      "construct_regex",
+      "construct",
+      "src/identities/string.rs",
+      "src/identities/comment.rs",
+      "src/parse/quotes.rs"
+    ],
+    "design": [
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"starts_with\\('«'\\)|string::read\\(|\\|text\\| read\\(text, 0\\)|read\\(spelling, 0\\)\" src/identities/string.rs src/identities/comment.rs src/parse/quotes.rs",
+        "output": "src/identities/comment.rs:27:        if text[at..].starts_with('«') {\nsrc/identities/comment.rs:28:            string::read(text, at).map(string::Quote::extent)\nsrc/identities/comment.rs:53:    let text = if spelling[at..].starts_with('«') {\nsrc/identities/comment.rs:54:        string::read(spelling, at).map_err(ParseError::Resolve)?.text(spelling)\nsrc/parse/quotes.rs:60:        let path_text: String = if source[self.cx.pos..].starts_with('«') {\nsrc/parse/quotes.rs:105:        if !source[start..].starts_with('«') {\nsrc/parse/quotes.rs:178:        let quote = crate::identities::string::read(self.cx.source, start)\nsrc/parse/quotes.rs:245:        if !source[start..].starts_with('«') {\nsrc/identities/string.rs:27:    cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));\nsrc/identities/string.rs:37:    let quote = read(spelling, 0).map_err(ParseError::Resolve)?;\nsrc/identities/string.rs:98:    debug_assert!(source[from..].starts_with('«'));",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/e2.txt",
+        "output": "== t := «a».type, t\nthread '<unnamed>' panicked at src/identities/string.rs:106:31:\nstart byte index 2 is out of bounds for string of length 1\nexit 1\n== t := «a».type, t»\nthread '<unnamed>' panicked at src/identities/string.rs:106:31:\nstart byte index 2 is not a char boundary; it is inside '»' (bytes 1..3 of string)\nexit 1\n== t := «a».type, print t»\n<command line>:1:22: error: `print` must be followed by a «…» quote\nexit 1",
+        "commit": "52c858c"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:04+02:00",
+      "by": "logoslang-why-P159-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "evidence 2 was {\"command\": \"bash why-probes/run.sh why-probes/e2.txt\", \"output\": \"== t := «a».type, t\\nthread '<unnamed>' panicked at src/identities/string.rs:106:31:\\nstart byte index 2 is out of bounds for string of length 1\\nexit 1\\n== t := «a].type, t»\\nthread '<unnamed>' panicked at src/identities/string.rs:106:31:\\nstart byte index 2 is not a char boundary; it is inside '»' (bytes 1..3 of string)\\nexit 1\\n== t := «a».type, print t»\\n<command line>:1:22: error: `print` must be followed by a «…» quote\\nexit 1\", \"commit\": \"39f2d7e\"}",
+        "reason": "why-P159-b: the output had a typo («a].type for «a».type); this is the exact output"
+      },
+      {
+        "at": "2026-10-12T10:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "52c858c",
+        "change": "accepted as a why of W310",
+        "reason": "B's fact, a second cause beside W325: the starts-with-« test sits at five callers of string::read, not in read, so the « identity's own two readers, which lex::token and ctor_of reach, are the ones without it"
+      }
+    ]
+  },
+  {
+    "id": "W329",
+    "kind": "why",
+    "status": "draft",
+    "text": "declare_here gives a name no offset in two of its arms: the type arm rebinds the name to the type (scopes.rebind) and the last arm points the binding at the value node (Binding::set_dyad, which leaves frame and offset unset) and keeps that node as declared, for every value no arm above gives a place (a fn literal, a text, a fraction literal); every other arm calls place_for; ›A scope lays out its declarations‹ gives every declaration an offset in the scope's storage and ›The pass runs only as far as it must‹ writes a named result into the name's slot, which together leave a declaration's third slot a write into the name's place, or nothing for a ?, never the value node itself",
+    "proposed_for": "W318",
+    "why": null,
+    "anchors": [
+      "declare_here",
+      "place_for",
+      "rebind",
+      "set_dyad",
+      "lay_out",
+      "Binding",
+      "src/parse/declare.rs",
+      "src/identities/binding.rs"
+    ],
+    "design": [
+      "A scope lays out its declarations; a use reaches the offset through its binding",
+      "The pass runs only as far as it must, in order, and never twice",
+      "A `:=` node's fields are `lhs` and `rhs`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'self.place_for\\(binding|self.cx.scopes.rebind\\(binding, read\\)|Binding::set_dyad\\(binding, read\\)|Binding::lay_out\\(binding, b.dyad' src/parse/declare.rs; rg -n '\\(\\*fields\\).(frame|offset) = |\\(\\*Self::fields\\(dyad\\)\\).dyad = identity' src/identities/binding.rs; rg -n 'Every declaration of a scope, shared or not, has an offset|A named result is written into the name.s slot' DESIGN.md",
+        "output": "src/parse/declare.rs:654, 670, 706, 723, 731, 746, 756:  let place = self.place_for(binding, …);   (empty node, hole, construct, box, Logos node, owning pointer, scalar)\nsrc/parse/declare.rs:716:                self.cx.scopes.rebind(binding, read);    (a type: no offset)\nsrc/parse/declare.rs:762:                Binding::lay_out(binding, b.dyad, b.frame, b.offset);   (x := y over storage: the same bytes)\nsrc/parse/declare.rs:766:                Binding::set_dyad(binding, read);    (the last arm: no offset)\nsrc/identities/binding.rs:130-131:   lay_out writes (*fields).frame and (*fields).offset\nsrc/identities/binding.rs:177:        (*Self::fields(dyad)).dyad = identity;   (set_dyad writes only dyad)\nDESIGN.md ›A scope lays out its declarations‹: Every declaration of a scope, shared or not, has an offset in the scope's own storage, …\nDESIGN.md ›The pass runs only as far as it must‹: … A named result is written into the name's slot, an unnamed one is dropped, …\nDESIGN.md ›A `:=` node's fields are `lhs` and `rhs`‹: What the seed made of the right side stays a third slot.",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p157-b-r3.txt   (each line one program through target/release/logos, release build of 39f2d7e)",
+        "output": "x := i32 3, print «{x:offset}» -> 39328   (the scalar arm: place_for)\nx := i32 3, g := fn () -> i32 ( 1 ), y := i32 4, print «{y:offset}» -> 40208\ng := fn () -> i32 ( 1 ), print «{g:offset}» -> 0   (the last arm: no offset)\nt := i32, print «{t:offset}» -> 0   (the type arm: no offset)\nb := true, print «{b:offset}» -> 39288\ns := «a» and r := 1/2 reach the same last arm and fail at their declaration (P157), so their offset cannot be printed",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:04+02:00",
+      "by": "logoslang-why-P157-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "B"
     },
     "history": []
   }
