@@ -34337,5 +34337,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P189",
+    "kind": "problem",
+    "status": "open",
+    "text": "A ( ) block that frees many names declared before it reads in time that grows with the square of their number; the same frees written straight on the line grow in step, and a failing line of the same shape adds a second square cost at the fault's end",
+    "program": "logos 'c := i32 1, h0 := alloc 1 of i32 0, h1 := alloc 1 of i32 1, h2 := alloc 1 of i32 2, ( free h0, free h1, free h2, 1 )' built at m = 300 to 3,000 names (.agents/orchestrator/tmp/issue-234-one-scope-reader/r3-speed.sh, shapes frees-flat, frees-block, no-frees, faultend-cli)",
+    "output": "dev bffb703, release, interpreted, wall seconds: frees on the line 0.017 / 0.033 / 0.050 / 0.073 at m = 300 / 1,000 / 2,000 / 3,000; frees in a block 0.017 / 0.042 / 0.096 / 0.159; the #234 branch 50f8b65 the same; failing with zz after y := immediate c: 2,500 names 0.236 against 0.178 kept",
+    "expected": "the block grows in step with m, as the frees on the line do (›Reading a program takes time in step with its size; no walk runs once per path‹)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-3, review round 3 of #234, 12 October 2026 (near P113, P148, P176)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:32+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "93ef9a9",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
