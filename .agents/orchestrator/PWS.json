@@ -31053,5 +31053,168 @@
         "reason": "A and B state the same fact: the only run entry on either tier is the whole-value read (Runtime::run, Lowerer::lower), so every runner that drops a value keeps its own skip list (drain, scope::run and its lower, declare::run, declare::lower)"
       }
     ]
+  },
+  {
+    "id": "S93",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A core type's run field holds its native operation, as its parse field holds its native parse: scope, if, return and := keep their operation on the type, no node carries an op word, and a type with no run, as square_brackets, is data read through its layout",
+    "fixes": [
+      "W305"
+    ],
+    "assessment": "Removes W301 (whether a node runs is read off its type, as ›Execution is function application‹ says), so read_kind's TUPLE/LIST arm and op_slot_of go and [1, 2] is data; with the W300 rule its value is its node (P150's first program, #195). Needs one Ruled line, the run twin of the Seed line 'the core parse is native' (›The constructors drive the tape‹). Operators that mint keep their op on the mint instead (#242). Medium: operand_record (38 calls), the meta.rs header, scope.rs, construct_index in fields.rs, read.rs, run.rs, compile.rs; after #242, which rewrites the same operator records.",
+    "decision": null,
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T09:56+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "3d0655b",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S94",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One rule for every value kept in its own node, whoever builds its type: a text from «…», a […] and a value of a type a Logos parse builds are each the node's address, eight bytes in a place",
+    "fixes": [
+      "W300"
+    ],
+    "assessment": "Gives place_layout an answer for string and square_brackets (the node's address, 8 bytes), so meta::is_node_valued's 'Logos fn constructor' test and read_kind's Opaque arm go; #213's list (s := «a», f(«a»), main(«hello»)) and #195's whole reads run, as x:name already does through a place of string. DESIGN: one Ruled line at ›A value of a type built by a Logos `parse` travels as a pointer‹; what [1, 2] or «a» prints stays #174's question. Small: read.rs, meta.rs, string.rs; with S93 for […].",
+    "decision": null,
+    "design": [
+      "A value of a type built by a Logos `parse` travels as a pointer"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T09:57+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "3d0655b",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S95",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Drop the i32 stand-in for a plain number (issue #214) only after #198 and #242: a written number that lands in a typed place is converted while parsing, so only one that lands nowhere typed stays a rational_number, read as its sixteen bytes",
+    "fixes": [
+      "W302"
+    ],
+    "assessment": "Decided by ›A plain number is a `rational_number`…‹; read_kind's FRACTION arm and rational::mold go, and r := 1/2, 0 and h(1/2) run (interpreted). The order is the point: dropped before #198 (one landing step) and #242 (the conversion as the mint's field) build the conversion at parse, every function with a plain number leaves the compiled tier, since compile.rs refuses rational operations; after them no function that compiles today stops compiling, provided a written number's conversion folds to a constant at parse (to check in the build), and a function holding a number that lands nowhere typed is interpreted until rationals lower (today it fails on both tiers). #214 is already 'blocked by #198'. Small: read.rs, rational.rs, run.rs, compile.rs.",
+    "decision": null,
+    "design": [
+      "A plain number is a `rational_number`, and a number type's definition converts it (headed \"Numeric literals are uncommitted until context classifies them\" until 29 September 2026)"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T09:57+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "3d0655b",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S96",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Build issue #242 as ruled: every operation whose field is ? mints, a node's type is its mint, and the machine operation is kept on the mint, never in each node's op word",
+    "fixes": [
+      "W304"
+    ],
+    "assessment": "Decided by ›A type with a `run` whose field is `?` mints too…‹ (Q-59, Q-61) and ›Which machine operation an operator is…‹ (Q-61: 'kept on the mint, not in an op slot of each node'); nothing for Thobias to choose. Removes the op and output_type words of +, -, *, /, ^ and the comparisons, and with them the kind byte's second job (picking add_i32 by its tag), so the byte's removal (#101) no longer waits for a rule set per backend (S26). Leaves the non-minting types' op word to S93. Large: binary.rs, ops.rs and every reader of an operator node's words; #242 is filed and unblocked.",
+    "decision": null,
+    "design": [
+      "A type with a `run` whose field is `?` mints too, so its `run` body is parsed once per mint"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T09:57+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "3d0655b",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W322",
+    "kind": "why",
+    "status": "draft",
+    "text": "Neither DESIGN.md nor a page it points to says whether a literal's opener is a spelling of the type its literal builds or an identity of its own that builds a value of that type: DESIGN names both `«` and `#` a constructor (›Strings nest by depth…‹ \"The `«` constructor\", ›Text literals are plain values; `#` is the one comment constructor‹) and `(` the scope identity's constructor, and the seed answers each its own way: `#`, `(` and `[` are token nodes apart from the comment, scope and square_brackets types, while string::register declares `«` on the text type node itself and rational::register declares the number pattern on rational_number's node",
+    "proposed_for": "W311",
+    "why": null,
+    "anchors": [
+      "src/identities/string.rs",
+      "src/identities/comment.rs",
+      "src/identities/paren.rs",
+      "src/identities/instance.rs",
+      "src/identities/scope.rs",
+      "src/identities/rational.rs",
+      "DESIGN.md"
+    ],
+    "design": [
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling",
+      "Text literals are plain values; `#` is the one comment constructor",
+      "The scope's constructor is the driver",
+      "Strings and comments are near-degenerate scopes",
+      "`{ }` is text interpolation",
+      "A constructor that finds nothing to consume sets its flag and stands as itself",
+      "`lex_rank` belongs to the binding, not the type"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'cx.declare(\"«\", id)|cx.declare(\"#\", hash)|cx.declare(r\"\\(\", open)|cx.declare(r\"\\[\", open_sq)|cx.declare(\"square_brackets\"|cx.declare(\"scope\"|cx.declare(r\"[0-9]|cx.declare(\"rational_number\"' src/identities",
+        "output": "string.rs:25:    cx.declare(\"«\", id);          (id = cx.string_, the text type)\nscope.rs:33:     cx.declare(\"scope\", scope_);\nparen.rs:16:     cx.declare(r\"\\(\", open);      (its own node)\ncomment.rs:23:   cx.declare(\"#\", hash);       (its own node; the comment type has no spelling)\ninstance.rs:74:  cx.declare(r\"\\[\", open_sq);   (its own node)\ninstance.rs:87:  cx.declare(\"square_brackets\", square_brackets);\nrational.rs:26:  cx.declare(r\"[0-9]+(?:\\.[0-9]+)?\", id);\nrational.rs:29:  cx.declare(\"rational_number\", id);   (same node as the pattern)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -i '`«` constructor|one comment constructor|`(` building its|string(n)|«example»|one family|finds nothing to consume' DESIGN.md (the nearest rules; none says whether an opener is its type's spelling)",
+        "output": "›Strings nest by depth‹: \"The `«` constructor counts «/» and {/}\": whose constructor is not said; \"`«…»` is the only spelling\" is against ASCII \"…\"\n›Text literals are plain values; # is the one comment constructor‹: the same wording for #, which the seed keeps apart from its type\n›The scope's constructor is the driver‹: \"`(` building its `scope` value\", yet the seed's ( is a node apart from scope\n›Strings and comments are near-degenerate scopes‹: \"Brackets, strings and comments are one family\", nothing on identity\n›{ }‹ and the Q-63/#199 ruling: the type is `string` (\"string(n)\", \"«example» a string\"), but a parse may branch on its spelling (›A type's parse is unrestricted code‹), as rational::construct does\n›lex_rank belongs to the binding‹, ›Two levels‹, ›A constructor that finds nothing to consume ... stands as itself‹: say what a second name of one identity does, true under either answer",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "target/release/logos 'scope'; target/release/logos 'square_brackets'; target/release/logos 'string'",
+        "output": "type      (a named type apart from its opener (\ntype      (a named type apart from its opener [\nerror: unknown name `string`   (the text type's only spelling is «)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:01+02:00",
+      "by": "logoslang-why-P159-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "A"
+    },
+    "history": []
   }
 ]
