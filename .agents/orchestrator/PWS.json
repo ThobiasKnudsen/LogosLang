@@ -24193,13 +24193,18 @@
   {
     "id": "S70",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "One repo per orchestrator: SKILL.md ›One repo, one orchestrator, several bases‹ says the orchestrator runs only the repo it stands in; another repo, new or not, gets its own orchestrator, which Thobias starts with /orchestrate in its folder; for a new one the orchestrator only makes the folder with what belongs in it and tells him, and that repo's setup is its own orchestrator's",
     "fixes": [
       "W250"
     ],
     "assessment": "Root fix: deletes the second repo from the session (the clause '-C <repo> names another', used to run another repo) instead of adding a case. Moves out of the session every step of another repo: on 8 October 42 tool calls touched PolyLogue, and its setup (conf, KNOWLEDGE.md, AGENTS.md, push, 23:24:42 to 23:28:41 UTC) is what why-P112-e's answer waited behind. Changes what Thobias can ask: at 23:18:32 UTC on 8 October he asked the LogosLang orchestrator to make PolyLogue and set it up for orchestrating; with this he gets the folder and starts /orchestrate there himself, which a new folder needs once anyway (SKILL.md ›Never‹: claude --bg refuses a folder that is not trusted). Text only: two bullets of that section and SKILL_HISTORY.md, minutes; no script refusal, since orchestrate.sh does not know which repo an orchestrator runs. No other solution agent's root touches that section; help-5's SKILL.md draft needs the same edit.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T12:25+02:00",
+      "words": "a",
+      "reason": "Q96 option (a), as shown: each repo gets its own orchestrator; for a new repo the orchestrator only makes its folder and copies in what belongs there, then Thobias opens Claude Code there and types /orchestrate, and that repo's own orchestrator does the setup and asks its own questions; all he loses is typing /orchestrate once in the new folder"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -24212,7 +24217,17 @@
       "run": "solve-W222",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T12:25+02:00",
+        "by": "logoslang-solve-W222",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "chosen by Thobias: \"a\"",
+        "reason": "Q96 option (a), as shown: each repo gets its own orchestrator; for a new repo the orchestrator only makes its folder and copies in what belongs there, then Thobias opens Claude Code there and types /orchestrate, and that repo's own orchestrator does the setup and asks its own questions; all he loses is typing /orchestrate once in the new folder"
+      }
+    ]
   },
   {
     "id": "S71",
@@ -34051,7 +34066,7 @@
     "id": "P180",
     "kind": "problem",
     "status": "open",
-    "text": "An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again. The REPL cases are fixed on the issue-234 branch at 3dccfdb (Q114: the file stays loaded for the session); the command-line cases (a ( ) block that faults, a later parse failure) are not",
+    "text": "An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again. The REPL cases are fixed on the issue-234 branch at 3dccfdb (Q114: the file stays loaded for the session); the command-line cases (a ( ) block that faults, a later parse failure) are not. Also: a file that imports held.logos and then fails at its own parse never frees its h on the command line (dev and the #234 branch); the import gives a file's exit items from = the line the import stands on, so a fault inside that line counts them not yet held (issue-234-review-2)",
     "program": "logos 'import ./tests/fixtures/deferring.logos, error «x»' (control); logos '( import ./tests/fixtures/deferring.logos, error «x» )'; logos 'import ./tests/fixtures/deferring.logos, zz'; REPL: ( import ./tests/fixtures/deferring.logos, zz ), then import ./tests/fixtures/deferring.logos, then k, then ctrl-d",
     "output": "control: file ends, then <command line>: run error: x, exit 1; in a block: only the run error, exit 1; with zz: only <command line>:1:42: error: unknown name `zz`, exit 1; REPL: k echoes 1 and nothing prints at the end; dev 6af86ca and the issue-234 branch, release, interpreted",
     "expected": "file ends printed in every case, where the program ends, as the fixture says the file's scope lives as long as the program",
@@ -34078,6 +34093,15 @@
         "commit": "9ddd441",
         "change": "text was \"An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again\"",
         "reason": "logoslang-issue-234-worker, fix round 1 of #234, 12 October 2026"
+      },
+      {
+        "at": "2026-10-12T12:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f8c60dd",
+        "change": "text was \"An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again. The REPL cases are fixed on the issue-234 branch at 3dccfdb (Q114: the file stays loaded for the session); the command-line cases (a ( ) block that faults, a later parse failure) are not\"",
+        "reason": "logoslang-issue-234-review-2, round 2 notes, 12 October 2026"
       }
     ]
   },
@@ -34155,7 +34179,7 @@
     "id": "P183",
     "kind": "problem",
     "status": "open",
-    "text": "A failed REPL line is undone in pieces written by hand in repl() (src/main.rs): the scope stack's journal undoes the names, keep_scope_lines the session's lines, the list of ended names the ends; each new thing a line can do needs its own undo there, and the import registry was left out, so a file imported on a failed line is freed while still counted as loaded",
+    "text": "A failed REPL line is undone in pieces written by hand in repl() (src/main.rs): the scope stack's journal undoes the names, keep_scope_lines the session's lines, the list of ended names the ends; each new thing a line can do needs its own undo there, and the import registry was left out, so a file imported on a failed line is freed while still counted as loaded. Fix round 1 of #234 (3dccfdb) added one more piece: hand_imported_exit splits a failed line's exit list into the file's items and the line's own, a split that #234's review round 2 made one hash-set lookup per item (decided by the orchestrator, 12 October 2026); keeping the file's items apart from the import on removes the split. After #234 review round 2 a failed REPL line is undone by three calls in repl() (end_failed_earlier_holds, hand_imported_exit, exit_after_fault), and only their placement keeps their order",
     "program": "REPL on the issue-234 branch: import ./held.logos, error «boom» (held.logos: bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), pub h := bag(9)); then import ./held.logos; then h.n",
     "output": "freed 9 / <repl>: run error: boom / then h.n echoes 9 from the freed bag; issue-234 branch at ab73ebe, release, interpreted",
     "expected": "one undo that every piece a line changes joins, so nothing a line does can be left out; Q114 (e4a932e): the file stays loaded for the session",
@@ -34173,7 +34197,26 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T12:17+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d3fe0a3",
+        "change": "text was \"A failed REPL line is undone in pieces written by hand in repl() (src/main.rs): the scope stack's journal undoes the names, keep_scope_lines the session's lines, the list of ended names the ends; each new thing a line can do needs its own undo there, and the import registry was left out, so a file imported on a failed line is freed while still counted as loaded\"",
+        "reason": "logoslang-issue-234-review-2's question, 12 October 2026"
+      },
+      {
+        "at": "2026-10-12T12:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f8c60dd",
+        "change": "text was \"A failed REPL line is undone in pieces written by hand in repl() (src/main.rs): the scope stack's journal undoes the names, keep_scope_lines the session's lines, the list of ended names the ends; each new thing a line can do needs its own undo there, and the import registry was left out, so a file imported on a failed line is freed while still counted as loaded. Fix round 1 of #234 (3dccfdb) added one more piece: hand_imported_exit splits a failed line's exit list into the file's items and the line's own, a split that #234's review round 2 made one hash-set lookup per item (decided by the orchestrator, 12 October 2026); keeping the file's items apart from the import on removes the split\"",
+        "reason": "logoslang-issue-234-review-2, round 2 notes, 12 October 2026"
+      }
+    ]
   },
   {
     "id": "P184",
@@ -34218,6 +34261,54 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "6463ccf",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P186",
+    "kind": "problem",
+    "status": "open",
+    "text": "A second import of a file gives back a pub name the importer already freed, as if it were alive: after free p, p@ is a parse error (\"`p` is dead here\"), but a second import of the same file makes p readable again, and the read reaches the freed value",
+    "program": "logos 'import ./tests/fixtures/owning_pub.logos, free p, import ./tests/fixtures/owning_pub.logos, p@'; REPL: import ./held.logos, free h, import ./held.logos, h.n (held.logos: bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), pub h := bag(9))",
+    "output": "<command line>: run error: this pointer holds nothing yet, exit 1; REPL: freed 9, then h.n echoes 9 from the freed bag; dev 1bfb2d7 and the issue-234 branch, release, interpreted",
+    "expected": "the second import publishes nothing alive for a name its importer freed: p stays dead (a parse error), as after free p alone (›Importing is dropping the text there, wrapped in its own scope‹, once per run)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-2, FOUND by /code-review in review round 2 of #234, 12 October 2026 (near P93 and #78)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:17+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "5c5e0a2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P187",
+    "kind": "problem",
+    "status": "open",
+    "text": "A run error of the importer's own earlier line is reported as the imported file failing, at a line of the file: the importer's waiting line runs inside the file's pass when the file first needs a value, so its error is shown as \"import of X failed\" pointing into the file, where nothing is wrong",
+    "program": "logos 'error «boom», import ./tests/fixtures/held.logos, free h' (held.logos: bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), pub h := bag(9))",
+    "output": "<command line>:1:49: error: import of `./tests/fixtures/held.logos` failed: … ./tests/fixtures/held.logos:3:14: error: run error: boom (caret under the file's type body), exit 1; dev bffb703 and the #234 branch 50f8b65, release, interpreted; the #234 REPL gives the same",
+    "expected": "the error is reported at the importer's own `error «boom»` on the command line, column 1, with nothing said about the imported file",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-3, review round 3 of #234, 12 October 2026 (near P186, P180, P183)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:29+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fd5750b",
       "run": null,
       "agent": null
     },
