@@ -697,8 +697,23 @@ unsafe fn operand_of_type(types: &Core, t: DyadPtr) -> Operand {
     }
 }
 
-/// Two different concrete types are a mismatch (no implicit coercion); a literal
-/// commits to the other operand's type, two literals to i32.
+/// The number type two operands of `a` and `b` meet in: the one the other lies inside.
+///
+/// # Safety
+/// `types` holds the number type nodes.
+unsafe fn joint(types: &Core, a: NumType, b: NumType) -> Result<NumType, ParseError> {
+    let node = |nt: NumType| types.numtypes[nt as usize];
+    if subset::includes(types, node(a), node(b)) == Some(true) {
+        Ok(b)
+    } else if subset::includes(types, node(b), node(a)) == Some(true) {
+        Ok(a)
+    } else {
+        Err(ParseError::TypeMismatch)
+    }
+}
+
+/// Two number types meet in the one the other lies inside, the other operand converted; a
+/// literal lands in the other operand's type, two literals in `i32`.
 ///
 /// # Safety
 /// `lhs`/`rhs` are valid dyads from the store.
@@ -718,12 +733,7 @@ pub(crate) unsafe fn resolve_binary(
         (Operand::NonNumeric, _) | (_, Operand::NonNumeric) => {
             return Err(ParseError::UnsupportedOperands)
         }
-        (Operand::Concrete(x), Operand::Concrete(y)) => {
-            if x != y {
-                return Err(ParseError::TypeMismatch);
-            }
-            *x
-        }
+        (Operand::Concrete(x), Operand::Concrete(y)) => joint(types, *x, *y)?,
         (Operand::Concrete(x), Operand::Literal) | (Operand::Literal, Operand::Concrete(x)) => *x,
         (Operand::Literal, Operand::Literal) => NumType::I32,
     };
@@ -735,9 +745,10 @@ pub(crate) unsafe fn resolve_binary(
 
 /// What lands in a place of type `ty`: the value itself where its type is `ty`, a plain number
 /// converted exactly, a value whose type lies inside `ty` under the conversion node a written
-/// `ty (value)` builds; anything else is refused where it is written. A type no place can have
-/// takes the value as it stands. DESIGN ›A type's `parse` decides what converts into it;
-/// unwritten, a value converts only into a type that holds it exactly‹.
+/// `ty (value)` builds; anything else is refused where it is written. An `if` lands each arm,
+/// so arms of two types meet in `ty`, and a block its last line. A type no place can have takes
+/// the value as it stands. DESIGN ›A type's `parse` decides what converts into it; unwritten, a
+/// value converts only into a type that holds it exactly‹, ›`if` reads its own right side‹.
 ///
 /// # Safety
 /// `value` must be a reduced dyad and `ty` null or a type node, both from the store.
@@ -752,7 +763,26 @@ pub(crate) unsafe fn land(
     else {
         return Ok(value);
     };
-    read::value_type(types, value)?;
+    match read::value_type(types, value) {
+        Ok(_) | Err(ParseError::ArmsDiffer) => {}
+        Err(e) => return Err(e),
+    }
+    let landed = walk_tail(types, value, &mut |leaf| land_leaf(store, types, leaf, ty, place))?;
+    read::value_type(types, landed)?;
+    Ok(landed)
+}
+
+/// [`land`] at one position that gives the value.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store; `ty` a type identity and `place` its layout.
+unsafe fn land_leaf(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    ty: DyadPtr,
+    place: read::Read,
+) -> Result<DyadPtr, ParseError> {
     // A comptime name used here is its binding; the literal folds through it.
     let plain = types.through(value);
     let plain_number = dyad::ty(plain) == types.rational;
@@ -1007,10 +1037,7 @@ pub(crate) unsafe fn resolve_loop_parts(
     let mut nt: Option<NumType> = None;
     for &p in parts.iter() {
         match operand_of(types, p) {
-            Operand::Concrete(c) => match nt {
-                Some(n) if n != c => return Err(ParseError::TypeMismatch),
-                _ => nt = Some(c),
-            },
+            Operand::Concrete(c) => nt = Some(nt.map_or(Ok(c), |n| joint(types, n, c))?),
             Operand::Literal => {}
             Operand::Pointer(_) | Operand::NonNumeric => {
                 return Err(ParseError::UnsupportedOperands)
@@ -1049,15 +1076,18 @@ pub(crate) unsafe fn commit_call_args(
     callee: DyadPtr,
     args: &mut [DyadPtr],
 ) -> Result<(), ParseError> {
-    if dyad::ty(callee) != types.fn_type {
-        return Ok(());
-    }
-    let input = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_INPUT);
-    let params = array::items(meta::record_fields_of(input));
-    for (arg, &param) in args.iter_mut().zip(params) {
+    let params = if dyad::ty(callee) == types.fn_type {
+        let input = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_INPUT);
+        array::items(meta::record_fields_of(input))
+    } else {
+        &[]
+    };
+    for (i, arg) in args.iter_mut().enumerate() {
         // A bare `name` parameter accepts any dyad.
-        let pty = hole::type_in(param);
-        if !pty.is_null() {
+        let pty = params.get(i).map_or(std::ptr::null_mut(), |&p| hole::type_in(p));
+        if pty.is_null() {
+            read::value_type(types, *arg)?;
+        } else {
             *arg = land(store, types, *arg, pty)?;
         }
     }

@@ -1550,6 +1550,45 @@ fn a_value_lands_unwritten_only_in_a_type_that_holds_every_value_of_it() {
 }
 
 #[test]
+fn an_if_lands_each_arm_and_an_operation_meets_in_the_wider_type() {
+    for compile in ["", "f.compile(), "] {
+        for (src, printed) in [
+            (
+                "f := fn (c := bool ?) -> i64 ( mut x := i64 0, x = if c (i32 1) else (i64 2), x ), \
+                 {c}f(true)",
+                "1",
+            ),
+            ("f := fn (c := bool ?) -> f64 ( if c (1) else (f64 2.5) ), {c}f(true)", "1.0"),
+            ("g := fn (a := i64 ?) -> i64 ( a ), f := fn (c := bool ?) -> i64 ( g(if c (i32 1) else (i64 2)) ), {c}f(false)", "2"),
+            (
+                "f := fn (c := i32 ?) -> i64 ( if c == 1 (i32 1) else if c == 2 (i16 7) else (i64 3) ), \
+                 {c}f(2)",
+                "7",
+            ),
+            ("f := fn (a := i32 ?, b := i64 ?) -> i64 ( a * b ), {c}f(3, 4)", "12"),
+            ("f := fn (a := f64 ?, b := i32 ?) -> f64 ( a + b ), {c}f(1.5, 1)", "2.5"),
+            ("f := fn (a := u8 ?, b := i32 ?) -> bool ( a < b ), {c}f(1, 2)", "true"),
+            ("f := fn () -> i64 ( mut s := i64 0, for i in (i32 0)..(i64 3) ( s = s + i ), s ), {c}f()", "3"),
+        ] {
+            let src = src.replace("{c}", compile);
+            let out = logos().arg(&src).output().unwrap();
+            assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+        }
+    }
+    for (src, expect) in [
+        ("c := true, x := if c (i32 1) else (i64 2)", "the arms of this `if` give different types"),
+        ("c := true, mut x := i64 0, x = if c (i32 1) else (f64 2.0)", "these types do not match"),
+        ("f32 1.5 + i32 1", "these types do not match"),
+        ("x := u64 1, y := i64 1, x + y", "these types do not match"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_dyad_place_takes_every_node_named_or_not_and_no_number() {
     let array = "import ./identities/array.logos";
     for tail in

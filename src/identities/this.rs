@@ -264,18 +264,23 @@ pub(crate) unsafe fn build_write(
             let ops = [this, k, value, owner];
             return Ok(act(store, types.this.write, types.this.write_leaf, &ops));
         }
+        // An `if` whose arms give two types gives a value in each, which lands on its own.
+        let arms_differ =
+            super::read::value_type(types, value) == Err(crate::parse::ParseError::ArmsDiffer);
         let yields_value = matches!(super::operand_of(types, value), super::Operand::Literal)
+            || arms_differ
             || match super::read::place_layout(types, super::read::output_type(types, value)) {
                 Some((super::read::Read::Scalar(_), _)) => true,
                 Some((super::read::Read::Pointer(p), _)) => p != types.dyad_,
                 _ => false,
             };
         if yields_value {
-            let value = super::commit_fn_body(store, types, value, ty)?;
+            let value = super::land(store, types, value, ty)?;
             let ops = [this, k, value, ty, owner];
             return Ok(act(store, types.this.store, types.this.store_leaf, &ops));
         }
     }
+    super::read::value_type(types, value)?;
     let value = super::tape::cell_arg(store, types, value);
     let ops = [this, k, value, owner];
     Ok(act(store, types.this.write, types.this.write_leaf, &ops))

@@ -173,8 +173,13 @@ pub(super) fn build_store(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    // An `if` whose arms give two types gives one where a typed place lands each arm.
     // SAFETY: `rhs` is a reduced dyad from the store.
-    unsafe { super::read::value_type(types, rhs) }?;
+    let arms_differ = match unsafe { super::read::value_type(types, rhs) } {
+        Ok(_) => false,
+        Err(ParseError::ArmsDiffer) => true,
+        Err(e) => return Err(e),
+    };
     // SAFETY: `lhs` is a reduced dyad from the store.
     let lhs_d = unsafe { types.through(lhs) };
     // SAFETY: `through` hands back its argument, the dyad a binding names, or the storage.
@@ -183,6 +188,9 @@ pub(super) fn build_store(
     let lhs_type = unsafe { types.type_of(lhs_d) };
     // SAFETY: `lhs_d` is a reduced dyad from the store.
     if unsafe { super::tape::is_cell_read(types, lhs_d) } {
+        if arms_differ {
+            return Err(ParseError::ArmsDiffer);
+        }
         // SAFETY: `lhs_d` is a tape cell read, `rhs` a reduced dyad.
         return Ok(unsafe { super::tape::build_write(store, types, lhs_d, rhs) });
     }
@@ -191,6 +199,9 @@ pub(super) fn build_store(
         return unsafe { super::hashmap::build_put(store, types, lhs_d, rhs) };
     }
     if lhs_ty == types.tape.is_constructed {
+        if arms_differ {
+            return Err(ParseError::ArmsDiffer);
+        }
         // SAFETY: `rhs` is a reduced dyad from the store.
         if unsafe { super::read::output_type(types, rhs) } != types.bool_ {
             return Err(ParseError::FlagTakesBool);

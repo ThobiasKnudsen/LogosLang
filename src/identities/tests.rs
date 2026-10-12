@@ -1559,13 +1559,18 @@ fn for_loop_endpoints_resolve_a_common_type() {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p = Parser::new(
-        "fn (mut a := i32 ?, b := i64 ?) -> void ( for i in a..b ( a = 0 ) )",
+        "fn (mut a := i32 ?, b := u64 ?) -> void ( for i in a..b ( a = 0 ) )",
         &mut store,
         &mut trie,
         &core,
         s,
     );
     assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
+    diff_typed_call(
+        "fn (a := i32 ?, b := i64 ?) -> i64 ( mut s := i64 0, for i in a..b ( s = s + i ), s )",
+        "f(1, 4)",
+        6,
+    );
 }
 
 #[test]
@@ -3800,18 +3805,23 @@ fn comptime_rational_commits_through_if_branches() {
 }
 
 #[test]
-fn different_concrete_types_are_a_mismatch() {
-    let (mut store, mut trie, core) = new_core();
-    let mut s = ScopeStack::new();
-    s.push(core.root_scope);
-    let mut p = Parser::new(
+fn operands_meet_in_the_type_the_other_lies_inside() {
+    diff_typed_call(
         "fn (x := i32 ?, y := i64 ?) -> i64 ( x + y )",
-        &mut store,
-        &mut trie,
-        &core,
-        s,
+        "f(2, 5000000000)",
+        5_000_000_002,
     );
-    assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::TypeMismatch));
+    diff_typed_call("fn (x := i64 ?, y := u8 ?) -> bool ( x < y )", "f(-1, 200)", 1);
+    for src in [
+        "fn (x := u64 ?, y := i64 ?) -> i64 ( x + y )",
+        "fn (x := f32 ?, y := i32 ?) -> f32 ( x + y )",
+    ] {
+        let (mut store, mut trie, core) = new_core();
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new(src, &mut store, &mut trie, &core, s);
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::TypeMismatch), "{src}");
+    }
 }
 
 #[test]

@@ -1116,8 +1116,13 @@ impl<'a> Parser<'a> {
             }
         }
         for &arg in &args {
+            // An `if` whose arms give two types gives one where its parameter's type lands each
+            // arm.
             // SAFETY: `args` are reduced dyads just parsed.
-            unsafe { crate::identities::read::value_type(self.types, arg) }?;
+            match unsafe { crate::identities::read::value_type(self.types, arg) } {
+                Ok(_) | Err(ParseError::ArmsDiffer) => {}
+                Err(e) => return Err(e),
+            }
             // Fail-closed until ownership-gated parameters let the callee declare
             // that it takes the value.
             // SAFETY: as above.
