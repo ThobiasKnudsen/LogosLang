@@ -32792,7 +32792,11 @@
     "expected": "An orchestrator edit to an open question survives his save, or his save of an older copy is caught and he is told before the answer is relayed (\"make it automatic\")",
     "tier": "interpreted",
     "found": "orchestrator LogosLang, while relaying Q106, 12 October 2026",
-    "why": null,
+    "why": [
+      "W338",
+      "W339",
+      "W337"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -32804,7 +32808,35 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "why + W338",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "why + W339",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "why + W337",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P170",
@@ -32881,7 +32913,7 @@
   {
     "id": "W335",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "SKILL.md's Never edit a question once it is placed (Questions to Thobias) is a sentence only, and nothing holds a placed question to it: no hook in any settings file refuses a Write or Edit under .agents/orchestrator/questions/, edited reads the orchestrator's own Edit-tool write as the owner's save (orchestrate.sh: a file that no longer matches was edited by its owner), and question-seen takes it as the new baseline without a word; so the orchestrator's additions to the open Q83 (3d0655b) and Q106 (fe9ae1d) went in unrefused and unrecorded as its own",
     "proposed_for": "P169",
     "why": null,
@@ -32920,7 +32952,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W338",
     "made": {
       "at": "2026-10-12T10:37+02:00",
       "by": "logoslang-why-P169-a",
@@ -32930,12 +32962,22 @@
       "run": "why-P169",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "merged into W338",
+        "reason": "A and B state the same fact: nothing but SKILL.md's sentence 'Never edit a question once it is placed' keeps a placed question as placed; no hook or command refuses an edit to an open question, and question-seen takes the orchestrator's own edit as read"
+      }
+    ]
   },
   {
     "id": "W336",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "Nothing compares an answer save with the text the question last held: mark_seen keeps only a sha256 per question and edited asks only whether it differs, so cmd_questions_watch wakes on a save that drops the orchestrator's lines exactly as on an answer, cmd_question_close copies the file into answers/ as it stands, and SKILL.md's wake step (read the whole file, ANSWER, question-close) checks it against nothing, though git holds the dropped text (Q106 fe9ae1d to 267eada, Q83 3d0655b to 2cf09e4)",
     "proposed_for": "P169",
     "why": null,
@@ -32970,7 +33012,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W339",
     "made": {
       "at": "2026-10-12T10:38+02:00",
       "by": "logoslang-why-P169-a",
@@ -32980,7 +33022,17 @@
       "run": "why-P169",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "merged into W339",
+        "reason": "A and B state the same fact: nothing compares a save with the version the orchestrator last wrote; mark_seen keeps only a sha256, edited asks only whether it differs, the watch prints the path, question-close copies the file as it stands"
+      }
+    ]
   },
   {
     "id": "P173",
@@ -33021,7 +33073,7 @@
   {
     "id": "W337",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "solve-prompt.md never tells a solution agent that a question stays as it was placed (the ban, Never edit a question once it is placed, stands only in the orchestrator's SKILL.md, which neither solve-prompt.md nor every-prompt.md carries), and it makes his pick confirm the exact recorded text and wording the round showed; so solve-W15 sent QUESTION messages asking the orchestrator to patch the open Q83 and the open Q106 before he answered, and both edits were those patches",
     "proposed_for": "P169",
     "why": null,
@@ -33058,12 +33110,22 @@
       "run": "why-P169",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "accepted as a why of P169",
+        "reason": "B's fact, the asker's side: solve-prompt.md carries no 'never edit a placed question', and its rule that his pick confirms the exact wording the round showed makes a patch to the open round worth asking for; both lost edits were solve-W15's patch requests"
+      }
+    ]
   },
   {
     "id": "W338",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "Nothing but one sentence of SKILL.md keeps a placed question as placed: orchestrate.sh has no command that changes an open question or refuses a change to one, cmd_question_seen (take the owner's edits so far as read) stores the sha256 of whatever the file holds, so it takes the orchestrator's own edit as read too, and the QUESTION row of SKILL.md's message table says only to place a new file; so solve-W15's two requests to patch an open question went in by the Edit tool, question-seen and a hand commit, Q83 at 09:51 and Q106 at 10:20",
     "proposed_for": "P169",
     "why": null,
@@ -33071,7 +33133,8 @@
       "cmd_question_seen",
       "mark_seen",
       "~/.claude/skills/orchestrate/orchestrate.sh",
-      "~/.claude/skills/orchestrate/SKILL.md"
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "edited"
     ],
     "design": [],
     "pages": [],
@@ -33085,12 +33148,35 @@
         "command": "git log --since='2026-10-12 09:00' --until='2026-10-12 11:30' --format='%h %ad %s' --date=format:%H:%M:%S --numstat -- .agents/orchestrator/questions .agents/orchestrator/answers (in a worktree of dev at 267eada)",
         "output": "267eada 10:30:07 questions: Q106 answered   6 3 {questions/5-Q106-S-P9.md => answers/Q106-S-P9.md}\nfe9ae1d 10:20:16 questions: Q106 keeps the pointer to the plain-number rule, and its Ruled line records the new word's source   2 2\n568837e 10:17:10 questions: Q106 asked, S-P9   104 0\n2cf09e4 10:08:15 questions: Q83 answered   5 20 {questions/5-Q83-S-P9.md => answers/Q83-S-P9.md}\n3d0655b 09:51:33 questions: Q83 shows what its answers also decide (...), for W313. PWS: S36, S45 amended to fix W313   19 0\n(3d0655b and fe9ae1d are hand commits: commit_questions writes only 'asked', 'moved to', 'tagged', 'answered')",
         "commit": "267eada"
+      },
+      {
+        "command": "rg -n 'Never edit a question once|question-seen ID|^# the orchestrator fingerprints|^edited' ~/.claude/skills/orchestrate/SKILL.md ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "SKILL.md:62:- Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor's old copy back over yours. A new point goes in a new question.\norchestrate.sh:102:  question-seen ID            take the owner's edits so far as read; the watch waits for the owner's next save\norchestrate.sh:1351:# the orchestrator fingerprints every file it writes; a file that no longer matches was edited by its owner\norchestrate.sh:1354:edited() { [ \"$(sha256sum < \"$1\" | cut -d' ' -f1)\" != \"$(cat \"$SEEN/$(id_of \"$1\")\" 2>/dev/null)\" ]; }",
+        "commit": "267eada"
+      },
+      {
+        "command": "jq the hooks of ~/.claude/settings.json, ~/.claude/settings.local.json and the repo's .claude/settings*.json (hook events and commands only)",
+        "output": "~/.claude/settings.json: Notification [notify-send 'Needs attention'], Stop [notify-send 'Agent finished']\n~/.claude/settings.local.json: []\nLogosLang .claude/settings.json, settings.local.json: no such file\n(no PreToolUse hook anywhere, so no Write or Edit of a placed question is refused)",
+        "commit": "267eada"
+      },
+      {
+        "command": "scratch repo S under the job's tmp: orchestrate.sh -C S question-new 5 S-P9 draft.md; the orchestrator's Edit tool adds a line to the placed file; questions; question-seen Q1; questions",
+        "output": "S/.agents/orchestrator/questions/5-Q1-S-P9.md   exit 0\n(Edit tool: 'Added later by the orchestrator: what (a) also decides.' written into the placed file, no refusal)\n5-Q1-S-P9.md\tedited\tQ1: Probe question for P169      exit 0   (its own edit counts as the owner's save)\nquestion-seen Q1 -> S/.agents/orchestrator/questions/5-Q1-S-P9.md   exit 0\n5-Q1-S-P9.md\twaiting\tQ1: Probe question for P169      exit 0   (taken as read, no note that the orchestrator changed the text)",
+        "commit": "267eada"
+      },
+      {
+        "command": "sibling writers of a placed question: rg -n 'An answer he types in chat' SKILL.md; git show 2cf09e4 -- .agents/orchestrator/questions/6-Q102-O.md",
+        "output": "SKILL.md:69:- An answer he types in chat counts the same: write it into the file's Answer section, relay, close.   (the skill itself prescribes an edit of an open file)\n2cf09e4 (question-close Q83, relink): -  - [5-Q83-S-P9.md](./5-Q83-S-P9.md): what #198 waits for\n                                      +  - [5-Q83-S-P9.md](../answers/Q83-S-P9.md): what #198 waits for   (the script rewrote the open Q102 in place; this one survived his later save, ff3d0e0)",
+        "commit": "267eada"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "SKILL.md's Never edit a question once it is placed (Questions to Thobias) is a sentence only, and nothing holds a placed question to it: no hook in any settings file refuses a Write or Edit under .agents/orchestrator/questions/, edited reads the orchestrator's own Edit-tool write as the owner's save (orchestrate.sh: a file that no longer matches was edited by its owner), and question-seen takes it as the new baseline without a word; so the orchestrator's additions to the open Q83 (3d0655b) and Q106 (fe9ae1d) went in unrefused and unrecorded as its own"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T10:39+02:00",
@@ -33101,6 +33187,89 @@
       "run": "why-P169",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "accepted as a why of P169, same as W335",
+        "reason": "A and B state the same fact: nothing but SKILL.md's sentence 'Never edit a question once it is placed' keeps a placed question as placed; no hook or command refuses an edit to an open question, and question-seen takes the orchestrator's own edit as read"
+      }
+    ]
+  },
+  {
+    "id": "W339",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Nothing compares a save with the version of the question the orchestrator last wrote: mark_seen keeps only its sha256, never its text, edited asks only whether the file differs from that, cmd_questions_watch prints only the path, SKILL.md's relay step says to read the whole file, which shows what stands and never what a save took away, and cmd_question_close moves the file as it is; so his save of an older copy, which took out the orchestrator's later lines, read as an answer and was relayed and closed, though git diff against the committed version shows the removal",
+    "proposed_for": "P169",
+    "why": null,
+    "anchors": [
+      "mark_seen",
+      "edited",
+      "cmd_questions_watch",
+      "cmd_question_close",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -E '^mark_seen|^edited|edited \"\\$f\" && \\{ echo \"\\$f\"|^cmd_question_close|done < \"\\$f\" \\| sed' ~/.claude/skills/orchestrate/orchestrate.sh; grep -n -o -F 'Read the whole file: his words may stand on the Answer lines, under an option, or beside the question' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "1353:mark_seen() { mkdir -p \"$SEEN\"; sha256sum < \"$1\" | cut -d' ' -f1 > \"$SEEN/$(id_of \"$1\")\"; }\n1354:edited() { [ \"$(sha256sum < \"$1\" | cut -d' ' -f1)\" != \"$(cat \"$SEEN/$(id_of \"$1\")\" 2>/dev/null)\" ]; }\n1480:cmd_question_close() {\n1491:    done < \"$f\" | sed 's|(\\./|(../questions/|g'; } > \"$HDIR/$new\" && rm \"$f\"\n1534:      [ -f \"$f\" ] && qid_of \"${f##*/}\" >/dev/null && edited \"$f\" && { echo \"$f\"; ...\n1540:      [ -f \"$f\" ] && qid_of \"${f##*/}\" >/dev/null && edited \"$f\" && { echo \"$f\"; ...\nSKILL.md:68: Read the whole file: his words may stand on the Answer lines, under an option, or beside the question",
+        "commit": "267eada"
+      },
+      {
+        "command": "git diff -M --numstat 3d0655b 2cf09e4 -- .agents/orchestrator/questions/5-Q83-S-P9.md .agents/orchestrator/answers/Q83-S-P9.md; git diff -M --numstat fe9ae1d 267eada -- .agents/orchestrator/questions/5-Q106-S-P9.md .agents/orchestrator/answers/Q106-S-P9.md; git grep -c 'Added 12 October' on 3d0655b's Q83 and on 2cf09e4's answer file; comm of fe9ae1d's changed lines against 267eada's answer file (why-probes/p169-lost-lines.txt, run by why-probes/run.sh)",
+        "output": "5\t20\t.agents/orchestrator/{questions/5-Q83-S-P9.md => answers/Q83-S-P9.md}   (the 19 lines 3d0655b added, and the Status line the close rewrites)\n6\t3\t.agents/orchestrator/{questions/5-Q106-S-P9.md => answers/Q106-S-P9.md}   (the 2 lines fe9ae1d changed, and the Status line)\n3d0655b:.agents/orchestrator/questions/5-Q83-S-P9.md:2   ('Added 12 October' paragraphs); 2cf09e4 answers/Q83-S-P9.md: 0\nfe9ae1d's 2 new lines found in answers/Q106-S-P9.md: 0; its 2 old lines found there: 2",
+        "commit": "267eada"
+      },
+      {
+        "command": "rg -n '^mark_seen|^edited|edited \"$f\" && { echo' ~/.claude/skills/orchestrate/orchestrate.sh; cmd_question_close read in full",
+        "output": "1353:mark_seen() { mkdir -p \"$SEEN\"; sha256sum < \"$1\" | cut -d' ' -f1 > \"$SEEN/$(id_of \"$1\")\"; }\n1354:edited() { [ \"$(sha256sum < \"$1\" | cut -d' ' -f1)\" != \"$(cat \"$SEEN/$(id_of \"$1\")\" 2>/dev/null)\" ]; }\n1534/1540 (cmd_questions_watch): ... && edited \"$f\" && { echo \"$f\"; ...   (a changed hash is the whole test; no copy of the earlier text is kept)\n1489-1491 (cmd_question_close): copies \"$f\" line by line into \"$HDIR/$new\", rewriting only the Status line and ./ links, then rm \"$f\"   (no diff against the last placed or committed text)",
+        "commit": "267eada"
+      },
+      {
+        "command": "the real saves: git show <rev>:<file> | grep -c '<the orchestrator's added lines>' before and after each answer save",
+        "output": "fe9ae1d:questions/5-Q106-S-P9.md: 2   (the pointer sentence 'A plain number converting where it lands ... is this rule's case' and '[2] ... lossy (Q106: «your answer 2»)')\n267eada:answers/Q106-S-P9.md: 0   (commit 'questions: Q106 answered', Status 'answered, relayed 2026-10-12 10:30')\n3d0655b:questions/5-Q83-S-P9.md: 2   ('Added 12 October' paragraphs)\n2cf09e4:answers/Q83-S-P9.md: 0   (commit 'questions: Q83 answered')",
+        "commit": "267eada"
+      },
+      {
+        "command": "scratch repo S, after the Edit and question-seen of W335's probe: the Write tool saves the copy opened before the edit plus 'b' on Answer 1; questions; timeout 5 questions-watch; question-close Q1; grep -c 'Added later' answers/Q1-S-P9.md",
+        "output": "5-Q1-S-P9.md\tedited\tQ1: Probe question for P169   exit 0\nS/.agents/orchestrator/questions/5-Q1-S-P9.md   exit 0   (the watch wakes with the path, as on any answer)\nS/.agents/orchestrator/answers/Q1-S-P9.md   exit 0   (closed, no warning)\n0   exit 1   (the orchestrator's line is gone from the answer file)",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "Nothing compares an answer save with the text the question last held: mark_seen keeps only a sha256 per question and edited asks only whether it differs, so cmd_questions_watch wakes on a save that drops the orchestrator's lines exactly as on an answer, cmd_question_close copies the file into answers/ as it stands, and SKILL.md's wake step (read the whole file, ANSWER, question-close) checks it against nothing, though git holds the dropped text (Q106 fe9ae1d to 267eada, Q83 3d0655b to 2cf09e4)"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:40+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "accepted as a why of P169, same as W336",
+        "reason": "A and B state the same fact: nothing compares a save with the version the orchestrator last wrote; mark_seen keeps only a sha256, edited asks only whether it differs, the watch prints the path, question-close copies the file as it stands"
+      }
+    ]
   }
 ]
