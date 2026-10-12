@@ -34051,7 +34051,7 @@
     "id": "P180",
     "kind": "problem",
     "status": "open",
-    "text": "An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again. The REPL cases are fixed on the issue-234 branch at 3dccfdb (Q114: the file stays loaded for the session); the command-line cases (a ( ) block that faults, a later parse failure) are not",
+    "text": "An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again. The REPL cases are fixed on the issue-234 branch at 3dccfdb (Q114: the file stays loaded for the session); the command-line cases (a ( ) block that faults, a later parse failure) are not. Also: a file that imports held.logos and then fails at its own parse never frees its h on the command line (dev and the #234 branch); the import gives a file's exit items from = the line the import stands on, so a fault inside that line counts them not yet held (issue-234-review-2)",
     "program": "logos 'import ./tests/fixtures/deferring.logos, error «x»' (control); logos '( import ./tests/fixtures/deferring.logos, error «x» )'; logos 'import ./tests/fixtures/deferring.logos, zz'; REPL: ( import ./tests/fixtures/deferring.logos, zz ), then import ./tests/fixtures/deferring.logos, then k, then ctrl-d",
     "output": "control: file ends, then <command line>: run error: x, exit 1; in a block: only the run error, exit 1; with zz: only <command line>:1:42: error: unknown name `zz`, exit 1; REPL: k echoes 1 and nothing prints at the end; dev 6af86ca and the issue-234 branch, release, interpreted",
     "expected": "file ends printed in every case, where the program ends, as the fixture says the file's scope lives as long as the program",
@@ -34078,6 +34078,15 @@
         "commit": "9ddd441",
         "change": "text was \"An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again\"",
         "reason": "logoslang-issue-234-worker, fix round 1 of #234, 12 October 2026"
+      },
+      {
+        "at": "2026-10-12T12:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f8c60dd",
+        "change": "text was \"An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again. The REPL cases are fixed on the issue-234 branch at 3dccfdb (Q114: the file stays loaded for the session); the command-line cases (a ( ) block that faults, a later parse failure) are not\"",
+        "reason": "logoslang-issue-234-review-2, round 2 notes, 12 October 2026"
       }
     ]
   },
@@ -34155,7 +34164,7 @@
     "id": "P183",
     "kind": "problem",
     "status": "open",
-    "text": "A failed REPL line is undone in pieces written by hand in repl() (src/main.rs): the scope stack's journal undoes the names, keep_scope_lines the session's lines, the list of ended names the ends; each new thing a line can do needs its own undo there, and the import registry was left out, so a file imported on a failed line is freed while still counted as loaded. Fix round 1 of #234 (3dccfdb) added one more piece: hand_imported_exit splits a failed line's exit list into the file's items and the line's own, a split that #234's review round 2 made one hash-set lookup per item (decided by the orchestrator, 12 October 2026); keeping the file's items apart from the import on removes the split",
+    "text": "A failed REPL line is undone in pieces written by hand in repl() (src/main.rs): the scope stack's journal undoes the names, keep_scope_lines the session's lines, the list of ended names the ends; each new thing a line can do needs its own undo there, and the import registry was left out, so a file imported on a failed line is freed while still counted as loaded. Fix round 1 of #234 (3dccfdb) added one more piece: hand_imported_exit splits a failed line's exit list into the file's items and the line's own, a split that #234's review round 2 made one hash-set lookup per item (decided by the orchestrator, 12 October 2026); keeping the file's items apart from the import on removes the split. After #234 review round 2 a failed REPL line is undone by three calls in repl() (end_failed_earlier_holds, hand_imported_exit, exit_after_fault), and only their placement keeps their order",
     "program": "REPL on the issue-234 branch: import ./held.logos, error «boom» (held.logos: bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), pub h := bag(9)); then import ./held.logos; then h.n",
     "output": "freed 9 / <repl>: run error: boom / then h.n echoes 9 from the freed bag; issue-234 branch at ab73ebe, release, interpreted",
     "expected": "one undo that every piece a line changes joins, so nothing a line does can be left out; Q114 (e4a932e): the file stays loaded for the session",
@@ -34182,6 +34191,15 @@
         "commit": "d3fe0a3",
         "change": "text was \"A failed REPL line is undone in pieces written by hand in repl() (src/main.rs): the scope stack's journal undoes the names, keep_scope_lines the session's lines, the list of ended names the ends; each new thing a line can do needs its own undo there, and the import registry was left out, so a file imported on a failed line is freed while still counted as loaded\"",
         "reason": "logoslang-issue-234-review-2's question, 12 October 2026"
+      },
+      {
+        "at": "2026-10-12T12:20+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f8c60dd",
+        "change": "text was \"A failed REPL line is undone in pieces written by hand in repl() (src/main.rs): the scope stack's journal undoes the names, keep_scope_lines the session's lines, the list of ended names the ends; each new thing a line can do needs its own undo there, and the import registry was left out, so a file imported on a failed line is freed while still counted as loaded. Fix round 1 of #234 (3dccfdb) added one more piece: hand_imported_exit splits a failed line's exit list into the file's items and the line's own, a split that #234's review round 2 made one hash-set lookup per item (decided by the orchestrator, 12 October 2026); keeping the file's items apart from the import on removes the split\"",
+        "reason": "logoslang-issue-234-review-2, round 2 notes, 12 October 2026"
       }
     ]
   },
