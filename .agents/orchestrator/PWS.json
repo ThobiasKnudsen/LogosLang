@@ -34361,5 +34361,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P190",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type ? field written inside a type's own parse takes a value that is not a type, unchecked when the program is read; it fails only when the program runs. The write goes through the last branch of this::build_write, which keeps the right side as a node and calls no land; #198's analysis hole-result-type (29 September) names it a symptom, and #203 (one placing operation for what a parse writes) is where it is fixed",
+    "program": "logos 'm := type ( a := i32 ?, output_type := type ?, share run = ( a + a ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = m, tape[0].a = tape[-1], tape[0].output_type = i32 ?, tape.is_constructed[0] = true, tape.remove(-1) ) ), x := i32 3, x m'",
+    "output": "<command line>: run error: this node was built with no operation to run (dev 5c5e0a2 and the #198 branch, release, interpreted; the same with output_type = 5; with output_type = i32 it prints 6)",
+    "expected": "refused where it is written: the declared or assigned type must be a type value, at tape[0].output_type = i32 ?",
+    "tier": "interpreted",
+    "found": "logoslang-issue-198-review-1, review round 1 of #198, 12 October 2026; left for #203 by the orchestrator",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:34+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "f43e40f",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
