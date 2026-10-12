@@ -33901,5 +33901,53 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P178",
+    "kind": "problem",
+    "status": "open",
+    "text": "A Logos-written type's run body cannot call a function held in its field, and a parameter cannot be typed fn ?: share run = ( a(3) ) over a field a := ? is \"the run body of `callit` could not be constructed: expected one expression, found more\", and fn ? is \"expected a `(` here\"; so a function value is keyed by fn alone, and functions of different shapes would share one body once a held function can be called (near P171, (g)() refused)",
+    "program": "logos 'callit := type ( a := ?, share run = ( a(3) ) ), f := fn (x := i32 ?) -> i32 ( x ), f callit'; and a parameter typed fn ?",
+    "output": "the run body of `callit` could not be constructed: expected one expression, found more; for fn ?: expected a `(` here; dev d4b7d8f and the issue-209 branch, release, interpreted",
+    "expected": "the held function is called with 3, as a name over the same function is called; a parameter typed by a function type",
+    "tier": "interpreted",
+    "found": "logoslang-issue-209-review-1, FACT while reviewing #209, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T11:08+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2f49577",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P179",
+    "kind": "problem",
+    "status": "open",
+    "text": "The bracket test and the wrapped bracket are written in several places: a wrapped bracket (tape.bracket_arg) is made by build_bracket_arg for a field slot (field_type_key, src/parse/types.rs) and again by hand in run_placed_call (src/identities/tape.rs:984-987), and the bracket test is written out at src/parse/bodies.rs:398, src/parse/driver.rs:978 and src/identities/tape.rs:866 and :976",
+    "program": "grep -n bracket_arg src/identities/tape.rs src/parse/types.rs; read the four bracket tests",
+    "output": "two builders of one wrapped bracket and four copies of the bracket test; dev 478e8ed (after #209, which deleted the parser's own copy in types.rs)",
+    "expected": "one builder and one bracket test that every reader asks",
+    "tier": "interpreted",
+    "found": "logoslang-issue-209-review-1, FACT while reviewing #209, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T11:08+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2f49577",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
