@@ -29476,7 +29476,11 @@
     "expected": "`t` is a name for the text type, read as that type value; no panic (a seed panic is a bug whatever the input)",
     "tier": "interpreted",
     "found": "logoslang-why-P150-a, FOUND in round 2 on P150, 12 October 2026",
-    "why": null,
+    "why": [
+      "W311",
+      "W308",
+      "W310"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -29488,7 +29492,35 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "why + W311",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "why + W308",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "why + W310",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W304",
@@ -29874,7 +29906,7 @@
   {
     "id": "W308",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "lex::token picks a token's extent reader off Resolved.identity, the dyad the matched name yields, so an extent reader crosses := with the value: the name t, bound to the text type, lexes with the quote reader string::register installs on the text type, read(text, 0), which reads the text from t on as a «…» quote: past the end for t alone (the panic), to the next » for t xyz» (one cell, built as the text «xyz»), or to no » at all (\"this `«` has no `»`\")",
     "proposed_for": "P159",
     "why": null,
@@ -29884,11 +29916,15 @@
       "Resolved",
       "src/parse/lex.rs",
       "src/parse/scopes.rs",
-      "src/identities/string.rs"
+      "src/identities/string.rs",
+      "install_extent",
+      "ExtentFn",
+      "src/identities/meta.rs"
     ],
     "design": [
       "Unknown spellings are two pattern identities",
-      "Two levels: the binding is the lex level, the dyad is the value level"
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "`lex_rank` belongs to the binding, not the type"
     ],
     "pages": [],
     "evidence": [
@@ -29906,12 +29942,30 @@
         "command": "bash why-probes/run.sh why-probes/e1.txt",
         "output": "== t := «a».type, x := t xyz, 0\n<command line>:1:21: error: this `«` has no `»`: write `\\«` for one as text\nexit 1\n== t := «a».type, x := t xyz», 0\n<command line>: run error: a record, text or hole is not read as one value; read a field or take its address\nexit 1\n== x := «xyz», 0\n<command line>: run error: a record, text or hole is not read as one value; read a field or take its address\nexit 1\n== t := i32, x := t 5, print «{x}»\n5\nexit 0",
         "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'extent_reader\\(r.identity\\)|pub\\(crate\\) unsafe fn install_extent' src/parse/lex.rs src/identities/meta.rs",
+        "output": "src/parse/lex.rs:35:    let Some(read) = (unsafe { crate::identities::meta::extent_reader(r.identity) }) else {\nsrc/identities/meta.rs:323:pub(crate) unsafe fn install_extent(id: DyadPtr, leaf: DyadPtr) {\n(DESIGN ›Two levels‹: \"Everything the lexer owns is tied to a name or to an appearance. Per name: the binding, name, lex_rank, ...\"; the Seed line of ›Unknown spellings are two pattern identities‹ only describes the seed: \"the record of each carries an extent reader\")",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "RUST_BACKTRACE=1 target/release/logos 't := «a».type, t' 2>&1 | grep seed::",
+        "output": "4: seed::identities::string::read\n5: <seed::identities::string::register::{closure#0} ...>::call_once\n6: seed::parse::lex::token\n7: <seed::parse::Parser>::peek_token\n8: <seed::parse::Parser>::next_cell",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "target/release/logos 't := «a».type, t, 0'; target/release/logos 't := «a».type, s := t ?, 0'",
+        "output": "1:16: error: this `«` has no `»`: write `\\«` for one as text   (caret under t)\n1:21: error: this `«` has no `»`: write `\\«` for one as text   (caret under t)",
+        "commit": "39f2d7e"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "A token's extent reader is found through the identity its spelling resolves to: lex::token calls meta::extent_reader(r.identity), which meta::install_extent wrote on the type's record, never through the binding of the spelling that matched, so the reader crosses := to every second name of the identity, while Two levels ties everything the lexer owns to a name or an appearance; so the name t is lexed by running string::read over the text from t on"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T09:43+02:00",
@@ -29922,7 +29976,17 @@
       "run": "why-P159",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "accepted as a why of P159, same as W317",
+        "reason": "A and B state the same fact: lex::token finds a token's extent reader through the identity the name resolves to, so the reader crosses := with the value"
+      }
+    ]
   },
   {
     "id": "W309",
@@ -29989,7 +30053,7 @@
   {
     "id": "W310",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "string::read steps two bytes past the « it takes to stand at from without checking it is there, its one check a debug_assert! that a release build drops; so handed the text at the name t it slices source[2..] past the end (t alone) or inside a » (t») and panics, where the comment reader in comment.rs and print's quote_span_after first check that the text starts with « and answer a non-quote with an error",
     "proposed_for": "P159",
     "why": null,
@@ -29998,7 +30062,8 @@
       "quote_span_after",
       "src/identities/string.rs",
       "src/identities/comment.rs",
-      "src/parse/quotes.rs"
+      "src/parse/quotes.rs",
+      "Quote"
     ],
     "design": [
       "Strings nest by depth; only five escapes; `«…»` is the only spelling"
@@ -30014,12 +30079,30 @@
         "command": "bash why-probes/run.sh why-probes/e2.txt",
         "output": "== t := «a».type, t\nthread '<unnamed>' panicked at src/identities/string.rs:106:31:\nstart byte index 2 is out of bounds for string of length 1\nexit 1\n== t := «a».type, t»\nthread '<unnamed>' panicked at src/identities/string.rs:106:31:\nstart byte index 2 is not a char boundary; it is inside '»' (bytes 1..3 of string)\nexit 1\n== t := «a».type, print t»\n<command line>:1:22: error: `print` must be followed by a «…» quote\nexit 1",
         "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'debug_assert!\\(source\\[from..\\].starts_with|let mut i = from|while let Some\\(c\\) = source\\[i..\\]' src/identities/string.rs",
+        "output": "98:    debug_assert!(source[from..].starts_with('«'));\n105:    let mut i = from + '«'.len_utf8();\n106:    while let Some(c) = source[i..].chars().next() {",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -B2 'string::read\\(|[^_]read\\(text, 0\\)|[^_]read\\(spelling, 0\\)' src --type rust",
+        "output": "comment.rs:27: if text[at..].starts_with('«') {  /  :28: string::read(text, at)\ncomment.rs:53: let text = if spelling[at..].starts_with('«') {  /  :54: string::read(spelling, at)\nquotes.rs:177: let (start, len) = self.quote_span_after(word)?;  /  :178: string::read(self.cx.source, start)\nstring.rs:27: cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));   (no check)\nstring.rs:36-37: let spelling = tape.own_text()...; let quote = read(spelling, 0)   (no check)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "target/release/logos 't := «a».type, t'; target/release/logos 't := «a».type, t»'",
+        "output": "panicked at src/identities/string.rs:106:31: start byte index 2 is out of bounds for string of length 1\npanicked at src/identities/string.rs:106:31: start byte index 2 is not a char boundary; it is inside '»' (bytes 1..3 of string)",
+        "commit": "39f2d7e"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "string::read checks that its text starts with « only by debug_assert! and then slices at from + '«'.len_utf8() unchecked, so in a release build a text that is no quote is cut at byte 2, past the end of t or inside the » of t», a panic where a checked error belongs; its only callers that skip the « check are string.rs's own construct and extent reader, which trust that their identity is «"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T09:43+02:00",
@@ -30030,13 +30113,23 @@
       "run": "why-P159",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "accepted as a why of P159, same as W319",
+        "reason": "A and B state the same fact: string::read checks the « only by debug_assert! and slices two bytes on unchecked, so a release build panics where the comment reader and quotes.rs check first"
+      }
+    ]
   },
   {
     "id": "W311",
     "kind": "why",
-    "status": "draft",
-    "text": "string::construct, the text type's constructor, reads its quote from the cell's own spelling (tape.own_text()) and has no case for a cell spelled other than «…», though ctor_of wakes it for every cell whose dyad is the text type, since a type's parse crosses := (›Two levels‹); so the cell the lexer made of t xyz» is built as the text «xyz», and with the lexer fixed alone the cell t would still reach read(\"t\", 0) here, while the sibling rational::construct reads a spelling that is not a number as the type's name, the conversion form (r := rational_number, r 5 gives 5)",
+    "status": "accepted",
+    "text": "The text type and the « quote opener are one identity: string::register declares the spelling « on the string type node cx.string_ and puts the quote reader on that record as its constructor (construct) and its extent reader (read), where comment::register gives # a token node of its own apart from the comment type; since a type's parse crosses := (`pow := ^` parses as ^ does) and := binds a second name to the type's own dyad, a name bound to the text type (t := «a».type) is lexed and constructed as a «, and the quote reader reads the name's own text as a quote",
     "proposed_for": "P159",
     "why": null,
     "anchors": [
@@ -30046,11 +30139,19 @@
       "construct_of",
       "src/identities/string.rs",
       "src/identities/rational.rs",
-      "src/parse/driver.rs"
+      "src/parse/driver.rs",
+      "src/identities/comment.rs",
+      "string_",
+      "Quote",
+      "text_start",
+      "Binding"
     ],
     "design": [
       "Two levels: the binding is the lex level, the dyad is the value level",
-      "Strings nest by depth; only five escapes; `«…»` is the only spelling"
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling",
+      "`lex_rank` belongs to the binding, not the type",
+      "`{ }` is text interpolation",
+      "Unknown spellings are two pattern identities"
     ],
     "pages": [],
     "evidence": [
@@ -30063,12 +30164,25 @@
         "command": "bash why-probes/run.sh why-probes/e3.txt",
         "output": "== x := «a».type, 0\n0\nexit 0\n== t := «a».type, x := t xyz», 0\n<command line>: run error: a record, text or hole is not read as one value; read a field or take its address\nexit 1\n== r := rational_number, r 5\n5\nexit 0",
         "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'let id = cx.string_|cx.declare\\(\"«\"|cx.declare\\(\"#\"|let hash = |let id = cx.store.alloc_head|metas.insert|extents.insert' src/identities/string.rs src/identities/comment.rs",
+        "output": "comment.rs:19:    let id = cx.store.alloc_head(cx.type_, record);\ncomment.rs:22:    let hash = cx.store.alloc_head(cx.type_, record);\ncomment.rs:23:    cx.declare(\"#\", hash);\ncomment.rs:24:    cx.metas.insert(hash, construct);\ncomment.rs:25:    cx.extents.insert(hash, |text| {\nstring.rs:22:    let id = cx.string_;\nstring.rs:25:    cx.declare(\"«\", id);\nstring.rs:26:    cx.metas.insert(id, construct);\nstring.rs:27:    cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));\n(DESIGN ›{ }‹: the text type applied to a value is the conversion, string(n), a parse the quote reader cannot be; ›lex_rank belongs to the binding‹: parse stays in the identity's value, so it crosses :=)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p159c.txt and p159b.txt (release build of dev 39f2d7e, interpreted)",
+        "output": "t := «a».type, t                 -> panicked at src/identities/string.rs:106:31: start byte index 2 is out of bounds for string of length 1, exit 1\ntx := «a».type, y := tx», 0      -> run error: a record, text or hole is not read as one value (tx» read as the quote «x»)\ny := «x», 0                      -> run error: a record, text or hole is not read as one value\ny := zz», 0                      -> error: unknown name `»`\nt := i32, t                      -> i32   (a type whose parse reads its right side, not its spelling)\nt := rational_number, t          -> type  (no panic: rational's construct checks its span starts with a digit)",
+        "commit": "39f2d7e"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "The text type and the « quote opener are one identity: string::register declares the spelling « on the string type node cx.string_ and puts the quote reader on that record as its constructor (construct) and its extent reader (read), where comment::register gives # a token node of its own apart from the comment type; since a type's parse crosses := (`pow := ^` parses as ^ does) and := binds a second name to the type's own dyad, a name bound to the text type (t := «a».type) is lexed and constructed as a «, and the quote reader reads the name's own text as a quote"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T09:43+02:00",
@@ -30079,7 +30193,26 @@
       "run": "why-P159",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "accepted as a why of P159, same as W315",
+        "reason": "A and B state the same fact from two sides: the text type and the « quote opener are one identity, whose constructor reads its quote from the cell's own spelling and whose extent reader is the quote reader; A shows B's constructor half follows from it (the comment type's # has a token node of its own)"
+      },
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "text was \"string::construct, the text type's constructor, reads its quote from the cell's own spelling (tape.own_text()) and has no case for a cell spelled other than «…», though ctor_of wakes it for every cell whose dyad is the text type, since a type's parse crosses := (›Two levels‹); so the cell the lexer made of t xyz» is built as the text «xyz», and with the lexer fixed alone the cell t would still reach read(\\\"t\\\", 0) here, while the sibling rational::construct reads a spelling that is not a number as the type's name, the conversion form (r := rational_number, r 5 gives 5)\"",
+        "reason": "why-P159-a's wording (W315, merged) names the deeper fact, the one identity for the text type and the « opener; B's constructor half follows from it"
+      }
+    ]
   },
   {
     "id": "W312",
@@ -30400,5 +30533,398 @@
         "reason": null
       }
     ]
+  },
+  {
+    "id": "W315",
+    "kind": "why",
+    "status": "merged",
+    "text": "The text type and the « quote opener are one identity: string::register declares the spelling « on the string type node cx.string_ and puts the quote reader on that record as its constructor (construct) and its extent reader (read), where comment::register gives # a token node of its own apart from the comment type; since a type's parse crosses := (`pow := ^` parses as ^ does) and := binds a second name to the type's own dyad, a name bound to the text type (t := «a».type) is lexed and constructed as a «, and the quote reader reads the name's own text as a quote",
+    "proposed_for": "P159",
+    "why": null,
+    "anchors": [
+      "src/identities/string.rs",
+      "src/identities/comment.rs",
+      "string_",
+      "Quote",
+      "text_start",
+      "Binding"
+    ],
+    "design": [
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling",
+      "`lex_rank` belongs to the binding, not the type",
+      "`{ }` is text interpolation",
+      "Unknown spellings are two pattern identities"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'let id = cx.string_|cx.declare\\(\"«\"|cx.declare\\(\"#\"|let hash = |let id = cx.store.alloc_head|metas.insert|extents.insert' src/identities/string.rs src/identities/comment.rs",
+        "output": "comment.rs:19:    let id = cx.store.alloc_head(cx.type_, record);\ncomment.rs:22:    let hash = cx.store.alloc_head(cx.type_, record);\ncomment.rs:23:    cx.declare(\"#\", hash);\ncomment.rs:24:    cx.metas.insert(hash, construct);\ncomment.rs:25:    cx.extents.insert(hash, |text| {\nstring.rs:22:    let id = cx.string_;\nstring.rs:25:    cx.declare(\"«\", id);\nstring.rs:26:    cx.metas.insert(id, construct);\nstring.rs:27:    cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));\n(DESIGN ›{ }‹: the text type applied to a value is the conversion, string(n), a parse the quote reader cannot be; ›lex_rank belongs to the binding‹: parse stays in the identity's value, so it crosses :=)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p159c.txt and p159b.txt (release build of dev 39f2d7e, interpreted)",
+        "output": "t := «a».type, t                 -> panicked at src/identities/string.rs:106:31: start byte index 2 is out of bounds for string of length 1, exit 1\ntx := «a».type, y := tx», 0      -> run error: a record, text or hole is not read as one value (tx» read as the quote «x»)\ny := «x», 0                      -> run error: a record, text or hole is not read as one value\ny := zz», 0                      -> error: unknown name `»`\nt := i32, t                      -> i32   (a type whose parse reads its right side, not its spelling)\nt := rational_number, t          -> type  (no panic: rational's construct checks its span starts with a digit)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W311",
+    "made": {
+      "at": "2026-10-12T09:54+02:00",
+      "by": "logoslang-why-P159-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "merged into W311",
+        "reason": "A and B state the same fact from two sides: the text type and the « quote opener are one identity, whose constructor reads its quote from the cell's own spelling and whose extent reader is the quote reader; A shows B's constructor half follows from it (the comment type's # has a token node of its own)"
+      }
+    ]
+  },
+  {
+    "id": "W316",
+    "kind": "why",
+    "status": "draft",
+    "text": "The seed has one way to run a node, Runtime::run (Lowerer::lower on the compiled tier), and it hands back the node's value, so on a node with no run (not Read::Executable) it reads that node whole; nothing runs a node for its effect alone, so each caller that drops the value keeps its own test of what not to run: declare::run (storage, Read::Aggregate), declare::lower (nothing), scope::run (comment, defer), the scope's lower (comment), Parser::drain (comment, defer, square_brackets), while immediate_value alone asks read_kind's Read::Executable (itself when nothing runs); ›Execution is function application‹ is one rule for what runs: a fn, a type's run, else it is data",
+    "proposed_for": "W314",
+    "why": null,
+    "anchors": [
+      "Runtime",
+      "lower",
+      "src/run.rs",
+      "src/compile.rs",
+      "src/identities/declare.rs",
+      "src/identities/scope.rs",
+      "drain",
+      "immediate_value",
+      "read_kind",
+      "Executable",
+      "is_comment_type",
+      "square_brackets"
+    ],
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'pub(\\(crate\\))? (unsafe )?fn (run|apply|eval|exec)\\w*' src/run.rs src/compile.rs; rg -n 'Read::Literal => crate::identities::rational::mold|Read::Aggregate \\| Read::Opaque \\| Read::Undefined =>' src/run.rs src/compile.rs; rg -n 'is_storage\\(declared\\)|!= super::read::Read::Aggregate|lw.lower\\(declared_of' src/identities/declare.rs; rg -n 'if super::numtype::is_comment_type\\(logos\\) \\|\\| logos == defer_ty|\\.filter\\(\\|&e\\| !super::numtype::is_comment_type' src/identities/scope.rs; rg -n '&& ty != self.types.defer_|&& ty != self.types.square_brackets|if !matches!\\(kind, Read::Executable\\(_\\)\\) && !place|itself when nothing runs' src/parse/bodies.rs",
+        "output": "src/run.rs:728/737/754 apply, apply_into, apply_values (a call); src/run.rs:831: pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError>   (the one entry; no run for effect)\nsrc/run.rs:855:            Read::Literal => crate::identities::rational::mold(node)\nsrc/run.rs:865:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),\nsrc/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),\nsrc/identities/declare.rs:88:        if !rt.types().is_storage(declared)\nsrc/identities/declare.rs:89:            && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate\nsrc/identities/declare.rs:100:        lw.lower(declared_of(node))?;      (declare::lower: no test)\nsrc/identities/scope.rs:248:            if super::numtype::is_comment_type(logos) || logos == defer_ty {      (scope::run)\nsrc/identities/scope.rs:292:            .filter(|&e| !super::numtype::is_comment_type(dyad::ty(e)))      (scope's lower)\nsrc/parse/bodies.rs:1439:                        && ty != self.types.defer_      (Parser::drain, after !is_comment_type)\nsrc/parse/bodies.rs:1440:                        && ty != self.types.square_brackets\nsrc/parse/bodies.rs:1516:    /// What an `immediate` operand stands as: itself when nothing runs, else what the\nsrc/parse/bodies.rs:1528:        if !matches!(kind, Read::Executable(_)) && !place {",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p157-b-r2.txt, then the same loop over why-probes/p157-b-axes.txt and the lines '«a», 0' and 't := i32, 0'   (each line one program through target/release/logos, release build of 39f2d7e)",
+        "output": "s := «a», 0 (declare::run's test) -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1\n«a», 0 (Parser::drain's list) -> the same error, exit 1\nh := fn () -> i32 ( «a», 0 ), h() (scope::run's list) -> the same error, exit 1\nh := fn () -> i32 ( «a», 0 ), h.compile(), h() (the scope's lower) -> run error: compile() failed: this cannot be compiled yet, exit 1\nh := fn () -> i32 ( 1/2, 0 ), h.compile(), h() -> run error: compile() failed: a literal here has no exact value in the type it lands in, exit 1\nt := i32, 0 and h := fn () -> i32 ( t := i32, 0 ), h.compile(), h() -> 0 (Read::Identity reads as its address, so running it passes)\npt := type ( a := i32 ?, b := i32 ? ), h := fn () -> i32 ( p := pt ?, 0 ), h() -> 0 (declare::run skips storage)\nthe same with h.compile() before h() -> run error: compile() failed: this cannot be compiled yet, exit 1 (declare::lower lowers the Read::Aggregate place)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:54+02:00",
+      "by": "logoslang-why-P157-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W317",
+    "kind": "why",
+    "status": "merged",
+    "text": "A token's extent reader is found through the identity its spelling resolves to: lex::token calls meta::extent_reader(r.identity), which meta::install_extent wrote on the type's record, never through the binding of the spelling that matched, so the reader crosses := to every second name of the identity, while Two levels ties everything the lexer owns to a name or an appearance; so the name t is lexed by running string::read over the text from t on",
+    "proposed_for": "P159",
+    "why": null,
+    "anchors": [
+      "src/parse/lex.rs",
+      "extent_reader",
+      "install_extent",
+      "ExtentFn",
+      "src/identities/meta.rs"
+    ],
+    "design": [
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "`lex_rank` belongs to the binding, not the type",
+      "Unknown spellings are two pattern identities"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'extent_reader\\(r.identity\\)|pub\\(crate\\) unsafe fn install_extent' src/parse/lex.rs src/identities/meta.rs",
+        "output": "src/parse/lex.rs:35:    let Some(read) = (unsafe { crate::identities::meta::extent_reader(r.identity) }) else {\nsrc/identities/meta.rs:323:pub(crate) unsafe fn install_extent(id: DyadPtr, leaf: DyadPtr) {\n(DESIGN ›Two levels‹: \"Everything the lexer owns is tied to a name or to an appearance. Per name: the binding, name, lex_rank, ...\"; the Seed line of ›Unknown spellings are two pattern identities‹ only describes the seed: \"the record of each carries an extent reader\")",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "RUST_BACKTRACE=1 target/release/logos 't := «a».type, t' 2>&1 | grep seed::",
+        "output": "4: seed::identities::string::read\n5: <seed::identities::string::register::{closure#0} ...>::call_once\n6: seed::parse::lex::token\n7: <seed::parse::Parser>::peek_token\n8: <seed::parse::Parser>::next_cell",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "target/release/logos 't := «a».type, t, 0'; target/release/logos 't := «a».type, s := t ?, 0'",
+        "output": "1:16: error: this `«` has no `»`: write `\\«` for one as text   (caret under t)\n1:21: error: this `«` has no `»`: write `\\«` for one as text   (caret under t)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W308",
+    "made": {
+      "at": "2026-10-12T09:54+02:00",
+      "by": "logoslang-why-P159-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "merged into W308",
+        "reason": "A and B state the same fact: lex::token finds a token's extent reader through the identity the name resolves to, so the reader crosses := with the value"
+      }
+    ]
+  },
+  {
+    "id": "W318",
+    "kind": "why",
+    "status": "draft",
+    "text": "A declare node's declared field holds one of three kinds of thing and nothing on the node says which: an initializer that runs (the = store build_init makes, a construct or by_copy result), storage (a hole's place, the binding of x := y over storage, a share's binding that construct_decl writes with set_declared), or the node the name denotes (a type identity, a fn literal, a text, a fraction literal, from declare_here's last arm); its doc says the run executes it, so declare::run and declare::lower must sort the three by the node's read kind, and is_slot_fill reads the same field as the denoted slot marker",
+    "proposed_for": "W314",
+    "why": null,
+    "anchors": [
+      "declare_here",
+      "construct_decl",
+      "set_declared",
+      "declared_of",
+      "build_init",
+      "is_slot_fill",
+      "DECL_DECLARED",
+      "src/parse/declare.rs",
+      "src/identities/declare.rs",
+      "src/parse/types.rs"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'The declared binding, construction initializer or snapshot' src/identities/declare.rs; rg -n '^\\s+(init|place|value|read)$|set_declared\\(node, named\\)' src/parse/declare.rs; rg -n 'def.slots.contains\\(&declared\\)' src/parse/types.rs",
+        "output": "src/identities/declare.rs:24:/// The declared binding, construction initializer or snapshot the run executes.\nsrc/parse/declare.rs:504:            crate::identities::declare::set_declared(node, named);   (construct_decl, a share: storage)\nsrc/parse/declare.rs:661:                init      (an empty node: runs)\nsrc/parse/declare.rs:695:                place     (a hole: storage)\nsrc/parse/declare.rs:711:                value     (construct / by_copy result: runs)\nsrc/parse/declare.rs:717:                read      (a type identity: the denoted node)\nsrc/parse/declare.rs:736:                init      (a Logos-built node: runs; the box and scalar arms also end in build_init)\nsrc/parse/declare.rs:749:                init      (an owning pointer: runs)\nsrc/parse/declare.rs:763:                read      (x := y over storage: a binding, storage)\nsrc/parse/declare.rs:767:                read      (the last arm: the node the name denotes, text, fraction literal, fn)\nsrc/parse/types.rs:561:            .is_some_and(|def| def.slots.contains(&declared) || def.free_marker == declared)   (is_slot_fill)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:54+02:00",
+      "by": "logoslang-why-P157-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "B"
+    },
+    "history": []
+  },
+  {
+    "id": "W319",
+    "kind": "why",
+    "status": "merged",
+    "text": "string::read checks that its text starts with « only by debug_assert! and then slices at from + '«'.len_utf8() unchecked, so in a release build a text that is no quote is cut at byte 2, past the end of t or inside the » of t», a panic where a checked error belongs; its only callers that skip the « check are string.rs's own construct and extent reader, which trust that their identity is «",
+    "proposed_for": "P159",
+    "why": null,
+    "anchors": [
+      "src/identities/string.rs",
+      "Quote",
+      "src/identities/comment.rs",
+      "src/parse/quotes.rs"
+    ],
+    "design": [
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'debug_assert!\\(source\\[from..\\].starts_with|let mut i = from|while let Some\\(c\\) = source\\[i..\\]' src/identities/string.rs",
+        "output": "98:    debug_assert!(source[from..].starts_with('«'));\n105:    let mut i = from + '«'.len_utf8();\n106:    while let Some(c) = source[i..].chars().next() {",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n -B2 'string::read\\(|[^_]read\\(text, 0\\)|[^_]read\\(spelling, 0\\)' src --type rust",
+        "output": "comment.rs:27: if text[at..].starts_with('«') {  /  :28: string::read(text, at)\ncomment.rs:53: let text = if spelling[at..].starts_with('«') {  /  :54: string::read(spelling, at)\nquotes.rs:177: let (start, len) = self.quote_span_after(word)?;  /  :178: string::read(self.cx.source, start)\nstring.rs:27: cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));   (no check)\nstring.rs:36-37: let spelling = tape.own_text()...; let quote = read(spelling, 0)   (no check)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "target/release/logos 't := «a».type, t'; target/release/logos 't := «a».type, t»'",
+        "output": "panicked at src/identities/string.rs:106:31: start byte index 2 is out of bounds for string of length 1\npanicked at src/identities/string.rs:106:31: start byte index 2 is not a char boundary; it is inside '»' (bytes 1..3 of string)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W310",
+    "made": {
+      "at": "2026-10-12T09:54+02:00",
+      "by": "logoslang-why-P159-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P159",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3d0655b",
+        "change": "merged into W310",
+        "reason": "A and B state the same fact: string::read checks the « only by debug_assert! and slices two bytes on unchecked, so a release build panics where the comment reader and quotes.rs check first"
+      }
+    ]
+  },
+  {
+    "id": "W320",
+    "kind": "why",
+    "status": "draft",
+    "text": "declare_here fills a declare node's declared field with one of two different things and marks neither: in six arms the work the declaration does (an = initializer from build_init, or a construct writing into the name's place), in four the thing the name already is, with nothing to do (the hole's own place, an alias's storage, the type a rebind names, the node Binding::set_dyad binds); the node's own contract treats the whole field as work (\"Running one runs declared for effect\"), and A := node's fields are lhs and rhs leaves the field open (\"What the seed made of the right side stays a third slot\"), so declare::run and declare::lower can tell whether a declaration has work only from the kind of node in the field",
+    "proposed_for": "W314",
+    "why": null,
+    "anchors": [
+      "declare_here",
+      "build_init",
+      "set_dyad",
+      "rebind",
+      "set_declared",
+      "declared_of",
+      "src/parse/declare.rs",
+      "src/identities/declare.rs"
+    ],
+    "design": [
+      "A `:=` node's fields are `lhs` and `rhs`"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n '<what each arm returns as declared>' src/parse/declare.rs, lines 640 to 770 (declare_here's arms)",
+        "output": "655/661: empty node: let init = build_init(.., place, node); init      (work)\n695: hole: place                                                       (nothing to do)\n711: construct or by_copy result writing into the place: value          (work)\n716/717: type: self.cx.scopes.rebind(binding, read); read               (nothing to do)\n724: box: build_init(.., place, read)                                   (work)\n732/736: node a Logos parse builds: let init = build_init(..); init     (work)\n747/749: owning block: let init = build_init(..); init                  (work)\n757: scalar snapshot: build_init(.., place, value)                      (work)\n762/763: alias over storage: Binding::lay_out(binding, b.dyad, ..); read (nothing to do)\n766/767: last arm: Binding::set_dyad(binding, read); read               (nothing to do)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "sed -n '4,8p' src/identities/declare.rs; sed -n '502,504p' src/parse/declare.rs   (the node's contract; construct_decl after a share line runs once)",
+        "output": "//! `:=`, the declaration operator, and the `declare` node it builds:\n//! `[lhs, rhs, declared, op]`, the binding, the right side as written, and\n//! what the seed made of it, ... Running one\n//! runs `declared` for effect and yields unit.\n            self.run_on_pass(node).map_err(ParseError::Run)?;\n            let named = self.types.through(crate::identities::declare::binding_of(node));\n            crate::identities::declare::set_declared(node, named);   (work done: the field is rewritten to the name, so the pass's run finds storage and skips)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "for l in 'x := i32 7, 0' 'pt := type ( a := i32 ?, b := i32 ? ), p := pt ?, 0' 'k := i32, 0' 's := «a», 0'; do target/release/logos \"$l\"; echo \"exit $?\"; done   (release build of dev 39f2d7e, interpreted)",
+        "output": "x := i32 7, 0 -> 0, exit 0   (build_init arm: the field is work, it runs)\np := pt ?, 0 -> 0, exit 0   (hole arm: nothing to do, skipped by is_storage)\nk := i32, 0 -> 0, exit 0   (rebind arm: nothing to do, run anyway, Read::Identity gives its address)\ns := «a», 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (set_dyad arm: nothing to do, run anyway, Read::Opaque refused)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:55+02:00",
+      "by": "logoslang-why-P157-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W321",
+    "kind": "why",
+    "status": "draft",
+    "text": "Neither tier can run a node only for its effect: the one entry is the whole-value read, Runtime::run (whose data arms read the value or refuse it) and Lowerer::lower, so every runner that drops a value keeps its own list of nodes not to hand it: Parser::drain skips comment, defer and square_brackets, scope::run and the scope's lower skip comment and defer, declare::run skips storage and Read::Aggregate, declare::lower skips nothing; the lists differ, and two entries repeat what the nodes already do (a comment reads as Read::Unit, defer runs run_defer_noop), so a dropped [1, 2] passes at the top level and fails in a block, a function body and a declaration, and a record passes as a declaration and fails as a bare line, where Execution is function application states the rule once",
+    "proposed_for": "W314",
+    "why": null,
+    "anchors": [
+      "Runtime",
+      "Lowerer",
+      "drain",
+      "lower_with_teardowns",
+      "run_defer_noop",
+      "read_kind",
+      "src/run.rs",
+      "src/compile.rs",
+      "src/parse/bodies.rs",
+      "src/identities/scope.rs",
+      "src/identities/declare.rs"
+    ],
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n '^    pub(\\(crate\\))? (unsafe )?fn (run|apply|exec|eval)\\w*' src/run.rs   (the runtime's entries; Runtime::run's doc: 'An executable node is dispatched; everything else is data read the way its type says')",
+        "output": "728:    pub unsafe fn apply(&mut self, f: DyadPtr, node: DyadPtr) -> Result<i64, RunError> {\n737:    pub(crate) unsafe fn apply_into(\n754:    pub unsafe fn apply_values(&mut self, f: DyadPtr, values: &[i64]) -> Result<i64, RunError> {\n831:    pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n '<each runner's skip test>' src/parse/bodies.rs src/identities/scope.rs src/compile.rs src/identities/declare.rs src/identities/drop_model.rs src/identities/read.rs",
+        "output": "src/parse/bodies.rs:1438:  !is_comment_type(ty)            (Parser::drain)\nsrc/parse/bodies.rs:1439:      && ty != self.types.defer_\nsrc/parse/bodies.rs:1440:      && ty != self.types.square_brackets\nsrc/identities/scope.rs:248:  if is_comment_type(logos) || logos == defer_ty {   (scope::run)\nsrc/identities/scope.rs:292:  .filter(|&e| !is_comment_type(dyad::ty(e)))   (scope's lower)\nsrc/compile.rs:334:  for &line in lines.iter().filter(|&&e| dyad::ty(e) != defer_) {   (lower_with_teardowns)\nsrc/identities/declare.rs:88:  if !rt.types().is_storage(declared)\nsrc/identities/declare.rs:89:      && read_kind(rt.types(), declared) != Read::Aggregate   (declare::run)\nsrc/identities/declare.rs:100:  lw.lower(declared_of(node))?;   (declare::lower, no test)\nsrc/identities/read.rs:128:  COMMENT_TAG | VOID_TAG => Read::Unit,   (a comment already runs to nothing)\nsrc/identities/drop_model.rs:1282:  fn run_defer_noop(..)   (defer's own run already does nothing)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w314-a.txt   (release build of dev 39f2d7e)",
+        "output": "[1, 2], 0 -> 0, exit 0   (drain skips square_brackets)\n( [1, 2], 0 ) -> run error: this node was built with no operation to run, exit 1   (scope::run does not)\nh := fn () -> i32 ( [1, 2], 0 ), h() -> the same error, exit 1\nh := fn () -> i32 ( [1, 2], 0 ), h.compile(), h() -> run error: compile() failed: this cannot be compiled yet, exit 1\nb := [1, 2], 0 -> the same no-operation error, exit 1   (declare::run does not skip it)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), 0 -> 0, exit 0   (declare::run skips storage)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), p, 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (drain reads the bare line whole)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:55+02:00",
+      "by": "logoslang-why-P157-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "A"
+    },
+    "history": []
   }
 ]
