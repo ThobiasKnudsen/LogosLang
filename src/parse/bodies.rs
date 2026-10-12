@@ -1635,7 +1635,8 @@ impl<'a> Parser<'a> {
             std::mem::take(&mut open.exit).into_iter().partition(|h| imported.contains(&h.what));
         open.exit = own;
         // A file's holds start at its import, which ran at parse whatever line the pass reached;
-        // a `free` or `move` of one the line parsed ends it only where the pass ran it.
+        // whether the line's own `free` or `move` of one ended it is read as the fault's end reads
+        // the line's own holds.
         let top = &self.cx.open[0];
         let held: Vec<ExitItem> = files
             .into_iter()
