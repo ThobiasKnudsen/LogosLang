@@ -34198,5 +34198,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P185",
+    "kind": "problem",
+    "status": "open",
+    "text": "Defining many top-level functions that call nothing reads in more than linear time: 1,000 definitions take 0.16 s and 2,000 take 0.49 s, while 2,000 plain names take 0.025 s",
+    "program": "target/release/logos \"$(for k in $(seq 1 N); do printf 'g%d := fn (a := i64 ?) -> i64 ( a ), ' $k; done; printf 'print «done»')\" for N = 1000 and 2000; control: gK := i64 K × 2000",
+    "output": "done, exit 0; 0.16 s at N = 1000, 0.49 s at N = 2000; the control 0.025 s; issue-198 branch at bfccd1b, release, interpreted",
+    "expected": "time in step with N, as plain names are",
+    "tier": "interpreted",
+    "found": "logoslang-issue-198-worker, FOUND while working #198, 12 October 2026 (no calls, so maybe not P139's cause)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:14+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "6463ccf",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
