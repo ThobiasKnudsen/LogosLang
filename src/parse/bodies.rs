@@ -604,8 +604,6 @@ impl<'a> Parser<'a> {
             unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?
         };
 
-        // A comptime-rational tail commits to the declared return type here,
-        // so `fn () -> i64 (…)` returns i64 rather than the i32 default.
         // SAFETY: `body`/`output` are valid dyads just built.
         let body =
             unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };
