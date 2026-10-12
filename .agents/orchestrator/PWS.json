@@ -34313,5 +34313,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P188",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type with its own parse, named after -> as a function's result type, does not become the result type: its parse runs there instead, and the function's result type comes out as an address",
+    "program": "logos 'm := type ( a := i32 ?, output_type := type ?, share run = ( a + a ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = m, tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) ), f := fn () -> m ( i32 5 ), f.output_type'",
+    "output": "dev 5c5e0a2, release, interpreted: 139906479332608, exit 0 (f() prints 5); branch issue-198-one-landing-step: <command line>:1:257: error: this gives nothing, and a value is needed here, exit 1; control x := i32 3, y := x m, y prints 6 on both",
+    "expected": "f.output_type is m, the type written after ->: a type named as a result type is that type, and its parse does not run there (near #207, which covers non-types after ->)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-198-review-1, review round 1 of #198, 12 October 2026 (near P10, P6, P51)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:32+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "839f884",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
