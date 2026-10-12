@@ -34385,5 +34385,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P191",
+    "kind": "problem",
+    "status": "open",
+    "text": "A failed REPL line that faults inside a ( ) block, before the block's own free of an earlier line's name, frees that name and leaves it dead; the same line without the block leaves it alive. An if arm does the same, and so does an imported file's pub name (kept for the session by Q114)",
+    "program": "REPL: p := alloc 1 of i32 3 / ( error «b», free p ) / p@; also bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), m := bag(3), ( error «b», free m ), m.n; if true ( error «b», free p ) else ( free p ); import ./tests/fixtures/held.logos, ( error «b», free h )",
+    "output": "run error: b, then p@: <repl>:1:1: error: `p` is dead here: it was moved or freed above; the bag line prints freed 3 before the run error; dev bffb703 and the #234 branch 50f8b65, release, interpreted; control on the branch: error «b», free p leaves p@ printing 3",
+    "expected": "a REPL line that fails leaves such a name live unless it reached its free or move (DESIGN ›`free` and `move` end a name; no drop flag‹, its Seed line), inside a block or an if arm as on the line itself",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-3, /code-review point 1 in review round 3 of #234, 12 October 2026 (near P180, P187, P39, P189, P183)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:41+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "746055a",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
