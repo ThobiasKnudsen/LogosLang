@@ -81,6 +81,16 @@ impl NumType {
         }
     }
 
+    /// The binary digits of magnitude the type holds every value of: an integer's value bits, a
+    /// float's significand.
+    pub(crate) fn digits(self) -> usize {
+        match self {
+            NumType::F32 => 24,
+            NumType::F64 => 53,
+            nt => nt.bytes() * 8 - usize::from(nt.is_signed_int()),
+        }
+    }
+
     /// The saturation sentinel division by zero yields; an unsigned maximum is all-ones,
     /// which is -1 sign-narrowed.
     pub(crate) fn max_imm(self) -> i64 {

@@ -151,7 +151,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::UnsettledInclusion => {
-            "`⊆` answers only for a type and itself or two integer types; \
+            "`⊆` answers only for a type and itself, or between number types and `bool`; \
              between other types what each can hold is not settled yet"
                 .into()
         }
@@ -480,7 +480,7 @@ pub fn run_message(e: &RunError) -> String {
             "`caller` alone is not a value the seed reads; read `caller.scope`".into()
         }
         RunError::UnsettledInclusion => {
-            "`⊆` answers only for a type and itself or two integer types; \
+            "`⊆` answers only for a type and itself, or between number types and `bool`; \
              between other types what each can hold is not settled yet"
                 .into()
         }

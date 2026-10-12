@@ -767,18 +767,28 @@ fn run_cell_value(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// The number a literal or a constant of the type holds; any other dyad, an expression
-/// whose value is known only when it runs, is refused.
+/// The number a literal or a constant of a type lying inside `ty` holds, as a `ty`; any other
+/// dyad, an expression whose value is known only when it runs, is refused.
 ///
 /// # Safety
 /// `cell` must be a dyad from the store; `ty` a number type node.
 pub(crate) unsafe fn constant_number(types: &Core, cell: DyadPtr, ty: DyadPtr) -> Option<i64> {
-    let nt = super::numtype::of_type_node(ty);
-    if dyad::ty(cell) == types.rational {
+    use super::numtype::{apply_cast, of_type_node, read_scalar};
+    let nt = of_type_node(ty);
+    let from = dyad::ty(cell);
+    if from == types.rational {
         return super::rational::mold_to(cell, nt);
     }
     let v = dyad::value(cell);
-    (dyad::ty(cell) == ty && !v.is_null()).then(|| super::numtype::read_scalar(ty, v as *const u8))
+    if v.is_null() {
+        return None;
+    }
+    if from == ty {
+        return Some(read_scalar(ty, v as *const u8));
+    }
+    let inside = super::is_numtype_node(types, from)
+        && super::subset::includes(types, from, ty) == Some(true);
+    inside.then(|| apply_cast(of_type_node(from), nt, read_scalar(from, v as *const u8)))
 }
 
 /// Checked again here, as `run_cell_value` is.

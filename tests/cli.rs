@@ -642,6 +642,7 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("b := a", ""),
         ("b := a, b[1]", "2"),
         ("t := array i32, mut x := t ?, x = [4, 5], x[1]", "5"),
+        ("b := array f64 [i32 1, 2], b[0]", "1.0"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -659,6 +660,8 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("b := array i32 (1, 2)", "the list is written in square brackets, `array i32 [1, 2]`"),
         ("t := array u8, mut x := t ?, x = [4, 300]", "an element does not fit the element type"),
         ("b := array array u8 [[1, 300]]", "an element does not fit the element type"),
+        ("b := array f32 [i32 1]", "an element does not fit the element type"),
+        ("a[f64 1.0]", "the index is not an integer"),
         // `array ?` is an empty node of `array`, with nothing to run.
         ("n := array ?", "was never written by its constructor"),
     ] {
@@ -1467,9 +1470,36 @@ fn inclusion_between_integer_types_follows_their_value_ranges() {
 }
 
 #[test]
+fn an_integer_lies_inside_a_float_that_holds_every_value_of_it() {
+    let (echoes, stderr) = repl(
+        "i32 ⊆ f64\ni32 ⊆ f32\nu16 ⊆ f32\nu32 ⊆ f64\ni64 ⊆ f64\nf32 ⊆ f64\nf64 ⊆ f32\n\
+         f64 ⊆ i64\nbool ⊆ i32\ni32 ⊆ bool\n"
+            .as_bytes(),
+    );
+    assert_eq!(
+        echoes,
+        ["true", "false", "true", "true", "false", "true", "false", "false", "false", "false"],
+        "stderr: {stderr}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn a_line_checked_against_a_float_reads_as_that_float() {
+    let q = "q := type ( share parse_rank = 60, share parse = ( \
+             if (not tape[1].type ⊆ f64) (error «not within f64»), \
+             print «{tape[1] + 0.5}», tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) )";
+    let out = logos().args([&format!("{q}, q (i32 3)")]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3.5\n1\n");
+    let out = logos().args([&format!("{q}, q (i64 3)")]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && stderr.contains("not within f64"), "stderr: {stderr}");
+}
+
+#[test]
 fn inclusion_the_design_leaves_open_is_a_checked_error() {
-    for src in ["f32 ⊆ f64\n", "i32 ⊆ f64\n", "bool ⊆ i32\n", "i32 ⊆ type\n", "u8 ⊆ dyad\n"]
-    {
+    for src in ["i32 ⊆ type\n", "u8 ⊆ dyad\n", "bool ⊆ type\n"] {
         let (echoes, stderr) = repl(src.as_bytes());
         assert!(echoes.is_empty() && stderr.contains("not settled"), "{src}: stderr: {stderr}");
     }
@@ -1486,7 +1516,9 @@ fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
     let out = logos().args([&format!("{q}, q (u32 3)")]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
-    for (arg, expect) in [("i8 3", "not within the size type"), ("f64 3.0", "not settled")] {
+    for (arg, expect) in
+        [("i8 3", "not within the size type"), ("f64 3.0", "not within the size type")]
+    {
         let out = logos().args([&format!("{q}, q ({arg})")]).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success() && stderr.contains(expect), "{arg}: stderr: {stderr}");
