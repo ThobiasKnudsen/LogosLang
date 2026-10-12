@@ -22322,7 +22322,9 @@
     "status": "accepted",
     "text": "orchestrate.sh's questions-watch wakes the orchestrator with only the saved question file's path and keeps only a sha256 of the file (mark_seen, edited), and question-close moves the file to answers/ without checking that what Thobias added since was read or relayed; so finding his words rests on the orchestrator's own partial read, and in Q85 a read of lines 33 to 62 missed his questions on line 63, which the close then took with it unrelayed and unanswered",
     "proposed_for": "P125",
-    "why": [],
+    "why": [
+      "W345"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/orchestrate.sh",
       "~/.claude/skills/orchestrate/SKILL.md"
@@ -22373,6 +22375,15 @@
         "commit": "fbaf028",
         "change": "asked: no why found",
         "reason": "only B found it; its evidence reruns (transcript 79afb672: Read of Q85 at 2026-10-08T22:45:47Z with offset 33, limit 30, ending at line 62; his questions stand on line 63); a fact of orchestrate.sh (questions-watch prints only the path, question-close checks nothing) with no further cause in the rule files"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W345",
+        "reason": null
       }
     ]
   },
@@ -33074,9 +33085,13 @@
     "id": "W337",
     "kind": "why",
     "status": "accepted",
-    "text": "solve-prompt.md never tells a solution agent that a question stays as it was placed (the ban, Never edit a question once it is placed, stands only in the orchestrator's SKILL.md, which neither solve-prompt.md nor every-prompt.md carries), and it makes his pick confirm the exact recorded text and wording the round showed; so solve-W15 sent QUESTION messages asking the orchestrator to patch the open Q83 and the open Q106 before he answered, and both edits were those patches",
+    "text": "solve-prompt.md does not carry SKILL.md's ban on editing a placed question nor its reason (his editor holds the file open): its line 18 keeps only new roots out of the round he is answering, with no reason, and its rule that his pick confirms the exact wording the round showed makes a patch to the open round worth asking for; both lost edits were solve-W15's patch requests, and the Q83 one broke line 18 too",
     "proposed_for": "P169",
-    "why": null,
+    "why": [
+      "W341",
+      "W342",
+      "W343"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/solve-prompt.md",
       "~/.claude/skills/orchestrate/every-prompt.md",
@@ -33119,6 +33134,42 @@
         "commit": "4b1bce2",
         "change": "accepted as a why of P169",
         "reason": "B's fact, the asker's side: solve-prompt.md carries no 'never edit a placed question', and its rule that his pick confirms the exact wording the round showed makes a patch to the open round worth asking for; both lost edits were solve-W15's patch requests"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "text was \"solve-prompt.md never tells a solution agent that a question stays as it was placed (the ban, Never edit a question once it is placed, stands only in the orchestrator's SKILL.md, which neither solve-prompt.md nor every-prompt.md carries), and it makes his pick confirm the exact recorded text and wording the round showed; so solve-W15 sent QUESTION messages asking the orchestrator to patch the open Q83 and the open Q106 before he answered, and both edits were those patches\"",
+        "reason": "both why agents: 'never tells' was too strong; line 18 carries a narrower copy with no reason"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W341",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W342",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W343",
+        "reason": null
       }
     ]
   },
@@ -33128,7 +33179,9 @@
     "status": "accepted",
     "text": "Nothing but one sentence of SKILL.md keeps a placed question as placed: orchestrate.sh has no command that changes an open question or refuses a change to one, cmd_question_seen (take the owner's edits so far as read) stores the sha256 of whatever the file holds, so it takes the orchestrator's own edit as read too, and the QUESTION row of SKILL.md's message table says only to place a new file; so solve-W15's two requests to patch an open question went in by the Edit tool, question-seen and a hand commit, Q83 at 09:51 and Q106 at 10:20",
     "proposed_for": "P169",
-    "why": null,
+    "why": [
+      "W340"
+    ],
     "anchors": [
       "cmd_question_seen",
       "mark_seen",
@@ -33196,6 +33249,15 @@
         "commit": "4b1bce2",
         "change": "accepted as a why of P169, same as W335",
         "reason": "A and B state the same fact: nothing but SKILL.md's sentence 'Never edit a question once it is placed' keeps a placed question as placed; no hook or command refuses an edit to an open question, and question-seen takes the orchestrator's own edit as read"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W340",
+        "reason": null
       }
     ]
   },
@@ -33205,7 +33267,10 @@
     "status": "accepted",
     "text": "Nothing compares a save with the version of the question the orchestrator last wrote: mark_seen keeps only its sha256, never its text, edited asks only whether the file differs from that, cmd_questions_watch prints only the path, SKILL.md's relay step says to read the whole file, which shows what stands and never what a save took away, and cmd_question_close moves the file as it is; so his save of an older copy, which took out the orchestrator's later lines, read as an answer and was relayed and closed, though git diff against the committed version shows the removal",
     "proposed_for": "P169",
-    "why": null,
+    "why": [
+      "W340",
+      "W345"
+    ],
     "anchors": [
       "mark_seen",
       "edited",
@@ -33269,6 +33334,398 @@
         "commit": "4b1bce2",
         "change": "accepted as a why of P169, same as W336",
         "reason": "A and B state the same fact: nothing compares a save with the version the orchestrator last wrote; mark_seen keeps only a sha256, edited asks only whether it differs, the watch prints the path, question-close copies the file as it stands"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W340",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W345",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W340",
+    "kind": "why",
+    "status": "accepted",
+    "text": "No part of a placed question file is fixed as the question: question-template.md tells Thobias to write his answer on the Answer line or anywhere else in the file and save, SKILL.md says his words may stand on the Answer lines, under an option, or beside the question, the orchestrator writes chat answers into it (SKILL.md: write it into the file's Answer section) and relink rewrites its links; so no command or hook can tell a forbidden change to the question from an allowed write, cmd_questions_watch takes anything changed anywhere as his, and only a sentence asks the orchestrator to keep the question text as it was",
+    "proposed_for": "W338",
+    "why": [],
+    "anchors": [
+      "~/.claude/skills/orchestrate/question-template.md",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "cmd_questions_watch",
+      "relink",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "id_of",
+      "mark_seen",
+      "cmd_question_seen"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'or anywhere else in the file|he answers under each question|his words may stand on the Answer lines|with anything changed in it|An answer he types in chat' ~/.claude/skills/orchestrate/{question-template.md,SKILL.md,orchestrate.sh}",
+        "output": "question-template.md:3: <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save.\nSKILL.md:64: … he answers under each question, not at the bottom, and the watch reads the whole file.\nSKILL.md:68: … prints a file's path each time he saves one of the repo's question files with anything changed in it, anywhere … Read the whole file: his words may stand on the Answer lines, under an option, or beside the question.\nSKILL.md:69: - An answer he types in chat counts the same: write it into the file's Answer section, relay, close.\norchestrate.sh:1514: # ends when its owner saves a question with anything changed in it, wherever in the file;\norchestrate.sh:1364-1376 relink: for g in \"$QDIR\"/*.md … sed … > \"$tmp\" … mv \"$tmp\" \"$g\"   (rewrites open question files in place)",
+        "commit": "267eada"
+      },
+      {
+        "command": "the same file shape along two axes: lines his save removed (P169) and lines he added beside the answers (P125's W232)",
+        "output": "Q106: fe9ae1d's two orchestrator lines -> 0 in answers/Q106-S-P9.md (267eada), relayed as an answer\nQ83: 3d0655b's two 'Added 12 October' paragraphs -> 0 in answers/Q83-S-P9.md (2cf09e4), relayed as an answer\nQ85 (W232's evidence): his question on line 63, beside the answers, missed by a read of lines 33 to 62 and closed unrelayed\nscratch repo (W335's probe): a save that dropped the orchestrator's line and added 'b' -> questions: edited; questions-watch printed the path; question-close exit 0",
+        "commit": "267eada"
+      },
+      {
+        "command": "grep -n -o -F on ~/.claude/skills/orchestrate/SKILL.md for the four sentences; grep -n -F 'the orchestrator fingerprints every file it writes' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "26:A step this skill describes never waits for a command the script lacks: do it by hand\n61:so move a file only while he has not opened it. After a wake, check `ls` for a file whose name was renamed, and move its answer into the tracked file\n62:Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor\n69:An answer he types in chat counts the same: write it into the file's Answer section, relay, close\n1351:# the orchestrator fingerprints every file it writes; a file that no longer matches was edited by its owner",
+        "commit": "267eada"
+      },
+      {
+        "command": "git show --format='%h %ad %s' --date=format:'%m-%d %H:%M' --numstat 91b6457 -- .agents/orchestrator/questions   (line 69 done: a hand commit into the open Q85, the same write line 62 forbids)",
+        "output": "91b6457 10-09 00:32 questions: Q85 point 2 answered, fix the slowdown on issue 82's branch first; DESIGN: his reason on the speed rule\n1\t1\t.agents/orchestrator/questions/10-Q85-R4-I82.md",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "SKILL.md itself has the orchestrator write into an open question by hand (line 69 writes a chat answer into the file's Answer section, line 61 moves a renamed file's answer into the tracked file, line 26 does by hand any step the script has no command for), and orchestrate.sh knows a write as the orchestrator's only when one of its own commands made it (the fingerprint comment above id_of and mark_seen); so the script cannot refuse a hand write into an open file without refusing those steps, and the ban of line 62 stands as one sentence beside two prescribed exceptions"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:44+02:00",
+      "by": "logoslang-why-P169-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W338, same as W344",
+        "reason": "A and B state the same fact: no part of a placed question file is fixed as the question text; he may answer anywhere, and the skill itself prescribes writes into the open file (a chat answer at line 69, a renamed file's answer at line 61, relink), so no guard can tell a forbidden edit from an allowed write, and the watch's test is only 'changed anywhere'"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a rule the skill does not have: which part of a question file is the question and which is his answer form; both agents trace no code fact under it"
+      }
+    ]
+  },
+  {
+    "id": "W341",
+    "kind": "why",
+    "status": "accepted",
+    "text": "solve-prompt.md has no step for a round that turns stale while Thobias answers it: its pick rule (Picking an option whose exact recorded text and wording the round showed is their confirmation) ties his answer to the text shown, every change it names goes to the next round, after his pick (the next round restates your understanding; new roots never in the round he is answering now), the solve skill lets the agent amend a recorded solution meanwhile (pws.py amend S), and no message lets an asker withdraw a placed round and put a corrected one in its place (SKILL.md only says a withdrawn question is closed); so when solve-W15 amended S36 for W313 at 09:50 while Q83 showed its old text, and found Q106's rule words short at 10:19, a patch to the open file was the only way left to keep his pick a confirmation of what would be recorded",
+    "proposed_for": "W337",
+    "why": [],
+    "anchors": [
+      "~/.claude/skills/orchestrate/solve-prompt.md",
+      "~/.claude/skills/solve/SKILL.md",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Picking an option|the next round restates|never in the round' ~/.claude/skills/orchestrate/solve-prompt.md; rg -n 'pws.py amend S' ~/.claude/skills/solve/SKILL.md; rg -n -i 'withdraw' ~/.claude/skills/orchestrate/{SKILL.md,solve-prompt.md}",
+        "output": "solve-prompt.md:14: … Picking an option whose exact recorded text and wording the round showed is their confirmation. When their words add to it or change it, the next round restates your understanding, with the wording that would then be written, and nothing counts as chosen until they confirm it (step 4).\nsolve-prompt.md:18: … They come up in your next round, never in the round {{OWNER}} is answering now.\nsolve/SKILL.md:41: … When a fact in a recorded assessment turns out different, correct it with `pws.py amend S --assessment \"…\" --reason \"…\"`\nSKILL.md:72: - A question an asker withdraws, or one a ruling made moot, is closed with its Status line saying so.\n(solve-prompt.md: no 'withdraw'; SKILL.md's message table, line 114 QUESTION row, places a new file only)",
+        "commit": "267eada"
+      },
+      {
+        "command": "pws.py show S36 (history), against the Q83 and Q106 patch times in git",
+        "output": "S36 09:50 by logoslang-solve-W15: fixes was [\"W15\"] -> [W15, W313], text and assessment amended ('W313 merged into solve-W15 (12 October 2026)')\n3d0655b 09:51:33 questions: Q83 shows what its answers also decide (…), for W313. PWS: S36, S45 amended to fix W313\n568837e 10:17:10 questions: Q106 asked, S-P9;  fe9ae1d 10:20:16 Q106 keeps the pointer to the plain-number rule, and its Ruled line records the new word's source\nS36 10:32 chosen by Thobias (Q106 answers b / approx… / a), after his save of 10:30 had removed fe9ae1d's lines\nsolve-prompt.md mtime 2026-10-08 21:18:18; S36 made by solve-W15 2026-10-08T21:36, so line 18 stood in its prompt",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:45+02:00",
+      "by": "logoslang-why-P169-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W337",
+        "reason": "A's fact: solve-prompt.md has no step for a round that goes stale while he answers it, and no message lets an asker withdraw a placed round and place a corrected one, so a patch to the open file was the only way left"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a rule the skill does not have: a way to withdraw a stale round and place a corrected one"
+      }
+    ]
+  },
+  {
+    "id": "W342",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The rule that a placed question stays as placed is written twice, in two scopes: SKILL.md, for the orchestrator, forbids every edit and gives the reason (his editor writes its old copy back), while solve-prompt.md, for the solution agent, says only that more roots come up in its next round, never in the round he is answering now, with no reason; so additions that bring no new decision (solve-W15 on Q83: They are not a new round, No point is missing) and fixes to a round's words (Q106) fall outside the copy the asker reads",
+    "proposed_for": "W337",
+    "why": [],
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/solve-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o -F 'Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor' ~/.claude/skills/orchestrate/SKILL.md; grep -n -o -F 'They come up in your next round, never in the round {{OWNER}} is answering now' ~/.claude/skills/orchestrate/solve-prompt.md; grep -n -i -E 'placed|never edit' ~/.claude/skills/orchestrate/{solve-prompt.md,every-prompt.md,question-template.md}",
+        "output": "62:Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor\n18:They come up in your next round, never in the round {{OWNER}} is answering now\n(third grep: no match; question-template.md holds only the file's shape, every-prompt.md only how to write a question)",
+        "commit": "267eada"
+      },
+      {
+        "command": "python3 -I why-probes/window.py ~/.claude/projects/-home-o-Personal-Code-LogosLang--agents-worktrees-solve-W15/af4ce677-ab43-4ac8-a413-cf217449b814.jsonl 2026-10-12T07:50 2026-10-12T07:52 (solve-W15's transcript, UTC)",
+        "output": "07:51:01Z thinking | Q83 covers W313's core decisions but doesn't highlight their implications for mixed-type operations, conditional arms, and type coercion, so I'll draft two brief additions and send them to the orchestrator.\n07:51:11Z SendMessage | QUESTION logoslang/solve-W15: .../q83-additions.md  These are two additions to Q83 (questions/5-Q83-S-P9.md) for W313. They are not a new round. Q83 already asks every decision W313 needs ... No point is missing. ... Please patch them in before he answers.",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:46+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W337",
+        "reason": "B's fact: the ban stands twice, once for any edit with its reason (SKILL.md line 62) and once for new roots only with no reason (solve-prompt.md line 18), and solve-W15 read its copy as not covering additions"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a root by the repo's list: one rule written twice (SKILL.md line 62 with its reason, solve-prompt.md line 18 narrower without), and the copies drifted"
+      }
+    ]
+  },
+  {
+    "id": "W343",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Nothing shows whether his editor holds a question open: cmd_questions knows only waiting and edited, both read from the file on disk, and cmd_questions_watch hears only close_write, moved_to and create; so every side read no save yet as not answering yet: the orchestrator's ROOTS message to solve-W15 (Q83 is still unanswered, tell me before he answers), solve-W15's two requests (before he answers), the orchestrator's one check before Q106 (git diff --stat) and Q83's label Added 12 October, before you answered, while his editor held the copy from before each edit",
+    "proposed_for": "W337",
+    "why": [],
+    "anchors": [
+      "cmd_questions",
+      "cmd_questions_watch",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/solve-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -F 'edited \"$f\" && echo edited || echo waiting' ~/.claude/skills/orchestrate/orchestrate.sh; grep -n -o -F 'inotifywait -q -m -e close_write -e moved_to -e create' ~/.claude/skills/orchestrate/orchestrate.sh; then why-probes/window.py and why-probes/q_edits.py over the orchestrator's transcript 79afb672 and solve-W15's af4ce677 (UTC; local is +2)",
+        "output": "1510:    printf '%s\\t%s\\t%s\\n' \"$(basename \"$f\")\" \"$(edited \"$f\" && echo edited || echo waiting)\" ...\n1530:inotifywait -q -m -e close_write -e moved_to -e create\n07:47:26Z ROOTS (orchestrator to solve-W15, written by hand; the script's ROOTS line, orchestrate.sh 1160, ends at the context path): ... Q83 is still unanswered: check whether it already covers W313 ...; if a point is missing, redraft it and tell me before he answers.\n07:51:11Z solve-W15: ... Please patch them in before he answers.   07:51:24Z Edit Q83: '*Added 12 October, before you answered:* ...'\n08:19:59Z solve-W15: two small fixes to the rule words in Q106 ..., to make before Thobias answers.\n08:20:05Z orchestrator: Checking you haven't edited Q106 yet, then fixing it.  (git diff --stat -- .../5-Q106-S-P9.md: empty)\nhis saves at 10:08 and 10:30 local wrote back the text from before 09:51 and 10:20 (git diff -M --numstat: Q83 5 20, Q106 6 3)",
+        "commit": "267eada"
+      },
+      {
+        "command": "grep -n -o -F 'so move a file only while he has not opened it. After a wake, check `ls` for a file whose name was renamed, and move its answer into the tracked file' ~/.claude/skills/orchestrate/SKILL.md   (the same unknown predicts the rename sibling: question-prio while his editor holds the file)",
+        "output": "61:so move a file only while he has not opened it. After a wake, check `ls` for a file whose name was renamed, and move its answer into the tracked file",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:46+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W337",
+        "reason": "B's fact: the orchestrator's own hand-written ROOTS message invited the Q83 patch ('if a point is missing, redraft it and tell me before he answers'), and the orchestrator read 'no save yet' as 'not answering yet'; nothing can tell whether he has a question open (the watch hears only close_write, moved_to, create)"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a rule the skill does not have: how the orchestrator knows whether he has a question open; nothing in the tools can tell"
+      }
+    ]
+  },
+  {
+    "id": "W344",
+    "kind": "why",
+    "status": "merged",
+    "text": "SKILL.md itself has the orchestrator write into an open question by hand (line 69 writes a chat answer into the file's Answer section, line 61 moves a renamed file's answer into the tracked file, line 26 does by hand any step the script has no command for), and orchestrate.sh knows a write as the orchestrator's only when one of its own commands made it (the fingerprint comment above id_of and mark_seen); so the script cannot refuse a hand write into an open file without refusing those steps, and the ban of line 62 stands as one sentence beside two prescribed exceptions",
+    "proposed_for": "W338",
+    "why": null,
+    "anchors": [
+      "id_of",
+      "mark_seen",
+      "cmd_question_seen",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o -F on ~/.claude/skills/orchestrate/SKILL.md for the four sentences; grep -n -F 'the orchestrator fingerprints every file it writes' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "26:A step this skill describes never waits for a command the script lacks: do it by hand\n61:so move a file only while he has not opened it. After a wake, check `ls` for a file whose name was renamed, and move its answer into the tracked file\n62:Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor\n69:An answer he types in chat counts the same: write it into the file's Answer section, relay, close\n1351:# the orchestrator fingerprints every file it writes; a file that no longer matches was edited by its owner",
+        "commit": "267eada"
+      },
+      {
+        "command": "git show --format='%h %ad %s' --date=format:'%m-%d %H:%M' --numstat 91b6457 -- .agents/orchestrator/questions   (line 69 done: a hand commit into the open Q85, the same write line 62 forbids)",
+        "output": "91b6457 10-09 00:32 questions: Q85 point 2 answered, fix the slowdown on issue 82's branch first; DESIGN: his reason on the speed rule\n1\t1\t.agents/orchestrator/questions/10-Q85-R4-I82.md",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W340",
+    "made": {
+      "at": "2026-10-12T10:46+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "merged into W340",
+        "reason": "A and B state the same fact: no part of a placed question file is fixed as the question text; he may answer anywhere, and the skill itself prescribes writes into the open file (a chat answer at line 69, a renamed file's answer at line 61, relink), so no guard can tell a forbidden edit from an allowed write, and the watch's test is only 'changed anywhere'"
+      }
+    ]
+  },
+  {
+    "id": "W345",
+    "kind": "why",
+    "status": "accepted",
+    "text": "SKILL.md has no rule that a saved question is read as its change against the version before it: it gives the watch one job, to tell that he saved (prints a file's path each time he saves one with anything changed in it, anywhere), its relay step reads the file as it stands, and the one hazard it names for a save, his editor writing its old copy back over the orchestrator's (line 62), it meets only by forbidding the edit; so mark_seen keeps a hash and no step diffs, though every open question is committed (line 59), so the version before stands in git",
+    "proposed_for": "W339",
+    "why": [],
+    "anchors": [
+      "mark_seen",
+      "cmd_questions_watch",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o -F 'prints a file' ~/.claude/skills/orchestrate/SKILL.md; grep -n -F 'saves a question with anything changed in it' ~/.claude/skills/orchestrate/orchestrate.sh; grep -n -o -F 'Everything in the folder is committed except this machine' ~/.claude/skills/orchestrate/SKILL.md; grep -n -i -E 'git diff|diff |compar|what (he|a save|his save) (changed|removed|took)|version before|older copy|old copy' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "68:prints a file ('s path each time he saves one of the repo's question files with anything changed in it, anywhere ... Read the whole file ... question-close ID)\n1514:# ends when its owner saves a question with anything changed in it, wherever in the file;\n59:Everything in the folder is committed except this machine\n(last grep, in Questions to Thobias: only 62, 'saving his answers writes the editor's old copy back over yours'; 94, 96, 97 are pws compare; no rule diffs or compares a save)\nnearest rules: 62 forbids the edit and checks nothing after; 64 'the watch reads the whole file'; 68 read the whole file, ANSWER, question-close",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:46+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W339",
+        "reason": "B's fact, which A also states: the skill gives the watch one job, to tell that he saved, and reads the file as it stands; nothing shows a save's diff against the version before, though git holds it, so a dropped line (P169) and an added line (W232, P125) are equally unseen"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a rule the skill does not have (B, and A's proposed fix): what a wake shows, the save's diff against the version before"
       }
     ]
   }
