@@ -49,6 +49,15 @@ pub(super) struct OpenReturn {
     cursor: usize,
 }
 
+/// Where a scope's lines end.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LinesEnd {
+    /// At a closer, which the bracket that opened the scope takes.
+    Closer,
+    /// At the end of the text: a root scope or a quote's `{…}`, where a closer closes nothing.
+    TextEnd,
+}
+
 #[derive(Default)]
 pub(super) struct OpenScope {
     /// What the scope's end runs, in line order: the names it holds, which no tail or
@@ -1225,7 +1234,30 @@ impl<'a> Parser<'a> {
 
     /// [`Self::parse_sequence`] as the cell, its facts with it.
     pub(crate) fn parse_sequence_cell(&mut self) -> Result<Cell, ParseError> {
-        self.parse_block(false).map(|(_, value)| value)
+        self.parse_block(false, LinesEnd::Closer).map(|(_, value)| value)
+    }
+
+    /// The lines of the open scope, each closed as it completes, read to the scope's end
+    /// (DESIGN ›The scope's constructor is the driver‹). Returns the scope's tail, its last line
+    /// that is not prose, with where that line ended; none when there is no such line.
+    pub fn read_lines(&mut self, end: LinesEnd) -> Result<Option<(Cell, usize)>, ParseError> {
+        let mut tail = None;
+        while let Some(item) = self.next_cell() {
+            let line = item?;
+            // SAFETY: `line` is the line `next_cell` just returned.
+            unsafe { self.close_line(line.dyad) };
+            // SAFETY: a line is a reduced dyad from the store.
+            if !unsafe { crate::identities::numtype::is_comment_type(dyad::ty(line.dyad)) } {
+                tail = Some((line, self.cx.pos));
+            }
+        }
+        if end == LinesEnd::TextEnd {
+            if let Some((_, len)) = self.peek_token().filter(|&(id, _)| self.is_closer(id)) {
+                let closer = &self.cx.source[self.cx.pos..self.cx.pos + len];
+                return Err(ParseError::StrayCloser(Box::new(closer.to_string())));
+            }
+        }
+        Ok(tail)
     }
 
     /// `open` has one entry per open scope, and `unopened` counts the skipped brackets it
@@ -1240,27 +1272,25 @@ impl<'a> Parser<'a> {
 
     /// [`Parser::parse_sequence`], with the scope the block opened, whose `dyads` hold
     /// every line whatever the value collapsed to.
-    pub(super) fn parse_block(&mut self, list: bool) -> Result<(DyadPtr, Cell), ParseError> {
+    pub(super) fn parse_block(
+        &mut self,
+        list: bool,
+        end: LinesEnd,
+    ) -> Result<(DyadPtr, Cell), ParseError> {
         self.check_depth(0)?;
         let scope = self.open_scope();
         let narrowed = self.cx.narrow_next.take().into_iter().collect();
         self.cx.open.push(OpenScope { narrowed, scope: Some(scope), list, ..OpenScope::default() });
         let array_ = self.types.array_;
-        // SAFETY: null is a legal cell dyad.
-        let mut last = unsafe { Cell::built(std::ptr::null_mut()) };
-        while let Some(item) = self.next_cell() {
-            last = match item {
-                Ok(cell) => cell,
-                Err(e) => {
-                    self.cx.scopes.pop();
-                    let open = self.cx.open.pop().expect("pushed above");
-                    self.end_after_fault(&open);
-                    return Err(e);
-                }
-            };
-            // SAFETY: `last` is the line `next_cell` just returned.
-            unsafe { self.close_line(last.dyad) };
-        }
+        let tail = match self.read_lines(end) {
+            Ok(tail) => tail,
+            Err(e) => {
+                self.cx.scopes.pop();
+                let open = self.cx.open.pop().expect("pushed above");
+                self.end_after_fault(&open);
+                return Err(e);
+            }
+        };
         self.cx.scopes.pop();
         // SAFETY: `scope` was minted by `open_scope` with a value, so it has an
         // array; the store outlives the slice and nothing pushes to it below.
@@ -1331,9 +1361,9 @@ impl<'a> Parser<'a> {
         // One line, and nothing for the end to run: the line stands as itself.
         let ends_run = closed.exit.iter().any(ExitItem::held_somewhere);
         if values > 0 && exprs.len() == 1 && !ends_run {
+            let line = tail.map(|(cell, _)| cell).filter(|c| c.dyad == exprs[0]);
             // SAFETY: `exprs` are reduced dyads from the store.
-            let expr = unsafe { Cell::built(exprs[0]) };
-            return Ok((scope, if last.dyad == exprs[0] { last } else { expr }));
+            return Ok((scope, line.unwrap_or_else(|| unsafe { Cell::built(exprs[0]) })));
         }
         let exit: Vec<DyadPtr> =
             closed.exit.iter().map(|h| h.build(self.rt.store, self.types)).collect();

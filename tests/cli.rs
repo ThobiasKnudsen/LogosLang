@@ -4808,3 +4808,47 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
         assert_eq!(stdout, want, "{src}");
     }
 }
+
+#[test]
+fn an_input_with_nothing_in_it_has_no_value_on_the_command_line_and_in_a_file() {
+    for src in [
+        "# hi",
+        "# «x»",
+        "# a\n# b",
+        "",
+        "   ",
+        "import tests/fixtures/only_prose.logos",
+        "import tests/fixtures/empty.logos",
+    ] {
+        assert_eq!(run_line(src), (Some(0), String::new(), String::new()), "{src:?}");
+    }
+    // The same lines read as a block, after other lines, and before a value.
+    for (src, want) in [
+        ("( # note\n), 7", "7"),
+        ("x := 1,\n# hi", ""),
+        ("1, # done", "1"),
+        ("( y := i32 2, y + 1 )", "3"),
+        ("x := 1, y := 2, x + y", "3"),
+        ("import tests/fixtures/only_prose.logos, 1", "1"),
+        ("import tests/fixtures/empty.logos, 1", "1"),
+    ] {
+        assert_eq!(line(src), want, "{src:?}");
+    }
+}
+
+#[test]
+fn a_closer_no_bracket_opened_is_one_error_naming_it() {
+    for (src, message) in [
+        ("1 )", "<command line>:1:3: error: this `)` closes nothing: no bracket is open here"),
+        ("1 ], 5", "<command line>:1:3: error: this `]` closes nothing: no bracket is open here"),
+        (")", "<command line>:1:1: error: this `)` closes nothing: no bracket is open here"),
+        (
+            "import tests/fixtures/stray_closer.logos, 2",
+            "stray_closer.logos:1:3: error: this `)` closes nothing: no bracket is open here",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stdout: {stdout}");
+        assert!(stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+}

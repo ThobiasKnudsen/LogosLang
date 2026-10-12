@@ -319,7 +319,7 @@ impl<'a> Parser<'a> {
         // still holds at its end, and its `defer`s, join the program's exit.
         g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect("pushed by enter").open);
         g.0.cx.open.push(OpenScope::default());
-        let inner = g.0.run_imported();
+        let inner = g.0.run_imported(section);
         let inner_pos = g.0.cx.pos;
         let file = g.0.cx.open.pop().expect("pushed above");
         if inner.is_err() {
@@ -354,35 +354,26 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The nested pass over an imported file: each statement pending, the
-    /// file run at its end, collecting the `pub` (name, binding) pairs. On
-    /// failure the message is returned with `offset` at the stuck point.
-    fn run_imported(&mut self) -> Result<Vec<(String, DyadPtr)>, String> {
-        let mut pubs = Vec::new();
-        while let Some(item) = self.parse_next() {
-            let node = item.map_err(|e| crate::report::parse_message(&e))?;
-            // SAFETY: `node` is the line `parse_next` just returned.
-            unsafe { self.close_item(node) };
-            // SAFETY: `node` was just parsed into the store, which outlives the pass.
-            unsafe {
-                if dyad::ty(node) == self.types.declare_ {
-                    let name = Binding::spelling(crate::identities::declare::binding_of(node));
-                    let resolved = self
-                        .cx
-                        .scopes
-                        .resolve(self.trie, &name)
-                        .map_err(|_| format!("name `{name}` did not stay resolvable"))?;
-                    if Binding::has_gate(resolved.binding, self.types.pub_) {
-                        pubs.push((name, resolved.binding));
-                    }
-                }
-            }
-        }
-        // A stray `)` ends the loop without being consumed, as in the drivers.
-        if !self.cx.source[self.cx.pos..].trim_start().is_empty() {
-            return Err("unexpected `)` — no scope is open here".to_string());
-        }
-        self.drain().map_err(|e| crate::report::parse_message(&e))?;
+    /// The nested pass over an imported file, whose lines land in `section`: the file read
+    /// and run, then its `pub` (name, binding) pairs in declaration order. On failure the
+    /// message is returned with `offset` at the stuck point.
+    fn run_imported(&mut self, section: DyadPtr) -> Result<Vec<(String, DyadPtr)>, String> {
+        let message = |e: ParseError| crate::report::parse_message(&e);
+        self.read_lines(LinesEnd::TextEnd).map_err(message)?;
+        self.drain().map_err(message)?;
+        let types = self.types;
+        // SAFETY: `section` is the file's scope node, its lines nodes from the store; a declare
+        // line holds the binding it declared.
+        let pubs = unsafe {
+            crate::identities::scope::exprs_of(section)
+                .unwrap_or(&[])
+                .iter()
+                .filter(|&&line| dyad::ty(line) == types.declare_)
+                .map(|&line| crate::identities::declare::binding_of(line))
+                .filter(|&binding| Binding::has_gate(binding, types.pub_))
+                .map(|binding| (Binding::spelling(binding), binding))
+                .collect()
+        };
         Ok(pubs)
     }
 
