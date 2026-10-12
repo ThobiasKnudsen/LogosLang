@@ -29046,7 +29046,7 @@
     "status": "accepted",
     "text": "Neither DESIGN.md nor a page it points to says how a value of a seed-built type that is a whole node, a text from « or a […] from [, sits in a place or is read whole: A value of a type built by a Logos parse travels as a pointer gives the node's address only to a type a Logos parse builds, Text literals are plain values says a text is a value but not how it reads, A bracket goes to the call whole hands a […] to a call and says nothing of it standing as a value, and The dyad's read surface leaves .text and .items open; so place_layout gives these types no layout (None, which its doc calls no place, while place_kind makes the same None an eight-byte Container), meta::is_node_valued asks for a Logos fn constructor, and read_kind keeps arms of its own for them (Opaque, Executable)",
     "proposed_for": "W293",
-    "why": null,
+    "why": [],
     "anchors": [
       "place_layout",
       "place_kind",
@@ -29098,6 +29098,15 @@
         "commit": "20e02c0",
         "change": "accepted as a why of W293",
         "reason": "only A: DESIGN has no rule for how a value of a seed-built whole-node type (text, [...]) sits in a place or is read whole"
+      },
+      {
+        "at": "2026-10-12T09:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "a42d1d9",
+        "change": "asked: no why found",
+        "reason": "both agents: a rule DESIGN does not have yet; only the stand-in 'a string still has no storage to read' and the Open line on .items and .text"
       }
     ]
   },
@@ -29107,7 +29116,10 @@
     "status": "accepted",
     "text": "Whether a node of a built-in operation runs is decided by a word in the node, not by its type: every operand-record type (`meta::operand_record`, 37 calls in 29 files, the one native way to give a type named fields, as `square_brackets` gets `dyads` and `output_type`) also gets an `op` field, and `read_kind` runs the Rust callable leaf it finds in that word of the node (`op_slot_of`, then `value[idx]`), so `scope::fill` makes `(1, 2)` run while `construct_index` leaves the word of `[1, 2]` null; an answer that depends on the node cannot come from `place_layout`, which takes only a type, so `read_kind` holds its own arm; DESIGN keeps the operation on the type: ›Which machine operation an operator is‹ says \"consult the node's type, its mint\" and, by Q-61, \"the operation is kept on the mint, not in an op slot of each node\"",
     "proposed_for": "W293",
-    "why": null,
+    "why": [
+      "W304",
+      "W305"
+    ],
     "anchors": [
       "operand_record",
       "op_slot_of",
@@ -29183,6 +29195,24 @@
         "commit": "20e02c0",
         "change": "accepted as a why of W293, same as W298",
         "reason": "A and B state the same fact: whether a built-in operation's node runs is decided by the op word in the node, which a function of the type alone cannot give; DESIGN keeps the operation on the mint (Q-61)"
+      },
+      {
+        "at": "2026-10-12T09:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "a42d1d9",
+        "change": "why + W304",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "a42d1d9",
+        "change": "why + W305",
+        "reason": null
       }
     ]
   },
@@ -29192,7 +29222,7 @@
     "status": "accepted",
     "text": "`read_kind`'s `FRACTION_TAG` arm answers `Read::Literal`, not `place_layout`'s `Read::Rational`, because the seed reads a plain number as an `i32` where it is used: `run` and `lower` mold a `Literal` at `i32` (`rational::mold` is `mold_to(node, NumType::I32)`) and `handed_on` reads a rational as an `i32`, the \"stand-in for #214\" that the Seed line of ›A node's output type is per node, and its parse writes it‹ records; the address step is already shared, since `place_addr` gives a node that is no binding \"a literal's own bytes\", so `Read::Rational` would reach the sixteen bytes `[num, den]`; ›A plain number is a `rational_number`‹ makes `1/2` a `rational_number`, converted only where it lands",
     "proposed_for": "W293",
-    "why": null,
+    "why": [],
     "anchors": [
       "read_kind",
       "place_layout",
@@ -29260,6 +29290,15 @@
         "commit": "20e02c0",
         "change": "accepted as a why of W293, same as W299",
         "reason": "A and B state the same fact: read_kind answers Literal for a fraction because of the 'plain number reads as i32' stand-in, the uncommitted-literal model DESIGN replaced on 29 September 2026"
+      },
+      {
+        "at": "2026-10-12T09:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "a42d1d9",
+        "change": "asked: no why found",
+        "reason": "both agents: a stand-in DESIGN records ('a plain number ... reads as an i32, the stand-in for #214') for the uncommitted-literal model DESIGN superseded on 29 September 2026"
       }
     ]
   },
@@ -29269,7 +29308,9 @@
     "status": "accepted",
     "text": "The `string` type has no storage in the seed: it is registered natively as a bare `STRING_TAG` header (`meta::record(cx.store, STRING_TAG, …)`) with no fields, its value a `[len][bytes]` blob in the node's own block, \"inert in the seed\"; DESIGN gives a string's characters to the string type's own fields (›The dyad's read surface: two fields, and the type answers the rest‹, whose Open line lists `.text` as not in the seed) and records \"a string still has no storage to read\" under ›The seed's tape shape (#60, #121) and its remaining stand-ins‹; so `place_layout` has no layout for `string` and `read_kind` answers a text node with its own `Read::Opaque`",
     "proposed_for": "W293",
-    "why": null,
+    "why": [
+      "W300"
+    ],
     "anchors": [
       "STRING_TAG",
       "record",
@@ -29320,6 +29361,15 @@
         "commit": "20e02c0",
         "change": "accepted as a why of W293",
         "reason": "only B: string has no storage in the seed, a bare STRING_TAG header, recorded in DESIGN as a stand-in ('a string still has no storage to read'), .text Open under ›The dyad's read surface‹"
+      },
+      {
+        "at": "2026-10-12T09:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "a42d1d9",
+        "change": "why + W300",
+        "reason": null
       }
     ]
   },
@@ -29346,5 +29396,120 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "W304",
+    "kind": "why",
+    "status": "accepted",
+    "text": "No operation mints: each operator is one type for every operand type (`binary::register_all` registers one operand record per spelling, `+` to `!=`), so the machine operation `build_op` picks for a node's operand types (`arith_leaf(a, nt)`, `rational_arith_leaf`, `cmp_leaf`) differs between nodes of one type and is written into each node's `op` word, beside the node's own `output_type` (\"Each node carries its own `output_type`: stand-in for #242\"); ›A type with a `run` whose field is `?` mints too‹ makes every operation whose field is `?` mint, \"a node's type is its mint\", and its Seed line says \"not yet (#242): no operation mints\"; this explains the op word of the minting operators only: `if`, `return`, `while` and `for` do not mint, and `scope` and `square_brackets` hold one operation for every node",
+    "proposed_for": "W301",
+    "why": [],
+    "anchors": [
+      "register_all",
+      "register",
+      "build_op",
+      "arith_leaf",
+      "rational_arith_leaf",
+      "cmp_leaf",
+      "operand_record",
+      "src/identities/binary.rs"
+    ],
+    "design": [
+      "A type with a `run` whose field is `?` mints too, so its `run` body is parsed once per mint",
+      "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"plus: register\\(cx, \\\"\\+\\\"|ne: register\\(cx, \\\"!=\\\"|Each node carries its own .output_type.: stand-in for #242|&\\[\\\"lhs\\\", \\\"rhs\\\", \\\"op\\\", \\\"output_type\\\"\\]|let leaf = types.ops.rational_arith_leaf\\(a\\)|\\[lhs, rhs, types.ops.arith_leaf\\(a, nt\\), types.numtypes|\\[lhs, rhs, types.ops.cmp_leaf\\(c, nt\\), types.bool_\\]|Ok\\(store.alloc_words\\(op, &slots\\)\\)\" src/identities/binary.rs; rg -n \"no operation mints|a node.s type is its mint, as an array\" DESIGN.md | cut -c1-140",
+        "output": "src/identities/binary.rs:45:        plus: register(cx, \"+\", ADDITIVE, Family::Arith(ArithOp::Add)),   (register_all: one type per spelling)\nsrc/identities/binary.rs:55:        ne: register(cx, \"!=\", EQUALITY, Family::Cmp(CmpOp::Ne)),\nsrc/identities/binary.rs:60:    // Each node carries its own `output_type`: stand-in for #242.\nsrc/identities/binary.rs:66:        &[\"lhs\", \"rhs\", \"op\", \"output_type\"],\nsrc/identities/binary.rs:151:            let leaf = types.ops.rational_arith_leaf(a);   (build_op)\nsrc/identities/binary.rs:162:                [lhs, rhs, types.ops.arith_leaf(a, nt), types.numtypes[nt as usize]]\nsrc/identities/binary.rs:195:            [lhs, rhs, types.ops.cmp_leaf(c, nt), types.bool_]\nsrc/identities/binary.rs:198:    Ok(store.alloc_words(op, &slots))   (the leaf lands in this node's op word)\nDESIGN.md:1950: ... So every operation whose field is `?` mints, `+`, `-`, `*`, `/` and `^` among them, one mint per set of field types its parse chooses, and a node's type is its mint, as an array value's is `array i32`. `if`, `return`, `while` and `for`, whose fields are typed, do not mint.\nDESIGN.md:1956:- **Seed:** not yet (#242): no operation mints. #82 gives each operator node its own output word, read through one read, as a stand-in for #242",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:18+02:00",
+      "by": "logoslang-why-P150-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "a42d1d9",
+        "change": "accepted as a why of W301",
+        "reason": "only B, for the minting operators: no operation mints (binary::register_all gives + one type for every operand type; build_op writes the leaf into each node's op word, 'stand-in for #242'); A counts it the same root as W301, since one fix (the operation on the type, kept on the mint) removes both"
+      },
+      {
+        "at": "2026-10-12T09:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "a42d1d9",
+        "change": "asked: no why found",
+        "reason": "a mechanism DESIGN has superseded: 'a node's type is its mint', Seed line 'not yet (#242): no operation mints'"
+      }
+    ]
+  },
+  {
+    "id": "W305",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A type's record has no field for a native operation: its header holds a native parse leaf (constructor) and a native extent leaf, but its run field holds only a lexed Logos body, so a built-in type that does not mint (scope, square_brackets, if, return, :=) can keep its operation only in each node's op word, where ›Execution is function application‹ reads the type",
+    "proposed_for": "W301",
+    "why": [],
+    "anchors": [
+      "src/identities/meta.rs",
+      "operand_record",
+      "read_kind"
+    ],
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data",
+      "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n 'constructor\\|extent\\|run' src/identities/meta.rs",
+        "output": "the type record header (meta.rs) has fields for a native parse leaf and a native extent leaf; its run field holds a lexed Logos body only (why-P150-a round 3, dev b3b125a)",
+        "commit": "a42d1d9"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:19+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "a42d1d9",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:19+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "a42d1d9",
+        "change": "asked: no why found",
+        "reason": "both agents, round 3: for the built-in types that do not mint, the op word goes against ›Execution is function application‹ and Q-61 ('the operation is kept on the mint, not in an op slot of each node'); a mechanism DESIGN has superseded, with no field on the type to replace it"
+      }
+    ]
   }
 ]
