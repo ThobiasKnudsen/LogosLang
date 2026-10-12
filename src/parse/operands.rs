@@ -317,8 +317,9 @@ impl<'a> Parser<'a> {
 
     /// The operand of `move`/`free`: a place as the node it is reached through
     /// (`read::place_node`), never an `addr`, a value no name holds, or a hole. A bare
-    /// name comes back with the `Ended` the caller hands to `mark_dead`; a name from
-    /// outside a loop or `fn` body is refused, and so is one the run starts with.
+    /// name or a path `name.field` comes back with the `Ended` the caller hands to
+    /// `mark_dead`; a name from outside a loop or `fn` body is refused, and so is one the run
+    /// starts with.
     pub(crate) fn place_operand_cell(
         &mut self,
         tape: &mut ParsingTape,
@@ -345,7 +346,7 @@ impl<'a> Parser<'a> {
                 match unsafe {
                     crate::identities::read::place_node(self.rt.store, self.types, cell.dyad)
                 } {
-                    Some(place) => Taken::Place(place, None),
+                    Some(place) => Taken::Place(place, self.ended_path(&cell)?),
                     None => Taken::Value(cell.dyad, cell.start),
                 }
             }
@@ -384,7 +385,7 @@ impl<'a> Parser<'a> {
             }
             self.check_made(binding)?;
             self.note_outer_read(binding);
-            Taken::Place(identity, Some(Ended { binding }))
+            Taken::Place(identity, Some(Ended::name(binding)))
         };
         if let Taken::Place(node, _) | Taken::Value(node, _) = taken {
             // SAFETY: `node` is a resolved dyad from the store.
@@ -394,6 +395,22 @@ impl<'a> Parser<'a> {
         }
         tape.remove(1);
         Ok(taken)
+    }
+
+    /// The path `name.field` the place in `cell` is, one field deep under a name, which a
+    /// `move` or `free` here ends as it would the bare name (DESIGN ›`move` and `free` take a
+    /// field path too‹); `None` for any other place.
+    fn ended_path(&mut self, cell: &Cell) -> Result<Option<Ended>, ParseError> {
+        let (binding, field) = cell.target;
+        if binding.is_null() || field.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: `.` set the target to the name's binding and the field's, both from the store.
+        if self.cx.scopes.crosses_barrier(unsafe { Binding::read(binding) }.scope) {
+            self.cx.pos = cell.start;
+            return Err(ParseError::MoveOfOuterName);
+        }
+        Ok(Some(Ended { binding, field }))
     }
 
     /// The one read every prefix constructor makes (`return x`, `not x`, a
@@ -502,7 +519,9 @@ impl<'a> Parser<'a> {
             {
                 return Err(ParseError::Resolve(ResolveError::OutOfScope(name())));
             }
-            if fields.is_dead() {
+            // The list names names, not paths: a name with a path ended is refused whole.
+            // SAFETY: as above.
+            if fields.is_dead() || unsafe { Binding::has_ended_path(binding) } {
                 return Err(ParseError::Resolve(ResolveError::Dead(name())));
             }
             self.note_outer_read(binding);

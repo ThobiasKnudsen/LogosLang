@@ -679,9 +679,8 @@ impl<'a> Parser<'a> {
         // SAFETY: a bracket cell is a node from the store.
         let call = bracket.map(|d| unsafe { self.args_of(d) });
         let key = self.index_node_at(tape, 2);
-        let writes = index.is_none()
-            && key.is_none()
-            && bracket.is_none()
+        let plain = index.is_none() && key.is_none() && bracket.is_none();
+        let writes = plain
             && tape
                 .at(2)
                 .is_some_and(|c| !c.constructed && self.cell_identity(c) == self.types.assign);
@@ -691,13 +690,15 @@ impl<'a> Parser<'a> {
         // SAFETY: a constructed cell's dyad is a dyad from the store.
         let named = woke.filter(|&d| unsafe { dyad::ty(d) } == self.types.binding_).unwrap_or(root);
         // SAFETY: `named` is null or a binding dyad; `lhs` a reduced dyad off the tape.
-        let fills = unsafe {
-            self.check_field_unwritten(named, lhs, &source[nstart..nstart + nlen], writes)
+        let reached = match unsafe {
+            self.check_name_field(named, lhs, &source[nstart..nstart + nlen], writes)
+        } {
+            Ok(reached) => reached,
+            Err(e) => {
+                self.cx.pos = nstart;
+                return Err(e);
+            }
         };
-        if let Err(e) = fills {
-            self.cx.pos = nstart;
-            return Err(e);
-        }
         self.cx.member_root = root;
         self.cx.member_path.clear();
         let member = Member { start: nstart, len: nlen, index, key, call };
@@ -729,8 +730,8 @@ impl<'a> Parser<'a> {
             tape.place(node);
             let cell = tape.at_mut(0).expect("placed above");
             cell.path = path;
-            if let Ok(Some(fill)) = fills {
-                cell.target = fill;
+            if plain {
+                cell.target = reached;
             }
         }
         Ok(Constructed::Placed)

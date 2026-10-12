@@ -29,7 +29,8 @@ pub struct Cell {
     /// The bindings a field place was reached through, root first, an `array` node; null
     /// for a cell reached no such way. What a write into the place must be granted by.
     pub path: DyadPtr,
-    /// The name and the field a `v.f` built as a write's target fills, or nulls.
+    /// The name and the field's binding a `v.f` over a name reached, or nulls: what a write
+    /// into it fills, and the path a `move` or `free` of it ends.
     pub target: (DyadPtr, DyadPtr),
     /// The valueless place `?` built, no declaration having taken it yet.
     pub hole: bool,

@@ -275,6 +275,11 @@ impl<'a> Parser<'a> {
         if self.cx.dropping > 0 {
             return;
         }
+        if !ended.is_name() {
+            // SAFETY: `ended` holds the name's and the field's bindings `.` reached.
+            unsafe { self.end_path(ended, node) };
+            return;
+        }
         // SAFETY: `ended.binding` is the binding the resolver returned for the operand.
         unsafe { self.cx.scopes.mark_dead(ended.binding, node) };
         // A borrow ends its name alone.
@@ -294,13 +299,47 @@ impl<'a> Parser<'a> {
         self.cx.ended_log.push((ended.binding, holder));
     }
 
+    /// `node` has ended the path `name.field`: the path's binding under the name's entry, made
+    /// on the first such end, is dead from here, and so the name as a whole (DESIGN ›`move` and
+    /// `free` take a field path too‹). The name stays held, its free run at its scope's end.
+    ///
+    /// # Safety
+    /// `ended.binding` must be a name's binding dyad, `ended.field` a field's.
+    unsafe fn end_path(&mut self, ended: Ended, node: DyadPtr) {
+        let field = Binding::read(ended.field).dyad;
+        let mut path = Binding::path(ended.binding, field);
+        if path.is_null() {
+            let name = Binding::read(ended.binding);
+            let spelled =
+                format!("{}.{}", Binding::spelling(ended.binding), Binding::spelling(ended.field));
+            path = self.mint_binding(field, name.scope, spelled.as_bytes());
+            Binding::set_start(path, name.start);
+            Binding::add_path(self.rt.store, self.types.array_, ended.binding, path);
+        }
+        self.cx.scopes.mark_dead(path, node);
+    }
+
     /// `?`'s entry on a binding refuses every read of the value until it is
     /// written: the target of `x = …` passes, and so does `x:…`, which reads
-    /// the binding (DESIGN ›Declarations are immutable by default‹).
+    /// the binding (DESIGN ›Declarations are immutable by default‹). A name with an ended path
+    /// is dead as a whole: only `x.…` and `x:…` pass (DESIGN ›`move` and `free` take a field
+    /// path too‹).
     pub(super) fn check_unwritten(&mut self, cell: &Cell) -> Result<(), ParseError> {
         let binding = cell.binding(self.types);
+        if binding.is_null() {
+            return Ok(());
+        }
         // SAFETY: a non-null cell binding is a binding dyad from the store.
-        if binding.is_null() || !unsafe { Binding::has_gate(binding, self.types.unknown) } {
+        if unsafe { Binding::has_ended_path(binding) }
+            && !matches!(self.peek_token(), Some((t, _)) if t == self.types.dot_ || t == self.types.colon_)
+        {
+            self.cx.pos = cell.start;
+            // SAFETY: as above.
+            let name = unsafe { Binding::spelling(binding) };
+            return Err(ParseError::Resolve(ResolveError::Dead(name)));
+        }
+        // SAFETY: as above.
+        if !unsafe { Binding::has_gate(binding, self.types.unknown) } {
             return Ok(());
         }
         if matches!(self.peek_token(), Some((t, _)) if t == self.types.assign || t == self.types.colon_)
@@ -319,8 +358,8 @@ impl<'a> Parser<'a> {
         Err(ParseError::Unwritten(Box::new(unsafe { Binding::spelling(binding) })))
     }
 
-    /// The `=` just built, with the name and field its target `v.f` fills when the
-    /// unwritten-fields rule noted one: the item the sibling rule reads.
+    /// The `=` just built, with the name and the field's binding its target `v.f` reached, or
+    /// nulls: the item the sibling rule reads.
     pub(crate) fn note_write(&mut self, node: DyadPtr, fill: (DyadPtr, DyadPtr)) {
         // SAFETY: `node` is the `=` node just built.
         if unsafe { dyad::ty(node) } == self.types.tape.write {
@@ -385,6 +424,7 @@ impl<'a> Parser<'a> {
             if rec.scope != scope || rec.unwritten.is_null() {
                 return;
             }
+            let field = Binding::read(field).dyad;
             let left: Vec<DyadPtr> = crate::identities::array::items(rec.unwritten)
                 .iter()
                 .copied()
@@ -433,46 +473,61 @@ impl<'a> Parser<'a> {
         Binding::set_unwritten(binding, arr);
     }
 
-    /// `v.f` where `v` is a name `?` left with fields unwritten: a write of `f` is let
-    /// through and noted for the sibling rule, a read of an unwritten `f` refused.
+    /// `v.f` where `v` is a name: the name and the field's binding it reaches, nulls where `f`
+    /// is no field. A read of a field `v := T ?` left unwritten is refused, a write let
+    /// through. Where a path under `v` ended, `v.f` is refused if `f`'s did, and a member that
+    /// is no field, which takes `v` whole, is refused too.
     ///
     /// # Safety
     /// `root` must be null or a binding dyad from the store; `lhs` a reduced dyad.
-    pub(super) unsafe fn check_field_unwritten(
+    pub(super) unsafe fn check_name_field(
         &self,
         root: DyadPtr,
         lhs: DyadPtr,
         name: &str,
         writes: bool,
-    ) -> Result<Option<(DyadPtr, DyadPtr)>, ParseError> {
+    ) -> Result<(DyadPtr, DyadPtr), ParseError> {
+        let none = (std::ptr::null_mut(), std::ptr::null_mut());
         if root.is_null() {
-            return Ok(None);
-        }
-        let unwritten = Binding::read(root).unwritten;
-        if unwritten.is_null() {
-            return Ok(None);
+            return Ok(none);
         }
         let t = self.types.type_of(lhs);
-        let mut scope = ScopeStack::new();
-        scope.push(crate::identities::meta::record_scope_of(t));
-        let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(t));
-        let Some(field) = scope
-            .resolve(self.trie, name)
-            .ok()
-            .and_then(|r| fields.iter().copied().find(|&f| f == r.identity))
-        else {
-            return Ok(None);
+        let field = if !crate::identities::meta::is_record_type(t) {
+            None
+        } else {
+            let mut scope = ScopeStack::new();
+            scope.push(crate::identities::meta::record_scope_of(t));
+            let fields =
+                crate::identities::array::items(crate::identities::meta::record_fields_of(t));
+            scope.resolve(self.trie, name).ok().filter(|r| fields.contains(&r.identity))
         };
-        if writes {
-            return Ok(Some((root, field)));
+        if Binding::has_ended_path(root) {
+            let dead = match &field {
+                None => Some(Binding::spelling(root)),
+                Some(r) => {
+                    let path = Binding::path(root, r.identity);
+                    (!path.is_null() && Binding::read(path).is_dead())
+                        .then(|| Binding::spelling(path))
+                }
+            };
+            if let Some(dead) = dead {
+                return Err(ParseError::Resolve(ResolveError::Dead(dead)));
+            }
         }
-        if crate::identities::array::items(unwritten).contains(&field) {
+        let Some(field) = field else {
+            return Ok(none);
+        };
+        let unwritten = Binding::read(root).unwritten;
+        if !writes
+            && !unwritten.is_null()
+            && crate::identities::array::items(unwritten).contains(&field.identity)
+        {
             return Err(ParseError::Unwritten(Box::new(format!(
                 "{}.{name}",
                 Binding::spelling(root)
             ))));
         }
-        Ok(None)
+        Ok((root, field.binding))
     }
 
     /// `name := value`, or `share name := value`: one place for every context

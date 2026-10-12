@@ -44,6 +44,9 @@ pub struct Binding {
     /// The fields of a `T ?` name not yet written, an `array` node of the record's field
     /// dyads; null while none wait.
     pub unwritten: DyadPtr,
+    /// The field paths under the name that a `move` or `free` ended, an `array` of bindings,
+    /// each with the field as its `dyad` and its own `end`; null until a partial move.
+    pub paths: DyadPtr,
     /// Declared outside any function in a body the pass does not run in parse order, a loop
     /// or a branch: at parse the name holds no value yet.
     pub unmade: bool,
@@ -71,6 +74,7 @@ impl Binding {
             frame: std::ptr::null_mut(),
             offset: 0,
             unwritten: std::ptr::null_mut(),
+            paths: std::ptr::null_mut(),
             unmade: false,
         }
     }
@@ -205,6 +209,43 @@ impl Binding {
     /// As `Binding::read`; `fields` null or an `array` node from the store.
     pub unsafe fn set_unwritten(dyad: DyadPtr, fields: DyadPtr) {
         (*Self::fields(dyad)).unwritten = fields;
+    }
+
+    /// The binding of the path under the name that ends at `field`, null while no `move` or
+    /// `free` reached it.
+    ///
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn path(dyad: DyadPtr, field: DyadPtr) -> DyadPtr {
+        let paths = (*Self::fields(dyad)).paths;
+        if paths.is_null() {
+            return std::ptr::null_mut();
+        }
+        super::array::items(paths)
+            .iter()
+            .copied()
+            .find(|&p| (*Self::fields(p)).dyad == field)
+            .unwrap_or(std::ptr::null_mut())
+    }
+
+    /// # Safety
+    /// As `add_gate`; `path` a binding dyad from the store.
+    pub unsafe fn add_path(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, path: DyadPtr) {
+        let paths = (*Self::fields(dyad)).paths;
+        let mut items =
+            if paths.is_null() { Vec::new() } else { super::array::items(paths).to_vec() };
+        items.push(path);
+        (*Self::fields(dyad)).paths = super::array::build(store, array_ty, &items);
+    }
+
+    /// Whether a path under the name has ended, so the name is dead as a whole.
+    ///
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn has_ended_path(dyad: DyadPtr) -> bool {
+        let paths = (*Self::fields(dyad)).paths;
+        !paths.is_null()
+            && super::array::items(paths).iter().any(|&p| !(*Self::fields(p)).end.is_null())
     }
 
     /// # Safety

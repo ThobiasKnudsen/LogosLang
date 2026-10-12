@@ -135,19 +135,20 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         }
         // A name moves whatever it holds, a borrowed node's name excepted: it holds none.
         // A field or cell moves only what it owns, and is emptied: stand-in for #66.
-        // SAFETY: as above, and `ended` holds the binding the resolver returned for it.
+        let name = ended.as_ref().filter(|e| e.is_name());
+        // SAFETY: as above, and `name` holds the binding the resolver returned for it.
         let (owner, node_valued) = unsafe {
             (
-                ended.as_ref().is_some_and(|e| p.owns_node(e.binding))
+                name.is_some_and(|e| p.owns_node(e.binding))
                     || p.is_owning_read(place)
                     || is_owning_place(types, place),
                 meta::is_node_valued(ty, types.fn_type),
             )
         };
-        if !owner && node_valued && ended.is_some() {
+        if !owner && node_valued && name.is_some() {
             return Err(ParseError::MoveOfBorrow);
         }
-        if !owner && ended.is_none() {
+        if !owner && name.is_none() {
             return Err(ParseError::MoveOfUnownedPath);
         }
         // SAFETY: as above.
@@ -182,8 +183,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                     return Ok(crate::parse::Constructed::Placed);
                 }
             };
-            // SAFETY: `ended` holds the binding the resolver returned.
-            let holder = ended.as_ref().is_some_and(|e| unsafe { p.name_holds(e.binding) });
+            let name = ended.as_ref().filter(|e| e.is_name());
+            // SAFETY: `name` holds the binding the resolver returned.
+            let holder = name.is_some_and(|e| unsafe { p.name_holds(e.binding) });
             // SAFETY: `place` is a reduced dyad from the store.
             let node = unsafe { build_place_free(p, place, holder) }?;
             tape.place(node);
@@ -1759,6 +1761,41 @@ mod tests {
             parse_err("a := alloc 1 of i32 7,\nf := fn () -> i32 ( b := move a, b@ )"),
             ParseError::MoveOfOuterName
         );
+    }
+
+    /// `x`, a record with two owning fields, `p` holding 5 and `q` 6.
+    const PAIR: &str = "r := type ( mut p := own @i32 ?, mut q := own @i32 ?, \
+        share free = ( free p, free q ), share s := fn () -> i32 ( 2 ) ),\n\
+        mut x := r ?,\na := alloc 1 of i32 5,\nx.p = move a,\nb := alloc 1 of i32 6,\nx.q = move b,\n";
+
+    #[test]
+    fn a_moved_path_ends_and_its_name_is_dead_as_a_whole() {
+        let dead = |n: &str| ParseError::Resolve(ResolveError::Dead(n.into()));
+        for (tail, want) in [
+            ("c := move x.p,\nx.p", dead("x.p")),
+            ("free x.p,\nfree x.p", dead("x.p")),
+            ("free x.p,\nd := alloc 1 of i32 7,\nx.p = move d", dead("x.p")),
+            ("c := move x.p,\nx", dead("x")),
+            ("c := move x.p,\nd := move x", dead("x")),
+            ("c := move x.p,\nx.s()", dead("x")),
+            ("c := move x.p,\nh := fn (v := r ?) -> i32 ( 1 ),\nh(x)", dead("x")),
+            ("g := fn () -> i32 ( x.q@ ),\nc := move x.p,\ng()", dead("x")),
+            ("c := move x.p,\nx := r ?", dead("x")),
+            ("k := i32 1,\nif (k == 1) ( c := move x.p, 1 ),\nx.p@", dead("x.p")),
+            ("for i in 0..2 ( c := move x.p )", ParseError::MoveOfOuterName),
+            ("f := fn () -> i32 ( c := move x.p, c@ )", ParseError::MoveOfOuterName),
+        ] {
+            assert_eq!(parse_err(&format!("{PAIR}{tail}")), want, "{tail}");
+        }
+        for (tail, want) in [
+            ("c := move x.p,\nx.q@ + c@", 11),
+            ("free x.p,\nx.q@", 6),
+            ("c := move x.p,\nd := move x.q,\nc@ + d@", 11),
+            ("k := i32 1,\nif (k == 1) ( c := move x.p, 1 ),\nx.q@", 6),
+            ("k := i32 0,\nif (k == 1) ( c := move x.p, 1 ),\nx.q@", 6),
+        ] {
+            assert_eq!(run(&format!("{PAIR}{tail}")), (want, 0), "{tail}");
+        }
     }
 
     /// A value whose owning field holds an array, in the array's shape: `bag ()` is a node

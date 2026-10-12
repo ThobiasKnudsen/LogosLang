@@ -84,17 +84,30 @@ struct Pending {
     endpoint: Endpoint,
 }
 
-/// A bare name a `move` or `free` is about to make dead, handed back so the
-/// keyword's constructor can mark it dead with the node it built.
+/// A bare name or a path `name.field` a `move` or `free` is about to end, handed back so
+/// the keyword's constructor can mark it dead with the node it built.
 #[derive(Debug)]
 pub(crate) struct Ended {
     pub(crate) binding: DyadPtr,
+    /// The binding of the field the path ends at; null when the name itself ends.
+    pub(crate) field: DyadPtr,
+}
+
+impl Ended {
+    pub(crate) fn name(binding: DyadPtr) -> Self {
+        Ended { binding, field: std::ptr::null_mut() }
+    }
+
+    /// The name itself, not a path under it.
+    pub(crate) fn is_name(&self) -> bool {
+        self.field.is_null()
+    }
 }
 
 /// The operand of a `move` or `free`.
 #[derive(Debug)]
 pub(crate) enum Taken {
-    /// The node the place is reached through, and the name it ends when it is a bare name.
+    /// The node the place is reached through, and the name or the path under a name it ends.
     Place(DyadPtr, Option<Ended>),
     /// A value no name holds, and where it starts in the source.
     Value(DyadPtr, usize),

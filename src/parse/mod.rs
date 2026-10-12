@@ -209,8 +209,8 @@ impl<'a> Context<'a> {
     }
 }
 
-/// The last `=` node built, the scope it was built in, and the name and field it fills when
-/// its target was a `v.f` the unwritten-fields rule noted (nulls otherwise).
+/// The last `=` node built, the scope it was built in, and the name and the field's binding
+/// its target reached when it was a `v.f` over a name (nulls otherwise).
 #[derive(Clone, Copy)]
 struct LastWrite {
     node: DyadPtr,

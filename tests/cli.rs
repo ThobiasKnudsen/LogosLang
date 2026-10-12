@@ -4006,6 +4006,39 @@ fn bag_line(tail: &str) -> String {
 }
 
 #[test]
+fn a_moved_field_ends_its_path_and_its_owner_as_a_whole() {
+    for (tail, printed) in [
+        ("g := bag (), y := move g.b, g.items[0]", "4"),
+        ("c := i32 0, g := bag (), if (c == 1) ( y := move g.b, 1 ), g.items[1]", "5"),
+        ("f := fn () -> i32 ( g := bag (), y := move g.b, g.items[2] ), f()", "6"),
+    ] {
+        let (code, stdout, stderr) = run_line(&bag_line(tail));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout.lines().last(), Some(printed), "{tail}: {stdout}");
+    }
+    for (tail, expect) in [
+        ("g := bag (), y := move g.b, g.b", "`g.b` is dead here"),
+        ("g := bag (), free g.b, free g.b", "`g.b` is dead here"),
+        ("c := i32 1, g := bag (), if (c == 1) ( y := move g.b, 1 ), g.b", "`g.b` is dead here"),
+        ("g := bag (), y := move g.b, g", "`g` is dead here"),
+        ("g := bag (), y := move g.b, h := move g", "`g` is dead here"),
+        (
+            "g := bag (), y := move g.b, f := fn (q := bagged ?) -> i32 ( 1 ), f(g)",
+            "`g` is dead here",
+        ),
+        ("f := fn () -> i32 ( g := bag (), y := move g.b, h := move g, 1 )", "`g` is dead here"),
+        (
+            "g := bag (), for i in 0..2 ( y := move g.b )",
+            "declared outside this loop or function body",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&bag_line(tail));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn an_owning_field_is_freed_once_by_the_owner_s_free() {
     for (tail, printed) in [
         ("g := bag (), print «made»", "made\nbag\nfree\n"),
@@ -4250,11 +4283,11 @@ fn free_of_a_value_runs_it_and_frees_what_it_made() {
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert_eq!(stdout, printed, "{tail}");
     }
-    // A field of a node the parse knows is a place: its block is freed at `free b.p`.
+    // A field of a node the parse knows is a place: `free b.p` ends its path.
     let (code, _, stderr) =
         run_line(&format!("{array}, {BOX}, b := box (1, 2), free b.p, (b.p + 0)@"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("this pointer holds nothing yet"), "stderr: {stderr}");
+    assert!(stderr.contains("`b.p` is dead here"), "stderr: {stderr}");
 }
 
 #[test]
