@@ -32584,5 +32584,161 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "S100",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Both rules hold, read together: 'Nothing is copied from one node into another' means := makes no node of its own for the name to copy the value into (the placeholder dyad it replaced), and whether y := x copies is the type's reading rule: data and fn copy into the name's own place, type gives the identity, a value that travels as a pointer copies the address",
+    "fixes": [
+      "W334"
+    ],
+    "assessment": "Removes P168: q := p of a record copies its bytes (&p == &q false, q.a stays 1 after p.a = 9) and g := f is an independent fn record, as ›:= decides nothing about copy or reference‹ and ›A function reads as a copy‹ say (both 'Seed: done'). The reading is the history's: DESIGN_HISTORY records that the sentence replaced ' fills that dyad', the placeholder copy declare_here made, so it never spoke of y := x. DESIGN: one sentence reworded at ›An unknown spelling stays text on the tape…‹, which Q82's next round rewords anyway; declare.rs's two comments that repeat the old sentence go with the arms. Seed: declare_here's arm over storage and its last arm (set_dyad) copy by the type's layout, which S99 makes the one decider.",
+    "decision": null,
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S101",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The name denotes the node the value built, for every type: y := x makes y a second name for x's value, and a copy must be written out",
+    "fixes": [
+      "W334"
+    ],
+    "assessment": "Also one rule, but it supersedes ›:= decides nothing about copy or reference‹ (5 September 2026: 'y := x is a copy … &x != &y'), ›A function reads as a copy‹, and the gate line 'y's gates are only what its own left side sets', since mut y := x then writes x. Changes what numbers do today: mut x := i32 1, y := x, x = 9, print «{y}» would print 9, not 1. Needs a written copy form DESIGN does not have. Recommended against.",
+    "decision": null,
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S102",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "declare_here lays out every declaration by place_layout of the type its right side gives, and nothing else: a type's declaration t := i32 gets an eight-byte place holding the identity's address (the parse still reads the identity from the declaration, so t 5 is classified by i32), a fraction literal sixteen bytes, a text or [...] the node's address; the chain of arms over kinds of right side goes",
+    "fixes": [
+      "W331"
+    ],
+    "assessment": "Root fix: one decider, as ›:= decides nothing about copy or reference‹ asks ('the type's reading rule does'), so the type arm (rebind), the box arm's kind list, is_rational_value's literal refusal and the set_dyad arm go, and ›A scope lays out its declarations‹ ('Every declaration … has an offset') holds with no exception: t:frame and t:offset become real. With S97 removes P168 and, with S94 and S95, P157's s := «a» and r := 1/2. Costs eight bytes per type name, written at run and read only where t stands as a value. Medium: src/parse/declare.rs, read.rs; shares declare.rs with #192's successors and #219.",
+    "decision": null,
+    "design": [
+      "A scope lays out its declarations; a use reaches the offset through its binding",
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S103",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "As S99, except that a name bound to a type is another spelling of it and gets no place, as today; ›A scope lays out its declarations‹ names that one exception",
+    "fixes": [
+      "W331"
+    ],
+    "assessment": "Removes the same arms for every other kind, but keeps one arm on a kind of right side (a type), the shape W331 names as the root, and writes an exception into 'Every declaration of a scope, shared or not, has an offset'. Saves eight bytes per type name. Leaves open what mut t := i32 or t := type ? hold, which need a place anyway. Recommended against.",
+    "decision": null,
+    "design": [
+      "A scope lays out its declarations; a use reaches the offset through its binding"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S104",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One whole read of a value wider than a word, a record's or a rational's: its address (place_addr), asked by Runtime::run and Lowerer::lower as by by_copy::record_addr and lower_record_addr, which merge into it",
+    "fixes": [
+      "W333"
+    ],
+    "assessment": "Root fix by deletion of a copy: Read::Aggregate's refusal in run and lower (NoWholeRead) goes, so a record read whole as a line, at its declaration's run or as a bare parameter's argument gives its address like a rational, as it already does for a record parameter. Decided by ›:= decides nothing about copy or reference‹ (a data value is its bytes, read whole) and ›A scope lays out its declarations‹ point 2 (an unnamed result is scratch bytes); nothing for Thobias to choose. Small: by_copy.rs, run.rs, compile.rs; part of the one read Q76 1(a) asks for.",
+    "decision": null,
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P169",
+    "kind": "problem",
+    "status": "open",
+    "text": "An edit the orchestrator makes to a question file after placing it is lost when Thobias saves the copy his editor opened before that edit: his answer save writes the older text back, and nothing notices; the watch relays his save as an answer and the lost lines are gone from the answer file",
+    "program": "Place a question; Thobias opens it in his editor; the orchestrator edits the file in place (question-seen after); Thobias writes his answers and saves",
+    "output": "Twice on 12 October 2026: Q83 lost the two \"Added 12 October\" paragraphs added at about 09:50 when he saved his answers at about 10:10 (commit 2cf09e4); Q106 lost the pointer sentence and the Ruled-line word source added at about 10:30 when he saved at about 10:45 (answers/Q106-S-P9.md). In both, git diff of his save shows exactly the orchestrator's later lines removed beside his answers",
+    "expected": "An orchestrator edit to an open question survives his save, or his save of an older copy is caught and he is told before the answer is relayed (\"make it automatic\")",
+    "tier": "interpreted",
+    "found": "orchestrator LogosLang, while relaying Q106, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:30+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
