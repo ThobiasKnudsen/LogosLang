@@ -114,7 +114,7 @@ pub enum ParseError {
     ArmsMakeAndBorrow,
     /// A logical operator applied to a non-`bool` operand.
     NonBoolOperands,
-    /// A value lands in a type that is not its own and does not hold every value of it.
+    /// A value lands in a type that is not its own and is not known to hold every value of it.
     TypeMismatch,
     /// A number literal had no exact value in the type it was committed to.
     UncomputableLiteral,

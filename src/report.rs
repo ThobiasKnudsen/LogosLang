@@ -80,7 +80,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
-            "these types do not match: unwritten, a value converts only into a type that holds \
+            "these types do not match: unwritten, a value converts only into a type known to hold \
              every value of it"
                 .into()
         }
