@@ -27758,5 +27758,120 @@
         "reason": null
       }
     ]
+  },
+  {
+    "id": "S87",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One way to end a task, its worktree found through git: one function in orchestrate.sh ends every task's work in one order (every check that can refuse; then every session row in the worktree stopped and removed, ended ones too; then what is kept moved out; then the worktree, the branch and the state), and merge (both flows), why-done, solve-done and the helper reap all call it; a task's worktree is looked up in git's own worktree list, so the hand-kept list of earlier roots goes; the folder stays the one key to a task's sessions, so the reap finds a helper by its folder too and the five session-id files nothing else reads go; SKILL.md states the order once, beside A session belongs to the worktree it runs in",
+    "fixes": [
+      "W278",
+      "W281",
+      "W283",
+      "W287"
+    ],
+    "assessment": "Root fix for all four: deletes the four copies of the end sequence (retire_branch, close_why_agent, cmd_merge's own removal for MERGE=pr, reap_helpers) for one function with one order (W278, W281); deletes OLD_WT_ROOTS and WT_ROOTS, the hand-kept list, for git's own record, which SKILL.md ›Never‹ already makes complete (every worktree made by git worktree add) and which follows ids-short's git worktree move by itself (W287, W279); deletes the second key, the recorded ids that a resume makes stale (W283, W282). Removes P144 twice over (rows stopped before the removal, and an old-root worktree found in git's list), P151 (a resumed helper is found by its folder), P152 (a former conf root's worktree is in git's list), and the help-5 case found on 12 October (reap_helpers read a helper whose job had ended as gone, removed its worktree and left its row 8a60fcfc). Leaves: git forgets a removed worktree, so a row left behind by hand-run git commands is found by no command (only one already left, help-5's, which needs a one-off claude rm). Lands in ~/.claude/skills/orchestrate: orchestrate.sh (end_task about 25 lines; wt_of and one reader of git's list replace the root loops in cmd_status, cmd_record, solve_of, cmd_ids_short and dup_rows; about 60 lines go), SKILL.md (one sentence under One repo, one orchestrator, several bases; the lists in Merging and A Linear repo and the PR flow and the clause in Staying responsive point to it), SKILL_HISTORY.md, the help lines of merge, why-done and solve-done. About three hours. solve-W243's S77 also changes cmd_status (a hooks check); help-5's SKILL.md draft needs the same edits.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T08:32+02:00",
+      "by": "logoslang-solve-W278",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fa5c394",
+      "run": "solve-W278",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S88",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "S87 with the place recorded instead of looked up: every command that makes a task's worktree writes its path to state/<task>/worktree, wt_of reads it, and a one-time pass writes it for the worktrees open now; the one ending step and the folder as the one key as in S87",
+    "fixes": [
+      "W278",
+      "W281",
+      "W283",
+      "W287"
+    ],
+    "assessment": "Fixes the same roots and problems as S87, and one thing more: the record outlives the worktree, so a row left behind can still be matched after the worktree is gone. But it is a second record of what git already keeps: written at five git worktree add sites, kept in step at every git worktree move (ids-short makes one, a hand-run move breaks it), plus a one-time fill for the worktrees open now; status and record still need a list of worktrees, read from the state folders or git. More to keep in step for no problem S87 leaves (with S87 nothing looks a worktree up after its removal). About four hours. Not recommended.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T08:32+02:00",
+      "by": "logoslang-solve-W278",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fa5c394",
+      "run": "solve-W278",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S89",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Smallest patch: cmd_merge stops its task's session rows before it removes the worktree, in both flows; cmd_resume writes a resumed helper's new id to state/help-K/id, as the orchestrator did by hand for help-8; reap_helpers also removes the row of a helper whose job has ended",
+    "fixes": [
+      "W275",
+      "W282"
+    ],
+    "assessment": "Symptom fix: moves one call in cmd_merge and adds a write to cmd_resume and a stop to reap_helpers, so P144, P151 and the help-5 row go. It fixes none of the four roots, so they are left out of --fixes: the end sequence stays written four times with each order chosen there (W278, W281), the folder and the recorded ids stay two keys, and a resumed worker or reviewer still has no id written (W283), and P152 stays, since a worktree under a former conf root is still lost to the hand-kept list of earlier roots (W287). Under thirty minutes. Not recommended.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T08:32+02:00",
+      "by": "logoslang-solve-W278",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fa5c394",
+      "run": "solve-W278",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P153",
+    "kind": "problem",
+    "status": "open",
+    "text": "reap_helpers leaves the session row of a helper whose job has ended: it reads sessions_json (claude agents --json, running jobs only), so an ended helper reads as gone, the stop is skipped, and its worktree and state are removed while its row stays; status lists running jobs only, so the left row shows nowhere",
+    "program": "claude agents --json --all | jq '.[] | select(.name == \"logoslang-help-5\") | {id, status, state}'; ls -d .agents/orchestrator/state/done/help-5-*; ls .agents/worktrees/help-5",
+    "output": "{\"id\":\"8a60fcfc\",\"status\":null,\"state\":\"done\"}; state/done/help-5-261009130746 (its id file holds 8a60fcfc, so the id is not stale); the worktree is gone; claude agents --json without --all lists no row named logoslang-help-5; 12 October 2026 08:30",
+    "expected": "SKILL.md ›Staying responsive‹: \"so each worktree has one row and goes with it when the work ends\"; ›Never‹: \"Leave a merged branch or worktree behind\"",
+    "tier": null,
+    "found": "logoslang-solve-W278, FOUND while working out W278, 12 October 2026",
+    "why": [
+      "W278"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T08:34+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "acadbf0",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T08:34+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "acadbf0",
+        "change": "why + W278",
+        "reason": null
+      }
+    ]
   }
 ]
