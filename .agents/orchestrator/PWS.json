@@ -23840,9 +23840,10 @@
       "W245",
       "W251",
       "W252",
-      "W253"
+      "W253",
+      "W286"
     ],
-    "assessment": "Root fix for a running session: the waker belongs to the session, registered by the skill, instead of to one Monitor tool call (W253, W219), the unrelayed-save test is read at every turn's end and after every tool call (W243, W252), AskUserQuestion is denied (W251), nothing has to check or time the watch (W244, W245), and P129's two gaps go. Fails P135: skill-frontmatter hooks are registered when the skill is invoked, and the hooks page says nothing of a resume, so after a computer restart the hooks and the watch return only when the orchestrator runs the skill again, a step to remember, and a first turn in plan mode starts nothing. Superseded by S76, which keeps every part of S66 but registers the hooks where Claude Code loads them at every start and resume. About two hours; touches solve-W218's S63/S65 at cmd_questions_watch's print line and at edited.",
+    "assessment": "Root fix for a running session, and the only option with no step of Thobias's: the hooks stand in the skill's own frontmatter, a file the orchestrator edits in place, which fixes W286 fully (unless auto mode refuses adding hooks there too; then he adds them once). The waker belongs to the session instead of to one Monitor tool call (W253, W219), the unrelayed-save test is read at every turn's end and after every tool call (W243, W252), AskUserQuestion is denied (W251), nothing has to check or time the watch (W244, W245), P129 and P138 go. Fails P135, now proven: why-P138-b's probe shows a frontmatter Stop hook fires at the skill's turn and later turns of the same process, and is gone after claude --continue until the skill is invoked again, so after a computer restart the watch waits until the orchestrator runs the skill again, a step to remember. About two hours; touches S63's watch change, which lands with it as one change.",
     "decision": null,
     "design": [],
     "issue": null,
@@ -23874,6 +23875,24 @@
         "commit": "d57a5dd",
         "change": "assessment was \"Root fix for a running session: the waker belongs to the session, registered by the skill, instead of to one Monitor tool call (W253, W219), the unrelayed-save test is read at every turn's end and after every tool call (W243, W252), AskUserQuestion is denied (W251), nothing has to check or time the watch (W244, W245), and P129's two gaps go. Fails P135: skill-frontmatter hooks are registered when the skill is invoked, and the hooks page says nothing of a resume, so after a computer restart the hooks and the watch return only when the orchestrator runs the skill again, a step to remember, and a first turn in plan mode starts nothing. Superseded by S69, which keeps every part of S66 but registers the hooks where Claude Code loads them at every start and resume. About two hours; touches solve-W218's S63/S65 at cmd_questions_watch's print line and at edited.\"",
         "reason": "the superseding solution was recorded as S76, not S69 as the last amend said"
+      },
+      {
+        "at": "2026-10-12T08:24+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "fixes was [\"W243\", \"W244\", \"W245\", \"W251\", \"W252\", \"W253\"]",
+        "reason": "why-P138-b's probe (9 October 2026) proves the restart gap, and W286 makes the frontmatter the one home inside the skill's files"
+      },
+      {
+        "at": "2026-10-12T08:24+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "assessment was \"Root fix for a running session: the waker belongs to the session, registered by the skill, instead of to one Monitor tool call (W253, W219), the unrelayed-save test is read at every turn's end and after every tool call (W243, W252), AskUserQuestion is denied (W251), nothing has to check or time the watch (W244, W245), and P129's two gaps go. Fails P135: skill-frontmatter hooks are registered when the skill is invoked, and the hooks page says nothing of a resume, so after a computer restart the hooks and the watch return only when the orchestrator runs the skill again, a step to remember, and a first turn in plan mode starts nothing. Superseded by S76, which keeps every part of S66 but registers the hooks where Claude Code loads them at every start and resume. About two hours; touches solve-W218's S63/S65 at cmd_questions_watch's print line and at edited.\"",
+        "reason": "why-P138-b's probe (9 October 2026) proves the restart gap, and W286 makes the frontmatter the one home inside the skill's files"
       }
     ]
   },
@@ -24227,16 +24246,17 @@
     "id": "S76",
     "kind": "solution",
     "status": "proposed",
-    "text": "S66 with its hooks in the repo's committed .claude/settings.json, which Claude Code loads at every start and resume of a session in the repo; setup writes the file for a new repo; each hook exits at once unless the session is the repo's orchestrator (the session the script runs for, kept in state/ and renewed at every start or resume); in that session a background hook (asyncRewake) starts the one-shot question watch at SessionStart (startup, resume, fork, compact) and at every turn's end, so the watch runs from the moment the session opens, before any turn and in any mode, and wakes it at a save even when idle; the watch reports each save once and keeps a record of what it reported; watch-guard.sh at Stop and after every tool call keeps the turn from ending and reminds while a save is not yet taken as read or closed, except in plan mode, where the orchestrator cannot act; PreToolUse denies AskUserQuestion",
+    "text": "S66 with its hooks in the repo's committed .claude/settings.json, which Claude Code loads at every start and resume of a session in the repo; Thobias adds the file by hand in each repo, since auto mode refuses a session's write of it; each hook exits at once unless the session is the repo's orchestrator (the session the script runs for, kept in state/ and renewed at every start or resume); in that session a background hook (asyncRewake) starts the one-shot question watch at SessionStart (startup, resume, fork, compact) and at every turn's end, so the watch runs from the moment the session opens, before any turn and in any mode, and wakes it at a save even when idle; the watch reports each save once and keeps a record of what it reported; watch-guard.sh at Stop and after every tool call keeps the turn from ending and reminds while a save is not yet taken as read or closed, except in plan mode, where the orchestrator cannot act; PreToolUse denies AskUserQuestion",
     "fixes": [
       "W243",
       "W244",
       "W245",
       "W251",
       "W252",
-      "W253"
+      "W253",
+      "W286"
     ],
-    "assessment": "Root fix, restart included: the waker belongs to the session and is registered by a file Claude Code reads at every start and resume, so no step is remembered after a computer restart (P135) or ever (W244, W245); the watch runs before the first turn, so plan mode does not stop it; the rest as S66 (W243, W252, W251, W253, P126, P129). P138 goes too: the new SKILL.md wording drops the untrue 'a Stop hook in his ~/.claude/settings.json' and names the file setup writes. The orchestrator is the session whose id stands in state/orchestrator.session; a plain claude --resume keeps the id, so only a --fork-session resume needs it renewed at SessionStart. The report-once record keeps a restarted watch from waking the session again and again for a save left unhandled (plan mode, the harness's 8-block cap), and it is the record solve-W218's S63/S65 need for question-close to refuse a save the watch has not printed, so one record serves both. Follows the global CLAUDE.md ruling (Thobias, 3 October 2026): '.claude/ keeps only the files Claude Code itself reads (settings, skill pointers, the CLAUDE.md bridge)'. Cost: the hooks run in every session in the repo and its worktrees and exit at once there (one bash start per tool call); the file is committed, so it reaches any machine, and does nothing where the skill is not installed; writing it may need Thobias's approval once per repo, as the settings.json edit did. Slice 1 tests asyncRewake at SessionStart and Stop in a scratch repo (fallback PostToolUse, decided in Q95). Opening the orchestrator session after a restart stays his. Lands in .claude/settings.json (about 20 lines), ~/.claude/skills/orchestrate watch-guard.sh (about 35), cmd_questions_watch (about 15), cmd_setup (about 5), SKILL.md (the wording in Q95, restart step deleted); about three hours.",
+    "assessment": "Fixes what S77 fixes, restart included, with the same pointer to one script in the skill's folder and the same status check (W286, P138), but the block stands in each repo's committed .claude/settings.json: it travels with the repo to another machine or a teammate, and since auto mode refuses a session's write of a settings file (9 October 00:27 UTC), setup cannot write it, so Thobias adds it by hand in every repo. Not recommended since that refusal: one step of his per repo instead of one per machine. Follows the global CLAUDE.md ruling that .claude/ keeps the files Claude Code reads. About three hours.",
     "decision": null,
     "design": [],
     "issue": null,
@@ -24259,6 +24279,33 @@
         "commit": "d57a5dd",
         "change": "assessment was \"Root fix, restart included: the waker belongs to the session and is registered by a file Claude Code reads at every start and resume, so no step is remembered after a computer restart (P135) or ever (W244, W245); the watch runs before the first turn, so plan mode does not stop it; the rest as S66 (W243, W252, W251, W253, P126, P129). The report-once record keeps a restarted watch from waking the session again and again for a save left unhandled (plan mode, the harness's 8-block cap), and it is the record solve-W218's S63/S65 need for question-close to refuse a save the watch has not printed, so one record serves both. Follows the global CLAUDE.md ruling (Thobias, 3 October 2026): '.claude/ keeps only the files Claude Code itself reads (settings, skill pointers, the CLAUDE.md bridge)'. Cost: the hooks run in every session in the repo and its worktrees and exit at once there (one bash start per tool call); the file is committed, so it reaches any machine, and does nothing where the skill is not installed; writing it may need Thobias's approval once per repo, as the settings.json edit did. Slice 1 tests asyncRewake at SessionStart and Stop in a scratch repo (fallback PostToolUse, decided in Q95) and which SessionStart field names the session after a forked resume. Opening the orchestrator session after a restart stays his. Lands in .claude/settings.json (about 20 lines), ~/.claude/skills/orchestrate watch-guard.sh (about 35), cmd_questions_watch (about 15), cmd_setup (about 5), SKILL.md (the wording in Q95, restart step deleted); about three hours.\"",
         "reason": "P138 and the fact that a plain resume keeps the session id (why-P135-a, 9 October 2026)"
+      },
+      {
+        "at": "2026-10-12T08:24+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "fixes was [\"W243\", \"W244\", \"W245\", \"W251\", \"W252\", \"W253\"]",
+        "reason": "W286 (9 October 2026): auto mode refuses a session's write of a settings file, so setup cannot write .claude/settings.json"
+      },
+      {
+        "at": "2026-10-12T08:24+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "text was \"S66 with its hooks in the repo's committed .claude/settings.json, which Claude Code loads at every start and resume of a session in the repo; setup writes the file for a new repo; each hook exits at once unless the session is the repo's orchestrator (the session the script runs for, kept in state/ and renewed at every start or resume); in that session a background hook (asyncRewake) starts the one-shot question watch at SessionStart (startup, resume, fork, compact) and at every turn's end, so the watch runs from the moment the session opens, before any turn and in any mode, and wakes it at a save even when idle; the watch reports each save once and keeps a record of what it reported; watch-guard.sh at Stop and after every tool call keeps the turn from ending and reminds while a save is not yet taken as read or closed, except in plan mode, where the orchestrator cannot act; PreToolUse denies AskUserQuestion\"",
+        "reason": "W286 (9 October 2026): auto mode refuses a session's write of a settings file, so setup cannot write .claude/settings.json"
+      },
+      {
+        "at": "2026-10-12T08:24+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "assessment was \"Root fix, restart included: the waker belongs to the session and is registered by a file Claude Code reads at every start and resume, so no step is remembered after a computer restart (P135) or ever (W244, W245); the watch runs before the first turn, so plan mode does not stop it; the rest as S66 (W243, W252, W251, W253, P126, P129). P138 goes too: the new SKILL.md wording drops the untrue 'a Stop hook in his ~/.claude/settings.json' and names the file setup writes. The orchestrator is the session whose id stands in state/orchestrator.session; a plain claude --resume keeps the id, so only a --fork-session resume needs it renewed at SessionStart. The report-once record keeps a restarted watch from waking the session again and again for a save left unhandled (plan mode, the harness's 8-block cap), and it is the record solve-W218's S63/S65 need for question-close to refuse a save the watch has not printed, so one record serves both. Follows the global CLAUDE.md ruling (Thobias, 3 October 2026): '.claude/ keeps only the files Claude Code itself reads (settings, skill pointers, the CLAUDE.md bridge)'. Cost: the hooks run in every session in the repo and its worktrees and exit at once there (one bash start per tool call); the file is committed, so it reaches any machine, and does nothing where the skill is not installed; writing it may need Thobias's approval once per repo, as the settings.json edit did. Slice 1 tests asyncRewake at SessionStart and Stop in a scratch repo (fallback PostToolUse, decided in Q95). Opening the orchestrator session after a restart stays his. Lands in .claude/settings.json (about 20 lines), ~/.claude/skills/orchestrate watch-guard.sh (about 35), cmd_questions_watch (about 15), cmd_setup (about 5), SKILL.md (the wording in Q95, restart step deleted); about three hours.\"",
+        "reason": "W286 (9 October 2026): auto mode refuses a session's write of a settings file, so setup cannot write .claude/settings.json"
       }
     ]
   },
@@ -24266,16 +24313,17 @@
     "id": "S77",
     "kind": "solution",
     "status": "proposed",
-    "text": "S76 with its hooks in Thobias's global ~/.claude/settings.json instead of each repo's .claude/settings.json: he adds them once, by hand, and they serve every repo on this machine",
+    "text": "One block in Thobias's global ~/.claude/settings.json, added once by him with '! bash ~/.claude/skills/orchestrate/orchestrate.sh hooks-install' (a session may not write the file), that only points four moments (SessionStart, Stop, PostToolUse, PreToolUse on AskUserQuestion) at one script in the skill's folder; the script does all of S76's work and exits at once in any session but the repo's orchestrator; status checks that the block is there and, when it is not, says to ask him to run that command; it serves every repo on this machine and loads at every start and resume",
     "fixes": [
       "W243",
       "W244",
       "W245",
       "W251",
       "W252",
-      "W253"
+      "W253",
+      "W286"
     ],
-    "assessment": "Fixes the same roots as S76, restart included (global settings also load at every start and resume). Differs in cost only: one manual edit by Thobias, since an agent's edit of his settings.json was refused as self-modification on 9 October, against one committed file per repo that setup writes; the hooks then run in every session on the machine, and they do not travel with a repo to another machine or a teammate. Same code otherwise, minus the setup step. Not recommended: S76 needs no step of his beyond, at most, one approval per repo.",
+    "assessment": "Root fix, restart included, and the recommended one since auto mode refuses every session's write of a settings file (9 October 00:27 UTC, [Self-Modification]; the skill's sessions all run in auto mode): only a settings file loads hooks before a resumed session's first turn (a skill-frontmatter hook is gone after claude --continue until the skill is invoked again, why-P138-b's probe), so one step of his is the floor, and this makes it one per machine, like installing the skill. W286: the only thing outside the skill's files is a fixed pointer naming every moment the design uses, so no later fix has to reach it (the behaviour lives in the script, edited in place like the rest of the skill), and status reads it, so the skill never again states a hook that is not registered (P138). The rest as S76: P126, P129, P135 (P131 fixed already); S63's watch change lands with it as one change to the watch. Cost: the hooks start a bash in every session on the machine, which exits at once outside the orchestrator; a new machine needs the same one command, as it needs the skill. About three hours, hooks-install included.",
     "decision": null,
     "design": [],
     "issue": null,
@@ -24307,6 +24355,33 @@
         "commit": "d57a5dd",
         "change": "assessment was \"Fixes the same roots as S69, restart included (global settings also load at every start and resume). Differs in cost only: one manual edit by Thobias, since an agent's edit of his settings.json was refused as self-modification on 9 October, against one committed file per repo that setup writes; the hooks then run in every session on the machine, and they do not travel with a repo to another machine or a teammate. Same code otherwise, minus the setup step. Not recommended: S69 needs no step of his beyond, at most, one approval per repo.\"",
         "reason": "the solution it varies was recorded as S76, not S69"
+      },
+      {
+        "at": "2026-10-12T08:24+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "fixes was [\"W243\", \"W244\", \"W245\", \"W251\", \"W252\", \"W253\"]",
+        "reason": "W286 and P138 (9 October 2026): auto mode refuses a session's write of any settings file, so the block is added by Thobias's own command, and the pointer design keeps every later change inside the skill's files"
+      },
+      {
+        "at": "2026-10-12T08:24+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "text was \"S76 with its hooks in Thobias's global ~/.claude/settings.json instead of each repo's .claude/settings.json: he adds them once, by hand, and they serve every repo on this machine\"",
+        "reason": "W286 and P138 (9 October 2026): auto mode refuses a session's write of any settings file, so the block is added by Thobias's own command, and the pointer design keeps every later change inside the skill's files"
+      },
+      {
+        "at": "2026-10-12T08:24+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "assessment was \"Fixes the same roots as S76, restart included (global settings also load at every start and resume). Differs in cost only: one manual edit by Thobias, since an agent's edit of his settings.json was refused as self-modification on 9 October, against one committed file per repo that setup writes; the hooks then run in every session on the machine, and they do not travel with a repo to another machine or a teammate. Same code otherwise, minus the setup step. Not recommended: S76 needs no step of his beyond, at most, one approval per repo.\"",
+        "reason": "W286 and P138 (9 October 2026): auto mode refuses a session's write of any settings file, so the block is added by Thobias's own command, and the pointer design keeps every later change inside the skill's files"
       }
     ]
   },
@@ -26687,7 +26762,7 @@
     "status": "accepted",
     "text": "orchestrate.sh has no one function that ends a task's work: retire_branch, the only shared step, removes the worktree and deletes the branch but never stops sessions or retires state, so cmd_merge (once per MERGE flow), close_why_agent with cmd_why_done, cmd_solve_done and reap_helpers each write their own sequence of stopping rows, git worktree remove and retire_state, and each picks its order there; the one stated order (checks, then stop, then remove) is a comment on cmd_solve_done alone, and SKILL.md says only that a worktree's row goes with it when the work ends",
     "proposed_for": "W275",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/orchestrate.sh",
       "~/.claude/skills/orchestrate/SKILL.md",
@@ -26746,6 +26821,15 @@
         "commit": "c40483f",
         "change": "accepted as a why of W275, same as W280",
         "reason": "A and B state the same fact: no one function ends a task; retire_branch removes the worktree but stops no session, so each of the closing sequences places its own stop"
+      },
+      {
+        "at": "2026-10-12T08:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa5c394",
+        "change": "asked: no why found",
+        "reason": "a root of the 'one rule written in several places' kind (why-P144-b): SKILL.md states one rule for every ending and the script writes it five times; why-P144-a linked it under W281, but an order rule would leave the five copies standing, so W281 is a sibling, not its cause"
       }
     ]
   },
@@ -26755,7 +26839,9 @@
     "status": "accepted",
     "text": "No state file records where a task's worktree was made: cmd_spawn_worker, cmd_record, start_why_agent, cmd_spawn_solve and cmd_spawn_helper each run git worktree add at a path they work out (wt_of, or WT_ROOT in cmd_record) and write base, round, prompts and a session id to the task's state folder, never that path, so rows_in, ids_in, live_in, branch_of and cmd_merge must work it out again through wt_of at each lookup, and wt_of can tell an earlier root only by which folder exists then",
     "proposed_for": "W277",
-    "why": null,
+    "why": [
+      "W287"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/orchestrate.sh",
       "cmd_spawn_worker",
@@ -26821,6 +26907,15 @@
         "commit": "c40483f",
         "change": "accepted as a why of W277, same as W284",
         "reason": "A and B state the same fact: no state file records where a task's worktree was made, so wt_of works it out again at each call"
+      },
+      {
+        "at": "2026-10-12T08:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa5c394",
+        "change": "why + W287",
+        "reason": null
       }
     ]
   },
@@ -26882,7 +26977,7 @@
     "status": "accepted",
     "text": "SKILL.md and the script's help give each closing command its own list of steps and have no rule for the order in which a task's sessions and its worktree end: merge N removes the worktree and branch and stops the last session at the very end (SKILL.md), the merge of the orchestrator's own PR stops every session row before it removes the worktree (SKILL.md), why-done and solve-done stop the agent, keep its files, then remove the worktree (help), and merge's help names no session at all; cmd_merge follows the merge N list",
     "proposed_for": "W275",
-    "why": null,
+    "why": [],
     "anchors": [
       "cmd_merge",
       "close_why_agent",
@@ -26933,6 +27028,15 @@
         "commit": "c40483f",
         "change": "accepted as a why of W275",
         "reason": "only A; the rule-file half of W275: SKILL.md and the script's help give each closing command its own steps and no rule orders a task's sessions before its worktree"
+      },
+      {
+        "at": "2026-10-12T08:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa5c394",
+        "change": "asked: no why found",
+        "reason": "both agents: a rule SKILL.md lacks; any deeper answer is history"
       }
     ]
   },
@@ -26942,7 +27046,9 @@
     "status": "accepted",
     "text": "The session ids a task's state keeps do not cover its sessions: worker.id and review-N.id are written once, when cmd_spawn_worker, cmd_spawn_reviewer, start_why_agent and cmd_spawn_solve start a session, while cmd_resume starts each resumed copy under a new id in the same folder and writes no state, so the one mark every session of a task shares is its row's cwd, and rows_in, ids_in and live_in match on that path (a session belongs to the worktree it runs in, whatever it is named)",
     "proposed_for": "W277",
-    "why": null,
+    "why": [
+      "W283"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/orchestrate.sh",
       "cmd_resume",
@@ -26991,6 +27097,15 @@
         "commit": "c40483f",
         "change": "accepted as a why of W277",
         "reason": "only B as worded: the ids a task's state keeps miss every resumed session, since cmd_resume writes no new id, so the folder is the only mark all a task's sessions share; explains P151 too"
+      },
+      {
+        "at": "2026-10-12T08:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa5c394",
+        "change": "why + W283",
+        "reason": null
       }
     ]
   },
@@ -27000,7 +27115,7 @@
     "status": "accepted",
     "text": "SKILL.md makes a task's worktree folder the one key to its sessions (A session belongs to the worktree it runs in; the script finds sessions by that, whatever they are named), so close_rows, ids_in and live_in match rows by folder and never read the session ids the spawn commands record (worker.id, review-K.id, written in four places, read nowhere); only reap_helpers stops a session by its recorded id, and cmd_resume starts a session under a new id it records nowhere",
     "proposed_for": "W277",
-    "why": null,
+    "why": [],
     "anchors": [
       "close_rows",
       "rows_in",
@@ -27051,6 +27166,15 @@
         "commit": "c40483f",
         "change": "accepted as a why of W277",
         "reason": "only A as worded: SKILL.md makes the worktree folder the one key to a task's sessions, so the recorded ids are never read"
+      },
+      {
+        "at": "2026-10-12T08:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa5c394",
+        "change": "asked: no why found",
+        "reason": "both agents: the rule in SKILL.md ›Setup‹ that a session belongs to the worktree it runs in, as the owner chose it"
       }
     ]
   },
@@ -27335,17 +27459,18 @@
   {
     "id": "W287",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "SKILL.md has no rule that a task's worktree place is recorded when it is made: it names the place by the task's name under WORKTREE_ROOT (issue-N, record-<stamp>, why-P-a, solve-W, help-K) and meets a moved root with one sentence, One begun under an earlier root finishes there, which says nothing of how the script finds it, so the script works the place out from the name each time and covers earlier roots with a hand-kept list of the two in-repo roots (OLD_WT_ROOTS in use_repo), which misses an earlier root that WORKTREE_ROOT in orchestrate.conf named, even while its folder exists",
     "proposed_for": "W279",
-    "why": null,
+    "why": [],
     "anchors": [
       "~/.claude/skills/orchestrate/SKILL.md",
       "~/.claude/skills/orchestrate/orchestrate.sh",
       "use_repo",
       "OLD_WT_ROOTS",
       "WORKTREE_ROOT",
-      "wt_of"
+      "wt_of",
+      "WT_ROOTS"
     ],
     "design": [],
     "pages": [],
@@ -27369,12 +27494,30 @@
         "command": "bash why-probes/wt_of_conf_probe.sh <scratch>   (the real use_repo lines and wt_of; WORKTREE_ROOT now <scratch>/wtB, earlier <scratch>/wtA; both folders exist when asked)",
         "output": "earlier roots wt_of tries: <scratch>/.claude/worktrees <scratch>/.agents/worktrees\nissue-90, folder under the earlier conf root wtA: <scratch>/wtB/issue-90\nissue-91, folder under .claude/worktrees: <scratch>/.claude/worktrees/issue-91",
         "commit": "776f442"
+      },
+      {
+        "command": "rg -n -i 'earlier root|which root|root (it|they) (began|was made)|where (a|its|the) worktree (was|is) made' ~/.claude/skills/orchestrate/SKILL.md   (a rule for knowing the root, in its own words)",
+        "output": "12: ... in worktrees under the repo's worktree root (`WORKTREE_ROOT`, by default its `.agents/worktrees/`) ... One begun under an earlier root finishes there.\n103: (matches only \"which root causes\", unrelated)\n(the nearest rules fall short: line 12 says where an old worktree finishes, not how it is known; line 32 says only where new worktrees are made: \"where its worktrees are made (`WORKTREE_ROOT`)\", \"A repo whose own tools read the worktrees inside its checkout sets `WORKTREE_ROOT=~/.claude/worktrees/<project>`\", and a local conf \"wins\"; line 33 finds sessions by their worktree and presumes it known)",
+        "commit": "776f442"
+      },
+      {
+        "command": "sed -n '176,180p' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "  # a worktree made under an earlier root finishes where it is\n  local r\n  OLD_WT_ROOTS=()\n  for r in \"$REPO/.claude/worktrees\" \"$REPO/.agents/worktrees\"; do [ \"$r\" = \"$WT_ROOT\" ] || OLD_WT_ROOTS+=(\"$r\"); done\n  WT_ROOTS=(\"${OLD_WT_ROOTS[@]}\" \"$WT_ROOT\")",
+        "commit": "776f442"
+      },
+      {
+        "command": "bash why-probes/conf_root_lost.sh   (loads the real wt_of and use_repo's earlier-root lines; a worktree still stands under a former conf root, ~/.claude/worktrees/proj, while WORKTREE_ROOT is now the default)",
+        "output": "earlier roots the script knows: <T>/repo/.claude/worktrees\nevery root status reads:        <T>/repo/.claude/worktrees <T>/repo/.agents/worktrees\nworktree stands at:             <T>/home/.claude/worktrees/proj/issue-5\nwt_of issue-5 =                 <T>/repo/.agents/worktrees/issue-5\n(the other axis: a built-in earlier root is found while its folder stands, a conf root is not found even then)",
+        "commit": "776f442"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "SKILL.md lets a task's worktree finish under the root it began in (One begun under an earlier root finishes there) while the root is a conf value that can change (WORKTREE_ROOT, per repo or per machine), and has no rule for how the script knows which root a task's worktree began under; so orchestrate.sh keeps that rule in wt_of alone, from a fixed pair of earlier roots written in use_repo (.claude/worktrees and .agents/worktrees) and whichever folder exists, and no spawn command records a path"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-09T14:25+02:00",
@@ -27385,7 +27528,26 @@
       "run": "why-P144",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T08:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa5c394",
+        "change": "accepted as a why of W279, same as W288",
+        "reason": "A and B state the same fact: no SKILL.md rule says a worktree's place is recorded when it is made, so wt_of works it out from a hand-kept pair of earlier roots plus whichever folder exists"
+      },
+      {
+        "at": "2026-10-12T08:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa5c394",
+        "change": "asked: no why found",
+        "reason": "both agents: a rule SKILL.md lacks"
+      }
+    ]
   },
   {
     "id": "S83",
@@ -27499,5 +27661,102 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "W288",
+    "kind": "why",
+    "status": "merged",
+    "text": "SKILL.md lets a task's worktree finish under the root it began in (One begun under an earlier root finishes there) while the root is a conf value that can change (WORKTREE_ROOT, per repo or per machine), and has no rule for how the script knows which root a task's worktree began under; so orchestrate.sh keeps that rule in wt_of alone, from a fixed pair of earlier roots written in use_repo (.claude/worktrees and .agents/worktrees) and whichever folder exists, and no spawn command records a path",
+    "proposed_for": "W279",
+    "why": null,
+    "anchors": [
+      "use_repo",
+      "OLD_WT_ROOTS",
+      "WT_ROOTS",
+      "wt_of",
+      "WORKTREE_ROOT",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -i 'earlier root|which root|root (it|they) (began|was made)|where (a|its|the) worktree (was|is) made' ~/.claude/skills/orchestrate/SKILL.md   (a rule for knowing the root, in its own words)",
+        "output": "12: ... in worktrees under the repo's worktree root (`WORKTREE_ROOT`, by default its `.agents/worktrees/`) ... One begun under an earlier root finishes there.\n103: (matches only \"which root causes\", unrelated)\n(the nearest rules fall short: line 12 says where an old worktree finishes, not how it is known; line 32 says only where new worktrees are made: \"where its worktrees are made (`WORKTREE_ROOT`)\", \"A repo whose own tools read the worktrees inside its checkout sets `WORKTREE_ROOT=~/.claude/worktrees/<project>`\", and a local conf \"wins\"; line 33 finds sessions by their worktree and presumes it known)",
+        "commit": "776f442"
+      },
+      {
+        "command": "sed -n '176,180p' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "  # a worktree made under an earlier root finishes where it is\n  local r\n  OLD_WT_ROOTS=()\n  for r in \"$REPO/.claude/worktrees\" \"$REPO/.agents/worktrees\"; do [ \"$r\" = \"$WT_ROOT\" ] || OLD_WT_ROOTS+=(\"$r\"); done\n  WT_ROOTS=(\"${OLD_WT_ROOTS[@]}\" \"$WT_ROOT\")",
+        "commit": "776f442"
+      },
+      {
+        "command": "bash why-probes/conf_root_lost.sh   (loads the real wt_of and use_repo's earlier-root lines; a worktree still stands under a former conf root, ~/.claude/worktrees/proj, while WORKTREE_ROOT is now the default)",
+        "output": "earlier roots the script knows: <T>/repo/.claude/worktrees\nevery root status reads:        <T>/repo/.claude/worktrees <T>/repo/.agents/worktrees\nworktree stands at:             <T>/home/.claude/worktrees/proj/issue-5\nwt_of issue-5 =                 <T>/repo/.agents/worktrees/issue-5\n(the other axis: a built-in earlier root is found while its folder stands, a conf root is not found even then)",
+        "commit": "776f442"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W287",
+    "made": {
+      "at": "2026-10-12T08:24+02:00",
+      "by": "logoslang-why-P144-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "776f442",
+      "run": "why-P144",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T08:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa5c394",
+        "change": "merged into W287",
+        "reason": "A and B state the same fact: no SKILL.md rule says a worktree's place is recorded when it is made, so wt_of works it out from a hand-kept pair of earlier roots plus whichever folder exists"
+      }
+    ]
+  },
+  {
+    "id": "P152",
+    "kind": "problem",
+    "status": "open",
+    "text": "A worktree made under a WORKTREE_ROOT set in orchestrate.conf is lost to the script once the conf changes: use_repo knows only .claude/worktrees and .agents/worktrees as earlier roots, so wt_of names the new root's folder even while the old one stands, and status, merge, spawn-reviewer and kill miss it",
+    "program": "a repo with WORKTREE_ROOT=~/.claude/worktrees/<project> in orchestrate.conf (SKILL.md advises this for some repos) and a worktree standing under it; change WORKTREE_ROOT back to the default; then status, merge, spawn-reviewer or kill on that task (probe: why-probes/conf_root_lost.sh in why-P144-a, run with the real wt_of and use_repo lines)",
+    "output": "wt_of gives <repo>/.agents/worktrees/<task> while the folder stands under the old root; status leaves it out, merge and spawn-reviewer stop with \"no worktree\", kill finds no sessions; seen at function level, not run end to end; no repo on this machine is known to be in that state",
+    "expected": "\"One begun under an earlier root finishes there\" (SKILL.md ›Setup‹)",
+    "tier": null,
+    "found": "logoslang-why-P144-a and logoslang-why-P144-b, each a FOUND in round 3 on P144, 12 October 2026",
+    "why": [
+      "W287"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T08:26+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fa5c394",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T08:26+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fa5c394",
+        "change": "why + W287",
+        "reason": null
+      }
+    ]
   }
 ]
