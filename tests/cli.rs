@@ -4777,6 +4777,8 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
                 share parse = ( tape[0].type = pass, tape[0].a = tape[-1], \
                 tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, \
                 tape.remove(-1) ) )";
+    let at = "at := fn (q := @i32 ?) -> @i32 ( q )";
+    let pt = "pt := type (u := i32 ?, v := i32 ?)";
     for (src, want) in [
         (
             format!(
@@ -4800,11 +4802,48 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
             ),
             "7 5 2.5 42\n",
         ),
+        (format!("{pass}, n := i32 5, p := &n, q := p pass, q@"), "5\n"),
+        (
+            format!(
+                "{pass}, f := fn (q := @i32 ?) -> @i32 ( q pass ), f.compile(), n := i32 5, f(&n)@"
+            ),
+            "5\n",
+        ),
+        (format!("{pass}, {at}, n := i32 5, (at(&n) pass)@"), "5\n"),
+        (
+            format!(
+                "{pass}, {at}, f := fn (q := @i32 ?) -> i32 ( (at(q) pass)@ ), f.compile(), \
+                 n := i32 5, f(&n)"
+            ),
+            "5\n",
+        ),
+        (format!("{pass}, {pt}, r := pt(3, 4), q := r pass, print «{{q.u}} {{q.v}}»"), "3 4\n"),
+        (format!("{pass}, {pt}, q := pt(3, 4) pass, q.v"), "4\n"),
+        (
+            format!(
+                "{pass}, {pt}, g := fn (r := pt ?) -> i32 ( q := r pass, q.v ), g.compile(), \
+                 g(pt(3, 4))"
+            ),
+            "4\n",
+        ),
+        (format!("{pass}, mut t := type ?, t = i32, q := t pass, q"), "i32\n"),
+        (format!("{pass}, ty := fn () -> type ( i32 ), (ty() pass) == i32"), "true\n"),
+        (format!("{pass}, (i32 pass) == i32"), "true\n"),
+        (format!("{pass}, g := fn (u := type ?) -> type ( u pass ), g.compile(), g(i32)"), "i32\n"),
+        (
+            format!("{pass}, g := fn (b := bool ?) -> bool ( b pass ), g.compile(), g(true)"),
+            "true\n",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
         assert_eq!(stdout, want, "{src}");
     }
+    // The field holds the operand's value, so an operand that gives none is refused.
+    let src = format!("{pass}, mut x := i32 5, (x = i32 3) pass");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: {stderr}");
+    assert!(stderr.contains("this gives nothing"), "{src}: {stderr}");
 }
 
 #[test]
