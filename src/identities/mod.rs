@@ -651,6 +651,25 @@ pub unsafe fn run_scope_exit(
     scope::run_exit(rt, scope, usize::MAX)
 }
 
+/// How many lines a scope's `dyads` hold: what a REPL line that fails gives back.
+///
+/// # Safety
+/// `scope` must be a scope node from the store.
+pub unsafe fn scope_lines(scope: DyadPtr) -> usize {
+    scope::exprs_of(scope).map_or(0, <[_]>::len)
+}
+
+/// The scope keeps its first `kept` lines, so a failed REPL line leaves none in the session.
+///
+/// # Safety
+/// `scope` must be a scope node from the store.
+pub unsafe fn keep_scope_lines(scope: DyadPtr, kept: usize) {
+    let lines = scope::exprs_array(scope);
+    if !lines.is_null() {
+        array::truncate(lines, kept);
+    }
+}
+
 /// # Safety
 /// `node.value` must point at an operand record of at least two `dyad@` fields.
 pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {

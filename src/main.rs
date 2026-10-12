@@ -216,10 +216,13 @@ fn code_bytes(engine: &Engine, text: &str) -> usize {
     cells.iter().filter(|c| c.identity(&engine.core) != engine.core.hash_).map(|c| c.len).sum()
 }
 
-/// One persistent store, index and scope; one expression per line, each value
-/// echoed; an error reports and the loop continues.
+/// One persistent store, index and scope; each line a line of the program, its tail
+/// echoed; a line that fails reports, leaves no trace, and the loop continues.
 fn repl() -> ExitCode {
-    println!("logos {} — one expression per line, ctrl-d to exit", env!("CARGO_PKG_VERSION"));
+    println!(
+        "logos {} — each line is a line of the program, ctrl-d to exit",
+        env!("CARGO_PKG_VERSION")
+    );
     let mut engine = Engine::new();
     let mut scopes = ScopeStack::new();
     scopes.push(engine.core.root_scope);
@@ -249,97 +252,56 @@ fn repl() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
         };
-        if line.trim().is_empty() {
-            continue;
-        }
-
+        let session = scopes.current().expect("the session's scope is open");
+        // SAFETY: `session` is the session's scope node.
+        let kept = unsafe { seed::identities::scope_lines(session) };
         let types = &engine.core;
-        // The value is read and rendered while the parser is alive, since an unnamed result
-        // lives in its runtime's scratch, and only for a line that parsed whole.
-        let (parsed, end, value, freed, scopes_back, imports_back) = {
+        let (outcome, freed, scopes_back, imports_back) = {
             let mut p = Parser::new(&line, &mut engine.store, &mut engine.trie, types, scopes)
                 .with_imports(std::mem::take(&mut imports))
                 .with_lower(&engine.core.lower);
-            // The echo is a use, so a line whose value is refused there fails as at its parse.
-            // SAFETY: `node` was just parsed into the engine's store.
-            let parsed = p.parse_expression().and_then(|node| unsafe {
-                seed::identities::read::gives_value(types, node).map(|_| node)
-            });
-            let end = p.offset();
-            let value = match parsed {
-                Ok(node) if line[end..].trim_start().is_empty() => {
-                    // SAFETY: `node` was just parsed into the engine's store.
-                    unsafe { p.fill_if_sibling_write(node) };
-                    // SAFETY: as above; `bits` is the value `node` yielded.
-                    let value = unsafe {
-                        p.value_of(node)
-                            .map(|bits| seed::identities::display_value(types, node, bits))
-                    };
-                    // A kept line is a line of the session: what it holds and defers
-                    // joins the session's end.
-                    if value.is_ok() {
-                        // SAFETY: `node` is the line just parsed; its pending bindings are
-                        // this line's declares.
-                        unsafe { p.close_item(node) };
-                        p.hand_exit();
-                    }
-                    Some(value)
+            let outcome = run_program_line(&mut p, types, "<repl>", &line);
+            let freed = match outcome {
+                // A kept line is a line of the session: what it holds and defers joins the
+                // session's end.
+                Ok(_) => {
+                    p.hand_exit();
+                    Vec::new()
                 }
-                _ => None,
-            };
-            // A line that failed keeps the ends its run made of an earlier line's names (DESIGN
-            // ›A checked error is a fault: the task that hit it is cancelled‹): once the line
-            // itself ran, those whose place it left NULL, else those whose ending line the pass ran.
-            let freed = match value {
-                Some(Ok(_)) => Vec::new(),
-                Some(Err(_)) => p.end_failed_earlier_holds(),
-                None => p.end_reached_earlier_holds(),
+                // A failed line keeps the ends it reached of an earlier line's names, and what
+                // its own lines hold ends as at a fault (DESIGN ›A checked error is a fault: the
+                // task that hit it is cancelled‹).
+                Err(_) => {
+                    let freed = p.end_failed_earlier_holds();
+                    p.exit_after_fault();
+                    freed
+                }
             };
             let imports_back = p.take_imports();
-            (parsed, end, value, freed, p.into_scopes(), imports_back)
+            (outcome, freed, p.into_scopes(), imports_back)
         };
         scopes = scopes_back;
         imports = imports_back;
 
-        // A failed line must leave no trace, or a typo would burn its name for
-        // the session under the no-shadowing rule.
-        let fail = |scopes: &mut ScopeStack, trie: &mut RegexTrie| {
-            scopes.rollback(trie, &freed);
-            scopes.truncate(2); // the root and the session's own section
-        };
-
-        let node = match parsed {
-            Ok(node) => node,
-            Err(e) => {
-                eprintln!("{}", report::render("<repl>", &line, end, &report::parse_message(&e)));
-                fail(&mut scopes, &mut engine.trie);
-                continue;
+        match outcome {
+            Ok(last) => {
+                if let Some((node, shown)) = last {
+                    // SAFETY: `node` is the line's tail, a dyad the parser built.
+                    if !unsafe { is_statement_node(&engine.core, node) } {
+                        println!("{shown}");
+                    }
+                }
+                scopes.commit();
             }
-        };
-        if !line[end..].trim_start().is_empty() {
-            eprintln!(
-                "{}",
-                report::render("<repl>", &line, end, "one expression per line in the REPL")
-            );
-            fail(&mut scopes, &mut engine.trie);
-            continue;
-        }
-
-        // Echo rule: statements are silent, value expressions echo.
-        // SAFETY: `node` is the valid dyad just parsed.
-        let is_statement = unsafe { is_statement_node(&engine.core, node) };
-
-        match value {
-            Some(Ok(shown)) if !is_statement => println!("{shown}"),
-            Some(Ok(_)) => {}
-            Some(Err(e)) => {
-                eprintln!("{}", report::parse_message(&e));
-                fail(&mut scopes, &mut engine.trie);
-                continue;
+            // A failed line leaves no trace, or a typo would burn its name for the session
+            // under the no-shadowing rule.
+            Err(shown) => {
+                eprintln!("{shown}");
+                scopes.rollback(&mut engine.trie, &freed);
+                // SAFETY: as above.
+                unsafe { seed::identities::keep_scope_lines(session, kept) };
+                scopes.truncate(2); // the root and the session's own section
             }
-            // Unreachable: every line that parsed whole had its value read above.
-            None => {}
         }
-        scopes.commit();
     }
 }

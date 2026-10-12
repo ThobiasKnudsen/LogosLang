@@ -1429,15 +1429,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A driver's top-level line is complete: see [`Parser::close_line`].
-    ///
-    /// # Safety
-    /// `item` must be a line this parser just returned.
-    pub unsafe fn close_item(&mut self, item: DyadPtr) {
-        // SAFETY: the caller's contract.
-        unsafe { self.close_line(item) }
-    }
-
     /// Run everything parsed and not yet run, outermost scope first, and hand
     /// back the last item run with its value: the tail, on the stack (DESIGN ›The
     /// pass runs only as far as it must, in order, and never twice‹). A block's
@@ -1641,23 +1632,17 @@ impl<'a> Parser<'a> {
         ended
     }
 
-    /// [`Self::end_earlier_holds`] for a line that ran and failed: only the names whose `free` or
-    /// `move` it reached (DESIGN ›`free` and `move` end a name; no drop flag‹).
+    /// [`Self::end_earlier_holds`] for a line that failed: only the names whose ending line the
+    /// pass ran, and whose `free` or `move` it reached there (DESIGN ›`free` and `move` end a
+    /// name; no drop flag‹).
     pub fn end_failed_earlier_holds(&mut self) -> Vec<DyadPtr> {
+        use crate::identities::drop_model::ended_at_run;
         let rt = &self.rt;
-        // SAFETY: the ended names are places an earlier line laid out in the program frame.
-        self.cx.open[0]
-            .ended_earlier
-            .retain(|&name| unsafe { crate::identities::drop_model::ended_at_run(rt, name) });
-        self.end_earlier_holds()
-    }
-
-    /// [`Self::end_earlier_holds`] for a line that never ran as a whole: only the names whose
-    /// ending line the pass ran.
-    pub fn end_reached_earlier_holds(&mut self) -> Vec<DyadPtr> {
         let top = &mut self.cx.open[0];
-        let reached = std::mem::take(&mut top.reached);
-        top.ended_earlier.retain(|name| reached.contains(name));
+        let reached = &top.reached;
+        // SAFETY: the ended names are places an earlier line laid out in the program frame.
+        top.ended_earlier
+            .retain(|&name| reached.contains(&name) && unsafe { ended_at_run(rt, name) });
         self.end_earlier_holds()
     }
 }

@@ -1549,7 +1549,7 @@ fn a_declared_hashmap_is_empty_and_readable_at_once() {
     );
     assert_eq!(echoes, ["type ?", "2"], "stderr: {stderr}");
     assert!(stderr.contains("the map holds no value at this key"), "stderr: {stderr}");
-    assert!(!stderr.contains("<repl>"), "no line is refused at parse: {stderr}");
+    assert!(!stderr.contains("<repl>:1:"), "no line is refused at parse: {stderr}");
 }
 
 #[test]
@@ -4851,4 +4851,54 @@ fn a_closer_no_bracket_opened_is_one_error_naming_it() {
         assert_eq!(code, Some(1), "{src}: stdout: {stdout}");
         assert!(stderr.contains(message), "{src}: stderr: {stderr}");
     }
+}
+
+#[test]
+fn a_repl_line_is_a_line_of_the_program() {
+    let (echoes, stderr) = repl(
+        b"# hello\n\
+          # \xc2\xabx\xc2\xbb\n\
+          \n   \n\
+          x := 1, y := 2\n\
+          x + y\n\
+          1, # done\n\
+          z := i32 1,\n\
+          z\n\
+          import tests/fixtures/only_prose.logos, 7\n\
+          w := i32 1, 5\n\
+          6, v := i32 1\n\
+          v\n",
+    );
+    assert_eq!(echoes, ["3", "1", "1", "7", "5", "1"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"1 )\n)\n2\n");
+    assert_eq!(echoes, ["2"], "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:3: error: this `)` closes nothing"), "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:1: error: this `)` closes nothing"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_failed_repl_line_leaves_no_trace() {
+    // Neither declaration of a line that fails is known after it.
+    let (echoes, stderr) = repl(b"x := i32 1, y := zz\nx\ny\nx := i32 3, y := i32 4\nx + y\n");
+    assert_eq!(echoes, ["7"], "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `zz`"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `x`"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `y`"), "stderr: {stderr}");
+    // What the line's own lines hold ends at its fault; what an earlier line holds ends only
+    // where the failing line reached its `free`.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let (echoes, stderr) = repl(
+        format!(
+            "{bag}\nc := bag(7), error «boom»\nc\nk := bag(1)\nfree k, error «x»\n\
+             m := bag(2)\nerror «y», free m\nm.n\n"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(echoes, ["freed 7", "freed 1", "2", "freed 2"], "stderr: {stderr}");
+    assert!(stderr.contains("<repl>: run error: boom"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `c`"), "stderr: {stderr}");
+    // Its lines leave the session's scope.
+    let (echoes, stderr) = repl(b"a := i32 1\nb := i32 2, zz\nhere.scope.dyads.size\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
 }
