@@ -26075,7 +26075,13 @@
     "expected": "each type gives one read kind for its node and its place alike, as #195 (\"#82's open half (the type's record states its read kind…)\"), #213 and #214 (\"#82's fix gives the type one read kind for both\") expect; ›A node's output type is per node, and its parse writes it‹",
     "tier": "interpreted",
     "found": "logoslang-help-7, FOUND while rerunning the issues blocked by #82, 9 October 2026, dev aaf87c2",
-    "why": null,
+    "why": [
+      "W293",
+      "W40",
+      "W295",
+      "W296",
+      "W297"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -26087,7 +26093,53 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "why + W293",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "why + W40",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "why + W295",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "why + W296",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "why + W297",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W269",
@@ -28268,7 +28320,7 @@
   {
     "id": "W293",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "`read_kind` is a second copy of the reading rule beside `place_layout`: a node that did not come through a binding is read by `read_kind`'s own `match` on `meta::kind_of(op)`, and `place_layout` is asked only for storage (`types.storage_type`, then `place_kind`), so one type reads two ways: `rational_number` as `Read::Literal`, molded at `i32` by `rational::mold` in `run` and `lower`, against a 16-byte `Read::Rational` place; `string` as `Read::Opaque`, and `square_brackets` through the empty `op` slot of its operand record (`Dispatch::None`), each against no layout at all (`place_layout` gives `None`); `reflect::describe` is a third `match` on the byte; ›Execution is function application‹ reads a data node through its type's layout",
     "proposed_for": "P150",
     "why": null,
@@ -28307,12 +28359,25 @@
         "command": "bash why-probes/p150-b-run.sh why-probes/p150-b-evidence.txt   (named type against unnamed, interpreted against compiled)",
         "output": "$ logos 'r := 1/2, 0'\nrun error: a literal here has no exact value in the type it lands in (exit 1)\n$ logos 'r := rational_number 1/2, 0'\n0 (exit 0)\n$ logos 'h := fn (a := rational_number ?) -> i32 ( 0 ), h(1/2)'\n0 (exit 0)\n$ logos 's := «a», 0'\nrun error: a record, text or hole is not read as one value; read a field or take its address (exit 1)\n$ logos '[1, 2]'\nrun error: this node was built with no operation to run (exit 1)\n$ logos 'h := fn () -> i32 ( r := 1/2, 0 ), h.compile(), h()'\nrun error: compile() failed: a literal here has no exact value in the type it lands in (exit 1)\n$ logos 'h := fn () -> i32 ( x := [1, 2], 0 ), h.compile(), h()'\nrun error: compile() failed: this cannot be compiled yet (exit 1)",
         "commit": "b3b125a"
+      },
+      {
+        "command": "rg -n 'if let Some\\(t\\) = types.storage_type\\(node\\)|return place_kind\\(types, t\\)|let Some\\(kind\\) = meta::kind_of\\(op\\)|let kind = meta::kind_of\\(t\\)\\?|meta::FRACTION_TAG =>|meta::TUPLE_TAG \\| meta::LIST_TAG =>|^\\s+STRING_TAG$|Read::Opaque$|_ => None,$|^pub unsafe fn (read_kind|place_layout)' src/identities/read.rs",
+        "output": "65:pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {\n71:    if let Some(t) = types.storage_type(node) {\n72:        return place_kind(types, t);\n88:    let Some(kind) = meta::kind_of(op) else {\n116:        meta::TUPLE_TAG | meta::LIST_TAG => {\n127:        meta::FRACTION_TAG => Read::Literal,\n133:                STRING_TAG\n139:            Read::Opaque\n268:pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {\n270:    let kind = meta::kind_of(t)?;\n272:        meta::FRACTION_TAG => Some((Read::Rational, 16)),\n289:        _ => None,        (place_layout: STRING, TUPLE, LIST and the rest have no place)",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "while IFS= read -r p; do echo \"== $p\"; target/release/logos \"$p\" 2>&1; echo \"exit $?\"; done < why-probes/p150-a-rational-place.txt   (one type, rational_number: a place against a node, both tiers)",
+        "output": "== h := fn (a := rational_number ?) -> i32 ( 0 ), h(1/2)\n0\n== h := fn (a := rational_number ?) -> i32 ( 0 ), h.compile(), h(1/2)\n0\n== h := fn (a) -> i32 ( 0 ), h(1/2)\nrun error: a literal here has no exact value in the type it lands in\nexit 1\n== h := fn (a) -> i32 ( 0 ), h(2/2)\n0",
+        "commit": "b3b125a"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "The reading rule is written twice: read_kind reads a node that is not storage by its own match on the record's kind byte (meta::kind_of(op)) and turns to the type's layout (place_kind over place_layout) only for storage, and place_layout is a second match on the same byte; so one type gets a node read and a place read that disagree: a rational_number reads Read::Literal as a node (molded to an i32) and Read::Rational, sixteen bytes, as a place, while text (STRING_TAG) and an operand record such as square_brackets (TUPLE_TAG, LIST_TAG) read Opaque and Executable as a node and have no place read at all (None)"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T08:59+02:00",
@@ -28323,12 +28388,22 @@
       "run": "why-P150",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "accepted as a why of P150, same as W294",
+        "reason": "A and B state the same fact: read_kind is a second copy of the reading rule beside place_layout, asked only for storage, and the two disagree (a rational_number node reads Literal, its place Rational)"
+      }
+    ]
   },
   {
     "id": "W294",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "The reading rule is written twice: read_kind reads a node that is not storage by its own match on the record's kind byte (meta::kind_of(op)) and turns to the type's layout (place_kind over place_layout) only for storage, and place_layout is a second match on the same byte; so one type gets a node read and a place read that disagree: a rational_number reads Read::Literal as a node (molded to an i32) and Read::Rational, sixteen bytes, as a place, while text (STRING_TAG) and an operand record such as square_brackets (TUPLE_TAG, LIST_TAG) read Opaque and Executable as a node and have no place read at all (None)",
     "proposed_for": "P150",
     "why": null,
@@ -28361,7 +28436,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W293",
     "made": {
       "at": "2026-10-12T09:02+02:00",
       "by": "logoslang-why-P150-a",
@@ -28371,15 +28446,27 @@
       "run": "why-P150",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "merged into W293",
+        "reason": "A and B state the same fact: read_kind is a second copy of the reading rule beside place_layout, asked only for storage, and the two disagree (a rational_number node reads Literal, its place Rational)"
+      }
+    ]
   },
   {
     "id": "W295",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "read_kind's TUPLE_TAG/LIST_TAG arm reads every node of an operand-record type as Read::Executable, Dispatch::None when no callable leaf sits in its op field, and never as data; square_brackets is such a type (instance::register gives it the fields dyads, op, output_type) and construct_index builds its node with a null op and output_type square_brackets, so [1, 2] is refused RunError::NoLeaf, while (1, 2), a scope node of the same kind whose op scope::fill sets, runs; Execution is function application makes a dyad whose type is neither a fn nor carries a run data, and A bracket goes to the call whole calls a […] a passive node with nothing to run",
     "proposed_for": "P150",
-    "why": null,
+    "why": [
+      "W293"
+    ],
     "anchors": [
       "read_kind",
       "op_slot_of",
@@ -28421,7 +28508,26 @@
       "run": "why-P150",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "accepted as a why of P150",
+        "reason": "only A, checked on a fresh release build of b3b125a; one symptom of P150, decided by an arm of read_kind's own match, the second copy W293"
+      },
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "why + W293",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P155",
@@ -28484,10 +28590,12 @@
   {
     "id": "W296",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "The read kind Read::Literal states no layout, so each reader decides what a fraction node is: Runtime::run and the compiler mold it into an i32 (rational::mold returns Option<i32>) and refuse any fraction that is not whole, while by_copy::record_addr, lower_record_addr and run_result read the same node as a rational's sixteen bytes [num, den]; so r := 1/2, 0 and h(1/2) to a bare parameter are refused on both tiers while 2/2 passes, though A plain number is a rational_number makes 1/2 the rational_number one half, sixteen bytes at run",
     "proposed_for": "P150",
-    "why": null,
+    "why": [
+      "W293"
+    ],
     "anchors": [
       "mold",
       "record_addr",
@@ -28529,15 +28637,36 @@
       "run": "why-P150",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "accepted as a why of P150",
+        "reason": "only A, checked on a fresh release build of b3b125a; one symptom of P150, decided by an arm of read_kind's own match, the second copy W293"
+      },
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "why + W293",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "W297",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "read_kind gives a node the read its own address (Read::Node) only when its type is a RECORD_TAG record with a Logos fn constructor (meta::is_node_valued), as A value of a type built by a Logos parse travels as a pointer words it, and reads a text node, whose type the seed registers natively (meta::record(cx.store, STRING_TAG, …)), as Read::Opaque, which Runtime::run and the compiler refuse; so a text value cannot be declared, echoed or passed to a bare parameter, main(«hello») of The command line is Logos source included, while a value of array i32, built by a Logos parse, can",
     "proposed_for": "P150",
-    "why": null,
+    "why": [
+      "W293"
+    ],
     "anchors": [
       "read_kind",
       "is_node_valued",
@@ -28578,6 +28707,49 @@
       "commit": "b3b125a",
       "run": "why-P150",
       "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "accepted as a why of P150",
+        "reason": "only A, checked on a fresh release build of b3b125a; one symptom of P150, decided by an arm of read_kind's own match, the second copy W293"
+      },
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "248ebc1",
+        "change": "why + W293",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P157",
+    "kind": "problem",
+    "status": "open",
+    "text": "A declaration runs its right side whole unless that side is storage or reads Read::Aggregate, so a text or fraction value fails at its own declaration even when nothing ever reads the name",
+    "program": "target/release/logos 's := «a», 0'; target/release/logos 'r := 1/2, 0'",
+    "output": "\"run error: a record, text or hole is not read as one value; read a field or take its address\", exit 1; \"run error: a literal here has no exact value in the type it lands in\", exit 1; declare::run (src/identities/declare.rs), whose comment says a node with no run \"is data and was built whole at parse\" while its test lists only Aggregate; release build of dev b3b125a, interpreted",
+    "expected": "both print `0`: a value nobody reads is not read; data built whole at parse is not run again (declare::run's own comment)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P150-a, FOUND in round 1 on P150, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:05+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "248ebc1",
+      "run": null,
+      "agent": null
     },
     "history": []
   }
