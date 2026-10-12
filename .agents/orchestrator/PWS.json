@@ -28324,5 +28324,261 @@
       "agent": "B"
     },
     "history": []
+  },
+  {
+    "id": "W294",
+    "kind": "why",
+    "status": "draft",
+    "text": "The reading rule is written twice: read_kind reads a node that is not storage by its own match on the record's kind byte (meta::kind_of(op)) and turns to the type's layout (place_kind over place_layout) only for storage, and place_layout is a second match on the same byte; so one type gets a node read and a place read that disagree: a rational_number reads Read::Literal as a node (molded to an i32) and Read::Rational, sixteen bytes, as a place, while text (STRING_TAG) and an operand record such as square_brackets (TUPLE_TAG, LIST_TAG) read Opaque and Executable as a node and have no place read at all (None)",
+    "proposed_for": "P150",
+    "why": null,
+    "anchors": [
+      "read_kind",
+      "place_layout",
+      "place_kind",
+      "kind_of",
+      "storage_type",
+      "src/identities/read.rs"
+    ],
+    "design": [
+      "A dyad's type defines how its value is read, and everything else",
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'if let Some\\(t\\) = types.storage_type\\(node\\)|return place_kind\\(types, t\\)|let Some\\(kind\\) = meta::kind_of\\(op\\)|let kind = meta::kind_of\\(t\\)\\?|meta::FRACTION_TAG =>|meta::TUPLE_TAG \\| meta::LIST_TAG =>|^\\s+STRING_TAG$|Read::Opaque$|_ => None,$|^pub unsafe fn (read_kind|place_layout)' src/identities/read.rs",
+        "output": "65:pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {\n71:    if let Some(t) = types.storage_type(node) {\n72:        return place_kind(types, t);\n88:    let Some(kind) = meta::kind_of(op) else {\n116:        meta::TUPLE_TAG | meta::LIST_TAG => {\n127:        meta::FRACTION_TAG => Read::Literal,\n133:                STRING_TAG\n139:            Read::Opaque\n268:pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {\n270:    let kind = meta::kind_of(t)?;\n272:        meta::FRACTION_TAG => Some((Read::Rational, 16)),\n289:        _ => None,        (place_layout: STRING, TUPLE, LIST and the rest have no place)",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "while IFS= read -r p; do echo \"== $p\"; target/release/logos \"$p\" 2>&1; echo \"exit $?\"; done < why-probes/p150-a-rational-place.txt   (one type, rational_number: a place against a node, both tiers)",
+        "output": "== h := fn (a := rational_number ?) -> i32 ( 0 ), h(1/2)\n0\n== h := fn (a := rational_number ?) -> i32 ( 0 ), h.compile(), h(1/2)\n0\n== h := fn (a) -> i32 ( 0 ), h(1/2)\nrun error: a literal here has no exact value in the type it lands in\nexit 1\n== h := fn (a) -> i32 ( 0 ), h(2/2)\n0",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:02+02:00",
+      "by": "logoslang-why-P150-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W295",
+    "kind": "why",
+    "status": "draft",
+    "text": "read_kind's TUPLE_TAG/LIST_TAG arm reads every node of an operand-record type as Read::Executable, Dispatch::None when no callable leaf sits in its op field, and never as data; square_brackets is such a type (instance::register gives it the fields dyads, op, output_type) and construct_index builds its node with a null op and output_type square_brackets, so [1, 2] is refused RunError::NoLeaf, while (1, 2), a scope node of the same kind whose op scope::fill sets, runs; Execution is function application makes a dyad whose type is neither a fn nor carries a run data, and A bracket goes to the call whole calls a […] a passive node with nothing to run",
+    "proposed_for": "P150",
+    "why": null,
+    "anchors": [
+      "read_kind",
+      "op_slot_of",
+      "construct_index",
+      "square_brackets",
+      "operand_record",
+      "src/identities/instance.rs",
+      "src/parse/fields.rs",
+      "src/identities/scope.rs"
+    ],
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data",
+      "A bracket goes to the call whole"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'return Read::Executable\\(Dispatch::None\\);|Read::Executable\\(Dispatch::Leaf\\(leaf\\)\\)$|^\\s+Read::Executable\\(Dispatch::None\\)$' src/identities/read.rs; rg -n '\"dyads\", \"op\", \"output_type\"|alloc_words\\(sq, ' src/identities/instance.rs src/parse/fields.rs; rg -n 'add\\(OP\\) = types.ops.scope_' src/identities/scope.rs",
+        "output": "src/identities/read.rs:118:                return Read::Executable(Dispatch::None);   (TUPLE/LIST arm, no op field)\nsrc/identities/read.rs:122:                Read::Executable(Dispatch::Leaf(leaf))\nsrc/identities/read.rs:124:                Read::Executable(Dispatch::None)           (TUPLE/LIST arm, null op)\nsrc/identities/instance.rs:84:        &[\"dyads\", \"op\", \"output_type\"],     (square_brackets, TUPLE_TAG)\nsrc/parse/fields.rs:825:        let node = self.rt.store.alloc_words(sq, &[dyads, std::ptr::null_mut(), sq]);\nsrc/identities/scope.rs:71:    *(dyad::value(node) as *mut DyadPtr).add(OP) = types.ops.scope_;",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "target/release/logos '(1, 2)'; target/release/logos '[1, 2]'; target/release/logos 'h := fn () -> i32 ( x := [1, 2], 0 ), h.compile(), h()'",
+        "output": "2\nexit 0\nrun error: this node was built with no operation to run\nexit 1\nrun error: compile() failed: this cannot be compiled yet\nexit 1",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:02+02:00",
+      "by": "logoslang-why-P150-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "P155",
+    "kind": "problem",
+    "status": "fixed",
+    "text": "Every new worktree gets the main checkout's target/ copied in (orchestrate.sh, prepare step), and nobody rebuilds the main checkout, while AGENTS.md said a new worktree \"needs nothing more\"; so an agent that trusted it probed a binary weeks older than its code",
+    "program": "ls -la --time-style=long-iso target/release/logos in the main checkout; in a new worktree of dev b3b125a, target/release/logos 'x := i32 1, x.type' before and after cargo build --release",
+    "output": "the main binary is dated 2026-09-30 03:46; before the build: \"error: a value's type is not one of its fields — read it with `:`: x:type\"; after it: `i32`; 12 October 2026",
+    "expected": "every probe runs the code of the commit it names",
+    "tier": null,
+    "found": "logoslang-why-P150-b, FOUND in round 1 on P150, 12 October 2026; checked by the orchestrator (the main binary's date)",
+    "why": null,
+    "issue": null,
+    "fixed": "3be1a13",
+    "made": {
+      "at": "2026-10-12T09:03+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2f6951d",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:05+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "3be1a13",
+        "change": "fixed at 3be1a13",
+        "reason": "AGENTS.md now says the copied binary may be weeks old and asks for cargo build --release before the first probe; the orchestrator does no builds, so the agent builds"
+      }
+    ]
+  },
+  {
+    "id": "P156",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type value prints as `type` unless it is a number type, `void`, `bool` or `binding`: type_name knows `type`, `bool` and `binding` by identity and the number types and `void` through the kind byte, and nothing else",
+    "program": "target/release/logos '(«a»).type'; target/release/logos '(1/2).type'; target/release/logos '(rational_number 1/2).type'; target/release/logos '([1, 2]).type'",
+    "output": "`type` each time; release build of dev b3b125a, interpreted",
+    "expected": "`string`, `rational_number`, `rational_number`, `square_brackets`: the type itself decides how it is shown (›A value is shown as the text its type's `print` slot gives back‹)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P150-b, FOUND in round 1 on P150, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:03+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2f6951d",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W296",
+    "kind": "why",
+    "status": "draft",
+    "text": "The read kind Read::Literal states no layout, so each reader decides what a fraction node is: Runtime::run and the compiler mold it into an i32 (rational::mold returns Option<i32>) and refuse any fraction that is not whole, while by_copy::record_addr, lower_record_addr and run_result read the same node as a rational's sixteen bytes [num, den]; so r := 1/2, 0 and h(1/2) to a bare parameter are refused on both tiers while 2/2 passes, though A plain number is a rational_number makes 1/2 the rational_number one half, sixteen bytes at run",
+    "proposed_for": "P150",
+    "why": null,
+    "anchors": [
+      "mold",
+      "record_addr",
+      "lower_record_addr",
+      "run_result",
+      "read_kind",
+      "src/run.rs",
+      "src/compile.rs",
+      "src/identities/by_copy.rs",
+      "src/identities/rational.rs"
+    ],
+    "design": [
+      "A plain number is a `rational_number`, and a number type's definition converts it (headed \"Numeric literals are uncommitted until context classifies them\" until 29 September 2026)"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Read::Literal =>' src/run.rs src/compile.rs src/identities/by_copy.rs; rg -n 'pub\\(crate\\) fn mold\\(node: DyadPtr\\)' src/identities/rational.rs",
+        "output": "src/compile.rs:173:            Read::Literal => match crate::identities::rational::mold(node) {\nsrc/run.rs:855:            Read::Literal => crate::identities::rational::mold(node)\nsrc/identities/by_copy.rs:199:        Read::Literal => return Ok(dyad::value(node)),     (record_addr: the rational's bytes)\nsrc/identities/by_copy.rs:228:        Read::Literal => Ok(lw.const_i64(dyad::value(node) as usize as i64)),   (lower_record_addr)\nsrc/identities/by_copy.rs:246:            Read::Literal => {      (run_result: copies 16 bytes)\nsrc/identities/rational.rs:331:pub(crate) fn mold(node: DyadPtr) -> Option<i32> {",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "target/release/logos 'r := 2/2, 0'; target/release/logos 'r := 1/2, 0'; target/release/logos 'r := 1/2 + 1/2, r'; target/release/logos 'h := fn () -> i32 ( r := 1/2, 0 ), h.compile(), h()'",
+        "output": "0\nexit 0\nrun error: a literal here has no exact value in the type it lands in\nexit 1\n1\nexit 0\nrun error: compile() failed: a literal here has no exact value in the type it lands in\nexit 1",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:03+02:00",
+      "by": "logoslang-why-P150-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W297",
+    "kind": "why",
+    "status": "draft",
+    "text": "read_kind gives a node the read its own address (Read::Node) only when its type is a RECORD_TAG record with a Logos fn constructor (meta::is_node_valued), as A value of a type built by a Logos parse travels as a pointer words it, and reads a text node, whose type the seed registers natively (meta::record(cx.store, STRING_TAG, …)), as Read::Opaque, which Runtime::run and the compiler refuse; so a text value cannot be declared, echoed or passed to a bare parameter, main(«hello») of The command line is Logos source included, while a value of array i32, built by a Logos parse, can",
+    "proposed_for": "P150",
+    "why": null,
+    "anchors": [
+      "read_kind",
+      "is_node_valued",
+      "STRING_TAG",
+      "src/identities/string.rs",
+      "src/identities/read.rs",
+      "src/run.rs",
+      "src/compile.rs"
+    ],
+    "design": [
+      "A value of a type built by a Logos `parse` travels as a pointer",
+      "Text literals are plain values; `#` is the one comment constructor",
+      "The command line is Logos source; the binary stays out of the way"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'if meta::is_node_valued\\(op, types.fn_type\\)|return Read::Node;|^\\s+STRING_TAG$|^\\s+Read::Opaque$' src/identities/read.rs; rg -n 'Read::Aggregate \\| Read::Opaque \\| Read::Undefined =>' src/run.rs src/compile.rs; rg -n '!ctor.is_null\\(\\) && dyad::ty\\(ctor\\) == fn_type' src/identities/meta.rs; rg -n 'let record = meta::record\\(cx.store, STRING_TAG' src/identities/string.rs",
+        "output": "src/identities/read.rs:100:            if meta::is_node_valued(op, types.fn_type) {\nsrc/identities/read.rs:101:                return Read::Node;\nsrc/identities/read.rs:133:                STRING_TAG\nsrc/identities/read.rs:139:            Read::Opaque\nsrc/run.rs:865:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),\nsrc/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),\nsrc/identities/meta.rs:379:    !ctor.is_null() && dyad::ty(ctor) == fn_type      (is_node_valued: a Logos fn constructor)\nsrc/identities/string.rs:21:    let record = meta::record(cx.store, STRING_TAG, meta::prec::LITERAL);",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "while IFS= read -r p; do echo \"== $p\"; target/release/logos \"$p\" 2>&1; echo \"exit $?\"; done < why-probes/p150-a-node-valued.txt   (text against a Logos-built node value); then target/release/logos 's := «a», 0'",
+        "output": "== main := fn (a) -> i32 ( 0 ), main(«hello»)\nrun error: a record, text or hole is not read as one value; read a field or take its address\nexit 1\n== import ./identities/array.logos, a := array i32 [1, 2], 0\n0\n== import ./identities/array.logos, h := fn (x) -> i32 ( 0 ), h(array i32 [1, 2])\n0\n== s := «a», 0\nrun error: a record, text or hole is not read as one value; read a field or take its address\nexit 1",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:04+02:00",
+      "by": "logoslang-why-P150-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "A"
+    },
+    "history": []
   }
 ]
