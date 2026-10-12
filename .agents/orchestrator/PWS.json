@@ -33728,5 +33728,29 @@
         "reason": "a rule the skill does not have (B, and A's proposed fix): what a wake shows, the save's diff against the version before"
       }
     ]
+  },
+  {
+    "id": "P174",
+    "kind": "problem",
+    "status": "open",
+    "text": "Reading a field straight off the record a function call gives back is refused, while a name over the same call reads it: g(pt(3, 4)).u and (g(pt(3, 4))).u are \"this operator cannot compute over these operands\", q := g(pt(3, 4)), q.u gives 3",
+    "program": "logos 'pt := type (u := i32 ?, v := i32 ?), g := fn (r := pt ?) -> pt ( r ), g(pt(3, 4)).u'; the same with (g(pt(3, 4))).u; control: 'pt := type (u := i32 ?, v := i32 ?), g := fn (r := pt ?) -> pt ( r ), q := g(pt(3, 4)), q.u'",
+    "output": "<command line>:1:84: error: this operator cannot compute over these operands (caret under u), exit 1; the bracketed form :1:86, same error; the control prints 3, exit 0; the same with g.compile() before the call; dev d4b7d8f, release",
+    "expected": "3 for all three: a field read reads the record the call gives back as it reads a name over it (the named against the unnamed value)",
+    "tier": "both",
+    "found": "logoslang-issue-209-review-1, FOUND while reviewing #209, 12 October 2026 (near P48 and P167)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:51+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c2cb819",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
