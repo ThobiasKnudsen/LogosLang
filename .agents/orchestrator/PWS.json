@@ -2402,7 +2402,8 @@
     "text": "`declare_here` has no case for a bare `?`: it falls to the arm for a type value and `rebind`s the name as another spelling of `?`, which is no place",
     "proposed_for": "P14",
     "why": [
-      "W25"
+      "W25",
+      "W331"
     ],
     "anchors": [
       "declare_here",
@@ -2440,6 +2441,15 @@
         "effort": "high",
         "commit": "9fc7634",
         "change": "why + W25",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W331",
         "reason": null
       }
     ]
@@ -9843,18 +9853,23 @@
   {
     "id": "S36",
     "kind": "solution",
-    "status": "proposed",
-    "text": "One conversion step wherever a value meets a number type it is not: land(value, type) hands back the value itself, a plain number converted exactly, or the node a written T(value) builds when the value's type lies inside the type, and refuses anything else; the eight check_store_type sites call it and keep what it hands back, resolve_binary converts the operand whose type lies inside the other's, and a landing walks an if's arms as the tail walk does; subset::includes, today private to ⊆, is the one lies-inside test",
+    "status": "chosen",
+    "text": "One conversion step wherever a value meets a number type it is not, written or not: land(value, type) hands back the value itself, or the node a written T(value) builds when the value's type lies inside the type, a plain number only when exact, and refuses anything else; the eight check_store_type sites, resolve_binary, an if's arms where its value lands and build_cast (a written T(value)) call it; subset::includes, with the integer-into-float pairs added, is the one lies-inside test; T approx v builds the conversion node without the test, the type applying its own approximation",
     "fixes": [
       "W15",
       "W313"
     ],
-    "assessment": "Removes the eight copies and the tail's unchecked arm (-> i32 ( f64 2.5 ) gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and the superseded exact-type test at all three meeting places, so P147 (x = f32 9 gives 9.0), P160 (i32 1 + i64 2 gives 3) and P161 (an if of 1 and f64 2.5 into an f64 gives 1.0) go with P9 and P90. One test, no copy: includes gains the integer-into-float pairs once Q83's point 2 is answered, and ⊆ then answers them too (i32 ⊆ f64 is 'not settled yet' at 783d78a). Where nothing requires a type (x := if …) the if's same-type check stays, as Q-63 and Q-65 rule. resolve_binary's conversion is the step #242's mint keeps as its field; tests that pin a widening's refusal change; W19 (#212) reuses land. Leaves the ? and bare-parameter tails (#202)",
-    "decision": null,
+    "assessment": "Removes the eight copies and the tail's unchecked arm (-> i32 ( f64 2.5 ) gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and the superseded exact-type test at all three meeting places: P147 (x = f32 9 gives 9.0), P160 (i32 1 + i64 2 gives 3), P161 (an if of 1 and f64 2.5 into an f64 gives 1.0), P9 and P90 go, and i32 ⊆ f64 answers true. A written narrowing becomes an error (i32 (i64 4), i32 (f64 2.5)) and an inexact decimal into a float too (f64 0.1); approx goes in at identities/exp.logos:5-6, ln.logos:21, power.logos:48-68 (i64(rhs), f64(lhs), output_type (exp(...))), array.logos:27,29 (u64(index)), examples/metatypefn.logos:28 and tests/fixtures/metalogos_arm.logos:14 (9.9), and the tests pinning i32(a) over an f64 (src/identities/tests.rs:3663-3667). resolve_binary's step is the one #242's mint keeps; W19 (#212) reuses land. Leaves the ? and bare-parameter tails (#202), and what approx gives out of range (Open)",
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T10:32+02:00",
+      "words": "Q106, 12 October 2026: Answer 1: \"b\". Answer 2: \"approx is more intuitive in different cases i think. lossy could read as you are loosing more than precicion. but you are supposed to write like this then: «i32 approx (f64 2.5)» so that approx consumes (f64 2.5) and i32 consumes that approx instance and since i32 then knows its approx it can apply its approximations\". Answer 3: \"a\"",
+      "reason": "He chose Q106's 3(a), 'Yes: build this fix, and write these words with your answers to points 1 and 2 put in where marked', after Q83 (12 October 2026): the type decides, not the value ('ill go for option a because return type of g is known at parse time'), a written conversion is checked the same way ('b because it looks most consistent'), and a node only where a conversion happens ('a')"
+    },
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
-    "issue": null,
+    "issue": 198,
     "done": null,
     "made": {
       "at": "2026-10-08T21:36+02:00",
@@ -9892,6 +9907,42 @@
         "commit": "783d78a",
         "change": "assessment was \"Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32 gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and makes the 2 October conversion rule (Q-63) true at every landing, where the seed refuses it today: x = f32 9 into an f64 gives 9.0, -> f64 ( u32 4000000000 ) gives 4000000000.0. The 'lies inside' test is one function over the number types' sign, width and float bits, beside their parse in numtype.rs, never a table. Tests that pin a widening's refusal change. W19 (#212) and #242's operand conversion reuse land. Leaves the ? and bare-parameter tails (#202)\"",
         "reason": "W313 merged into solve-W15 (12 October 2026): the same conversion step serves resolve_binary and the if arms; and the lies-inside test already exists as subset::includes, so writing a new one in numtype.rs would have copied it"
+      },
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "text was \"One conversion step wherever a value meets a number type it is not: land(value, type) hands back the value itself, a plain number converted exactly, or the node a written T(value) builds when the value's type lies inside the type, and refuses anything else; the eight check_store_type sites call it and keep what it hands back, resolve_binary converts the operand whose type lies inside the other's, and a landing walks an if's arms as the tail walk does; subset::includes, today private to ⊆, is the one lies-inside test\"",
+        "reason": "Thobias's Q106 answers (12 October 2026): 1(b) a float takes a plain number only exactly, 2 the word is approx after the type, 3(a) build it; a written conversion is checked as an unwritten one (Q83 2(b))"
+      },
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "assessment was \"Removes the eight copies and the tail's unchecked arm (-> i32 ( f64 2.5 ) gives 0, the segfault of -> @i32 ( i32 5 ), the compiled Verifier errors and silent reinterpretations) and the superseded exact-type test at all three meeting places, so P147 (x = f32 9 gives 9.0), P160 (i32 1 + i64 2 gives 3) and P161 (an if of 1 and f64 2.5 into an f64 gives 1.0) go with P9 and P90. One test, no copy: includes gains the integer-into-float pairs once Q83's point 2 is answered, and ⊆ then answers them too (i32 ⊆ f64 is 'not settled yet' at 783d78a). Where nothing requires a type (x := if …) the if's same-type check stays, as Q-63 and Q-65 rule. resolve_binary's conversion is the step #242's mint keeps as its field; tests that pin a widening's refusal change; W19 (#212) reuses land. Leaves the ? and bare-parameter tails (#202)\"",
+        "reason": "Thobias's Q106 answers (12 October 2026): 1(b) a float takes a plain number only exactly, 2 the word is approx after the type, 3(a) build it; a written conversion is checked as an unwritten one (Q83 2(b))"
+      },
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "chosen by Thobias: \"Q106, 12 October 2026: Answer 1: \"b\". Answer 2: \"approx is more intuitive in different cases i think. lossy could read as you are loosing more than precicion. but you are supposed to write like this then: «i32 approx (f64 2.5)» so that approx consumes (f64 2.5) and i32 consumes that approx instance and since i32 then knows its approx it can apply its approximations\". Answer 3: \"a\"\"",
+        "reason": "He chose Q106's 3(a), 'Yes: build this fix, and write these words with your answers to points 1 and 2 put in where marked', after Q83 (12 October 2026): the type decides, not the value ('ill go for option a because return type of g is known at parse time'), a written conversion is checked the same way ('b because it looks most consistent'), and a node only where a conversion happens ('a')"
+      },
+      {
+        "at": "2026-10-12T10:36+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "e84fed3",
+        "change": "issue #198",
+        "reason": null
       }
     ]
   },
@@ -18694,14 +18745,19 @@
   {
     "id": "S45",
     "kind": "solution",
-    "status": "proposed",
+    "status": "rejected",
     "text": "Thobias's idea (Q79, 8 October 2026, an idea, not a ruling): every spot a value goes into with a type (argument, return value, field, pointer write) runs the same conversion path as =, and the graph holds an explicit = node there, which the code leaves unwritten",
     "fixes": [
       "W15",
       "W313"
     ],
     "assessment": "Same one-path shape as S36, so it removes the eight copies, the tail's missing check and the superseded exact-type test (an operation's operand and an if's arm go through the same path). Today = is itself one of the eight copies and refuses a = i64 4, so the path must be built first either way. An = node at every argument, return and field is built once per call site at parse, never per run, but adds a node where nothing converts and repeats what a call's argument already is (the fill of its parameter field); S36 puts a node only where a conversion happens, the T(value) node a written conversion builds, which is the part of = that converts. Whether i64 4 converts into i32 waits on by-type against by-value (Q83)",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T10:32+02:00",
+      "words": "Q83, 12 October 2026, Answer 3: \"a\"",
+      "reason": "Q83 point 3 put his idea's form, (b) 'An = node at every spot, even where nothing converts', against (a) 'A node only where a conversion happens'; he chose (a). The one conversion path of his idea lives on in S36"
+    },
     "design": [
       "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
     ],
@@ -18734,6 +18790,15 @@
         "commit": "783d78a",
         "change": "assessment was \"Same one-path shape as S36, so it removes the eight copies and the tail's missing check. Today = is itself one of the eight copies and refuses a = i64 4, so the path must be built first either way. An = node at every argument, return and field is built once per call site at parse, never per run, but adds a node where nothing converts and repeats what a call's argument already is (the fill of its parameter field); S36 puts a node only where a conversion happens, the T(value) node a written conversion builds, which is the part of = that converts. Whether i64 4 converts into i32 waits on by-type against by-value\"",
         "reason": "W313 merged into solve-W15 (12 October 2026); every solution recorded now names every root it fixes"
+      },
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "logoslang-solve-W15",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "783d78a",
+        "change": "rejected by Thobias: \"Q83, 12 October 2026, Answer 3: \"a\"\"",
+        "reason": "Q83 point 3 put his idea's form, (b) 'An = node at every spot, even where nothing converts', against (a) 'A node only where a conversion happens'; he chose (a). The one conversion path of his idea lives on in S36"
       }
     ]
   },
@@ -19689,7 +19754,7 @@
       "W150",
       "W157"
     ],
-    "assessment": "Root fix for W123, W150 and W157, from Thobias's Q82 ruling (9 Oct, ›An unknown spelling stays text on the tape‹): no tape node is ever empty, because the lexer keeps the binding the trie already finds for the two fresh-spelling patterns (src/identities/fresh.rs mints them; src/parse/lex.rs:63 throws it away for null) instead of a null. All four P31 routes stop crashing at dev 35cdb52: flagging zz makes it stand as unknown_name, like a declined i32; tape[1].type is type; tape[0] = tape[1] copies unknown_name. Deletes the null branch, the reader null checks W127/W135 name, and the leftover check's fresh-spelling case (now unknown_name's own parse); S37's write check is not needed. Every is_fresh() reader (operands.rs, fields.rs, declare.rs, types.rs, lex.rs) asks one predicate, 'its identity is unknown_name'; the REPL feed's re-resolution (feed_resolve) and its unbuilt-name null must keep working; regex_ merges into unknown_name. Leaves W126 (S41): without it a constructor can flag zz and hide the error. Medium; issue-82-output-type touches driver.rs/operands.rs",
+    "assessment": "Root fix for W123, W150 and W157, from Thobias's Q82 ruling (9 Oct, ›An unknown spelling stays text on the tape‹): no tape node is ever empty, because the lexer keeps the binding the trie already finds for the two fresh-spelling patterns (src/identities/fresh.rs mints them; src/parse/lex.rs:63 throws it away for null) instead of a null. All four P31 routes stop crashing at dev 35cdb52: flagging zz makes it stand as unknown_name, like a declined i32; tape[1].type is type; tape[0] = tape[1] copies unknown_name. Deletes the null branch, the reader null checks W127/W135 name, and the leftover check's fresh-spelling case (now unknown_name's own parse); S37's write check is not needed. Every is_fresh() reader (operands.rs, fields.rs, declare.rs, types.rs, lex.rs) asks one predicate, 'its identity is unknown_name'; the REPL feed's re-resolution (feed_resolve) and its unbuilt-name null must keep working; regex_ merges into unknown_name. Leaves W126 (S41): without it a constructor can flag zz and hide the error. Medium; issue-82-output-type touches driver.rs/operands.rs Hazard (logoslang-solve-W322, 12 October 2026, not a fault in today's code): the unknown-word patterns as names of unknown_word give them the shape P159 has for «; a name bound to unknown_word (u := unknown_word, u) gets unknown_word's parse, the 'unknown name u' error, unless that parse tells a declared name from a fresh word, as rational_number's parse tells 5 from rational_number by its first character.",
     "decision": null,
     "design": [
       "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
@@ -19707,7 +19772,17 @@
       "run": "solve-W123",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T10:25+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "f043e0c",
+        "change": "assessment was \"Root fix for W123, W150 and W157, from Thobias's Q82 ruling (9 Oct, ›An unknown spelling stays text on the tape‹): no tape node is ever empty, because the lexer keeps the binding the trie already finds for the two fresh-spelling patterns (src/identities/fresh.rs mints them; src/parse/lex.rs:63 throws it away for null) instead of a null. All four P31 routes stop crashing at dev 35cdb52: flagging zz makes it stand as unknown_name, like a declined i32; tape[1].type is type; tape[0] = tape[1] copies unknown_name. Deletes the null branch, the reader null checks W127/W135 name, and the leftover check's fresh-spelling case (now unknown_name's own parse); S37's write check is not needed. Every is_fresh() reader (operands.rs, fields.rs, declare.rs, types.rs, lex.rs) asks one predicate, 'its identity is unknown_name'; the REPL feed's re-resolution (feed_resolve) and its unbuilt-name null must keep working; regex_ merges into unknown_name. Leaves W126 (S41): without it a constructor can flag zz and hide the error. Medium; issue-82-output-type touches driver.rs/operands.rs\"",
+        "reason": "solve-W322's note for solve-W123, which is stopped until Q93"
+      }
+    ]
   },
   {
     "id": "S57",
@@ -22247,7 +22322,9 @@
     "status": "accepted",
     "text": "orchestrate.sh's questions-watch wakes the orchestrator with only the saved question file's path and keeps only a sha256 of the file (mark_seen, edited), and question-close moves the file to answers/ without checking that what Thobias added since was read or relayed; so finding his words rests on the orchestrator's own partial read, and in Q85 a read of lines 33 to 62 missed his questions on line 63, which the close then took with it unrelayed and unanswered",
     "proposed_for": "P125",
-    "why": [],
+    "why": [
+      "W345"
+    ],
     "anchors": [
       "~/.claude/skills/orchestrate/orchestrate.sh",
       "~/.claude/skills/orchestrate/SKILL.md"
@@ -22298,6 +22375,15 @@
         "commit": "fbaf028",
         "change": "asked: no why found",
         "reason": "only B found it; its evidence reruns (transcript 79afb672: Read of Q85 at 2026-10-08T22:45:47Z with offset 33, limit 30, ending at line 62; his questions stand on line 63); a fact of orchestrate.sh (questions-watch prints only the path, question-close checks nothing) with no further cause in the rule files"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W345",
+        "reason": null
       }
     ]
   },
@@ -30943,8 +31029,7 @@
     "text": "A declare node's declared field holds one of three kinds of thing and nothing on the node says which: an initializer that runs (the = store build_init makes, a construct or by_copy result), storage (a hole's place, the binding of x := y over storage, a share's binding that construct_decl writes with set_declared), or the node the name denotes (a type identity, a fn literal, a text, a fraction literal, from declare_here's last arm); its doc says the run executes it, so declare::run and declare::lower must sort the three by the node's read kind, and is_slot_fill reads the same field as the denoted slot marker",
     "proposed_for": "W314",
     "why": [
-      "W329",
-      "W330"
+      "W329"
     ],
     "anchors": [
       "declare_here",
@@ -31030,6 +31115,15 @@
         "commit": "2cf09e4",
         "change": "why + W330",
         "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why - W330",
+        "reason": "W330 rejected: its author withdrew it (why-P157-a) and B agrees: ›A scope lays out its declarations‹ and ›The pass runs only as far as it must‹ decide that a declaration's run writes into the name's place or does nothing for ?; what the node keeps of the outcome DESIGN leaves to the seed on purpose; the 'denotes the node' outcome is W334"
       }
     ]
   },
@@ -31525,7 +31619,9 @@
     "status": "accepted",
     "text": "Runtime::run and Lowerer::lower refuse to read a record place whole (Read::Aggregate gives NoWholeRead and NotLowerable, the read kind's doc saying 'read by field or by address, never whole'), while a run-time rational, sixteen bytes that DESIGN calls 'copied like a record', is read as the address of its bytes (Read::Rational, place_addr); DESIGN reads a data type's value as bytes, a copy, and refuses no whole read of a record, so the refusal is the seed's own, and declare::run's test names Read::Aggregate, the kind this read refuses, and a bare record line, which no runner tests for, fails on both tiers",
     "proposed_for": "W316",
-    "why": null,
+    "why": [
+      "W333"
+    ],
     "anchors": [
       "Runtime",
       "Lowerer",
@@ -31601,6 +31697,15 @@
         "commit": "2cf09e4",
         "change": "accepted as a why of W316",
         "reason": "A's fact: the seed's whole read refuses a record place (Read::Aggregate), where DESIGN reads a data value as bytes; declare::run's Aggregate test names it, and a bare record line fails on both tiers"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W333",
+        "reason": null
       }
     ]
   },
@@ -31920,7 +32025,12 @@
     "status": "accepted",
     "text": "declare_here gives a name no offset in two of its arms: the type arm rebinds the name to the type (scopes.rebind) and the last arm points the binding at the value node (Binding::set_dyad, which leaves frame and offset unset) and keeps that node as declared, for every value no arm above gives a place (a fn literal, a text, a fraction literal); every other arm calls place_for; ›A scope lays out its declarations‹ gives every declaration an offset in the scope's storage and ›The pass runs only as far as it must‹ writes a named result into the name's slot, which together leave a declaration's third slot a write into the name's place, or nothing for a ?, never the value node itself",
     "proposed_for": "W318",
-    "why": null,
+    "why": [
+      "W331",
+      "W334",
+      "W303",
+      "W302"
+    ],
     "anchors": [
       "declare_here",
       "place_for",
@@ -31972,13 +32082,49 @@
         "commit": "2cf09e4",
         "change": "accepted as a why of W318",
         "reason": "B's fact: declare_here's type arm (rebind) and last arm (Binding::set_dyad) give the name no offset and keep the value node as declared, where ›A scope lays out its declarations‹ gives every declaration an offset"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W331",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W334",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W303",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W302",
+        "reason": null
       }
     ]
   },
   {
     "id": "W330",
     "kind": "why",
-    "status": "accepted",
+    "status": "rejected",
     "text": "Neither DESIGN.md nor a page it points to says what a := node keeps beside lhs and rhs, or whether it has work left when it runs: A := node's fields are lhs and rhs names the third slot only as 'What the seed made of the right side'; the rules that decide what a declaration does give it several outcomes by kind, the name denoting the node the value built (An unknown spelling stays text on the tape), a copy into a fresh place for a data name or the type itself for a type (:= decides nothing about copy or reference), no value for key := T ? (? is one value), and none says what the node records of the outcome; so declare_here stores each arm's own product in that slot, unmarked",
     "proposed_for": "W318",
     "why": null,
@@ -32037,6 +32183,15 @@
         "commit": "2cf09e4",
         "change": "accepted as a why of W318",
         "reason": "A's fact, beside W329: DESIGN does not say what a := node keeps beside lhs and rhs (›A := node's fields are lhs and rhs‹: 'What the seed made of the right side'), so declare_here keeps each arm's own product unmarked"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "rejected",
+        "reason": "its author withdrew it (why-P157-a) and B agrees: ›A scope lays out its declarations‹ and ›The pass runs only as far as it must‹ decide that a declaration's run writes into the name's place or does nothing for ?; what the node keeps of the outcome DESIGN leaves to the seed on purpose; the 'denotes the node' outcome is W334"
       }
     ]
   },
@@ -32059,6 +32214,1641 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "2cf09e4",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W331",
+    "kind": "why",
+    "status": "accepted",
+    "text": "declare_here decides whether a declaration gets a place by a chain of arms over kinds of right side, the first match winning (read_kind's Read::Identity before the box arm; the box arm only for an output of type, dyad or a run-time rational, is_rational_value refusing a literal; then node_output, a Teardown::Block, scalar_binding_type), not by place_layout of the type the right side gives, which := decides nothing about copy or reference makes the decider ('the type's reading rule does'); so a type written directly is rebound though place_layout gives type an eight-byte Container and a type held in a place works as a type, a fraction literal falls past the box arm though place_layout gives rational_number sixteen bytes, and fn and string, which place_layout gives no layout, fall to set_dyad",
+    "proposed_for": "W329",
+    "why": [],
+    "anchors": [
+      "declare_here",
+      "place_layout",
+      "is_rational_value",
+      "scalar_binding_type",
+      "node_output",
+      "rebind",
+      "set_dyad",
+      "src/parse/declare.rs",
+      "src/identities/read.rs",
+      "src/identities/rational.rs"
+    ],
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does",
+      "A function reads as a copy"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n '268,290p' src/identities/read.rs   (place_layout); sed -n '425,430p' src/identities/rational.rs   (is_rational_value)",
+        "output": "meta::FRACTION_TAG => Some((Read::Rational, 16)),\nk if k < VOID_TAG => Some((Read::Scalar(nt), nt.bytes())),\nADDR_TAG => Some((Read::Pointer(..), 8)),\nmeta::TYPEREC_TAG | meta::DYAD_TAG => Some((Read::Container(t), 8)),\nmeta::RECORD_TAG => Container 8 for a Logos-parse node type, None for a type with a run, else Some((Read::Aggregate, record_size_of(t)))\n_ => None,   (fn's operand record, STRING_TAG)\nis_rational_value: !read.is_null() && !is_literal(types.rational, read) && output_type(types, node) == types.rational",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n 'Read::Identity|let box_ty|is_rational_value|node_output\\(self.types, value\\)|Teardown::Block\\(pointee\\) = teardown_of|scalar_binding_type\\(self.rt.store|Binding::set_dyad\\(binding, read\\)' src/parse/declare.rs   (declare_here's arm order)",
+        "output": "635: let box_ty = ... (rational || out == self.types.type_ || out == self.types.dyad_).then_some(out)\n637:     let rational = crate::identities::rational::is_rational_value(self.types, read);\n713: } else if read_kind(self.types, read) == Read::Identity {   (rebind, before the box arm)\n718: } else if let Some(t) = box_ty {\n725: } else if let Some(t) = node_output(self.types, value) ...\n737: } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {\n751: } else if let Some((ty_node, width)) = scalar_binding_type(self.rt.store, self.types, value) {\n766:     Binding::set_dyad(binding, read);   (every other right side)",
+        "commit": "fe9ae1d"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w329-b.txt, then why-probes/w329-a.txt   (release build of dev 39f2d7e, interpreted)",
+        "output": "mut t := type ?, t = i32, print «{t:offset}» -> 39312   (a type in a place: place_layout's Container)\nmut t := type ?, t = i32, y := t 5, print «{y}» -> 5   (and it works as a type)\nk := i32, print «{k:offset}» -> 0   (a type written directly: rebound, no place)\nx := i32 3, print «{x:offset}» -> 39328   (scalar arm)\nr := 2/1, print «{r:offset}» -> 0 ; r := 1/2 + 1/2, print «{r:offset}» -> 0   (fraction literals: last arm, no place)\ng := fn () -> i32 ( 1 ), print «{g:offset}» -> 0   (fn: no layout, last arm)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:17+02:00",
+      "by": "logoslang-why-P157-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "evidence 2 was {\"command\": \"rg -n 'Read::Identity|let box_ty|is_rational_value|node_output\\\\(self.types, value\\\\)|Teardown::Block\\\\(pointee\\\\) = teardown_of|scalar_binding_type\\\\(self.rt.store|Binding::set_dyad\\\\(binding, read\\\\)' src/parse/declare.rs   (declare_here's arm order)\", \"output\": \"636: let box_ty = ... (rational || out == self.types.type_ || out == self.types.dyad_).then_some(out)\\n638:     let rational = crate::identities::rational::is_rational_value(self.types, read);\\n713: } else if read_kind(self.types, read) == Read::Identity {   (rebind, before the box arm)\\n719: } else if let Some(t) = box_ty {\\n725: } else if let Some(t) = node_output(self.types, value) ...\\n737: } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {\\n750: } else if let Some((ty_node, width)) = scalar_binding_type(self.rt.store, self.types, value) {\\n766:     Binding::set_dyad(binding, read);   (every other right side)\", \"commit\": \"39f2d7e\"}",
+        "reason": "why-P157-a: wrong line numbers (636, 638, 719, 750); checked against git show 39f2d7e:src/parse/declare.rs"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "accepted as a why of W329",
+        "reason": "A's fact: declare_here decides whether a declaration gets a place by a first-match chain of branches over kinds of right side, not by place_layout of the type it gives, though ›:= decides nothing about copy or reference‹ makes the type the decider; a type is rebound, a fraction literal, a text and a fn get no place"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "asked: no why found",
+        "reason": "a root by the repo's list (AGENTS.md: a Rust match/if on node kind where DESIGN says the record decides): ›:= decides nothing about copy or reference‹ makes the type's reading rule the decider, and declare_here branches on kinds of right side"
+      }
+    ]
+  },
+  {
+    "id": "W332",
+    "kind": "why",
+    "status": "merged",
+    "text": "How a value wider than one word is handed on whole is decided by each reader, not by its read kind: by_copy::record_addr and lower_record_addr hand on the address of a Read::Aggregate place exactly as of a Read::Rational one (and a Read::Literal's own bytes), while Runtime::run and Lowerer::lower, which hand back one i64, give a Rational its address, mold a Literal at i32 and refuse an Aggregate; so q := p copies a whole record through by_copy while the line p, read by Runtime::run, is refused, and W296's split over a fraction literal is the same split over another kind",
+    "proposed_for": "W324",
+    "why": null,
+    "anchors": [
+      "record_addr",
+      "lower_record_addr",
+      "Runtime",
+      "Lowerer",
+      "read_kind",
+      "place_addr",
+      "NoWholeRead",
+      "src/identities/by_copy.rs",
+      "src/run.rs",
+      "src/compile.rs"
+    ],
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data",
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "sed -n '196,201p;224,229p' src/identities/by_copy.rs; rg -n 'Read::Rational => Ok\\(self.place_addr|Read::Literal => crate::identities::rational::mold|Read::Aggregate \\| Read::Opaque \\| Read::Undefined|pub unsafe fn run\\(&mut self, node: DyadPtr\\) -> Result<i64' src/run.rs src/compile.rs",
+        "output": "by_copy.rs record_addr:      Read::Aggregate | Read::Rational => node,   (then place_addr: the address)\n                             Read::Literal => return Ok(dyad::value(node)),   (its own sixteen bytes)\nby_copy.rs lower_record_addr: Read::Aggregate | Read::Rational => lw.place_addr(node),\n                             Read::Literal => Ok(lw.const_i64(dyad::value(node) as usize as i64)),\nsrc/run.rs:831: pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {\nsrc/run.rs:853:            Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),\nsrc/run.rs:855:            Read::Literal => crate::identities::rational::mold(node)\nsrc/run.rs:865:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),\nsrc/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w324-a.txt   (release build of dev 39f2d7e, interpreted lines)",
+        "output": "pt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), q := p, print «{q.b}» -> 2, exit 0   (by_copy::record_addr reads the whole record by address)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), p, 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (Runtime::run refuses it)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W333",
+    "made": {
+      "at": "2026-10-12T10:17+02:00",
+      "by": "logoslang-why-P157-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "merged into W333",
+        "reason": "A and B state the same fact: how a value wider than one word is read whole is written twice; Runtime::run and lower give a rational place its address and refuse a record place, while by_copy::record_addr and lower_record_addr give both their address (a record parameter of a call works, a bare record line fails)"
+      }
+    ]
+  },
+  {
+    "id": "W333",
+    "kind": "why",
+    "status": "accepted",
+    "text": "How a value wider than a word is read whole is written twice: Runtime::run and Lowerer::lower give a rational place its address (Read::Rational, place_addr) and refuse a record place (Read::Aggregate), while by_copy::record_addr and lower_record_addr give both kinds their address (Read::Aggregate | Read::Rational => place_addr); only a call's record parameter (eval_args, the compiler's argument loop) and by_copy's out node ask the second, so a record reaches a record parameter whole and is refused as a line, at a declaration's run and as a bare parameter's argument",
+    "proposed_for": "W324",
+    "why": [],
+    "anchors": [
+      "record_addr",
+      "lower_record_addr",
+      "eval_args",
+      "Runtime",
+      "Lowerer",
+      "place_addr",
+      "Aggregate",
+      "Rational",
+      "src/identities/by_copy.rs",
+      "src/run.rs",
+      "src/compile.rs",
+      "read_kind",
+      "NoWholeRead"
+    ],
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does",
+      "Operands travel on the stack, so `run` and `compile` take no arguments",
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Read::Rational => Ok\\(self.place_addr|Read::Aggregate \\| Read::Opaque \\| Read::Undefined =>|Read::Rational => self.place_addr' src/run.rs src/compile.rs; rg -n 'Read::Aggregate \\| Read::Rational =>' src/identities/by_copy.rs; rg -n 'by_copy::(lower_)?record_addr\\(self, arg\\)' src/run.rs src/compile.rs",
+        "output": "src/run.rs:853:            Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),\nsrc/run.rs:865:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),\nsrc/compile.rs:172:            Read::Rational => self.place_addr(node),\nsrc/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),\nsrc/identities/by_copy.rs:197:        Read::Aggregate | Read::Rational => node,          (record_addr, then place_addr)\nsrc/identities/by_copy.rs:226:        Read::Aggregate | Read::Rational => lw.place_addr(node),   (lower_record_addr)\nsrc/run.rs:906:                    let src = by_copy::record_addr(self, arg)?;          (eval_args, a record parameter)\nsrc/compile.rs:1026:                    let src = by_copy::lower_record_addr(self, arg)?;\nsrc/identities/by_copy.rs:270, 275: record_addr / lower_record_addr for by_copy's out node",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p157-b-r4.txt   (lines 6-8; each one program through target/release/logos, release build of 39f2d7e)",
+        "output": "pt := type ( a := i32 ?, b := i32 ? ), h := fn (r := pt ?) -> i32 ( r.a ), p := pt(1, 2), h(p) -> 1   (record parameter: record_addr)\npt := type ( a := i32 ?, b := i32 ? ), h := fn (r) -> i32 ( 0 ), p := pt(1, 2), h(p) -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (bare parameter: Runtime::run)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), p, 0 -> the same error, exit 1   (a line: Runtime::run)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "sed -n '196,201p;224,229p' src/identities/by_copy.rs; rg -n 'Read::Rational => Ok\\(self.place_addr|Read::Literal => crate::identities::rational::mold|Read::Aggregate \\| Read::Opaque \\| Read::Undefined|pub unsafe fn run\\(&mut self, node: DyadPtr\\) -> Result<i64' src/run.rs src/compile.rs",
+        "output": "by_copy.rs record_addr:      Read::Aggregate | Read::Rational => node,   (then place_addr: the address)\n                             Read::Literal => return Ok(dyad::value(node)),   (its own sixteen bytes)\nby_copy.rs lower_record_addr: Read::Aggregate | Read::Rational => lw.place_addr(node),\n                             Read::Literal => Ok(lw.const_i64(dyad::value(node) as usize as i64)),\nsrc/run.rs:831: pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {\nsrc/run.rs:853:            Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),\nsrc/run.rs:855:            Read::Literal => crate::identities::rational::mold(node)\nsrc/run.rs:865:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),\nsrc/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w324-a.txt   (release build of dev 39f2d7e, interpreted lines)",
+        "output": "pt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), q := p, print «{q.b}» -> 2, exit 0   (by_copy::record_addr reads the whole record by address)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), p, 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (Runtime::run refuses it)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "How a value wider than one word is handed on whole is decided by each reader, not by its read kind: by_copy::record_addr and lower_record_addr hand on the address of a Read::Aggregate place exactly as of a Read::Rational one (and a Read::Literal's own bytes), while Runtime::run and Lowerer::lower, which hand back one i64, give a Rational its address, mold a Literal at i32 and refuse an Aggregate; so q := p copies a whole record through by_copy while the line p, read by Runtime::run, is refused, and W296's split over a fraction literal is the same split over another kind"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:19+02:00",
+      "by": "logoslang-why-P157-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "accepted as a why of W324, same as W332",
+        "reason": "A and B state the same fact: how a value wider than one word is read whole is written twice; Runtime::run and lower give a rational place its address and refuse a record place, while by_copy::record_addr and lower_record_addr give both their address (a record parameter of a call works, a bare record line fails)"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "asked: no why found",
+        "reason": "a root by the repo's list (AGENTS.md: one rule written twice): the whole read of a value wider than a word is written in Runtime::run/Lowerer::lower and again in by_copy::record_addr/lower_record_addr, and they disagree"
+      }
+    ]
+  },
+  {
+    "id": "W334",
+    "kind": "why",
+    "status": "accepted",
+    "text": "DESIGN gives a declaration two outcomes and no rule for which a value takes: ›An unknown spelling stays text on the tape‹ says 'Nothing is copied from one node into another; the name denotes the node the value built', while ›:= decides nothing about copy or reference‹ says 'A data type reads its value as bytes, stored in a fresh place: y := x is a copy … &x != &y' and ›A scope lays out its declarations‹ gives every declaration an offset; declare_here keeps both, one per arm: a place and a copy where an arm above finds the value a layout (a number), and the first rule elsewhere, in its last arm, whose comment repeats it ('The name denotes the node the value built, never a copy of it'), and in its arm over storage ('a second name for the same bytes'), which a record's q := p takes",
+    "proposed_for": "W329",
+    "why": [],
+    "anchors": [
+      "declare_here",
+      "set_dyad",
+      "lay_out",
+      "place_for",
+      "src/parse/declare.rs",
+      "DESIGN.md"
+    ],
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
+      "`:=` decides nothing about copy or reference; the type's reading rule does",
+      "A scope lays out its declarations; a use reaches the offset through its binding"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Nothing is copied from one node into another|A \\*\\*data\\*\\* type reads its value as bytes|Every declaration of a scope, shared or not' DESIGN.md; rg -n 'The name denotes the node the value built|over storage no rule above copies|the same bytes\\.$' src/parse/declare.rs",
+        "output": "DESIGN.md:620: - A **data** type reads its value as bytes, stored in a fresh place: `y := x` is a **copy**. Own address, own binding, `y = 7` leaves x at 5, `&x != &y`. …\nDESIGN.md:1572: … from then on the binding is the name's home, and it points at the value's node as soon as that node exists … Nothing is copied from one node into another; the name denotes the node the value built. …\nDESIGN.md:1887: Every declaration of a scope, shared or not, has an offset in the scope's own storage, …\nsrc/parse/declare.rs:759:                // `x := y` over storage no rule above copies: the name is a second name for\nsrc/parse/declare.rs:760:                // the same bytes.\nsrc/parse/declare.rs:765:                // The name denotes the node the value built, never a copy of it.",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p157-b-r4.txt; bash why-probes/run.sh why-probes/p157-b-alias.txt; bash why-probes/run.sh why-probes/p157-b-alias2.txt   (each line one program through target/release/logos, release build of 39f2d7e)",
+        "output": "x := i32 5, y := x, print «{x:offset} {y:offset}» -> 39328 39584;  … print «{&x == &y}» -> false   (a copy)\nmut x := i32 1, y := x, x = 9, print «{y}» -> 1\nf := fn () -> i32 ( 1 ), g := f, print «{f:offset} {g:offset}» -> 0 0   (the last arm: g names f's node)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), q := p, print «{p:offset} {q:offset}» -> 41408 41408;  … print «{&p == &q}» -> true\npt := type ( mut a := i32 ?, b := i32 ? ), mut p := pt(1, 2), q := p, p.a = 9, print «{q.a}» -> 9   (no copy)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:19+02:00",
+      "by": "logoslang-why-P157-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "accepted as a why of W329",
+        "reason": "B's fact, beside W331: DESIGN gives a declaration two outcomes, a copy into a fresh place (›:= decides nothing about copy or reference‹) and the name denoting the node the value built (›An unknown spelling stays text on the tape‹), and no rule for which a value takes; declare_here keeps both, one per arm"
+      },
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "asked: no why found",
+        "reason": "a rule DESIGN does not have, or two rules in conflict: both why agents quote ›An unknown spelling stays text on the tape‹ ('the name denotes the node the value built') against ›:= decides nothing about copy or reference‹ ('y := x is a copy … &x != &y') and ›A scope lays out its declarations‹; only Thobias decides"
+      }
+    ]
+  },
+  {
+    "id": "P168",
+    "kind": "problem",
+    "status": "open",
+    "text": "A record or a fn declared from another name shares its bytes instead of copying: `q := p` of a record is a second name for the same bytes, and `g := f` names the same fn node",
+    "program": "target/release/logos 'pt := type ( mut a := i32 ?, b := i32 ? ), mut p := pt(1, 2), q := p, p.a = 9, print «{q.a}»'; target/release/logos 'pt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), q := p, print «{&p == &q}»'; and f := fn () -> i32 ( 1 ), g := f gives both offset 0",
+    "output": "9, exit 0; true, exit 0; release build of dev 39f2d7e, interpreted. declare_here's arm over storage (declare.rs:759-762): \"the name is a second name for the same bytes\"",
+    "expected": "1 and false: ›`:=` decides nothing about copy or reference‹ (\"`y := x` is a **copy**. Own address, own binding, `y = 7` leaves x at 5, `&x != &y`\"; its Seed line says done); ›A function reads as a copy‹ (\"`g := f` is an independent function record\")",
+    "tier": "interpreted",
+    "found": "logoslang-why-P157-b, FOUND in round 4 on P157, 12 October 2026, release build of dev 39f2d7e",
+    "why": [
+      "W334"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:22+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fe9ae1d",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:22+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "fe9ae1d",
+        "change": "why + W334",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "S97",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "« is an identity of its own, a token apart from the text type, as # is apart from the comment type and ( from scope; the text type is named string and stands as itself, so a name bound to it is the type; how far a token reads past its spelling is part of its parse and crosses := with it, the reader handed the text after the spelling that matched; one function tests whether a quote starts at a position",
+    "fixes": [
+      "W322",
+      "W323",
+      "W311",
+      "W325",
+      "W328",
+      "W310"
+    ],
+    "assessment": "Root fix: removes P159 (all three programs) and P164. Tried at 2cf09e4 and restored (string::register mints a token node for « and declares string on the text type; quote_after in quotes.rs uses the token): t := «a».type, t gives type; t xyz» and t» give 'unknown name »'; the fn-parameter program gives the seed's 'declarations of non-numeric types are not in the seed yet', as «a».type ? does; string and «a».type == string give type and true; quotes, nesting, interpolation, # comments, regex, lex and error unchanged; cargo test --release: 566 passed. The rest is how a reader starts: ExtentFn and both constructors take the text after the matched spelling, the constructor reading the spelling's length off its cell's binding, so string::read and comment's text_start stop stepping past an assumed « or # (W325); one quote_at(text, at) holds the quote-start test the five callers copy (W328), and read's debug_assert goes (W310). W308's crossing becomes the rule and is harmless, since only « carries the quote reader. Agrees with S23 (W54), which lists extent among a type record's fields. DESIGN: a new rule beside ›Strings nest by depth…‹ and a sentence at ›Two levels‹. Leaves the number and unknown-word patterns names of their type (Q88 (a)); string (n) as a conversion stays #174's. Small: string.rs, comment.rs, lex.rs, quotes.rs, mod.rs, about 100 lines; no open branch touches them.",
+    "decision": null,
+    "design": [
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling",
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "`lex_rank` belongs to the binding, not the type",
+      "Every identity has a `parse_rank`, and `(` works in two steps"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:23+02:00",
+      "by": "logoslang-solve-W322",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2cf09e4",
+      "run": "solve-W322",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S98",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "« stays the text type's own spelling, as the number pattern names rational_number: the text type gets the second name string, and its parse and its reach each test whether the spelling that matched is «, standing as the type when it is not",
+    "fixes": [
+      "W322",
+      "W323",
+      "W311",
+      "W310"
+    ],
+    "assessment": "Symptom fix: removes P159 and P164 with two branches on the spelling, one in the extent reader and one in string::construct, the shape rational::construct has for 5 against rational_number. A hand-kept test of the character « then decides which names open a text, so no other spelling can ever open one (a language that gives « a spelling of its own), and every name of the text type still carries the quote reader, against ›lex_rank belongs to the binding‹'s 'pow parses exactly as ^ does'. Against language_sketch.logos (lex «\\«» := ? beside string := type ?). Leaves W325 and adds a sixth copy of W328's quote-start test. Smallest: string.rs, about 15 lines. Not recommended.",
+    "decision": null,
+    "design": [
+      "Strings nest by depth; only five escapes; `«…»` is the only spelling",
+      "`lex_rank` belongs to the binding, not the type"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:23+02:00",
+      "by": "logoslang-solve-W322",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2cf09e4",
+      "run": "solve-W322",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S99",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "« is an identity of its own as in S97, but how far a token reads past its spelling is the name's: Binding gets an extent reader field, and := gives a new name none",
+    "fixes": [
+      "W322",
+      "W323",
+      "W311"
+    ],
+    "assessment": "Removes P159 and P164 as S97 does, since the split alone stops t from reading a quote. But it puts one unit on two levels: a second name of « gets «'s parse, which crosses :=, without its reach, so that parse finds no quote the lexer took (the 'W323 alone' failure the why agents note). Against ›Two levels‹ ('Parse behaviour is not a third level. It is content of a value') and ›Every identity has a parse_rank, and ( works in two steps‹, where a raw-text consumer is built at discovery, its reading part of its parse. Adds a field to every binding, and contradicts S23's extent field in a type's record (W54). Leaves W325 and W328. Not recommended.",
+    "decision": null,
+    "design": [
+      "Two levels: the binding is the lex level, the dyad is the value level",
+      "Every identity has a `parse_rank`, and `(` works in two steps"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:23+02:00",
+      "by": "logoslang-solve-W322",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2cf09e4",
+      "run": "solve-W322",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S100",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Both rules hold, read together: 'Nothing is copied from one node into another' means := makes no node of its own for the name to copy the value into (the placeholder dyad it replaced), and whether y := x copies is the type's reading rule: data and fn copy into the name's own place, type gives the identity, a value that travels as a pointer copies the address",
+    "fixes": [
+      "W334"
+    ],
+    "assessment": "Removes P168: q := p of a record copies its bytes (&p == &q false, q.a stays 1 after p.a = 9) and g := f is an independent fn record, as ›:= decides nothing about copy or reference‹ and ›A function reads as a copy‹ say (both 'Seed: done'). The reading is the history's: DESIGN_HISTORY records that the sentence replaced '`:=` fills that dyad', the placeholder copy declare_here made, so it never spoke of y := x. DESIGN: one sentence reworded at ›An unknown spelling stays text on the tape…‹, which Q82's next round rewords anyway; declare.rs's two comments that repeat the old sentence go with the arms. Seed: declare_here's arm over storage and its last arm (set_dyad) copy by the type's layout, which S99 makes the one decider.",
+    "decision": null,
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value",
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:32+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "0c73e38",
+        "change": "assessment was \"Removes P168: q := p of a record copies its bytes (&p == &q false, q.a stays 1 after p.a = 9) and g := f is an independent fn record, as ›:= decides nothing about copy or reference‹ and ›A function reads as a copy‹ say (both 'Seed: done'). The reading is the history's: DESIGN_HISTORY records that the sentence replaced ' fills that dyad', the placeholder copy declare_here made, so it never spoke of y := x. DESIGN: one sentence reworded at ›An unknown spelling stays text on the tape…‹, which Q82's next round rewords anyway; declare.rs's two comments that repeat the old sentence go with the arms. Seed: declare_here's arm over storage and its last arm (set_dyad) copy by the type's layout, which S99 makes the one decider.\"",
+        "reason": "solve-W54: an unescaped backtick in its shell call dropped ':='"
+      }
+    ]
+  },
+  {
+    "id": "S101",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The name denotes the node the value built, for every type: y := x makes y a second name for x's value, and a copy must be written out",
+    "fixes": [
+      "W334"
+    ],
+    "assessment": "Also one rule, but it supersedes ›:= decides nothing about copy or reference‹ (5 September 2026: 'y := x is a copy … &x != &y'), ›A function reads as a copy‹, and the gate line 'y's gates are only what its own left side sets', since mut y := x then writes x. Changes what numbers do today: mut x := i32 1, y := x, x = 9, print «{y}» would print 9, not 1. Needs a written copy form DESIGN does not have. Recommended against.",
+    "decision": null,
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S102",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "declare_here lays out every declaration by place_layout of the type its right side gives, and nothing else: a type's declaration t := i32 gets an eight-byte place holding the identity's address (the parse still reads the identity from the declaration, so t 5 is classified by i32), a fraction literal sixteen bytes, a text or [...] the node's address; the chain of arms over kinds of right side goes",
+    "fixes": [
+      "W331"
+    ],
+    "assessment": "Root fix: one decider, as ›:= decides nothing about copy or reference‹ asks ('the type's reading rule does'), so the type arm (rebind), the box arm's kind list, is_rational_value's literal refusal and the set_dyad arm go, and ›A scope lays out its declarations‹ ('Every declaration … has an offset') holds with no exception: t:frame and t:offset become real. With S97 removes P168 and, with S94 and S95, P157's s := «a» and r := 1/2. Costs eight bytes per type name, written at run and read only where t stands as a value. Medium: src/parse/declare.rs, read.rs; shares declare.rs with #192's successors and #219.",
+    "decision": null,
+    "design": [
+      "A scope lays out its declarations; a use reaches the offset through its binding",
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S103",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "As S99, except that a name bound to a type is another spelling of it and gets no place, as today; ›A scope lays out its declarations‹ names that one exception",
+    "fixes": [
+      "W331"
+    ],
+    "assessment": "Removes the same arms for every other kind, but keeps one arm on a kind of right side (a type), the shape W331 names as the root, and writes an exception into 'Every declaration of a scope, shared or not, has an offset'. Saves eight bytes per type name. Leaves open what mut t := i32 or t := type ? hold, which need a place anyway. Recommended against.",
+    "decision": null,
+    "design": [
+      "A scope lays out its declarations; a use reaches the offset through its binding"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S104",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One whole read of a value wider than a word, a record's or a rational's: its address (place_addr), asked by Runtime::run and Lowerer::lower as by by_copy::record_addr and lower_record_addr, which merge into it",
+    "fixes": [
+      "W333"
+    ],
+    "assessment": "Root fix by deletion of a copy: Read::Aggregate's refusal in run and lower (NoWholeRead) goes, so a record read whole as a line, at its declaration's run or as a bare parameter's argument gives its address like a rational, as it already does for a record parameter. Decided by ›:= decides nothing about copy or reference‹ (a data value is its bytes, read whole) and ›A scope lays out its declarations‹ point 2 (an unnamed result is scratch bytes); nothing for Thobias to choose. Small: by_copy.rs, run.rs, compile.rs; part of the one read Q76 1(a) asks for.",
+    "decision": null,
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:27+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e9b94fe",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P169",
+    "kind": "problem",
+    "status": "open",
+    "text": "An edit the orchestrator makes to a question file after placing it is lost when Thobias saves the copy his editor opened before that edit: his answer save writes the older text back, and nothing notices; the watch relays his save as an answer and the lost lines are gone from the answer file",
+    "program": "Place a question; Thobias opens it in his editor; the orchestrator edits the file in place (question-seen after); Thobias writes his answers and saves",
+    "output": "Twice on 12 October 2026: Q83 lost the two \"Added 12 October\" paragraphs added at about 09:50 when he saved his answers at about 10:10 (commit 2cf09e4); Q106 lost the pointer sentence and the Ruled-line word source added at about 10:30 when he saved at about 10:45 (answers/Q106-S-P9.md). In both, git diff of his save shows exactly the orchestrator's later lines removed beside his answers",
+    "expected": "An orchestrator edit to an open question survives his save, or his save of an older copy is caught and he is told before the answer is relayed (\"make it automatic\")",
+    "tier": "interpreted",
+    "found": "orchestrator LogosLang, while relaying Q106, 12 October 2026",
+    "why": [
+      "W338",
+      "W339",
+      "W337"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:30+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "why + W338",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "why + W339",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "why + W337",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P170",
+    "kind": "problem",
+    "status": "open",
+    "text": "A `type` value that a call gives when the program runs is shown as a large number (an address), not as the type's name; the value itself is right",
+    "program": "target/release/logos 'f := fn (t := type ?) -> type ( t ), g := fn (u := type ?) -> i32 ( print «{f(u)}», 0 ), g(i32)'; on issue-209 at 2848e98 also 'mut t := type ?, t = i32, t pass' and 'i32 pass' echoed",
+    "output": "140595418886720 then 0 (the number changes per run), exit 0; on the 209 branch the echo is an address, while q := t pass, q prints i32 and (t pass) == i32 prints true",
+    "expected": "i32 then 0: ›A value is shown as the text its type's `print` slot gives back‹; close to P119 (a -> dyad call echoed shows a large number) and P156 (a type value prints as `type`)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-209-worker, FOUND while working #209, 12 October 2026, dev code ff3d0e0",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "e84fed3",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P171",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function value in brackets, or one a node gives back, is not called by the `()` after it: `(g)()` is refused, while a name over the same value is called",
+    "program": "target/release/logos 'g := fn () -> i32 ( 1 ), (g)()'; control: 'g := fn () -> i32 ( 1 ), h := g, h()'; on issue-209 at 2848e98 also '(g pass)()' and 'h := g pass, h()'",
+    "output": "\"<command line>:1:29: error: expected one expression, found more\", caret under the ( of (), exit 1; the control prints 1; the 209 forms give the same error",
+    "expected": "1: a call applies the function value to its left whatever gives it; the same shape as P50 (`t := i32, (t) 4`, a type value in brackets not applied)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-209-worker, FOUND while working #209, 12 October 2026, dev code ff3d0e0",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "e84fed3",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P172",
+    "kind": "problem",
+    "status": "open",
+    "text": "An error a Logos-written type raises at parse about an operand points at the type's own word, not at the operand: the operand's tape node, with its start, was removed by the type's parse (tape.remove(-1)), and a node keeps no source position; a built-in operator, whose Rust constructor still holds the node, points at the operand",
+    "program": "the issue's pass type (gh issue view 209), then '(x = i32 3) pass' on branch issue-209-field-key-every-type at 2848e98; control '(x = i32 3) + 1'",
+    "output": "this gives nothing, and a value is needed here, caret under pass (column 307); the control puts the caret under the operand's ( ",
+    "expected": "the caret under the operand (column 295), as for a built-in operator: a Logos-written type and a built-in one report the same error at the same place",
+    "tier": "interpreted",
+    "found": "logoslang-issue-209-worker, QUESTION while working #209, 12 October 2026; the orchestrator accepted the caret under pass for #209",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "287a176",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W335",
+    "kind": "why",
+    "status": "merged",
+    "text": "SKILL.md's Never edit a question once it is placed (Questions to Thobias) is a sentence only, and nothing holds a placed question to it: no hook in any settings file refuses a Write or Edit under .agents/orchestrator/questions/, edited reads the orchestrator's own Edit-tool write as the owner's save (orchestrate.sh: a file that no longer matches was edited by its owner), and question-seen takes it as the new baseline without a word; so the orchestrator's additions to the open Q83 (3d0655b) and Q106 (fe9ae1d) went in unrefused and unrecorded as its own",
+    "proposed_for": "P169",
+    "why": null,
+    "anchors": [
+      "cmd_question_seen",
+      "edited",
+      "mark_seen",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/orchestrate.sh"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Never edit a question once|question-seen ID|^# the orchestrator fingerprints|^edited' ~/.claude/skills/orchestrate/SKILL.md ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "SKILL.md:62:- Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor's old copy back over yours. A new point goes in a new question.\norchestrate.sh:102:  question-seen ID            take the owner's edits so far as read; the watch waits for the owner's next save\norchestrate.sh:1351:# the orchestrator fingerprints every file it writes; a file that no longer matches was edited by its owner\norchestrate.sh:1354:edited() { [ \"$(sha256sum < \"$1\" | cut -d' ' -f1)\" != \"$(cat \"$SEEN/$(id_of \"$1\")\" 2>/dev/null)\" ]; }",
+        "commit": "267eada"
+      },
+      {
+        "command": "jq the hooks of ~/.claude/settings.json, ~/.claude/settings.local.json and the repo's .claude/settings*.json (hook events and commands only)",
+        "output": "~/.claude/settings.json: Notification [notify-send 'Needs attention'], Stop [notify-send 'Agent finished']\n~/.claude/settings.local.json: []\nLogosLang .claude/settings.json, settings.local.json: no such file\n(no PreToolUse hook anywhere, so no Write or Edit of a placed question is refused)",
+        "commit": "267eada"
+      },
+      {
+        "command": "scratch repo S under the job's tmp: orchestrate.sh -C S question-new 5 S-P9 draft.md; the orchestrator's Edit tool adds a line to the placed file; questions; question-seen Q1; questions",
+        "output": "S/.agents/orchestrator/questions/5-Q1-S-P9.md   exit 0\n(Edit tool: 'Added later by the orchestrator: what (a) also decides.' written into the placed file, no refusal)\n5-Q1-S-P9.md\tedited\tQ1: Probe question for P169      exit 0   (its own edit counts as the owner's save)\nquestion-seen Q1 -> S/.agents/orchestrator/questions/5-Q1-S-P9.md   exit 0\n5-Q1-S-P9.md\twaiting\tQ1: Probe question for P169      exit 0   (taken as read, no note that the orchestrator changed the text)",
+        "commit": "267eada"
+      },
+      {
+        "command": "sibling writers of a placed question: rg -n 'An answer he types in chat' SKILL.md; git show 2cf09e4 -- .agents/orchestrator/questions/6-Q102-O.md",
+        "output": "SKILL.md:69:- An answer he types in chat counts the same: write it into the file's Answer section, relay, close.   (the skill itself prescribes an edit of an open file)\n2cf09e4 (question-close Q83, relink): -  - [5-Q83-S-P9.md](./5-Q83-S-P9.md): what #198 waits for\n                                      +  - [5-Q83-S-P9.md](../answers/Q83-S-P9.md): what #198 waits for   (the script rewrote the open Q102 in place; this one survived his later save, ff3d0e0)",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W338",
+    "made": {
+      "at": "2026-10-12T10:37+02:00",
+      "by": "logoslang-why-P169-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "merged into W338",
+        "reason": "A and B state the same fact: nothing but SKILL.md's sentence 'Never edit a question once it is placed' keeps a placed question as placed; no hook or command refuses an edit to an open question, and question-seen takes the orchestrator's own edit as read"
+      }
+    ]
+  },
+  {
+    "id": "W336",
+    "kind": "why",
+    "status": "merged",
+    "text": "Nothing compares an answer save with the text the question last held: mark_seen keeps only a sha256 per question and edited asks only whether it differs, so cmd_questions_watch wakes on a save that drops the orchestrator's lines exactly as on an answer, cmd_question_close copies the file into answers/ as it stands, and SKILL.md's wake step (read the whole file, ANSWER, question-close) checks it against nothing, though git holds the dropped text (Q106 fe9ae1d to 267eada, Q83 3d0655b to 2cf09e4)",
+    "proposed_for": "P169",
+    "why": null,
+    "anchors": [
+      "mark_seen",
+      "edited",
+      "cmd_questions_watch",
+      "cmd_question_close",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n '^mark_seen|^edited|edited \"$f\" && { echo' ~/.claude/skills/orchestrate/orchestrate.sh; cmd_question_close read in full",
+        "output": "1353:mark_seen() { mkdir -p \"$SEEN\"; sha256sum < \"$1\" | cut -d' ' -f1 > \"$SEEN/$(id_of \"$1\")\"; }\n1354:edited() { [ \"$(sha256sum < \"$1\" | cut -d' ' -f1)\" != \"$(cat \"$SEEN/$(id_of \"$1\")\" 2>/dev/null)\" ]; }\n1534/1540 (cmd_questions_watch): ... && edited \"$f\" && { echo \"$f\"; ...   (a changed hash is the whole test; no copy of the earlier text is kept)\n1489-1491 (cmd_question_close): copies \"$f\" line by line into \"$HDIR/$new\", rewriting only the Status line and ./ links, then rm \"$f\"   (no diff against the last placed or committed text)",
+        "commit": "267eada"
+      },
+      {
+        "command": "the real saves: git show <rev>:<file> | grep -c '<the orchestrator's added lines>' before and after each answer save",
+        "output": "fe9ae1d:questions/5-Q106-S-P9.md: 2   (the pointer sentence 'A plain number converting where it lands ... is this rule's case' and '[2] ... lossy (Q106: «your answer 2»)')\n267eada:answers/Q106-S-P9.md: 0   (commit 'questions: Q106 answered', Status 'answered, relayed 2026-10-12 10:30')\n3d0655b:questions/5-Q83-S-P9.md: 2   ('Added 12 October' paragraphs)\n2cf09e4:answers/Q83-S-P9.md: 0   (commit 'questions: Q83 answered')",
+        "commit": "267eada"
+      },
+      {
+        "command": "scratch repo S, after the Edit and question-seen of W335's probe: the Write tool saves the copy opened before the edit plus 'b' on Answer 1; questions; timeout 5 questions-watch; question-close Q1; grep -c 'Added later' answers/Q1-S-P9.md",
+        "output": "5-Q1-S-P9.md\tedited\tQ1: Probe question for P169   exit 0\nS/.agents/orchestrator/questions/5-Q1-S-P9.md   exit 0   (the watch wakes with the path, as on any answer)\nS/.agents/orchestrator/answers/Q1-S-P9.md   exit 0   (closed, no warning)\n0   exit 1   (the orchestrator's line is gone from the answer file)",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W339",
+    "made": {
+      "at": "2026-10-12T10:38+02:00",
+      "by": "logoslang-why-P169-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "merged into W339",
+        "reason": "A and B state the same fact: nothing compares a save with the version the orchestrator last wrote; mark_seen keeps only a sha256, edited asks only whether it differs, the watch prints the path, question-close copies the file as it stands"
+      }
+    ]
+  },
+  {
+    "id": "P173",
+    "kind": "problem",
+    "status": "open",
+    "text": "A field can be moved out through a name that only borrows the record: after h := g (g owns a bagged), move h.b is accepted, g is not marked, and g.b passes the parse and fails when it runs; a bare move h is refused (\"only its owner can\")",
+    "program": "target/release/logos '<BAG>, g := bag (), h := g, y := move h.b, print «moved», g.b' (<BAG> = the bag_line fixture of tests/cli.rs); control: the same without g.b",
+    "output": "moved / free / bag / \"<command line>: run error: field 2 of this node's type body was never written by its constructor\", exit 1; the control prints moved / free / bag, exit 0; branch issue-66-partial-move-subrange at ff3d0e0 (dev src), release, interpreted",
+    "expected": "move h.b refused at parse as move h is (h does not own g's fields), or, if h := g is a copy (Q109), h owns its own fields; either way no run error on g.b: ›`move` and `free` take a field path too‹",
+    "tier": "interpreted",
+    "found": "logoslang-issue-66-worker, FOUND while working #66, 12 October 2026",
+    "why": [
+      "W334"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:39+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "d4b7d8f",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:39+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d4b7d8f",
+        "change": "why + W334",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W337",
+    "kind": "why",
+    "status": "accepted",
+    "text": "solve-prompt.md does not carry SKILL.md's ban on editing a placed question nor its reason (his editor holds the file open): its line 18 keeps only new roots out of the round he is answering, with no reason, and its rule that his pick confirms the exact wording the round showed makes a patch to the open round worth asking for; both lost edits were solve-W15's patch requests, and the Q83 one broke line 18 too",
+    "proposed_for": "P169",
+    "why": [
+      "W341",
+      "W342",
+      "W343"
+    ],
+    "anchors": [
+      "~/.claude/skills/orchestrate/solve-prompt.md",
+      "~/.claude/skills/orchestrate/every-prompt.md",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o -F 'Never edit a question once it is placed' ~/.claude/skills/orchestrate/{SKILL.md,solve-prompt.md,every-prompt.md,question-template.md} ~/.claude/skills/solve/SKILL.md; grep -n -i -E 'placed|never edit' ~/.claude/skills/orchestrate/{solve-prompt.md,every-prompt.md,question-template.md} ~/.claude/skills/solve/SKILL.md; grep -n -o -F 'Picking an option whose exact recorded text and wording the round showed is their confirmation' ~/.claude/skills/orchestrate/solve-prompt.md",
+        "output": "/home/o/.claude/skills/orchestrate/SKILL.md:62:Never edit a question once it is placed\n(second grep: no match in solve-prompt.md, every-prompt.md, question-template.md, solve/SKILL.md)\n14:Picking an option whose exact recorded text and wording the round showed is their confirmation",
+        "commit": "267eada"
+      },
+      {
+        "command": "python3 -I why-probes/solve_msgs.py ~/.claude/projects/-home-o-Personal-Code-LogosLang/79afb672-3638-4a49-8c0b-2c1c8c5aed2d.jsonl (the orchestrator's transcript; messages from logoslang-solve-W15 on 12 October, UTC; local is +2), then why-probes/q_edits.py on the same file for what followed each",
+        "output": "2026-10-12T07:51:12Z QUESTION logoslang/solve-W15: .../solve-drafts/q83-additions.md | These are two additions to Q83 (questions/5-Q83-S-P9.md) for W313. They are not a new round. ... Please patch them in before he answers.\n07:51:24Z, 07:51:29Z Edit 5-Q83-S-P9.md (the two '*Added 12 October*' paragraphs); 07:51:32Z question-seen Q83 + git commit 3d0655b\n2026-10-12T08:19:59Z QUESTION logoslang/solve-W15: two small fixes to the rule words in Q106 (questions/5-Q106-S-P9.md), to make before Thobias answers.\n08:20:05Z orchestrator: 'Checking you haven't edited Q106 yet, then fixing it.' (git diff --stat); 08:20:10Z, 08:20:12Z Edit 5-Q106-S-P9.md; 08:20:15Z question-seen Q106 + git commit fe9ae1d\n08:16:25Z (between the two) QUESTION logoslang/solve-W15: .../q-3.md | This is round 3 ... It shows the examples his save removed",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:39+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "accepted as a why of P169",
+        "reason": "B's fact, the asker's side: solve-prompt.md carries no 'never edit a placed question', and its rule that his pick confirms the exact wording the round showed makes a patch to the open round worth asking for; both lost edits were solve-W15's patch requests"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "text was \"solve-prompt.md never tells a solution agent that a question stays as it was placed (the ban, Never edit a question once it is placed, stands only in the orchestrator's SKILL.md, which neither solve-prompt.md nor every-prompt.md carries), and it makes his pick confirm the exact recorded text and wording the round showed; so solve-W15 sent QUESTION messages asking the orchestrator to patch the open Q83 and the open Q106 before he answered, and both edits were those patches\"",
+        "reason": "both why agents: 'never tells' was too strong; line 18 carries a narrower copy with no reason"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W341",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W342",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W343",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W338",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Nothing but one sentence of SKILL.md keeps a placed question as placed: orchestrate.sh has no command that changes an open question or refuses a change to one, cmd_question_seen (take the owner's edits so far as read) stores the sha256 of whatever the file holds, so it takes the orchestrator's own edit as read too, and the QUESTION row of SKILL.md's message table says only to place a new file; so solve-W15's two requests to patch an open question went in by the Edit tool, question-seen and a hand commit, Q83 at 09:51 and Q106 at 10:20",
+    "proposed_for": "P169",
+    "why": [
+      "W340"
+    ],
+    "anchors": [
+      "cmd_question_seen",
+      "mark_seen",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "edited"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -E '^  question-|^mark_seen|^cmd_question_seen|^  mark_seen \"\\$f\"' ~/.claude/skills/orchestrate/orchestrate.sh; grep -n -o -F 'A solution agent sends the path of a file it drafted: fill its Priority line, then `question-new`' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "91:  question-new PRIO TAG FILE  place FILE in the repo's questions folder as PRIO-QN-TAG.md; ...\n97:  question-prio ID PRIO       move an open question to PRIO; ...\n98:  question-tag ID TAG         give an open question the tag TAG, ...\n99:  question-close ID [STATUS]  move an answered question to the answers folder, ...\n102:  question-seen ID            take the owner's edits so far as read; the watch waits for the owner's next save\n1353:mark_seen() { mkdir -p \"$SEEN\"; sha256sum < \"$1\" | cut -d' ' -f1 > \"$SEEN/$(id_of \"$1\")\"; }\n1499:cmd_question_seen() {\n1502:  mark_seen \"$f\"\nSKILL.md:114: A solution agent sends the path of a file it drafted: fill its Priority line, then `question-new`\n(no question-* command edits an open file's text; SKILL.md:62 'Never edit a question once it is placed' is the only guard)",
+        "commit": "267eada"
+      },
+      {
+        "command": "git log --since='2026-10-12 09:00' --until='2026-10-12 11:30' --format='%h %ad %s' --date=format:%H:%M:%S --numstat -- .agents/orchestrator/questions .agents/orchestrator/answers (in a worktree of dev at 267eada)",
+        "output": "267eada 10:30:07 questions: Q106 answered   6 3 {questions/5-Q106-S-P9.md => answers/Q106-S-P9.md}\nfe9ae1d 10:20:16 questions: Q106 keeps the pointer to the plain-number rule, and its Ruled line records the new word's source   2 2\n568837e 10:17:10 questions: Q106 asked, S-P9   104 0\n2cf09e4 10:08:15 questions: Q83 answered   5 20 {questions/5-Q83-S-P9.md => answers/Q83-S-P9.md}\n3d0655b 09:51:33 questions: Q83 shows what its answers also decide (...), for W313. PWS: S36, S45 amended to fix W313   19 0\n(3d0655b and fe9ae1d are hand commits: commit_questions writes only 'asked', 'moved to', 'tagged', 'answered')",
+        "commit": "267eada"
+      },
+      {
+        "command": "rg -n 'Never edit a question once|question-seen ID|^# the orchestrator fingerprints|^edited' ~/.claude/skills/orchestrate/SKILL.md ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "SKILL.md:62:- Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor's old copy back over yours. A new point goes in a new question.\norchestrate.sh:102:  question-seen ID            take the owner's edits so far as read; the watch waits for the owner's next save\norchestrate.sh:1351:# the orchestrator fingerprints every file it writes; a file that no longer matches was edited by its owner\norchestrate.sh:1354:edited() { [ \"$(sha256sum < \"$1\" | cut -d' ' -f1)\" != \"$(cat \"$SEEN/$(id_of \"$1\")\" 2>/dev/null)\" ]; }",
+        "commit": "267eada"
+      },
+      {
+        "command": "jq the hooks of ~/.claude/settings.json, ~/.claude/settings.local.json and the repo's .claude/settings*.json (hook events and commands only)",
+        "output": "~/.claude/settings.json: Notification [notify-send 'Needs attention'], Stop [notify-send 'Agent finished']\n~/.claude/settings.local.json: []\nLogosLang .claude/settings.json, settings.local.json: no such file\n(no PreToolUse hook anywhere, so no Write or Edit of a placed question is refused)",
+        "commit": "267eada"
+      },
+      {
+        "command": "scratch repo S under the job's tmp: orchestrate.sh -C S question-new 5 S-P9 draft.md; the orchestrator's Edit tool adds a line to the placed file; questions; question-seen Q1; questions",
+        "output": "S/.agents/orchestrator/questions/5-Q1-S-P9.md   exit 0\n(Edit tool: 'Added later by the orchestrator: what (a) also decides.' written into the placed file, no refusal)\n5-Q1-S-P9.md\tedited\tQ1: Probe question for P169      exit 0   (its own edit counts as the owner's save)\nquestion-seen Q1 -> S/.agents/orchestrator/questions/5-Q1-S-P9.md   exit 0\n5-Q1-S-P9.md\twaiting\tQ1: Probe question for P169      exit 0   (taken as read, no note that the orchestrator changed the text)",
+        "commit": "267eada"
+      },
+      {
+        "command": "sibling writers of a placed question: rg -n 'An answer he types in chat' SKILL.md; git show 2cf09e4 -- .agents/orchestrator/questions/6-Q102-O.md",
+        "output": "SKILL.md:69:- An answer he types in chat counts the same: write it into the file's Answer section, relay, close.   (the skill itself prescribes an edit of an open file)\n2cf09e4 (question-close Q83, relink): -  - [5-Q83-S-P9.md](./5-Q83-S-P9.md): what #198 waits for\n                                      +  - [5-Q83-S-P9.md](../answers/Q83-S-P9.md): what #198 waits for   (the script rewrote the open Q102 in place; this one survived his later save, ff3d0e0)",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "SKILL.md's Never edit a question once it is placed (Questions to Thobias) is a sentence only, and nothing holds a placed question to it: no hook in any settings file refuses a Write or Edit under .agents/orchestrator/questions/, edited reads the orchestrator's own Edit-tool write as the owner's save (orchestrate.sh: a file that no longer matches was edited by its owner), and question-seen takes it as the new baseline without a word; so the orchestrator's additions to the open Q83 (3d0655b) and Q106 (fe9ae1d) went in unrefused and unrecorded as its own"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:39+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "accepted as a why of P169, same as W335",
+        "reason": "A and B state the same fact: nothing but SKILL.md's sentence 'Never edit a question once it is placed' keeps a placed question as placed; no hook or command refuses an edit to an open question, and question-seen takes the orchestrator's own edit as read"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W340",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W339",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Nothing compares a save with the version of the question the orchestrator last wrote: mark_seen keeps only its sha256, never its text, edited asks only whether the file differs from that, cmd_questions_watch prints only the path, SKILL.md's relay step says to read the whole file, which shows what stands and never what a save took away, and cmd_question_close moves the file as it is; so his save of an older copy, which took out the orchestrator's later lines, read as an answer and was relayed and closed, though git diff against the committed version shows the removal",
+    "proposed_for": "P169",
+    "why": [
+      "W340",
+      "W345"
+    ],
+    "anchors": [
+      "mark_seen",
+      "edited",
+      "cmd_questions_watch",
+      "cmd_question_close",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -E '^mark_seen|^edited|edited \"\\$f\" && \\{ echo \"\\$f\"|^cmd_question_close|done < \"\\$f\" \\| sed' ~/.claude/skills/orchestrate/orchestrate.sh; grep -n -o -F 'Read the whole file: his words may stand on the Answer lines, under an option, or beside the question' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "1353:mark_seen() { mkdir -p \"$SEEN\"; sha256sum < \"$1\" | cut -d' ' -f1 > \"$SEEN/$(id_of \"$1\")\"; }\n1354:edited() { [ \"$(sha256sum < \"$1\" | cut -d' ' -f1)\" != \"$(cat \"$SEEN/$(id_of \"$1\")\" 2>/dev/null)\" ]; }\n1480:cmd_question_close() {\n1491:    done < \"$f\" | sed 's|(\\./|(../questions/|g'; } > \"$HDIR/$new\" && rm \"$f\"\n1534:      [ -f \"$f\" ] && qid_of \"${f##*/}\" >/dev/null && edited \"$f\" && { echo \"$f\"; ...\n1540:      [ -f \"$f\" ] && qid_of \"${f##*/}\" >/dev/null && edited \"$f\" && { echo \"$f\"; ...\nSKILL.md:68: Read the whole file: his words may stand on the Answer lines, under an option, or beside the question",
+        "commit": "267eada"
+      },
+      {
+        "command": "git diff -M --numstat 3d0655b 2cf09e4 -- .agents/orchestrator/questions/5-Q83-S-P9.md .agents/orchestrator/answers/Q83-S-P9.md; git diff -M --numstat fe9ae1d 267eada -- .agents/orchestrator/questions/5-Q106-S-P9.md .agents/orchestrator/answers/Q106-S-P9.md; git grep -c 'Added 12 October' on 3d0655b's Q83 and on 2cf09e4's answer file; comm of fe9ae1d's changed lines against 267eada's answer file (why-probes/p169-lost-lines.txt, run by why-probes/run.sh)",
+        "output": "5\t20\t.agents/orchestrator/{questions/5-Q83-S-P9.md => answers/Q83-S-P9.md}   (the 19 lines 3d0655b added, and the Status line the close rewrites)\n6\t3\t.agents/orchestrator/{questions/5-Q106-S-P9.md => answers/Q106-S-P9.md}   (the 2 lines fe9ae1d changed, and the Status line)\n3d0655b:.agents/orchestrator/questions/5-Q83-S-P9.md:2   ('Added 12 October' paragraphs); 2cf09e4 answers/Q83-S-P9.md: 0\nfe9ae1d's 2 new lines found in answers/Q106-S-P9.md: 0; its 2 old lines found there: 2",
+        "commit": "267eada"
+      },
+      {
+        "command": "rg -n '^mark_seen|^edited|edited \"$f\" && { echo' ~/.claude/skills/orchestrate/orchestrate.sh; cmd_question_close read in full",
+        "output": "1353:mark_seen() { mkdir -p \"$SEEN\"; sha256sum < \"$1\" | cut -d' ' -f1 > \"$SEEN/$(id_of \"$1\")\"; }\n1354:edited() { [ \"$(sha256sum < \"$1\" | cut -d' ' -f1)\" != \"$(cat \"$SEEN/$(id_of \"$1\")\" 2>/dev/null)\" ]; }\n1534/1540 (cmd_questions_watch): ... && edited \"$f\" && { echo \"$f\"; ...   (a changed hash is the whole test; no copy of the earlier text is kept)\n1489-1491 (cmd_question_close): copies \"$f\" line by line into \"$HDIR/$new\", rewriting only the Status line and ./ links, then rm \"$f\"   (no diff against the last placed or committed text)",
+        "commit": "267eada"
+      },
+      {
+        "command": "the real saves: git show <rev>:<file> | grep -c '<the orchestrator's added lines>' before and after each answer save",
+        "output": "fe9ae1d:questions/5-Q106-S-P9.md: 2   (the pointer sentence 'A plain number converting where it lands ... is this rule's case' and '[2] ... lossy (Q106: «your answer 2»)')\n267eada:answers/Q106-S-P9.md: 0   (commit 'questions: Q106 answered', Status 'answered, relayed 2026-10-12 10:30')\n3d0655b:questions/5-Q83-S-P9.md: 2   ('Added 12 October' paragraphs)\n2cf09e4:answers/Q83-S-P9.md: 0   (commit 'questions: Q83 answered')",
+        "commit": "267eada"
+      },
+      {
+        "command": "scratch repo S, after the Edit and question-seen of W335's probe: the Write tool saves the copy opened before the edit plus 'b' on Answer 1; questions; timeout 5 questions-watch; question-close Q1; grep -c 'Added later' answers/Q1-S-P9.md",
+        "output": "5-Q1-S-P9.md\tedited\tQ1: Probe question for P169   exit 0\nS/.agents/orchestrator/questions/5-Q1-S-P9.md   exit 0   (the watch wakes with the path, as on any answer)\nS/.agents/orchestrator/answers/Q1-S-P9.md   exit 0   (closed, no warning)\n0   exit 1   (the orchestrator's line is gone from the answer file)",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "Nothing compares an answer save with the text the question last held: mark_seen keeps only a sha256 per question and edited asks only whether it differs, so cmd_questions_watch wakes on a save that drops the orchestrator's lines exactly as on an answer, cmd_question_close copies the file into answers/ as it stands, and SKILL.md's wake step (read the whole file, ANSWER, question-close) checks it against nothing, though git holds the dropped text (Q106 fe9ae1d to 267eada, Q83 3d0655b to 2cf09e4)"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:40+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:40+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "4b1bce2",
+        "change": "accepted as a why of P169, same as W336",
+        "reason": "A and B state the same fact: nothing compares a save with the version the orchestrator last wrote; mark_seen keeps only a sha256, edited asks only whether it differs, the watch prints the path, question-close copies the file as it stands"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W340",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "why + W345",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W340",
+    "kind": "why",
+    "status": "accepted",
+    "text": "No part of a placed question file is fixed as the question: question-template.md tells Thobias to write his answer on the Answer line or anywhere else in the file and save, SKILL.md says his words may stand on the Answer lines, under an option, or beside the question, the orchestrator writes chat answers into it (SKILL.md: write it into the file's Answer section) and relink rewrites its links; so no command or hook can tell a forbidden change to the question from an allowed write, cmd_questions_watch takes anything changed anywhere as his, and only a sentence asks the orchestrator to keep the question text as it was",
+    "proposed_for": "W338",
+    "why": [],
+    "anchors": [
+      "~/.claude/skills/orchestrate/question-template.md",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "cmd_questions_watch",
+      "relink",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "id_of",
+      "mark_seen",
+      "cmd_question_seen"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'or anywhere else in the file|he answers under each question|his words may stand on the Answer lines|with anything changed in it|An answer he types in chat' ~/.claude/skills/orchestrate/{question-template.md,SKILL.md,orchestrate.sh}",
+        "output": "question-template.md:3: <!-- Write your answer on the **Answer** line under each question, or anywhere else in the file, and save.\nSKILL.md:64: … he answers under each question, not at the bottom, and the watch reads the whole file.\nSKILL.md:68: … prints a file's path each time he saves one of the repo's question files with anything changed in it, anywhere … Read the whole file: his words may stand on the Answer lines, under an option, or beside the question.\nSKILL.md:69: - An answer he types in chat counts the same: write it into the file's Answer section, relay, close.\norchestrate.sh:1514: # ends when its owner saves a question with anything changed in it, wherever in the file;\norchestrate.sh:1364-1376 relink: for g in \"$QDIR\"/*.md … sed … > \"$tmp\" … mv \"$tmp\" \"$g\"   (rewrites open question files in place)",
+        "commit": "267eada"
+      },
+      {
+        "command": "the same file shape along two axes: lines his save removed (P169) and lines he added beside the answers (P125's W232)",
+        "output": "Q106: fe9ae1d's two orchestrator lines -> 0 in answers/Q106-S-P9.md (267eada), relayed as an answer\nQ83: 3d0655b's two 'Added 12 October' paragraphs -> 0 in answers/Q83-S-P9.md (2cf09e4), relayed as an answer\nQ85 (W232's evidence): his question on line 63, beside the answers, missed by a read of lines 33 to 62 and closed unrelayed\nscratch repo (W335's probe): a save that dropped the orchestrator's line and added 'b' -> questions: edited; questions-watch printed the path; question-close exit 0",
+        "commit": "267eada"
+      },
+      {
+        "command": "grep -n -o -F on ~/.claude/skills/orchestrate/SKILL.md for the four sentences; grep -n -F 'the orchestrator fingerprints every file it writes' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "26:A step this skill describes never waits for a command the script lacks: do it by hand\n61:so move a file only while he has not opened it. After a wake, check `ls` for a file whose name was renamed, and move its answer into the tracked file\n62:Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor\n69:An answer he types in chat counts the same: write it into the file's Answer section, relay, close\n1351:# the orchestrator fingerprints every file it writes; a file that no longer matches was edited by its owner",
+        "commit": "267eada"
+      },
+      {
+        "command": "git show --format='%h %ad %s' --date=format:'%m-%d %H:%M' --numstat 91b6457 -- .agents/orchestrator/questions   (line 69 done: a hand commit into the open Q85, the same write line 62 forbids)",
+        "output": "91b6457 10-09 00:32 questions: Q85 point 2 answered, fix the slowdown on issue 82's branch first; DESIGN: his reason on the speed rule\n1\t1\t.agents/orchestrator/questions/10-Q85-R4-I82.md",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "SKILL.md itself has the orchestrator write into an open question by hand (line 69 writes a chat answer into the file's Answer section, line 61 moves a renamed file's answer into the tracked file, line 26 does by hand any step the script has no command for), and orchestrate.sh knows a write as the orchestrator's only when one of its own commands made it (the fingerprint comment above id_of and mark_seen); so the script cannot refuse a hand write into an open file without refusing those steps, and the ban of line 62 stands as one sentence beside two prescribed exceptions"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:44+02:00",
+      "by": "logoslang-why-P169-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W338, same as W344",
+        "reason": "A and B state the same fact: no part of a placed question file is fixed as the question text; he may answer anywhere, and the skill itself prescribes writes into the open file (a chat answer at line 69, a renamed file's answer at line 61, relink), so no guard can tell a forbidden edit from an allowed write, and the watch's test is only 'changed anywhere'"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a rule the skill does not have: which part of a question file is the question and which is his answer form; both agents trace no code fact under it"
+      }
+    ]
+  },
+  {
+    "id": "W341",
+    "kind": "why",
+    "status": "accepted",
+    "text": "solve-prompt.md has no step for a round that turns stale while Thobias answers it: its pick rule (Picking an option whose exact recorded text and wording the round showed is their confirmation) ties his answer to the text shown, every change it names goes to the next round, after his pick (the next round restates your understanding; new roots never in the round he is answering now), the solve skill lets the agent amend a recorded solution meanwhile (pws.py amend S), and no message lets an asker withdraw a placed round and put a corrected one in its place (SKILL.md only says a withdrawn question is closed); so when solve-W15 amended S36 for W313 at 09:50 while Q83 showed its old text, and found Q106's rule words short at 10:19, a patch to the open file was the only way left to keep his pick a confirmation of what would be recorded",
+    "proposed_for": "W337",
+    "why": [],
+    "anchors": [
+      "~/.claude/skills/orchestrate/solve-prompt.md",
+      "~/.claude/skills/solve/SKILL.md",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'Picking an option|the next round restates|never in the round' ~/.claude/skills/orchestrate/solve-prompt.md; rg -n 'pws.py amend S' ~/.claude/skills/solve/SKILL.md; rg -n -i 'withdraw' ~/.claude/skills/orchestrate/{SKILL.md,solve-prompt.md}",
+        "output": "solve-prompt.md:14: … Picking an option whose exact recorded text and wording the round showed is their confirmation. When their words add to it or change it, the next round restates your understanding, with the wording that would then be written, and nothing counts as chosen until they confirm it (step 4).\nsolve-prompt.md:18: … They come up in your next round, never in the round {{OWNER}} is answering now.\nsolve/SKILL.md:41: … When a fact in a recorded assessment turns out different, correct it with `pws.py amend S --assessment \"…\" --reason \"…\"`\nSKILL.md:72: - A question an asker withdraws, or one a ruling made moot, is closed with its Status line saying so.\n(solve-prompt.md: no 'withdraw'; SKILL.md's message table, line 114 QUESTION row, places a new file only)",
+        "commit": "267eada"
+      },
+      {
+        "command": "pws.py show S36 (history), against the Q83 and Q106 patch times in git",
+        "output": "S36 09:50 by logoslang-solve-W15: fixes was [\"W15\"] -> [W15, W313], text and assessment amended ('W313 merged into solve-W15 (12 October 2026)')\n3d0655b 09:51:33 questions: Q83 shows what its answers also decide (…), for W313. PWS: S36, S45 amended to fix W313\n568837e 10:17:10 questions: Q106 asked, S-P9;  fe9ae1d 10:20:16 Q106 keeps the pointer to the plain-number rule, and its Ruled line records the new word's source\nS36 10:32 chosen by Thobias (Q106 answers b / approx… / a), after his save of 10:30 had removed fe9ae1d's lines\nsolve-prompt.md mtime 2026-10-08 21:18:18; S36 made by solve-W15 2026-10-08T21:36, so line 18 stood in its prompt",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:45+02:00",
+      "by": "logoslang-why-P169-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W337",
+        "reason": "A's fact: solve-prompt.md has no step for a round that goes stale while he answers it, and no message lets an asker withdraw a placed round and place a corrected one, so a patch to the open file was the only way left"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a rule the skill does not have: a way to withdraw a stale round and place a corrected one"
+      }
+    ]
+  },
+  {
+    "id": "W342",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The rule that a placed question stays as placed is written twice, in two scopes: SKILL.md, for the orchestrator, forbids every edit and gives the reason (his editor writes its old copy back), while solve-prompt.md, for the solution agent, says only that more roots come up in its next round, never in the round he is answering now, with no reason; so additions that bring no new decision (solve-W15 on Q83: They are not a new round, No point is missing) and fixes to a round's words (Q106) fall outside the copy the asker reads",
+    "proposed_for": "W337",
+    "why": [],
+    "anchors": [
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/solve-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o -F 'Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor' ~/.claude/skills/orchestrate/SKILL.md; grep -n -o -F 'They come up in your next round, never in the round {{OWNER}} is answering now' ~/.claude/skills/orchestrate/solve-prompt.md; grep -n -i -E 'placed|never edit' ~/.claude/skills/orchestrate/{solve-prompt.md,every-prompt.md,question-template.md}",
+        "output": "62:Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor\n18:They come up in your next round, never in the round {{OWNER}} is answering now\n(third grep: no match; question-template.md holds only the file's shape, every-prompt.md only how to write a question)",
+        "commit": "267eada"
+      },
+      {
+        "command": "python3 -I why-probes/window.py ~/.claude/projects/-home-o-Personal-Code-LogosLang--agents-worktrees-solve-W15/af4ce677-ab43-4ac8-a413-cf217449b814.jsonl 2026-10-12T07:50 2026-10-12T07:52 (solve-W15's transcript, UTC)",
+        "output": "07:51:01Z thinking | Q83 covers W313's core decisions but doesn't highlight their implications for mixed-type operations, conditional arms, and type coercion, so I'll draft two brief additions and send them to the orchestrator.\n07:51:11Z SendMessage | QUESTION logoslang/solve-W15: .../q83-additions.md  These are two additions to Q83 (questions/5-Q83-S-P9.md) for W313. They are not a new round. Q83 already asks every decision W313 needs ... No point is missing. ... Please patch them in before he answers.",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:46+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W337",
+        "reason": "B's fact: the ban stands twice, once for any edit with its reason (SKILL.md line 62) and once for new roots only with no reason (solve-prompt.md line 18), and solve-W15 read its copy as not covering additions"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a root by the repo's list: one rule written twice (SKILL.md line 62 with its reason, solve-prompt.md line 18 narrower without), and the copies drifted"
+      }
+    ]
+  },
+  {
+    "id": "W343",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Nothing shows whether his editor holds a question open: cmd_questions knows only waiting and edited, both read from the file on disk, and cmd_questions_watch hears only close_write, moved_to and create; so every side read no save yet as not answering yet: the orchestrator's ROOTS message to solve-W15 (Q83 is still unanswered, tell me before he answers), solve-W15's two requests (before he answers), the orchestrator's one check before Q106 (git diff --stat) and Q83's label Added 12 October, before you answered, while his editor held the copy from before each edit",
+    "proposed_for": "W337",
+    "why": [],
+    "anchors": [
+      "cmd_questions",
+      "cmd_questions_watch",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md",
+      "~/.claude/skills/orchestrate/solve-prompt.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -F 'edited \"$f\" && echo edited || echo waiting' ~/.claude/skills/orchestrate/orchestrate.sh; grep -n -o -F 'inotifywait -q -m -e close_write -e moved_to -e create' ~/.claude/skills/orchestrate/orchestrate.sh; then why-probes/window.py and why-probes/q_edits.py over the orchestrator's transcript 79afb672 and solve-W15's af4ce677 (UTC; local is +2)",
+        "output": "1510:    printf '%s\\t%s\\t%s\\n' \"$(basename \"$f\")\" \"$(edited \"$f\" && echo edited || echo waiting)\" ...\n1530:inotifywait -q -m -e close_write -e moved_to -e create\n07:47:26Z ROOTS (orchestrator to solve-W15, written by hand; the script's ROOTS line, orchestrate.sh 1160, ends at the context path): ... Q83 is still unanswered: check whether it already covers W313 ...; if a point is missing, redraft it and tell me before he answers.\n07:51:11Z solve-W15: ... Please patch them in before he answers.   07:51:24Z Edit Q83: '*Added 12 October, before you answered:* ...'\n08:19:59Z solve-W15: two small fixes to the rule words in Q106 ..., to make before Thobias answers.\n08:20:05Z orchestrator: Checking you haven't edited Q106 yet, then fixing it.  (git diff --stat -- .../5-Q106-S-P9.md: empty)\nhis saves at 10:08 and 10:30 local wrote back the text from before 09:51 and 10:20 (git diff -M --numstat: Q83 5 20, Q106 6 3)",
+        "commit": "267eada"
+      },
+      {
+        "command": "grep -n -o -F 'so move a file only while he has not opened it. After a wake, check `ls` for a file whose name was renamed, and move its answer into the tracked file' ~/.claude/skills/orchestrate/SKILL.md   (the same unknown predicts the rename sibling: question-prio while his editor holds the file)",
+        "output": "61:so move a file only while he has not opened it. After a wake, check `ls` for a file whose name was renamed, and move its answer into the tracked file",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:46+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W337",
+        "reason": "B's fact: the orchestrator's own hand-written ROOTS message invited the Q83 patch ('if a point is missing, redraft it and tell me before he answers'), and the orchestrator read 'no save yet' as 'not answering yet'; nothing can tell whether he has a question open (the watch hears only close_write, moved_to, create)"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a rule the skill does not have: how the orchestrator knows whether he has a question open; nothing in the tools can tell"
+      }
+    ]
+  },
+  {
+    "id": "W344",
+    "kind": "why",
+    "status": "merged",
+    "text": "SKILL.md itself has the orchestrator write into an open question by hand (line 69 writes a chat answer into the file's Answer section, line 61 moves a renamed file's answer into the tracked file, line 26 does by hand any step the script has no command for), and orchestrate.sh knows a write as the orchestrator's only when one of its own commands made it (the fingerprint comment above id_of and mark_seen); so the script cannot refuse a hand write into an open file without refusing those steps, and the ban of line 62 stands as one sentence beside two prescribed exceptions",
+    "proposed_for": "W338",
+    "why": null,
+    "anchors": [
+      "id_of",
+      "mark_seen",
+      "cmd_question_seen",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o -F on ~/.claude/skills/orchestrate/SKILL.md for the four sentences; grep -n -F 'the orchestrator fingerprints every file it writes' ~/.claude/skills/orchestrate/orchestrate.sh",
+        "output": "26:A step this skill describes never waits for a command the script lacks: do it by hand\n61:so move a file only while he has not opened it. After a wake, check `ls` for a file whose name was renamed, and move its answer into the tracked file\n62:Never edit a question once it is placed. His editor holds it open, and saving his answers writes the editor\n69:An answer he types in chat counts the same: write it into the file's Answer section, relay, close\n1351:# the orchestrator fingerprints every file it writes; a file that no longer matches was edited by its owner",
+        "commit": "267eada"
+      },
+      {
+        "command": "git show --format='%h %ad %s' --date=format:'%m-%d %H:%M' --numstat 91b6457 -- .agents/orchestrator/questions   (line 69 done: a hand commit into the open Q85, the same write line 62 forbids)",
+        "output": "91b6457 10-09 00:32 questions: Q85 point 2 answered, fix the slowdown on issue 82's branch first; DESIGN: his reason on the speed rule\n1\t1\t.agents/orchestrator/questions/10-Q85-R4-I82.md",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W340",
+    "made": {
+      "at": "2026-10-12T10:46+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "merged into W340",
+        "reason": "A and B state the same fact: no part of a placed question file is fixed as the question text; he may answer anywhere, and the skill itself prescribes writes into the open file (a chat answer at line 69, a renamed file's answer at line 61, relink), so no guard can tell a forbidden edit from an allowed write, and the watch's test is only 'changed anywhere'"
+      }
+    ]
+  },
+  {
+    "id": "W345",
+    "kind": "why",
+    "status": "accepted",
+    "text": "SKILL.md has no rule that a saved question is read as its change against the version before it: it gives the watch one job, to tell that he saved (prints a file's path each time he saves one with anything changed in it, anywhere), its relay step reads the file as it stands, and the one hazard it names for a save, his editor writing its old copy back over the orchestrator's (line 62), it meets only by forbidding the edit; so mark_seen keeps a hash and no step diffs, though every open question is committed (line 59), so the version before stands in git",
+    "proposed_for": "W339",
+    "why": [],
+    "anchors": [
+      "mark_seen",
+      "cmd_questions_watch",
+      "~/.claude/skills/orchestrate/orchestrate.sh",
+      "~/.claude/skills/orchestrate/SKILL.md"
+    ],
+    "design": [],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "grep -n -o -F 'prints a file' ~/.claude/skills/orchestrate/SKILL.md; grep -n -F 'saves a question with anything changed in it' ~/.claude/skills/orchestrate/orchestrate.sh; grep -n -o -F 'Everything in the folder is committed except this machine' ~/.claude/skills/orchestrate/SKILL.md; grep -n -i -E 'git diff|diff |compar|what (he|a save|his save) (changed|removed|took)|version before|older copy|old copy' ~/.claude/skills/orchestrate/SKILL.md",
+        "output": "68:prints a file ('s path each time he saves one of the repo's question files with anything changed in it, anywhere ... Read the whole file ... question-close ID)\n1514:# ends when its owner saves a question with anything changed in it, wherever in the file;\n59:Everything in the folder is committed except this machine\n(last grep, in Questions to Thobias: only 62, 'saving his answers writes the editor's old copy back over yours'; 94, 96, 97 are pws compare; no rule diffs or compares a save)\nnearest rules: 62 forbids the edit and checks nothing after; 64 'the watch reads the whole file'; 68 read the whole file, ANSWER, question-close",
+        "commit": "267eada"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T10:46+02:00",
+      "by": "logoslang-why-P169-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "267eada",
+      "run": "why-P169",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "accepted as a why of W339",
+        "reason": "B's fact, which A also states: the skill gives the watch one job, to tell that he saved, and reads the file as it stands; nothing shows a save's diff against the version before, though git holds it, so a dropped line (P169) and an added line (W232, P125) are equally unseen"
+      },
+      {
+        "at": "2026-10-12T10:47+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6359afd",
+        "change": "asked: no why found",
+        "reason": "a rule the skill does not have (B, and A's proposed fix): what a wake shows, the save's diff against the version before"
+      }
+    ]
+  },
+  {
+    "id": "P174",
+    "kind": "problem",
+    "status": "open",
+    "text": "Reading a field straight off the record a function call gives back is refused, while a name over the same call reads it: g(pt(3, 4)).u and (g(pt(3, 4))).u are \"this operator cannot compute over these operands\", q := g(pt(3, 4)), q.u gives 3",
+    "program": "logos 'pt := type (u := i32 ?, v := i32 ?), g := fn (r := pt ?) -> pt ( r ), g(pt(3, 4)).u'; the same with (g(pt(3, 4))).u; control: 'pt := type (u := i32 ?, v := i32 ?), g := fn (r := pt ?) -> pt ( r ), q := g(pt(3, 4)), q.u'",
+    "output": "<command line>:1:84: error: this operator cannot compute over these operands (caret under u), exit 1; the bracketed form :1:86, same error; the control prints 3, exit 0; the same with g.compile() before the call; dev d4b7d8f, release",
+    "expected": "3 for all three: a field read reads the record the call gives back as it reads a name over it (the named against the unnamed value)",
+    "tier": "both",
+    "found": "logoslang-issue-209-review-1, FOUND while reviewing #209, 12 October 2026 (near P48 and P167)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:51+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "c2cb819",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S105",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One writer, every save shown as a change: once placed, nothing writes inside a question file but Thobias's editor; mark_seen keeps the file's text instead of its hash, the watch prints under the path the lines his save added and the lines it took away, question-seen and question-close refuse a file that changed since the watch last printed it, a chat answer goes into the closed copy through question-close, relink and links-repair skip open files (question-close repairs the closed copy's links), a change to a placed round goes in a follow-up file and his pick confirms only the text the file he answered showed; the rule stands once in SKILL.md ›Questions to Thobias‹ with its reason, every-prompt.md gives every asker the follow-up step, the template's comment tells him the file never changes under him",
+    "fixes": [
+      "W340",
+      "W341",
+      "W342",
+      "W343",
+      "W345"
+    ],
+    "assessment": "Root fix for all five: W340 (the whole placed file is his alone, so any other write is forbidden and shows in the next diff; the three prescribed writes go: SKILL.md l.69's chat answer goes to the closed copy, relink stops writing open files, and l.26's hand steps cannot include it), W345 and W339 (a save is read as its change against the version before, whose text is kept), W338 (question-seen takes as read only what the watch printed), W341 (a follow-up file; the pick confirms only the text shown), W342 (one home plus the asker's step), W343 (the need goes: nothing writes while his editor may hold the file, so nothing must know). Removes P169 both ways: no edit left to lose, and a save that takes lines away is printed before any relay. Builds S63's undone script half (Q94, decided: the watch shows his added lines, close refused after an unseen save), so S63 needs nothing more (its SKILL.md bullet, template line 4 and the reply files Q98, Q99, Q100 are placed). Leaves: question-prio's move while he holds a file (l.61, the rename sibling); a link in an open file to a question closed meanwhile opens nothing until that file closes (4 of 29 open files link another open one). Lands in ~/.claude/skills/orchestrate: orchestrate.sh (mark_seen, edited, cmd_questions_watch, cmd_question_seen, cmd_question_close, relink, cmd_links_repair; about 40 lines), SKILL.md l.62, 64, 68, 69, every-prompt.md one sentence, question-template.md comment, SKILL_HISTORY.md; about two hours. solve-W243's S77 changes how the watch starts and keeps a record of what it reported, the same record; it lands with S77 as one watch change, as S63 was to.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:58+02:00",
+      "by": "logoslang-solve-W340",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "6359afd",
+      "run": "solve-W340",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S106",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Edits stay allowed and are merged back: the orchestrator changes an open question only through a new question-edit command, which keeps the version before; after each save of his, the script three-way merges (git merge-file) his save with the orchestrator's last version over the version his editor most likely opened, writes the result back, and prints his added lines",
+    "fixes": [
+      "W345"
+    ],
+    "assessment": "Fixes W345 and W339 (the version before is kept and compared) and P169's lost lines, automatically as he asked. Leaves W340, W341, W342, W343 out of --fixes: two writers stay in one file, so his pick can confirm text he never saw (his editor shows the old copy until he saves, and the merged paragraph appears after he answered); the base his editor opened is guessed (several edits; an editor that does not reload a changed file); a merge conflict needs his hand; the merged write lands right after his save, while his editor may still hold the file. More script (question-edit, the merge, a conflict path): about half a day. Not recommended.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:58+02:00",
+      "by": "logoslang-solve-W340",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "6359afd",
+      "run": "solve-W340",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S107",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Text only: SKILL.md ›Questions to Thobias‹ keeps the ban with its reason and drops the chat-answer write (relay and close instead); every-prompt.md tells every asker that a placed question is never patched, that a change goes in a follow-up file, and that his pick confirms only the text he was shown",
+    "fixes": [
+      "W341",
+      "W342"
+    ],
+    "assessment": "Fixes W341 and W342 by words. Leaves W340 (relink still writes open files; the ban rests on a sentence again, as on 12 October, when it stood and failed twice), W345, W339 and W338 (no diff; question-seen still hashes whatever the file holds, the orchestrator's own edit too) and W343. Leaves S63's script half undone. Minutes of work. A hook denying the Edit tool on open question files could join solve-W243's S77 if that hooks block is chosen. Not recommended.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:58+02:00",
+      "by": "logoslang-solve-W340",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "6359afd",
+      "run": "solve-W340",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P175",
+    "kind": "problem",
+    "status": "open",
+    "text": "A solution that changes a rule of the orchestrate skill cannot name the rule it changes: pws.py add solution --design (and add why --design) accepts only headings of the repo's ruling document, so a fix to SKILL.md or a prompt file is recorded with no rule anchor and nothing ties it to the heading it rewrites",
+    "program": "pws.py add solution --fixes W340 --text '…' --design 'Questions to Thobias'",
+    "output": "pws.py: not a heading of the ruling document; the solution was recorded without --design (S105, 12 October 2026)",
+    "expected": "the solution names the skill heading it changes (SKILL.md ›Questions to Thobias‹), checked against that file as a DESIGN.md heading is",
+    "tier": "interpreted",
+    "found": "logoslang-solve-W340, FACT while recording S105, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T11:00+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8cfc62a",
       "run": null,
       "agent": null
     },
