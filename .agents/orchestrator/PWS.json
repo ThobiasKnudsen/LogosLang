@@ -24000,7 +24000,7 @@
   {
     "id": "S66",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "The skill wakes and guards its own session: SKILL.md's frontmatter registers hooks in the session that runs /orchestrate; at every turn's end a background hook (asyncRewake) starts the one-shot question watch, which wakes the orchestrator at a save even when it is idle (exit 2) and is started again at the next turn's end, so the Monitor watch, its 30-minute restarts and every 'start the watch' step go; watch-guard.sh, run at Stop and after every tool call, keeps the turn from ending and reminds while a question file holds a save not yet taken as read or closed (no stop_hook_active escape: the harness caps blocks at 8 in a row); a PreToolUse hook denies AskUserQuestion; no settings.json edit",
     "fixes": [
       "W243",
@@ -24012,7 +24012,12 @@
       "W286"
     ],
     "assessment": "Root fix for a running session, and the only option with no step of Thobias's: the hooks stand in the skill's own frontmatter, a file the orchestrator edits in place, which fixes W286 fully (unless auto mode refuses adding hooks there too; then he adds them once). The waker belongs to the session instead of to one Monitor tool call (W253, W219), the unrelayed-save test is read at every turn's end and after every tool call (W243, W252), AskUserQuestion is denied (W251), nothing has to check or time the watch (W244, W245), P129 and P138 go. Fails P135, now proven: why-P138-b's probe shows a frontmatter Stop hook fires at the skill's turn and later turns of the same process, and is gone after claude --continue until the skill is invoked again, so after a computer restart the watch waits until the orchestrator runs the skill again, a step to remember. About two hours; touches S63's watch change, which lands with it as one change.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T11:58+02:00",
+      "words": "Q95 Answer 1: \"b. a is a bad option because i want most possible of the information to be in the SKILL file not in random ish locations.\"",
+      "reason": "In Q95 he chose (b), the hooks in the skill's own file, so that as much as possible of the skill stands in SKILL.md; he accepted the cost the option stated: after a computer restart the hooks wait until the skill is run again"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -24061,6 +24066,15 @@
         "commit": "d57a5dd",
         "change": "assessment was \"Root fix for a running session: the waker belongs to the session, registered by the skill, instead of to one Monitor tool call (W253, W219), the unrelayed-save test is read at every turn's end and after every tool call (W243, W252), AskUserQuestion is denied (W251), nothing has to check or time the watch (W244, W245), and P129's two gaps go. Fails P135: skill-frontmatter hooks are registered when the skill is invoked, and the hooks page says nothing of a resume, so after a computer restart the hooks and the watch return only when the orchestrator runs the skill again, a step to remember, and a first turn in plan mode starts nothing. Superseded by S76, which keeps every part of S66 but registers the hooks where Claude Code loads them at every start and resume. About two hours; touches solve-W218's S63/S65 at cmd_questions_watch's print line and at edited.\"",
         "reason": "why-P138-b's probe (9 October 2026) proves the restart gap, and W286 makes the frontmatter the one home inside the skill's files"
+      },
+      {
+        "at": "2026-10-12T11:58+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "chosen by Thobias: \"Q95 Answer 1: \"b. a is a bad option because i want most possible of the information to be in the SKILL file not in random ish locations.\"\"",
+        "reason": "In Q95 he chose (b), the hooks in the skill's own file, so that as much as possible of the skill stands in SKILL.md; he accepted the cost the option stated: after a computer restart the hooks wait until the skill is run again"
       }
     ]
   },
@@ -24413,7 +24427,7 @@
   {
     "id": "S76",
     "kind": "solution",
-    "status": "proposed",
+    "status": "rejected",
     "text": "S66 with its hooks in the repo's committed .claude/settings.json, which Claude Code loads at every start and resume of a session in the repo; Thobias adds the file by hand in each repo, since auto mode refuses a session's write of it; each hook exits at once unless the session is the repo's orchestrator (the session the script runs for, kept in state/ and renewed at every start or resume); in that session a background hook (asyncRewake) starts the one-shot question watch at SessionStart (startup, resume, fork, compact) and at every turn's end, so the watch runs from the moment the session opens, before any turn and in any mode, and wakes it at a save even when idle; the watch reports each save once and keeps a record of what it reported; watch-guard.sh at Stop and after every tool call keeps the turn from ending and reminds while a save is not yet taken as read or closed, except in plan mode, where the orchestrator cannot act; PreToolUse denies AskUserQuestion",
     "fixes": [
       "W243",
@@ -24425,7 +24439,12 @@
       "W286"
     ],
     "assessment": "Fixes what S77 fixes, restart included, with the same pointer to one script in the skill's folder and the same status check (W286, P138), but the block stands in each repo's committed .claude/settings.json: it travels with the repo to another machine or a teammate, and since auto mode refuses a session's write of a settings file (9 October 00:27 UTC), setup cannot write it, so Thobias adds it by hand in every repo. Not recommended since that refusal: one step of his per repo instead of one per machine. Follows the global CLAUDE.md ruling that .claude/ keeps the files Claude Code reads. About three hours.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T11:58+02:00",
+      "words": "Q95 Answer 1: \"b. a is a bad option because i want most possible of the information to be in the SKILL file not in random ish locations.\"",
+      "reason": "In Q95 he chose (b), S66, over (c), this solution, a block in each repo's .claude/settings.json; his reason against settings files holds for it too"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -24474,13 +24493,22 @@
         "commit": "d57a5dd",
         "change": "assessment was \"Root fix, restart included: the waker belongs to the session and is registered by a file Claude Code reads at every start and resume, so no step is remembered after a computer restart (P135) or ever (W244, W245); the watch runs before the first turn, so plan mode does not stop it; the rest as S66 (W243, W252, W251, W253, P126, P129). P138 goes too: the new SKILL.md wording drops the untrue 'a Stop hook in his ~/.claude/settings.json' and names the file setup writes. The orchestrator is the session whose id stands in state/orchestrator.session; a plain claude --resume keeps the id, so only a --fork-session resume needs it renewed at SessionStart. The report-once record keeps a restarted watch from waking the session again and again for a save left unhandled (plan mode, the harness's 8-block cap), and it is the record solve-W218's S63/S65 need for question-close to refuse a save the watch has not printed, so one record serves both. Follows the global CLAUDE.md ruling (Thobias, 3 October 2026): '.claude/ keeps only the files Claude Code itself reads (settings, skill pointers, the CLAUDE.md bridge)'. Cost: the hooks run in every session in the repo and its worktrees and exit at once there (one bash start per tool call); the file is committed, so it reaches any machine, and does nothing where the skill is not installed; writing it may need Thobias's approval once per repo, as the settings.json edit did. Slice 1 tests asyncRewake at SessionStart and Stop in a scratch repo (fallback PostToolUse, decided in Q95). Opening the orchestrator session after a restart stays his. Lands in .claude/settings.json (about 20 lines), ~/.claude/skills/orchestrate watch-guard.sh (about 35), cmd_questions_watch (about 15), cmd_setup (about 5), SKILL.md (the wording in Q95, restart step deleted); about three hours.\"",
         "reason": "W286 (9 October 2026): auto mode refuses a session's write of a settings file, so setup cannot write .claude/settings.json"
+      },
+      {
+        "at": "2026-10-12T11:58+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "rejected by Thobias: \"Q95 Answer 1: \"b. a is a bad option because i want most possible of the information to be in the SKILL file not in random ish locations.\"\"",
+        "reason": "In Q95 he chose (b), S66, over (c), this solution, a block in each repo's .claude/settings.json; his reason against settings files holds for it too"
       }
     ]
   },
   {
     "id": "S77",
     "kind": "solution",
-    "status": "proposed",
+    "status": "rejected",
     "text": "One block in Thobias's global ~/.claude/settings.json, added once by him with '! bash ~/.claude/skills/orchestrate/orchestrate.sh hooks-install' (a session may not write the file), that only points four moments (SessionStart, Stop, PostToolUse, PreToolUse on AskUserQuestion) at one script in the skill's folder; the script does all of S76's work and exits at once in any session but the repo's orchestrator; status checks that the block is there and, when it is not, says to ask him to run that command; it serves every repo on this machine and loads at every start and resume",
     "fixes": [
       "W243",
@@ -24492,7 +24520,12 @@
       "W286"
     ],
     "assessment": "Root fix, restart included, and the recommended one since auto mode refuses every session's write of a settings file (9 October 00:27 UTC, [Self-Modification]; the skill's sessions all run in auto mode): only a settings file loads hooks before a resumed session's first turn (a skill-frontmatter hook is gone after claude --continue until the skill is invoked again, why-P138-b's probe), so one step of his is the floor, and this makes it one per machine, like installing the skill. W286: the only thing outside the skill's files is a fixed pointer naming every moment the design uses, so no later fix has to reach it (the behaviour lives in the script, edited in place like the rest of the skill), and status reads it, so the skill never again states a hook that is not registered (P138). The rest as S76: P126, P129, P135 (P131 fixed already); S63's watch change lands with it as one change to the watch. Cost: the hooks start a bash in every session on the machine, which exits at once outside the orchestrator; a new machine needs the same one command, as it needs the skill. About three hours, hooks-install included.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T11:58+02:00",
+      "words": "Q95 Answer 1: \"b. a is a bad option because i want most possible of the information to be in the SKILL file not in random ish locations.\"",
+      "reason": "In Q95 (a) was this solution, a block in his ~/.claude/settings.json; he rejected it because it puts part of the skill outside SKILL.md"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -24550,6 +24583,15 @@
         "commit": "d57a5dd",
         "change": "assessment was \"Fixes the same roots as S76, restart included (global settings also load at every start and resume). Differs in cost only: one manual edit by Thobias, since an agent's edit of his settings.json was refused as self-modification on 9 October, against one committed file per repo that setup writes; the hooks then run in every session on the machine, and they do not travel with a repo to another machine or a teammate. Same code otherwise, minus the setup step. Not recommended: S76 needs no step of his beyond, at most, one approval per repo.\"",
         "reason": "W286 and P138 (9 October 2026): auto mode refuses a session's write of any settings file, so the block is added by Thobias's own command, and the pointer design keeps every later change inside the skill's files"
+      },
+      {
+        "at": "2026-10-12T11:58+02:00",
+        "by": "logoslang-solve-W243",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "d57a5dd",
+        "change": "rejected by Thobias: \"Q95 Answer 1: \"b. a is a bad option because i want most possible of the information to be in the SKILL file not in random ish locations.\"\"",
+        "reason": "In Q95 (a) was this solution, a block in his ~/.claude/settings.json; he rejected it because it puts part of the skill outside SKILL.md"
       }
     ]
   },
