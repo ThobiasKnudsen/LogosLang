@@ -28802,7 +28802,11 @@
     "expected": "both print `0`: a value nobody reads is not read; data built whole at parse is not run again (declare::run's own comment)",
     "tier": "interpreted",
     "found": "logoslang-why-P150-a, FOUND in round 1 on P150, 12 October 2026",
-    "why": null,
+    "why": [
+      "W314",
+      "W296",
+      "W297"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -28814,7 +28818,35 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "783d78a",
+        "change": "why + W314",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "783d78a",
+        "change": "why + W296",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "783d78a",
+        "change": "why + W297",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "S90",
@@ -29846,7 +29878,7 @@
   {
     "id": "W309",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "declare::run decides whether to run the declared field by a list of its own, skipping only storage (is_storage) and Read::Aggregate, instead of the reading rule's split, where read_kind gives Read::Executable to a node that runs and one of 12 other kinds to data; so the text or rational_number literal that declare_here's last arm binds with Binding::set_dyad and keeps as declared is run at its declaration, though declare::run's own comment calls a node with no run data built whole at parse and Execution is function application runs only a fn or a type's run",
     "proposed_for": "P157",
     "why": null,
@@ -29883,7 +29915,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W314",
     "made": {
       "at": "2026-10-12T09:43+02:00",
       "by": "logoslang-why-P157-a",
@@ -29893,7 +29925,17 @@
       "run": "why-P157",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "783d78a",
+        "change": "merged into W314",
+        "reason": "A and B state the same fact: declare::run runs the declared node unless it is storage or reads Read::Aggregate, its own list beside read_kind's split, where Read::Executable says a node has a run"
+      }
+    ]
   },
   {
     "id": "W310",
@@ -30169,6 +30211,144 @@
         "commit": "06d47f5",
         "change": "asked: no why found",
         "reason": "both agents: the only answer to why the code still follows the old heading is history; DESIGN already has the rule, and its one open point (Q79) does not touch f32 into f64 or i32 into i64"
+      }
+    ]
+  },
+  {
+    "id": "W314",
+    "kind": "why",
+    "status": "accepted",
+    "text": "declare::run runs a declaration's declared node unless it is storage or reads Read::Aggregate, two exclusions, where read_kind's Read::Executable is what says a node has a run (declare::run's own comment: a node with no run is data built whole at parse), and declare::lower lowers declared with no test at all; so a text node (Read::Opaque) or a fraction literal (Read::Literal), which declare_here's last arm leaves in declared as the node the name denotes, is run on the interpreted tier and lowered on the compiled one, that is read whole, at its own declaration",
+    "proposed_for": "P157",
+    "why": null,
+    "anchors": [
+      "src/identities/declare.rs",
+      "declared_of",
+      "is_storage",
+      "read_kind",
+      "Executable",
+      "Aggregate",
+      "declare_here",
+      "set_dyad",
+      "src/identities/read.rs"
+    ],
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'is data and was built whole|is_storage\\(declared\\)|!= super::read::Read::Aggregate|rt.run\\(declared\\)|lw.lower\\(declared_of' src/identities/declare.rs; rg -n 'Read::Executable\\(Dispatch::Call\\(op\\)\\)|Read::Executable\\(Dispatch::Leaf\\(leaf\\)\\)|meta::FRACTION_TAG => Read::Literal|^\\s+Read::Opaque$' src/identities/read.rs; rg -n 'Binding::set_dyad\\(binding, read\\);' src/parse/declare.rs",
+        "output": "src/identities/declare.rs:87:        // initializes it. Nor has a node with no run, which is data and was built whole at parse.\nsrc/identities/declare.rs:88:        if !rt.types().is_storage(declared)\nsrc/identities/declare.rs:89:            && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate\nsrc/identities/declare.rs:91:            rt.run(declared)?;\nsrc/identities/declare.rs:100:        lw.lower(declared_of(node))?;      (declare::lower, no test)\nsrc/identities/read.rs:82:        return Read::Executable(Dispatch::Call(op));\nsrc/identities/read.rs:122:                Read::Executable(Dispatch::Leaf(leaf))\nsrc/identities/read.rs:127:        meta::FRACTION_TAG => Read::Literal,\nsrc/identities/read.rs:139:            Read::Opaque      (STRING_TAG among the kinds)\nsrc/parse/declare.rs:766:                Binding::set_dyad(binding, read);      (declare_here's last arm: declared = read)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "bash why-probes/run.sh why-probes/p157-b-axes.txt   (each line one program through target/release/logos, then exit $?)",
+        "output": "s := «a», 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1\nr := 1/2, 0 -> run error: a literal here has no exact value in the type it lands in, exit 1\nx := 1.5, 0 -> the same, exit 1\nx := 3, 0 -> 0 (a whole literal molds at i32, so running it passes)\nr := 1/2 + 1/2, 0 -> 0 (a rational value gets a 16-byte place and an initializer)\nt := i32, 0 -> 0 (Read::Identity, running it gives its address)\nh := fn () -> i32 ( s := «a», 0 ), h() -> the text error, exit 1\nh := fn () -> i32 ( s := «a», 0 ), h.compile(), h() -> run error: compile() failed: this cannot be compiled yet, exit 1\nh := fn () -> i32 ( x := 1.5, 0 ), h.compile(), h() -> run error: compile() failed: a literal here has no exact value in the type it lands in, exit 1",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "sed -n '85,92p' src/identities/declare.rs",
+        "output": "        let declared = declared_of(node);\n        // The storage a hole laid out, `x := ?` or `x := T ?`, has nothing to run: nothing\n        // initializes it. Nor has a node with no run, which is data and was built whole at parse.\n        if !rt.types().is_storage(declared)\n            && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate\n        {\n            rt.run(declared)?;\n        }",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n '^    (Scalar|Pointer|Container|Identity|Node|Address|Literal|Rational|Aggregate|Opaque|Unit|Executable|Undefined)\\b' src/identities/read.rs",
+        "output": "22:    Scalar(NumType),\n24:    Pointer(DyadPtr),\n27:    Container(DyadPtr),\n29:    Identity,\n31:    Node,\n33:    Address,\n35:    Literal,\n38:    Rational,\n40:    Aggregate,\n43:    Opaque,\n45:    Unit,\n46:    Executable(Dispatch),\n48:    Undefined,",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "for l in 's := «a», 0' 'r := 1/2, 0' 'k := i32, 0' 'r := 4/2, 0' 'g := fn () -> i32 ( s := «a», 0 ), g.compile(), g()'; do target/release/logos \"$l\"; echo \"exit $?\"; done   (release build of dev 39f2d7e, interpreted unless g.compile())",
+        "output": "s := «a», 0 -> run error: a record, text or hole is not read as one value; read a field or take its address; exit 1\nr := 1/2, 0 -> run error: a literal here has no exact value in the type it lands in; exit 1\nk := i32, 0 -> 0; exit 0   (a type is data too, but Runtime::run gives its address without failing)\nr := 4/2, 0 -> 0; exit 0   (a whole fraction molds to i32)\ncompiled: g := fn () -> i32 ( s := «a», 0 ), g.compile(), g() -> run error: compile() failed: this cannot be compiled yet; exit 1   (declare's lower lowers declared with no skip at all, W3's tier copy)",
+        "commit": "39f2d7e"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "declare::run decides whether to run the declared field by a list of its own, skipping only storage (is_storage) and Read::Aggregate, instead of the reading rule's split, where read_kind gives Read::Executable to a node that runs and one of 12 other kinds to data; so the text or rational_number literal that declare_here's last arm binds with Binding::set_dyad and keeps as declared is run at its declaration, though declare::run's own comment calls a node with no run data built whole at parse and Execution is function application runs only a fn or a type's run"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:49+02:00",
+      "by": "logoslang-why-P157-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "39f2d7e",
+      "run": "why-P157",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "783d78a",
+        "change": "accepted as a why of P157, same as W309",
+        "reason": "A and B state the same fact: declare::run runs the declared node unless it is storage or reads Read::Aggregate, its own list beside read_kind's split, where Read::Executable says a node has a run"
+      }
+    ]
+  },
+  {
+    "id": "P165",
+    "kind": "problem",
+    "status": "open",
+    "text": "A line whose value nothing reads is still read whole, so a bare text or fraction line fails: the line runners Parser::drain and scope::run run every line with rt.run, each with its own list of what to skip (drain: comment, defer, square_brackets; scope::run: comment, defer)",
+    "program": "target/release/logos '«a», 0'; target/release/logos '1/2, 0'; target/release/logos '5000000000, 0'; target/release/logos 'h := fn () -> i32 ( «a», 0 ), h()'",
+    "output": "\"run error: a record, text or hole is not read as one value; read a field or take its address\", exit 1; \"run error: a literal here has no exact value in the type it lands in\", exit 1 (twice); the text error again, exit 1",
+    "expected": "`0` each time: ›The pass runs only as far as it must, in order, and never twice‹ (\"an unnamed one is dropped\") and ›Text literals are plain values‹",
+    "tier": "interpreted",
+    "found": "logoslang-why-P157-b, FOUND in round 1 on P157, 12 October 2026, release build of dev 39f2d7e",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:50+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "783d78a",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P166",
+    "kind": "problem",
+    "status": "open",
+    "text": "A fraction inside `{…}` in a quote is molded to `i32`, so `print «{1/2}»` fails",
+    "program": "target/release/logos 'print «{1/2}»'",
+    "output": "run error: a literal here has no exact value in the type it lands in, exit 1",
+    "expected": "the rational one half shown (›A plain number is a `rational_number`…‹)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P157-b, FOUND in round 1 on P157, 12 October 2026, release build of dev 39f2d7e",
+    "why": [
+      "W296"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:50+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "783d78a",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:50+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "783d78a",
+        "change": "why + W296",
+        "reason": null
       }
     ]
   }
