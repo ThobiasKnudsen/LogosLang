@@ -796,8 +796,6 @@ unsafe fn land_leaf(
             let bits = rational::mold_to(plain, nt).ok_or(ParseError::UncomputableLiteral)?;
             return Ok(store.alloc_blob(ty, &bits.to_ne_bytes()[..nt.bytes()]));
         }
-        // What a bare parameter or a `dyad` holds is known only at the call: stand-in for #216.
-        read::Read::Scalar(_) if from.is_null() || from == types.dyad_ => true,
         read::Read::Scalar(_) => {
             if from != ty && subset::includes(types, from, ty) == Some(true) {
                 return Ok(convert::build_convert(store, types, value, from, ty));
@@ -1105,9 +1103,9 @@ pub(crate) unsafe fn commit_fn_body(
     body: DyadPtr,
     output: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    if output == types.void_ || read::place_layout(types, output).is_none() {
+    let Some((place, _)) = read::place_layout(types, output) else {
         return Ok(body);
-    }
+    };
     walk_tail(types, body, &mut |leaf| {
         refuse_statement(types, leaf)?;
         // A call may fill a parameter with a number, which the result's reader would follow as
@@ -1117,6 +1115,11 @@ pub(crate) unsafe fn commit_fn_body(
         }
         // An `out` already hands back its bytes.
         if dyad::ty(leaf) == types.by_copy.out {
+            return Ok(leaf);
+        }
+        // What a bare parameter or a `dyad` holds is known only at the call: stand-in for #216.
+        let from = read::output_type(types, leaf);
+        if matches!(place, read::Read::Scalar(_)) && (from.is_null() || from == types.dyad_) {
             return Ok(leaf);
         }
         let landed = land(store, types, leaf, output)?;

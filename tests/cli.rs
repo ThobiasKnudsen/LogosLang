@@ -1542,6 +1542,10 @@ fn a_value_lands_unwritten_only_in_a_type_that_holds_every_value_of_it() {
         "rec := type ( a := i64 ?, b := f64 ? ), v := rec (i32 3, i64 4)",
         "m := hashmap i32 -> i32 ?, m[i64 3] = 4",
         "x := f64 3.5, x pt",
+        "g := fn (b) -> i32 ( mut x := i32 0, x = b, x ), g.compile(), g(f64 2.5)",
+        "g := fn (b) -> i32 ( h := fn (a := i32 ?) -> i32 ( a ), h(b) ), g(5)",
+        "g := fn (b) -> i64 ( b pt ), g(i64 3)",
+        "mut d := dyad ?, d = i32, mut x := i32 0, x = d",
     ] {
         let out = logos().arg(format!("{pt}, {src}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
