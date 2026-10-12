@@ -34009,7 +34009,7 @@
     "id": "P180",
     "kind": "problem",
     "status": "open",
-    "text": "An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again",
+    "text": "An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again. The REPL cases are fixed on the issue-234 branch at 3dccfdb (Q114: the file stays loaded for the session); the command-line cases (a ( ) block that faults, a later parse failure) are not",
     "program": "logos 'import ./tests/fixtures/deferring.logos, error «x»' (control); logos '( import ./tests/fixtures/deferring.logos, error «x» )'; logos 'import ./tests/fixtures/deferring.logos, zz'; REPL: ( import ./tests/fixtures/deferring.logos, zz ), then import ./tests/fixtures/deferring.logos, then k, then ctrl-d",
     "output": "control: file ends, then <command line>: run error: x, exit 1; in a block: only the run error, exit 1; with zz: only <command line>:1:42: error: unknown name `zz`, exit 1; REPL: k echoes 1 and nothing prints at the end; dev 6af86ca and the issue-234 branch, release, interpreted",
     "expected": "file ends printed in every case, where the program ends, as the fixture says the file's scope lives as long as the program",
@@ -34027,7 +34027,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T11:51+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "9ddd441",
+        "change": "text was \"An imported file's defer never runs when the importing line fails at its parse after the import, or when the import sits in a ( ) block whose run faults; it runs when the same import faults outside a block. In the REPL it then never runs at all, since a second import does not run the file again\"",
+        "reason": "logoslang-issue-234-worker, fix round 1 of #234, 12 October 2026"
+      }
+    ]
   },
   {
     "id": "P181",
