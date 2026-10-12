@@ -4943,11 +4943,20 @@ fn a_failed_repl_line_leaves_no_trace() {
 #[test]
 fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
     let held = "import ./tests/fixtures/held.logos";
-    // Neither a fault nor a failed parse after the import ends the file: the session does, once.
-    for failing in [format!("{held}, error «boom»"), format!("{held}, zz")] {
+    // Neither a fault, a failed parse after the import, nor a `free` the line parsed and never
+    // ran ends the file: the session does, once.
+    for failing in [
+        format!("{held}, error «boom»"),
+        format!("{held}, zz"),
+        format!("{held}, error «boom», free h"),
+        format!("{held}, free h, zz"),
+    ] {
         let (echoes, stderr) = repl(format!("{failing}\n{held}\nh.n\n").as_bytes());
         assert_eq!(echoes, ["9", "freed 9"], "{failing}: stderr: {stderr}");
     }
+    // A `free` the line ran before its fault ended the value there.
+    let (echoes, stderr) = repl(format!("{held}, free h, error «boom»\n1\n").as_bytes());
+    assert_eq!(echoes, ["freed 9", "1"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
         b"import ./tests/fixtures/owning_pub.logos, error \xc2\xabboom\xc2\xbb\n\
           import ./tests/fixtures/owning_pub.logos, p@\n",

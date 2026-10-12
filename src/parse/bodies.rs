@@ -1497,18 +1497,12 @@ impl<'a> Parser<'a> {
     /// holds a name alone decides: a name held from the scope's start is an enclosing
     /// scope's, and one a nested line the pass ran ended is not held.
     pub(super) fn end_after_fault(&mut self, open: &OpenScope) {
-        let types = self.types;
-        // SAFETY: held places and reached names are dyads from the store.
-        let reached =
-            |item: &ExitItem| open.reached.iter().any(|&n| unsafe { self.holds(item, n) });
         let ends: Vec<ExitItem> = open
             .exit
             .iter()
             .rev()
-            // SAFETY: as above.
-            .filter(|item| unsafe {
-                item.from > 0 && item.held_at_fault(types, open.ran) && !reached(item)
-            })
+            // SAFETY: held places and reached names are dyads from the store.
+            .filter(|item| item.from > 0 && unsafe { self.held_after_fault(open, item) })
             .copied()
             .collect();
         for item in ends {
@@ -1517,6 +1511,16 @@ impl<'a> Parser<'a> {
                 return;
             }
         }
+    }
+
+    /// Whether `item` is still held where `open`'s pass stopped on a fault or a failed parse:
+    /// held at that line, and not ended by a nested line the pass ran.
+    ///
+    /// # Safety
+    /// `item`'s place and `open`'s reached names must be dyads from the store.
+    unsafe fn held_after_fault(&self, open: &OpenScope, item: &ExitItem) -> bool {
+        item.held_at_fault(self.types, open.ran)
+            && !open.reached.iter().any(|&n| self.holds(item, n))
     }
 
     /// `immediate x` (DESIGN ›`immediate x` runs the expression to its right as soon as
@@ -1617,9 +1621,10 @@ impl<'a> Parser<'a> {
         top
     }
 
-    /// What the files a failed REPL line imported hold and defer leaves the line's end and
-    /// joins `session`'s, as a kept line's does: a file loads once per run, and the run is the
-    /// session (DESIGN ›Importing is dropping the text there, wrapped in its own scope‹).
+    /// What the files a failed REPL line imported still hold, and what they defer, leaves the
+    /// line's end and joins `session`'s, as a kept line's does: a file loads once per run, and
+    /// the run is the session (DESIGN ›Importing is dropping the text there, wrapped in its own
+    /// scope‹).
     ///
     /// # Safety
     /// `session` must be the scope node the driver minted for the session.
@@ -1629,8 +1634,16 @@ impl<'a> Parser<'a> {
         let (files, own): (Vec<ExitItem>, Vec<ExitItem>) =
             std::mem::take(&mut open.exit).into_iter().partition(|h| imported.contains(&h.what));
         open.exit = own;
-        let items: Vec<DyadPtr> =
-            files.iter().map(|h| h.build(self.rt.store, self.types)).collect();
+        // A file's holds start at its import, which ran at parse whatever line the pass reached;
+        // a `free` or `move` of one the line parsed ends it only where the pass ran it.
+        let top = &self.cx.open[0];
+        let held: Vec<ExitItem> = files
+            .into_iter()
+            // SAFETY: the files' places and the reached names are dyads from the store.
+            .filter(|&item| unsafe { self.held_after_fault(top, &ExitItem { from: 0, ..item }) })
+            .map(|item| ExitItem { end: None, ..item })
+            .collect();
+        let items: Vec<DyadPtr> = held.iter().map(|h| h.build(self.rt.store, self.types)).collect();
         // SAFETY: the caller's contract; `items` are exit items just built.
         unsafe {
             crate::identities::scope::extend_exit(self.rt.store, self.types.array_, session, &items)
