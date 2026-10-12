@@ -34000,7 +34000,7 @@
     "id": "P176",
     "kind": "problem",
     "status": "open",
-    "text": "A long sum on one line takes time that grows with the square of its length: a := u64 1, s := a + a + … + a, s takes 0.39 s at 2000 terms, 1.56 s at 4000 and 6.20 s at 8000; the same with a field read (x.a + x.a + …)",
+    "text": "A long sum on one line takes time that grows with the square of its length: a := u64 1, s := a + a + … + a, s takes 0.39 s at 2000 terms, 1.56 s at 4000 and 6.20 s at 8000; the same with a field read (x.a + x.a + …). Also with i64: x := i64 1, s := i64 0 + x + x + … takes 0.11 s at 1,000 terms, 0.39 s at 2,000, 1.5 s at 4,000 (dev dc1e2ca and the #198 branch alike); + i64 (x) on each term 0.07, 0.23, 0.87 s",
     "program": "a := u64 1, s := a + a + … + a, s with N terms a, run as target/release/logos \"$(cat prog.logos)\" under /usr/bin/time; and the same with x.a + x.a + … over a record x with field a",
     "output": "2000 terms 0.39 s, 4000 1.56 s, 8000 6.20 s; field reads 0.20 s, 0.74 s, 3.0 s; dev 18817c6, release; the same on the issue-66 branch",
     "expected": "time that grows in step with the number of terms (P113, a long else-if chain, was fixed this way at 27ed63c)",
@@ -34018,7 +34018,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T13:39+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "7b23bf0",
+        "change": "text was \"A long sum on one line takes time that grows with the square of its length: a := u64 1, s := a + a + … + a, s takes 0.39 s at 2000 terms, 1.56 s at 4000 and 6.20 s at 8000; the same with a field read (x.a + x.a + …)\"",
+        "reason": "logoslang-issue-198-worker's FOUND, 12 October 2026"
+      }
+    ]
   },
   {
     "id": "P177",
@@ -34517,6 +34527,54 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "f7fe7ba",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P195",
+    "kind": "problem",
+    "status": "open",
+    "text": "A rational_number power held in a name fails when the program runs: x := 2 ^ -3, x is a run error, while f64(2 ^ -3) gives 0.125",
+    "program": "logos 'x := 2 ^ -3, x' (identities/power.logos loaded)",
+    "output": "<command line>: run error: a literal here has no exact value in the type it lands in (dev dc1e2ca and the #198 branch, release, interpreted)",
+    "expected": "x holds the rational_number 1/8 and the line echoes it, as 2 ^ -3 alone would",
+    "tier": "interpreted",
+    "found": "logoslang-issue-198-worker, slice 3 of #198, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T13:39+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "7b23bf0",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P196",
+    "kind": "problem",
+    "status": "open",
+    "text": "ln of infinity never returns: halving infinity in ln's first loop stays infinity, so ln(f64 1.0 / 0.0) and x ^ 0.5 over an infinite f64 x (through ^'s fractional branch) hang",
+    "program": "logos 'import identities/ln.logos, ln(f64 1.0 / 0.0)'; also x := f64 1.0 / 0.0, x ^ 0.5",
+    "output": "runs until killed at a 10-second limit (dev dc1e2ca and the #198 branch, release, interpreted)",
+    "expected": "ln(inf) is inf and returns at once, as exp now handles NaN and the infinities first on the #198 branch",
+    "tier": "interpreted",
+    "found": "logoslang-issue-198-worker, slice 3 of #198, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T13:39+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "7b23bf0",
       "run": null,
       "agent": null
     },
