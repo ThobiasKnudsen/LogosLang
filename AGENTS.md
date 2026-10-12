@@ -7,7 +7,7 @@ The general rules live in the global `~/.claude/CLAUDE.md` since 29 September 20
 
 # Working in this repo
 - The work is the Rust seed of the Logos language. Probe a behaviour by running a Logos program through the release build, `target/release/logos '<program>'` (build it first with `cargo build --release`), on both tiers where a compiled path exists (`f.compile()` before the call; `compile f` is refused as an unknown name), and give the program with its exact output wherever you report one. Everything after `logos` is one line of Logos source, a file path too (`logos prog.logos` parses the path as source); a program of several lines goes through `import` or the REPL, which `logos` alone starts.
-- A new worktree needs nothing more: the orchestrator copies the main checkout's `target/` into it.
+- A new worktree gets a copy of the main checkout's `target/`, so the build is incremental; run `cargo build --release` before the first probe, since nobody rebuilds the main checkout and its binary may be weeks old.
 - Commits are signed off: `git commit -s` (the DCO guard checks it).
 - `.vscode/` in the main checkout is Thobias's and untracked; leave it alone.
 
