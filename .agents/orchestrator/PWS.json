@@ -33752,5 +33752,106 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "S105",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One writer, every save shown as a change: once placed, nothing writes inside a question file but Thobias's editor; mark_seen keeps the file's text instead of its hash, the watch prints under the path the lines his save added and the lines it took away, question-seen and question-close refuse a file that changed since the watch last printed it, a chat answer goes into the closed copy through question-close, relink and links-repair skip open files (question-close repairs the closed copy's links), a change to a placed round goes in a follow-up file and his pick confirms only the text the file he answered showed; the rule stands once in SKILL.md ›Questions to Thobias‹ with its reason, every-prompt.md gives every asker the follow-up step, the template's comment tells him the file never changes under him",
+    "fixes": [
+      "W340",
+      "W341",
+      "W342",
+      "W343",
+      "W345"
+    ],
+    "assessment": "Root fix for all five: W340 (the whole placed file is his alone, so any other write is forbidden and shows in the next diff; the three prescribed writes go: SKILL.md l.69's chat answer goes to the closed copy, relink stops writing open files, and l.26's hand steps cannot include it), W345 and W339 (a save is read as its change against the version before, whose text is kept), W338 (question-seen takes as read only what the watch printed), W341 (a follow-up file; the pick confirms only the text shown), W342 (one home plus the asker's step), W343 (the need goes: nothing writes while his editor may hold the file, so nothing must know). Removes P169 both ways: no edit left to lose, and a save that takes lines away is printed before any relay. Builds S63's undone script half (Q94, decided: the watch shows his added lines, close refused after an unseen save), so S63 needs nothing more (its SKILL.md bullet, template line 4 and the reply files Q98, Q99, Q100 are placed). Leaves: question-prio's move while he holds a file (l.61, the rename sibling); a link in an open file to a question closed meanwhile opens nothing until that file closes (4 of 29 open files link another open one). Lands in ~/.claude/skills/orchestrate: orchestrate.sh (mark_seen, edited, cmd_questions_watch, cmd_question_seen, cmd_question_close, relink, cmd_links_repair; about 40 lines), SKILL.md l.62, 64, 68, 69, every-prompt.md one sentence, question-template.md comment, SKILL_HISTORY.md; about two hours. solve-W243's S77 changes how the watch starts and keeps a record of what it reported, the same record; it lands with S77 as one watch change, as S63 was to.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:58+02:00",
+      "by": "logoslang-solve-W340",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "6359afd",
+      "run": "solve-W340",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S106",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Edits stay allowed and are merged back: the orchestrator changes an open question only through a new question-edit command, which keeps the version before; after each save of his, the script three-way merges (git merge-file) his save with the orchestrator's last version over the version his editor most likely opened, writes the result back, and prints his added lines",
+    "fixes": [
+      "W345"
+    ],
+    "assessment": "Fixes W345 and W339 (the version before is kept and compared) and P169's lost lines, automatically as he asked. Leaves W340, W341, W342, W343 out of --fixes: two writers stay in one file, so his pick can confirm text he never saw (his editor shows the old copy until he saves, and the merged paragraph appears after he answered); the base his editor opened is guessed (several edits; an editor that does not reload a changed file); a merge conflict needs his hand; the merged write lands right after his save, while his editor may still hold the file. More script (question-edit, the merge, a conflict path): about half a day. Not recommended.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:58+02:00",
+      "by": "logoslang-solve-W340",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "6359afd",
+      "run": "solve-W340",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S107",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Text only: SKILL.md ›Questions to Thobias‹ keeps the ban with its reason and drops the chat-answer write (relay and close instead); every-prompt.md tells every asker that a placed question is never patched, that a change goes in a follow-up file, and that his pick confirms only the text he was shown",
+    "fixes": [
+      "W341",
+      "W342"
+    ],
+    "assessment": "Fixes W341 and W342 by words. Leaves W340 (relink still writes open files; the ban rests on a sentence again, as on 12 October, when it stood and failed twice), W345, W339 and W338 (no diff; question-seen still hashes whatever the file holds, the orchestrator's own edit too) and W343. Leaves S63's script half undone. Minutes of work. A hook denying the Edit tool on open question files could join solve-W243's S77 if that hooks block is chosen. Not recommended.",
+    "decision": null,
+    "design": [],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T10:58+02:00",
+      "by": "logoslang-solve-W340",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "6359afd",
+      "run": "solve-W340",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P175",
+    "kind": "problem",
+    "status": "open",
+    "text": "A solution that changes a rule of the orchestrate skill cannot name the rule it changes: pws.py add solution --design (and add why --design) accepts only headings of the repo's ruling document, so a fix to SKILL.md or a prompt file is recorded with no rule anchor and nothing ties it to the heading it rewrites",
+    "program": "pws.py add solution --fixes W340 --text '…' --design 'Questions to Thobias'",
+    "output": "pws.py: not a heading of the ruling document; the solution was recorded without --design (S105, 12 October 2026)",
+    "expected": "the solution names the skill heading it changes (SKILL.md ›Questions to Thobias‹), checked against that file as a DESIGN.md heading is",
+    "tier": "interpreted",
+    "found": "logoslang-solve-W340, FACT while recording S105, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T11:00+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8cfc62a",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
