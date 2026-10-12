@@ -24232,13 +24232,18 @@
   {
     "id": "S71",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "Records written where the work is: an asker places its own question file with the script's question-new from its worktree, and a solution agent (a helper for the orchestrator's own rulings) writes an approved ruling's record on a branch in its own worktree and runs the docs gate; the orchestrator checks the diff against Thobias's words and lands it on the base with one locked script command; helper-prompt.md lets a helper write such a record",
     "fixes": [
       "W248"
     ],
     "assessment": "Root fix for W248: the rule becomes one on the commands (the folder and the ruling document reach the base only through the script's locked commands, a branch's record only after the orchestrator's check), not one on a session; also removes P130 (SKILL.md lets a helper write a record, helper-prompt.md says Change nothing) by one rule for both. Moves out of the session the ruling-document work (122 tool calls on 8 October) and most question placing (137; placing Q89 took 70 s and 13 calls), about 18% of its calls; the orchestrator keeps the diff check and the points marked (orchestrator). Costs: the orchestrator no longer edits a question before Thobias sees it; script work (question-new runnable from a worktree, a command landing a record branch under the merge lock) and wording in every-prompt.md, solve-prompt.md, helper-prompt.md and agent-agnostic-prompt.md; half a day. Changes the sentence Only the orchestrator writes the ruling document, which S46 (solve-W101) rewords for the case with an orchestrator.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T12:51+02:00",
+      "words": "b because i need the agents to be able to ask be directly but that means their prompts must be change so that they ask short ans conscise questions and answers. i actually dont quite like how questions are today and the reason is that each heading in a question file is not a question just a statement so its hard to get a good overview about what the question actually is. in most cases the question hides inside one of the lines of text which is not a heading. also each text session heavily depend on what is said earlier and that is annoying because then i cannot read thorugh fast, i need to read thorugh everything to know what im actually choosing.",
+      "reason": "Q97 point 1, option (b) as shown: S73's helper writes each approved ruling, and every agent also places its own questions; he wants the agents to ask him directly, on the condition that every agent's prompt makes its questions and answers short and concise, in the question format he described (recorded by the orchestrator in SKILL.md Questions to Thobias)"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -24251,7 +24256,17 @@
       "run": "solve-W222",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T12:51+02:00",
+        "by": "logoslang-solve-W222",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "chosen by Thobias: \"b because i need the agents to be able to ask be directly but that means their prompts must be change so that they ask short ans conscise questions and answers. i actually dont quite like how questions are today and the reason is that each heading in a question file is not a question just a statement so its hard to get a good overview about what the question actually is. in most cases the question hides inside one of the lines of text which is not a heading. also each text session heavily depend on what is said earlier and that is annoying because then i cannot read thorugh fast, i need to read thorugh everything to know what im actually choosing.\"",
+        "reason": "Q97 point 1, option (b) as shown: S73's helper writes each approved ruling, and every agent also places its own questions; he wants the agents to ask him directly, on the condition that every agent's prompt makes its questions and answers short and concise, in the question format he described (recorded by the orchestrator in SKILL.md Questions to Thobias)"
+      }
+    ]
   },
   {
     "id": "S72",
@@ -24261,7 +24276,7 @@
     "fixes": [
       "W249"
     ],
-    "assessment": "Root fix for W249 (and W242 under it): gives the skill a base and branches, so the in-place edit by whichever orchestrator lands a fix goes. Moves out of the session the skill edits: on 8 October about 100 edits of the skill's files (SKILL.md 33, orchestrate.sh 27, pws.py 15, SKILL_HISTORY.md 12, pws_test.py 6, the prompts) and 54 reads, about 11% of its calls. Costs: a one-time setup (git init, a private GitHub repo or a local base, an .agents/orchestrator folder, and under S70 an orchestrator of its own), every skill fix then waits for a review round, and The installed files are the source becomes the repo's base is the source; about a day. help-5's whole-file cut would land as its first commit. Overlaps W193 (held by solve-W101), whose S46 gives SKILL.md one section on its own files and assumes no git.",
+    "assessment": "Root fix for W249 (and W242 under it): gives the skill a base and branches, so the in-place edit by whichever orchestrator lands a fix goes. Moves out of the session the skill edits: on 8 October about 100 edits of the skill's files (SKILL.md 33, orchestrate.sh 27, pws.py 15, SKILL_HISTORY.md 12, pws_test.py 6, the prompts) and 54 reads, about 11% of its calls. Costs: a one-time setup (git init, a private GitHub repo or a local base, an .agents/orchestrator folder, and under S70 an orchestrator of its own), every skill fix then waits for a review round, and The installed files are the source becomes the repo's base is the source; about a day. Overlaps W193 (held by solve-W101), whose S46 gives SKILL.md one section on its own files and assumes no git. Not yet: Thobias, Q97 point 2, 12 October 2026, chose (b) Not yet: \"option b\"; it stays proposed, neither chosen nor rejected.",
     "decision": null,
     "design": [],
     "issue": null,
@@ -24275,7 +24290,17 @@
       "run": "solve-W222",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T12:51+02:00",
+        "by": "logoslang-solve-W222",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "assessment was \"Root fix for W249 (and W242 under it): gives the skill a base and branches, so the in-place edit by whichever orchestrator lands a fix goes. Moves out of the session the skill edits: on 8 October about 100 edits of the skill's files (SKILL.md 33, orchestrate.sh 27, pws.py 15, SKILL_HISTORY.md 12, pws_test.py 6, the prompts) and 54 reads, about 11% of its calls. Costs: a one-time setup (git init, a private GitHub repo or a local base, an .agents/orchestrator folder, and under S70 an orchestrator of its own), every skill fix then waits for a review round, and The installed files are the source becomes the repo's base is the source; about a day. help-5's whole-file cut would land as its first commit. Overlaps W193 (held by solve-W101), whose S46 gives SKILL.md one section on its own files and assumes no git.\"",
+        "reason": "his Q97 answer: not yet, so S72 stays proposed with his words"
+      }
+    ]
   },
   {
     "id": "P134",
@@ -24304,13 +24329,18 @@
   {
     "id": "S73",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "A ruling's record is written by a helper: once Thobias approves a wording, the orchestrator starts a helper that writes the approved words at their rule and the History line, runs the docs gate and commits on a branch of its own worktree; the orchestrator checks the diff against his words, lands it on the base with one locked script command (land), then relays the answer; placing questions stays the orchestrator's, since it shortens each one and decides its (orchestrator) points; helper-prompt.md lets a helper write such a record",
     "fixes": [
       "W248"
     ],
     "assessment": "Root fix for W248 as far as rulings go: a ruling is no longer written only where one session may stand; it is written in a helper's worktree and only landed in the main checkout, one route for every asker (no arm per kind of asker). Also removes P130 (SKILL.md lets a helper write a record, helper-prompt.md says Change nothing) with one rule. Question placing stays in the session on purpose, with that reason, so S71's loss of the orchestrator's shortening goes. Moves out the writing of rulings, part of the 122 tool calls on the ruling document on 8 October (the rest are searches while placing questions). Costs: the asker waits for the helper too (a session start plus its record, a few minutes) before the answer is relayed; a land command in orchestrate.sh (fast-forward or cherry-pick under the merge lock, refusing anything beyond the ruling document and its history) and one sentence each in SKILL.md, helper-prompt.md and solve-prompt.md; about half a day. Rewords S46's sentence for W101 (every-prompt.md keeps that only the orchestrator writes the ruling document) to only the orchestrator lands a record on it; the same words whichever lands first.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T12:51+02:00",
+      "words": "b because i need the agents to be able to ask be directly but that means their prompts must be change so that they ask short ans conscise questions and answers.",
+      "reason": "Q97 point 1, option (b) as shown was (a), S73, and every agent also places its own questions (S71); so the helper that writes each approved ruling is chosen as part of (b)"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -24323,7 +24353,17 @@
       "run": "solve-W222",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T12:51+02:00",
+        "by": "logoslang-solve-W222",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "chosen by Thobias: \"b because i need the agents to be able to ask be directly but that means their prompts must be change so that they ask short ans conscise questions and answers.\"",
+        "reason": "Q97 point 1, option (b) as shown was (a), S73, and every agent also places its own questions (S71); so the helper that writes each approved ruling is chosen as part of (b)"
+      }
+    ]
   },
   {
     "id": "S74",
@@ -34429,6 +34469,30 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "ad8dbea",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P193",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type's parse that passes a checked tape line to a placed call whose parameter is wider than the checked type keeps the line only when it is a constant; a name or an expression line fails at parse. The call-argument landing (commit_call_args, land) wraps the narrowed tape read in a conversion node, so run_placed_call no longer sees a tape read and runs the argument while placing it; #203 (one placing operation) reworks both",
+    "program": "logos 'w := fn (n := i64 ?) -> i64 ( n * 2 ), m := type ( v := ?, output_type := type ?, share run = ( v ), share parse_rank = *.parse_rank + 1, share parse = ( if not (tape[-1].type ⊆ i32) (error «no»), tape[0].type = m, tape[0].v = w(tape[-1]), tape[0].output_type = i64, tape.is_constructed[0] = true, tape.remove(-1) ) ), x := i32 3, x m'; also (x + i32 1) m, and (i32 3) m",
+    "output": "branch issue-198-one-landing-step d943b0a: error: this identity's constructor failed while parsing: … it holds no literal or constant of it: only a constant is read as its number, exit 1 (the same for (x + i32 1) m; (i32 3) m gives 6); dev: these types do not match (crossing types needs an explicit cast) for all three; with n := i32 ? all give 6, 8 on both",
+    "expected": "6, 6 and 8: a narrowed line passed to a placed call is the line itself, run when the call runs (›A tape read checked against a number type reads as that number‹)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-198-review-1, review round 1 of #198, 12 October 2026; nothing worse than dev; for #203",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:55+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "8bb9b68",
       "run": null,
       "agent": null
     },
