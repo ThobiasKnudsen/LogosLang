@@ -30402,7 +30402,11 @@
     "status": "accepted",
     "text": "declare::run runs a declaration's declared node unless it is storage or reads Read::Aggregate, two exclusions, where read_kind's Read::Executable is what says a node has a run (declare::run's own comment: a node with no run is data built whole at parse), and declare::lower lowers declared with no test at all; so a text node (Read::Opaque) or a fraction literal (Read::Literal), which declare_here's last arm leaves in declared as the node the name denotes, is run on the interpreted tier and lowered on the compiled one, that is read whole, at its own declaration",
     "proposed_for": "P157",
-    "why": null,
+    "why": [
+      "W316",
+      "W318",
+      "W4"
+    ],
     "anchors": [
       "src/identities/declare.rs",
       "declared_of",
@@ -30471,6 +30475,33 @@
         "commit": "783d78a",
         "change": "accepted as a why of P157, same as W309",
         "reason": "A and B state the same fact: declare::run runs the declared node unless it is storage or reads Read::Aggregate, its own list beside read_kind's split, where Read::Executable says a node has a run"
+      },
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e5c8e56",
+        "change": "why + W316",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e5c8e56",
+        "change": "why + W318",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e5c8e56",
+        "change": "why + W4",
+        "reason": null
       }
     ]
   },
@@ -30484,7 +30515,9 @@
     "expected": "`0` each time: ›The pass runs only as far as it must, in order, and never twice‹ (\"an unnamed one is dropped\") and ›Text literals are plain values‹",
     "tier": "interpreted",
     "found": "logoslang-why-P157-b, FOUND in round 1 on P157, 12 October 2026, release build of dev 39f2d7e",
-    "why": null,
+    "why": [
+      "W316"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -30496,7 +30529,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e5c8e56",
+        "change": "why + W316",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P166",
@@ -30597,7 +30640,7 @@
   {
     "id": "W316",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "The seed has one way to run a node, Runtime::run (Lowerer::lower on the compiled tier), and it hands back the node's value, so on a node with no run (not Read::Executable) it reads that node whole; nothing runs a node for its effect alone, so each caller that drops the value keeps its own test of what not to run: declare::run (storage, Read::Aggregate), declare::lower (nothing), scope::run (comment, defer), the scope's lower (comment), Parser::drain (comment, defer, square_brackets), while immediate_value alone asks read_kind's Read::Executable (itself when nothing runs); ›Execution is function application‹ is one rule for what runs: a fn, a type's run, else it is data",
     "proposed_for": "W314",
     "why": null,
@@ -30613,7 +30656,11 @@
       "read_kind",
       "Executable",
       "is_comment_type",
-      "square_brackets"
+      "square_brackets",
+      "Lowerer",
+      "lower_with_teardowns",
+      "run_defer_noop",
+      "src/parse/bodies.rs"
     ],
     "design": [
       "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data",
@@ -30630,12 +30677,30 @@
         "command": "bash why-probes/run.sh why-probes/p157-b-r2.txt, then the same loop over why-probes/p157-b-axes.txt and the lines '«a», 0' and 't := i32, 0'   (each line one program through target/release/logos, release build of 39f2d7e)",
         "output": "s := «a», 0 (declare::run's test) -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1\n«a», 0 (Parser::drain's list) -> the same error, exit 1\nh := fn () -> i32 ( «a», 0 ), h() (scope::run's list) -> the same error, exit 1\nh := fn () -> i32 ( «a», 0 ), h.compile(), h() (the scope's lower) -> run error: compile() failed: this cannot be compiled yet, exit 1\nh := fn () -> i32 ( 1/2, 0 ), h.compile(), h() -> run error: compile() failed: a literal here has no exact value in the type it lands in, exit 1\nt := i32, 0 and h := fn () -> i32 ( t := i32, 0 ), h.compile(), h() -> 0 (Read::Identity reads as its address, so running it passes)\npt := type ( a := i32 ?, b := i32 ? ), h := fn () -> i32 ( p := pt ?, 0 ), h() -> 0 (declare::run skips storage)\nthe same with h.compile() before h() -> run error: compile() failed: this cannot be compiled yet, exit 1 (declare::lower lowers the Read::Aggregate place)",
         "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n '^    pub(\\(crate\\))? (unsafe )?fn (run|apply|exec|eval)\\w*' src/run.rs   (the runtime's entries; Runtime::run's doc: 'An executable node is dispatched; everything else is data read the way its type says')",
+        "output": "728:    pub unsafe fn apply(&mut self, f: DyadPtr, node: DyadPtr) -> Result<i64, RunError> {\n737:    pub(crate) unsafe fn apply_into(\n754:    pub unsafe fn apply_values(&mut self, f: DyadPtr, values: &[i64]) -> Result<i64, RunError> {\n831:    pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n '<each runner's skip test>' src/parse/bodies.rs src/identities/scope.rs src/compile.rs src/identities/declare.rs src/identities/drop_model.rs src/identities/read.rs",
+        "output": "src/parse/bodies.rs:1438:  !is_comment_type(ty)            (Parser::drain)\nsrc/parse/bodies.rs:1439:      && ty != self.types.defer_\nsrc/parse/bodies.rs:1440:      && ty != self.types.square_brackets\nsrc/identities/scope.rs:248:  if is_comment_type(logos) || logos == defer_ty {   (scope::run)\nsrc/identities/scope.rs:292:  .filter(|&e| !is_comment_type(dyad::ty(e)))   (scope's lower)\nsrc/compile.rs:334:  for &line in lines.iter().filter(|&&e| dyad::ty(e) != defer_) {   (lower_with_teardowns)\nsrc/identities/declare.rs:88:  if !rt.types().is_storage(declared)\nsrc/identities/declare.rs:89:      && read_kind(rt.types(), declared) != Read::Aggregate   (declare::run)\nsrc/identities/declare.rs:100:  lw.lower(declared_of(node))?;   (declare::lower, no test)\nsrc/identities/read.rs:128:  COMMENT_TAG | VOID_TAG => Read::Unit,   (a comment already runs to nothing)\nsrc/identities/drop_model.rs:1282:  fn run_defer_noop(..)   (defer's own run already does nothing)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w314-a.txt   (release build of dev 39f2d7e)",
+        "output": "[1, 2], 0 -> 0, exit 0   (drain skips square_brackets)\n( [1, 2], 0 ) -> run error: this node was built with no operation to run, exit 1   (scope::run does not)\nh := fn () -> i32 ( [1, 2], 0 ), h() -> the same error, exit 1\nh := fn () -> i32 ( [1, 2], 0 ), h.compile(), h() -> run error: compile() failed: this cannot be compiled yet, exit 1\nb := [1, 2], 0 -> the same no-operation error, exit 1   (declare::run does not skip it)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), 0 -> 0, exit 0   (declare::run skips storage)\npt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), p, 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (drain reads the bare line whole)",
+        "commit": "39f2d7e"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "Neither tier can run a node only for its effect: the one entry is the whole-value read, Runtime::run (whose data arms read the value or refuse it) and Lowerer::lower, so every runner that drops a value keeps its own list of nodes not to hand it: Parser::drain skips comment, defer and square_brackets, scope::run and the scope's lower skip comment and defer, declare::run skips storage and Read::Aggregate, declare::lower skips nothing; the lists differ, and two entries repeat what the nodes already do (a comment reads as Read::Unit, defer runs run_defer_noop), so a dropped [1, 2] passes at the top level and fails in a block, a function body and a declaration, and a record passes as a declaration and fails as a bare line, where Execution is function application states the rule once"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T09:54+02:00",
@@ -30646,7 +30711,17 @@
       "run": "why-P157",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e5c8e56",
+        "change": "accepted as a why of W314, same as W321",
+        "reason": "A and B state the same fact: the only run entry on either tier is the whole-value read (Runtime::run, Lowerer::lower), so every runner that drops a value keeps its own skip list (drain, scope::run and its lower, declare::run, declare::lower)"
+      }
+    ]
   },
   {
     "id": "W317",
@@ -30714,7 +30789,7 @@
   {
     "id": "W318",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "A declare node's declared field holds one of three kinds of thing and nothing on the node says which: an initializer that runs (the = store build_init makes, a construct or by_copy result), storage (a hole's place, the binding of x := y over storage, a share's binding that construct_decl writes with set_declared), or the node the name denotes (a type identity, a fn literal, a text, a fraction literal, from declare_here's last arm); its doc says the run executes it, so declare::run and declare::lower must sort the three by the node's read kind, and is_slot_fill reads the same field as the denoted slot marker",
     "proposed_for": "W314",
     "why": null,
@@ -30728,21 +30803,43 @@
       "DECL_DECLARED",
       "src/parse/declare.rs",
       "src/identities/declare.rs",
-      "src/parse/types.rs"
+      "src/parse/types.rs",
+      "set_dyad",
+      "rebind"
     ],
-    "design": [],
+    "design": [
+      "A `:=` node's fields are `lhs` and `rhs`"
+    ],
     "pages": [],
     "evidence": [
       {
         "command": "rg -n 'The declared binding, construction initializer or snapshot' src/identities/declare.rs; rg -n '^\\s+(init|place|value|read)$|set_declared\\(node, named\\)' src/parse/declare.rs; rg -n 'def.slots.contains\\(&declared\\)' src/parse/types.rs",
         "output": "src/identities/declare.rs:24:/// The declared binding, construction initializer or snapshot the run executes.\nsrc/parse/declare.rs:504:            crate::identities::declare::set_declared(node, named);   (construct_decl, a share: storage)\nsrc/parse/declare.rs:661:                init      (an empty node: runs)\nsrc/parse/declare.rs:695:                place     (a hole: storage)\nsrc/parse/declare.rs:711:                value     (construct / by_copy result: runs)\nsrc/parse/declare.rs:717:                read      (a type identity: the denoted node)\nsrc/parse/declare.rs:736:                init      (a Logos-built node: runs; the box and scalar arms also end in build_init)\nsrc/parse/declare.rs:749:                init      (an owning pointer: runs)\nsrc/parse/declare.rs:763:                read      (x := y over storage: a binding, storage)\nsrc/parse/declare.rs:767:                read      (the last arm: the node the name denotes, text, fraction literal, fn)\nsrc/parse/types.rs:561:            .is_some_and(|def| def.slots.contains(&declared) || def.free_marker == declared)   (is_slot_fill)",
         "commit": "39f2d7e"
+      },
+      {
+        "command": "rg -n '<what each arm returns as declared>' src/parse/declare.rs, lines 640 to 770 (declare_here's arms)",
+        "output": "655/661: empty node: let init = build_init(.., place, node); init      (work)\n695: hole: place                                                       (nothing to do)\n711: construct or by_copy result writing into the place: value          (work)\n716/717: type: self.cx.scopes.rebind(binding, read); read               (nothing to do)\n724: box: build_init(.., place, read)                                   (work)\n732/736: node a Logos parse builds: let init = build_init(..); init     (work)\n747/749: owning block: let init = build_init(..); init                  (work)\n757: scalar snapshot: build_init(.., place, value)                      (work)\n762/763: alias over storage: Binding::lay_out(binding, b.dyad, ..); read (nothing to do)\n766/767: last arm: Binding::set_dyad(binding, read); read               (nothing to do)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "sed -n '4,8p' src/identities/declare.rs; sed -n '502,504p' src/parse/declare.rs   (the node's contract; construct_decl after a share line runs once)",
+        "output": "//! `:=`, the declaration operator, and the `declare` node it builds:\n//! `[lhs, rhs, declared, op]`, the binding, the right side as written, and\n//! what the seed made of it, ... Running one\n//! runs `declared` for effect and yields unit.\n            self.run_on_pass(node).map_err(ParseError::Run)?;\n            let named = self.types.through(crate::identities::declare::binding_of(node));\n            crate::identities::declare::set_declared(node, named);   (work done: the field is rewritten to the name, so the pass's run finds storage and skips)",
+        "commit": "39f2d7e"
+      },
+      {
+        "command": "for l in 'x := i32 7, 0' 'pt := type ( a := i32 ?, b := i32 ? ), p := pt ?, 0' 'k := i32, 0' 's := «a», 0'; do target/release/logos \"$l\"; echo \"exit $?\"; done   (release build of dev 39f2d7e, interpreted)",
+        "output": "x := i32 7, 0 -> 0, exit 0   (build_init arm: the field is work, it runs)\np := pt ?, 0 -> 0, exit 0   (hole arm: nothing to do, skipped by is_storage)\nk := i32, 0 -> 0, exit 0   (rebind arm: nothing to do, run anyway, Read::Identity gives its address)\ns := «a», 0 -> run error: a record, text or hole is not read as one value; read a field or take its address, exit 1   (set_dyad arm: nothing to do, run anyway, Read::Opaque refused)",
+        "commit": "39f2d7e"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "declare_here fills a declare node's declared field with one of two different things and marks neither: in six arms the work the declaration does (an = initializer from build_init, or a construct writing into the name's place), in four the thing the name already is, with nothing to do (the hole's own place, an alias's storage, the type a rebind names, the node Binding::set_dyad binds); the node's own contract treats the whole field as work (\"Running one runs declared for effect\"), and A := node's fields are lhs and rhs leaves the field open (\"What the seed made of the right side stays a third slot\"), so declare::run and declare::lower can tell whether a declaration has work only from the kind of node in the field"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T09:54+02:00",
@@ -30753,7 +30850,17 @@
       "run": "why-P157",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e5c8e56",
+        "change": "accepted as a why of W314, same as W320",
+        "reason": "A and B state the same fact: declare_here puts either work (an initializer, a construct) or what the name already is (a hole's place, an alias's storage, a type, a bound node) in declared, marking neither; DESIGN leaves the field open ('What the seed made of the right side stays a third slot')"
+      }
+    ]
   },
   {
     "id": "W319",
@@ -30818,7 +30925,7 @@
   {
     "id": "W320",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "declare_here fills a declare node's declared field with one of two different things and marks neither: in six arms the work the declaration does (an = initializer from build_init, or a construct writing into the name's place), in four the thing the name already is, with nothing to do (the hole's own place, an alias's storage, the type a rebind names, the node Binding::set_dyad binds); the node's own contract treats the whole field as work (\"Running one runs declared for effect\"), and A := node's fields are lhs and rhs leaves the field open (\"What the seed made of the right side stays a third slot\"), so declare::run and declare::lower can tell whether a declaration has work only from the kind of node in the field",
     "proposed_for": "W314",
     "why": null,
@@ -30857,7 +30964,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W318",
     "made": {
       "at": "2026-10-12T09:55+02:00",
       "by": "logoslang-why-P157-a",
@@ -30867,12 +30974,22 @@
       "run": "why-P157",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e5c8e56",
+        "change": "merged into W318",
+        "reason": "A and B state the same fact: declare_here puts either work (an initializer, a construct) or what the name already is (a hole's place, an alias's storage, a type, a bound node) in declared, marking neither; DESIGN leaves the field open ('What the seed made of the right side stays a third slot')"
+      }
+    ]
   },
   {
     "id": "W321",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "Neither tier can run a node only for its effect: the one entry is the whole-value read, Runtime::run (whose data arms read the value or refuse it) and Lowerer::lower, so every runner that drops a value keeps its own list of nodes not to hand it: Parser::drain skips comment, defer and square_brackets, scope::run and the scope's lower skip comment and defer, declare::run skips storage and Read::Aggregate, declare::lower skips nothing; the lists differ, and two entries repeat what the nodes already do (a comment reads as Read::Unit, defer runs run_defer_noop), so a dropped [1, 2] passes at the top level and fails in a block, a function body and a declaration, and a record passes as a declaration and fails as a bare line, where Execution is function application states the rule once",
     "proposed_for": "W314",
     "why": null,
@@ -30915,7 +31032,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W316",
     "made": {
       "at": "2026-10-12T09:55+02:00",
       "by": "logoslang-why-P157-a",
@@ -30925,6 +31042,16 @@
       "run": "why-P157",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:55+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "e5c8e56",
+        "change": "merged into W316",
+        "reason": "A and B state the same fact: the only run entry on either tier is the whole-value read (Runtime::run, Lowerer::lower), so every runner that drops a value keeps its own skip list (drain, scope::run and its lower, declare::run, declare::lower)"
+      }
+    ]
   }
 ]
