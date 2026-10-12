@@ -26020,7 +26020,10 @@
     "expected": "`g(( y := i32 1, y + 4 ))` passes the scope's value, `5`, as one argument, as `x := (y := i32 1, i32 5), g(x)` does; a `( … )` inside the call's parentheses is one expression (›A scope's value is what it evaluates to, and `return` is an optional early exit…‹); whether `g((a, b))` is one argument or two is not looked up yet",
     "tier": "interpreted",
     "found": "logoslang-help-7, FOUND while rerunning #217 after issue 82's merge, 9 October 2026, dev aaf87c2; it is why #217's row `g((y := i32 1, box (1, 2)))` still fails",
-    "why": null,
+    "why": [
+      "W289",
+      "W290"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -26032,7 +26035,26 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T08:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "931cad0",
+        "change": "why + W289",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T08:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "931cad0",
+        "change": "why + W290",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P150",
@@ -27907,7 +27929,7 @@
   {
     "id": "W289",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "args_of, which construct_application and the three other bracket readers use to get a call's arguments, decides how many there are from the type of the node in the bracket cell alone: a scope node gives one argument per line, any other node is one argument; so when that node is a scope written inside the call's brackets, as in g((a, b)), its lines become the call's arguments, exactly as g(a, b)'s would",
     "proposed_for": "P149",
     "why": null,
@@ -27917,11 +27939,14 @@
       "src/parse/driver.rs",
       "src/identities/numtype.rs",
       "src/parse/fields.rs",
-      "src/parse/declare.rs"
+      "src/parse/declare.rs",
+      "construct_field_access",
+      "construct_dyad"
     ],
     "design": [
       "A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function",
-      "Positional arguments fill the holes in order; an expression line among them is a precondition"
+      "Positional arguments fill the holes in order; an expression line among them is a precondition",
+      "A scope's lines are its one field, `dyads`"
     ],
     "pages": [],
     "evidence": [
@@ -27934,12 +27959,25 @@
         "command": "bash why-probes/run.sh why-probes/b1.txt; bash why-probes/run.sh why-probes/b2.txt",
         "output": "$ logos 'g := fn (b := i32 ?, c := i32 ?) -> i32 ( b + c ), g((i32 4, i32 5))'\n9\n$ logos 'g := fn (b := i32 ?) -> i32 ( b ), x := (y := i32 1, i32 5), g(x)'\n5\n$ logos 'x := i64((y := i32 1, y + 4)), print «{x}»'\n1:30: error: this gives nothing, and a value is needed here\n$ logos 's := (y := i32 1, y + 4), x := i64(s), print «{x}»'\n5\n$ logos 'g := fn (b := i32 ?) -> i32 ( b ), g(( i32 4, i32 5 ) + 1)'\n6",
         "commit": "b3b125a"
+      },
+      {
+        "command": "rg -n \"args_of\\(\" src; sed -n 776,782p src/parse/driver.rs",
+        "output": "src/parse/fields.rs:680:        let call = bracket.map(|d| unsafe { self.args_of(d) });\nsrc/parse/driver.rs:756:            let args = unsafe { self.args_of(scope) };\nsrc/parse/driver.rs:776:    pub(crate) unsafe fn args_of(&self, scope: DyadPtr) -> Vec<DyadPtr> {\nsrc/parse/declare.rs:793:            let args = self.args_of(bracket.dyad);\nsrc/identities/numtype.rs:161:            let args = unsafe { p.args_of(scope) };\n    pub(crate) unsafe fn args_of(&self, scope: DyadPtr) -> Vec<DyadPtr> {\n        if dyad::ty(scope) != self.types.scope {\n            return vec![scope];\n        }\n        let Some(items) = crate::identities::scope::exprs_of(scope) else {\n            return vec![scope];\n        };",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "target/release/logos '<line>' for each line of why-probes/a1.txt and a2.txt (dev b3b125a, release build)",
+        "output": "g := fn (b := i32 ?, c := i32 ?) -> i32 ( b + c ), g((i32 4, i32 5))   -> 9, exit 0\ng := fn (b := i32 ?, c := i32 ?) -> i32 ( b + c ), g(scope (i32 4, i32 5))   -> 9, exit 0\ng := fn (b := i32 ?, c := i32 ?) -> i32 ( b + c ), g(((i32 4, i32 5)))   -> 9, exit 0\ng := fn (b := i32 ?, c := i32 ?) -> i32 ( b + c ), g.compile(), g((i32 4, i32 5))   -> 9, exit 0 (compiled tier)\nx := i32((i32 4, i32 5)), x   -> 1:25: error: a conversion takes exactly one numeric value, exit 1\nx := i32(i32 4, i32 5), x   -> 1:23: error: a conversion takes exactly one numeric value, exit 1\ng := fn (b := i32 ?) -> i32 ( b ), x := (y := i32 1, y + 4), g(x)   -> 5, exit 0 (named: a binding, not a scope node)",
+        "commit": "b3b125a"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "A call reads its arguments with args_of from the one node its bracket landed, splitting that node into its lines when its type is scope and taking any other node as one argument, so the count comes from the node's type and not from the call bracket's own lines: g((a, b)) and g(a, b) hand args_of the same scope node and both become two arguments; construct_application, construct_field_access, construct_dyad and the number conversion all read their arguments so"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T08:55+02:00",
@@ -27959,13 +27997,22 @@
         "commit": "b3b125a",
         "change": "evidence 2 was {\"command\": \"bash why-probes/run.sh why-probes/b1.txt why-probes/b2.txt (selected lines; release build of dev b3b125a, interpreted)\", \"output\": \"$ logos 'g := fn (b := i32 ?, c := i32 ?) -> i32 ( b + c ), g((i32 4, i32 5))'\\n9\\n$ logos 'g := fn (b := i32 ?) -> i32 ( b ), x := (y := i32 1, i32 5), g(x)'\\n5\\n$ logos 'x := i64((y := i32 1, y + 4)), print «{x}»'\\n1:30: error: this gives nothing, and a value is needed here\\n$ logos 's := (y := i32 1, y + 4), x := i64(s), print «{x}»'\\n5\\n$ logos 'g := fn (b := i32 ?) -> i32 ( b ), g(( i32 4, i32 5 ) + 1)'\\n6\", \"commit\": \"b3b125a\"}",
         "reason": "why-P149-b: run.sh reads only its first argument, so the two probe files run one call each; the output stands as given"
+      },
+      {
+        "at": "2026-10-12T08:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "931cad0",
+        "change": "accepted as a why of P149, same as W291",
+        "reason": "A and B state the same fact: args_of counts a call's arguments from the type of the one node its bracket landed, a scope's lines or one argument"
       }
     ]
   },
   {
     "id": "W290",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "The constructor of ( places parse_sequence_cell's value cell, and parse_block gives a bracket of one value line with nothing for its end to run as that line's own cell, not its scope node; so a call's brackets around one line leave nothing of their own, and in g((a, b)) the call's bracket cell holds the inner scope (a, b), which the call cannot tell from a bracket of two lines",
     "proposed_for": "P149",
     "why": null,
@@ -27979,7 +28026,9 @@
     ],
     "design": [
       "A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function",
-      "A scope's lines are its one field, `dyads`"
+      "A scope's lines are its one field, `dyads`",
+      "The seed's tape shape (#60, #121) and its remaining stand-ins",
+      "A bracket goes to the call whole"
     ],
     "pages": [],
     "evidence": [
@@ -27992,12 +28041,30 @@
         "command": "bash why-probes/run.sh why-probes/b1.txt; bash why-probes/run.sh why-probes/b2.txt (selected lines; release build of dev b3b125a; one line inside the call's brackets against two)",
         "output": "$ logos 'g := fn (b := i32 ?) -> i32 ( b ), g(( y := i32 1, y + 4 ))'\n1:60: error: this gives nothing, and a value is needed here\n$ logos 'g := fn (b := i32 ?, c := i32 ?) -> i32 ( b + c ), g(( y := i32 1, y ), 2)'\n3\n$ logos 'g := fn (b := i32 ?) -> i32 ( b ), g(((i32 4, i32 5)))'\nrun error: a call's argument count does not match its function\n$ logos 'g := fn (b := i32 ?) -> i32 ( b ), g.compile(), g(( y := i32 1, y + 4 ))'\n1:73: error: this gives nothing, and a value is needed here",
         "commit": "b3b125a"
+      },
+      {
+        "command": "sed -n 1227,1229p src/parse/bodies.rs; sed -n 1331,1337p src/parse/bodies.rs; sed -n 17,20p src/identities/paren.rs",
+        "output": "    pub(crate) fn parse_sequence_cell(&mut self) -> Result<Cell, ParseError> {\n        self.parse_block(false).map(|(_, value)| value)\n    }\n        // One line, and nothing for the end to run: the line stands as itself.\n        let ends_run = closed.exit.iter().any(ExitItem::held_somewhere);\n        if values > 0 && exprs.len() == 1 && !ends_run {\n            let expr = unsafe { Cell::built(exprs[0]) };\n            return Ok((scope, if last.dyad == exprs[0] { last } else { expr }));\n        }\n    cx.metas.insert(open, |p, _id, tape| {\n        let body = p.parse_sequence_cell()?;\n        p.expect_close()?;\n        tape.place_bracket_cell(body);",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "rg -n \"one-expression bracket is unwrapped|as the cell a .\\(. lands is a .scope.\" DESIGN.md",
+        "output": "1395:A `[…]` is parsed as any bracket and any expression. The cell a `[` lands is a value of its own identity, `square_brackets`, as the cell a `(` lands is a `scope`. ...\n1456:- A one-expression bracket is unwrapped to its expression, so the bracket a `(` landed is marked on the cell rather than read off the scope type.",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "target/release/logos '<line>' for each line of why-probes/a1.txt (dev b3b125a, release build)",
+        "output": "g := fn (b := i32 ?) -> i32 ( b ), g((i32 5))   -> 5, exit 0 (one line inside one line: unwrapped twice, one argument)\ng := fn (b := i32 ?, c := i32 ?) -> i32 ( b + c ), g(( y := i32 1, y ), 2)   -> 3, exit 0 (outer bracket has two lines, so it stays a scope)\ng := fn (b := i32 ?) -> i32 ( b ), g(( y := i32 1, y + 4 ))   -> 1:60: error: this gives nothing, and a value is needed here, exit 1\ng := fn (b := i32 ?) -> i32 ( b ), g.compile(), g(( y := i32 1, y + 4 ))   -> 1:73: the same error, exit 1 (compiled tier)",
+        "commit": "b3b125a"
       }
     ],
     "found_by": [
+      "A",
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "parse_block hands a bracket of one line, with nothing for its end to run, back as that line itself, and the constructor of ( places it with place_bracket_cell while parse_sequence_cell drops the block scope that held the line; so the ( of g(( a, b )) lands the inner scope node (a, b), the same node the bracket of g(a, b) lands, and nothing on the node says it was one line of an outer bracket; DESIGN keeps this unwrap as a seed stand-in, against the rule that the cell a ( lands is a scope"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-12T08:56+02:00",
@@ -28008,12 +28075,22 @@
       "run": "why-P149",
       "agent": "B"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T08:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "931cad0",
+        "change": "accepted as a why of P149, same as W292",
+        "reason": "A and B state the same fact: parse_block hands a one-line bracket back as that line itself, so the bracket of g((a, b)) lands the inner scope, the same node g(a, b) lands; DESIGN lists it as a seed stand-in against ›A bracket goes to the call whole‹"
+      }
+    ]
   },
   {
     "id": "W291",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "A call reads its arguments with args_of from the one node its bracket landed, splitting that node into its lines when its type is scope and taking any other node as one argument, so the count comes from the node's type and not from the call bracket's own lines: g((a, b)) and g(a, b) hand args_of the same scope node and both become two arguments; construct_application, construct_field_access, construct_dyad and the number conversion all read their arguments so",
     "proposed_for": "P149",
     "why": null,
@@ -28049,7 +28126,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W289",
     "made": {
       "at": "2026-10-12T08:57+02:00",
       "by": "logoslang-why-P149-a",
@@ -28059,12 +28136,22 @@
       "run": "why-P149",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T08:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "931cad0",
+        "change": "merged into W289",
+        "reason": "A and B state the same fact: args_of counts a call's arguments from the type of the one node its bracket landed, a scope's lines or one argument"
+      }
+    ]
   },
   {
     "id": "W292",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "parse_block hands a bracket of one line, with nothing for its end to run, back as that line itself, and the constructor of ( places it with place_bracket_cell while parse_sequence_cell drops the block scope that held the line; so the ( of g(( a, b )) lands the inner scope node (a, b), the same node the bracket of g(a, b) lands, and nothing on the node says it was one line of an outer bracket; DESIGN keeps this unwrap as a seed stand-in, against the rule that the cell a ( lands is a scope",
     "proposed_for": "P149",
     "why": null,
@@ -28103,7 +28190,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W290",
     "made": {
       "at": "2026-10-12T08:57+02:00",
       "by": "logoslang-why-P149-a",
@@ -28112,6 +28199,40 @@
       "commit": "b3b125a",
       "run": "why-P149",
       "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T08:57+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "931cad0",
+        "change": "merged into W290",
+        "reason": "A and B state the same fact: parse_block hands a one-line bracket back as that line itself, so the bracket of g((a, b)) lands the inner scope, the same node g(a, b) lands; DESIGN lists it as a seed stand-in against ›A bracket goes to the call whole‹"
+      }
+    ]
+  },
+  {
+    "id": "P154",
+    "kind": "problem",
+    "status": "open",
+    "text": "A call with the wrong number of arguments passes the parse and is refused only when it runs, on both tiers, so a wrong call that never runs is never reported",
+    "program": "target/release/logos 'c := i32 1, g := fn (b := i32 ?) -> i32 ( b ), x := if (c == 2) (g(i32 4, i32 5)) else (i32 0), x'; the same with g.compile(), before x",
+    "output": "`0`, exit 0, on both tiers; the count is checked only in RunError::ArityMismatch (src/run.rs) and CompileError::ArityMismatch (src/compile.rs); dev b3b125a",
+    "expected": "the wrong call refused where it is read, as a wrong type into a parameter is: ›Positional arguments fill the holes in order; an expression line among them is a precondition‹ says \"arity is the hole count\", though not when a wrong count is refused",
+    "tier": "interpreted",
+    "found": "logoslang-why-P149-a, FOUND in round 1 on P149, 12 October 2026, dev b3b125a",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T08:58+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "931cad0",
+      "run": null,
+      "agent": null
     },
     "history": []
   }
