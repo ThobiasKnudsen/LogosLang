@@ -28323,7 +28323,13 @@
     "status": "accepted",
     "text": "`read_kind` is a second copy of the reading rule beside `place_layout`: a node that did not come through a binding is read by `read_kind`'s own `match` on `meta::kind_of(op)`, and `place_layout` is asked only for storage (`types.storage_type`, then `place_kind`), so one type reads two ways: `rational_number` as `Read::Literal`, molded at `i32` by `rational::mold` in `run` and `lower`, against a 16-byte `Read::Rational` place; `string` as `Read::Opaque`, and `square_brackets` through the empty `op` slot of its operand record (`Dispatch::None`), each against no layout at all (`place_layout` gives `None`); `reflect::describe` is a third `match` on the byte; ›Execution is function application‹ reads a data node through its type's layout",
     "proposed_for": "P150",
-    "why": null,
+    "why": [
+      "W301",
+      "W302",
+      "W300",
+      "W303",
+      "W40"
+    ],
     "anchors": [
       "read_kind",
       "place_layout",
@@ -28397,6 +28403,51 @@
         "commit": "248ebc1",
         "change": "accepted as a why of P150, same as W294",
         "reason": "A and B state the same fact: read_kind is a second copy of the reading rule beside place_layout, asked only for storage, and the two disagree (a rational_number node reads Literal, its place Rational)"
+      },
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "why + W301",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "why + W302",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "why + W300",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "why + W303",
+        "reason": null
+      },
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "why + W40",
+        "reason": null
       }
     ]
   },
@@ -28838,7 +28889,7 @@
   {
     "id": "W298",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "The seed keeps what a built-in node does as a native leaf in an op word of each node (meta::operand_record writes an op and an output_type field into the record at 37 call sites, + among them as lhs, rhs, op, output_type), found only through the operand-record kind byte (named_slot answers for TUPLE_TAG and LIST_TAG alone), where DESIGN keeps it on the type: Execution is function application runs a fn or the type's run and else reads data, and Q-61 at Which machine operation an operator is keeps the operation on the mint, not in an op slot of each node; so whether a node runs is a question about the node that place_layout, asked about a type, cannot answer, and read_kind answers it in a match of its own on the kind byte",
     "proposed_for": "W293",
     "why": null,
@@ -28873,7 +28924,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W301",
     "made": {
       "at": "2026-10-12T09:11+02:00",
       "by": "logoslang-why-P150-a",
@@ -28883,12 +28934,22 @@
       "run": "why-P150",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "merged into W301",
+        "reason": "A and B state the same fact: whether a built-in operation's node runs is decided by the op word in the node, which a function of the type alone cannot give; DESIGN keeps the operation on the mint (Q-61)"
+      }
+    ]
   },
   {
     "id": "W299",
     "kind": "why",
-    "status": "draft",
+    "status": "merged",
     "text": "read_kind's FRACTION_TAG arm gives a fraction node Read::Literal, documented A comptime rational, molded on read: the uncommitted literal of the rule headed Numeric literals are uncommitted until context classifies them, which A plain number is a rational_number replaced on 29 September 2026 (a plain number is a value of the type rational_number, converted by the type it lands in, never molded by whatever reads it); the literal's node already holds a rational place's sixteen bytes (build_literal stores [num, den] with alloc_blob), so only this older mechanism keeps the fraction's node read, molded at i32 by rational::mold, apart from place_layout's Read::Rational",
     "proposed_for": "W293",
     "why": null,
@@ -28921,7 +28982,7 @@
       "A"
     ],
     "aliases": [],
-    "merged_into": null,
+    "merged_into": "W302",
     "made": {
       "at": "2026-10-12T09:12+02:00",
       "by": "logoslang-why-P150-a",
@@ -28931,7 +28992,17 @@
       "run": "why-P150",
       "agent": "A"
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "merged into W302",
+        "reason": "A and B state the same fact: read_kind answers Literal for a fraction because of the 'plain number reads as i32' stand-in, the uncommitted-literal model DESIGN replaced on 29 September 2026"
+      }
+    ]
   },
   {
     "id": "P158",
@@ -28972,7 +29043,7 @@
   {
     "id": "W300",
     "kind": "why",
-    "status": "draft",
+    "status": "accepted",
     "text": "Neither DESIGN.md nor a page it points to says how a value of a seed-built type that is a whole node, a text from « or a […] from [, sits in a place or is read whole: A value of a type built by a Logos parse travels as a pointer gives the node's address only to a type a Logos parse builds, Text literals are plain values says a text is a value but not how it reads, A bracket goes to the call whole hands a […] to a call and says nothing of it standing as a value, and The dyad's read surface leaves .text and .items open; so place_layout gives these types no layout (None, which its doc calls no place, while place_kind makes the same None an eight-byte Container), meta::is_node_valued asks for a Logos fn constructor, and read_kind keeps arms of its own for them (Opaque, Executable)",
     "proposed_for": "W293",
     "why": null,
@@ -29017,6 +29088,262 @@
       "commit": "b3b125a",
       "run": "why-P150",
       "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "accepted as a why of W293",
+        "reason": "only A: DESIGN has no rule for how a value of a seed-built whole-node type (text, [...]) sits in a place or is read whole"
+      }
+    ]
+  },
+  {
+    "id": "W301",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Whether a node of a built-in operation runs is decided by a word in the node, not by its type: every operand-record type (`meta::operand_record`, 37 calls in 29 files, the one native way to give a type named fields, as `square_brackets` gets `dyads` and `output_type`) also gets an `op` field, and `read_kind` runs the Rust callable leaf it finds in that word of the node (`op_slot_of`, then `value[idx]`), so `scope::fill` makes `(1, 2)` run while `construct_index` leaves the word of `[1, 2]` null; an answer that depends on the node cannot come from `place_layout`, which takes only a type, so `read_kind` holds its own arm; DESIGN keeps the operation on the type: ›Which machine operation an operator is‹ says \"consult the node's type, its mint\" and, by Q-61, \"the operation is kept on the mint, not in an op slot of each node\"",
+    "proposed_for": "W293",
+    "why": null,
+    "anchors": [
+      "operand_record",
+      "op_slot_of",
+      "read_kind",
+      "fill",
+      "construct_index",
+      "square_brackets",
+      "place_layout",
+      "src/identities/meta.rs",
+      "src/identities/read.rs",
+      "src/identities/scope.rs",
+      "src/parse/fields.rs",
+      "named_slot",
+      "src/identities/binary.rs",
+      "src/run.rs"
+    ],
+    "design": [
+      "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule",
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data",
+      "A type with a `run` whose field is `?` mints too, so its `run` body is parsed once per mint"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"let Some\\(idx\\) = meta::op_slot_of\\(op\\)|let leaf = \\*\\(value as \\*const DyadPtr\\).add\\(idx\\)|slot_of\\(\\\"op\\\"\\)|add\\(OP\\) = types.ops.scope_|alloc_words\\(sq, &\\[dyads, std::ptr::null_mut\\(\\), sq\\]\\)|A list standing as a value gives back itself\" src; rg -n \"consult the node.s type, its mint|kept on the mint, not in an op slot of each node\" DESIGN.md | cut -c1-160",
+        "output": "src/parse/fields.rs:823:        // A list standing as a value gives back itself.\nsrc/parse/fields.rs:825:        let node = self.rt.store.alloc_words(sq, &[dyads, std::ptr::null_mut(), sq]);   (construct_index: op word null)\nsrc/identities/meta.rs:148:    blob.extend_from_slice(&[roles.len() as u8, slot_of(\"op\"), slot_of(\"output_type\")]);   (operand_record)\nsrc/identities/scope.rs:71:    *(dyad::value(node) as *mut DyadPtr).add(OP) = types.ops.scope_;   (scope::fill)\nsrc/identities/read.rs:117:            let Some(idx) = meta::op_slot_of(op) else {   (read_kind, TUPLE_TAG | LIST_TAG arm)\nsrc/identities/read.rs:120:            let leaf = *(value as *const DyadPtr).add(idx);   (the word read from the node)\nDESIGN.md:1082:Machine operations are identities (`add_i32`, `fadd_f64`), each carrying its `@exec`, unchangeable. `+` is the constructor that builds the application node ... Evaluate: consult the node's type, its mint; operation filled, jump; ...\nDESIGN.md:1085:- **Ruled (2 October 2026, Thobias, Q-61):** the operation is kept on the mint, not in an op slot of each node",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "rg -n \"operand_record\\(\" src --glob \"!**/tests.rs\" | rg -v \"fn operand_record\" | wc -l; rg -l \"operand_record\\(\" src --glob \"!**/tests.rs\" --glob \"!src/identities/meta.rs\" | wc -l",
+        "output": "37\n29",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "bash why-probes/p150-b-run.sh why-probes/p150-b-w293.txt   (a scope node and a [ ] node, both operand records)",
+        "output": "$ logos '(1, 2)'\n2 (exit 0)\n$ logos '[1, 2]'\nrun error: this node was built with no operation to run (exit 1)",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "rg -n 'operand_record\\(' src --glob '!**/tests.rs' | wc -l   (38 = 37 call sites + the definition); rg -n 'Some\\(TUPLE_TAG \\| LIST_TAG\\) =>|slot_of\\(\"op\"\\), slot_of\\(\"output_type\"\\)' src/identities/meta.rs; rg -n '\"lhs\", \"rhs\", \"op\", \"output_type\"' src/identities/binary.rs; rg -n 'let leaf = \\*\\(value as \\*const DyadPtr\\).add\\(idx\\);' src/identities/read.rs; rg -n 'Read::Executable\\(Dispatch::Leaf\\(leaf\\)\\) =>' src/run.rs; rg -n -o 'the operation is kept on the mint, not in an op slot of each node' DESIGN.md",
+        "output": "38\nsrc/identities/meta.rs:148:    blob.extend_from_slice(&[roles.len() as u8, slot_of(\"op\"), slot_of(\"output_type\")]);\nsrc/identities/meta.rs:407:        Some(TUPLE_TAG | LIST_TAG) => {      (named_slot: the op slot exists for these kinds only)\nsrc/identities/binary.rs:66:        &[\"lhs\", \"rhs\", \"op\", \"output_type\"],\nsrc/identities/read.rs:120:            let leaf = *(value as *const DyadPtr).add(idx);   (read_kind reads the node's own op word)\nsrc/run.rs:835:            Read::Executable(Dispatch::Leaf(leaf)) => {\nDESIGN.md:1085:the operation is kept on the mint, not in an op slot of each node",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "target/release/logos 'i32 1 + 0'; target/release/logos '(1, 2)'; target/release/logos '[1, 2]'   (same operand-record kind; what runs follows each node's op word)",
+        "output": "1\nexit 0\n2\nexit 0\nrun error: this node was built with no operation to run\nexit 1",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The seed keeps what a built-in node does as a native leaf in an op word of each node (meta::operand_record writes an op and an output_type field into the record at 37 call sites, + among them as lhs, rhs, op, output_type), found only through the operand-record kind byte (named_slot answers for TUPLE_TAG and LIST_TAG alone), where DESIGN keeps it on the type: Execution is function application runs a fn or the type's run and else reads data, and Q-61 at Which machine operation an operator is keeps the operation on the mint, not in an op slot of each node; so whether a node runs is a question about the node that place_layout, asked about a type, cannot answer, and read_kind answers it in a match of its own on the kind byte"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:12+02:00",
+      "by": "logoslang-why-P150-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "accepted as a why of W293, same as W298",
+        "reason": "A and B state the same fact: whether a built-in operation's node runs is decided by the op word in the node, which a function of the type alone cannot give; DESIGN keeps the operation on the mint (Q-61)"
+      }
+    ]
+  },
+  {
+    "id": "W302",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`read_kind`'s `FRACTION_TAG` arm answers `Read::Literal`, not `place_layout`'s `Read::Rational`, because the seed reads a plain number as an `i32` where it is used: `run` and `lower` mold a `Literal` at `i32` (`rational::mold` is `mold_to(node, NumType::I32)`) and `handed_on` reads a rational as an `i32`, the \"stand-in for #214\" that the Seed line of ›A node's output type is per node, and its parse writes it‹ records; the address step is already shared, since `place_addr` gives a node that is no binding \"a literal's own bytes\", so `Read::Rational` would reach the sixteen bytes `[num, den]`; ›A plain number is a `rational_number`‹ makes `1/2` a `rational_number`, converted only where it lands",
+    "proposed_for": "W293",
+    "why": null,
+    "anchors": [
+      "read_kind",
+      "place_layout",
+      "place_addr",
+      "mold",
+      "mold_to",
+      "handed_on",
+      "src/identities/read.rs",
+      "src/identities/rational.rs",
+      "src/run.rs",
+      "src/compile.rs",
+      "build_literal"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it",
+      "A plain number is a `rational_number`, and a number type's definition converts it (headed \"Numeric literals are uncommitted until context classifies them\" until 29 September 2026)",
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"meta::FRACTION_TAG => (Read::Literal|Some\\(\\(Read::Rational, 16\\)\\))|stand-in for #214|None => Some\\(dyad::value\\(node\\)\\)|Read::Rational => Ok\\(self.place_addr|mold_to\\(node, NumType::I32\\)\" src; rg -n \"the stand-in for #214|converted where it lands in a number type\" DESIGN.md | cut -c1-200",
+        "output": "src/run.rs:697:            None => Some(dyad::value(node)),   (place_addr: \"A literal's own bytes.\")\nsrc/run.rs:853:            Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),\nsrc/identities/rational.rs:332:    mold_to(node, NumType::I32).map(|b| b as i32)   (rational::mold)\nsrc/identities/read.rs:127:        meta::FRACTION_TAG => Read::Literal,   (read_kind)\nsrc/identities/read.rs:145:/// as an `i32`: stand-in for #214.   (handed_on)\nsrc/identities/read.rs:272:        meta::FRACTION_TAG => Some((Read::Rational, 16)),   (place_layout)\nDESIGN.md:920:A plain number literal is a `rational_number`, a type of its own. ... converted where it lands in a number type's place.\nDESIGN.md:1141:- **Seed:** since 1 October 2026 (#82), ... a plain number a sequence or an `if` hands on reads as an `i32`, the stand-in for #214.",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "bash why-probes/p150-b-run.sh why-probes/p150-b-w293.txt   (a whole fraction against one that is not, named type against unnamed)",
+        "output": "$ logos 'r := 2/2, 0'\n0 (exit 0)\n$ logos 'r := 1/2, 0'\nrun error: a literal here has no exact value in the type it lands in (exit 1)\n$ logos 'r := rational_number 1/2, 0'\n0 (exit 0)\n$ logos 'h := fn (a) -> i32 ( 0 ), h(1/2)'\nrun error: a literal here has no exact value in the type it lands in (exit 1)",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "rg -n 'A comptime rational, molded on read|meta::FRACTION_TAG => Read::Literal|meta::FRACTION_TAG => Some\\(\\(Read::Rational, 16\\)\\)' src/identities/read.rs; rg -n 'let mut bytes = \\[0u8; 16\\];|store.alloc_blob\\(rational, &bytes\\)|mold_to\\(node, NumType::I32\\)' src/identities/rational.rs; rg -n -o 'until 29 September 2026 the rule was headed .{0,200}|A number is not uncommitted.{0,120}' DESIGN_HISTORY.md",
+        "output": "src/identities/read.rs:34:    /// A comptime rational, molded on read.\nsrc/identities/read.rs:127:        meta::FRACTION_TAG => Read::Literal,\nsrc/identities/read.rs:272:        meta::FRACTION_TAG => Some((Read::Rational, 16)),\nsrc/identities/rational.rs:73:    let mut bytes = [0u8; 16];\nsrc/identities/rational.rs:76:    store.alloc_blob(rational, &bytes)\nsrc/identities/rational.rs:332:    mold_to(node, NumType::I32).map(|b| b as i32)\nDESIGN_HISTORY.md:365: until 29 September 2026 the rule was headed \"Numeric literals are uncommitted until context classifies them\" and read \"It can become any int, uint or float. Beside a typed value it takes that type … the result stays rational_number until it lands in a typed slot.\"\nDESIGN_HISTORY.md:365: A number is not uncommitted; it is a rational_number, and the conversion belongs to the type it lands in.",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "while IFS= read -r p; do echo \"== $p\"; target/release/logos \"$p\" 2>&1; echo \"exit $?\"; done < why-probes/p150-a-r2.txt   (lines 3 to 6: the literal unnamed against the value of rational_number)",
+        "output": "== r := 1/2, 0\nrun error: a literal here has no exact value in the type it lands in\nexit 1\n== r := rational_number 1/2, 0\n0\n== h := fn (a) -> i32 ( 0 ), h(1/2)\nrun error: a literal here has no exact value in the type it lands in\nexit 1\n== h := fn (a := rational_number ?) -> i32 ( 0 ), h(1/2)\n0",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "read_kind's FRACTION_TAG arm gives a fraction node Read::Literal, documented A comptime rational, molded on read: the uncommitted literal of the rule headed Numeric literals are uncommitted until context classifies them, which A plain number is a rational_number replaced on 29 September 2026 (a plain number is a value of the type rational_number, converted by the type it lands in, never molded by whatever reads it); the literal's node already holds a rational place's sixteen bytes (build_literal stores [num, den] with alloc_blob), so only this older mechanism keeps the fraction's node read, molded at i32 by rational::mold, apart from place_layout's Read::Rational"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:12+02:00",
+      "by": "logoslang-why-P150-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "accepted as a why of W293, same as W299",
+        "reason": "A and B state the same fact: read_kind answers Literal for a fraction because of the 'plain number reads as i32' stand-in, the uncommitted-literal model DESIGN replaced on 29 September 2026"
+      }
+    ]
+  },
+  {
+    "id": "W303",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The `string` type has no storage in the seed: it is registered natively as a bare `STRING_TAG` header (`meta::record(cx.store, STRING_TAG, …)`) with no fields, its value a `[len][bytes]` blob in the node's own block, \"inert in the seed\"; DESIGN gives a string's characters to the string type's own fields (›The dyad's read surface: two fields, and the type answers the rest‹, whose Open line lists `.text` as not in the seed) and records \"a string still has no storage to read\" under ›The seed's tape shape (#60, #121) and its remaining stand-ins‹; so `place_layout` has no layout for `string` and `read_kind` answers a text node with its own `Read::Opaque`",
+    "proposed_for": "W293",
+    "why": null,
+    "anchors": [
+      "STRING_TAG",
+      "record",
+      "build_text",
+      "place_layout",
+      "read_kind",
+      "src/identities/string.rs",
+      "src/identities/read.rs"
+    ],
+    "design": [
+      "The dyad's read surface: two fields, and the type answers the rest",
+      "The seed's tape shape (#60, #121) and its remaining stand-ins",
+      "Text literals are plain values; `#` is the one comment constructor"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n \"meta::record\\(cx.store, STRING_TAG|inert in the seed|Storage: .\\[len: u64\\]\\[bytes\\].\" src/identities/string.rs; rg -n \"a string still has no storage to read|and .\\.text. \\(the array and string types. own fields\\)|a string.s characters belong to\" DESIGN.md | cut -c1-120",
+        "output": "src/identities/string.rs:4://! `string` and its `«…»` literal: a plain value, inert in the seed (nothing\nsrc/identities/string.rs:5://! consumes one yet). Storage: `[len: u64][bytes]`, the native-endian length\nsrc/identities/string.rs:21:    let record = meta::record(cx.store, STRING_TAG, meta::prec::LITERAL);\nDESIGN.md:1453: ... `tape.spelling[k]` hands back a string node built into the parser's store, the seed's form of a string value until strings are live: a string still has no storage to read, so a constructor may write the text into a cell, but nothing may yet run that cell.\nDESIGN.md:1744: ... An array's elements and a string's characters belong to the array and string types' own fields in the same way.\nDESIGN.md:1754:- **Open:** in the seed: `.items` and `.text` (the array and string types' own fields), runtime-indexed reads, and ...",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "bash why-probes/p150-b-run.sh why-probes/p150-b-w293.txt   (a text node bare and as an argument)",
+        "output": "$ logos '«a»'\nrun error: a record, text or hole is not read as one value; read a field or take its address (exit 1)\n$ logos 'h := fn (a) -> i32 ( 0 ), h(«a»)'\nrun error: a record, text or hole is not read as one value; read a field or take its address (exit 1)",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:12+02:00",
+      "by": "logoslang-why-P150-b",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:13+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "20e02c0",
+        "change": "accepted as a why of W293",
+        "reason": "only B: string has no storage in the seed, a bare STRING_TAG header, recorded in DESIGN as a stand-in ('a string still has no storage to read'), .text Open under ›The dyad's read surface‹"
+      }
+    ]
+  },
+  {
+    "id": "P159",
+    "kind": "problem",
+    "status": "open",
+    "text": "A name bound to the text type acts as another spelling of `«`: using the name makes the `«` constructor read the name's own text as a quote, which panics or misparses",
+    "program": "target/release/logos 't := «a».type, t'; control: target/release/logos 't := «a».type, 0'; then target/release/logos 't := «a».type, h := fn (s := t ?) -> i32 ( 0 ), 0'",
+    "output": "\"thread '<unnamed>' panicked at src/identities/string.rs:106:31: start byte index 2 is out of bounds for string of length 1\", exit 1; the control gives `0`; the third gives \"this `«` has no `»`\"; release build of dev b3b125a, interpreted",
+    "expected": "`t` is a name for the text type, read as that type value; no panic (a seed panic is a bug whatever the input)",
+    "tier": "interpreted",
+    "found": "logoslang-why-P150-a, FOUND in round 2 on P150, 12 October 2026",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:12+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "20e02c0",
+      "run": null,
+      "agent": null
     },
     "history": []
   }
