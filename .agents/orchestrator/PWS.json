@@ -34289,5 +34289,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P187",
+    "kind": "problem",
+    "status": "open",
+    "text": "A run error of the importer's own earlier line is reported as the imported file failing, at a line of the file: the importer's waiting line runs inside the file's pass when the file first needs a value, so its error is shown as \"import of X failed\" pointing into the file, where nothing is wrong",
+    "program": "logos 'error «boom», import ./tests/fixtures/held.logos, free h' (held.logos: bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), pub h := bag(9))",
+    "output": "<command line>:1:49: error: import of `./tests/fixtures/held.logos` failed: … ./tests/fixtures/held.logos:3:14: error: run error: boom (caret under the file's type body), exit 1; dev bffb703 and the #234 branch 50f8b65, release, interpreted; the #234 REPL gives the same",
+    "expected": "the error is reported at the importer's own `error «boom»` on the command line, column 1, with nothing said about the imported file",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-3, review round 3 of #234, 12 October 2026 (near P186, P180, P183)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:29+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fd5750b",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
