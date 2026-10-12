@@ -748,10 +748,9 @@ fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let target = read_target(rt, dyad::value(node) as *const DyadPtr)?;
         let types = rt.types();
-        if dyad::ty(target) == types.scope || dyad::ty(target) == types.square_brackets {
-            return Ok(dyad::ty(target) as i64);
-        }
-        Ok(super::read::output_type(types, target) as i64)
+        let ty =
+            bracket_kind(types, target).unwrap_or_else(|| super::read::output_type(types, target));
+        Ok(ty as i64)
     }
 }
 
@@ -1059,6 +1058,21 @@ pub(crate) unsafe fn build_bracket_arg(
     owned_lines(types, bracket)?;
     let output = at_dyad(store, types);
     Ok(node(store, types.tape.bracket_arg, types.tape.bracket_arg_leaf, &[bracket], output))
+}
+
+/// The kind of bracket `node` is, `scope` or `square_brackets`, written or wrapped by
+/// `build_bracket_arg`; `None` for any other node.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn bracket_kind(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    let node = types.through(node);
+    let bracket = if dyad::ty(node) == types.tape.bracket_arg {
+        *(dyad::value(node) as *const DyadPtr)
+    } else {
+        node
+    };
+    is_bracket(types, bracket).then(|| dyad::ty(bracket))
 }
 
 /// A line with a value to evaluate where the call runs: a number or a `bool`, or a node of a
