@@ -172,7 +172,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The `«…»` to the right of `print` or `error`, read into its parts: text runs, and
-    /// each `{…}` expression parsed here, in the scope the word appears in.
+    /// each `{…}` read here as a scope inside the one the word appears in.
     fn interpolated_quote(&mut self, word: &'static str) -> Result<Vec<DyadPtr>, ParseError> {
         let (start, len) = self.quote_span_after(word)?;
         let quote = crate::identities::string::read(self.cx.source, start)
