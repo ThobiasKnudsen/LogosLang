@@ -34497,5 +34497,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P194",
+    "kind": "problem",
+    "status": "open",
+    "text": "A bare parameter given back as a function's number result is read at the result type unchecked: wrong bits interpreted, a backend verifier failure compiled. commit_fn_body (src/identities/mod.rs) lets a leaf of unknown type into a number result unchecked; the stand-in for #216 (a body built per set of argument types) that #198's Seed line records",
+    "program": "logos 'f := fn (a) -> f64 ( a ), f(i32 3)'; f := fn (a) -> i32 ( a ), f(f64 2.5); the same after f.compile(); f := fn (a) -> i64 ( a ), f.compile(), f(i32 3)",
+    "output": "f(i32 3) into -> f64: 1.5e-323, exit 0, both tiers; f(f64 2.5) into -> i32: 0, exit 0; compiled: run error: compile() failed: the backend rejected this: Compilation error: Verifier errors, exit 1; -> i64 compiled f(i32 3): 3 by luck of sign extension; dev 5c5e0a2 and the #198 branch d943b0a, release",
+    "expected": "f(i32 3) into -> f64 gives 3.0, f(f64 2.5) into -> i32 is refused (›A type's `parse` decides what converts into it…‹), and the compiled tier runs what the interpreter runs",
+    "tier": "both",
+    "found": "logoslang-issue-198-review-1, review round 1 of #198, 12 October 2026 (near P146, the literal case #198 fixes); for #216",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:55+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "f7fe7ba",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
