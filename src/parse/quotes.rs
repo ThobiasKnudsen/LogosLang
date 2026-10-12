@@ -186,7 +186,9 @@ impl<'a> Parser<'a> {
                     &text,
                 )),
                 Piece::Scope(inner) => {
-                    let part = self.parse_within(inner.start, inner.end)?;
+                    let Some(part) = self.parse_within(inner.start, inner.end)? else {
+                        continue;
+                    };
                     // SAFETY: `part` is the reduced dyad just parsed.
                     if let Err(e) = unsafe { crate::identities::read::value_type(self.types, part) }
                     {
@@ -211,21 +213,18 @@ impl<'a> Parser<'a> {
         Ok(parts)
     }
 
-    /// A quote's `{…}` scope, one expression over its interior `from..to`: in a body lexed
-    /// once its cells are the ones lexed with the quote; where the quote is read from the
-    /// source they are lexed now. The source is cut at `to` so the segment ends there, and
-    /// offsets stay those of the whole line.
-    fn parse_within(&mut self, from: usize, to: usize) -> Result<DyadPtr, ParseError> {
+    /// A quote's `{…}`, a scope over its interior `from..to` (DESIGN ›`{ }` is text
+    /// interpolation‹): its value, or none when it has no tail and so adds no text. In a body
+    /// lexed once its cells are the ones lexed with the quote; where the quote is read from the
+    /// source they are lexed now. The source is cut at `to` so the scope ends there, and offsets
+    /// stay those of the whole line.
+    fn parse_within(&mut self, from: usize, to: usize) -> Result<Option<DyadPtr>, ParseError> {
         let whole = self.cx.source;
         self.cx.source = &whole[..to];
         self.cx.pos = from;
-        let parsed = self.parse_expression().and_then(|expr| {
-            self.skip_whitespace();
-            if self.cx.pos < to {
-                Err(ParseError::Trailing)
-            } else {
-                Ok(expr)
-            }
+        let parsed = self.parse_block(false, LinesEnd::TextEnd).map(|(scope, value)| {
+            // SAFETY: `scope` is the scope node just built.
+            unsafe { super::bodies::last_sequence_expr(scope) }.map(|_| value.dyad)
         });
         self.cx.source = whole;
         parsed

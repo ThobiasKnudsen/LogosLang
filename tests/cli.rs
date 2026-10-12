@@ -2864,8 +2864,6 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
         ("print «{x»", "this `{` has no `}`"),
         ("print «x}»", "this `}` closes no `{`"),
         ("print «{nope}»", "unknown name `nope`"),
-        ("print «{1, 2}»", "expected one expression"),
-        ("print «{}»", "nothing to evaluate"),
     ] {
         let out = logos().arg(src).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -4901,4 +4899,41 @@ fn a_failed_repl_line_leaves_no_trace() {
     // Its lines leave the session's scope.
     let (echoes, stderr) = repl(b"a := i32 1\nb := i32 2, zz\nhere.scope.dyads.size\n");
     assert_eq!(echoes, ["1"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_quote_s_braces_are_a_scope_whose_text_is_its_tail() {
+    for (src, printed) in [
+        ("print «a{ y := i32 2, y + 1 }b»", "a3b\n"),
+        ("print «a{ # c\n}b»", "ab\n"),
+        ("print «a{ # «c» }b»", "ab\n"),
+        ("print «a{}b»", "ab\n"),
+        ("print «{1, 2}»", "2\n"),
+        ("print «{}»", "\n"),
+        ("f := fn () -> void ( print «a{ y := i32 2, y + 1 }b» ), f()", "a3b\n"),
+        ("f := fn () -> void ( print «a{ # c\n}b» ), f()", "ab\n"),
+        ("f := fn () -> void ( print «a{ # «c» }b», print «a{}b» ), f()", "ab\nab\n"),
+        // A comment in the braces is a line of their scope, not of the one around them.
+        ("print «{5 # «c» * 2}», here.scope.dyads.size", "10\n1\n"),
+        ("( print «{5 # «c» * 2}», here.scope.dyads.size )", "10\n1\n"),
+    ] {
+        assert_eq!(run_line(src), (Some(0), printed.to_string(), String::new()), "{src:?}");
+    }
+    for (src, message) in [("error «a{ y := 2, y }b»", "a2b"), ("error «a{ # «c» }b»", "ab")]
+    {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains(&format!("run error: {message}")), "{src}: stderr: {stderr}");
+    }
+    // A tail that gives nothing is no tail missing: a value is read there.
+    for src in ["print «a{ x := i32 1 }b»", "print «a{ y := i32 1, print «in» }b»"] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains("gives nothing, and a value is needed here"), "{src}: {stderr}");
+    }
+    // Its names are its own, and a closer in it closes nothing.
+    let (_, _, stderr) = run_line("print «a{ y := i32 2, y }b», y");
+    assert!(stderr.contains("`y` is not in scope here"), "stderr: {stderr}");
+    let (_, _, stderr) = run_line("print «{ 1 ) }»");
+    assert!(stderr.contains("1:12: error: this `)` closes nothing"), "stderr: {stderr}");
 }
