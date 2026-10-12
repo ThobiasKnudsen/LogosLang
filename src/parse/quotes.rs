@@ -172,7 +172,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The `«…»` to the right of `print` or `error`, read into its parts: text runs, and
-    /// each `{…}` expression parsed here, in the scope the word appears in.
+    /// each `{…}` read here as a scope inside the one the word appears in.
     fn interpolated_quote(&mut self, word: &'static str) -> Result<Vec<DyadPtr>, ParseError> {
         let (start, len) = self.quote_span_after(word)?;
         let quote = crate::identities::string::read(self.cx.source, start)
@@ -186,7 +186,9 @@ impl<'a> Parser<'a> {
                     &text,
                 )),
                 Piece::Scope(inner) => {
-                    let part = self.parse_within(inner.start, inner.end)?;
+                    let Some(part) = self.parse_within(inner.start, inner.end)? else {
+                        continue;
+                    };
                     // SAFETY: `part` is the reduced dyad just parsed.
                     if let Err(e) = unsafe { crate::identities::read::value_type(self.types, part) }
                     {
@@ -211,21 +213,18 @@ impl<'a> Parser<'a> {
         Ok(parts)
     }
 
-    /// A quote's `{…}` scope, one expression over its interior `from..to`: in a body lexed
-    /// once its cells are the ones lexed with the quote; where the quote is read from the
-    /// source they are lexed now. The source is cut at `to` so the segment ends there, and
-    /// offsets stay those of the whole line.
-    fn parse_within(&mut self, from: usize, to: usize) -> Result<DyadPtr, ParseError> {
+    /// A quote's `{…}`, a scope over its interior `from..to` (DESIGN ›`{ }` is text
+    /// interpolation‹): its value, or none when it has no tail and so adds no text. In a body
+    /// lexed once its cells are the ones lexed with the quote; where the quote is read from the
+    /// source they are lexed now. The source is cut at `to` so the scope ends there, and offsets
+    /// stay those of the whole line.
+    fn parse_within(&mut self, from: usize, to: usize) -> Result<Option<DyadPtr>, ParseError> {
         let whole = self.cx.source;
         self.cx.source = &whole[..to];
         self.cx.pos = from;
-        let parsed = self.parse_expression().and_then(|expr| {
-            self.skip_whitespace();
-            if self.cx.pos < to {
-                Err(ParseError::Trailing)
-            } else {
-                Ok(expr)
-            }
+        let parsed = self.parse_block(false, LinesEnd::TextEnd).map(|(scope, value)| {
+            // SAFETY: `scope` is the scope node just built.
+            unsafe { super::bodies::last_sequence_expr(scope) }.map(|_| value.dyad)
         });
         self.cx.source = whole;
         parsed
@@ -319,7 +318,7 @@ impl<'a> Parser<'a> {
         // still holds at its end, and its `defer`s, join the program's exit.
         g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect("pushed by enter").open);
         g.0.cx.open.push(OpenScope::default());
-        let inner = g.0.run_imported();
+        let inner = g.0.run_imported(section);
         let inner_pos = g.0.cx.pos;
         let file = g.0.cx.open.pop().expect("pushed above");
         if inner.is_err() {
@@ -327,9 +326,10 @@ impl<'a> Parser<'a> {
         } else {
             let program = g.0.cx.open.first_mut().expect("the program's scope is open");
             let from = program.lines + 1;
-            program.exit.extend(
-                file.exit.into_iter().filter(|h| h.end.is_none()).map(|h| ExitItem { from, ..h }),
-            );
+            for item in file.exit.into_iter().filter(|h| h.end.is_none()) {
+                program.imported.insert(item.what);
+                program.exit.push(ExitItem { from, ..item });
+            }
         }
         g.0.outer.last_mut().expect("pushed by enter").open = std::mem::take(&mut g.0.cx.open);
         drop(g);
@@ -354,35 +354,26 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The nested pass over an imported file: each statement pending, the
-    /// file run at its end, collecting the `pub` (name, binding) pairs. On
-    /// failure the message is returned with `offset` at the stuck point.
-    fn run_imported(&mut self) -> Result<Vec<(String, DyadPtr)>, String> {
-        let mut pubs = Vec::new();
-        while let Some(item) = self.parse_next() {
-            let node = item.map_err(|e| crate::report::parse_message(&e))?;
-            // SAFETY: `node` is the line `parse_next` just returned.
-            unsafe { self.close_item(node) };
-            // SAFETY: `node` was just parsed into the store, which outlives the pass.
-            unsafe {
-                if dyad::ty(node) == self.types.declare_ {
-                    let name = Binding::spelling(crate::identities::declare::binding_of(node));
-                    let resolved = self
-                        .cx
-                        .scopes
-                        .resolve(self.trie, &name)
-                        .map_err(|_| format!("name `{name}` did not stay resolvable"))?;
-                    if Binding::has_gate(resolved.binding, self.types.pub_) {
-                        pubs.push((name, resolved.binding));
-                    }
-                }
-            }
-        }
-        // A stray `)` ends the loop without being consumed, as in the drivers.
-        if !self.cx.source[self.cx.pos..].trim_start().is_empty() {
-            return Err("unexpected `)` — no scope is open here".to_string());
-        }
-        self.drain().map_err(|e| crate::report::parse_message(&e))?;
+    /// The nested pass over an imported file, whose lines land in `section`: the file read
+    /// and run, then its `pub` (name, binding) pairs in declaration order. On failure the
+    /// message is returned with `offset` at the stuck point.
+    fn run_imported(&mut self, section: DyadPtr) -> Result<Vec<(String, DyadPtr)>, String> {
+        let message = |e: ParseError| crate::report::parse_message(&e);
+        self.read_lines(LinesEnd::TextEnd).map_err(message)?;
+        self.drain().map_err(message)?;
+        let types = self.types;
+        // SAFETY: `section` is the file's scope node, its lines nodes from the store; a declare
+        // line holds the binding it declared.
+        let pubs = unsafe {
+            crate::identities::scope::exprs_of(section)
+                .unwrap_or(&[])
+                .iter()
+                .filter(|&&line| dyad::ty(line) == types.declare_)
+                .map(|&line| crate::identities::declare::binding_of(line))
+                .filter(|&binding| Binding::has_gate(binding, types.pub_))
+                .map(|binding| (Binding::spelling(binding), binding))
+                .collect()
+        };
         Ok(pubs)
     }
 

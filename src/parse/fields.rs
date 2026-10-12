@@ -785,7 +785,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let (scope, key) = self.parse_block(true)?;
+        let (scope, key) = self.parse_block(true, LinesEnd::Closer)?;
         let key = key.dyad;
         self.take_closer(self.types.open_sq_)?;
         // An index right after a tape value is the element read, a slot node

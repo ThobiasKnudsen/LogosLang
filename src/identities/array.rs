@@ -34,7 +34,8 @@ pub(crate) fn build(store: &mut Store, array_: DyadPtr, items: &[DyadPtr]) -> Dy
 /// at zero, else the next power of two, at least four.
 ///
 /// # Safety
-/// `node` must be an array node that [`build`] made empty and only `push` grew.
+/// `node` must be an array node that [`build`] made empty and only `push` and [`truncate`]
+/// changed.
 pub(crate) unsafe fn push(store: &mut Store, node: DyadPtr, item: DyadPtr) {
     let (len, data) = parts(node);
     let full = len == 0 || (len >= 4 && len.is_power_of_two());
@@ -49,6 +50,17 @@ pub(crate) unsafe fn push(store: &mut Store, node: DyadPtr, item: DyadPtr) {
     };
     *data.add(len) = item;
     std::ptr::write_unaligned(dyad::value(node).add(LEN_OFF) as *mut u64, (len + 1) as u64);
+}
+
+/// Keep the first `len` items, in place. The data run keeps its capacity, at least the one
+/// `push` implies for the shorter length.
+///
+/// # Safety
+/// As [`push`].
+pub(crate) unsafe fn truncate(node: DyadPtr, len: usize) {
+    if len < parts(node).0 {
+        std::ptr::write_unaligned(dyad::value(node).add(LEN_OFF) as *mut u64, len as u64);
+    }
 }
 
 /// The `(len, data)` of an array node.
