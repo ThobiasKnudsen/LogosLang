@@ -32796,5 +32796,53 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P170",
+    "kind": "problem",
+    "status": "open",
+    "text": "A `type` value that a call gives when the program runs is shown as a large number (an address), not as the type's name; the value itself is right",
+    "program": "target/release/logos 'f := fn (t := type ?) -> type ( t ), g := fn (u := type ?) -> i32 ( print «{f(u)}», 0 ), g(i32)'; on issue-209 at 2848e98 also 'mut t := type ?, t = i32, t pass' and 'i32 pass' echoed",
+    "output": "140595418886720 then 0 (the number changes per run), exit 0; on the 209 branch the echo is an address, while q := t pass, q prints i32 and (t pass) == i32 prints true",
+    "expected": "i32 then 0: ›A value is shown as the text its type's `print` slot gives back‹; close to P119 (a -> dyad call echoed shows a large number) and P156 (a type value prints as `type`)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-209-worker, FOUND while working #209, 12 October 2026, dev code ff3d0e0",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "e84fed3",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P171",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function value in brackets, or one a node gives back, is not called by the `()` after it: `(g)()` is refused, while a name over the same value is called",
+    "program": "target/release/logos 'g := fn () -> i32 ( 1 ), (g)()'; control: 'g := fn () -> i32 ( 1 ), h := g, h()'; on issue-209 at 2848e98 also '(g pass)()' and 'h := g pass, h()'",
+    "output": "\"<command line>:1:29: error: expected one expression, found more\", caret under the ( of (), exit 1; the control prints 1; the 209 forms give the same error",
+    "expected": "1: a call applies the function value to its left whatever gives it; the same shape as P50 (`t := i32, (t) 4`, a type value in brackets not applied)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-209-worker, FOUND while working #209, 12 October 2026, dev code ff3d0e0",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T10:36+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "e84fed3",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
