@@ -1546,6 +1546,8 @@ fn a_value_lands_unwritten_only_in_a_type_that_holds_every_value_of_it() {
         "g := fn (b) -> i32 ( h := fn (a := i32 ?) -> i32 ( a ), h(b) ), g(5)",
         "g := fn (b) -> i64 ( b pt ), g(i64 3)",
         "mut d := dyad ?, d = i32, mut x := i32 0, x = d",
+        "mut d := dyad ?, d = i32, f := fn () -> i32 ( d ), f()",
+        "g := fn (q := dyad ?) -> i32 ( q ), g(i32)",
     ] {
         let out = logos().arg(format!("{pt}, {src}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);

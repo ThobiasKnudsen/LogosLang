@@ -1117,9 +1117,8 @@ pub(crate) unsafe fn commit_fn_body(
         if dyad::ty(leaf) == types.by_copy.out {
             return Ok(leaf);
         }
-        // What a bare parameter or a `dyad` holds is known only at the call: stand-in for #216.
-        let from = read::output_type(types, leaf);
-        if matches!(place, read::Read::Scalar(_)) && (from.is_null() || from == types.dyad_) {
+        // What a bare parameter holds is known only at the call: stand-in for #216.
+        if matches!(place, read::Read::Scalar(_)) && read::output_type(types, leaf).is_null() {
             return Ok(leaf);
         }
         let landed = land(store, types, leaf, output)?;
