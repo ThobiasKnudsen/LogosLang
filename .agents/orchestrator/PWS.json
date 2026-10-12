@@ -24193,13 +24193,18 @@
   {
     "id": "S70",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "One repo per orchestrator: SKILL.md ›One repo, one orchestrator, several bases‹ says the orchestrator runs only the repo it stands in; another repo, new or not, gets its own orchestrator, which Thobias starts with /orchestrate in its folder; for a new one the orchestrator only makes the folder with what belongs in it and tells him, and that repo's setup is its own orchestrator's",
     "fixes": [
       "W250"
     ],
     "assessment": "Root fix: deletes the second repo from the session (the clause '-C <repo> names another', used to run another repo) instead of adding a case. Moves out of the session every step of another repo: on 8 October 42 tool calls touched PolyLogue, and its setup (conf, KNOWLEDGE.md, AGENTS.md, push, 23:24:42 to 23:28:41 UTC) is what why-P112-e's answer waited behind. Changes what Thobias can ask: at 23:18:32 UTC on 8 October he asked the LogosLang orchestrator to make PolyLogue and set it up for orchestrating; with this he gets the folder and starts /orchestrate there himself, which a new folder needs once anyway (SKILL.md ›Never‹: claude --bg refuses a folder that is not trusted). Text only: two bullets of that section and SKILL_HISTORY.md, minutes; no script refusal, since orchestrate.sh does not know which repo an orchestrator runs. No other solution agent's root touches that section; help-5's SKILL.md draft needs the same edit.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T12:25+02:00",
+      "words": "a",
+      "reason": "Q96 option (a), as shown: each repo gets its own orchestrator; for a new repo the orchestrator only makes its folder and copies in what belongs there, then Thobias opens Claude Code there and types /orchestrate, and that repo's own orchestrator does the setup and asks its own questions; all he loses is typing /orchestrate once in the new folder"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -24212,7 +24217,17 @@
       "run": "solve-W222",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T12:25+02:00",
+        "by": "logoslang-solve-W222",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "chosen by Thobias: \"a\"",
+        "reason": "Q96 option (a), as shown: each repo gets its own orchestrator; for a new repo the orchestrator only makes its folder and copies in what belongs there, then Thobias opens Claude Code there and types /orchestrate, and that repo's own orchestrator does the setup and asks its own questions; all he loses is typing /orchestrate once in the new folder"
+      }
+    ]
   },
   {
     "id": "S71",
