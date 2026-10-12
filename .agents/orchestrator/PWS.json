@@ -34409,5 +34409,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P192",
+    "kind": "problem",
+    "status": "open",
+    "text": "The dyad (T, v) constructor refuses a value of the type T itself: for a number type it takes only a plain number, for bool only true or false, any other type is BadDyadType (src/parse/declare.rs, a branch per kind); after #198, x = i32 3 into an i64 place converts while dyad (i64, i32 3) is refused",
+    "program": "logos 'd := dyad (i64, i64 3), d'; also dyad (i64, 3), dyad (i64, i32 3), x := i32 3, d := dyad (i64, x), dyad (bool, true)",
+    "output": "dyad (i64, 3) gives 3; dyad (i64, i64 3): <command line>:1:23: error: this operator cannot compute over these operands, exit 1; the same for dyad (i64, i32 3) and dyad (i64, x); dyad (bool, true) gives true; dev 5c5e0a2 and the #198 branch, release, interpreted",
+    "expected": "dyad (i64, i64 3) gives 3, and dyad (T, v) takes what a T place takes, by the one conversion step (›A type's `parse` decides what converts into it…‹); DESIGN names dyad (type, value) only as a construction the seed exposes",
+    "tier": "interpreted",
+    "found": "logoslang-issue-198-review-1, review round 1 of #198, 12 October 2026 (near P16, P160, P162; the file is #66's)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:43+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "ad8dbea",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
