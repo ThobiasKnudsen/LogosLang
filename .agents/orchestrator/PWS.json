@@ -28752,5 +28752,272 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "S90",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The ( keeps the scope it opened on its tape cell, beside its value: every reader of a bracket (a call, a number conversion, dyad (T, v), a member call, tape[k] in a Logos parse) reads that scope's lines as its operands, while the seed's own readers of a value still read a one-line bracket's line",
+    "fixes": [
+      "W290",
+      "W289"
+    ],
+    "assessment": "Root fix: a bracket always leaves its own scope, so args_of reads the lines of the bracket it is given and its branch on the node's type (W289) goes. Removes P149's two programs and four unfiled siblings, both tiers at 2a081ef: i32 ((i32 4, i32 5)) refused as 'a conversion takes exactly one numeric value', dyad ((i32, 5)) giving 5 for one argument, first (i32 7) of tests/fixtures/scope_cell_lines.logos refused as 'this node is not a scope', first ((i32 1, i32 2)) giving 1 for 2. No speed change: parse_block mints the scope for every bracket today and drops it; the built-in operators' cell stays the line. Leaves the stand-in for the seed's own value readers: (x + 2) * 3 holds x + 2 in the graph, which b:start.rhs.lhs shows. DESIGN: no new rule (›A bracket goes to the call whole‹ already has 'the cell a ( lands is a scope' and 'lines are operands'); the stand-in line at ›The seed's tape shape‹ narrows to value readers. Small, about 60 lines: Cell.bracket from bool to the scope (src/parse/tape.rs, a write to the cell clears it), paren.rs and scope.rs keep the scope, parse_block fills it on its one-line path, args_of and its four callers (driver.rs, numtype.rs, fields.rs, declare.rs), read_cell for tape[k] (src/identities/tape.rs). To check in the build: a Logos operator with ( ) on its right (power.logos's ^) then holds a scope; read::output_type already gives a scope its last line's type.",
+    "decision": null,
+    "design": [
+      "The seed's tape shape (#60, #121) and its remaining stand-ins",
+      "A bracket goes to the call whole"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T09:11+02:00",
+      "by": "logoslang-solve-W290",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2a081ef",
+      "run": "solve-W290",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S91",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Delete the stand-in: ( always lands its scope node, for every reader; the seed's operators, literal folding and both tiers read and run a one-line scope as its line's value",
+    "fixes": [
+      "W290",
+      "W289"
+    ],
+    "assessment": "Root fix by deletion, faithful to the letter of ›A scope's value is what it evaluates to‹ ('Every ( ) is a scope'): the stand-in line at ›The seed's tape shape‹ goes and the graph holds a scope wherever a ( was written. Removes the same six programs as S90 and W289. Costs: every Rust constructor that reads the node beside it (operators, the fold of (2 + 3) * 4, number commits, &, move, free, :=) must read through a one-line scope, and the interpreter runs a scope per bracket unless it and the lowering skip one; not measured, large, many files in src/parse and src/identities. No known problem needs more than S90, which already keeps the scope on the cell, so this can follow it later.",
+    "decision": null,
+    "design": [
+      "The seed's tape shape (#60, #121) and its remaining stand-ins",
+      "A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T09:11+02:00",
+      "by": "logoslang-solve-W290",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2a081ef",
+      "run": "solve-W290",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S92",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "parse_block does not unwrap a one-line bracket whose one line is itself a scope node, so ((a, b)) stays a scope of one line",
+    "fixes": [
+      "W290"
+    ],
+    "assessment": "Symptom fix: a branch on the kind of the line in parse_block, while args_of keeps deciding by node type (W289 stays). Removes P149's two programs, i32 ((i32 4, i32 5)), dyad ((i32, 5)) and first ((i32 1, i32 2)), but not first (i32 7) ('this node is not a scope'), since a one-line bracket of anything but a scope still lands its line. Smallest: one condition in src/parse/bodies.rs. Not recommended.",
+    "decision": null,
+    "design": [
+      "The seed's tape shape (#60, #121) and its remaining stand-ins"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-12T09:11+02:00",
+      "by": "logoslang-solve-W290",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "2a081ef",
+      "run": "solve-W290",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W298",
+    "kind": "why",
+    "status": "draft",
+    "text": "The seed keeps what a built-in node does as a native leaf in an op word of each node (meta::operand_record writes an op and an output_type field into the record at 37 call sites, + among them as lhs, rhs, op, output_type), found only through the operand-record kind byte (named_slot answers for TUPLE_TAG and LIST_TAG alone), where DESIGN keeps it on the type: Execution is function application runs a fn or the type's run and else reads data, and Q-61 at Which machine operation an operator is keeps the operation on the mint, not in an op slot of each node; so whether a node runs is a question about the node that place_layout, asked about a type, cannot answer, and read_kind answers it in a match of its own on the kind byte",
+    "proposed_for": "W293",
+    "why": null,
+    "anchors": [
+      "operand_record",
+      "op_slot_of",
+      "named_slot",
+      "read_kind",
+      "src/identities/meta.rs",
+      "src/identities/binary.rs",
+      "src/run.rs"
+    ],
+    "design": [
+      "Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data",
+      "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule",
+      "A type with a `run` whose field is `?` mints too, so its `run` body is parsed once per mint"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'operand_record\\(' src --glob '!**/tests.rs' | wc -l   (38 = 37 call sites + the definition); rg -n 'Some\\(TUPLE_TAG \\| LIST_TAG\\) =>|slot_of\\(\"op\"\\), slot_of\\(\"output_type\"\\)' src/identities/meta.rs; rg -n '\"lhs\", \"rhs\", \"op\", \"output_type\"' src/identities/binary.rs; rg -n 'let leaf = \\*\\(value as \\*const DyadPtr\\).add\\(idx\\);' src/identities/read.rs; rg -n 'Read::Executable\\(Dispatch::Leaf\\(leaf\\)\\) =>' src/run.rs; rg -n -o 'the operation is kept on the mint, not in an op slot of each node' DESIGN.md",
+        "output": "38\nsrc/identities/meta.rs:148:    blob.extend_from_slice(&[roles.len() as u8, slot_of(\"op\"), slot_of(\"output_type\")]);\nsrc/identities/meta.rs:407:        Some(TUPLE_TAG | LIST_TAG) => {      (named_slot: the op slot exists for these kinds only)\nsrc/identities/binary.rs:66:        &[\"lhs\", \"rhs\", \"op\", \"output_type\"],\nsrc/identities/read.rs:120:            let leaf = *(value as *const DyadPtr).add(idx);   (read_kind reads the node's own op word)\nsrc/run.rs:835:            Read::Executable(Dispatch::Leaf(leaf)) => {\nDESIGN.md:1085:the operation is kept on the mint, not in an op slot of each node",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "target/release/logos 'i32 1 + 0'; target/release/logos '(1, 2)'; target/release/logos '[1, 2]'   (same operand-record kind; what runs follows each node's op word)",
+        "output": "1\nexit 0\n2\nexit 0\nrun error: this node was built with no operation to run\nexit 1",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:11+02:00",
+      "by": "logoslang-why-P150-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "W299",
+    "kind": "why",
+    "status": "draft",
+    "text": "read_kind's FRACTION_TAG arm gives a fraction node Read::Literal, documented A comptime rational, molded on read: the uncommitted literal of the rule headed Numeric literals are uncommitted until context classifies them, which A plain number is a rational_number replaced on 29 September 2026 (a plain number is a value of the type rational_number, converted by the type it lands in, never molded by whatever reads it); the literal's node already holds a rational place's sixteen bytes (build_literal stores [num, den] with alloc_blob), so only this older mechanism keeps the fraction's node read, molded at i32 by rational::mold, apart from place_layout's Read::Rational",
+    "proposed_for": "W293",
+    "why": null,
+    "anchors": [
+      "read_kind",
+      "build_literal",
+      "mold",
+      "place_layout",
+      "src/identities/rational.rs",
+      "src/identities/read.rs"
+    ],
+    "design": [
+      "A plain number is a `rational_number`, and a number type's definition converts it (headed \"Numeric literals are uncommitted until context classifies them\" until 29 September 2026)",
+      "A type's `parse` decides what converts into it; unwritten, a value converts only into a type that holds it exactly"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n 'A comptime rational, molded on read|meta::FRACTION_TAG => Read::Literal|meta::FRACTION_TAG => Some\\(\\(Read::Rational, 16\\)\\)' src/identities/read.rs; rg -n 'let mut bytes = \\[0u8; 16\\];|store.alloc_blob\\(rational, &bytes\\)|mold_to\\(node, NumType::I32\\)' src/identities/rational.rs; rg -n -o 'until 29 September 2026 the rule was headed .{0,200}|A number is not uncommitted.{0,120}' DESIGN_HISTORY.md",
+        "output": "src/identities/read.rs:34:    /// A comptime rational, molded on read.\nsrc/identities/read.rs:127:        meta::FRACTION_TAG => Read::Literal,\nsrc/identities/read.rs:272:        meta::FRACTION_TAG => Some((Read::Rational, 16)),\nsrc/identities/rational.rs:73:    let mut bytes = [0u8; 16];\nsrc/identities/rational.rs:76:    store.alloc_blob(rational, &bytes)\nsrc/identities/rational.rs:332:    mold_to(node, NumType::I32).map(|b| b as i32)\nDESIGN_HISTORY.md:365: until 29 September 2026 the rule was headed \"Numeric literals are uncommitted until context classifies them\" and read \"It can become any int, uint or float. Beside a typed value it takes that type … the result stays rational_number until it lands in a typed slot.\"\nDESIGN_HISTORY.md:365: A number is not uncommitted; it is a rational_number, and the conversion belongs to the type it lands in.",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "while IFS= read -r p; do echo \"== $p\"; target/release/logos \"$p\" 2>&1; echo \"exit $?\"; done < why-probes/p150-a-r2.txt   (lines 3 to 6: the literal unnamed against the value of rational_number)",
+        "output": "== r := 1/2, 0\nrun error: a literal here has no exact value in the type it lands in\nexit 1\n== r := rational_number 1/2, 0\n0\n== h := fn (a) -> i32 ( 0 ), h(1/2)\nrun error: a literal here has no exact value in the type it lands in\nexit 1\n== h := fn (a := rational_number ?) -> i32 ( 0 ), h(1/2)\n0",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:12+02:00",
+      "by": "logoslang-why-P150-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "A"
+    },
+    "history": []
+  },
+  {
+    "id": "P158",
+    "kind": "problem",
+    "status": "open",
+    "text": "A one-line `( )` inside another reader's bracket is read wrong by the cast, `dyad` and a tape-reading constructor, since the one-line bracket leaves nothing of its own; one of them gives a wrong value silently",
+    "program": "target/release/logos 'x := i32 ((i32 4, i32 5)), x'; target/release/logos 'x := dyad ((i32, 5)), x'; target/release/logos 'import tests/fixtures/scope_cell_lines.logos, first (i32 7)'; target/release/logos 'import tests/fixtures/scope_cell_lines.logos, first ((i32 1, i32 2))'; each also inside h := fn () -> i32 ( … ), h.compile(), h()",
+    "output": "\"1:26: error: a conversion takes exactly one numeric value\", exit 1; `5`, exit 0; \"error: this identity's constructor failed while parsing: this node is not a scope\", exit 1; `1`, exit 0 (also `first (scope (1, 2))` gives `1`); same on both tiers; release build of dev 2a081ef",
+    "expected": "`5` (the cast gets one argument, the inner scope); the arity error, since the bracket holds one line; `7` (tape[1] is a scope, so tape[1].dyads[0] is 7); `2` (tape[1] is a scope of one line, the inner scope, whose value is 2): ›A scope's value is what it evaluates to…‹, ›A bracket goes to the call whole‹ (\"the cell a `(` lands is a `scope`\")",
+    "tier": "interpreted",
+    "found": "logoslang-solve-W290, FOUND while working out W290, 12 October 2026",
+    "why": [
+      "W290"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T09:12+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "6fc371f",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-12T09:12+02:00",
+        "by": "orchestrator LogosLang",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "6fc371f",
+        "change": "why + W290",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W300",
+    "kind": "why",
+    "status": "draft",
+    "text": "Neither DESIGN.md nor a page it points to says how a value of a seed-built type that is a whole node, a text from « or a […] from [, sits in a place or is read whole: A value of a type built by a Logos parse travels as a pointer gives the node's address only to a type a Logos parse builds, Text literals are plain values says a text is a value but not how it reads, A bracket goes to the call whole hands a […] to a call and says nothing of it standing as a value, and The dyad's read surface leaves .text and .items open; so place_layout gives these types no layout (None, which its doc calls no place, while place_kind makes the same None an eight-byte Container), meta::is_node_valued asks for a Logos fn constructor, and read_kind keeps arms of its own for them (Opaque, Executable)",
+    "proposed_for": "W293",
+    "why": null,
+    "anchors": [
+      "place_layout",
+      "place_kind",
+      "is_node_valued",
+      "read_kind",
+      "DESIGN.md",
+      "src/identities/string.rs",
+      "src/parse/fields.rs"
+    ],
+    "design": [
+      "A value of a type built by a Logos `parse` travels as a pointer",
+      "Text literals are plain values; `#` is the one comment constructor",
+      "A bracket goes to the call whole",
+      "The dyad's read surface: two fields, and the type answers the rest"
+    ],
+    "pages": [],
+    "evidence": [
+      {
+        "command": "rg -n -i 'address of its node|node.s address|travels as a pointer|eight bytes in a place|is the node itself|its own address is the value' DESIGN.md | cut -c1-90; rg -n -i 'string type|the .string.|text type|a text value|a string value' DESIGN.md | cut -c1-90",
+        "output": "1350:### A value of a type built by a Logos `parse` travels as a pointer\n1351:Such a value is the address of its node, eight bytes in a place. ...\n1353:A field of such a type holds the node's address ...\n1355:`alloc n of T`, for such a `T`, gives n cells of its address ...\n2135:- **Ruled:** 28 September 2026 ... the handle is the node's address, 64 bits   (the store's handle, not a value's read)\n(second search) 1614: ... A string is a scope that builds exactly its braces.   (lexing, under { } is text interpolation)\n1744: ... An array's elements and a string's characters belong to the array and string types' own fields\n1754:- **Open:** in the seed: `.items` and `.text` (the array and string types' own fields) ...",
+        "commit": "b3b125a"
+      },
+      {
+        "command": "rg -n 'or .None. when no place of|None => Read::Container\\(t\\),|container every other type.s place holds' src/identities/read.rs; rg -n '!ctor.is_null\\(\\) && dyad::ty\\(ctor\\) == fn_type' src/identities/meta.rs; target/release/logos 'main := fn (a) -> i32 ( 0 ), main(«hello»)'",
+        "output": "src/identities/read.rs:251:/// container every other type's place holds (a node's address, a bare parameter's operand).   (place_kind)\nsrc/identities/read.rs:258:        None => Read::Container(t),\nsrc/identities/read.rs:262:/// What a place of `t` reads as and how many bytes it takes, or `None` when no place of   (place_layout)\nsrc/identities/meta.rs:379:    !ctor.is_null() && dyad::ty(ctor) == fn_type   (is_node_valued)\nrun error: a record, text or hole is not read as one value; read a field or take its address\nexit 1",
+        "commit": "b3b125a"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-12T09:12+02:00",
+      "by": "logoslang-why-P150-a",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "b3b125a",
+      "run": "why-P150",
+      "agent": "A"
+    },
+    "history": []
   }
 ]
