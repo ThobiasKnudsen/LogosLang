@@ -24193,13 +24193,18 @@
   {
     "id": "S70",
     "kind": "solution",
-    "status": "proposed",
+    "status": "chosen",
     "text": "One repo per orchestrator: SKILL.md ›One repo, one orchestrator, several bases‹ says the orchestrator runs only the repo it stands in; another repo, new or not, gets its own orchestrator, which Thobias starts with /orchestrate in its folder; for a new one the orchestrator only makes the folder with what belongs in it and tells him, and that repo's setup is its own orchestrator's",
     "fixes": [
       "W250"
     ],
     "assessment": "Root fix: deletes the second repo from the session (the clause '-C <repo> names another', used to run another repo) instead of adding a case. Moves out of the session every step of another repo: on 8 October 42 tool calls touched PolyLogue, and its setup (conf, KNOWLEDGE.md, AGENTS.md, push, 23:24:42 to 23:28:41 UTC) is what why-P112-e's answer waited behind. Changes what Thobias can ask: at 23:18:32 UTC on 8 October he asked the LogosLang orchestrator to make PolyLogue and set it up for orchestrating; with this he gets the folder and starts /orchestrate there himself, which a new folder needs once anyway (SKILL.md ›Never‹: claude --bg refuses a folder that is not trusted). Text only: two bullets of that section and SKILL_HISTORY.md, minutes; no script refusal, since orchestrate.sh does not know which repo an orchestrator runs. No other solution agent's root touches that section; help-5's SKILL.md draft needs the same edit.",
-    "decision": null,
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-12T12:25+02:00",
+      "words": "a",
+      "reason": "Q96 option (a), as shown: each repo gets its own orchestrator; for a new repo the orchestrator only makes its folder and copies in what belongs there, then Thobias opens Claude Code there and types /orchestrate, and that repo's own orchestrator does the setup and asks its own questions; all he loses is typing /orchestrate once in the new folder"
+    },
     "design": [],
     "issue": null,
     "done": null,
@@ -24212,7 +24217,17 @@
       "run": "solve-W222",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-12T12:25+02:00",
+        "by": "logoslang-solve-W222",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh",
+        "commit": "be2423e",
+        "change": "chosen by Thobias: \"a\"",
+        "reason": "Q96 option (a), as shown: each repo gets its own orchestrator; for a new repo the orchestrator only makes its folder and copies in what belongs there, then Thobias opens Claude Code there and types /orchestrate, and that repo's own orchestrator does the setup and asks its own questions; all he loses is typing /orchestrate once in the new folder"
+      }
+    ]
   },
   {
     "id": "S71",
@@ -34270,6 +34285,126 @@
       "model": "claude-opus-5-5",
       "effort": "xhigh",
       "commit": "5c5e0a2",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P187",
+    "kind": "problem",
+    "status": "open",
+    "text": "A run error of the importer's own earlier line is reported as the imported file failing, at a line of the file: the importer's waiting line runs inside the file's pass when the file first needs a value, so its error is shown as \"import of X failed\" pointing into the file, where nothing is wrong",
+    "program": "logos 'error «boom», import ./tests/fixtures/held.logos, free h' (held.logos: bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), pub h := bag(9))",
+    "output": "<command line>:1:49: error: import of `./tests/fixtures/held.logos` failed: … ./tests/fixtures/held.logos:3:14: error: run error: boom (caret under the file's type body), exit 1; dev bffb703 and the #234 branch 50f8b65, release, interpreted; the #234 REPL gives the same",
+    "expected": "the error is reported at the importer's own `error «boom»` on the command line, column 1, with nothing said about the imported file",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-3, review round 3 of #234, 12 October 2026 (near P186, P180, P183)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:29+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "fd5750b",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P188",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type with its own parse, named after -> as a function's result type, does not become the result type: its parse runs there instead, and the function's result type comes out as an address",
+    "program": "logos 'm := type ( a := i32 ?, output_type := type ?, share run = ( a + a ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = m, tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) ), f := fn () -> m ( i32 5 ), f.output_type'",
+    "output": "dev 5c5e0a2, release, interpreted: 139906479332608, exit 0 (f() prints 5); branch issue-198-one-landing-step: <command line>:1:257: error: this gives nothing, and a value is needed here, exit 1; control x := i32 3, y := x m, y prints 6 on both",
+    "expected": "f.output_type is m, the type written after ->: a type named as a result type is that type, and its parse does not run there (near #207, which covers non-types after ->)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-198-review-1, review round 1 of #198, 12 October 2026 (near P10, P6, P51)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:32+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "839f884",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P189",
+    "kind": "problem",
+    "status": "open",
+    "text": "A ( ) block that frees many names declared before it reads in time that grows with the square of their number; the same frees written straight on the line grow in step, and a failing line of the same shape adds a second square cost at the fault's end",
+    "program": "logos 'c := i32 1, h0 := alloc 1 of i32 0, h1 := alloc 1 of i32 1, h2 := alloc 1 of i32 2, ( free h0, free h1, free h2, 1 )' built at m = 300 to 3,000 names (.agents/orchestrator/tmp/issue-234-one-scope-reader/r3-speed.sh, shapes frees-flat, frees-block, no-frees, faultend-cli)",
+    "output": "dev bffb703, release, interpreted, wall seconds: frees on the line 0.017 / 0.033 / 0.050 / 0.073 at m = 300 / 1,000 / 2,000 / 3,000; frees in a block 0.017 / 0.042 / 0.096 / 0.159; the #234 branch 50f8b65 the same; failing with zz after y := immediate c: 2,500 names 0.236 against 0.178 kept",
+    "expected": "the block grows in step with m, as the frees on the line do (›Reading a program takes time in step with its size; no walk runs once per path‹)",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-3, review round 3 of #234, 12 October 2026 (near P113, P148, P176)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:32+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "93ef9a9",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P190",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type ? field written inside a type's own parse takes a value that is not a type, unchecked when the program is read; it fails only when the program runs. The write goes through the last branch of this::build_write, which keeps the right side as a node and calls no land; #198's analysis hole-result-type (29 September) names it a symptom, and #203 (one placing operation for what a parse writes) is where it is fixed",
+    "program": "logos 'm := type ( a := i32 ?, output_type := type ?, share run = ( a + a ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = m, tape[0].a = tape[-1], tape[0].output_type = i32 ?, tape.is_constructed[0] = true, tape.remove(-1) ) ), x := i32 3, x m'",
+    "output": "<command line>: run error: this node was built with no operation to run (dev 5c5e0a2 and the #198 branch, release, interpreted; the same with output_type = 5; with output_type = i32 it prints 6)",
+    "expected": "refused where it is written: the declared or assigned type must be a type value, at tape[0].output_type = i32 ?",
+    "tier": "interpreted",
+    "found": "logoslang-issue-198-review-1, review round 1 of #198, 12 October 2026; left for #203 by the orchestrator",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:34+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "f43e40f",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P191",
+    "kind": "problem",
+    "status": "open",
+    "text": "A failed REPL line that faults inside a ( ) block, before the block's own free of an earlier line's name, frees that name and leaves it dead; the same line without the block leaves it alive. An if arm does the same, and so does an imported file's pub name (kept for the session by Q114)",
+    "program": "REPL: p := alloc 1 of i32 3 / ( error «b», free p ) / p@; also bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), m := bag(3), ( error «b», free m ), m.n; if true ( error «b», free p ) else ( free p ); import ./tests/fixtures/held.logos, ( error «b», free h )",
+    "output": "run error: b, then p@: <repl>:1:1: error: `p` is dead here: it was moved or freed above; the bag line prints freed 3 before the run error; dev bffb703 and the #234 branch 50f8b65, release, interpreted; control on the branch: error «b», free p leaves p@ printing 3",
+    "expected": "a REPL line that fails leaves such a name live unless it reached its free or move (DESIGN ›`free` and `move` end a name; no drop flag‹, its Seed line), inside a block or an if arm as on the line itself",
+    "tier": "interpreted",
+    "found": "logoslang-issue-234-review-3, /code-review point 1 in review round 3 of #234, 12 October 2026 (near P180, P187, P39, P189, P183)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-12T12:41+02:00",
+      "by": "orchestrator LogosLang",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "commit": "746055a",
       "run": null,
       "agent": null
     },
