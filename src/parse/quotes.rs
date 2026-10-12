@@ -326,9 +326,10 @@ impl<'a> Parser<'a> {
         } else {
             let program = g.0.cx.open.first_mut().expect("the program's scope is open");
             let from = program.lines + 1;
-            program.exit.extend(
-                file.exit.into_iter().filter(|h| h.end.is_none()).map(|h| ExitItem { from, ..h }),
-            );
+            for item in file.exit.into_iter().filter(|h| h.end.is_none()) {
+                program.imported.push(item.what);
+                program.exit.push(ExitItem { from, ..item });
+            }
         }
         g.0.outer.last_mut().expect("pushed by enter").open = std::mem::take(&mut g.0.cx.open);
         drop(g);

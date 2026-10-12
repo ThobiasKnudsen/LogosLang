@@ -63,6 +63,9 @@ pub(super) struct OpenScope {
     /// What the scope's end runs, in line order: the names it holds, which no tail or
     /// `return` leaving the scope may hand out, and its `defer` lines.
     pub(super) exit: Vec<ExitItem>,
+    /// At the top level: what the `exit` items an imported file added hold or defer, which
+    /// are the run's and not the line's.
+    pub(super) imported: Vec<DyadPtr>,
     /// The lines closed so far, so the index of the one being parsed.
     pub(super) lines: usize,
     /// Held names a `move` or `free` in the line being parsed ended; the line's close
@@ -1612,6 +1615,26 @@ impl<'a> Parser<'a> {
         // SAFETY: `top` is a scope node the driver minted; `items` exit items just built.
         unsafe { scope::extend_exit(self.rt.store, self.types.array_, top, &items) };
         top
+    }
+
+    /// What the files a failed REPL line imported hold and defer leaves the line's end and
+    /// joins `session`'s, as a kept line's does: a file loads once per run, and the run is the
+    /// session (DESIGN ›Importing is dropping the text there, wrapped in its own scope‹).
+    ///
+    /// # Safety
+    /// `session` must be the scope node the driver minted for the session.
+    pub unsafe fn hand_imported_exit(&mut self, session: DyadPtr) {
+        let open = &mut self.cx.open[0];
+        let imported = std::mem::take(&mut open.imported);
+        let (files, own): (Vec<ExitItem>, Vec<ExitItem>) =
+            std::mem::take(&mut open.exit).into_iter().partition(|h| imported.contains(&h.what));
+        open.exit = own;
+        let items: Vec<DyadPtr> =
+            files.iter().map(|h| h.build(self.rt.store, self.types)).collect();
+        // SAFETY: the caller's contract; `items` are exit items just built.
+        unsafe {
+            crate::identities::scope::extend_exit(self.rt.store, self.types.array_, session, &items)
+        };
     }
 
     /// The names an earlier REPL line holds that this parse ended: the top scope's end frees

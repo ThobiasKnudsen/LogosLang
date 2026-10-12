@@ -4941,6 +4941,35 @@ fn a_failed_repl_line_leaves_no_trace() {
 }
 
 #[test]
+fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
+    let held = "import ./tests/fixtures/held.logos";
+    // Neither a fault nor a failed parse after the import ends the file: the session does, once.
+    for failing in [format!("{held}, error «boom»"), format!("{held}, zz")] {
+        let (echoes, stderr) = repl(format!("{failing}\n{held}\nh.n\n").as_bytes());
+        assert_eq!(echoes, ["9", "freed 9"], "{failing}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl(
+        b"import ./tests/fixtures/owning_pub.logos, error \xc2\xabboom\xc2\xbb\n\
+          import ./tests/fixtures/owning_pub.logos, p@\n",
+    );
+    assert_eq!(echoes, ["7"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(
+        b"import ./tests/fixtures/counter.logos, error \xc2\xabboom\xc2\xbb\n\
+          import ./tests/fixtures/counter.logos\nc@\n",
+    );
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+    // The line's own holds still end at its fault, and the names it published roll back.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let line_holds = format!("c := bag(1), {held}, d := bag(2), error «boom»");
+    let (echoes, stderr) = repl(format!("{bag}\n{line_holds}\nh.n\n").as_bytes());
+    assert_eq!(echoes, ["freed 2", "freed 1", "freed 9"], "stderr: {stderr}");
+    assert!(stderr.contains("`h` is not in scope here"), "stderr: {stderr}");
+    // On the command line the run ends at the fault, and the file with it.
+    let (code, stdout, _) = run_line("import ./tests/fixtures/deferring.logos, error «x»");
+    assert_eq!((code, stdout.as_str()), (Some(1), "file ends\n"));
+}
+
+#[test]
 fn a_quote_s_braces_are_a_scope_whose_text_is_its_tail() {
     for (src, printed) in [
         ("print «a{ y := i32 2, y + 1 }b»", "a3b\n"),

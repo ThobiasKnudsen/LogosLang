@@ -268,11 +268,14 @@ fn repl() -> ExitCode {
                     p.hand_exit();
                     Vec::new()
                 }
-                // A failed line keeps the ends it reached of an earlier line's names, and what
-                // its own lines hold ends as at a fault (DESIGN ›A checked error is a fault: the
-                // task that hit it is cancelled‹).
+                // A failed line keeps the ends it reached of an earlier line's names, what a
+                // file it imported holds stays the session's, and what its own lines hold ends
+                // as at a fault (DESIGN ›A checked error is a fault: the task that hit it is
+                // cancelled‹).
                 Err(_) => {
                     let freed = p.end_failed_earlier_holds();
+                    // SAFETY: `session` is the session's scope node.
+                    unsafe { p.hand_imported_exit(session) };
                     p.exit_after_fault();
                     freed
                 }
