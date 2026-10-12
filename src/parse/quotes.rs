@@ -327,7 +327,7 @@ impl<'a> Parser<'a> {
             let program = g.0.cx.open.first_mut().expect("the program's scope is open");
             let from = program.lines + 1;
             for item in file.exit.into_iter().filter(|h| h.end.is_none()) {
-                program.imported.push(item.what);
+                program.imported.insert(item.what);
                 program.exit.push(ExitItem { from, ..item });
             }
         }

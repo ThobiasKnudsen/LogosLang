@@ -65,7 +65,7 @@ pub(super) struct OpenScope {
     pub(super) exit: Vec<ExitItem>,
     /// At the top level: what the `exit` items an imported file added hold or defer, which
     /// are the run's and not the line's.
-    pub(super) imported: Vec<DyadPtr>,
+    pub(super) imported: HashSet<DyadPtr>,
     /// The lines closed so far, so the index of the one being parsed.
     pub(super) lines: usize,
     /// Held names a `move` or `free` in the line being parsed ended; the line's close
