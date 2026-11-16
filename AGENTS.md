@@ -45,4 +45,4 @@ Never tag speculatively "to see if CI passes". There is no undo.
 # Branches in this repo
 - `dev` is the working branch and the base of every issue branch; `main` is protected and takes a PR (Release rules, step 5).
 - `git branch -r | grep -v 'origin/dev$\|origin/main$'` must list only branches with unmerged work.
-- The orchestrator's settings, questions, answers and PWS graph live in `.agents/orchestrator/`; its README.md says how they work.
+- Work is tracked in GitHub issues. What the orchestrator made until 16 November 2026 (its questions, answers, PWS graph and solve drafts) is under the tag `orchestrator-archive`: `git show orchestrator-archive:.agents/orchestrator/README.md`. Reason (Thobias, 16 November 2026): "Archive it, work from issues".
