@@ -1,3 +1,5 @@
+<!-- Written by the PolyLogue server from the rules it keeps. A rule is changed on the server, never here, and this file is then written again. -->
+
 # Logos: A Unified Programming System
 
 **What this is.** The ruling design document of Logos, in the shape it took on 27 September 2026: one rule per heading, the live rule first in plain present tense, then its reason, its ruling, what was rejected, what is open, what the seed does, and its history, each on its own line. It replaced the earlier DESIGN.md, one paragraph per topic with the history inline, whose last version is git commit e75bcdc; its `##` sections stand here in the same order, so a section is found by its old name. A pointer at a rule from code, an issue or a note names the rule's heading, ›like this‹, never a line number: headings hold still and lines do not. DESIGN_HISTORY.md holds, under the same headings, everything that left this file on 27 September 2026. On 1 October 2026 the rules' **Source** bullets and the other line numbers of e75bcdc left this file, and DESIGN_HISTORY.md's became that hash (Thobias, 30 September 2026: "do choice a. delete them", and for DESIGN_HISTORY.md, "it would be better to remove those as well and show commit hash instead so that it can be looked up in git history"): they read like the line pointers this file stopped using, and they served only to check the rewrite against the old text, a check that is done, with git keeping the old file.
@@ -1532,7 +1534,6 @@ Text that names nothing lexes to a cell with no node, its spelling kept tape-sid
 - **Seed:** since 15 September 2026 (#62), with stand-ins (`lex` reads only its quote).
 
 ### The scope's constructor is the driver
-
 The "driver" is not special machinery and not the tape. It is the constructor of the enclosing **scope** identity: `(` building its `scope` value, and its kin. A scope's constructor is called by its own enclosing scope when its opener appears, so the drive recurses by nesting. The root scope is run by `import` over a file, and by the command line over its one line. The tape runs nothing: it only lexes and remembers.
 - **Ruled:** August 2026, in discussion.
 
@@ -2348,7 +2349,6 @@ A third `@exec` mint for cache loads; runtime-automatic checkpointing in any for
 | Debugger/profiler | Standard protocols first, Logos-native later. |
 | Compiler-extension framework | Partly free from meta-reflection; conventions mature with the stdlib, which shows the patterns. |
 | Verified demonstration projects | Verified kernel module, crypto library, or compiler pass; research-grade; earns credibility in the verification niche. |
-
 
 ### The v0.1.0 preview leads with "the language defines itself"
 A new operator or keyword defined in ordinary Logos, used in the same file, compiled with `compile f`. Critical path in order: (1) eager-segment driver convergence; (2) the tape's four affordances as Logos-reachable identities; (3) Logos-written constructors run during the parse; (4) `lex «…»`; (5) the demo file. Not v0.1.0 work: verification (proofs, refinements), the borrow checker, the rewriting engine.
