@@ -8,7 +8,9 @@
 
 use std::cell::RefCell;
 
-use regex::bytes::Regex;
+use regex_automata::meta::{self, Regex};
+use regex_automata::util::syntax;
+use regex_automata::{Anchored, Input};
 
 use crate::binding::Binding;
 use crate::dyad::DyadPtr;
@@ -49,8 +51,8 @@ pub struct MatchResult<'a> {
 struct RegexEntry {
     node: Box<RegexTrie>,
     pattern: String,
-    /// `^(?:pattern)`, compiled on first use so a bad pattern surfaces at
-    /// lookup rather than at insert.
+    /// Compiled on first use so a bad pattern surfaces at lookup rather than
+    /// at insert.
     matcher: RefCell<Option<Regex>>,
 }
 
@@ -63,18 +65,27 @@ impl RegexEntry {
         }
     }
 
-    /// Length of this branch's non-empty match at the start of `hay`.
-    fn match_len(&self, hay: &[u8]) -> Result<Option<usize>, RegexTrieError> {
-        if self.matcher.borrow().is_none() {
-            let anchored = format!("^(?:{})", self.pattern);
-            let re = Regex::new(&anchored)
-                .map_err(|err| RegexTrieError::BadPattern(format!("{anchored}: {err}")))?;
-            *self.matcher.borrow_mut() = Some(re);
-        }
-        let borrow = self.matcher.borrow();
-        let re = borrow.as_ref().unwrap();
-        Ok(re.find(hay).and_then(|m| (m.start() == 0 && m.end() > 0).then_some(m.end())))
+    /// Length of this branch's match starting at `pos`, which may be empty
+    /// (`\b`, `x*`). The bytes before `pos` stay in view, so a `\b` at the
+    /// chunk's start reads the char before it, as it does in the whole pattern.
+    fn match_len(&self, hay: &[u8], pos: usize) -> Result<Option<usize>, RegexTrieError> {
+        let mut slot = self.matcher.borrow_mut();
+        let re = match &mut *slot {
+            Some(re) => re,
+            None => slot.insert(compile(&self.pattern)?),
+        };
+        let input = Input::new(hay).range(pos..).anchored(Anchored::Yes);
+        Ok(re.search(&input).map(|m| m.end() - pos))
     }
+}
+
+/// The chunk as `regex::bytes` builds a pattern: leftmost-first, over any bytes.
+fn compile(pattern: &str) -> Result<Regex, RegexTrieError> {
+    Regex::builder()
+        .configure(meta::Config::new().utf8_empty(false))
+        .syntax(syntax::Config::new().utf8(false))
+        .build(pattern)
+        .map_err(|err| RegexTrieError::BadPattern(format!("{pattern}: {err}")))
 }
 
 /// A node: `child_indices` maps a byte to a slot in `children`; byte 0 is the
@@ -114,6 +125,15 @@ impl RegexTrie {
     fn check_eow(&self) -> bool {
         let idx = self.child_indices[EOW];
         idx != NONE && self.children[idx as usize].is_none()
+    }
+
+    /// The leaf a match of `matched` bytes ends at. A spelling is never
+    /// empty, so a leaf reached having matched nothing is no match.
+    fn leaf_at(&self, matched: usize) -> Option<&Leaf> {
+        if matched == 0 || !self.check_eow() {
+            return None;
+        }
+        self.leaf_value.as_ref()
     }
 
     /// Any literal child other than EOW, or any regex branch.
@@ -269,29 +289,21 @@ impl RegexTrie {
         hay: &[u8],
         pos: usize,
     ) -> Result<Option<(usize, &'s Leaf)>, RegexTrieError> {
-        let mut best: Option<(usize, &'s Leaf)> = None;
-        if self.check_eow() {
-            if let Some(leaf) = self.leaf_value.as_ref() {
-                best = Some((pos, leaf));
-            }
-        }
-        if pos < hay.len() {
-            let c = hay[pos];
-            if c != 0 {
-                if let Some(child) = self.lit_child(c) {
-                    if let Some(cand) = child.longest(hay, pos + 1)? {
-                        if best.is_none_or(|(n, _)| cand.0 > n) {
-                            best = Some(cand);
-                        }
+        let mut best: Option<(usize, &'s Leaf)> = self.leaf_at(pos).map(|leaf| (pos, leaf));
+        if let Some(&c) = hay.get(pos).filter(|&&c| c != 0) {
+            if let Some(child) = self.lit_child(c) {
+                if let Some(cand) = child.longest(hay, pos + 1)? {
+                    if best.is_none_or(|(n, _)| cand.0 > n) {
+                        best = Some(cand);
                     }
                 }
             }
-            for entry in &self.regexes {
-                if let Some(len) = entry.match_len(&hay[pos..])? {
-                    if let Some(cand) = entry.node.longest(hay, pos + len)? {
-                        if best.is_none_or(|(n, _)| cand.0 > n) {
-                            best = Some(cand);
-                        }
+        }
+        for entry in &self.regexes {
+            if let Some(len) = entry.match_len(hay, pos)? {
+                if let Some(cand) = entry.node.longest(hay, pos + len)? {
+                    if best.is_none_or(|(n, _)| cand.0 > n) {
+                        best = Some(cand);
                     }
                 }
             }
@@ -306,31 +318,20 @@ impl RegexTrie {
         let mut stack: Vec<(&RegexTrie, usize)> = vec![(self, 0)];
 
         while let Some((current, pos)) = stack.pop() {
-            if current.check_eow() {
-                if let Some(v) = &current.leaf_value {
-                    out.push(MatchResult {
-                        matched: pos,
-                        regex_key: &v.regex_key,
-                        bindings: &v.bindings,
-                    });
+            if let Some(v) = current.leaf_at(pos) {
+                out.push(MatchResult {
+                    matched: pos,
+                    regex_key: &v.regex_key,
+                    bindings: &v.bindings,
+                });
+            }
+            if let Some(&c) = bytes.get(pos).filter(|&&c| c != 0) {
+                if let Some(child) = current.lit_child(c) {
+                    stack.push((child, pos + 1));
                 }
             }
-            if pos >= bytes.len() {
-                continue;
-            }
-
-            let c = bytes[pos];
-            if c != 0 {
-                let idx = current.child_indices[c as usize];
-                if idx != NONE {
-                    if let Some(child) = &current.children[idx as usize] {
-                        stack.push((child, pos + 1));
-                    }
-                }
-            }
-
             for entry in &current.regexes {
-                if let Some(len) = entry.match_len(&bytes[pos..])? {
+                if let Some(len) = entry.match_len(bytes, pos)? {
                     stack.push((&entry.node, pos + len));
                 }
             }
@@ -848,6 +849,83 @@ mod tests {
         let m = t.get("12x").unwrap();
         assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, kx));
         assert!(matches!(t.get("1kx"), Err(RegexTrieError::NodeNotFound)));
+    }
+
+    #[test]
+    fn a_chunk_reads_the_char_before_it() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (bound, inside, wide, dash) = (dummy(1), dummy(2), dummy(3), dummy(4));
+        t.insert("q\\b[0-9]+", rec(bound, root));
+        t.insert("r\\B[0-9]+", rec(inside, root));
+        t.insert("ü\\B[0-9]+", rec(wide, root));
+        t.insert("s-\\b[0-9]+", rec(dash, root));
+
+        assert!(matches!(t.get("q1"), Err(RegexTrieError::NodeNotFound)));
+        let m = t.get("r1").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (2, inside));
+        let m = t.get("ü1").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, wide));
+        let m = t.get("s-1").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, dash));
+    }
+
+    #[test]
+    fn a_zero_width_chunk_lets_the_walk_go_on() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (start, word, end, never) = (dummy(1), dummy(2), dummy(3), dummy(4));
+        t.insert("^ab", rec(start, root));
+        t.insert("\\bfoo", rec(word, root));
+        t.insert("bar\\b", rec(end, root));
+        t.insert("c\\bd", rec(never, root));
+
+        let m = t.get("ab").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (2, start));
+        let m = t.get("foo").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, word));
+        let m = t.get("bar").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, end));
+        let m = t.get("bar+").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, end));
+        assert!(matches!(t.get("barn"), Err(RegexTrieError::NodeNotFound)));
+        assert!(matches!(t.get("cd"), Err(RegexTrieError::NodeNotFound)));
+    }
+
+    #[test]
+    fn a_chunk_may_match_empty_where_the_pattern_does() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (digits_x, tail) = (dummy(1), dummy(2));
+        t.insert("(?:[0-9]*)x", rec(digits_x, root));
+        t.insert("cd(?:y*)", rec(tail, root));
+
+        let m = t.get("x").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (1, digits_x));
+        let m = t.get("12x").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, digits_x));
+        let m = t.get("cd").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (2, tail));
+        let m = t.get("cdyy").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (4, tail));
+    }
+
+    #[test]
+    fn a_match_of_nothing_is_no_match() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let digits = dummy(1);
+        t.insert("[0-9]*", rec(digits, root));
+
+        let m = t.get("12").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (2, digits));
+        assert!(matches!(t.get("x"), Err(RegexTrieError::NodeNotFound)));
+        assert!(t.get_all_matches("x").unwrap().is_empty());
+        let ends: Vec<usize> = t.get_all_matches("12").unwrap().iter().map(|m| m.matched).collect();
+        assert_eq!(ends, [2]);
+
+        assert_eq!(t.remove("[0-9]*", root).unwrap(), digits);
+        assert!(t.get("12").is_err());
     }
 
     #[test]

@@ -1046,6 +1046,40 @@ fn a_quantifier_in_a_pattern_covers_its_whole_group_or_escape() {
 }
 
 #[test]
+fn a_pattern_judges_a_word_boundary_by_the_char_before_it() {
+    for src in [
+        "regex «q\\B[0-9]+» := type (), (q1).type == type",
+        "regex «q-\\b[0-9]+» := type (), (q-1).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    let (_, _, stderr) = run_line("regex «q\\b[0-9]+» := type (), (q1).type == type");
+    assert!(stderr.contains("unknown name `q1`"), "{stderr}");
+}
+
+#[test]
+fn a_pattern_part_that_matches_nothing_still_lets_it_lex() {
+    for src in [
+        "regex «^ab» := type (), (ab).type == type",
+        "regex «\\bfoo» := type (), (foo).type == type",
+        "regex «(?:[0-9]*)x» := type (), (x).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    // A pattern that can match nothing as a whole lexes only where it matches something.
+    let (echoes, stderr) = repl(
+        "regex «a*» := type ()\n(aaa).type == type\nb := 3\nb\n\
+         regex «x{0,3}» := type ()\n(xx).type == type\n"
+            .as_bytes(),
+    );
+    assert_eq!(echoes, ["true", "3", "true"], "stderr: {stderr}");
+}
+
+#[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
