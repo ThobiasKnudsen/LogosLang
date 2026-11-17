@@ -74,11 +74,6 @@ pub(super) struct OpenScope {
     /// At the top level: owners a `move` or `free` ended that no open scope holds, which the
     /// top scope's exit does, from an earlier REPL line.
     pub(super) ended_earlier: Vec<DyadPtr>,
-    /// Held names a field path under which a `move` or `free` in the line being parsed ended;
-    /// the line's close settles them.
-    pub(super) ended_paths: Vec<DyadPtr>,
-    /// At the top level: owners as `ended_earlier`, a field path under which this parse ended.
-    pub(super) paths_ended_earlier: Vec<DyadPtr>,
     /// Items parsed at depth 0 and not yet run, each with its line and the names it ends that
     /// an enclosing scope or an earlier REPL line holds: `drain` runs them when the pass needs
     /// a value, the scope's own run otherwise.
@@ -650,15 +645,8 @@ impl<'a> Parser<'a> {
             }
         }
         for r in returns {
-            // A field path its line ended after it is freed by the `return`, its name's free at
-            // the scope's end leaving the field out.
-            // SAFETY: an ended place is a reduced dyad from the store.
-            let root_of = |place| unsafe { crate::identities::this::path_root(self.types, place) };
-            let ends: Vec<DyadPtr> = r
-                .live
-                .iter()
-                .flat_map(|&name| r.ended.iter().copied().filter(move |&p| root_of(p) == name))
-                .collect();
+            let ends: Vec<DyadPtr> =
+                r.live.iter().copied().filter(|name| r.ended.contains(name)).collect();
             // SAFETY: `r.node` is a `return` node built in this body, not yet run; `ends` are
             // places the scopes it leaves hold.
             unsafe {
@@ -841,19 +829,17 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
-    /// The held names and owning field paths under them the ended log's `range` ended that a
-    /// scope outside depth `inside` holds, in the order their names were declared, the paths
-    /// under one name in the order they ended.
+    /// The held names the ended log's `range` ended that a scope outside depth `inside` holds, in
+    /// the order they were declared.
     fn ended_outside(&self, range: std::ops::Range<usize>, inside: usize) -> Vec<DyadPtr> {
         let mut names: Vec<(usize, usize, DyadPtr)> = self.cx.ended_log[range]
             .iter()
             .filter(|&&(_, holder)| holder < inside)
-            .map(|&(place, holder)| {
-                // SAFETY: held places and `place` are dyads from the store.
-                let at = self.cx.open[holder].exit.iter().position(|h| unsafe {
-                    self.holds(h, crate::identities::this::path_root(self.types, place))
-                });
-                (holder, at.unwrap_or(usize::MAX), place)
+            .map(|&(name, holder)| {
+                // SAFETY: held places and `name` are dyads from the store.
+                let at =
+                    self.cx.open[holder].exit.iter().position(|h| unsafe { self.holds(h, name) });
+                (holder, at.unwrap_or(usize::MAX), name)
             })
             .collect();
         names.sort_by_key(|&(holder, at, _)| (holder, at));
@@ -1443,40 +1429,19 @@ impl<'a> Parser<'a> {
             }
             let open = &mut self.cx.open[depth];
             if line > 0 {
-                let held = ExitItem { what: name, from: 0, end: Some(line), free_from: None };
+                let held = ExitItem { what: name, from: 0, end: Some(line) };
                 open.exit.insert(0, held);
             }
             if let Some((_, _, ends)) = open.unrun.last_mut().filter(|(_, at, _)| *at == line) {
                 ends.push(name);
             }
         }
-        // SAFETY: the ended roots are names this scope holds.
-        unsafe { self.free_ended_paths(depth, line) };
         // SAFETY: `item` is a reduced dyad from the store.
         if unsafe { dyad::ty(item) } == self.types.defer_ {
-            let deferred = ExitItem { what: item, from: line + 1, end: None, free_from: None };
+            let deferred = ExitItem { what: item, from: line + 1, end: None };
             self.cx.open[depth].exit.push(deferred);
         }
         self.cx.open[depth].lines += 1;
-    }
-
-    /// The scope at `depth` holds names a field of which its line `line` ended: from that line
-    /// on, its end frees each without the lines of the fields ended under it (DESIGN ›`move` and
-    /// `free` take a field path too‹).
-    ///
-    /// # Safety
-    /// The scope's ended roots must be binding dyads it holds.
-    unsafe fn free_ended_paths(&mut self, depth: usize, line: usize) {
-        for root in std::mem::take(&mut self.cx.open[depth].ended_paths) {
-            let Some(at) = self.cx.open[depth].exit.iter().rposition(|h| self.holds(h, root))
-            else {
-                continue;
-            };
-            let ty = self.types.type_of(root);
-            let free =
-                crate::identities::drop_model::free_without(self.rt.store, self.types, ty, root);
-            self.cx.open[depth].exit[at].free_from = Some((line, free));
-        }
     }
 
     /// The block at `depth` closed: a `return` inside it stands in the enclosing scope's line
@@ -1565,7 +1530,7 @@ impl<'a> Parser<'a> {
             .collect();
         for item in ends {
             // SAFETY: the pass laid the scope's places out in the frame `self.rt` runs.
-            if unsafe { item.run(&mut self.rt, None) }.is_err() {
+            if unsafe { item.run(&mut self.rt) }.is_err() {
                 return;
             }
         }
@@ -1715,19 +1680,12 @@ impl<'a> Parser<'a> {
         use crate::identities::{drop_model, scope};
         let top = self.cx.scopes.current().expect("the top scope is open");
         let ended = std::mem::take(&mut self.cx.open[0].ended_earlier);
-        let roots = std::mem::take(&mut self.cx.open[0].paths_ended_earlier);
-        // SAFETY: `top` is a scope node the driver minted, its exit null or exit items; the
-        // roots are names an earlier line holds.
+        // SAFETY: `top` is a scope node the driver minted, its exit null or exit items.
         unsafe {
             for &node in scope::exit_items(top) {
                 let item = drop_model::exit_item_of(node);
                 if ended.iter().any(|&name| self.holds(&item, name)) {
                     drop_model::end_exit_item(self.rt.store, self.types, node);
-                }
-                if let Some(&root) = roots.iter().find(|&&root| self.holds(&item, root)) {
-                    let ty = self.types.type_of(root);
-                    let free = drop_model::free_without(self.rt.store, self.types, ty, root);
-                    drop_model::free_exit_item_by(self.rt.store, self.types, node, free);
                 }
             }
         }
@@ -1736,7 +1694,7 @@ impl<'a> Parser<'a> {
 
     /// [`Self::end_earlier_holds`] for a line that failed: only the names whose ending line the
     /// pass ran, and whose `free` or `move` it reached there (DESIGN ›`free` and `move` end a
-    /// name; no drop flag‹). A field path the line ended is live again, its name freed whole.
+    /// name; no drop flag‹).
     pub fn end_failed_earlier_holds(&mut self) -> Vec<DyadPtr> {
         use crate::identities::drop_model::ended_at_run;
         let rt = &self.rt;
@@ -1745,7 +1703,6 @@ impl<'a> Parser<'a> {
         // SAFETY: the ended names are places an earlier line laid out in the program frame.
         top.ended_earlier
             .retain(|&name| reached.contains(&name) && unsafe { ended_at_run(rt, name) });
-        top.paths_ended_earlier.clear();
         self.end_earlier_holds()
     }
 }
