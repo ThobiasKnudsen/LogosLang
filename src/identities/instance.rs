@@ -12,7 +12,7 @@ use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
-use super::{commit_if_literal, meta, operand_of, Cx, Operand};
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -161,21 +161,8 @@ pub(crate) unsafe fn build_ctor(
     ops.push(record_logos);
     ops.push(types.ops.construct_);
     ops.push(record_logos);
-    for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
-        let fty = super::hole::type_in(field);
-        let field_read = super::read::place_layout(types, fty);
-        let field_ptr = matches!(field_read, Some((super::read::Read::Pointer(_), _)));
-        let arg = if let Operand::Literal = operand_of(types, arg) {
-            if field_ptr {
-                // A literal into a pointer field would be a wild address.
-                return Err(ParseError::TypeMismatch);
-            }
-            commit_if_literal(store, types, arg, &Operand::Literal, fty, nt)?
-        } else {
-            super::check_store_type(types, fty, arg)?;
-            arg
-        };
-        ops.push(arg);
+    for (&arg, &(field, _, _)) in args.iter().zip(&fields) {
+        ops.push(super::land(store, types, arg, super::hole::type_in(field))?);
     }
     ops.push(std::ptr::null_mut());
     Ok(store.alloc_words(construct, &ops))

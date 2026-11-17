@@ -101,7 +101,7 @@ pub(crate) fn fold_arith(
         }
         match fold_pair(op, l, r) {
             Some((num, den)) => Ok(Some(build_literal(store, rational, num, den))),
-            None => Err(ParseError::UncomputableLiteral),
+            None => Err(ParseError::LiteralArithmetic),
         }
     }
 }
@@ -288,8 +288,8 @@ pub(crate) unsafe fn write_at(p: *mut u8, num: i64, den: i64) {
     std::ptr::write_unaligned(p.add(8) as *mut i64, den);
 }
 
-/// An integer target needs an exact in-range integer; a float target takes `num/den`;
-/// `None` where there is no exact value.
+/// The value of `nt` the plain number is exactly, `None` where there is none. DESIGN ›A plain
+/// number is a `rational_number`, and a number type's definition converts it‹.
 pub(crate) fn mold_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
     let p = unsafe { dyad::value(node) };
@@ -303,12 +303,14 @@ pub(crate) fn mold_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     }
     use NumType::*;
     if nt.is_float() {
-        let v = num as f64 / den as f64;
-        return match nt {
-            F32 => Some(i64::from((v as f32).to_bits())),
-            F64 => Some(v.to_bits() as i64),
-            _ => None,
-        };
+        // Reduced, so exact only over a power of two, with no more significant bits than the
+        // float's digits.
+        let n = num.unsigned_abs();
+        let significant = (u64::BITS - n.leading_zeros()).saturating_sub(n.trailing_zeros());
+        if !(den as u64).is_power_of_two() || significant as usize > nt.digits() {
+            return None;
+        }
+        return Some(cast_pair(num, den, nt));
     }
     if num % den != 0 {
         return None;
@@ -332,8 +334,8 @@ pub(crate) fn mold(node: DyadPtr) -> Option<i32> {
     mold_to(node, NumType::I32).map(|b| b as i32)
 }
 
-/// `as` semantics, for the `T(literal)` conversion: an integer target takes the truncated
-/// integer part then wraps to width; `None` for a malformed rational.
+/// What `lossy` gives for a plain number: an integer type takes its whole part, wrapped to
+/// width, a float type its nearest value; `None` for a malformed rational.
 pub(crate) fn cast_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
     let p = unsafe { dyad::value(node) };
@@ -348,7 +350,7 @@ pub(crate) fn cast_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     Some(cast_pair(num, den, nt))
 }
 
-/// `as` semantics on a fraction, `den > 0`.
+/// [`cast_to`] on a fraction, `den > 0`.
 pub(crate) fn cast_pair(num: i64, den: i64, nt: NumType) -> i64 {
     if nt.is_float() {
         let v = num as f64 / den as f64;
@@ -358,8 +360,8 @@ pub(crate) fn cast_pair(num: i64, den: i64, nt: NumType) -> i64 {
             _ => unreachable!("nt is a float here"),
         };
     }
-    // Through the shared cast, so it matches a runtime `i64` to `nt` convert.
-    super::numtype::apply_cast(NumType::I64, nt, num / den)
+    // Through the shared integer wrap, so it matches a runtime `i64` to `nt` convert.
+    super::numtype::encode_from_i128(nt, i128::from(num / den))
 }
 
 /// `rational_number 1` hands the literal on as a run-time value, its bytes the value's;
@@ -464,7 +466,7 @@ pub(crate) unsafe fn run_into(
     let op = rt.types().ops.rational_arith_op_of(*ops.add(2)).ok_or(RunError::NoLeaf)?;
     let l = value_of(rt, *ops)?;
     let r = value_of(rt, *ops.add(1))?;
-    let (num, den) = fold_pair(op, l, r).ok_or(RunError::UncomputableLiteral)?;
+    let (num, den) = fold_pair(op, l, r).ok_or(RunError::RationalArithmetic)?;
     write_at(dest, num, den);
     Ok(())
 }

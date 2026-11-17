@@ -242,7 +242,7 @@ a = a + 1
 # d is an infinitesimal: an actual number, greater than 0 and smaller than every
 # machine-representable number. nothing containing d lowers to machine code (an
 # operation over a sizeless type does not lower until resolved): replace d with
-# a small machine number (f64 1e-9) for approximation, or let the proof layer
+# a small machine number (f64 lossy 1e-9) for approximation, or let the proof layer
 # take d -> 0 for the exact value. every range is directed (start toward bound),
 # the step signed with the direction of travel, which is what gives negative
 # bounds the right sign.

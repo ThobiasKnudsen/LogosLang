@@ -625,8 +625,7 @@ impl Lowerer<'_, '_> {
         }
     }
 
-    /// Cast `v` from `from` to `to` as the interpreter's `apply_cast` does
-    /// (Rust `as`); float→int saturates rather than trapping.
+    /// Cast `v` from `from` to `to` as the interpreter's `apply_cast` does.
     pub(crate) fn emit_cast(&mut self, from: NumType, to: NumType, v: Value) -> Value {
         let tct = to.cranelift_type();
         match (from.is_float(), to.is_float()) {
@@ -651,13 +650,14 @@ impl Lowerer<'_, '_> {
                     self.builder.ins().fcvt_from_uint(tct, v)
                 }
             }
-            // Saturating, NaN → 0, matching Rust `as`.
+            // The wrap and the NaN fault are the interpreter's own function.
             (true, false) => {
-                if to.is_signed_int() {
-                    self.builder.ins().fcvt_to_sint_sat(tct, v)
-                } else {
-                    self.builder.ins().fcvt_to_uint_sat(tct, v)
-                }
+                let bits = widen_to_i64(self.builder, v, from);
+                let from_tag = self.builder.ins().iconst(types::I64, from as i64);
+                let to_tag = self.builder.ins().iconst(types::I64, to as i64);
+                let entry = crate::run::convert_float_to_int as *const () as usize;
+                let whole = self.call_seed(entry, &[bits, from_tag, to_tag]);
+                narrow_from_i64(self.builder, whole, to)
             }
             (true, true) => {
                 if to.bytes() > from.bytes() {

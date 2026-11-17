@@ -1224,7 +1224,6 @@ impl<'a> Parser<'a> {
         ty: DyadPtr,
         node: DyadPtr,
     ) -> Result<Option<Vec<DyadPtr>>, ParseError> {
-        use crate::identities::{operand_of, Operand};
         let types = self.types;
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
         let slots = dyad::value(node) as *mut DyadPtr;
@@ -1246,18 +1245,7 @@ impl<'a> Parser<'a> {
                 && declared != types.square_brackets
                 && declared != types.scope
             {
-                // A literal stays as it stands in a rational field: its bytes are the value's.
-                if matches!(operand_of(types, slot), Operand::Literal) {
-                    let lit = types.through(slot);
-                    if crate::identities::is_numtype_node(types, declared) {
-                        *slots.add(i) = crate::identities::commit_literal_to(
-                            self.rt.store,
-                            types,
-                            lit,
-                            declared,
-                        )?;
-                    }
-                }
+                *slots.add(i) = crate::identities::land(self.rt.store, types, slot, declared)?;
                 declared
             } else if let Some(bracket) = crate::identities::tape::bracket_kind(types, slot) {
                 if dyad::ty(slot) != types.tape.bracket_arg {

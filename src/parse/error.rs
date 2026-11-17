@@ -116,11 +116,14 @@ pub enum ParseError {
     ArmsMakeAndBorrow,
     /// A logical operator applied to a non-`bool` operand.
     NonBoolOperands,
-    /// A binary operator's operands were two different concrete numeric
-    /// types: cross-type arithmetic needs an explicit cast.
+    /// A value lands in a type that is not its own and is not known to hold every value of it.
     TypeMismatch,
     /// A number literal had no exact value in the type it was committed to.
     UncomputableLiteral,
+    /// Arithmetic on plain numbers with no value: a division by zero, or past an `i64` fraction.
+    LiteralArithmetic,
+    /// `lossy` not between a number type and a bracketed value or a plain number.
+    LossyOutOfPlace,
     /// A `return` with no function around it to leave.
     ReturnOutsideFunction,
     /// A node that gives nothing (a statement, a `-> void` call) stood where a value is
@@ -204,16 +207,15 @@ pub enum ParseError {
     BadStep,
     /// An `&` of something without storage to point at.
     BadAddressOf,
-    /// A numeric conversion `logos(value)` with not exactly one operand, or a
-    /// non-numeric one.
+    /// A numeric conversion `T(value)` with not exactly one operand.
     BadCast,
     /// A declaration's type position, or a type variable's fill, held
     /// something that does not evaluate to a type.
     BadDeclaredType,
-    /// A `-> dyad` function gives back what `=` refuses into a `dyad ?` place, or a
-    /// parameter, which a call may fill with a number: every reader of the result follows
-    /// it as a node's address. stand-in for #198
-    DyadResultNotNode,
+    /// A number lands in a `dyad ?` place, or a `-> dyad` function gives back a parameter, which
+    /// a call may fill with a number: every reader follows the place as a node's address.
+    /// stand-in for #216
+    DyadTakesNode,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,

@@ -616,8 +616,6 @@ impl<'a> Parser<'a> {
             unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?
         };
 
-        // A comptime-rational tail commits to the declared return type here,
-        // so `fn () -> i64 (…)` returns i64 rather than the i32 default.
         // SAFETY: `body`/`output` are valid dyads just built.
         let body =
             unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };
@@ -1115,21 +1113,40 @@ impl<'a> Parser<'a> {
         callee: DyadPtr,
         args: &[DyadPtr],
     ) -> Result<DyadPtr, ParseError> {
+        self.build_call_as(callee, args, false)
+    }
+
+    /// [`build_call`](Self::build_call), a numeric callee converting with `lossy` when it is set,
+    /// as `i32 lossy (x)`.
+    ///
+    /// # Safety
+    /// As [`build_call`](Self::build_call).
+    pub(crate) unsafe fn build_call_as(
+        &mut self,
+        callee: DyadPtr,
+        args: &[DyadPtr],
+        lossy: bool,
+    ) -> Result<DyadPtr, ParseError> {
         let mut args = args.to_vec();
         for i in 0..args.len() {
             // SAFETY: `args` are reduced dyads from the store.
             if let Some((connective, a, b)) = crate::identities::group::members(self.types, args[i])
             {
                 args[i] = a;
-                let a = self.build_call(callee, &args)?;
+                let a = self.build_call_as(callee, &args, lossy)?;
                 args[i] = b;
-                let b = self.build_call(callee, &args)?;
+                let b = self.build_call_as(callee, &args, lossy)?;
                 return crate::identities::group::join(self.rt.store, self.types, connective, a, b);
             }
         }
         for &arg in &args {
+            // An `if` whose arms give two types gives one where its parameter's type lands each
+            // arm.
             // SAFETY: `args` are reduced dyads just parsed.
-            unsafe { crate::identities::read::value_type(self.types, arg) }?;
+            match unsafe { crate::identities::read::value_type(self.types, arg) } {
+                Ok(_) | Err(ParseError::ArmsDiffer) => {}
+                Err(e) => return Err(e),
+            }
             // Fail-closed until ownership-gated parameters let the callee declare
             // that it takes the value.
             // SAFETY: as above.
@@ -1146,7 +1163,9 @@ impl<'a> Parser<'a> {
         };
         if is_numtype {
             // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
-            unsafe { crate::identities::build_cast(self.rt.store, self.types, callee, &args) }
+            unsafe {
+                crate::identities::build_cast(self.rt.store, self.types, callee, &args, lossy)
+            }
         } else if is_record {
             // SAFETY: `callee` is a record type node.
             if unsafe { !crate::identities::meta::run_body_of(callee).is_null() } {

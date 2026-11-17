@@ -78,6 +78,11 @@ pub enum RunError {
     NoDestructor(DyadPtr),
     /// A literal with no exact `i32` value: a fraction, or out of range.
     UncomputableLiteral,
+    /// NaN or an infinity converted into an integer type.
+    NoWholeNumber,
+    /// Arithmetic on `rational_number` values with no value: a division by zero, or past an
+    /// `i64` fraction.
+    RationalArithmetic,
     /// A call's argument count differs from the callee's parameter count.
     ArityMismatch,
     /// `f.compile()` under a runtime with no compiler: parse-time evaluation.
@@ -236,6 +241,29 @@ pub unsafe extern "C" fn interpret_call(
 pub unsafe extern "C" fn park_null_pointer(ctx: *mut Context) -> i64 {
     park(ctx, RunError::NullPointer);
     0
+}
+
+/// A float converted into an integer type in compiled code, by the interpreter's own
+/// [`apply_cast`](crate::identities::numtype::apply_cast); NaN or an infinity is parked as the
+/// fault the interpreter raises.
+///
+/// # Safety
+/// Called only by compiled code, with the context it was called with; `from` and `to` are
+/// number type tags.
+pub unsafe extern "C" fn convert_float_to_int(
+    ctx: *mut Context,
+    v: i64,
+    from: i64,
+    to: i64,
+) -> i64 {
+    use crate::identities::numtype::{apply_cast, NumType};
+    match apply_cast(NumType::from_tag(from as u8), NumType::from_tag(to as u8), v) {
+        Some(bits) => bits,
+        None => {
+            park(ctx, RunError::NoWholeNumber);
+            0
+        }
+    }
 }
 
 /// The first fault parked is the cause: machine code runs on with the zero it left, so a
