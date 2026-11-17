@@ -8,7 +8,9 @@
 
 use std::cell::RefCell;
 
-use regex::bytes::Regex;
+use regex_automata::meta::{self, Regex};
+use regex_automata::util::syntax;
+use regex_automata::{Anchored, Input};
 
 use crate::binding::Binding;
 use crate::dyad::DyadPtr;
@@ -49,8 +51,8 @@ pub struct MatchResult<'a> {
 struct RegexEntry {
     node: Box<RegexTrie>,
     pattern: String,
-    /// `^(?:pattern)`, compiled on first use so a bad pattern surfaces at
-    /// lookup rather than at insert.
+    /// Compiled on first use so a bad pattern surfaces at lookup rather than
+    /// at insert.
     matcher: RefCell<Option<Regex>>,
 }
 
@@ -63,18 +65,27 @@ impl RegexEntry {
         }
     }
 
-    /// Length of this branch's non-empty match at the start of `hay`.
-    fn match_len(&self, hay: &[u8]) -> Result<Option<usize>, RegexTrieError> {
-        if self.matcher.borrow().is_none() {
-            let anchored = format!("^(?:{})", self.pattern);
-            let re = Regex::new(&anchored)
-                .map_err(|err| RegexTrieError::BadPattern(format!("{anchored}: {err}")))?;
-            *self.matcher.borrow_mut() = Some(re);
-        }
-        let borrow = self.matcher.borrow();
-        let re = borrow.as_ref().unwrap();
-        Ok(re.find(hay).and_then(|m| (m.start() == 0 && m.end() > 0).then_some(m.end())))
+    /// Length of this branch's non-empty match starting at `pos`. The bytes
+    /// before `pos` stay in view, so a `\b` at the chunk's start reads the
+    /// char before it, as it does in the whole pattern.
+    fn match_len(&self, hay: &[u8], pos: usize) -> Result<Option<usize>, RegexTrieError> {
+        let mut slot = self.matcher.borrow_mut();
+        let re = match &mut *slot {
+            Some(re) => re,
+            None => slot.insert(compile(&self.pattern)?),
+        };
+        let input = Input::new(hay).range(pos..).anchored(Anchored::Yes);
+        Ok(re.search(&input).map(|m| m.end() - pos).filter(|&len| len > 0))
     }
+}
+
+/// The chunk as `regex::bytes` builds a pattern: leftmost-first, over any bytes.
+fn compile(pattern: &str) -> Result<Regex, RegexTrieError> {
+    Regex::builder()
+        .configure(meta::Config::new().utf8_empty(false))
+        .syntax(syntax::Config::new().utf8(false))
+        .build(pattern)
+        .map_err(|err| RegexTrieError::BadPattern(format!("{pattern}: {err}")))
 }
 
 /// A node: `child_indices` maps a byte to a slot in `children`; byte 0 is the
@@ -287,7 +298,7 @@ impl RegexTrie {
                 }
             }
             for entry in &self.regexes {
-                if let Some(len) = entry.match_len(&hay[pos..])? {
+                if let Some(len) = entry.match_len(hay, pos)? {
                     if let Some(cand) = entry.node.longest(hay, pos + len)? {
                         if best.is_none_or(|(n, _)| cand.0 > n) {
                             best = Some(cand);
@@ -330,7 +341,7 @@ impl RegexTrie {
             }
 
             for entry in &current.regexes {
-                if let Some(len) = entry.match_len(&bytes[pos..])? {
+                if let Some(len) = entry.match_len(bytes, pos)? {
                     stack.push((&entry.node, pos + len));
                 }
             }
@@ -848,6 +859,25 @@ mod tests {
         let m = t.get("12x").unwrap();
         assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, kx));
         assert!(matches!(t.get("1kx"), Err(RegexTrieError::NodeNotFound)));
+    }
+
+    #[test]
+    fn a_chunk_reads_the_char_before_it() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (bound, inside, wide, dash) = (dummy(1), dummy(2), dummy(3), dummy(4));
+        t.insert("q\\b[0-9]+", rec(bound, root));
+        t.insert("r\\B[0-9]+", rec(inside, root));
+        t.insert("ü\\B[0-9]+", rec(wide, root));
+        t.insert("s-\\b[0-9]+", rec(dash, root));
+
+        assert!(matches!(t.get("q1"), Err(RegexTrieError::NodeNotFound)));
+        let m = t.get("r1").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (2, inside));
+        let m = t.get("ü1").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, wide));
+        let m = t.get("s-1").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, dash));
     }
 
     #[test]

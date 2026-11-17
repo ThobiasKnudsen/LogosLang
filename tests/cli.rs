@@ -1024,6 +1024,20 @@ fn a_pattern_whose_class_can_eat_its_own_literal_still_lexes() {
 }
 
 #[test]
+fn a_pattern_judges_a_word_boundary_by_the_char_before_it() {
+    for src in [
+        "regex «q\\B[0-9]+» := type (), (q1).type == type",
+        "regex «q-\\b[0-9]+» := type (), (q-1).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    let (_, _, stderr) = run_line("regex «q\\b[0-9]+» := type (), (q1).type == type");
+    assert!(stderr.contains("unknown name `q1`"), "{stderr}");
+}
+
+#[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
