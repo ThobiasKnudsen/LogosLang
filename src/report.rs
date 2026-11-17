@@ -339,6 +339,14 @@ pub fn parse_message(e: &ParseError) -> String {
              and `free` take a cell through the pointer that owns it"
                 .into()
         }
+        ParseError::EndUnderFree(spelled) => {
+            let (path, holder) = &**spelled;
+            format!(
+                "the type of `{holder}` fills its own `share free = (…)`, which frees `{path}` with \
+                 the rest of `{holder}`: `move` and `free` cannot take `{path}` out alone; free \
+                 `{holder}` whole"
+            )
+        }
         ParseError::RecordMoveNotInSeed => {
             "moving a plain record is not in the seed yet: its bytes are not copied into a name"
                 .into()

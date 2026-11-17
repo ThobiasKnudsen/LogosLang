@@ -259,6 +259,9 @@ pub enum ParseError {
     /// `&` made, a copy of an owner or a parameter without `own`, or a name that borrows the node
     /// whose pointer reaches it.
     EndThroughBorrow,
+    /// `move` or `free` of a field path under a holder whose type fills its own `free`, which
+    /// frees the field with the rest: the path, then that holder, each spelled.
+    EndUnderFree(Box<(String, String)>),
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
     /// a `free`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,

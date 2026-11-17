@@ -405,7 +405,9 @@ impl<'a> Parser<'a> {
     /// no name holds or a borrow, or of a `share` function's own value. A cell that holds a value
     /// with an end is refused where something it is reached through only borrows it.
     fn ended_path(&mut self, place: DyadPtr, cell: &Cell) -> Result<Option<Ended>, ParseError> {
-        use crate::identities::drop_model::{cell_free, is_owning_place, path_borrows};
+        use crate::identities::drop_model::{
+            cell_free, freeing_holder, is_owning_place, path_borrows,
+        };
         use crate::identities::this::{field_path, FieldPath};
         let (at, held) = (cell.start, self.settled_type(cell.root));
         // SAFETY: `place` is a reduced dyad from the store.
@@ -441,6 +443,14 @@ impl<'a> Parser<'a> {
             }
             if owns && path_borrows(self.types, binding, &path) {
                 return Err(self.fail_at(at, ParseError::UnfollowedPath));
+            }
+            if let Some(k) = freeing_holder(self.types, binding, &path) {
+                let spelled = |n: usize| {
+                    let steps = std::iter::once(binding).chain(path[..n].iter().copied());
+                    steps.map(|b| Binding::spelling(b)).collect::<Vec<_>>().join(".")
+                };
+                let spelled = (spelled(path.len()), spelled(k));
+                return Err(self.fail_at(at, ParseError::EndUnderFree(Box::new(spelled))));
             }
         }
         Ok(Some(Ended { binding, path }))

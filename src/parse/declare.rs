@@ -251,12 +251,7 @@ impl<'a> Parser<'a> {
         let at =
             if self.cx.once_at == Some(self.cx.frames.len()) { 0 } else { self.cx.open.len() - 1 };
         let open = &mut self.cx.open[at];
-        open.exit.push(ExitItem {
-            what: binding,
-            from: open.lines + 1,
-            end: None,
-            free_from: None,
-        });
+        open.exit.push(ExitItem { what: binding, from: open.lines + 1, end: None });
     }
 
     /// The open scope whose end holds `place`, innermost first.
@@ -314,10 +309,8 @@ impl<'a> Parser<'a> {
     /// `node` has ended the field path `ended`: each path binding along it under the name's
     /// entry, made on the first end that reaches it, and the last is dead from here, so the name
     /// and every path above the last are dead as a whole (DESIGN ›`move` and `free` take a field
-    /// path too‹). A name that holds stays held: the line's close has its scope's end run its
-    /// free without the path's line. An owning field it ends is settled as a held name is: each
-    /// scope inside the holder holds it up to the line, an `if` one of whose arms ended it
-    /// frees it at the end of the others, and a `return` before it in its line frees it.
+    /// path too‹). Nothing more is settled: no holder on the path fills `free`, so no holder's
+    /// end reaches the field.
     ///
     /// # Safety
     /// `ended.binding` must be a name's binding dyad and `ended.path` field bindings; `node` a
@@ -337,27 +330,6 @@ impl<'a> Parser<'a> {
             path = below;
         }
         self.cx.scopes.mark_dead(path, node);
-        if !self.name_holds(ended.binding) {
-            return;
-        }
-        // An owner no open scope holds is an earlier REPL line's, whose item the session's
-        // scope keeps.
-        let (holder, ended_paths) = match self.holder_of(ended.binding) {
-            Some(holder) => (holder, &mut self.cx.open[holder].ended_paths),
-            None => (0, &mut self.cx.open[0].paths_ended_earlier),
-        };
-        if !ended_paths.contains(&ended.binding) {
-            ended_paths.push(ended.binding);
-        }
-        let place = *(dyad::value(node) as *const DyadPtr);
-        if self.is_owning_read(place)
-            || crate::identities::drop_model::is_owning_place(self.types, place)
-        {
-            for open in &mut self.cx.open[holder + 1..] {
-                open.ended.push(place);
-            }
-            self.cx.ended_log.push((place, holder));
-        }
     }
 
     /// The path binding a field path `lhs` from the name `root` reaches under its entry, null

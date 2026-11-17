@@ -17,6 +17,15 @@ fn new_core() -> (Store, RegexTrie, Core) {
     (store, trie, core)
 }
 
+/// The operator a node applies, with the type its mint gives back and the leaf it runs.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+unsafe fn minted(node: DyadPtr) -> (DyadPtr, Option<DyadPtr>, Option<DyadPtr>) {
+    let m = dyad::ty(node);
+    (mint::origin(m), mint::output_type_of(m), mint::operation_of(m))
+}
+
 /// A binding dyad naming `identity`, for a name a test declares by hand, in the store
 /// like every binding, so its record is in the program frame.
 fn test_binding(store: &mut Store, binding_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
@@ -87,13 +96,13 @@ fn parses_a_equals_a_plus_one() {
         let top = dyad::value(root) as *const DyadPtr;
         assert_eq!(core.through(*top), a);
         let sum = *top.add(1);
-        assert_eq!(dyad::ty(sum), core.plus);
+        let add = core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32);
+        assert_eq!(minted(sum), (core.plus, Some(core.i32_), Some(add)));
         let sops = dyad::value(sum) as *const DyadPtr;
         assert_eq!(core.through(*sops), a);
         let one = *sops.add(1);
         assert_eq!(dyad::ty(one), core.i32_);
         assert_eq!(std::ptr::read_unaligned(dyad::value(one) as *const i32), 1);
-        assert_eq!(*sops.add(2), core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32));
     }
 }
 
@@ -691,11 +700,8 @@ fn plus_is_abstract_and_resolves_to_a_concrete_op() {
     };
     unsafe {
         let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
-        assert_eq!(dyad::ty(body), core.plus);
-        assert_eq!(
-            *(dyad::value(body) as *const DyadPtr).add(2),
-            core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32)
-        );
+        let add = core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32);
+        assert_eq!(minted(body), (core.plus, Some(core.i32_), Some(add)));
     }
 
     let call = store.alloc_leaf(func);
@@ -807,15 +813,11 @@ fn minus_and_times_resolve_to_concrete_ops() {
     };
     unsafe {
         let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
-        assert_eq!(dyad::ty(body), core.minus);
-        let bops = dyad::value(body) as *const DyadPtr;
-        assert_eq!(*bops.add(2), core.ops.arith_leaf(numtype::ArithOp::Sub, NumType::I32));
-        let rhs = *bops.add(1);
-        assert_eq!(dyad::ty(rhs), core.times);
-        assert_eq!(
-            *(dyad::value(rhs) as *const DyadPtr).add(2),
-            core.ops.arith_leaf(numtype::ArithOp::Mul, NumType::I32)
-        );
+        let sub = core.ops.arith_leaf(numtype::ArithOp::Sub, NumType::I32);
+        assert_eq!(minted(body), (core.minus, Some(core.i32_), Some(sub)));
+        let rhs = *(dyad::value(body) as *const DyadPtr).add(1);
+        let mul = core.ops.arith_leaf(numtype::ArithOp::Mul, NumType::I32);
+        assert_eq!(minted(rhs), (core.times, Some(core.i32_), Some(mul)));
     }
 }
 
@@ -848,11 +850,8 @@ fn less_than_is_abstract_and_resolves_to_lt_i32() {
     };
     unsafe {
         let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
-        assert_eq!(dyad::ty(body), core.lt);
-        assert_eq!(
-            *(dyad::value(body) as *const DyadPtr).add(2),
-            core.ops.cmp_leaf(numtype::CmpOp::Lt, NumType::I32)
-        );
+        let lt = core.ops.cmp_leaf(numtype::CmpOp::Lt, NumType::I32);
+        assert_eq!(minted(body), (core.lt, Some(core.bool_), Some(lt)));
     }
 }
 
@@ -1045,13 +1044,37 @@ fn comparison_siblings_resolve_to_their_concrete_ops() {
         // SAFETY: `func` is the fn node just parsed.
         unsafe {
             let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
-            assert_eq!(dyad::ty(body), abstract_op, "abstract op for `{src}`");
-            assert_eq!(
-                *(dyad::value(body) as *const DyadPtr).add(2),
-                concrete,
-                "concrete op for `{src}`"
-            );
+            assert_eq!(minted(body), (abstract_op, Some(core.bool_), Some(concrete)), "`{src}`");
         }
+    }
+}
+
+#[test]
+fn an_operation_mints_once_per_set_of_field_types() {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let src = "x := i32 3, x + i32 1, x + 2, x + i64 2, x * i32 1";
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
+    let root = p.parse_sequence().unwrap();
+    // SAFETY: `root` is the sequence just parsed into `store`, which is alive.
+    unsafe {
+        let lines = scope::exprs_of(root).unwrap();
+        let (one, two, wide, times) = (lines[1], lines[2], lines[3], lines[4]);
+        let add = |nt| core.ops.arith_leaf(numtype::ArithOp::Add, nt);
+        // `2` converts to `i32` where it lands, so both lines are nodes of one mint.
+        assert_eq!(dyad::ty(one), dyad::ty(two));
+        assert_eq!(minted(one), (core.plus, Some(core.i32_), Some(add(NumType::I32))));
+        // `x` lies inside `i64`: the mint is `+`'s for `i64`, its `lhs` the conversion of `x`.
+        let i64_ = core.numtypes[NumType::I64 as usize];
+        assert_eq!(minted(wide), (core.plus, Some(i64_), Some(add(NumType::I64))));
+        assert_eq!(dyad::ty(operands(wide).0), core.convert);
+        assert_ne!(dyad::ty(one), dyad::ty(times));
+        // The node holds its operands and nothing else.
+        let m = dyad::ty(one);
+        assert_eq!(meta::arity_of(m), 2);
+        assert_eq!(meta::op_slot_of(m), None);
+        assert_eq!(meta::output_slot_of(m), None);
     }
 }
 

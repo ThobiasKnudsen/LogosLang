@@ -481,18 +481,16 @@ mod tests {
 
         // SAFETY: all handles are identities Core::build just allocated.
         unsafe {
+            // An operation whose fields are `?` keeps its output and its leaf on each mint.
+            for id in [
+                core.plus, core.minus, core.times, core.div_, core.rem_, core.lt, core.gt, core.le,
+                core.ge, core.eq, core.ne,
+            ] {
+                assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
+                assert_eq!(meta::arity_of(id), 2);
+                assert_eq!((meta::op_slot_of(id), meta::output_slot_of(id)), (None, None));
+            }
             for (id, kind, arity) in [
-                (core.plus, meta::TUPLE_TAG, 4),
-                (core.minus, meta::TUPLE_TAG, 4),
-                (core.times, meta::TUPLE_TAG, 4),
-                (core.div_, meta::TUPLE_TAG, 4),
-                (core.rem_, meta::TUPLE_TAG, 4),
-                (core.lt, meta::TUPLE_TAG, 4),
-                (core.gt, meta::TUPLE_TAG, 4),
-                (core.le, meta::TUPLE_TAG, 4),
-                (core.ge, meta::TUPLE_TAG, 4),
-                (core.eq, meta::TUPLE_TAG, 4),
-                (core.ne, meta::TUPLE_TAG, 4),
                 (core.and_, meta::TUPLE_TAG, 4),
                 (core.or_, meta::TUPLE_TAG, 4),
                 (core.convert, meta::TUPLE_TAG, 5),
@@ -625,9 +623,13 @@ mod tests {
             let Shape::Tuple { slots: sum } = describe(types, slots[1].node) else {
                 panic!("the sum should be a tuple");
             };
-            assert_eq!(text_of(sum[2].role), b"op");
-            let Shape::Callable { convention } = describe(types, sum[2].node) else {
-                panic!("the op slot should hold a callable leaf");
+            assert_eq!(sum.len(), 2, "the sum holds its operands and nothing else");
+            let mint = dyad::ty(core.through(slots[1].node));
+            assert_eq!(crate::identities::mint::origin(mint), core.plus);
+            let leaf =
+                crate::identities::mint::operation_of(mint).expect("the sum's type is a mint");
+            let Shape::Callable { convention } = describe(types, leaf) else {
+                panic!("the mint should hold a callable leaf");
             };
             assert_eq!(convention, core.conv_seed_native);
 
