@@ -84,23 +84,24 @@ struct Pending {
     endpoint: Endpoint,
 }
 
-/// A bare name or a path `name.field` a `move` or `free` is about to end, handed back so
+/// A bare name or a field path `name.f.g` a `move` or `free` is about to end, handed back so
 /// the keyword's constructor can mark it dead with the node it built.
 #[derive(Debug)]
 pub(crate) struct Ended {
     pub(crate) binding: DyadPtr,
-    /// The binding of the field the path ends at; null when the name itself ends.
-    pub(crate) field: DyadPtr,
+    /// The bindings of the fields the path goes through, the name's first; empty when the
+    /// name itself ends.
+    pub(crate) path: Vec<DyadPtr>,
 }
 
 impl Ended {
     pub(crate) fn name(binding: DyadPtr) -> Self {
-        Ended { binding, field: std::ptr::null_mut() }
+        Ended { binding, path: Vec::new() }
     }
 
     /// The name itself, not a path under it.
     pub(crate) fn is_name(&self) -> bool {
-        self.field.is_null()
+        self.path.is_empty()
     }
 }
 

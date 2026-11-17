@@ -29,6 +29,8 @@ pub(super) struct OpenType {
     pub(super) this_param: DyadPtr,
     /// `this_param` is a parse's node, whose fields are reached through `tape[0]`, never bare.
     pub(super) in_parse: bool,
+    /// `this_param` is the value a `free` body tears down, whose fields it frees.
+    pub(super) in_free: bool,
     /// The parse body's `tape` parameter while `in_parse`.
     pub(super) tape_param: DyadPtr,
     /// The `share` function being read has read a field of its value.
@@ -636,6 +638,7 @@ impl<'a> Parser<'a> {
             run_body: std::ptr::null_mut(),
             this_param: std::ptr::null_mut(),
             in_parse: false,
+            in_free: false,
             tape_param: std::ptr::null_mut(),
             read_receiver: false,
             wrote_receiver: false,
@@ -1033,6 +1036,7 @@ impl<'a> Parser<'a> {
                 let (input, params) = self.hidden_param_record(&[(None, types.dyad_)], at)?;
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = params[0];
+                def.in_free = true;
                 // SAFETY: `input` was just built, `params` its bindings; no declaration is published to.
                 let f = unsafe {
                     self.fn_over_body(
@@ -1047,6 +1051,7 @@ impl<'a> Parser<'a> {
                 };
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = std::ptr::null_mut();
+                def.in_free = false;
                 def.instances_free = f?;
                 let f = def.instances_free;
                 Ok(self.slot_declare(SlotKind::Free, target, f))

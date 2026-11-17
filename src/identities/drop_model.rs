@@ -134,7 +134,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             return Err(ParseError::RecordMoveNotInSeed);
         }
         // A name moves whatever it holds, a borrowed node's name excepted: it holds none.
-        // A field or cell moves only what it owns, and is emptied: stand-in for #66.
+        // A field or cell moves only what it owns: stand-in for #66.
         let name = ended.as_ref().filter(|e| e.is_name());
         // SAFETY: as above, and `name` holds the binding the resolver returned for it.
         let (owner, node_valued) = unsafe {
@@ -212,7 +212,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["what", "from", "end", "op"],
+        &["what", "from", "end", "since", "free", "op"],
     );
     let exit_item = cx.store.alloc_head(cx.type_, record);
 
@@ -699,12 +699,19 @@ pub(crate) struct ExitItem {
     pub what: DyadPtr,
     pub from: usize,
     pub end: Option<usize>,
+    /// From that line on, the `free` a scope's end runs in place of the type's own: the type's
+    /// without the lines of the fields a `move` or `free` ended (DESIGN ›`move` and `free` take a
+    /// field path too‹). A line that fails runs the type's own, which finds those fields NULL.
+    pub free_from: Option<(usize, DyadPtr)>,
 }
 
-/// An exit item node is `[what, from, end, op]`, `from` and `end` `u64` leaves, `end` null
-/// while nothing ended the name, `op` null: nothing runs the node itself.
+/// An exit item node is `[what, from, end, since, free, op]`, `from`, `end` and `since` `u64`
+/// leaves, `end` null while nothing ended the name, `since` and `free` null while the type's
+/// own `free` runs, `op` null: nothing runs the node itself.
 const ITEM_FROM: usize = 1;
 const ITEM_END: usize = 2;
+const ITEM_SINCE: usize = 3;
+const ITEM_FREE: usize = 4;
 
 impl ExitItem {
     /// Whether the scope's end, reached after `reached` of its lines completed, runs it.
@@ -728,26 +735,60 @@ impl ExitItem {
         self.held_at(failed)
             || self.from <= failed
                 && self.end == Some(failed)
-                && holds_by_address(types, types.type_of(self.what))
+                && holds_by_address(types, held_type(types, self.what))
     }
 
+    /// The `free` the end reached after `reached` lines runs, null for the type's own; a line
+    /// that fails (`None`) runs the type's own.
+    fn free_at(&self, reached: Option<usize>) -> DyadPtr {
+        match (self.free_from, reached) {
+            (Some((since, free)), Some(reached)) if reached >= since => free,
+            _ => std::ptr::null_mut(),
+        }
+    }
+
+    /// The item run at a scope's end reached after `reached` lines, or after a line that
+    /// failed (`None`).
+    ///
     /// # Safety
     /// `what` must be a `defer` node or a place laid out in the frame `rt` runs.
-    pub(crate) unsafe fn run(&self, rt: &mut Runtime) -> Result<(), RunError> {
+    pub(crate) unsafe fn run(
+        &self,
+        rt: &mut Runtime,
+        reached: Option<usize>,
+    ) -> Result<(), RunError> {
         if dyad::ty(self.what) == rt.types().defer_ {
             rt.run(deferred_inner_of(self.what)).map(|_| ())
         } else {
-            end_held(rt, self.what)
+            end_held_by(rt, self.what, self.free_at(reached))
+        }
+    }
+
+    /// [`Self::run`] compiled, at the end of a scope whose lines all ran.
+    ///
+    /// # Safety
+    /// As [`Self::run`].
+    pub(crate) unsafe fn lower(&self, lw: &mut Lowerer) -> Result<(), CompileError> {
+        if dyad::ty(self.what) == lw.types().defer_ {
+            lw.lower(deferred_inner_of(self.what)).map(|_| ())
+        } else {
+            lower_end_held_by(lw, self.what, self.free_at(Some(usize::MAX)))
         }
     }
 
     pub(crate) fn build(&self, store: &mut Store, types: &Core) -> DyadPtr {
         let u64_ty = types.numtypes[numtype::NumType::U64 as usize];
-        let from = store.alloc_blob(u64_ty, &(self.from as u64).to_ne_bytes());
-        let end = self.end.map_or(std::ptr::null_mut(), |end| {
-            store.alloc_blob(u64_ty, &(end as u64).to_ne_bytes())
-        });
-        store.alloc_words(types.exit_item, &[self.what, from, end, std::ptr::null_mut()])
+        let mut leaf = |n: usize| store.alloc_blob(u64_ty, &(n as u64).to_ne_bytes());
+        let from = leaf(self.from);
+        let end = self.end.map_or(std::ptr::null_mut(), &mut leaf);
+        let (since, free) = match self.free_from {
+            Some((since, free)) => (leaf(since), free),
+            None => (std::ptr::null_mut(), std::ptr::null_mut()),
+        };
+        store.alloc_words(
+            types.exit_item,
+            &[self.what, from, end, since, free, std::ptr::null_mut()],
+        )
     }
 }
 
@@ -790,6 +831,24 @@ pub(crate) unsafe fn end_exit_item(store: &mut Store, types: &Core, node: DyadPt
     *(dyad::value(node) as *mut DyadPtr).add(ITEM_END) = end;
 }
 
+/// A later REPL line moved or freed a field of the name the item holds: the session's end
+/// runs `free` in place of the type's own.
+///
+/// # Safety
+/// `node` must be an exit item node [`ExitItem::build`] made; `free` a `fn` node.
+pub(crate) unsafe fn free_exit_item_by(
+    store: &mut Store,
+    types: &Core,
+    node: DyadPtr,
+    free: DyadPtr,
+) {
+    let u64_ty = types.numtypes[numtype::NumType::U64 as usize];
+    let since = store.alloc_blob(u64_ty, &0u64.to_ne_bytes());
+    let slots = dyad::value(node) as *mut DyadPtr;
+    *slots.add(ITEM_SINCE) = since;
+    *slots.add(ITEM_FREE) = free;
+}
+
 /// # Safety
 /// `node` must be an exit item node [`ExitItem::build`] made.
 pub(crate) unsafe fn exit_item_of(node: DyadPtr) -> ExitItem {
@@ -803,6 +862,7 @@ pub(crate) unsafe fn exit_item_of(node: DyadPtr) -> ExitItem {
         what: *slots,
         from: leaf(ITEM_FROM).expect("an exit item holds from where"),
         end: leaf(ITEM_END),
+        free_from: leaf(ITEM_SINCE).map(|since| (since, *slots.add(ITEM_FREE))),
     }
 }
 
@@ -831,6 +891,18 @@ pub(crate) unsafe fn ended_at_run(rt: &Runtime, place: DyadPtr) -> bool {
             .is_none_or(|slot| slot.is_null() || std::ptr::read_unaligned(slot as *const i64) == 0)
 }
 
+/// The type of the value a held place holds: a name's, or the field's a field path reaches.
+///
+/// # Safety
+/// `place` must be a dyad from the store.
+unsafe fn held_type(types: &Core, place: DyadPtr) -> DyadPtr {
+    if super::this::is_field_read(types, place) {
+        super::read::output_type(types, place)
+    } else {
+        types.type_of(place)
+    }
+}
+
 /// The one teardown of the value a held place holds, the `free` slot of the place's type run
 /// over it: an owning pointer's destructor frees its block, a type that fills `free` runs it
 /// over the value, a node by its address and a plain record by its bytes' address, as a
@@ -838,15 +910,27 @@ pub(crate) unsafe fn ended_at_run(rt: &Runtime, place: DyadPtr) -> bool {
 /// already NULL frees nothing.
 ///
 /// # Safety
-/// `place` must be a place the binding site made an owner, laid out in the frame `rt` runs.
+/// `place` must be a place the binding site made an owner, or the owning field of one,
+/// laid out in the frame `rt` runs.
 pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), RunError> {
-    let ty = rt.types().type_of(place);
+    end_held_by(rt, place, std::ptr::null_mut())
+}
+
+/// [`end_held`] running `free` in place of the type's own, unless it is null.
+///
+/// # Safety
+/// As `end_held`; `free` null or a `fn` node over the type's value.
+unsafe fn end_held_by(rt: &mut Runtime, place: DyadPtr, free: DyadPtr) -> Result<(), RunError> {
+    let ty = held_type(rt.types(), place);
     let dtor = meta::destructor_of(ty);
+    if !dtor.is_null() && super::this::is_field_read(rt.types(), place) {
+        return free_field_block(rt, place);
+    }
     if !dtor.is_null() {
         let entry = std::mem::transmute::<usize, crate::run::RunFn>(callable::entry_of(dtor));
         return entry(rt, place).map(|_| ());
     }
-    let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
+    let slot = owned_slot(rt, place)?;
     if slot.is_null() {
         return Err(RunError::Uninitialized);
     }
@@ -858,7 +942,8 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
         held
     };
     if held != 0 {
-        rt.apply_values(meta::instances_free_of(ty), &[held])?;
+        let free = if free.is_null() { meta::instances_free_of(ty) } else { free };
+        rt.apply_values(free, &[held])?;
     }
     Ok(())
 }
@@ -869,7 +954,20 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
 /// # Safety
 /// As `end_held`.
 pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<(), CompileError> {
-    if is_owning_place(lw.types(), place) {
+    lower_end_held_by(lw, place, std::ptr::null_mut())
+}
+
+/// [`lower_end_held`] calling `free` in place of the type's own, unless it is null. A field's
+/// slot no frame holds keeps the function interpreted: stand-in for #164.
+///
+/// # Safety
+/// As `end_held_by`.
+unsafe fn lower_end_held_by(
+    lw: &mut Lowerer,
+    place: DyadPtr,
+    free: DyadPtr,
+) -> Result<(), CompileError> {
+    if is_owning_place(lw.types(), place) || !lw.types().is_storage(place) {
         return Err(CompileError::NotLowerable(place));
     }
     let ty = lw.types().type_of(place);
@@ -881,9 +979,99 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
         lw.write_place(place, types::I64, null)?;
         held
     };
-    let free = lw.node_addr(meta::instances_free_of(ty));
+    let free = if free.is_null() { meta::instances_free_of(ty) } else { free };
+    let free = lw.node_addr(free);
     lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]);
     Ok(())
+}
+
+/// The `free` of the value a name or path `path` holds, of type `ty`, without the lines of the
+/// fields a `move` or `free` ended under it: the line `free f` of an ended `f` stands as
+/// prose, and that of an `f` with an ended field under it frees `f` by `f`'s own `free`
+/// without those lines in turn (DESIGN ›`move` and `free` take a field path too‹). `ty`'s own
+/// `free` when no line changes.
+///
+/// # Safety
+/// `ty` must be a type node and `path` a binding dyad, both from the store.
+pub(crate) unsafe fn free_without(
+    store: &mut Store,
+    types: &Core,
+    ty: DyadPtr,
+    path: DyadPtr,
+) -> DyadPtr {
+    use crate::parse::{FN_BCODE, FN_BODY, FN_SLOTS};
+    let free = meta::instances_free_of(ty);
+    if free.is_null() {
+        return free;
+    }
+    let fields = dyad::value(free) as *const DyadPtr;
+    let body = *fields.add(FN_BODY);
+    let in_scope = dyad::ty(body) == types.scope;
+    let lines = match super::scope::exprs_of(body).filter(|_| in_scope) {
+        Some(lines) => lines.to_vec(),
+        None => vec![body],
+    };
+    let kept: Vec<DyadPtr> =
+        lines.iter().map(|&line| free_line_without(store, types, free, line, path)).collect();
+    if kept == lines {
+        return free;
+    }
+    let body = if in_scope {
+        super::scope::with_exprs(store, types, body, &kept)
+    } else {
+        let scope = super::scope::mint(store, types.scope, std::ptr::null_mut());
+        let lines = super::scope::dyads(store, types.array_, scope);
+        super::array::push(store, lines, kept[0]);
+        super::scope::fill(types, scope);
+        scope
+    };
+    let mut record: Vec<DyadPtr> = (0..FN_SLOTS).map(|k| *fields.add(k)).collect();
+    record[FN_BODY] = body;
+    record[FN_BCODE] = std::ptr::null_mut();
+    store.alloc_words(dyad::ty(free), &record)
+}
+
+/// A line of the `free` slot `free` as [`free_without`] keeps it.
+///
+/// # Safety
+/// As `free_without`; `free` a `fn` node, `line` one of its body's lines.
+unsafe fn free_line_without(
+    store: &mut Store,
+    types: &Core,
+    free: DyadPtr,
+    line: DyadPtr,
+    path: DyadPtr,
+) -> DyadPtr {
+    use super::binding::{Binding, Frame};
+    use super::this;
+    if dyad::ty(line) != types.free_ {
+        return line;
+    }
+    let slots = dyad::value(line) as *const DyadPtr;
+    let place = *slots.add(TEARDOWN_PLACE);
+    if !this::is_field_read(types, place)
+        || types.frame_of(*(dyad::value(place) as *const DyadPtr)) != Some((Frame::Call(free), 0))
+    {
+        return line;
+    }
+    let field = this::field_binding_of(types, place);
+    if field.is_null() {
+        return line;
+    }
+    let ended = Binding::path(path, Binding::read(field).dyad);
+    if ended.is_null() {
+        return line;
+    }
+    if Binding::read(ended).is_dead() {
+        let text = format!("free {}: ended in its scope", Binding::spelling(field));
+        let text = super::string::build_text(store, types.string_, text.as_bytes());
+        return store.alloc_head(types.comment_, text.cast());
+    }
+    if *slots.add(2) != types.ops.instance_free_ || !Binding::has_ended_path(ended) {
+        return line;
+    }
+    let inner = free_without(store, types, super::read::output_type(types, place), ended);
+    build_instance_free(store, types, place, inner)
 }
 
 /// What a bound owning pointer points at, so the binding site can mint its owning
@@ -1183,25 +1371,31 @@ fn run_instance_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// An unwritten field or an emptied one frees nothing; after freeing, the field holds null.
 fn run_field_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[field read, pointee, op]` node from `build_field_free`, over an
     // owning pointer field.
-    unsafe {
-        let read = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
-        let Some(bytes) = super::this::pointer_bytes(rt, read)? else {
-            return Ok(0);
-        };
-        let bytes = bytes as *mut i64;
-        let ptr = std::ptr::read_unaligned(bytes) as u64 as *mut u8;
-        if ptr.is_null() {
-            return Ok(0);
-        }
-        heap_free(ptr);
-        rt.note_free();
-        std::ptr::write_unaligned(bytes, 0);
-        Ok(0)
+    unsafe { free_field_block(rt, *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE)) }?;
+    Ok(0)
+}
+
+/// The block an owning pointer field holds is freed and the field holds null; an unwritten
+/// field or an emptied one frees nothing.
+///
+/// # Safety
+/// `read` must be a field read of an owning pointer field.
+unsafe fn free_field_block(rt: &mut Runtime, read: DyadPtr) -> Result<(), RunError> {
+    let Some(bytes) = super::this::pointer_bytes(rt, read)? else {
+        return Ok(());
+    };
+    let bytes = bytes as *mut i64;
+    let ptr = std::ptr::read_unaligned(bytes) as u64 as *mut u8;
+    if ptr.is_null() {
+        return Ok(());
     }
+    heap_free(ptr);
+    rt.note_free();
+    std::ptr::write_unaligned(bytes, 0);
+    Ok(())
 }
 
 /// A value no name holds: it runs, and a node it made is freed by its type's `free`.
@@ -1261,9 +1455,9 @@ unsafe fn reached_slot(rt: &mut Runtime, place: DyadPtr) -> Result<Option<*mut u
     Ok(None)
 }
 
-/// A move reads the value; the parse ended a moved name, whose place is NULL from here when it
-/// holds an address. A field moved out is emptied, so its owner's free skips it:
-/// stand-in for #66.
+/// A move reads the value; the parse ended a moved name or field, whose place is NULL from
+/// here when it holds an address, so a line that fails later finds nothing there (DESIGN
+/// ›`move` and `free` take a field path too‹).
 fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `move` node `[place, type, op]` from the store; a field or cell it
     // reaches is an owning one, eight bytes wide, as is a name that holds an address.
@@ -1795,6 +1989,31 @@ mod tests {
             ("k := i32 0,\nif (k == 1) ( c := move x.p, 1 ),\nx.q@", 6),
         ] {
             assert_eq!(run(&format!("{PAIR}{tail}")), (want, 0), "{tail}");
+        }
+        // A line that fails after the move frees `x` whole and finds nothing in `p`.
+        let (e, live) = fault(&format!("{PAIR}c := move x.p,\nerror «stop»"));
+        assert!(matches!(e, RunError::Raised(_)), "{e:?}");
+        assert_eq!(live, 0);
+    }
+
+    #[test]
+    fn the_owner_s_end_runs_its_free_without_the_ended_field_s_line() {
+        use crate::parse::FN_BODY;
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let items = exit_items(&mut store, &mut trie, &core, &format!("{PAIR}c := move x.p,\n0"));
+        let (since, free) = items
+            .iter()
+            .find_map(|item| item.free_from)
+            .expect("`x`'s item runs its free without `free p`");
+        assert_eq!(since, 6, "from the line of the move on");
+        // SAFETY: `free` is the `fn` node the parse built over the `free` slot's body.
+        unsafe {
+            let body = *(dyad::value(free) as *const DyadPtr).add(FN_BODY);
+            let lines = super::super::scope::exprs_of(body).expect("the body's lines");
+            assert!(numtype::is_comment_type(dyad::ty(lines[0])), "`free p` stands as prose");
+            assert_eq!(dyad::ty(lines[1]), core.free_, "`free q` runs");
         }
     }
 

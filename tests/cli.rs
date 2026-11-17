@@ -4079,12 +4079,10 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
 #[test]
 fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
     let r = "r := type ( mut p := own @i32 ?, share free = ( free p ), \
-             share set := fn () -> i32 ( a := alloc 1 of i32 5, p = move a, 1 ), \
-             share s := fn () -> i32 ( free p, 2 ) ), mut x := r ?";
+             share set := fn () -> i32 ( a := alloc 1 of i32 5, p = move a, 1 ) ), mut x := r ?";
     for (tail, printed) in [
-        ("x.set(), x.s()", "2"),
-        ("a := alloc 1 of i32 5, x.p = move a, x.s()", "2"),
-        ("x.s()", "2"),
+        ("x.set(), 2", "2"),
+        ("a := alloc 1 of i32 5, x.p = move a, free x.p, 2", "2"),
         ("a := alloc 1 of i32 5, x.p = move a, b := alloc 1 of i32 6, x.p = move b, x.p@", "6"),
         // Moved out, the field is empty, so the record's own free frees nothing twice.
         ("a := alloc 1 of i32 5, x.p = move a, b := move x.p, b@", "5"),
@@ -4410,6 +4408,92 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
 }
 
 #[test]
+fn a_field_path_is_followed_from_its_name_and_the_owner_s_free_skips_its_line() {
+    // `g`'s free runs every line but `free b`; under `g.b.p`, `b`'s runs without `free p`.
+    for (tail, printed) in [
+        ("g := bag (), free g.b, print «after»", "free\nafter\nbag\n"),
+        ("g := bag (), y := move g.b.p, print «moved», y@", "moved\nbag\nfree\n7\n"),
+        ("g := bag (), y := move g.b.p, g.b.size", "bag\nfree\n2\n"),
+        ("g := bag (), y := move g.b, z := move g.items, print «both»", "both\nfree\nbag\n"),
+        ("g := bag (), ( y := move g.b, print «inner» ), print «after»", "inner\nfree\nafter\nbag\n"),
+        // The arm that did not end the field frees it at its end.
+        ("c := i32 0, g := bag (), if (c == 1) ( y := move g.b, 1 ), print «after»", "free\nafter\nbag\n"),
+        ("c := i32 1, g := bag (), if (c == 1) ( y := move g.b, 1 ), print «after»", "free\nafter\nbag\n"),
+        ("c := i32 0, g := bag (), if (c == 1) ( free g.b.p ), print «after»", "after\nbag\nfree\n"),
+        (
+            "f := fn (c := i32 ?) -> i32 ( g := bag (), \
+             if (c == 1) ( y := move g.b ) else ( z := move g.items ), 2 ), f(1), f(0)",
+            "free\nbag\nfree\nbag\n2\n",
+        ),
+        // A `return` before the field's end in its line frees the field on its way out.
+        (
+            "f := fn (c := i32 ?) -> i32 ( g := bag (), \
+             x := (if (c == 1) (return 1), i32 2) + (free g.b, i32 1), x ), \
+             print «got {f(1)}», print «got {f(0)}»",
+            "free\nbag\ngot 1\nfree\nbag\ngot 3\n",
+        ),
+        (
+            "f := fn (c := i32 ?) -> i32 ( g := bag (), ( if (c == 1) (return 1), free g.b.p ), 2 ), \
+             print «got {f(1)}», print «got {f(0)}»",
+            "bag\nfree\ngot 1\nbag\nfree\ngot 2\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&bag_line(tail));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+    // A line that fails after the move frees `g` whole and finds nothing in `b`.
+    for tail in [
+        "g := bag (), y := move g.b, error «stop»",
+        "f := fn () -> i32 ( g := bag (), y := move g.b, error «stop», 1 ), f()",
+    ] {
+        let (code, stdout, stderr) = run_line(&bag_line(tail));
+        assert_eq!(code, Some(1), "{tail}: stdout: {stdout}");
+        assert_eq!(stdout, "free\nbag\n", "{tail}: stderr: {stderr}");
+    }
+    let unfollowed = "nothing here can end it";
+    for (tail, expect) in [
+        ("g := bag (), y := move g.b, g := bag ()", "`g` is dead here"),
+        ("g := bag (), y := move g.b.p, g.b", "`g.b` is dead here"),
+        ("g := bag (), y := move g.b.p, free g.b, 1", "`g.b` is dead here"),
+        ("g := bag (), y := move g.b.p, g.b.p", "`g.b.p` is dead here"),
+        ("g := bag (), y := move g.b.p, g", "`g` is dead here"),
+        ("l := array bagged [bag (), bag ()], y := move l[0].b, 1", unfollowed),
+        ("l := array bagged [bag (), bag ()], free l[0].b, 1", unfollowed),
+        ("g := bag (), h := g, y := move h.b, 1", unfollowed),
+        ("f := fn (q := bagged ?) -> i32 ( y := move q.b, 1 ), 1", unfollowed),
+        (
+            "r := type ( mut p := own @i32 ?, share free = ( free p ), \
+             share s := fn () -> i32 ( free p, 2 ) )",
+            unfollowed,
+        ),
+        (
+            "r := type ( mut p := own @i32 ?, share free = ( free p ), \
+             share s := fn () -> i32 ( a := move p, 2 ) )",
+            unfollowed,
+        ),
+        ("p := type ( x := i32 ?, share s := fn () -> i32 ( free x, 1 ) )", unfollowed),
+    ] {
+        let (code, _, stderr) = run_line(&bag_line(tail));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+    // A REPL line ends a field of a name an earlier line holds: the session's end frees the
+    // name without it; a line that fails leaves the path live, its field NULL.
+    for tail in [
+        "g := bag ()\ny := move g.b\nprint «end»\n",
+        "g := bag ()\ny := move g.b, error «stop»\nfree g.items\nprint «end»\n",
+    ] {
+        let (echoes, stderr) = repl(format!("{}\n{tail}", bag_line("1")).as_bytes());
+        for word in ["free", "bag"] {
+            let count = echoes.iter().filter(|l| *l == word).count();
+            assert_eq!(count, 1, "{tail}: {echoes:?} {stderr}");
+        }
+        assert_eq!(echoes.last().map(String::as_str), Some("bag"), "{tail}: {echoes:?}");
+    }
+}
+
+#[test]
 fn a_chooser_takes_the_type_the_chooser_right_of_it_leaves() {
     let array = "import ./identities/array.logos";
     for (tail, printed) in [
@@ -4560,11 +4644,7 @@ fn free_of_an_element_runs_its_free_there_and_the_array_skips_it() {
             "ran\n3\n",
         ),
         // A plain record's field lies in its bytes, not in a node's slot.
-        (
-            "p := type ( x := i32 ?, y := i32 ?, share s := fn () -> i32 ( free x, y ) ), \
-             q := p (1, 2), q.s()",
-            "2\n",
-        ),
+        ("p := type ( x := i32 ?, y := i32 ? ), q := p (1, 2), free q.x, q.y", "2\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
@@ -5281,17 +5361,22 @@ fn free_and_move_read_the_type_a_dereference_gives_back() {
     let r = "r := type ( mut p := own @i32 ?, share free = ( free p ) )";
     let q = "q := alloc 1 of own @i32 ?, a := alloc 1 of i32 5, q@ = move a";
     let x = "mut x := r ?, a := alloc 1 of i32 5, x.p = move a";
+    let src = format!("{q}, free q@, q@@");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}");
+    assert!(stderr.contains("this pointer holds nothing yet"), "{src}: stderr: {stderr}");
+    // A field through a pointer is ended on its owner, `move x.p`.
     for src in [
         format!("{r}, {x}, pp := &x, free pp@.p, x.p@"),
         format!("{r}, f := fn (pp := @r ?) -> i32 ( free pp@.p, 1 ), {x}, f(&x), x.p@"),
-        format!("{q}, free q@, q@@"),
+        format!("{r}, {x}, pp := &x, b := move pp@.p, b@"),
     ] {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}");
-        assert!(stderr.contains("this pointer holds nothing yet"), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("reached through a pointer"), "{src}: stderr: {stderr}");
     }
     for (src, want) in [
-        (format!("{r}, {x}, pp := &x, b := move pp@.p, b@"), "5\n"),
+        (format!("{r}, {x}, b := move x.p, b@"), "5\n"),
         (format!("{q}, b := move q@, b@"), "5\n"),
         (
             format!("{BOX}, g := fn () -> i32 ( b := box (5, 6), y := move b.p, y@ ), g()"),

@@ -243,6 +243,70 @@ pub(crate) unsafe fn owner_of(types: &Core, read: DyadPtr) -> DyadPtr {
     *ops.add(if dyad::ty(read) == types.this.slot { 4 } else { 5 })
 }
 
+/// What a place is as a field path (DESIGN ›`move` and `free` take a field path too‹).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum FieldPath {
+    /// No field: a name, a cell, a value.
+    NoField,
+    /// A field reached from a name through fields: the name's binding, then each field's
+    /// binding, the name's first.
+    From(DyadPtr, Vec<DyadPtr>),
+    /// A field reached through a pointer, an element or a value no name holds.
+    Unfollowed,
+}
+
+/// The field path `node` is, read off the reads it is built of: each field read or record
+/// field steps to the value it reads into, until a name, the value `held` the parse read the
+/// name `root` as, or something else.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store; `root` null or a binding dyad.
+pub(crate) unsafe fn field_path(
+    types: &Core,
+    node: DyadPtr,
+    root: DyadPtr,
+    held: DyadPtr,
+) -> FieldPath {
+    let mut fields = Vec::new();
+    let mut at = node;
+    loop {
+        if is_field_read(types, at) {
+            fields.push(field_binding_of(types, at));
+            at = *(dyad::value(at) as *const DyadPtr);
+        } else if dyad::ty(at) == types.field_ && types.binding_field_of(at).is_none() {
+            let (record, field) = super::instance::field_parts(at);
+            fields.push(field);
+            at = record;
+        } else if dyad::ty(at) == types.deref_ && super::pointer::reads_folded_field(types, at) {
+            return FieldPath::Unfollowed;
+        } else {
+            break;
+        }
+    }
+    if fields.is_empty() {
+        return FieldPath::NoField;
+    }
+    if !root.is_null() && !at.is_null() && (at == held || at == types.through(root)) {
+        at = root;
+    }
+    if at.is_null() || dyad::ty(at) != types.binding_ || fields.iter().any(|f| f.is_null()) {
+        return FieldPath::Unfollowed;
+    }
+    fields.reverse();
+    FieldPath::From(at, fields)
+}
+
+/// The name the field path `node` starts at; `node` itself when it is no such path.
+///
+/// # Safety
+/// As [`field_path`].
+pub(crate) unsafe fn path_root(types: &Core, node: DyadPtr) -> DyadPtr {
+    match field_path(types, node, std::ptr::null_mut(), std::ptr::null_mut()) {
+        FieldPath::From(root, _) => root,
+        _ => node,
+    }
+}
+
 /// A number or pointer field takes the value the right side yields, molded to the
 /// field's type; a right side that yields a node, the operand as graph, is stored as
 /// that node (DESIGN ›Execution is function application‹, item 4).

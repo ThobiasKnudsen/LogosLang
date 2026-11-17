@@ -244,7 +244,12 @@ impl<'a> Parser<'a> {
         let at =
             if self.cx.once_at == Some(self.cx.frames.len()) { 0 } else { self.cx.open.len() - 1 };
         let open = &mut self.cx.open[at];
-        open.exit.push(ExitItem { what: binding, from: open.lines + 1, end: None });
+        open.exit.push(ExitItem {
+            what: binding,
+            from: open.lines + 1,
+            end: None,
+            free_from: None,
+        });
     }
 
     /// The open scope whose end holds `place`, innermost first.
@@ -276,7 +281,7 @@ impl<'a> Parser<'a> {
             return;
         }
         if !ended.is_name() {
-            // SAFETY: `ended` holds the name's and the field's bindings `.` reached.
+            // SAFETY: `ended` holds the name's binding and the field bindings its path reads.
             unsafe { self.end_path(ended, node) };
             return;
         }
@@ -299,24 +304,74 @@ impl<'a> Parser<'a> {
         self.cx.ended_log.push((ended.binding, holder));
     }
 
-    /// `node` has ended the path `name.field`: the path's binding under the name's entry, made
-    /// on the first such end, is dead from here, and so the name as a whole (DESIGN ›`move` and
-    /// `free` take a field path too‹). The name stays held, its free run at its scope's end.
+    /// `node` has ended the field path `ended`: each path binding along it under the name's
+    /// entry, made on the first end that reaches it, and the last is dead from here, so the name
+    /// and every path above the last are dead as a whole (DESIGN ›`move` and `free` take a field
+    /// path too‹). A name that holds stays held: the line's close has its scope's end run its
+    /// free without the path's line. An owning field it ends is settled as a held name is: each
+    /// scope inside the holder holds it up to the line, an `if` one of whose arms ended it
+    /// frees it at the end of the others, and a `return` before it in its line frees it.
     ///
     /// # Safety
-    /// `ended.binding` must be a name's binding dyad, `ended.field` a field's.
+    /// `ended.binding` must be a name's binding dyad and `ended.path` field bindings; `node` a
+    /// `move` or `free` node over the path's place.
     unsafe fn end_path(&mut self, ended: Ended, node: DyadPtr) {
-        let field = Binding::read(ended.field).dyad;
-        let mut path = Binding::path(ended.binding, field);
-        if path.is_null() {
-            let name = Binding::read(ended.binding);
-            let spelled =
-                format!("{}.{}", Binding::spelling(ended.binding), Binding::spelling(ended.field));
-            path = self.mint_binding(field, name.scope, spelled.as_bytes());
-            Binding::set_start(path, name.start);
-            Binding::add_path(self.rt.store, self.types.array_, ended.binding, path);
+        let name = Binding::read(ended.binding);
+        let mut path = ended.binding;
+        for &field in &ended.path {
+            let identity = Binding::read(field).dyad;
+            let mut below = Binding::path(path, identity);
+            if below.is_null() {
+                let spelled = format!("{}.{}", Binding::spelling(path), Binding::spelling(field));
+                below = self.mint_binding(identity, name.scope, spelled.as_bytes());
+                Binding::set_start(below, name.start);
+                Binding::add_path(self.rt.store, self.types.array_, path, below);
+            }
+            path = below;
         }
         self.cx.scopes.mark_dead(path, node);
+        if !self.name_holds(ended.binding) {
+            return;
+        }
+        // An owner no open scope holds is an earlier REPL line's, whose item the session's
+        // scope keeps.
+        let (holder, ended_paths) = match self.holder_of(ended.binding) {
+            Some(holder) => (holder, &mut self.cx.open[holder].ended_paths),
+            None => (0, &mut self.cx.open[0].paths_ended_earlier),
+        };
+        if !ended_paths.contains(&ended.binding) {
+            ended_paths.push(ended.binding);
+        }
+        let place = *(dyad::value(node) as *const DyadPtr);
+        if self.is_owning_read(place)
+            || crate::identities::drop_model::is_owning_place(self.types, place)
+        {
+            for open in &mut self.cx.open[holder + 1..] {
+                open.ended.push(place);
+            }
+            self.cx.ended_log.push((place, holder));
+        }
+    }
+
+    /// The path binding a field path `lhs` from the name `root` reaches under its entry, null
+    /// where it is no field path or no `move` or `free` reached it.
+    ///
+    /// # Safety
+    /// `lhs` must be a reduced dyad from the store; `root` null or a binding dyad.
+    unsafe fn reached_path(&self, lhs: DyadPtr, root: DyadPtr) -> DyadPtr {
+        use crate::identities::this::{field_path, FieldPath};
+        let held = self.settled_type(root);
+        let FieldPath::From(name, fields) = field_path(self.types, lhs, root, held) else {
+            return std::ptr::null_mut();
+        };
+        let mut path = name;
+        for field in fields {
+            if path.is_null() {
+                break;
+            }
+            path = Binding::path(path, Binding::read(field).dyad);
+        }
+        path
     }
 
     /// `?`'s entry on a binding refuses every read of the value until it is
@@ -473,25 +528,34 @@ impl<'a> Parser<'a> {
         Binding::set_unwritten(binding, arr);
     }
 
-    /// `v.f` where `v` is a name: the name and the field's binding it reaches, nulls where `f`
-    /// is no field. A read of a field `v := T ?` left unwritten is refused, a write let
-    /// through. Where a path under `v` ended, `v.f` is refused if `f`'s did, and a member that
-    /// is no field, which takes `v` whole, is refused too.
+    /// `v.f` where `v` is a name, `root`, or a field path from the name `chain`: the name and
+    /// the field's binding it reaches when `v` is a name, nulls otherwise. A read of a field
+    /// `v := T ?` left unwritten is refused, a write let through. Where a path under `v` ended,
+    /// `v.f` is refused if `f`'s did, and so is `v.f` read whole, with no `.` after it
+    /// (`dotted`), if a path under it did; a member that is no field, which takes `v` whole, is
+    /// refused too.
     ///
     /// # Safety
-    /// `root` must be null or a binding dyad from the store; `lhs` a reduced dyad.
+    /// `root` and `chain` must be null or binding dyads from the store; `lhs` a reduced dyad.
     pub(super) unsafe fn check_name_field(
         &self,
         root: DyadPtr,
+        chain: DyadPtr,
         lhs: DyadPtr,
         name: &str,
         writes: bool,
+        dotted: bool,
     ) -> Result<(DyadPtr, DyadPtr), ParseError> {
         let none = (std::ptr::null_mut(), std::ptr::null_mut());
-        if root.is_null() {
+        let parent = if root.is_null() { self.reached_path(lhs, chain) } else { root };
+        if parent.is_null() {
             return Ok(none);
         }
-        let t = self.types.type_of(lhs);
+        let t = if root.is_null() {
+            crate::identities::read::output_type(self.types, lhs)
+        } else {
+            self.types.type_of(lhs)
+        };
         let field = if !crate::identities::meta::is_record_type(t) {
             None
         } else {
@@ -501,20 +565,22 @@ impl<'a> Parser<'a> {
                 crate::identities::array::items(crate::identities::meta::record_fields_of(t));
             scope.resolve(self.trie, name).ok().filter(|r| fields.contains(&r.identity))
         };
-        if Binding::has_ended_path(root) {
+        if Binding::has_ended_path(parent) {
             let dead = match &field {
-                None => Some(Binding::spelling(root)),
+                None => Some(Binding::spelling(parent)),
                 Some(r) => {
-                    let path = Binding::path(root, r.identity);
-                    (!path.is_null() && Binding::read(path).is_dead())
-                        .then(|| Binding::spelling(path))
+                    let path = Binding::path(parent, r.identity);
+                    let ended = !path.is_null()
+                        && (Binding::read(path).is_dead()
+                            || !dotted && Binding::has_ended_path(path));
+                    ended.then(|| Binding::spelling(path))
                 }
             };
             if let Some(dead) = dead {
                 return Err(ParseError::Resolve(ResolveError::Dead(dead)));
             }
         }
-        let Some(field) = field else {
+        let Some(field) = field.filter(|_| !root.is_null()) else {
             return Ok(none);
         };
         let unwritten = Binding::read(root).unwritten;

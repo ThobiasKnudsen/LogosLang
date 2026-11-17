@@ -44,8 +44,9 @@ pub struct Binding {
     /// The fields of a `T ?` name not yet written, an `array` node of the record's field
     /// dyads; null while none wait.
     pub unwritten: DyadPtr,
-    /// The field paths under the name that a `move` or `free` ended, an `array` of bindings,
-    /// each with the field as its `dyad` and its own `end`; null until a partial move.
+    /// The field paths under the name that a `move` or `free` reached, an `array` of bindings,
+    /// each with the field as its `dyad`, its own `end` and the paths under it; null until a
+    /// partial move.
     pub paths: DyadPtr,
     /// Declared outside any function in a body the pass does not run in parse order, a loop
     /// or a branch: at parse the name holds no value yet.
@@ -238,14 +239,16 @@ impl Binding {
         (*Self::fields(dyad)).paths = super::array::build(store, array_ty, &items);
     }
 
-    /// Whether a path under the name has ended, so the name is dead as a whole.
+    /// Whether a path under the name has ended, at any depth, so the name is dead as a whole.
     ///
     /// # Safety
     /// As `Binding::read`.
     pub unsafe fn has_ended_path(dyad: DyadPtr) -> bool {
         let paths = (*Self::fields(dyad)).paths;
         !paths.is_null()
-            && super::array::items(paths).iter().any(|&p| !(*Self::fields(p)).end.is_null())
+            && super::array::items(paths)
+                .iter()
+                .any(|&p| !(*Self::fields(p)).end.is_null() || Self::has_ended_path(p))
     }
 
     /// # Safety

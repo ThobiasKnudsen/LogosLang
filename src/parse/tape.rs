@@ -30,8 +30,12 @@ pub struct Cell {
     /// for a cell reached no such way. What a write into the place must be granted by.
     pub path: DyadPtr,
     /// The name and the field's binding a `v.f` over a name reached, or nulls: what a write
-    /// into it fills, and the path a `move` or `free` of it ends.
+    /// into it fills, and the path a `move` or `free` of it ends where the read folded to the
+    /// node the field's slot holds.
     pub target: (DyadPtr, DyadPtr),
+    /// The name a field path `v.f.g` read by `.` alone starts at, null for any other cell: what
+    /// a `move` or `free` of it ends a path under, when the reads stand on `v`'s value.
+    pub root: DyadPtr,
     /// The valueless place `?` built, no declaration having taken it yet.
     pub hole: bool,
     /// A hole `own` marked over a type whose body fills `free`: the name or field declared
@@ -40,24 +44,31 @@ pub struct Cell {
 }
 
 impl Cell {
-    const NO_FACTS: (DyadPtr, (DyadPtr, DyadPtr), bool, bool) =
-        (std::ptr::null_mut(), (std::ptr::null_mut(), std::ptr::null_mut()), false, false);
+    const NO_FACTS: (DyadPtr, (DyadPtr, DyadPtr), DyadPtr, bool, bool) = (
+        std::ptr::null_mut(),
+        (std::ptr::null_mut(), std::ptr::null_mut()),
+        std::ptr::null_mut(),
+        false,
+        false,
+    );
 
     fn facts_from(&mut self, from: &Cell) {
         self.path = from.path;
         self.target = from.target;
+        self.root = from.root;
         self.hole = from.hole;
         self.owning = from.owning;
     }
 
     /// The cell placed over `dyad`, its facts cleared.
     fn over(&mut self, dyad: DyadPtr) {
-        let (path, target, hole, owning) = Self::NO_FACTS;
+        let (path, target, root, hole, owning) = Self::NO_FACTS;
         self.dyad = dyad;
         self.constructed = true;
         self.bracket = false;
         self.path = path;
         self.target = target;
+        self.root = root;
         self.hole = hole;
         self.owning = owning;
     }
@@ -68,7 +79,7 @@ impl Cell {
     /// `text` must outlive every read of the cell's spelling; `dyad` must be
     /// null (a fresh spelling) or a dyad from the store.
     pub unsafe fn lexed(dyad: DyadPtr, text: &str, start: usize, len: usize) -> Self {
-        let (path, target, hole, owning) = Self::NO_FACTS;
+        let (path, target, root, hole, owning) = Self::NO_FACTS;
         Cell {
             dyad,
             constructed: false,
@@ -78,6 +89,7 @@ impl Cell {
             len,
             path,
             target,
+            root,
             hole,
             owning,
         }
@@ -86,7 +98,7 @@ impl Cell {
     /// # Safety
     /// `dyad` must be null or a dyad from the store.
     pub unsafe fn built(dyad: DyadPtr) -> Self {
-        let (path, target, hole, owning) = Self::NO_FACTS;
+        let (path, target, root, hole, owning) = Self::NO_FACTS;
         Cell {
             dyad,
             constructed: true,
@@ -96,6 +108,7 @@ impl Cell {
             len: 0,
             path,
             target,
+            root,
             hole,
             owning,
         }

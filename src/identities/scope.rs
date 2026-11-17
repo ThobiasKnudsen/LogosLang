@@ -190,7 +190,7 @@ pub(crate) unsafe fn run_exit(
     node: DyadPtr,
     reached: usize,
 ) -> Result<(), RunError> {
-    run_exit_items(rt, node, |_, item| item.held_at(reached))
+    run_exit_items(rt, node, Some(reached), |_, item| item.held_at(reached))
 }
 
 /// The scope's end after its line `failed` faulted: what [`run_exit`] would run there, and what
@@ -203,7 +203,7 @@ unsafe fn run_exit_after_fault(
     node: DyadPtr,
     failed: usize,
 ) -> Result<(), RunError> {
-    run_exit_items(rt, node, |types, item| item.held_at_fault(types, failed))
+    run_exit_items(rt, node, None, |types, item| item.held_at_fault(types, failed))
 }
 
 /// # Safety
@@ -211,12 +211,13 @@ unsafe fn run_exit_after_fault(
 unsafe fn run_exit_items(
     rt: &mut Runtime,
     node: DyadPtr,
+    reached: Option<usize>,
     runs: impl Fn(&crate::Core, &ExitItem) -> bool,
 ) -> Result<(), RunError> {
     for &item in exit_items(node).iter().rev() {
         let item = super::drop_model::exit_item_of(item);
         if runs(rt.types(), &item) {
-            item.run(rt)?;
+            item.run(rt, reached)?;
         }
     }
     Ok(())
