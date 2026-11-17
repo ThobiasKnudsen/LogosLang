@@ -30,7 +30,7 @@ impl<'a> Parser<'a> {
             // it and it is not a bare delimiter, which no operator takes.
             c => {
                 let id = self.cell_identity(c);
-                c.is_fresh() || (self.ctor_of(id).is_none() && !self.is_delimiter(id))
+                self.ctor_of(id).is_none() && !self.is_delimiter(id)
             }
         }
     }
@@ -192,7 +192,7 @@ impl<'a> Parser<'a> {
         match cell {
             c if c.constructed => Ok(c.dyad),
             c => {
-                let (id, binding) = if c.is_fresh() {
+                let (id, binding) = if c.is_fresh(self.types) {
                     match self.resolve_fresh(c.spelling()) {
                         Ok(r) => (r.identity, r.binding),
                         Err(e) => {

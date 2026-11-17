@@ -224,7 +224,7 @@ fn lex_hands_back_the_tape_unconstructed() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
 
-    let plus = lex_fragment(&scopes, &trie, "+").unwrap();
+    let plus = lex_fragment(&scopes, &trie, &mut store, types, "+").unwrap();
     assert_eq!(plus.len(), 1);
     let cell = *plus.at(0).unwrap();
     assert!(!cell.constructed);
@@ -232,27 +232,38 @@ fn lex_hands_back_the_tape_unconstructed() {
     assert!(!cell.binding(types).is_null());
     assert_eq!(plus.spelling(0), Some("+"));
 
-    let group = lex_fragment(&scopes, &trie, "(a, b)").unwrap();
+    let group = lex_fragment(&scopes, &trie, &mut store, types, "(a, b)").unwrap();
     let cells = group.cells();
     assert_eq!(cells.len(), 5, "a group is its tokens, the bracket not woken");
     assert!(cells.iter().all(|c| !c.constructed));
     assert_eq!(cells[0].identity(types), types.open_);
     assert_eq!(cells[2].identity(types), types.sep_);
     assert_eq!(cells[4].identity(types), types.close_);
-    assert!(cells[1].is_fresh() && cells[3].is_fresh(), "names nothing declared are fresh");
-    assert!(cells[1].dyad.is_null(), "a fresh spelling has no node");
+    assert!(
+        cells[1].is_fresh(types) && cells[3].is_fresh(types),
+        "names nothing declared are fresh"
+    );
+    // SAFETY: a fresh cell's dyad is the `unknown_name` node the lexer built, its value a text.
+    unsafe {
+        assert_eq!(dyad::ty(cells[1].dyad), types.unknown_name, "a fresh spelling is a node");
+        assert_eq!(crate::identities::string::text(cells[1].dyad), b"a", "holding its spelling");
+    }
+    assert!(cells[1].binding(types).is_null(), "a fresh spelling names no binding");
     assert_eq!(cells[1].spelling(), "a");
     assert_eq!(cells[3].spelling(), "b");
     assert_eq!(group.cursor(), 0, "the fragment is centered on its first cell");
 
-    let five = lex_fragment(&scopes, &trie, " 5 ").unwrap();
+    let five = lex_fragment(&scopes, &trie, &mut store, types, " 5 ").unwrap();
     assert_eq!(five.len(), 1);
     assert_eq!(five.at(0).unwrap().identity(types), types.rational);
     assert_eq!(five.spelling(0), Some("5"), "`lex «5»` carries «5»");
 
-    let none = lex_fragment(&scopes, &trie, "  ").unwrap();
+    let none = lex_fragment(&scopes, &trie, &mut store, types, "  ").unwrap();
     assert!(none.is_empty());
-    assert!(lex_fragment(&scopes, &trie, "«").is_err(), "nothing spells a lone quote mark");
+    assert!(
+        lex_fragment(&scopes, &trie, &mut store, types, "«").is_err(),
+        "nothing spells a lone quote mark"
+    );
 }
 
 #[test]

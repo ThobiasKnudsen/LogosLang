@@ -9,8 +9,10 @@
 //! identities‹ [[R252]]
 
 use super::numtype::STRING_TAG;
-use super::{meta, Cx};
+use super::{meta, string, Cx};
 use crate::dyad::DyadPtr;
+use crate::store::Store;
+use crate::Core;
 
 /// Below the `0` every declared spelling reads by default.
 pub(crate) const FRESH_LEX_RANK: f64 = -1.0;
@@ -42,4 +44,10 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     mint(WORD);
     mint(SYMBOL);
     unknown_name
+}
+
+/// The node a fresh spelling lexes to. ›An unknown spelling is a node of type
+/// `unknown_name`; `:=` makes the binding, and the node comes with the value‹ [[R251]]
+pub(crate) fn node(store: &mut Store, types: &Core, spelling: &str) -> DyadPtr {
+    string::build_text(store, types.unknown_name, spelling.as_bytes())
 }

@@ -621,8 +621,9 @@ impl<'a> Parser<'a> {
         let free_marker = self.rt.store.alloc_head(self.types.type_, head);
         let self_type = self.rt.store.alloc_leaf(id);
         if !own_name.is_null() {
-            // The body's lines name the type they are building (DESIGN ›An unknown spelling
-            // stays text on the tape; `:=` makes the binding, and the node comes with the value‹).
+            // The body's lines name the type they are building (DESIGN ›An unknown spelling is
+            // a node of type `unknown_name`; `:=` makes the binding, and the node comes with
+            // the value‹ [[R251]]).
             // SAFETY: `own_name` is the binding `:=` is filling, live for the whole drive.
             unsafe { Binding::set_dyad(own_name, self_type) };
         }
@@ -742,21 +743,22 @@ impl<'a> Parser<'a> {
         // SAFETY: `text` is the string node just built; its bytes live for the store.
         let held = unsafe { crate::identities::string::text(text) };
         let held = std::str::from_utf8(held).expect("copied from the source text");
-        let mut fragment =
-            lex_fragment(&self.cx.scopes, self.trie, held).map_err(ParseError::Resolve)?;
+        let mut fragment = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held)
+            .map_err(ParseError::Resolve)?;
         // A slot word of a type around this one names that type's slot; the held body's
-        // own are declared when it is built, so its cells wait to be resolved then.
+        // own are declared when it is built, so its cells wait fresh to be resolved then.
         let outer_slot = |cell: &Cell| {
             let id = cell.identity(types);
-            !cell.is_fresh() && self.cx.definitions.iter().any(|d| d.slots.contains(&id))
+            !cell.is_fresh(types) && self.cx.definitions.iter().any(|d| d.slots.contains(&id))
         };
         for (i, cell) in fragment.cells().iter().enumerate() {
             if outer_slot(cell) {
-                fragment.set_dyad(i as isize, std::ptr::null_mut());
+                let fresh = crate::identities::fresh::node(self.rt.store, types, cell.spelling());
+                fragment.set_dyad(i as isize, fresh);
             }
         }
         for cell in fragment.inner.iter_mut().filter(|c| outer_slot(c)) {
-            cell.dyad = std::ptr::null_mut();
+            cell.dyad = crate::identities::fresh::node(self.rt.store, types, cell.spelling());
         }
         let cells = Box::into_raw(Box::new(fragment));
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
@@ -1023,8 +1025,8 @@ impl<'a> Parser<'a> {
                 // SAFETY: `text` is the string node just built; its bytes live for the store.
                 let held = unsafe { crate::identities::string::text(text) };
                 let held = std::str::from_utf8(held).expect("copied from the source text");
-                let fragment =
-                    lex_fragment(&self.cx.scopes, self.trie, held).map_err(ParseError::Resolve)?;
+                let fragment = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held)
+                    .map_err(ParseError::Resolve)?;
                 let cells = Box::into_raw(Box::new(fragment));
                 let body = crate::identities::run_body::build(self.rt.store, types, text, cells);
                 self.cx.definitions.last_mut().expect("checked above").run_body = body;
