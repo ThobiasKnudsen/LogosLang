@@ -80,6 +80,9 @@ pub enum RunError {
     UncomputableLiteral,
     /// NaN or an infinity converted into an integer type.
     NoWholeNumber,
+    /// Arithmetic on `rational_number` values with no value: a division by zero, or past an
+    /// `i64` fraction.
+    RationalArithmetic,
     /// A call's argument count differs from the callee's parameter count.
     ArityMismatch,
     /// `f.compile()` under a runtime with no compiler: parse-time evaluation.

@@ -1716,6 +1716,11 @@ fn comptime_division_is_exact_fractions() {
     diff_typed_call("fn () -> i32 ( 10 % 3 )", "f()", 1);
     assert_eq!(parse_err("i32(1 / 0)"), ParseError::LiteralArithmetic);
     assert_eq!(parse_err("i32(1 % 0)"), ParseError::LiteralArithmetic);
+    let h = "h := fn (x := rational_number ?, y := rational_number ?) -> rational_number ( x / y )";
+    assert_eq!(
+        run_script_result(&format!("{h}, h(1, 0)")),
+        Err(crate::run::RunError::RationalArithmetic)
+    );
 }
 
 #[test]

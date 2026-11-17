@@ -466,7 +466,7 @@ pub(crate) unsafe fn run_into(
     let op = rt.types().ops.rational_arith_op_of(*ops.add(2)).ok_or(RunError::NoLeaf)?;
     let l = value_of(rt, *ops)?;
     let r = value_of(rt, *ops.add(1))?;
-    let (num, den) = fold_pair(op, l, r).ok_or(RunError::UncomputableLiteral)?;
+    let (num, den) = fold_pair(op, l, r).ok_or(RunError::RationalArithmetic)?;
     write_at(dest, num, den);
     Ok(())
 }

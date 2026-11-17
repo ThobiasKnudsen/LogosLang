@@ -482,6 +482,11 @@ pub fn run_message(e: &RunError) -> String {
                                     whole number, so `lossy` cannot convert it into an integer \
                                     type"
             .into(),
+        RunError::RationalArithmetic => {
+            "this arithmetic on `rational_number` values has no value: a division by zero, or a \
+             result past what a fraction of two i64s holds"
+                .into()
+        }
         RunError::ArityMismatch => "a call's argument count does not match its function".into(),
         RunError::CompilerUnavailable => {
             "compile() is not available here (parse-time evaluation runs without the compiler)"
