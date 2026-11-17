@@ -37,15 +37,18 @@ pub(crate) unsafe fn of(
     let key = array::build(store, types.array_, key);
     let record = meta::mint_record(store, origin, output_type, op);
     let mint = store.alloc_head(types.type_, record);
-    let made = meta::mints_of(origin);
-    let mut all = if made.is_null() { Vec::new() } else { array::items(made).to_vec() };
-    all.push(array::build(store, types.array_, &[key, mint]));
-    meta::install_mints(origin, array::build(store, types.array_, &all));
+    let mut made = meta::mints_of(origin);
+    if made.is_null() {
+        made = array::build(store, types.array_, &[]);
+        meta::install_mints(origin, made);
+    }
+    let pair = array::build(store, types.array_, &[key, mint]);
+    array::push(store, made, pair);
     mint
 }
 
 /// # Safety
-/// `origin` must carry a record whose mints `of` made.
+/// `origin` must carry a record whose memo only `of` built and grew.
 unsafe fn find(origin: DyadPtr, key: &[DyadPtr]) -> Option<DyadPtr> {
     let made = meta::mints_of(origin);
     if made.is_null() {
