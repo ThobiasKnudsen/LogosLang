@@ -1024,6 +1024,28 @@ fn a_pattern_whose_class_can_eat_its_own_literal_still_lexes() {
 }
 
 #[test]
+fn a_quantifier_in_a_pattern_covers_its_whole_group_or_escape() {
+    for src in [
+        "regex «(a[0-9])+» := type (), (a1a2).type == type",
+        "regex «(a\\\\.b)+» := type (), (a.ba.b).type == type",
+        "regex «q\\\\.+» := type (), (q..).type == type",
+        "regex «(a|b)+c» := type (), (abc).type == type",
+        "regex «xb{0}c» := type (), (xc).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    for (src, name) in [
+        ("regex «(a\\\\.b)+» := type (), (axb).type == type", "axb"),
+        ("regex «x([a-z]+ing)?» := type (), (xab).type == type", "xab"),
+    ] {
+        let (_, _, stderr) = run_line(src);
+        assert!(stderr.contains(&format!("unknown name `{name}`")), "{src}: {stderr}");
+    }
+}
+
+#[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
