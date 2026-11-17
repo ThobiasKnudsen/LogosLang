@@ -4010,6 +4010,34 @@ fn a_plain_record_s_owner_runs_its_free_once() {
     assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
 }
 
+/// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹: "`free p@` does the same for
+/// a cell", a plain record's cell included, on both tiers.
+#[test]
+fn free_of_a_cell_runs_the_free_of_the_record_it_holds() {
+    let f = "f := fn (p := @bag ?) -> i32 ( free p@, 1 )";
+    for (tail, printed) in [
+        ("p := alloc 1 of bag (5), free p@, 0".to_string(), "freed 5\n0\n"),
+        (
+            "p := alloc 2 of bag (5), (p + 1)@.n = 6, free (p + 1)@, free p@, 0".to_string(),
+            "freed 6\nfreed 5\n0\n",
+        ),
+        (
+            "g := fn () -> i32 ( p := alloc 1 of bag (5), free p@, 1 ), g()".to_string(),
+            "freed 5\n1\n",
+        ),
+        (format!("{f}, q := alloc 1 of bag (5), f(q), print «after»"), "freed 5\nafter\n"),
+        (
+            format!("{f}, f.compile(), q := alloc 1 of bag (5), f(q), print «after»"),
+            "freed 5\nafter\n",
+        ),
+        // The block's own `free` runs nothing for the records its cells hold.
+        ("p := alloc 1 of bag (5), free p, 0".to_string(), "0\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+}
+
 /// `h0` makes with `-> RESULT`, and each `h1` to `hN` hands on the one before from both arms.
 fn own_chain(result: &str, depth: usize) -> String {
     let mut src = format!("c := i32 1, h0 := fn () -> {result} ( bag(1) )");

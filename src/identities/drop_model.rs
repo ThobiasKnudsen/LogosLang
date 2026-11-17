@@ -437,8 +437,8 @@ pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr)
 }
 
 /// What `free` of the place runs: a name that holds its value (`holder`) its teardown, an
-/// owning field or cell the teardown of what it holds, emptying it, and anything else the
-/// inert `free`.
+/// owning field or a cell the teardown of what it holds, emptying a slot that holds an
+/// address, and anything else the inert `free`.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
@@ -534,8 +534,8 @@ pub(crate) fn build_instance_free(
     free_node(store, types, [place, free, types.ops.instance_free_])
 }
 
-/// The instances' `free` of the node a dereference `p@` reads, when its type fills one: the
-/// cell holds that node's address, and freeing the cell frees the node. DESIGN ›A value
+/// The `free` the type of what a dereference `p@` reads fills, [`type_free`]'s answer: a node's,
+/// whose address the cell holds, or a plain record's, kept in the cell's bytes. DESIGN ›A value
 /// owns what its elements hold and frees it‹.
 ///
 /// # Safety
@@ -544,11 +544,7 @@ unsafe fn cell_free(types: &Core, place: DyadPtr) -> Option<DyadPtr> {
     if dyad::ty(place) != types.deref_ {
         return None;
     }
-    let (_, pointee, _) = super::pointer::deref_parts(place);
-    if !meta::is_node_valued(pointee, types.fn_type) {
-        return None;
-    }
-    let free = meta::instances_free_of(pointee);
+    let free = type_free(types, place, super::read::output_type(types, place));
     (!free.is_null()).then_some(free)
 }
 
@@ -592,8 +588,9 @@ fn build_inert_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr 
     free_node(store, types, [place, std::ptr::null_mut(), types.ops.free_])
 }
 
-/// A node's `free` runs in the seed. A cell's or field's free empties a slot no frame holds,
-/// so a function holding one stays interpreted: stand-in for #164.
+/// A node's `free` runs in the seed, and a cell's over a plain record, which hands its type's
+/// `free` its bytes' address as a value does. A cell's or field's free that empties a slot no
+/// frame holds keeps the function interpreted: stand-in for #164.
 fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `free` node `[place, pointee, op]`, `[place, free, op]` or
     // `[value, free, op]`.
@@ -601,7 +598,11 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let slots = dyad::value(node) as *const DyadPtr;
         (*slots, *slots.add(TEARDOWN_POINTEE), *slots.add(2))
     };
-    if op == lw.types().ops.value_free_ {
+    let core = lw.types();
+    // SAFETY: `place` is a reduced dyad from the store; its output type is null or a type node.
+    let in_bytes = op == core.ops.instance_free_
+        && unsafe { !holds_by_address(core, super::read::output_type(core, place)) };
+    if op == core.ops.value_free_ || in_bytes {
         // SAFETY: the value is a reduced dyad from the store.
         let this = unsafe { lw.lower(place) }?;
         if pointee.is_null() {
@@ -844,21 +845,29 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
         let entry = std::mem::transmute::<usize, crate::run::RunFn>(callable::entry_of(dtor));
         return entry(rt, place).map(|_| ());
     }
-    let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
-    if slot.is_null() {
-        return Err(RunError::Uninitialized);
-    }
-    let held = if super::this::is_plain(rt.types(), ty) {
-        slot as i64
-    } else {
-        let held = std::ptr::read_unaligned(slot as *const i64);
-        std::ptr::write_unaligned(slot as *mut i64, 0);
-        held
-    };
+    let held = take_held(rt, place, ty)?;
     if held != 0 {
         rt.apply_values(meta::instances_free_of(ty), &[held])?;
     }
     Ok(())
+}
+
+/// What a place of type `ty` hands that type's `free`: a plain record its bytes' address, a
+/// node its address, the place NULL from here, and 0 once a `free` or `move` emptied it.
+///
+/// # Safety
+/// `place` must be a name laid out in the frame `rt` runs, a cell, or an owning field's slot.
+unsafe fn take_held(rt: &mut Runtime, place: DyadPtr, ty: DyadPtr) -> Result<i64, RunError> {
+    let slot = owned_slot(rt, place)?;
+    if slot.is_null() {
+        return Err(RunError::Uninitialized);
+    }
+    if super::this::is_plain(rt.types(), ty) {
+        return Ok(slot as i64);
+    }
+    let held = std::ptr::read_unaligned(slot as *const i64);
+    std::ptr::write_unaligned(slot as *mut i64, 0);
+    Ok(held)
 }
 
 /// [`end_held`] compiled: a type's `free` is called over the value the place holds; a block's
@@ -1160,23 +1169,19 @@ fn run_held_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     Ok(0)
 }
 
-/// The slot is emptied before the body runs, so the free of what holds it finds nothing.
+/// A slot holding a node is emptied before the body runs, so the free of what holds it finds
+/// nothing.
 fn run_instance_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a `[place, free, op]` node from `build_instance_free`; the slot
-    // holds a node's address or the null an earlier free or move left.
+    // SAFETY: `node` is a `[place, free, op]` node from `build_instance_free`, over a cell or an
+    // owning field's slot.
     unsafe {
         let slots = dyad::value(node) as *const DyadPtr;
         let place = *slots.add(TEARDOWN_PLACE);
-        let slot = owned_slot(rt, place)?;
-        if slot.is_null() {
-            return Err(RunError::Uninitialized);
+        let ty = super::read::output_type(rt.types(), place);
+        let this = take_held(rt, place, ty)?;
+        if this != 0 {
+            rt.apply_values(*slots.add(TEARDOWN_POINTEE), &[this])?;
         }
-        let this = std::ptr::read_unaligned(slot as *const i64);
-        if this == 0 {
-            return Ok(0);
-        }
-        std::ptr::write_unaligned(slot as *mut i64, 0);
-        rt.apply_values(*slots.add(TEARDOWN_POINTEE), &[this])?;
         Ok(0)
     }
 }
