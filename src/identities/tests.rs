@@ -3785,6 +3785,13 @@ fn lossy_stands_only_between_a_number_type_and_its_value() {
 }
 
 #[test]
+fn a_lossy_conversion_reads_its_bracket_as_a_written_one_does() {
+    assert_eq!(run_script("x := i64 5, x == i64 (i32 5 or i32 6)"), 1);
+    assert_eq!(run_script("x := i64 6, x == i64 lossy (i32 5 or i32 6)"), 1);
+    assert_eq!(run_script("x := i32 7, x == i32 lossy (f64 5.5 or f64 6.5)"), 0);
+}
+
+#[test]
 fn malformed_casts_are_rejected() {
     assert_eq!(parse_err("i32()"), ParseError::BadCast);
     assert_eq!(parse_err("i32(1, 2)"), ParseError::BadCast);

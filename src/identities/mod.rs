@@ -783,23 +783,13 @@ pub(crate) unsafe fn land(
     land_as(store, types, value, ty, false)
 }
 
-/// What `ty lossy (value)` gives: as [`land`], and a number of any number type, a plain number
-/// or a rational value converts into the number type `ty`, losing what `ty` cannot hold.
+/// As [`land`]; with `lossy`, what `ty lossy (value)` gives: a number of any number type, a plain
+/// number or a rational value also converts into the number type `ty`, losing what `ty` cannot
+/// hold.
 ///
 /// # Safety
 /// As [`land`].
-pub(crate) unsafe fn land_lossy(
-    store: &mut Store,
-    types: &Core,
-    value: DyadPtr,
-    ty: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    land_as(store, types, value, ty, true)
-}
-
-/// # Safety
-/// As [`land`].
-unsafe fn land_as(
+pub(crate) unsafe fn land_as(
     store: &mut Store,
     types: &Core,
     value: DyadPtr,
@@ -1266,7 +1256,8 @@ unsafe fn is_parameter(types: &Core, node: DyadPtr) -> bool {
     }
 }
 
-/// The written `T(value)`, checked as an unwritten value landing in `T` is.
+/// The written `T(value)`, or `T lossy (value)` with `lossy`, checked as an unwritten value
+/// landing in `T` is.
 ///
 /// # Safety
 /// `target` is a numeric type node; `args` are valid dyads from the store.
@@ -1275,11 +1266,12 @@ pub(crate) unsafe fn build_cast(
     types: &Core,
     target: DyadPtr,
     args: &[DyadPtr],
+    lossy: bool,
 ) -> Result<DyadPtr, ParseError> {
     let [operand] = args else {
         return Err(ParseError::BadCast);
     };
-    land(store, types, *operand, target)
+    land_as(store, types, *operand, target, lossy)
 }
 
 #[cfg(test)]

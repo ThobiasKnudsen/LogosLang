@@ -178,13 +178,7 @@ fn construct(
             let l = c.dyad;
             tape.remove(1);
             // SAFETY: `l` is rational-typed by the guard; `id` is this numeric type's node.
-            unsafe {
-                if lossy {
-                    super::land_lossy(p.store(), types, l, id)
-                } else {
-                    super::commit_literal_to(p.store(), types, l, id)
-                }
-            }?
+            unsafe { super::land_as(p.store(), types, l, id, lossy) }?
         }
         // `i32(x)`: the bracket is this type's to read, a conversion, never `(`'s call.
         Some(c) if c.is_bracket() => {
@@ -192,16 +186,8 @@ fn construct(
             // SAFETY: `scope` is the bracket's node from the store.
             let args = unsafe { p.args_of(scope) };
             tape.remove(1);
-            if lossy {
-                let [operand] = args[..] else {
-                    return Err(crate::parse::ParseError::BadCast);
-                };
-                // SAFETY: `operand` is a reduced dyad; `id` is this numeric type's node.
-                unsafe { super::land_lossy(p.store(), types, operand, id) }?
-            } else {
-                // SAFETY: `id` is this numeric type's node; `args` are reduced dyads.
-                unsafe { p.build_call(id, &args) }?
-            }
+            // SAFETY: `id` is this numeric type's node; `args` are reduced dyads.
+            unsafe { p.build_call_as(id, &args, lossy) }?
         }
         _ if lossy => return Err(crate::parse::ParseError::LossyOutOfPlace),
         _ => p.stand_as_value(tape, id),

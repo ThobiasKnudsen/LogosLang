@@ -1113,15 +1113,29 @@ impl<'a> Parser<'a> {
         callee: DyadPtr,
         args: &[DyadPtr],
     ) -> Result<DyadPtr, ParseError> {
+        self.build_call_as(callee, args, false)
+    }
+
+    /// [`build_call`](Self::build_call), a numeric callee converting with `lossy` when it is set,
+    /// as `i32 lossy (x)`.
+    ///
+    /// # Safety
+    /// As [`build_call`](Self::build_call).
+    pub(crate) unsafe fn build_call_as(
+        &mut self,
+        callee: DyadPtr,
+        args: &[DyadPtr],
+        lossy: bool,
+    ) -> Result<DyadPtr, ParseError> {
         let mut args = args.to_vec();
         for i in 0..args.len() {
             // SAFETY: `args` are reduced dyads from the store.
             if let Some((connective, a, b)) = crate::identities::group::members(self.types, args[i])
             {
                 args[i] = a;
-                let a = self.build_call(callee, &args)?;
+                let a = self.build_call_as(callee, &args, lossy)?;
                 args[i] = b;
-                let b = self.build_call(callee, &args)?;
+                let b = self.build_call_as(callee, &args, lossy)?;
                 return crate::identities::group::join(self.rt.store, self.types, connective, a, b);
             }
         }
@@ -1149,7 +1163,9 @@ impl<'a> Parser<'a> {
         };
         if is_numtype {
             // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
-            unsafe { crate::identities::build_cast(self.rt.store, self.types, callee, &args) }
+            unsafe {
+                crate::identities::build_cast(self.rt.store, self.types, callee, &args, lossy)
+            }
         } else if is_record {
             // SAFETY: `callee` is a record type node.
             if unsafe { !crate::identities::meta::run_body_of(callee).is_null() } {
