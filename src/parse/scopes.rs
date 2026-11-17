@@ -348,7 +348,7 @@ impl ScopeStack {
 
     /// The live binding a declaration of `name`, keyed as `binding`'s record says, would
     /// shadow: one under that very key, or for a spelling that stands for itself, one its
-    /// text resolves to. A pattern meets only its own key: two patterns that can
+    /// whole text resolves to. A pattern meets only its own key: two patterns that can
     /// match the same length at equal rank are caught when text hits both (`Tied`), since
     /// deciding it here needs automaton intersection.
     ///
@@ -373,7 +373,7 @@ impl ScopeStack {
             return Ok(keyed);
         }
         match self.resolve(trie, name) {
-            Ok(r) => Ok(Some(r.binding)),
+            Ok(r) => Ok((r.matched == name.len()).then_some(r.binding)),
             Err(ResolveError::OutOfScope(_) | ResolveError::Unknown(_) | ResolveError::Dead(_)) => {
                 Ok(None)
             }

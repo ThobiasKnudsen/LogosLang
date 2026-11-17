@@ -1038,6 +1038,31 @@ fn a_pattern_spelling_is_declared_through_regex() {
 }
 
 #[test]
+fn a_literal_spelling_is_declared_by_its_whole_text() {
+    // `@` is declared and outranks the fresh-name pattern, so only the quote declares `@!`.
+    for (src, out) in [
+        ("lex «@!» := i32 5, @!", "5"),
+        ("lex «@!» := i32 5, @!:name", "@!"),
+        ("lex «~.» := i32 5, ~.:name", "~."),
+        ("mut lex «@!» := i32 5, @! = 6, @!", "6"),
+        ("f := fn () -> i32 (lex «@!» := i32 5, @!), f()", "5"),
+        ("f := fn () -> i32 (lex «@!» := i32 5, @!), f.compile(), f()", "5"),
+    ] {
+        assert_eq!(line(src), out, "{src}");
+    }
+    for (src, expect) in [
+        ("lex «..» := i32 5, 1", "`..` is already declared"),
+        ("lex «@!» := i32 5, lex «@!» := i32 6, 1", "`@!` is already declared"),
+        ("lex «12» := i32 5, 1", "`12` is already declared"),
+        ("lex «» := i32 5, 1", "must not be empty"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: {stderr}");
+        assert!(stderr.contains(expect), "{src}: {stderr}");
+    }
+}
+
+#[test]
 fn a_pattern_whose_class_can_eat_its_own_literal_still_lexes() {
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[a-z]+ing\xc2\xbb := type ()\n(running).type == type\n(ring).type == type\n\
@@ -3030,6 +3055,7 @@ fn an_imported_pub_spelling_is_keyed_and_ranked_as_the_file_declared_it() {
     let lib = "import ./tests/fixtures/pub_spellings.logos";
     assert_eq!(line(&format!("{lib}, (5k).type == type")), "true");
     assert_eq!(line(&format!("{lib}, {lib}, (5k).type == type")), "true");
+    assert_eq!(line(&format!("{lib}, {lib}, @!")), "7");
     assert_eq!(line(&format!("{lib}, r:lex_rank")), "3.0");
     let (code, _, stderr) = run_line(&format!("regex «[0-9]+k» := type (), {lib}"));
     assert_eq!(code, Some(1), "stderr: {stderr}");

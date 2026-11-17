@@ -578,24 +578,36 @@ impl<'a> Parser<'a> {
     /// value's node once it exists (a `fn` publishes it before its body). Legal only
     /// opening its expression; anywhere else it declines.
     fn declare_here(&mut self, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
-        // The name is the cell to the left: a spelling, or the node `regex «…»`
-        // placed, whose text is a pattern; anything else declines.
+        // The name is the cell to the left: a spelling, the node `regex «…»` placed, whose
+        // text is a pattern, or the node `lex «…»` placed, whose whole text is one spelling
+        // (DESIGN ›A pattern identity is declared `regex «…» := type (…)`‹); anything else
+        // declines.
         let Some(tok) = tape.at(-1).copied() else {
             return Ok(Constructed::Decline);
         };
         // Copied out: the cell's text is independent of the `&mut self` the
         // declaration and value parse need.
         let (name, pattern): (String, bool) = if tok.constructed {
-            // SAFETY: a constructed cell holds a node from the store.
-            if unsafe { dyad::ty(tok.dyad) } != self.types.regex_ {
+            // SAFETY: a constructed cell holds a node from the store; a `regex` node's value
+            // is a text blob.
+            let quoted = unsafe {
+                if dyad::ty(tok.dyad) == self.types.regex_ {
+                    Some((crate::identities::string::text(tok.dyad), true))
+                } else {
+                    crate::identities::lex::quoted(self.types, tok.dyad).map(|text| (text, false))
+                }
+            };
+            let Some((text, pattern)) = quoted else {
                 return Ok(Constructed::Decline);
-            }
-            // SAFETY: a `regex` node's value is a text blob.
-            let text = unsafe { crate::identities::string::text(tok.dyad) };
-            (String::from_utf8_lossy(text).into_owned(), true)
+            };
+            (String::from_utf8_lossy(text).into_owned(), pattern)
         } else {
             (tok.spelling().to_string(), false)
         };
+        if name.is_empty() {
+            self.cx.pos = tok.start;
+            return Err(ParseError::EmptySpelling);
+        }
         let name: &str = &name;
         // The binding is the name's home before its node exists (DESIGN ›An unknown spelling
         // stays text on the tape; `:=` makes the binding, and the node comes with the value‹).

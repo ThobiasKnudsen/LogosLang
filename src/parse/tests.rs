@@ -587,6 +587,20 @@ fn shadowing_is_rejected() {
 }
 
 #[test]
+fn a_spelling_is_shadowed_only_by_one_that_matches_it_whole() {
+    let mut trie = RegexTrie::new();
+    let mut scopes = ScopeStack::new();
+    scopes.push(dyad(100));
+    unsafe { scopes.declare(&mut trie, "@", rec(dyad(1))) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "@!", rec(dyad(2))) }.unwrap();
+    assert_eq!(scopes.resolve(&trie, "@!").unwrap().identity, dyad(2));
+    assert_eq!(
+        unsafe { scopes.declare(&mut trie, "@!", rec(dyad(3))) },
+        Err(ResolveError::Shadowed("@!".into()))
+    );
+}
+
+#[test]
 fn rollback_undoes_journalled_declarations() {
     let mut trie = RegexTrie::new();
     let mut scopes = ScopeStack::new();
