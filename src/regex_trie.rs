@@ -589,7 +589,7 @@ mod tests {
         t.insert(":", rec(colon, root));
         t.insert(":=", rec(colon_eq, root));
         t.insert("=", rec(eq, root));
-        t.insert("+", rec(plus, root));
+        t.insert(r"\+", rec(plus, root));
 
         let m = t.get(":=").unwrap();
         assert_eq!(m.matched, 2);

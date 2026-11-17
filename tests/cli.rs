@@ -1069,6 +1069,35 @@ fn a_quantifier_in_a_pattern_covers_its_whole_group_or_escape() {
 }
 
 #[test]
+fn a_pattern_is_read_as_the_regex_crate_reads_it() {
+    for src in [
+        "regex «k\\\\x41» := type (), (kA).type == type",
+        "regex «k\\\\u{41}» := type (), (kA).type == type",
+        "regex «(?i)abc» := type (), (ABC).type == type",
+        "regex «k(?-u:[a-z])» := type (), (kq).type == type",
+        "regex «(ab|cd|ef|gh|ij){5}» := type (), (ijijijijij).type == type",
+        "regex «(?:a+)?b» := type (), (b).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    for (src, name) in [
+        ("regex «k\\\\x41» := type (), (kx41).type == type", "kx41"),
+        ("regex «k\\\\t» := type (), (kt).type == type", "kt"),
+        ("regex «k\\\\n» := type (), (kn).type == type", "kn"),
+    ] {
+        let (_, _, stderr) = run_line(src);
+        assert!(stderr.contains(&format!("unknown name `{name}`")), "{src}: {stderr}");
+    }
+    // A rolled-back pattern that can match nothing as a whole leaves no entry behind.
+    let (echoes, stderr) =
+        repl("regex «a*» := type ()\nregex «b*» := type (), zz\n(bb).type == type\n".as_bytes());
+    assert!(echoes.is_empty(), "echoes: {echoes:?}");
+    assert!(stderr.contains("unknown name `bb`"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_pattern_judges_a_word_boundary_by_the_char_before_it() {
     for src in [
         "regex «q\\B[0-9]+» := type (), (q1).type == type",
