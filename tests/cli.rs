@@ -1132,6 +1132,24 @@ fn a_pattern_part_that_matches_nothing_still_lets_it_lex() {
 }
 
 #[test]
+fn spellings_ending_at_one_node_are_each_found_by_their_own_key() {
+    // A rolled-back declaration leaves nothing behind, though another spelling ends where it did.
+    for (program, gone, kept) in [
+        ("regex «x|ab» := type ()\nregex «ab|y» := type (), zz\n(y).type == type\n", "y", "ab"),
+        ("regex «a*» := type ()\nregex «b*» := type (), zz\n(bb).type == type\n", "bb", "aa"),
+    ] {
+        let (echoes, stderr) = repl(format!("{program}({kept}).type == type\n").as_bytes());
+        assert_eq!(echoes, ["true"], "{program}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("unknown name `{gone}`")), "{program}: stderr: {stderr}");
+    }
+    let (_, _, stderr) =
+        run_line("regex «x|ab» := type (), regex «ab|y» := type (), regex «ab|y» := type (), 5");
+    assert!(stderr.contains("`ab|y` is already declared"), "stderr: {stderr}");
+    let (_, _, stderr) = run_line("regex «x|ab» := type (), regex «ab|y» := type (), ab");
+    assert!(stderr.contains("same lex_rank"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

@@ -466,15 +466,14 @@ impl ScopeStack {
         name: &str,
         scope: DyadPtr,
     ) -> Result<bool, ResolveError> {
-        match trie.get(name) {
-            Ok(m) if m.matched == name.len() => {
-                // SAFETY: every pointer the trie stores is a binding dyad.
-                let fields = |r: DyadPtr| unsafe { Binding::read(r) };
-                Ok(m.bindings.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()))
-            }
-            Ok(_) | Err(RegexTrieError::NodeNotFound) => Ok(false),
-            Err(e) => Err(ResolveError::Index(e)),
-        }
+        let matches = trie.get_all_matches(name).map_err(ResolveError::Index)?;
+        // SAFETY: every pointer the trie stores is a binding dyad.
+        let fields = |r: DyadPtr| unsafe { Binding::read(r) };
+        Ok(matches
+            .iter()
+            .filter(|m| m.matched == name.len())
+            .flat_map(|m| m.bindings)
+            .any(|&r| fields(r).scope == scope && !fields(r).is_dead()))
     }
 
     /// The name becomes another spelling of an existing identity (a type), so
