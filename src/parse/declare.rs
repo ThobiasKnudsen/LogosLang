@@ -933,7 +933,7 @@ impl<'a> Parser<'a> {
                 if dyad::ty(read) != types.rational {
                     return Err(ParseError::UnsupportedOperands);
                 }
-                crate::identities::commit_literal_to(self.rt.store, types, read, ty)?
+                crate::identities::land(self.rt.store, types, read, ty)?
             } else if scalar {
                 // `bool` is physically an i32 0/1 in storage; only `true` and
                 // `false` have bits at parse.
