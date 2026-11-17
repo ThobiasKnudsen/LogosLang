@@ -320,6 +320,7 @@ fn parse_atom(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
 }
 
 fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
+    let atom_start = *pos;
     let paths = parse_atom(s, pos);
     if paths.is_empty() {
         return paths;
@@ -365,20 +366,9 @@ fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
 
     let (min, max) = get_quant_n(&quant_str);
 
-    if min == 0 && max == 0 {
-        // A degenerate quantifier (`{0}`): carry the remainder as a regex tail.
-        let tail = bytes_to_string(&s[quant_begin..]);
-        let mut paths = paths;
-        for path in paths.iter_mut() {
-            path.push(Segment::rx(&tail));
-        }
-        *pos = s.len();
-        return paths;
-    }
-
     // Small fixed repetition expands by cartesian product, bounded by MAX_PATHS
     // each round so `(a|b|c|d|e){9}` cannot explode before the cap applies.
-    if max != usize::MAX && max == min && min > 0 && min < 10 {
+    if max == min && (1..10).contains(&min) {
         let mut repeated: Vec<Vec<Segment>> = vec![Vec::new()];
         for _ in 0..min {
             let mut new_rep: Vec<Vec<Segment>> = Vec::new();
@@ -398,25 +388,14 @@ fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
         return repeated;
     }
 
-    // Variable repetition: attach the quantifier to the last segment of each path.
-    let mut new_paths: Vec<Vec<Segment>> = Vec::new();
-    for p in &paths {
-        let mut np = p.clone();
-        if let Some(last) = np.last_mut() {
-            // A multi-char literal is a merged group (`(ab)`): quantified bare it
-            // would misparse `(ab)+` as `ab+`, so it is wrapped.
-            if last.is_lit && last.str.len() > 1 {
-                last.str = format!("(?:{}){}", last.str, full_quant);
-            } else {
-                last.str.push_str(&full_quant);
-            }
-            last.is_lit = false;
-        } else {
-            np.push(Segment::rx(&full_quant));
-        }
-        merge_adjacent(&mut np);
-        new_paths.push(np);
-    }
+    // Any other quantifier covers its atom as written, so the atom is one regex
+    // segment; a group drops its capture, as an unquantified one drops its parens.
+    let atom = bytes_to_string(&s[atom_start..quant_begin]);
+    let atom = match atom.strip_prefix('(') {
+        Some(inner) if !inner.starts_with('?') => format!("(?:{inner}"),
+        _ => atom,
+    };
+    let mut new_paths = vec![vec![Segment::rx(&format!("{atom}{full_quant}"))]];
     if min == 0 {
         // The empty path last, so longer alternatives win first.
         new_paths.push(Vec::new());
@@ -558,6 +537,27 @@ mod tests {
     #[test]
     fn capturing_group_repetition_keeps_grouping() {
         assert_eq!(regex_splitting("(ab)+"), vec![vec![rx("(?:ab)+")]]);
+    }
+
+    #[test]
+    fn a_quantifier_covers_its_whole_group() {
+        assert_eq!(regex_splitting("(a[0-9])+"), vec![vec![rx("(?:a[0-9])+")]]);
+        assert_eq!(regex_splitting("([a-z]+ing)?"), vec![vec![rx("(?:[a-z]+ing)?")], vec![]]);
+        assert_eq!(regex_splitting("(a|b)+c"), vec![vec![rx("(?:a|b)+"), lit("c")]]);
+    }
+
+    #[test]
+    fn a_quantified_escaped_char_keeps_its_escape() {
+        assert_eq!(regex_splitting("(a\\.b)+"), vec![vec![rx("(?:a\\.b)+")]]);
+        assert_eq!(regex_splitting("\\.+"), vec![vec![rx("\\.+")]]);
+    }
+
+    #[test]
+    fn a_zero_count_leaves_a_path_without_its_atom() {
+        assert_eq!(
+            regex_splitting("xb{0}c"),
+            vec![vec![lit("x"), rx("b{0}"), lit("c")], vec![lit("xc")]]
+        );
     }
 
     #[test]
