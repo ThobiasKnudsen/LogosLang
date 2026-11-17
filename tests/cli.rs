@@ -3654,7 +3654,10 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert!(!out.status.success() && out.stdout.is_empty(), "{src}: {stderr}");
         assert!(stderr.contains("does not fit the node's type"), "{src}: {stderr}");
     }
-    // Nor is it read from the record the node gives when it runs.
+    // Nor is it read from the record the node gives when it runs, which a name holds.
+    let out = logos().arg(format!("{mk}, y := i32 3, z := y mk, z.x")).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n");
     let out = logos().arg(format!("{mk}, y := i32 3, (y mk).x")).output().unwrap();
     assert!(
         !out.status.success() && out.stdout.is_empty(),
