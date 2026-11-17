@@ -438,10 +438,31 @@ impl<'a> Parser<'a> {
                     return Ok((self.narrowed_read(line), 1));
                 }
             }
+            // `here.scope`, `caller.scope` (DESIGN ›Meta-navigation‹): `here`
+            // knows its scope at the appearance, so the read folds; `caller`
+            // reads the pass, so its `.scope` is a node run inside a constructor.
+            let h = self.types.here;
+            if dyad::ty(lhs) == h.here || dyad::ty(lhs) == h.caller {
+                if name != "scope" {
+                    return Err(ParseError::BadReflectRead);
+                }
+                let node = if dyad::ty(lhs) == h.here {
+                    self.reach(crate::identities::here::scope_of_here(lhs))
+                } else {
+                    crate::identities::here::build_caller_scope(self.rt.store, self.types)
+                };
+                return Ok((node, 0));
+            }
+            // An operator expression is read through its own type alone, never through what it
+            // gives.
             if self.is_operator_node(lhs) {
                 if let Some(field) = self.node_field(lhs, name)? {
                     return Ok((field, 0));
                 }
+                let ty = dyad::ty(lhs);
+                return self
+                    .share_member_access(lhs, &left, ty, name, call)?
+                    .ok_or(ParseError::BadReflectRead);
             }
             // A field holding a node a Logos `parse` built is read when the code runs, even
             // through a node the parse knows: the node it holds may be replaced before then.
@@ -468,21 +489,6 @@ impl<'a> Parser<'a> {
             }
             if dyad::ty(lhs) == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
-            }
-            // `here.scope`, `caller.scope` (DESIGN ›Meta-navigation‹): `here`
-            // knows its scope at the appearance, so the read folds; `caller`
-            // reads the pass, so its `.scope` is a node run inside a constructor.
-            let h = self.types.here;
-            if dyad::ty(lhs) == h.here || dyad::ty(lhs) == h.caller {
-                if name != "scope" {
-                    return Err(ParseError::BadReflectRead);
-                }
-                let node = if dyad::ty(lhs) == h.here {
-                    self.reach(crate::identities::here::scope_of_here(lhs))
-                } else {
-                    crate::identities::here::build_caller_scope(self.rt.store, self.types)
-                };
-                return Ok((node, 0));
             }
             // A scope's link up is `.back`; `.scope` is the scope of a spot, a call or a name.
             if name == "back" && crate::identities::here::yields_scope_address(self.types, lhs) {
@@ -602,37 +608,13 @@ impl<'a> Parser<'a> {
             || !crate::identities::meta::is_record_type(record_logos)
             || (!storage && self.types.is_hole(lhs))
         {
-            if self.is_operator_node(lhs) {
-                return Err(ParseError::BadReflectRead);
-            }
             return Err(ParseError::UnsupportedOperands);
         }
         let (_, _, binding) = match self.resolve_field(record_logos, nstart, nlen) {
             Ok(found) => found,
             Err(e) => {
                 let name = &self.cx.source[nstart..nstart + nlen];
-                let Some(member) = self.share_member_read(record_logos, name) else {
-                    return Err(e);
-                };
-                if let Some(args) = call {
-                    if self.takes_this(member) {
-                        self.check_receiver_write(&left, member)?;
-                        // A record laid out in bytes is handed on as the address of its bytes,
-                        // any other value by a `dyad` view, as a `dyad ?` parameter takes a node.
-                        let view = if storage {
-                            crate::identities::instance::layout(record_logos)?;
-                            let types = self.types;
-                            crate::identities::by_copy::build_out(self.rt.store, types, lhs)
-                        } else {
-                            self.rt.store.alloc_head(self.types.dyad_, lhs.cast())
-                        };
-                        let mut with_this = vec![view];
-                        with_this.extend(args);
-                        self.cx.member_path.clear();
-                        return self.build_call(member, &with_this).map(|n| (n, 1));
-                    }
-                }
-                return Ok((member, 0));
+                return self.share_member_access(lhs, &left, record_logos, name, call)?.ok_or(e);
             }
         };
         // A field is bytes inside storage; a node's fields are read above, through its slots.
@@ -1357,6 +1339,44 @@ impl<'a> Parser<'a> {
         let (identity, binding) = self.share_member_of(logos, name)?;
         self.cx.member_path = vec![binding];
         Some(identity)
+    }
+
+    /// `lhs.name` read as a `share` member of `logos`, the type `lhs` is read through: the
+    /// member, or, called, a `share` function that takes `lhs` as its receiver. `None` when
+    /// `logos` has no such member.
+    ///
+    /// # Safety
+    /// `lhs` must be a reduced dyad from the store and `logos` a type identity node.
+    unsafe fn share_member_access(
+        &mut self,
+        lhs: DyadPtr,
+        left: &Cell,
+        logos: DyadPtr,
+        name: &str,
+        call: Option<Vec<DyadPtr>>,
+    ) -> Result<Option<(DyadPtr, usize)>, ParseError> {
+        let Some(member) = self.share_member_read(logos, name) else {
+            return Ok(None);
+        };
+        if let Some(args) = call {
+            if self.takes_this(member) {
+                self.check_receiver_write(left, member)?;
+                // A record laid out in bytes is handed on as the address of its bytes,
+                // any other value by a `dyad` view, as a `dyad ?` parameter takes a node.
+                let view = if self.types.is_storage(lhs) {
+                    crate::identities::instance::layout(logos)?;
+                    let types = self.types;
+                    crate::identities::by_copy::build_out(self.rt.store, types, lhs)
+                } else {
+                    self.rt.store.alloc_head(self.types.dyad_, lhs.cast())
+                };
+                let mut with_this = vec![view];
+                with_this.extend(args);
+                self.cx.member_path.clear();
+                return self.build_call(member, &with_this).map(|n| Some((n, 1)));
+            }
+        }
+        Ok(Some((member, 0)))
     }
 
     /// The element type a type of node values built from a bracket holds; stand-in for #152.

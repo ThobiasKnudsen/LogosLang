@@ -3610,6 +3610,12 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
                  share parse_rank = *.parse_rank + 1, share associativity = right, \
                  share parse = ( tape[0].type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = tape[-1].type, \
                  tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
+    let sq = "sq := type ( a := ?, output_type := type ?, share tag := i32 7, \
+              share run = ( a * a ), share parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
+              tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, tape.remove(-1) ) )";
+    let mk = "pt := type ( x := i32 ? ), mk := type ( a := i32 ?, output_type := type ?, \
+              share run = ( pt(a) ), share parse = ( tape[0].type = mk, tape[0].a = tape[-1], \
+              tape[0].output_type = pt, tape.is_constructed[0] = true, tape.remove(-1) ) )";
     for (tail, want) in [
         ("f := fn (x := i32 ?) -> i32 ( b := x ^ 3, b:start.rhs.lhs ), f(5)", "5"),
         ("f := fn (x := i32 ?) -> i32 ( b := x ^ 3, b:start.rhs.lhs ), f.compile(), f(5)", "5"),
@@ -3625,6 +3631,14 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{tail}");
     }
+    // A `share` member of the node's own type.
+    for tail in
+        ["x := i32 3, (x sq).tag", "f := fn (x := i32 ?) -> i32 ( (x sq).tag ), f.compile(), f(3)"]
+    {
+        let out = logos().arg(format!("{sq}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n", "{tail}");
+    }
     // A name stands for the number it holds, which has no `lhs`; an all-literal `2 ^ 3` folds
     // to its number before `.` reads it.
     for tail in ["x := i32 1, c := x + 2, c.lhs", "(2 ^ 3).lhs"] {
@@ -3634,10 +3648,19 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert!(stderr.contains("cannot compute"), "{tail}: {stderr}");
     }
     // A field the node's type does not have is the error that says so.
-    let out = logos().arg("x := i32 1, (x + 2).nope").output().unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
-    assert!(stderr.contains("does not fit the node's type"), "{stderr}");
+    for src in ["x := i32 1, (x + 2).nope".to_string(), format!("{sq}, x := i32 3, (x sq).nope")] {
+        let out = logos().arg(&src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && out.stdout.is_empty(), "{src}: {stderr}");
+        assert!(stderr.contains("does not fit the node's type"), "{src}: {stderr}");
+    }
+    // Nor is it read from the record the node gives when it runs.
+    let out = logos().arg(format!("{mk}, y := i32 3, (y mk).x")).output().unwrap();
+    assert!(
+        !out.status.success() && out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
