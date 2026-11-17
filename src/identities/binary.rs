@@ -1,16 +1,16 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The eleven infix operators over two numeric operands, `+ - * / %` and
-//! `< > <= >= == !=`. Each resolves an application to one concrete leaf from its
-//! operand types and stores it in the node's op slot, `[lhs, rhs, leaf]`; two
-//! comptime rationals fold at parse instead.
+//! The eleven infix operators over two operands, `+ - * / %` and `< > <= >= == !=`. Their
+//! fields are `?`, so each node is `[mint, lhs, rhs]`: the parse chooses the mint from the
+//! operand types once they meet, and the mint holds the output type and the leaf; two comptime
+//! rationals fold at parse instead.
 
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{ArithOp, CmpOp, NumType};
 use super::read::Read;
-use super::{bool_mod, group, meta, rational, resolve_binary, Cx};
+use super::{bool_mod, group, meta, mint, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, LowerFn, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -57,14 +57,7 @@ pub(super) fn register_all(cx: &mut Cx) -> BinaryIds {
 }
 
 fn register(cx: &mut Cx, spelling: &str, rank: f64, family: Family) -> DyadPtr {
-    // Each node carries its own `output_type`: stand-in for #242.
-    let record = meta::operand_record(
-        cx,
-        meta::TUPLE_TAG,
-        rank,
-        Assoc::Left,
-        &["lhs", "rhs", "op", "output_type"],
-    );
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, rank, Assoc::Left, &["lhs", "rhs"]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(spelling, id);
     let (construct, lower) = shims(family);
@@ -128,10 +121,13 @@ fn build<const FAMILY: u8, const OP: u8>(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    build_op(store, types, op, family_of::<FAMILY, OP>(), lhs, rhs)
+    // SAFETY: a constructor hands its builder reduced dyads from the store.
+    unsafe { build_op(store, types, op, family_of::<FAMILY, OP>(), lhs, rhs) }
 }
 
-fn build_op(
+/// # Safety
+/// `lhs`/`rhs` must be reduced dyads from the store.
+unsafe fn build_op(
     store: &mut Store,
     types: &Core,
     op: DyadPtr,
@@ -139,37 +135,33 @@ fn build_op(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    let slots = match family {
+    match family {
         Family::Arith(a) => {
             if let Some(folded) = rational::fold_arith(store, types, a, lhs, rhs)? {
                 return Ok(folded);
             }
-            // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-            if let Some(node) = unsafe { pointer_step(store, types, op, a, lhs, rhs) }? {
+            if let Some(node) = pointer_step(store, types, op, a, lhs, rhs)? {
                 return Ok(node);
             }
-            let leaf = types.ops.rational_arith_leaf(a);
-            // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-            if let Some([lhs, rhs, leaf]) = unsafe { rational_slots(types, lhs, rhs, leaf) }? {
-                [lhs, rhs, leaf, types.rational]
-            } else {
-                // SAFETY: as above.
-                let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
-                // No machine float remainder exists, so the node cannot.
-                if matches!(a, ArithOp::Rem) && nt.is_float() {
-                    return Err(ParseError::UnsupportedOperands);
-                }
-                [lhs, rhs, types.ops.arith_leaf(a, nt), types.numtypes[nt as usize]]
+            if rational_operands(types, lhs, rhs)? {
+                let leaf = types.ops.rational_arith_leaf(a);
+                return Ok(node(store, types, op, lhs, rhs, types.rational, leaf));
             }
+            let ([lhs, rhs], nt) = resolve_binary(store, types, lhs, rhs)?;
+            // No machine float remainder exists, so the node cannot.
+            if matches!(a, ArithOp::Rem) && nt.is_float() {
+                return Err(ParseError::UnsupportedOperands);
+            }
+            let (output, leaf) = (types.numtypes[nt as usize], types.ops.arith_leaf(a, nt));
+            Ok(node(store, types, op, lhs, rhs, output, leaf))
         }
         Family::Cmp(c) => {
             if let Some(v) = rational::compare_literals(types, c, lhs, rhs) {
                 return Ok(bool_mod::literal_node(store, types.bool_, v));
             }
-            let leaf = types.ops.rational_cmp_leaf(c);
-            // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-            if let Some([lhs, rhs, leaf]) = unsafe { rational_slots(types, lhs, rhs, leaf) }? {
-                return Ok(store.alloc_words(op, &[lhs, rhs, leaf, types.bool_]));
+            if rational_operands(types, lhs, rhs)? {
+                let leaf = types.ops.rational_cmp_leaf(c);
+                return Ok(node(store, types, op, lhs, rhs, types.bool_, leaf));
             }
             if matches!(c, CmpOp::Eq | CmpOp::Ne) {
                 if let Some(node) = build_identity_compare(store, types, op, c, lhs, rhs) {
@@ -177,29 +169,44 @@ fn build_op(
                 }
                 // Two values of one type with a machine form, a `bool` among them, are equal
                 // when their bits are.
-                // SAFETY: `lhs`/`rhs` are reduced dyads from the store; an output type is null
-                // or a type node from the store.
-                let same = unsafe {
-                    let t = super::read::output_type(types, lhs);
-                    (t == super::read::output_type(types, rhs))
-                        .then(|| super::read::place_layout(types, t))
-                        .flatten()
-                };
+                let t = super::read::output_type(types, lhs);
+                let same = (t == super::read::output_type(types, rhs))
+                    .then(|| super::read::place_layout(types, t))
+                    .flatten();
                 if let Some((Read::Scalar(nt), _)) = same {
                     let leaf = types.ops.cmp_leaf(c, nt);
-                    return Ok(store.alloc_words(op, &[lhs, rhs, leaf, types.bool_]));
+                    return Ok(node(store, types, op, lhs, rhs, types.bool_, leaf));
                 }
             }
-            // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-            let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
-            [lhs, rhs, types.ops.cmp_leaf(c, nt), types.bool_]
+            let ([lhs, rhs], nt) = resolve_binary(store, types, lhs, rhs)?;
+            let leaf = types.ops.cmp_leaf(c, nt);
+            Ok(node(store, types, op, lhs, rhs, types.bool_, leaf))
         }
-    };
-    Ok(store.alloc_words(op, &slots))
+    }
 }
 
-/// `p + k` and `p - k` on an `@T` step k whole cells: the node is `[p, k * width, i64 op]`,
-/// the scaling written into the graph as an `i64` product. `None` when `lhs` is no pointer.
+/// `[mint, lhs, rhs]`, the mint `op`'s for the types its operands give.
+///
+/// # Safety
+/// `lhs`/`rhs` must be reduced dyads from the store; `output_type` and `leaf` what every node of
+/// `op` over these operand types gives back and runs.
+unsafe fn node(
+    store: &mut Store,
+    types: &Core,
+    op: DyadPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+    output_type: DyadPtr,
+    leaf: DyadPtr,
+) -> DyadPtr {
+    let key = [super::read::output_type(types, lhs), super::read::output_type(types, rhs)];
+    let mint = mint::of(store, types, op, &key, output_type, leaf);
+    store.alloc_words(mint, &[lhs, rhs])
+}
+
+/// `p + k` and `p - k` on an `@T` step k whole cells: the node is `[p, k * width]` under the
+/// operator's mint for `@T` and `i64`, the scaling written into the graph as an `i64` product.
+/// `None` when `lhs` is no pointer.
 /// DESIGN ›A pointer steps by whole cells‹.
 ///
 /// # Safety
@@ -242,15 +249,14 @@ unsafe fn pointer_step(
                 )
             };
             let w = store.alloc_blob(i64_ty, &(width as i64).to_ne_bytes());
-            store.alloc_words(
-                types.times,
-                &[k, w, types.ops.arith_leaf(ArithOp::Mul, NumType::I64), i64_ty],
-            )
+            let mul = types.ops.arith_leaf(ArithOp::Mul, NumType::I64);
+            node(store, types, types.times, k, w, i64_ty, mul)
         }
         _ => return Err(ParseError::UnsupportedOperands),
     };
     let output = super::pointer::make_pointer_type(store, types.type_, pointee);
-    Ok(Some(store.alloc_words(op, &[lhs, offset, types.ops.arith_leaf(a, NumType::I64), output])))
+    let leaf = types.ops.arith_leaf(a, NumType::I64);
+    Ok(Some(node(store, types, op, lhs, offset, output, leaf)))
 }
 
 /// The pointer the steps `p + k` and `p - k` start from, whose block holds every cell they
@@ -260,7 +266,7 @@ unsafe fn pointer_step(
 /// `node` must be a reduced dyad from the store.
 pub(crate) unsafe fn step_base(types: &Core, node: DyadPtr) -> DyadPtr {
     let node = types.through(node);
-    let op = dyad::ty(node);
+    let op = mint::origin(dyad::ty(node));
     if (op == types.plus || op == types.minus)
         && super::numtype::is_pointer_type(super::read::output_type(types, node))
     {
@@ -270,18 +276,13 @@ pub(crate) unsafe fn step_base(types: &Core, node: DyadPtr) -> DyadPtr {
 }
 
 /// When either side is a rational value, the other must be one too or a literal; a
-/// concrete number beside a rational is the mismatch. `None` when neither side is one.
+/// concrete number beside a rational is the mismatch. `false` when neither side is one.
 ///
 /// # Safety
 /// `lhs`/`rhs` must be reduced dyads from the store.
-unsafe fn rational_slots(
-    types: &Core,
-    lhs: DyadPtr,
-    rhs: DyadPtr,
-    leaf: DyadPtr,
-) -> Result<Option<[DyadPtr; 3]>, ParseError> {
+unsafe fn rational_operands(types: &Core, lhs: DyadPtr, rhs: DyadPtr) -> Result<bool, ParseError> {
     if !rational::is_rational_value(types, lhs) && !rational::is_rational_value(types, rhs) {
-        return Ok(None);
+        return Ok(false);
     }
     let fits = |n: DyadPtr| {
         rational::is_rational_value(types, n)
@@ -290,7 +291,7 @@ unsafe fn rational_slots(
     if !fits(lhs) || !fits(rhs) {
         return Err(ParseError::TypeMismatch);
     }
-    Ok(Some([lhs, rhs, leaf]))
+    Ok(true)
 }
 
 /// Two identities compare by identity at parse (types are interned); two values that
@@ -333,7 +334,8 @@ fn build_identity_compare(
         |n: DyadPtr| unsafe { matches!(super::operand_of(types, n), super::Operand::Pointer(_)) };
     if (addressed(lhs, l) && addressed(rhs, r)) || (pointer(lhs) && pointer(rhs)) {
         let leaf = types.ops.cmp_leaf(c, NumType::I64);
-        return Some(store.alloc_words(op, &[lhs, rhs, leaf, types.bool_]));
+        // SAFETY: as above; a cell's identity read is built over a reduced dyad too.
+        return Some(unsafe { node(store, types, op, lhs, rhs, types.bool_, leaf) });
     }
     None
 }
@@ -368,7 +370,7 @@ fn lower<const FAMILY: u8, const OP: u8>(
     lw: &mut Lowerer,
     node: DyadPtr,
 ) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a resolved application of this operator, `[lhs, rhs, op]`.
+    // SAFETY: `node` is a node of one of this operator's mints, `[lhs, rhs]`.
     unsafe {
         match family_of::<FAMILY, OP>() {
             Family::Arith(a) => lw.lower_arith(node, a),

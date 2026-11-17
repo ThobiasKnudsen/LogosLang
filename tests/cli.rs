@@ -164,13 +164,12 @@ fn the_repl_imports_once_per_session_and_keeps_pub_names() {
 
 #[test]
 fn a_value_reads_its_type_and_a_reached_node_its_operands() {
-    // `(x + x)` has arity 4: its third slot is the resolved callable leaf, its fourth the
-    // type it gives back.
+    // `(x + x)` has arity 2, its operands: the type it gives back is its mint's.
     let (echoes, stderr) = repl(
         b"x := i32 5\nx.type == i32\nb := x + x\nb:start.rhs.type.arity\n\
           b:start.rhs.lhs.type == i32\nb:start.rhs.lhs\nb:start.rhs.output_type == i32\n",
     );
-    assert_eq!(echoes, ["true", "4", "true", "5", "true"], "stderr: {stderr}");
+    assert_eq!(echoes, ["true", "2", "true", "5", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 

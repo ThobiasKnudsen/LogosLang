@@ -232,8 +232,8 @@ unsafe fn type_check_of(types: &Core, cond: DyadPtr) -> Option<(CellKey, DyadPtr
         return Some((key, ty, !holds));
     }
     let subset = dyad::ty(cond) == types.subset;
-    let eq = subset || dyad::ty(cond) == types.eq;
-    if !eq && dyad::ty(cond) != types.ne {
+    let eq = subset || crate::identities::mint::origin(dyad::ty(cond)) == types.eq;
+    if !eq && crate::identities::mint::origin(dyad::ty(cond)) != types.ne {
         return None;
     }
     let ops = dyad::value(cond) as *const DyadPtr;

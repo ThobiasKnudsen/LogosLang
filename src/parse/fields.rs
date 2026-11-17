@@ -254,7 +254,9 @@ impl<'a> Parser<'a> {
             _ => None,
         };
         let Some(i) = slot else {
-            return Ok(None);
+            return Ok(
+                crate::identities::mint::shared_field(ty, name).map(|f| self.path_operand(f))
+            );
         };
         let field = *(value as *const DyadPtr).add(i);
         if field.is_null() {

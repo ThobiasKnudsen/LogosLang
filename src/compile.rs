@@ -21,7 +21,7 @@ use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
-use crate::identities::{by_copy, operand_of, operands, Operand};
+use crate::identities::{by_copy, mint, operand_of, operands, Operand};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_OUTPUT};
 use crate::Core;
 
@@ -158,7 +158,9 @@ impl Lowerer<'_, '_> {
             Read::Executable(Dispatch::Leaf(leaf)) if self.types.ops.is_rational_leaf(leaf) => {
                 Err(CompileError::NotLowerable(node))
             }
-            Read::Executable(Dispatch::Leaf(_)) => match self.lower.get(&op).copied() {
+            // A mint is lowered by the rule of the type it is a mint of.
+            Read::Executable(Dispatch::Leaf(_)) => match self.lower.get(&mint::origin(op)).copied()
+            {
                 Some(f) => f(self, node),
                 None => Err(CompileError::NotLowerable(op)),
             },
@@ -488,7 +490,7 @@ impl Lowerer<'_, '_> {
     /// the operand `Value`s.
     ///
     /// # Safety
-    /// `node` must be a resolved binary numeric operator node `[lhs, rhs, op]`.
+    /// `node` must be a node of an arithmetic operator's mint, `[lhs, rhs]`.
     pub(crate) unsafe fn lower_arith(
         &mut self,
         node: DyadPtr,
@@ -580,20 +582,20 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// A signed or unsigned `icmp`, or an `fcmp`, at the width the node's leaf
-    /// carries, zero-extended to the `I32` bool.
+    /// A signed or unsigned `icmp`, or an `fcmp`, at the width the leaf of the node's
+    /// mint carries, zero-extended to the `I32` bool.
     ///
     /// # Safety
-    /// `node` must be a resolved binary numeric operator node `[lhs, rhs, op]`.
+    /// `node` must be a node of a comparison's mint, `[lhs, rhs]`.
     pub(crate) unsafe fn lower_compare(
         &mut self,
         node: DyadPtr,
         op: CmpOp,
     ) -> Result<Value, CompileError> {
         let (lhs, rhs) = operands(node);
-        // The width is in the node: the builder chose a leaf for the resolved
-        // operand types, so they are not classified a second time here.
-        let leaf = *(dyad::value(node) as *const DyadPtr).add(2);
+        // The width is in the mint: the parse chose its leaf for the resolved operand
+        // types, so they are not classified a second time here.
+        let leaf = mint::operation_of(dyad::ty(node)).unwrap_or(std::ptr::null_mut());
         let Some(logos) = self.types.ops.cmp_nt_of(leaf) else {
             return Err(CompileError::Internal(
                 "a resolved comparison node holds a comparison leaf",
