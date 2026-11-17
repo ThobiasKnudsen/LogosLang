@@ -2009,18 +2009,41 @@ fn a_value_reads_its_type_with_a_dot_on_both_tiers() {
     let sq = "sq := type ( a := ?, output_type := type ?, share run = ( a * a ), \
               share parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
               tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, tape.remove(-1) ) )";
+    let pt = "pt := type ( x := i32 ? ), g := fn (x := i32 ?) -> pt ( pt(x) )";
     for (src, want) in [
         ("x := i32 3, x.type == i32".to_string(), "true"),
         ("f := fn (x := i32 ?) -> bool ( x.type == i32 ), f.compile(), f(1)".into(), "true"),
-        ("x := i32 3, (x + i32 1).type == i32".into(), "true"),
+        // An operator expression stands for its node: `.type` is the node's own type, its
+        // operator's mint for its operand types, and what it gives is the mint's `output_type`.
+        ("x := i32 3, (x + i32 1).type == i32".into(), "false"),
+        ("x := i32 3, (x + i32 1).output_type == i32".into(), "true"),
+        ("x := i32 3, (x + i32 1).type == (x + i32 2).type".into(), "true"),
+        ("x := i32 3, y := i64 4, (x + i32 1).type == (y + i64 1).type".into(), "false"),
         (
-            "f := fn (x := f64 ?) -> bool ( (x + 1.0).type == f64 ), f.compile(), f(1.0)".into(),
+            "f := fn (x := i32 ?) -> bool ( (x + i32 1).type == (x + i32 2).type ), \
+             f.compile(), f(3)"
+                .into(),
             "true",
         ),
+        (
+            "f := fn (x := i32 ?, y := i64 ?) -> bool ( (x + i32 1).type == (y + i64 1).type ), \
+             f.compile(), f(3, 4)"
+                .into(),
+            "false",
+        ),
+        (
+            "f := fn (x := f64 ?) -> bool ( (x + 1.0).output_type == f64 ), f.compile(), f(1.0)"
+                .into(),
+            "true",
+        ),
+        // A call stands for what it returns.
+        (format!("{pt}, g(5).type == pt"), "true"),
+        (format!("{pt}, (g(5)).type == pt"), "true"),
+        (format!("{pt}, g.compile(), g(5).type == pt"), "true"),
         // The tape operand's type picks the node's output type.
         (format!("{sq}, x := f64 1.5, x sq"), "2.25"),
         (format!("{sq}, f := fn (x := f64 ?) -> f64 ( x sq ), f.compile(), f(1.5)"), "2.25"),
-        (format!("{sq}, x := i32 3, (x sq).type == i32"), "true"),
+        (format!("{sq}, x := i32 3, (x sq).output_type == i32"), "true"),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: {stderr}");
@@ -3621,28 +3644,60 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
                  share parse_rank = *.parse_rank + 1, share associativity = right, \
                  share parse = ( tape[0].type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = tape[-1].type, \
                  tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
+    let sq = "sq := type ( a := ?, output_type := type ?, share tag := i32 7, \
+              share run = ( a * a ), share parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
+              tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, tape.remove(-1) ) )";
+    let mk = "pt := type ( x := i32 ? ), mk := type ( a := i32 ?, output_type := type ?, \
+              share run = ( pt(a) ), share parse = ( tape[0].type = mk, tape[0].a = tape[-1], \
+              tape[0].output_type = pt, tape.is_constructed[0] = true, tape.remove(-1) ) )";
     for (tail, want) in [
         ("f := fn (x := i32 ?) -> i32 ( b := x ^ 3, b:start.rhs.lhs ), f(5)", "5"),
         ("f := fn (x := i32 ?) -> i32 ( b := x ^ 3, b:start.rhs.lhs ), f.compile(), f(5)", "5"),
         ("x := i32 1, c := x + 2, c:start.rhs.lhs", "1"),
+        // Written straight on an operator expression, `.` reads its node.
+        ("f := fn (x := i32 ?) -> i32 ( (x ^ 3).lhs ), f(5)", "5"),
+        ("f := fn (x := i32 ?) -> i32 ( (x ^ 3).lhs ), f.compile(), f(5)", "5"),
+        ("f := fn (x := i32 ?) -> i32 ( (x + 3).lhs ), f.compile(), f(5)", "5"),
+        ("x := i32 1, (x + 2).lhs", "1"),
+        ("x := i32 1, (x + 2).rhs", "2"),
     ] {
         let out = logos().arg(format!("{power}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{tail}");
     }
-    // Written straight on an expression, `.` reads the number it evaluates to, as on a name.
-    for tail in [
-        "(2 ^ 3).lhs",
-        "f := fn (x := i32 ?) -> i32 ( (x ^ 3).lhs ), f(5)",
-        "f := fn (x := i32 ?) -> i32 ( (x + 3).lhs ), f.compile(), f(5)",
-        "x := i32 1, (x + 2).lhs",
-        "x := i32 1, c := x + 2, c.lhs",
-    ] {
+    // A `share` member of the node's own type.
+    for tail in
+        ["x := i32 3, (x sq).tag", "f := fn (x := i32 ?) -> i32 ( (x sq).tag ), f.compile(), f(3)"]
+    {
+        let out = logos().arg(format!("{sq}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n", "{tail}");
+    }
+    // A name stands for the number it holds, which has no `lhs`; an all-literal `2 ^ 3` folds
+    // to its number before `.` reads it.
+    for tail in ["x := i32 1, c := x + 2, c.lhs", "(2 ^ 3).lhs"] {
         let out = logos().arg(format!("{power}, {tail}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success() && out.stdout.is_empty(), "{tail}: {stderr}");
         assert!(stderr.contains("cannot compute"), "{tail}: {stderr}");
     }
+    // A field the node's type does not have is the error that says so.
+    for src in ["x := i32 1, (x + 2).nope".to_string(), format!("{sq}, x := i32 3, (x sq).nope")] {
+        let out = logos().arg(&src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && out.stdout.is_empty(), "{src}: {stderr}");
+        assert!(stderr.contains("does not fit the node's type"), "{src}: {stderr}");
+    }
+    // Nor is it read from the record the node gives when it runs, which a name holds.
+    let out = logos().arg(format!("{mk}, y := i32 3, z := y mk, z.x")).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n");
+    let out = logos().arg(format!("{mk}, y := i32 3, (y mk).x")).output().unwrap();
+    assert!(
+        !out.status.success() && out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
