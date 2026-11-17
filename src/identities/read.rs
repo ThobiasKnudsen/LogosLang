@@ -575,7 +575,7 @@ mod tests {
             // The place is behind the binding's initializer store or construction.
             let declared = |i: usize| {
                 let d = declare::declared_of(exprs[i]);
-                if dyad::ty(d) == core.assign {
+                if crate::identities::mint::origin(dyad::ty(d)) == core.assign {
                     types.through(crate::identities::operands(d).0)
                 } else if dyad::ty(d) == core.construct_ {
                     *(dyad::value(d) as *const DyadPtr)

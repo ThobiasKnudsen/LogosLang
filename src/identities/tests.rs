@@ -92,7 +92,8 @@ fn parses_a_equals_a_plus_one() {
     };
 
     unsafe {
-        assert_eq!(dyad::ty(root), core.assign);
+        let put = core.ops.put_leaf(super::read::Carry::Word(NumType::I32));
+        assert_eq!(minted(root), (core.assign, Some(core.void_), Some(put)));
         let top = dyad::value(root) as *const DyadPtr;
         assert_eq!(core.through(*top), a);
         let sum = *top.add(1);
@@ -1075,6 +1076,34 @@ fn an_operation_mints_once_per_set_of_field_types() {
         assert_eq!(meta::arity_of(m), 2);
         assert_eq!(meta::op_slot_of(m), None);
         assert_eq!(meta::output_slot_of(m), None);
+    }
+}
+
+#[test]
+fn assignment_mints_once_per_place_type() {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let src = "mut x := i32 0, mut y := i32 1, x = 9, y = x, mut d := f64 0.0, d = 2";
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
+    let root = p.parse_sequence().unwrap();
+    // SAFETY: `root` is the sequence just parsed into `store`, which is alive.
+    unsafe {
+        let lines = scope::exprs_of(root).unwrap();
+        let put = |nt| core.ops.put_leaf(super::read::Carry::Word(nt));
+        let i32_write = dyad::ty(lines[2]);
+        assert_eq!(minted(lines[2]), (core.assign, Some(core.void_), Some(put(NumType::I32))));
+        // A declaration's first write and every later one over an `i32` place are one mint.
+        for write in
+            [super::declare::declared_of(lines[0]), super::declare::declared_of(lines[1]), lines[3]]
+        {
+            assert_eq!(dyad::ty(write), i32_write);
+        }
+        assert_eq!(minted(lines[5]), (core.assign, Some(core.void_), Some(put(NumType::F64))));
+        assert_ne!(dyad::ty(lines[5]), i32_write);
+        // The node holds its place and its value and nothing else.
+        assert_eq!(meta::arity_of(i32_write), 2);
+        assert_eq!(meta::op_slot_of(i32_write), None);
     }
 }
 

@@ -3,8 +3,8 @@
 
 //! The concrete machine operations, `add_i32`, `lt_f64`, `store_u8`, …: one
 //! spelling-less `callable` leaf per (operation, machine type), minted from one
-//! table-driven loop. A surface operator's mint holds its leaf, and a statement's node its
-//! own in its op slot, so run reads it and jumps.
+//! table-driven loop. A surface operator's mint holds its leaf, `=`'s mint its store leaf,
+//! and any other statement's node its own in its op slot, so run reads it and jumps.
 
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, RunFn, Runtime};
@@ -142,7 +142,7 @@ fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Resul
 }
 
 fn store_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an assignment application `[lhs, rhs, op]`; `lhs` is a
+    // SAFETY: `node` is a node of one of `=`'s mints, `[lhs, rhs]`; `lhs` is a
     // typed variable whose storage the builder checked assignable.
     unsafe { put_into(rt, node, Carry::Word(NumType::from_tag(NT))) }
 }
@@ -158,7 +158,7 @@ fn store_bytes_run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// `[lhs, rhs, op]`: the right side taken, then put into the place on the left.
+/// `[lhs, rhs]`: the right side taken, then put into the place on the left.
 ///
 /// # Safety
 /// `node` must be an assignment application over a storage place whose type moves as `carry`.

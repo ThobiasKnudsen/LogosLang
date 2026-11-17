@@ -454,7 +454,7 @@ mod tests {
         unsafe {
             let place = |i: usize| {
                 let d = crate::identities::declare::declared_of(roots[i]);
-                if dyad::ty(d) == core.assign {
+                if crate::identities::mint::origin(dyad::ty(d)) == core.assign {
                     types.through(crate::identities::operands(d).0)
                 } else {
                     d
@@ -481,10 +481,21 @@ mod tests {
 
         // SAFETY: all handles are identities Core::build just allocated.
         unsafe {
-            // An operation whose fields are `?` keeps its output and its leaf on each mint.
+            // An operation whose fields are `?` keeps its output and its leaf on each mint, and so
+            // does `=`, one mint per place type.
             for id in [
-                core.plus, core.minus, core.times, core.div_, core.rem_, core.lt, core.gt, core.le,
-                core.ge, core.eq, core.ne,
+                core.plus,
+                core.minus,
+                core.times,
+                core.div_,
+                core.rem_,
+                core.lt,
+                core.gt,
+                core.le,
+                core.ge,
+                core.eq,
+                core.ne,
+                core.assign,
             ] {
                 assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
                 assert_eq!(meta::arity_of(id), 2);
@@ -503,7 +514,6 @@ mod tests {
                 assert_eq!(meta::output_slot_of(id), Some(arity - 1));
             }
             for (id, arity) in [
-                (core.assign, 3),
                 (core.while_, 3),
                 (core.for_, 6),
                 (core.storeptr_, 5),

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `=`: assignment. Constructed at discovery, it reads the place to its left
-//! and drives its right side to the boundary; its builder bakes how the place's type
-//! moves into the store leaf in the op slot. `=` returns nothing. Beside it, the one
-//! mover every whole-value write runs. DESIGN ›The scope's constructor is the driver‹
+//! and drives its right side to the boundary. Its node over a frame's place is `[mint, lhs,
+//! rhs]`, the mint `=`'s for the place's type, holding the store leaf for how that type moves.
+//! `=` returns nothing. Beside it, the one mover every whole-value write runs.
+//! ›`=` sits beside `:=`, and returns nothing‹ [[R277]]
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
@@ -13,7 +14,7 @@ use super::numtype::{read_scalar_nt, write_scalar_nt, NumType};
 use super::read::{
     call_place, carry_of, is_lex_rank_field, place_of, read_kind, Carry, Place, Read,
 };
-use super::{meta, operands, Cx};
+use super::{meta, mint, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -28,7 +29,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
         meta::TUPLE_TAG,
         meta::prec::DECLARE,
         Assoc::Right,
-        &["lhs", "rhs", "op"],
+        &["lhs", "rhs"],
     );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("=", id);
@@ -125,14 +126,14 @@ fn construct(
 /// # Safety
 /// `node` must be an `=` or a field write just built; `free` a free node.
 unsafe fn displace(store: &mut Store, types: &Core, node: DyadPtr, free: DyadPtr) {
-    let at = if dyad::ty(node) == types.assign { 1 } else { 2 };
+    let at = if mint::origin(dyad::ty(node)) == types.assign { 1 } else { 2 };
     let slot = (dyad::value(node) as *mut DyadPtr).add(at);
     *slot = super::drop_model::build_displace(store, types, *slot, free);
 }
 
 /// A literal right side commits to the target's type; a non-literal one must
-/// already be it. The op slot gets the store leaf for the target's width.
-/// Shared with the declaration's snapshot initializer for `:=`.
+/// already be it. Shared with the declaration's first write, so a name's first write and
+/// every later one over a place of one type are nodes of one mint.
 pub(super) fn build(
     store: &mut Store,
     types: &Core,
@@ -246,7 +247,10 @@ pub(super) fn build_store(
     if super::drop_model::is_owning_place(types, lhs_d) && !rhs_owning {
         return Err(ParseError::NonOwningIntoOwning);
     }
-    Ok(store.alloc_words(op, &[lhs, rhs, types.ops.put_leaf(carry)]))
+    // SAFETY: `op` is `=`, an operand record; `lhs_type` is the type node `carry` was read from.
+    let mint =
+        unsafe { mint::of(store, types, op, &[lhs_type], types.void_, types.ops.put_leaf(carry)) };
+    Ok(store.alloc_words(mint, &[lhs, rhs]))
 }
 
 /// What `value` hands a place of `carry`: the word it runs to, or the address of its bytes.
@@ -356,7 +360,7 @@ pub(crate) unsafe fn box_takes(types: &Core, t: DyadPtr, value: DyadPtr) -> bool
 /// Guards a null storage address like the interpreter's `Uninitialized`; what moves is what
 /// the place's type moves as, the decision the leaf was picked by.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a valid `=` application `[lhs, rhs, store leaf]` over a storage place.
+    // SAFETY: `node` is a node of one of `=`'s mints, `[lhs, rhs]` over a storage place.
     unsafe {
         let (lhs, rhs) = operands(node);
         let lhs = lw.through(lhs);
