@@ -3768,6 +3768,28 @@ fn casts_fold_literal_operands() {
 }
 
 #[test]
+fn lossy_rounds_a_fraction_once_to_the_nearest_float_on_both_tiers() {
+    let up = i64::from((1.0 + f32::EPSILON).to_bits());
+    let near = 12009599006321324.0f64;
+    for (body, expect) in [
+        ("f32 lossy (1152921573326323713/1152921504606846976)", up),
+        ("f32 lossy (1152921710765277183/1152921504606846976)", up),
+        (
+            "f32 lossy (-1152921573326323713/1152921504606846976)",
+            i64::from((-1.0 - f32::EPSILON).to_bits()),
+        ),
+        ("f32 lossy (16777217/16777216)", i64::from(1.0f32.to_bits())),
+        ("f64 lossy (36028797018963970/3)", near.to_bits() as i64),
+        ("f64 lossy (-36028797018963970/3)", (-near).to_bits() as i64),
+    ] {
+        let ty = &body[..3];
+        diff_typed_call(&format!("fn () -> {ty} ( {body} )"), "f()", expect);
+    }
+    let x = "x := rational_number 1152921573326323713/1152921504606846976, f32 lossy (x)";
+    assert_eq!(run_script(x), up, "{x}");
+}
+
+#[test]
 fn a_written_conversion_is_checked_as_an_unwritten_one() {
     for src in ["i32 (i64 4)", "i32 (f64 2.5)", "f32 (i32 1)", "i64 (f64 2.0)", "i32 (true)"] {
         assert_eq!(parse_err(src), ParseError::TypeMismatch, "{src}");
