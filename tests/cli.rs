@@ -5322,40 +5322,114 @@ fn equals_frees_the_record_it_displaces() {
     ]);
 }
 
-/// A whole value the seed cannot place yet is refused, never written past its room: a field
-/// wider than its record lays out for it, and a record whose type fills `free` through a pointer.
+/// A record whose type fills `free` is refused through a pointer, never written over the value
+/// whose `free` would then never run.
 #[test]
-fn a_whole_value_with_no_room_is_refused() {
-    for (src, reason) in [
+fn a_held_record_through_a_pointer_is_refused() {
+    let src = "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), w := r(2), \
+               mut x := r(1), p := &x, p@ = w, 0";
+    let (code, stdout, stderr) = run_line(src);
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("through a pointer is not in the seed yet"), "stderr: {stderr}");
+}
+
+/// DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹: a
+/// field takes the bytes a place of its type takes, sixteen for a `rational_number` and a
+/// record's own size for a record, so writing one never reaches the next, and `size_bytes` is
+/// their sum, packed.
+#[test]
+fn a_field_takes_the_width_a_place_of_its_type_takes() {
+    let ab = "pt := type ( mut a := rational_number ?, mut b := i32 ? )";
+    let get = "f := fn (p := pt ?) -> rational_number ( p.a )";
+    let mut cases = vec![
+        ("pt := type ( a := rational_number ?, b := i32 ? ), pt.size_bytes".to_string(), "20\n"),
+        (
+            "q := type ( x := i64 ?, y := i64 ? ), pt := type ( a := q ?, b := i32 ? ), pt.size_bytes"
+                .to_string(),
+            "20\n",
+        ),
+        (
+            "pt := type ( c := i32 ?, a := rational_number ?, b := i32 ? ), pt.size_bytes".to_string(),
+            "24\n",
+        ),
+        (
+            "pt := type ( a := i8 ?, b := i64 ?, c := i16 ? ), p := pt(1, 2, 3), \
+             print «{p.a} {p.b} {p.c} {pt.size_bytes}»"
+                .to_string(),
+            "1 2 3 11\n",
+        ),
+        (format!("{ab}, mut v := pt ?, v.b = 7, v.a = rational_number 1/2, v.b"), "7\n"),
+        (format!("{ab}, mut v := pt ?, v.a = rational_number 1/2, v.b = 7, v.a"), "1/2\n"),
+        (
+            "pt := type ( mut b := i32 ?, mut a := rational_number ? ), mut v := pt ?, v.b = 7, \
+             v.a = rational_number 1/2, v.b"
+                .to_string(),
+            "7\n",
+        ),
+        (
+            "pt := type ( mut c := i32 ?, mut a := rational_number ?, mut b := i32 ? ), mut v := pt ?, \
+             v.c = 3, v.b = 7, v.a = rational_number 1/2, print «{v.c} {v.b}»"
+                .to_string(),
+            "3 7\n",
+        ),
+        (
+            "pt := type ( mut a := rational_number ? ), f := fn () -> i32 ( mut v := pt ?, \
+             mut w := i32 9, v.a = rational_number 1/2, w ), f()"
+                .to_string(),
+            "9\n",
+        ),
+        (
+            "pt := type ( mut a := rational_number ? ), f := fn () -> pt ( mut v := pt ?, \
+             v.a = rational_number 1/2, v ), r := f(), r.a"
+                .to_string(),
+            "1/2\n",
+        ),
         (
             "pt := type ( mut a := i64 ?, mut b := i64 ? ), o := type ( mut a := pt ?, mut z := i64 ? ), \
-             mut v := o ?, v.a = pt(1, 2), 0",
-            "takes more bytes than its record lays out",
+             mut v := o ?, v.z = 9, v.a = pt(1, 2), print «{v.a.a} {v.a.b} {v.z}»"
+                .to_string(),
+            "1 2 9\n",
         ),
         (
-            "o := type ( mut a := rational_number ?, mut z := i64 ? ), mut v := o ?, \
-             v.a = rational_number 1/3, 0",
-            "takes more bytes than its record lays out",
+            "o := type ( mut a := rational_number ?, mut z := i64 ? ), mut v := o ?, v.z = 9, \
+             v.a = rational_number 1/3, print «{v.a} {v.z}»"
+                .to_string(),
+            "1/3 9\n",
         ),
         (
-            "pt := type ( mut a := rational_number ?, mut b := i32 ? ), p := alloc 1 of pt ?, \
-             p@.a = rational_number 1/2, 0",
-            "takes more bytes than its record lays out",
+            format!("{ab}, p := alloc 1 of pt ?, p@.b = 7, p@.a = rational_number 1/2, print «{{p@.a}} {{p@.b}}»"),
+            "1/2 7\n",
         ),
         (
-            "pt := type ( mut b := i32 ?, mut a := rational_number ? ), p := alloc 1 of pt ?, p@.a",
-            "takes more bytes than its record lays out",
+            "pt := type ( mut b := i32 ?, mut a := rational_number ? ), p := alloc 1 of pt ?, \
+             p@.a = rational_number 1/2, p@.a"
+                .to_string(),
+            "1/2\n",
         ),
-        (
-            "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), w := r(2), \
-             mut x := r(1), p := &x, p@ = w, 0",
-            "through a pointer is not in the seed yet",
-        ),
-    ] {
-        let (code, stdout, stderr) = run_line(src);
-        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
-        assert!(stderr.contains(reason), "{src}: stderr: {stderr}");
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!(
+                "{ab}, {get}, {compile}mut v := pt ?, v.b = 7, v.a = rational_number 1/2, f(v)"
+            ),
+            "1/2\n",
+        ));
+        cases.push((
+            format!(
+                "{ab}, f := fn (v := pt ?) -> i32 ( v.b ), {compile}mut v := pt ?, v.b = 7, \
+                 v.a = rational_number 1/2, f(v)"
+            ),
+            "7\n",
+        ));
+        cases.push((
+            format!(
+                "{ab}, f := fn (p := @pt ?) -> rational_number ( p@.a ), {compile}mut v := pt ?, \
+                 v.b = 7, v.a = rational_number 1/2, f(&v)"
+            ),
+            "1/2\n",
+        ));
     }
+    assert_runs(&cases);
 }
 
 #[test]

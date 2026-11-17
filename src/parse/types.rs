@@ -79,40 +79,21 @@ impl SlotKind {
     }
 }
 
-/// A scalar at its own width; anything else an 8-byte container.
+/// Each field's offset inside a value of `ty`, packed in order at the width a place of its type
+/// takes, written onto the field's binding; the fields' total, the type's `size_bytes`.
+/// DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹.
 ///
 /// # Safety
-/// `logos` must be null or a type node from the store.
-unsafe fn field_width(logos: DyadPtr) -> u64 {
-    if crate::identities::numtype::is_scalar_type(logos) {
-        crate::identities::numtype::of_type_node(logos).bytes() as u64
-    } else {
-        8
-    }
-}
-
-/// Whether a whole value of `logos` fits the room [`field_width`] gives a field of it.
-/// stand-in for #221
-///
-/// # Safety
-/// `logos` must be null or a type node from the store.
-pub(crate) unsafe fn fits_field(types: &Core, logos: DyadPtr) -> bool {
-    crate::identities::read::carry_of(types, logos)
-        .is_none_or(|carry| carry.width() as u64 <= field_width(logos))
-}
-
-/// Each field's offset inside a value of `ty`, packed in order by `field_width`, written
-/// onto the field's binding (DESIGN ›A scope lays out its declarations…‹).
-///
-/// # Safety
-/// `ty` must be a record node from the store, `fields` its field array and `bindings` the
+/// `ty` must be a type node from the store, `fields` its field array and `bindings` the
 /// fields' bindings in the same order.
-unsafe fn lay_out_fields(ty: DyadPtr, fields: DyadPtr, bindings: &[DyadPtr]) {
-    let mut offset = 0u64;
+unsafe fn lay_out_fields(types: &Core, ty: DyadPtr, fields: DyadPtr, bindings: &[DyadPtr]) -> u64 {
+    let mut offset = 0;
     for (&field, &binding) in crate::identities::array::items(fields).iter().zip(bindings) {
-        Binding::set_field_offset(binding, ty, offset as usize);
-        offset += field_width(crate::identities::hole::type_in(field));
+        Binding::set_field_offset(binding, ty, offset);
+        offset +=
+            crate::identities::by_copy::place_width(types, crate::identities::hole::type_in(field));
     }
+    offset as u64
 }
 
 impl<'a> Parser<'a> {
@@ -129,21 +110,28 @@ impl<'a> Parser<'a> {
         &mut self,
         leading: Option<DyadPtr>,
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
-        let record_logos = self.types.type_;
-        let (scope, fields_arr, size_bytes, bindings) = self.parse_field_list(false, leading)?;
+        let (scope, fields_arr, bindings) = self.parse_field_list(false, leading)?;
+        Ok((self.record_node(scope, fields_arr, &bindings), bindings))
+    }
+
+    /// The record node over a field list: its fields laid out onto their bindings, then the
+    /// record holding the scope, the fields and their total.
+    fn record_node(&mut self, scope: DyadPtr, fields: DyadPtr, bindings: &[DyadPtr]) -> DyadPtr {
+        let input = self.rt.store.alloc_leaf(self.types.type_);
+        // SAFETY: the bindings were just minted for these fields; `input` is the record node.
+        let size_bytes = unsafe { lay_out_fields(self.types, input, fields, bindings) };
         let record = crate::identities::meta::record_layout(
             self.rt.store,
             scope,
-            fields_arr,
+            fields,
             size_bytes,
             std::ptr::null_mut(),
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
         );
-        let input = self.rt.store.alloc_head(record_logos, record.cast());
-        // SAFETY: the bindings were just minted for these fields; `input` is the record node.
-        unsafe { lay_out_fields(input, fields_arr, &bindings) };
-        Ok((input, bindings))
+        // SAFETY: `input` was minted above with no record; nothing reads one until now.
+        unsafe { dyad::set_head(input, record.cast()) };
+        input
     }
 
     /// A `fn`'s parameter list checks each name against every open scope, since
@@ -157,7 +145,7 @@ impl<'a> Parser<'a> {
         &mut self,
         relaxed: bool,
         leading: Option<DyadPtr>,
-    ) -> Result<(DyadPtr, DyadPtr, u64, Vec<DyadPtr>), ParseError> {
+    ) -> Result<(DyadPtr, DyadPtr, Vec<DyadPtr>), ParseError> {
         if !relaxed {
             self.expect_open()?;
         }
@@ -183,16 +171,8 @@ impl<'a> Parser<'a> {
         if !relaxed {
             self.expect_close()?;
         }
-
-        // Fields pack in declaration order at the width rule parameters claim
-        // frame offsets by.
-        // SAFETY: each field is the dyad just built, its type null or a type node.
-        let size_bytes: u64 = fields
-            .iter()
-            .map(|&f| unsafe { field_width(crate::identities::hole::type_in(f)) })
-            .sum();
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
-        Ok((scope, fields_arr, size_bytes, bindings))
+        Ok((scope, fields_arr, bindings))
     }
 
     fn field_lines(
@@ -671,13 +651,13 @@ impl<'a> Parser<'a> {
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
         }
-        let (field_scope, fields, size_bytes, bindings) = lines?;
+        let (field_scope, fields, bindings) = lines?;
         if !held.is_empty() {
             return Err(ParseError::DeferInTypeBody);
         }
         self.expect_close()?;
         // SAFETY: the bindings were just minted for these fields; `def.self_type` is the type node.
-        unsafe { lay_out_fields(def.self_type, fields, &bindings) };
+        let size_bytes = unsafe { lay_out_fields(self.types, def.self_type, fields, &bindings) };
         let layout = crate::identities::meta::record_layout(
             self.rt.store,
             field_scope,
@@ -1097,24 +1077,7 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         declared?;
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
-        // SAFETY: each `ty` is a type node from the store.
-        let size_bytes = fields
-            .iter()
-            .map(|&f| unsafe { field_width(crate::identities::hole::type_in(f)) })
-            .sum();
-        let record = crate::identities::meta::record_layout(
-            self.rt.store,
-            scope,
-            fields_arr,
-            size_bytes,
-            std::ptr::null_mut(),
-            crate::identities::meta::prec::APPLY,
-            Assoc::Left,
-        );
-        let input = self.rt.store.alloc_head(self.types.type_, record.cast());
-        // SAFETY: the bindings were just minted for these fields; `input` is the record node.
-        unsafe { lay_out_fields(input, fields_arr, &bindings) };
-        Ok((input, bindings))
+        Ok((self.record_node(scope, fields_arr, &bindings), bindings))
     }
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN

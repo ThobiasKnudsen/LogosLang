@@ -590,7 +590,7 @@ impl<'a> Parser<'a> {
             for (&param, &binding) in crate::identities::array::items(fields).iter().zip(params) {
                 // Sized by the rule the argument block lays them out by (`by_copy::slots`).
                 let logos = crate::identities::hole::type_in(param);
-                let width = crate::identities::by_copy::param_width(self.types, logos);
+                let width = crate::identities::by_copy::place_width(self.types, logos);
                 let frame = self.cx.frames.last_mut().expect("pushed above");
                 Binding::lay_out(binding, logos, node, frame.size);
                 frame.size += width;

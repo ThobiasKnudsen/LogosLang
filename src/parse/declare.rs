@@ -789,8 +789,7 @@ impl<'a> Parser<'a> {
                 // it. A hashmap's zeroed place is already its empty map, so nothing is
                 // unknown to refuse.
                 let t = crate::identities::hole::type_in(value);
-                let width = crate::identities::read::place_layout(self.types, t)
-                    .map_or(8, |(_, width)| width);
+                let width = crate::identities::by_copy::place_width(self.types, t);
                 let place = self.place_for(binding, t, width);
                 // `a := own t ?`, and `a := r ?` of a plain record `r` whose body fills `free`:
                 // the owner of whatever is written into it later.
@@ -824,9 +823,7 @@ impl<'a> Parser<'a> {
                 // just made or moved out, of a type whose body fills `free`, makes the name its
                 // owner.
                 let t = crate::identities::read::output_type(self.types, read);
-                let width = crate::identities::read::place_layout(self.types, t)
-                    .map_or(8, |(_, width)| width)
-                    .max(1);
+                let width = crate::identities::by_copy::place_width(self.types, t);
                 let place = self.place_for(binding, t, width);
                 *(dyad::value(read) as *mut DyadPtr) = place;
                 if let Teardown::Node(_) = teardown_of(self.types, value) {

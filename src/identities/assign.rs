@@ -238,10 +238,6 @@ pub(super) fn build_store(
     let Some(carry) = carry else {
         return Err(ParseError::BadAssignTarget);
     };
-    // SAFETY: `lhs_type` is null or a type node.
-    if lhs_ty == types.field_ && !unsafe { crate::parse::fits_field(types, lhs_type) } {
-        return Err(ParseError::WideFieldNotInSeed);
-    }
     // SAFETY: `rhs` is a reduced dyad from the store.
     let rhs = unsafe { super::land(store, types, rhs, lhs_type) }?;
     // A non-owning value in an owning place ends in a double free at scope exit.
