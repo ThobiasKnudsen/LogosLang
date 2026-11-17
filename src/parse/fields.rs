@@ -798,7 +798,7 @@ impl<'a> Parser<'a> {
         // the identity to its left owns; after a `.` it stays a passive cell.
         if let Some(left) = tape.at(-1).copied() {
             // A fresh spelling to the left is a member name after `.`, never a tape.
-            if !left.is_fresh() && self.is_operand_cell(&left) {
+            if !left.is_fresh(self.types) && self.is_operand_cell(&left) {
                 let lhs = self.operand_dyad(left)?;
                 let types = self.types;
                 // SAFETY: `lhs` is a reduced dyad from the store.
@@ -924,10 +924,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::BadAddressOf);
         };
         // Keywords, operators, literals: not places.
-        if !cell.constructed
-            && !cell.is_fresh()
-            && self.ctor_of(self.cell_identity(&cell)).is_some()
-        {
+        if !cell.constructed && self.ctor_of(self.cell_identity(&cell)).is_some() {
             return Err(ParseError::BadAddressOf);
         }
         let node = self.operand_dyad(cell)?;

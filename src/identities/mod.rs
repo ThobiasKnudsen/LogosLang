@@ -156,6 +156,8 @@ pub struct Core {
     pub colon_: DyadPtr,
     /// `?`, the one unknown; also the read-veto entry its declarations put on a binding.
     pub unknown: DyadPtr,
+    /// The type of the node a fresh spelling lexes to, holding the spelling.
+    pub unknown_name: DyadPtr,
     pub tape: tape::TapeIds,
     pub hashmap: hashmap::HashmapIds,
     pub held_type: held_type::HeldTypeIds,
@@ -306,7 +308,7 @@ impl Core {
         let unknown = hole::register(&mut cx);
         cx.unknown = unknown;
         let (sep_, left_, right_) = logos_mod::register_syntax(&mut cx);
-        fresh::register(&mut cx);
+        let unknown_name = fresh::register(&mut cx);
         let instance::InstanceIds {
             construct: construct_,
             construct_leaf,
@@ -446,6 +448,7 @@ impl Core {
             binding_,
             colon_,
             unknown,
+            unknown_name,
             tape,
             hashmap,
             held_type,

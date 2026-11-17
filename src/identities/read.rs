@@ -44,7 +44,7 @@ pub enum Read {
     /// Prose, or a `fn` literal standing as a statement: yields 0.
     Unit,
     Executable(Dispatch),
-    /// A slot marker, a fresh spelling's dyad.
+    /// A slot marker: a hole, a field node, or no node.
     Undefined,
 }
 

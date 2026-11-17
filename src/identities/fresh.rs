@@ -3,10 +3,16 @@
 
 //! The two fresh-spelling patterns, a word and a symbol run: identities of the
 //! language start that lex a spelling the trie does not otherwise know, ranked
-//! below every declared spelling so they match only where nothing declared does.
-//! DESIGN ›The scope's constructor is the driver‹
+//! below every declared spelling so they match only where nothing declared does;
+//! and `unknown_name`, the type of the node each makes, which holds the spelling.
+//! DESIGN ›The scope's constructor is the driver‹, ›Unknown spellings are two pattern
+//! identities‹ [[R252]]
 
-use super::{meta, Cx};
+use super::numtype::STRING_TAG;
+use super::{meta, string, Cx};
+use crate::dyad::DyadPtr;
+use crate::store::Store;
+use crate::Core;
 
 /// Below the `0` every declared spelling reads by default.
 pub(crate) const FRESH_LEX_RANK: f64 = -1.0;
@@ -22,7 +28,12 @@ pub(crate) fn is_fresh_key(key: &str) -> bool {
     key == WORD || key == SYMBOL
 }
 
-pub(super) fn register(cx: &mut Cx) {
+/// `unknown_name` holds text as `string` and `regex` do, `[len][bytes]`, and has no
+/// constructor, so the name standing alone is the type.
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+    let record = meta::record(cx.store, STRING_TAG, meta::prec::INERT);
+    let unknown_name = cx.store.alloc_head(cx.type_, record);
+    cx.declare("unknown_name", unknown_name);
     let mut mint = |pattern: &str| {
         let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
         let id = cx.store.alloc_head(cx.type_, record);
@@ -32,4 +43,11 @@ pub(super) fn register(cx: &mut Cx) {
     };
     mint(WORD);
     mint(SYMBOL);
+    unknown_name
+}
+
+/// The node a fresh spelling lexes to. ›An unknown spelling is a node of type
+/// `unknown_name`; `:=` makes the binding, and the node comes with the value‹ [[R251]]
+pub(crate) fn node(store: &mut Store, types: &Core, spelling: &str) -> DyadPtr {
+    string::build_text(store, types.unknown_name, spelling.as_bytes())
 }

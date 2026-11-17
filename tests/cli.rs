@@ -326,6 +326,27 @@ fn a_chooser_hands_its_cell_to_a_type_minted_at_run() {
 }
 
 #[test]
+fn a_fresh_spelling_on_the_tape_is_a_node_of_type_unknown_name() {
+    let k = |body: &str, operand: &str| {
+        format!(
+            "k := type ( share parse = ( {body}, tape.remove(1), \
+             tape.is_constructed[0] = true ) ), k {operand}"
+        )
+    };
+    let is_unknown = "print «{tape[1].type == unknown_name}»";
+    for (operand, expect) in [("zz", "true\ntype\n"), ("i32", "false\ntype\n")] {
+        let (code, stdout, stderr) = run_line(&k(is_unknown, operand));
+        assert_eq!((code, stdout.as_str()), (Some(0), expect), "{operand}: stderr: {stderr}");
+    }
+    let (code, stdout, stderr) = run_line("unknown_name");
+    assert_eq!((code, stdout.as_str()), (Some(0), "type\n"), "stderr: {stderr}");
+    // An `unknown_name` holds a spelling, not a scope: reading its dyads is an error, not a crash.
+    let (code, _, stderr) = run_line(&k("print «{tape[1].dyads}»", "zz"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("this node is not a scope"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
     let q = |ty: &str, body: &str| {
         format!(

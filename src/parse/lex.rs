@@ -40,12 +40,15 @@ pub(crate) fn token(
     Ok((r, extent.scopes))
 }
 
-/// The lex step the driver and `lex «…»` share: a fresh spelling is a cell with no node,
-/// the pattern's construction done at the lex. The cell comes with the `{…}` scopes it
-/// opened, as ranges of `text`. `None` at the end of the text; `text` must outlive the cell.
+/// The lex step the driver and `lex «…»` share: a fresh spelling lexes to a node of type
+/// `unknown_name` holding it, built into `store`, the pattern's construction done at the
+/// lex. The cell comes with the `{…}` scopes it opened, as ranges of `text`. `None` at the
+/// end of the text; `text` must outlive the cell.
 pub(crate) fn lex_token(
     scopes: &ScopeStack,
     trie: &RegexTrie,
+    store: &mut Store,
+    types: &Core,
     text: &str,
     pos: usize,
 ) -> Result<Option<(Cell, Opened)>, ResolveError> {
@@ -58,10 +61,13 @@ pub(crate) fn lex_token(
         return Ok(None);
     }
     let (r, opened) = token(scopes, trie, &text[start..], true)?;
-    // DESIGN ›An unknown spelling stays text on the tape; `:=` makes the binding, and the
-    // node comes with the value‹.
-    let dyad = if r.fresh { std::ptr::null_mut() } else { r.binding };
-    // SAFETY: `text` outlives the cell (the caller's contract); `dyad` is null or the index's binding.
+    let dyad = if r.fresh {
+        crate::identities::fresh::node(store, types, &text[start..start + r.matched])
+    } else {
+        r.binding
+    };
+    // SAFETY: `text` outlives the cell (the caller's contract); `dyad` is the index's
+    // binding or the node just built.
     let cell = unsafe { Cell::lexed(dyad, text, start, r.matched) };
     Ok(Some((cell, opened.into_iter().map(|s| start + s.start..start + s.end).collect())))
 }
@@ -73,14 +79,16 @@ pub(crate) fn lex_token(
 pub fn lex_fragment(
     scopes: &ScopeStack,
     trie: &RegexTrie,
+    store: &mut Store,
+    types: &Core,
     text: &str,
 ) -> Result<ParsingTape, ResolveError> {
     let mut tape = ParsingTape::new();
     let mut pos = 0;
-    while let Some((cell, opened)) = lex_token(scopes, trie, text, pos)? {
+    while let Some((cell, opened)) = lex_token(scopes, trie, store, types, text, pos)? {
         tape.push(cell);
         pos = cell.end();
-        lex_scopes(scopes, trie, text, opened, &mut tape.inner)?;
+        lex_scopes(scopes, trie, store, types, text, opened, &mut tape.inner)?;
     }
     tape.set_cursor(0);
     Ok(tape)
@@ -91,16 +99,20 @@ pub fn lex_fragment(
 fn lex_scopes(
     scopes: &ScopeStack,
     trie: &RegexTrie,
+    store: &mut Store,
+    types: &Core,
     text: &str,
     opened: Opened,
     into: &mut Vec<Cell>,
 ) -> Result<(), ResolveError> {
     for scope in opened {
         let mut pos = scope.start;
-        while let Some((cell, deeper)) = lex_token(scopes, trie, &text[..scope.end], pos)? {
+        while let Some((cell, deeper)) =
+            lex_token(scopes, trie, store, types, &text[..scope.end], pos)?
+        {
             into.push(cell);
             pos = cell.end();
-            lex_scopes(scopes, trie, text, deeper, into)?;
+            lex_scopes(scopes, trie, store, types, text, deeper, into)?;
         }
     }
     Ok(())
@@ -134,9 +146,9 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let start = self.cx.pos;
             // The scopes a quote opened are lexed by whoever builds them, from the source.
-            let Some((cell, _)) = lex_token(&self.cx.scopes, self.trie, source, start)
-                .map_err(|e| self.lex_error(start, e))?
-            else {
+            let lexed =
+                lex_token(&self.cx.scopes, self.trie, self.rt.store, self.types, source, start);
+            let Some((cell, _)) = lexed.map_err(|e| self.lex_error(start, e))? else {
                 return Ok(None);
             };
             self.cx.pos = cell.end();
@@ -151,8 +163,9 @@ impl<'a> Parser<'a> {
         // A box is read by the pass wherever it stands as an operand, and the
         // read is honest only if everything parsed before it has run; so where
         // parse order is run order, its cell is the point the pass runs to.
-        if in_run_order && self.cx.runtime_depth == 0 && !cell.is_fresh() {
-            // SAFETY: the binding the trie resolved is a dyad from the store.
+        if in_run_order && self.cx.runtime_depth == 0 {
+            // SAFETY: the binding the trie resolved, or the fresh spelling's node, is a dyad
+            // from the store.
             let is_box = unsafe {
                 matches!(
                     crate::identities::read::read_kind(self.types, cell.identity(self.types)),
@@ -265,14 +278,15 @@ impl<'a> Parser<'a> {
 
     /// An unresolved cell stays fresh for the boundary to report.
     fn feed_resolve(&self, cell: &mut Cell) {
-        if !cell.is_fresh() {
+        if !cell.is_fresh(self.types) {
             return;
         }
         if let Ok(r) = self.resolve_fresh(cell.spelling()) {
             if r.matched == cell.len {
-                cell.dyad = r.binding;
-                if self.unbuilt(cell) {
-                    cell.dyad = std::ptr::null_mut();
+                let mut bound = *cell;
+                bound.dyad = r.binding;
+                if !self.unbuilt(&bound) {
+                    *cell = bound;
                 }
             }
         }
@@ -303,7 +317,7 @@ impl<'a> Parser<'a> {
         let i = self.feed_index()?;
         let mut cell = self.cx.feed.as_ref()?.cells[i];
         self.feed_resolve(&mut cell);
-        if cell.is_fresh() {
+        if cell.is_fresh(self.types) {
             return None;
         }
         Some((cell.identity(self.types), cell.len))
@@ -427,7 +441,7 @@ impl<'a> Parser<'a> {
                 return None;
             }
             let cell = self.feed_take()?;
-            return Some((cell.start, cell.len, cell.is_fresh()));
+            return Some((cell.start, cell.len, cell.is_fresh(self.types)));
         }
         self.skip_whitespace();
         let source = self.cx.source;
@@ -491,7 +505,7 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::UnclosedBracket);
             }
             let r = self.token_at(at, true)?;
-            let id = if r.fresh { std::ptr::null_mut() } else { r.identity };
+            let id = r.identity;
             if self.is_closer(id) {
                 return self.take_closer(opener).map(|()| at);
             }

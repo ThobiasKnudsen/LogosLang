@@ -133,7 +133,8 @@ fn run_line(source: &str) -> ExitCode {
     let mut sources: Vec<&str> = vec![source];
     sources.extend(imports.sources());
     if let Some(core) = core_stats {
-        print_stats(&engine, core, engine.store.stats(), &sources);
+        let after = engine.store.stats();
+        print_stats(&mut engine, core, after, &sources);
     }
 
     if let Some((_, shown)) = last {
@@ -187,7 +188,8 @@ fn run_program_line(
 
 /// `LOGOS_STATS`: the store after the core, after the line, and their delta
 /// against the source that was parsed (the command line and every loaded file).
-fn print_stats(engine: &Engine, core: StoreStats, after: StoreStats, sources: &[&str]) {
+/// Counting the code lexes it once more, after `after` was read.
+fn print_stats(engine: &mut Engine, core: StoreStats, after: StoreStats, sources: &[&str]) {
     let delta = after.since(&core);
     let source_bytes: usize = sources.iter().map(|s| s.len()).sum();
     let code_bytes: usize = sources.iter().map(|s| code_bytes(engine, s)).sum();
@@ -206,10 +208,12 @@ fn print_stats(engine: &Engine, core: StoreStats, after: StoreStats, sources: &[
 
 /// Bytes of code: every token the lexer reads but a comment, the whitespace between them
 /// dropped. The program's own names lex as fresh spellings, which spans the same bytes.
-fn code_bytes(engine: &Engine, text: &str) -> usize {
+fn code_bytes(engine: &mut Engine, text: &str) -> usize {
     let mut scopes = ScopeStack::new();
     scopes.push(engine.core.root_scope);
-    let Ok(tape) = seed::parse::lex_fragment(&scopes, &engine.trie, text) else {
+    let lexed =
+        seed::parse::lex_fragment(&scopes, &engine.trie, &mut engine.store, &engine.core, text);
+    let Ok(tape) = lexed else {
         return 0;
     };
     let cells = tape.cells();

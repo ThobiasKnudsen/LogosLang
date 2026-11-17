@@ -702,8 +702,9 @@ impl<'a> Parser<'a> {
             return Err(ParseError::EmptySpelling);
         }
         let name: &str = &name;
-        // The binding is the name's home before its node exists (DESIGN ›An unknown spelling
-        // stays text on the tape; `:=` makes the binding, and the node comes with the value‹).
+        // The binding is the name's home before its node exists (DESIGN ›An unknown spelling is
+        // a node of type `unknown_name`; `:=` makes the binding, and the node comes with the
+        // value‹ [[R251]]).
         let declared = self.declare_spelling(name, pattern, std::ptr::null_mut(), tok.start);
         let binding = match declared {
             Ok(binding) => binding,
@@ -938,10 +939,9 @@ impl<'a> Parser<'a> {
                 // turn (`x != ?`) is no type either.
                 let left = self.cell_identity(&cell);
                 let waiting = !cell.constructed
-                    && !cell.is_fresh()
                     && self.ctor_of(left).is_some()
                     && self.precedence_of_cell(left) < crate::identities::meta::prec::HOLE;
-                if cell.is_fresh() || waiting {
+                if cell.is_fresh(types) || waiting {
                     None
                 } else {
                     // A box the pass has already filled declares with the
