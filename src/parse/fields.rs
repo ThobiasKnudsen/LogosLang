@@ -438,6 +438,11 @@ impl<'a> Parser<'a> {
                     return Ok((self.narrowed_read(line), 1));
                 }
             }
+            if self.is_operator_node(lhs) {
+                if let Some(field) = self.node_field(lhs, name)? {
+                    return Ok((field, 0));
+                }
+            }
             // A field holding a node a Logos `parse` built is read when the code runs, even
             // through a node the parse knows: the node it holds may be replaced before then.
             if let Some(t) = crate::identities::node_output(self.types, lhs) {
@@ -496,8 +501,8 @@ impl<'a> Parser<'a> {
             {
                 return Err(ParseError::TypeKnownOnlyAtRun);
             }
-            // A node that is the value has its type's fields; one that runs is read through
-            // what it yields, so `(x + x).lhs` is no slot (DESIGN ›Reading a path runs nothing‹).
+            // A node that is the value has its type's fields; a call stands for what it returns,
+            // so its node's own fields are never read (DESIGN ›Reading a path runs nothing‹).
             let runs = matches!(
                 crate::identities::read::read_kind(self.types, lhs),
                 crate::identities::read::Read::Executable(_)
@@ -597,6 +602,9 @@ impl<'a> Parser<'a> {
             || !crate::identities::meta::is_record_type(record_logos)
             || (!storage && self.types.is_hole(lhs))
         {
+            if self.is_operator_node(lhs) {
+                return Err(ParseError::BadReflectRead);
+            }
             return Err(ParseError::UnsupportedOperands);
         }
         let (_, _, binding) = match self.resolve_field(record_logos, nstart, nlen) {
@@ -1177,10 +1185,10 @@ impl<'a> Parser<'a> {
         (!node.is_null()).then_some(node)
     }
 
-    /// `.type`, read on every value (DESIGN ›`a.type` reads the type of the value a name
-    /// stands for…‹): a tape cell's when the constructor runs, a field's declared type through
-    /// `tape[0]`, a node reached by path its own, a view the viewed node's, and anything else
-    /// the type of what it yields.
+    /// `.type`, read on every value (DESIGN ›`x.type` reads the type word of the node a name or
+    /// an expression stands for‹): a tape cell's when the constructor runs, a field's declared
+    /// type through `tape[0]`, a node reached by path or an operator expression its own type word,
+    /// a view the viewed node's, a name its own and a call the type it returns.
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store.
@@ -1207,11 +1215,32 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
+        // An expression the parse refuses where it is written, as an `if` whose arms give two
+        // types, is refused for that reason first.
         let t = crate::identities::read::value_type(types, lhs)?;
+        if self.is_operator_node(lhs) {
+            return Ok(dyad::ty(lhs));
+        }
         if t.is_null() {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }
         Ok(t)
+    }
+
+    /// An operator expression, which `.` reads as its node (DESIGN ›Reading a path runs
+    /// nothing‹): a node that runs, whose type word is an identity with a parse of its own, the
+    /// one that built it from its operands (`x + 2`, `x ^ 3`). A call's type word is a function
+    /// or an inner node with no parse (`pt(3, 4)`, `m[k]`), and the call stands for what it
+    /// returns.
+    ///
+    /// # Safety
+    /// `node` must be a reduced dyad from the store.
+    unsafe fn is_operator_node(&self, node: DyadPtr) -> bool {
+        use crate::identities::read::{read_kind, Read};
+        let ty = dyad::ty(node);
+        matches!(read_kind(self.types, node), Read::Executable(_))
+            && self.identity_head(ty).is_some()
+            && !crate::identities::meta::constructor_of(ty).is_null()
     }
 
     /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's
