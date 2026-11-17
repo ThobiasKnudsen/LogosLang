@@ -84,12 +84,13 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
             "these types do not match: a value converts only into a type known to hold every value \
-             of it; a number that may lose part of itself converts with `lossy`, as `i32 lossy (x)`"
+             of it; a number that may lose part of itself converts into a number type with `lossy`, \
+             as `i32 lossy (x)`"
                 .into()
         }
         ParseError::UncomputableLiteral => {
-            "this literal has no exact value in the type it lands in; `lossy` converts it anyway, \
-             as `f64 lossy 0.1`"
+            "this literal has no exact value in the type it lands in; into a number type, `lossy` \
+             converts it anyway, as `f64 lossy 0.1`"
                 .into()
         }
         ParseError::LiteralArithmetic => {
