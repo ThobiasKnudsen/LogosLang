@@ -45,7 +45,7 @@ jobs:
       - name: Format (rustfmt.toml is the style)
         run: cargo fmt --check
 
-      - name: Comments carry no ruling history (CLAUDE.md, Comment rules)
+      - name: Comments carry no ruling history
         run: bash .github/scripts/comment-check.sh
 
       - name: Lint (clippy, warnings are errors)
