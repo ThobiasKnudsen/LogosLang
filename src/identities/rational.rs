@@ -23,7 +23,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let id = cx.store.alloc_head(cx.type_, record);
     // Unanchored: the lexer longest-matches a prefix. The span is unsigned: `-` is
     // always the operator, else `a-1` would lex as `a` then `-1`.
-    cx.declare(r"[0-9]+(?:\.[0-9]+)?", id);
+    cx.declare_pattern(r"[0-9]+(?:\.[0-9]+)?", id);
     // `rational_number ?` is a place of the type, `rational_number 1` the literal as a runtime
     // value.
     cx.declare("rational_number", id);
