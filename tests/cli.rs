@@ -1014,7 +1014,7 @@ fn rational_places_and_operators_run_interpreted_and_are_refused_compiled() {
 
 #[test]
 fn a_pattern_spelling_is_declared_through_regex() {
-    // `<=>` beats `<=` `>` by length at equal rank; the core's `..` is spelled `\.\.`.
+    // `<=>` beats `<=` `>` by length at equal rank; the core's `..` enters the index as `\.\.`.
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[0-9]+[kK]\xc2\xbb := type ()\n(5k).type == type\n\
           regex \xc2\xab<=>\xc2\xbb := type ()\n(<=>).type == type\n\
