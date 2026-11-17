@@ -35,7 +35,7 @@ Newlines are whitespace. The one separator is `,`, and it is required between tw
 
 ### Numbers
 
-A plain number such as `3` is a `rational_number` until it lands in a number type, which converts it exactly: `x + 1` with `x` an `i32` is i32 addition, and `f64 0.1` is refused, since 0.1 has no exact `f64`. A value converts into another number type only when that type holds every value of its own, written (`i64 (x)`) or not: `i32 1 + i64 2` is i64 addition, and `i64 3 + f64 2.0` is refused. A conversion that may lose part of the value is written with `lossy`: `i32 lossy (f64 2.7)` is `2`, and `f64 lossy 0.1` is the nearest `f64`. `-y` is negation. Integer division by zero does not crash and does not give zero: it saturates, to the type's largest value for a non-negative dividend and its smallest for a negative one, loud enough to notice.
+A plain number such as `3` is a `rational_number` until it lands in a number type, which converts it exactly: `x + 1` with `x` an `i32` is i32 addition, and `f64 0.1` is refused, since 0.1 has no exact `f64`. A value converts into another number type only when that type holds every value of its own, written (`i64 (x)`) or not: `i32 1 + i64 2` is i64 addition, and `i64 3 + f64 2.0` is refused. A conversion that may lose part of the value is written with `lossy`: `i32 lossy (f64 2.5)` is `2`, and `f64 lossy 0.1` is the nearest `f64`. `-y` is negation. Integer division by zero does not crash and does not give zero: it saturates, to the type's largest value for a non-negative dividend and its smallest for a negative one, loud enough to notice.
 
 ### Functions and scopes
 
