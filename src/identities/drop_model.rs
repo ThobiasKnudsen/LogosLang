@@ -371,6 +371,34 @@ pub(crate) fn is_owning_place(types: &Core, place: DyadPtr) -> bool {
     }
 }
 
+/// Whether `holder`, a name, field or pointer a place is reached through, only borrows what it
+/// reaches: a pointer that owns nothing, as one `&` made, a copy of an owner and a parameter
+/// without `own` hold, or a name or field holding a node without `own`. A record kept in its
+/// bytes is its holder's own. DESIGN ›`move` is the act, `own` the gate word, `free` the end‹.
+///
+/// # Safety
+/// `holder` must be a reduced dyad from the store.
+pub(crate) unsafe fn only_borrows(types: &Core, holder: DyadPtr) -> bool {
+    let named = dyad::ty(holder) == types.binding_;
+    let ty = if named { types.type_of(holder) } else { super::read::output_type(types, holder) };
+    if numtype::is_pointer_type(ty) {
+        return meta::destructor_of(ty).is_null();
+    }
+    named
+        && meta::is_node_valued(ty, types.fn_type)
+        && !crate::binding::Binding::has_gate(holder, types.own_)
+}
+
+/// Whether a field path's name, or a field on it before the last, [`only_borrows`] what it
+/// reaches.
+///
+/// # Safety
+/// `name` and `path` must be binding dyads from the store.
+pub(crate) unsafe fn path_borrows(types: &Core, name: DyadPtr, path: &[DyadPtr]) -> bool {
+    let through = path.split_last().map_or(&[][..], |(_, through)| through);
+    std::iter::once(name).chain(through.iter().copied()).any(|h| only_borrows(types, h))
+}
+
 /// `own @T ?`: the hole `?` built for a pointer type becomes a place of an owning pointer
 /// type, what a field or name declared with it holds (DESIGN ›Memory and concurrency‹).
 /// `own t ?`, `t` a type whose body fills `free`: the hole becomes an owning one (`true`),
@@ -542,7 +570,7 @@ pub(crate) fn build_instance_free(
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
-unsafe fn cell_free(types: &Core, place: DyadPtr) -> Option<DyadPtr> {
+pub(crate) unsafe fn cell_free(types: &Core, place: DyadPtr) -> Option<DyadPtr> {
     if dyad::ty(place) != types.deref_ {
         return None;
     }

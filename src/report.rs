@@ -333,6 +333,12 @@ pub fn parse_message(e: &ParseError) -> String {
              `move` and `free` take a field through the name that holds it, `move x.p`"
                 .into()
         }
+        ParseError::EndThroughBorrow => {
+            "this cell is reached through something that only borrows it, a pointer `&` made, a \
+             copy of its owner or a parameter without `own`, so nothing here can end it: `move` \
+             and `free` take a cell through the pointer that owns it"
+                .into()
+        }
         ParseError::RecordMoveNotInSeed => {
             "moving a plain record is not in the seed yet: its bytes are not copied into a name"
                 .into()

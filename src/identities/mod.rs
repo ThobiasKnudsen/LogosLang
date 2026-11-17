@@ -24,7 +24,7 @@ pub mod read;
 mod and;
 pub(crate) mod array;
 mod assign;
-mod binary;
+pub(crate) mod binary;
 #[path = "bool.rs"]
 pub(crate) mod bool_mod;
 pub(crate) mod by_copy;
