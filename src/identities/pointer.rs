@@ -90,29 +90,35 @@ pub(super) fn register(
     (deref, storeptr, addr, deref_leaf, storeptr_leaf, addr_leaf, at)
 }
 
-/// The address resolves at run/lower time through `place_addr`, so a frame-relative
-/// local yields a per-activation address.
+/// The address resolves at run/lower time, so a frame-relative local yields a
+/// per-activation address.
 ///
 /// # Safety
-/// `place` must be a storage-backed place node from the store.
+/// `place` must be a frame's place or a deref node from the store.
 pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let pointee = types.type_of(place);
+    let pointee = super::read::output_type(types, place);
     let output = make_pointer_type(store, types.type_, pointee);
     store.alloc_words(types.addr_, &[place, pointee, types.ops.addr_, output])
 }
 
 fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an addr node; its first operand is a place.
+    // SAFETY: `node` is an addr node; its first operand is a frame's place or a deref node.
     unsafe {
         let place = *(dyad::value(node) as *const DyadPtr);
+        if dyad::ty(place) == rt.types().deref_ {
+            return deref_addr(rt, place).map(|addr| addr as i64);
+        }
         Ok(rt.place_addr(place).ok_or(RunError::NoActivation)? as i64)
     }
 }
 
 fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is an addr node; its first operand is a place.
+    // SAFETY: `node` is an addr node; its first operand is a frame's place or a deref node.
     unsafe {
         let place = *(dyad::value(node) as *const DyadPtr);
+        if dyad::ty(place) == lw.types().deref_ {
+            return lower_deref_addr(lw, place);
+        }
         lw.place_addr(place)
     }
 }
@@ -201,6 +207,24 @@ pub(crate) unsafe fn deref_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u64) {
     (*p, *p.add(1), off)
 }
 
+/// Whether the dereference reads a field `p@.f` folded into it: past the record's start, or of
+/// another type than the record its pointer points at.
+///
+/// # Safety
+/// `node` must be a deref node from `build_deref`.
+pub(crate) unsafe fn reads_folded_field(types: &Core, node: DyadPtr) -> bool {
+    let (ptr, pointee, offset) = deref_parts(node);
+    if offset != 0 {
+        return true;
+    }
+    let target = super::read::output_type(types, ptr);
+    if target.is_null() || !super::numtype::is_pointer_type(target) {
+        return false;
+    }
+    let record = super::numtype::pointee_of(target);
+    !record.is_null() && record != pointee && meta::is_record_type(record)
+}
+
 /// The pointee must be a type a whole value of which moves into a place.
 ///
 /// # Safety
@@ -241,6 +265,16 @@ pub(crate) unsafe fn deref_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut 
         return Err(RunError::NullPointer);
     }
     Ok(base.wrapping_add(off) as *mut u8)
+}
+
+/// [`deref_addr`]'s compiled half.
+///
+/// # Safety
+/// As [`deref_addr`].
+unsafe fn lower_deref_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    let (ptr_expr, _, off) = deref_parts(node);
+    let base = lw.lower(ptr_expr)?;
+    lw.guard_non_null(base, NumType::U64.cranelift_type(), |s| Ok(s.offset_addr(base, off as i64)))
 }
 
 /// A cell's whole read hands over what the pointee's type moves as: its word, or the address

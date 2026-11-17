@@ -84,17 +84,31 @@ struct Pending {
     endpoint: Endpoint,
 }
 
-/// A bare name a `move` or `free` is about to make dead, handed back so the
-/// keyword's constructor can mark it dead with the node it built.
+/// A bare name or a field path `name.f.g` a `move` or `free` is about to end, handed back so
+/// the keyword's constructor can mark it dead with the node it built.
 #[derive(Debug)]
 pub(crate) struct Ended {
     pub(crate) binding: DyadPtr,
+    /// The bindings of the fields the path goes through, the name's first; empty when the
+    /// name itself ends.
+    pub(crate) path: Vec<DyadPtr>,
+}
+
+impl Ended {
+    pub(crate) fn name(binding: DyadPtr) -> Self {
+        Ended { binding, path: Vec::new() }
+    }
+
+    /// The name itself, not a path under it.
+    pub(crate) fn is_name(&self) -> bool {
+        self.path.is_empty()
+    }
 }
 
 /// The operand of a `move` or `free`.
 #[derive(Debug)]
 pub(crate) enum Taken {
-    /// The node the place is reached through, and the name it ends when it is a bare name.
+    /// The node the place is reached through, and the name or the path under a name it ends.
     Place(DyadPtr, Option<Ended>),
     /// A value no name holds, and where it starts in the source.
     Value(DyadPtr, usize),
@@ -321,7 +335,8 @@ impl ScopeStack {
     }
 
     /// No-shadowing: `Shadowed` if `name` is live in an open scope; a dead
-    /// name is free to redeclare, a fresh entry beside the dead one.
+    /// name is free to redeclare, a fresh entry beside the dead one. `name` is
+    /// the binding's spelling, entered under the key its record says.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store; this writes its `scope`.
@@ -332,15 +347,12 @@ impl ScopeStack {
         binding: DyadPtr,
     ) -> Result<(), ResolveError> {
         let scope = self.current().expect("declare needs an open scope");
-        match self.resolve(trie, name) {
-            Ok(_) => return Err(ResolveError::Shadowed(name.to_string())),
-            Err(ResolveError::OutOfScope(_) | ResolveError::Unknown(_) | ResolveError::Dead(_)) => {
-            }
-            Err(e) => return Err(e),
+        if self.live(trie, name, binding)?.is_some() {
+            return Err(ResolveError::Shadowed(name.to_string()));
         }
-        // The spelling enters the index as a literal key, never as a pattern.
-        let key = regex::escape(name);
         // SAFETY: `binding` is a binding dyad from the store, built for this name.
+        let key = unsafe { Binding::read(binding) }.key(name);
+        // SAFETY: as above.
         unsafe { Binding::set_scope(binding, scope) };
         trie.insert(&key, binding);
         self.journal.push(Journal::Declared { name: key, scope });
@@ -348,35 +360,39 @@ impl ScopeStack {
         Ok(())
     }
 
-    /// The key enters the index as the recognizer it is, never escaped; the
-    /// one check is that this very key is not live in an open scope. Two
-    /// patterns that can match the same length at equal rank are caught only
-    /// when text hits both (`Tied`): deciding it here needs automaton
-    /// intersection.
+    /// The live binding a declaration of `name`, keyed as `binding`'s record says, would
+    /// shadow: one under that very key, or for a spelling that stands for itself, one its
+    /// whole text resolves to. A pattern meets only its own key: two patterns that can
+    /// match the same length at equal rank are caught when text hits both (`Tied`), since
+    /// deciding it here needs automaton intersection.
     ///
     /// # Safety
-    /// `binding` must be a binding dyad from the store ([`Binding::alloc`]); this
-    /// writes its `scope` field through the pointer.
-    pub unsafe fn declare_pattern(
-        &mut self,
-        trie: &mut RegexTrie,
-        key: &str,
+    /// `binding` must be a binding dyad from the store.
+    pub unsafe fn live(
+        &self,
+        trie: &RegexTrie,
+        name: &str,
         binding: DyadPtr,
-    ) -> Result<(), ResolveError> {
-        let scope = self.current().expect("declare needs an open scope");
-        if let Some(bindings) = trie.bindings_for_key(key) {
-            // SAFETY: every pointer the trie stores is a binding dyad from the store.
-            let fields = |r: DyadPtr| unsafe { Binding::read(r) };
-            if bindings.iter().any(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead()) {
-                return Err(ResolveError::Shadowed(key.to_string()));
-            }
+    ) -> Result<Option<DyadPtr>, ResolveError> {
+        // SAFETY: `binding` and every pointer the trie stores are binding dyads from the store.
+        let fields = |r: DyadPtr| unsafe { Binding::read(r) };
+        let rec = fields(binding);
+        let keyed = trie.bindings_for_key(&rec.key(name)).and_then(|bindings| {
+            bindings
+                .iter()
+                .copied()
+                .find(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())
+        });
+        if keyed.is_some() || rec.pattern {
+            return Ok(keyed);
         }
-        // SAFETY: `binding` is a binding dyad from the store, built for this pattern.
-        unsafe { Binding::set_scope(binding, scope) };
-        trie.insert(key, binding);
-        self.journal.push(Journal::Declared { name: key.to_string(), scope });
-        self.pending.push(Pending { binding, endpoint: Endpoint::Start });
-        Ok(())
+        match self.resolve(trie, name) {
+            Ok(r) => Ok((r.matched == name.len()).then_some(r.binding)),
+            Err(ResolveError::OutOfScope(_) | ResolveError::Unknown(_) | ResolveError::Dead(_)) => {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// `node` is the provisional `end` until `settle_item` replaces it with
@@ -448,9 +464,9 @@ impl ScopeStack {
         if self.declared_in(trie, name, scope)? {
             return Err(ResolveError::Shadowed(name.to_string()));
         }
-        // The spelling enters the index as a literal key, never as a pattern.
-        let key = regex::escape(name);
         // SAFETY: `binding` is a binding dyad from the store, built for this name.
+        let key = unsafe { Binding::read(binding) }.key(name);
+        // SAFETY: as above.
         unsafe { Binding::set_scope(binding, scope) };
         trie.insert(&key, binding);
         self.journal.push(Journal::Declared { name: key, scope });

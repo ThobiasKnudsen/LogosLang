@@ -317,8 +317,9 @@ impl<'a> Parser<'a> {
 
     /// The operand of `move`/`free`: a place as the node it is reached through
     /// (`read::place_node`), never an `addr`, a value no name holds, or a hole. A bare
-    /// name comes back with the `Ended` the caller hands to `mark_dead`; a name from
-    /// outside a loop or `fn` body is refused, and so is one the run starts with.
+    /// name or a path `name.field` comes back with the `Ended` the caller hands to
+    /// `mark_dead`; a name from outside a loop or `fn` body is refused, and so is one the run
+    /// starts with.
     pub(crate) fn place_operand_cell(
         &mut self,
         tape: &mut ParsingTape,
@@ -345,7 +346,7 @@ impl<'a> Parser<'a> {
                 match unsafe {
                     crate::identities::read::place_node(self.rt.store, self.types, cell.dyad)
                 } {
-                    Some(place) => Taken::Place(place, None),
+                    Some(place) => Taken::Place(place, self.ended_path(place, &cell)?),
                     None => Taken::Value(cell.dyad, cell.start),
                 }
             }
@@ -384,7 +385,7 @@ impl<'a> Parser<'a> {
             }
             self.check_made(binding)?;
             self.note_outer_read(binding);
-            Taken::Place(identity, Some(Ended { binding }))
+            Taken::Place(identity, Some(Ended::name(binding)))
         };
         if let Taken::Place(node, _) | Taken::Value(node, _) = taken {
             // SAFETY: `node` is a resolved dyad from the store.
@@ -394,6 +395,50 @@ impl<'a> Parser<'a> {
         }
         tape.remove(1);
         Ok(taken)
+    }
+
+    /// The field path `place` is, from a name through fields at any depth, which a `move` or
+    /// `free` here ends as it would the bare name (DESIGN ›`move` and `free` take a field path
+    /// too‹); `None` for a place that is no field, and for a field of the value a type's `free`
+    /// or `parse` body works on. A field the parse cannot follow back to a name that holds it
+    /// is refused where `cell`, the operand's, stands: through a pointer, an element, a value
+    /// no name holds or a borrow, or of a `share` function's own value.
+    fn ended_path(&mut self, place: DyadPtr, cell: &Cell) -> Result<Option<Ended>, ParseError> {
+        use crate::identities::this::{field_path, FieldPath};
+        let (at, held) = (cell.start, self.settled_type(cell.root));
+        // SAFETY: `place` is a reduced dyad from the store, the cell's root null or a binding.
+        let (binding, path) = match unsafe { field_path(self.types, place, cell.root, held) } {
+            // A field of a node the parse holds is read as the node its slot holds.
+            FieldPath::NoField if !cell.target.0.is_null() => (cell.target.0, vec![cell.target.1]),
+            FieldPath::NoField => return Ok(None),
+            FieldPath::Unfollowed => return Err(self.fail_at(at, ParseError::UnfollowedPath)),
+            FieldPath::From(binding, path) => (binding, path),
+        };
+        if let Some(def) = self.cx.definitions.last().filter(|d| d.this_param == binding) {
+            if def.in_parse || def.in_free {
+                return Ok(None);
+            }
+            return Err(self.fail_at(at, ParseError::UnfollowedPath));
+        }
+        // SAFETY: `binding` and the path's fields are binding dyads from the store.
+        unsafe {
+            if self.cx.scopes.crosses_barrier(Binding::read(binding).scope) {
+                return Err(self.fail_at(at, ParseError::MoveOfOuterName));
+            }
+            let owns = self.is_owning_read(place)
+                || crate::identities::drop_model::is_owning_place(self.types, place);
+            // A record kept in its bytes is the name's own; a node only an `own` name holds.
+            let borrows = |b: DyadPtr| {
+                let ty = self.types.type_of(b);
+                crate::identities::meta::is_node_valued(ty, self.types.fn_type)
+                    && !self.owns_node(b)
+            };
+            let (_, through) = path.split_last().expect("a field path names a field");
+            if owns && (borrows(binding) || through.iter().any(|&f| borrows(f))) {
+                return Err(self.fail_at(at, ParseError::UnfollowedPath));
+            }
+        }
+        Ok(Some(Ended { binding, path }))
     }
 
     /// The one read every prefix constructor makes (`return x`, `not x`, a
@@ -502,7 +547,9 @@ impl<'a> Parser<'a> {
             {
                 return Err(ParseError::Resolve(ResolveError::OutOfScope(name())));
             }
-            if fields.is_dead() {
+            // The list names names, not paths: a name with a path ended is refused whole.
+            // SAFETY: as above.
+            if fields.is_dead() || unsafe { Binding::has_ended_path(binding) } {
                 return Err(ParseError::Resolve(ResolveError::Dead(name())));
             }
             self.note_outer_read(binding);

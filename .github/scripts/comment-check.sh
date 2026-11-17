@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails on ruling history in Rust comments: dates, "ruled"/"superseded"/"amended",
-# issue numbers outside a "stand-in for #N", DESIGN quotes. CLAUDE.md, "Comment rules".
+# issue numbers outside a "stand-in for #N", DESIGN quotes.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 lines=$(grep -rn --include='*.rs' -E '^\s*//' src tests)
@@ -14,7 +14,7 @@ hits=$(
 )
 if [ -n "$hits" ]; then
   echo "$hits"
-  echo "comment-check: $(echo "$hits" | wc -l) comment line(s) carry ruling history; see CLAUDE.md 'Comment rules'"
+  echo "comment-check: $(echo "$hits" | wc -l) comment line(s) carry ruling history"
   exit 1
 fi
 echo "comment-check: OK"

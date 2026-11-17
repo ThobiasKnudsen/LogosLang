@@ -379,38 +379,34 @@ impl<'a> Parser<'a> {
 
     /// Pub-only exposure, the ordinary visibility rule: a collision with a
     /// live name is the ordinary shadowing error. Idempotent where the name
-    /// already resolves to the same identity. The importer's name is the file's
-    /// binding again: the same storage and the same gates (DESIGN ›Importing is
-    /// dropping the text there, wrapped in its own scope‹).
+    /// is already live for the same identity. The importer's name is the file's
+    /// binding record again, in the importer's scope: its storage, gates, rank and key
+    /// (DESIGN ›Importing is dropping the text there, wrapped in its own scope‹).
     fn publish(&mut self, pubs: &[(String, DyadPtr)]) -> Result<(), ParseError> {
         // A collision is the import's: reported where the import stands.
         let at = self.cx.pos;
         for (name, exported) in pubs {
-            // SAFETY: `exported` is a binding dyad the file's pass built.
-            let (b, identity) = unsafe {
-                let b = Binding::read(*exported);
-                (b, b.names(*exported))
+            // SAFETY: `exported` is a binding dyad the file's pass built, and a live binding
+            // the scopes hand back one from the store; a storage name is the same name when it
+            // is laid out over the same bytes.
+            let same = unsafe {
+                let names = |r: DyadPtr| Binding::read(r).names(r);
+                let identity = names(*exported);
+                self.cx.scopes.live(self.trie, name, *exported).ok().flatten().is_some_and(|r| {
+                    names(r) == identity
+                        || (self.types.frame_of(names(r)).is_some()
+                            && self.types.frame_of(names(r)) == self.types.frame_of(identity))
+                })
             };
-            if let Ok(r) = self.cx.scopes.resolve(self.trie, name) {
-                // SAFETY: both are dyads from the store; a storage name is the same name when
-                // it is laid out over the same bytes.
-                let same = unsafe {
-                    r.identity == identity
-                        || (self.types.frame_of(r.identity).is_some()
-                            && self.types.frame_of(r.identity) == self.types.frame_of(identity))
-                };
-                if same {
-                    continue;
-                }
+            if same {
+                continue;
             }
-            let binding = self.declare_name(name, identity, at)?;
-            // SAFETY: `binding` was just declared; `exported` as above.
-            unsafe {
-                Binding::copy_gates(binding, *exported);
-                if b.is_storage() {
-                    Binding::lay_out(binding, b.dyad, b.frame, b.offset);
-                }
-            }
+            // The gate array is shared: every gate edit builds a new one.
+            // SAFETY: as above.
+            let rec = unsafe { Binding::read(*exported) };
+            let rec = Binding { start: std::ptr::null_mut(), end: std::ptr::null_mut(), ..rec };
+            let binding = Binding::alloc(self.rt.store, self.types.binding_, rec);
+            self.enter_binding(name, binding, at)?;
         }
         Ok(())
     }

@@ -3,7 +3,7 @@
 
 //! The Logos bootstrap seed: the hand-built core identities, the lexing name
 //! index, the parser, the interpreter and the compiler, over one node store.
-//! `DESIGN.md` says what it builds toward.
+//! The project's rules say what it builds toward.
 
 pub mod compile;
 pub mod identities;

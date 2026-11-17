@@ -154,6 +154,8 @@ pub enum ParseError {
     ExpectedPattern,
     /// A `lex`, `print` or `error` was not followed by a `«…»` quote; carries the word.
     ExpectedQuote(&'static str),
+    /// `lex «» := …`: a spelling of no text, which no lex could ever match.
+    EmptySpelling,
     /// A `}` in a `print` quote with no `{` before it.
     StrayInterpolationClose,
     /// `tape.insert(k, …)` was handed something that is not a tape: `insert`
@@ -252,6 +254,10 @@ pub enum ParseError {
     HeldRecordThroughPointerNotInSeed,
     /// `move p.f` or `move p@` of a field or cell that owns nothing. stand-in for #66
     MoveOfUnownedPath,
+    /// `move` or `free` of a field the parse cannot follow back to a name that holds it:
+    /// through a pointer, an element, a value no name holds or a borrow, or of a `share`
+    /// function's own value.
+    UnfollowedPath,
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
     /// a `free`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,

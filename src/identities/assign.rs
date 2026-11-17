@@ -10,7 +10,9 @@ use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{read_scalar_nt, write_scalar_nt, NumType};
-use super::read::{call_place, carry_of, place_of, read_kind, Carry, Place, Read};
+use super::read::{
+    call_place, carry_of, is_lex_rank_field, place_of, read_kind, Carry, Place, Read,
+};
 use super::{meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -138,15 +140,6 @@ pub(super) fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // A binding's fields are read; `lex_rank` is the one a program sets after the declaration
-    // (DESIGN ›`lex_rank` belongs to the binding, not the type‹).
-    // SAFETY: `lhs` is a reduced dyad from the store.
-    if let Some(field) = unsafe { types.binding_field_of(lhs) } {
-        // SAFETY: `field` is a binding dyad from the store.
-        if unsafe { crate::binding::Binding::spelling(field) } != "lex_rank" {
-            return Err(ParseError::BadAssignTarget);
-        }
-    }
     // A name is written only if its binding carries `mut` and no `immut`.
     // SAFETY: `lhs` is a reduced dyad from the store; one of the `binding` type is a binding.
     unsafe {
@@ -188,6 +181,19 @@ pub(super) fn build_store(
     // SAFETY: as above.
     let lhs_type = unsafe { types.type_of(lhs_d) };
     // SAFETY: `lhs_d` is a reduced dyad from the store.
+    let place = unsafe { place_of(types, lhs_d) };
+    // SAFETY: as above.
+    if place.is_none() && !unsafe { is_lex_rank_field(types, lhs_d) } {
+        // SAFETY: as above; a `Literal` read is a rational node with its fraction blob.
+        return Err(unsafe {
+            if read_kind(types, lhs_d) == Read::Literal {
+                ParseError::AssignToLiteral(Box::new(super::rational::spell(lhs_d)))
+            } else {
+                ParseError::BadAssignTarget
+            }
+        });
+    }
+    // SAFETY: `lhs_d` is a reduced dyad from the store.
     if unsafe { super::tape::is_cell_read(types, lhs_d) } {
         if arms_differ {
             return Err(ParseError::ArmsDiffer);
@@ -219,22 +225,15 @@ pub(super) fn build_store(
         // SAFETY: `lhs_d` is a deref node, `rhs` a reduced dyad.
         return unsafe { super::pointer::build_storeptr(store, types, lhs_d, rhs) };
     }
-    // SAFETY: `lhs_d` is a reduced dyad from the store.
-    if let Some(Place::Call(call)) = unsafe { place_of(types, lhs_d) } {
+    if let Some(Place::Call(call)) = place {
         // SAFETY: `call` came from `place_of`, `rhs` is a reduced dyad.
         return unsafe {
-            let place = call_place(store, types, call);
-            super::pointer::build_storeptr(store, types, place, rhs)
+            let deref = call_place(store, types, call);
+            super::pointer::build_storeptr(store, types, deref, rhs)
         };
     }
-    // SAFETY: `lhs_d` is a reduced dyad from the store.
-    if unsafe { read_kind(types, lhs_d) } == Read::Literal {
-        // SAFETY: a `Literal` read is a rational node with its fraction blob.
-        return Err(ParseError::AssignToLiteral(Box::new(unsafe {
-            super::rational::spell(lhs_d)
-        })));
-    }
-    // SAFETY: as above; `lhs_type` is null or a type node.
+    // Left: a frame's place, written at its offset when its type moves whole.
+    // SAFETY: `lhs_d` is a reduced dyad from the store; `lhs_type` is null or a type node.
     let carry = unsafe { types.is_storage(lhs_d).then(|| carry_of(types, lhs_type)) }.flatten();
     let Some(carry) = carry else {
         return Err(ParseError::BadAssignTarget);

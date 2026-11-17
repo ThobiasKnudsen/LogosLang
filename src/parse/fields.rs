@@ -683,25 +683,29 @@ impl<'a> Parser<'a> {
         // SAFETY: a bracket cell is a node from the store.
         let call = bracket.map(|d| unsafe { self.args_of(d) });
         let key = self.index_node_at(tape, 2);
-        let writes = index.is_none()
-            && key.is_none()
-            && bracket.is_none()
-            && tape
-                .at(2)
-                .is_some_and(|c| !c.constructed && self.cell_identity(c) == self.types.assign);
+        let plain = index.is_none() && key.is_none() && bracket.is_none();
+        let next_is =
+            |id: DyadPtr| tape.at(2).is_some_and(|c| !c.constructed && self.cell_identity(c) == id);
+        let (writes, dotted) =
+            (plain && next_is(self.types.assign), plain && next_is(self.types.dot_));
         let source = self.cx.source;
         // A name its value's parse woke stands constructed and still holds its binding.
         let woke = tape.at(-1).filter(|c| c.constructed && !c.dyad.is_null()).map(|c| c.dyad);
         // SAFETY: a constructed cell's dyad is a dyad from the store.
         let named = woke.filter(|&d| unsafe { dyad::ty(d) } == self.types.binding_).unwrap_or(root);
-        // SAFETY: `named` is null or a binding dyad; `lhs` a reduced dyad off the tape.
-        let fills = unsafe {
-            self.check_field_unwritten(named, lhs, &source[nstart..nstart + nlen], writes)
+        let path_root = if named.is_null() { left.root } else { named };
+        // SAFETY: `named` and the left cell's root are null or binding dyads; `lhs` a reduced
+        // dyad off the tape.
+        let reached = match unsafe {
+            let member = &source[nstart..nstart + nlen];
+            self.check_name_field(named, left.root, lhs, member, writes, dotted)
+        } {
+            Ok(reached) => reached,
+            Err(e) => {
+                self.cx.pos = nstart;
+                return Err(e);
+            }
         };
-        if let Err(e) = fills {
-            self.cx.pos = nstart;
-            return Err(e);
-        }
         self.cx.member_root = root;
         self.cx.member_path.clear();
         let member = Member { start: nstart, len: nlen, index, key, call };
@@ -733,8 +737,9 @@ impl<'a> Parser<'a> {
             tape.place(node);
             let cell = tape.at_mut(0).expect("placed above");
             cell.path = path;
-            if let Ok(Some(fill)) = fills {
-                cell.target = fill;
+            if plain {
+                cell.target = reached;
+                cell.root = path_root;
             }
         }
         Ok(Constructed::Placed)
@@ -912,7 +917,8 @@ impl<'a> Parser<'a> {
 
     /// `&`'s constructor: an `addr` node that resolves the place's address at
     /// run/lower time, so a frame-relative local yields a per-activation
-    /// address. A comptime binding has no storage.
+    /// address. Of the places, a frame's and a dereference's cell have an address
+    /// to hand out.
     pub(crate) fn construct_address_of(
         &mut self,
         tape: &mut ParsingTape,
@@ -930,23 +936,25 @@ impl<'a> Parser<'a> {
         let node = self.operand_dyad(cell)?;
         // SAFETY: `node` is a resolved dyad from the store.
         let addr = unsafe {
-            // A place the reading rule can name, marked as storage: a literal's
-            // blob is not one, nor a node of a code-carrying type (an operand run, no fields).
-            use crate::identities::read::{read_kind, Read};
-            let placed = matches!(
-                read_kind(self.types, node),
-                Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
-            ) && self.types.is_storage(node);
-            // A binding's fields are read; `lex_rank` alone is a place a program writes.
-            let binding_field = self
-                .types
-                .binding_field_of(node)
-                .is_some_and(|f| Binding::spelling(f) != "lex_rank");
-            if !placed || binding_field {
+            use crate::identities::read::{
+                is_lex_rank_field, output_type, place_kind, place_node, Read,
+            };
+            let types = self.types;
+            let addressed = |p: DyadPtr| {
+                (types.is_storage(p) || dyad::ty(p) == types.deref_)
+                    && matches!(
+                        place_kind(types, output_type(types, p)),
+                        Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
+                    )
+            };
+            let Some(place) = place_node(self.rt.store, types, node)
+                .or_else(|| is_lex_rank_field(types, node).then_some(node))
+                .filter(|&p| addressed(p))
+            else {
                 return Err(ParseError::BadAddressOf);
-            }
+            };
             self.check_capture(node)?;
-            crate::identities::pointer::build_addr(self.rt.store, self.types, node)
+            crate::identities::pointer::build_addr(self.rt.store, types, place)
         };
         tape.remove(1);
         tape.place(addr);

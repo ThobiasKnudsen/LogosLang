@@ -611,19 +611,20 @@ impl Cx<'_> {
     /// A native record type's field names live in the type's own scope. The
     /// spelling enters the index as a literal key, as a declared name does.
     pub(crate) fn declare_in(&mut self, scope: DyadPtr, spelling: &str, id: DyadPtr) -> DyadPtr {
-        self.enter(scope, spelling, &regex::escape(spelling), id)
+        self.enter(scope, spelling, false, id)
     }
 
     /// Declare `pattern` at the root scope, entered as the recognizer it is.
     pub(crate) fn declare_pattern(&mut self, pattern: &str, id: DyadPtr) -> DyadPtr {
         let root = self.root_scope;
-        self.enter(root, pattern, pattern, id)
+        self.enter(root, pattern, true, id)
     }
 
-    fn enter(&mut self, scope: DyadPtr, name: &str, key: &str, id: DyadPtr) -> DyadPtr {
-        let name = string::build_text(self.store, self.string_, name.as_bytes());
-        let binding = Binding::alloc(self.store, self.binding_, Binding::new(id, scope, name));
-        self.trie.insert(key, binding);
+    fn enter(&mut self, scope: DyadPtr, spelling: &str, pattern: bool, id: DyadPtr) -> DyadPtr {
+        let name = string::build_text(self.store, self.string_, spelling.as_bytes());
+        let rec = Binding { pattern, ..Binding::new(id, scope, name) };
+        let binding = Binding::alloc(self.store, self.binding_, rec);
+        self.trie.insert(&rec.key(spelling), binding);
         binding
     }
 }
@@ -1109,19 +1110,6 @@ pub(crate) unsafe fn resolve_loop_parts(
         *p = land(store, types, *p, logos)?;
     }
     Ok(logos)
-}
-
-/// The `i32 32` juxtaposition: a plain number landed in a number type.
-///
-/// # Safety
-/// `lit` must be a rational literal from the store; `ty_node` a numeric type node.
-pub(crate) unsafe fn commit_literal_to(
-    store: &mut Store,
-    types: &Core,
-    lit: DyadPtr,
-    ty_node: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    land(store, types, lit, ty_node)
 }
 
 /// Land a call's arguments in their parameters' types, so `f(3000000000)` is exact for an `i64`

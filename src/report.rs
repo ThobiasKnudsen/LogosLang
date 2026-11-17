@@ -127,6 +127,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ExpectedPath => "`import` must be followed by a file path".into(),
         ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
         ParseError::ExpectedQuote(word) => format!("`{word}` must be followed by a «…» quote"),
+        ParseError::EmptySpelling => {
+            "a declared spelling must not be empty: no text could ever lex as it".into()
+        }
         ParseError::StrayInterpolationClose => {
             "this `}` closes no `{`: write `\\}` to print a brace".into()
         }
@@ -322,6 +325,12 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::MoveOfUnownedPath => {
             "moving out of a field or cell that owns nothing is not in the seed yet; a name \
              moves whatever it holds"
+                .into()
+        }
+        ParseError::UnfollowedPath => {
+            "this field is reached through a pointer, an element, a value no name holds, a name \
+             that borrows it or a `share` function's own value, so nothing here can end it: \
+             `move` and `free` take a field through the name that holds it, `move x.p`"
                 .into()
         }
         ParseError::RecordMoveNotInSeed => {

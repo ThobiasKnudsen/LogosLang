@@ -44,9 +44,16 @@ pub struct Binding {
     /// The fields of a `T ?` name not yet written, an `array` node of the record's field
     /// dyads; null while none wait.
     pub unwritten: DyadPtr,
+    /// The field paths under the name that a `move` or `free` reached, an `array` of bindings,
+    /// each with the field as its `dyad`, its own `end` and the paths under it; null until a
+    /// partial move.
+    pub paths: DyadPtr,
     /// Declared outside any function in a body the pass does not run in parse order, a loop
     /// or a branch: at parse the name holds no value yet.
     pub unmade: bool,
+    /// The spelling is a pattern, keyed in the trie as the recognizer it is; any other
+    /// spelling is keyed escaped, so it stands for itself.
+    pub pattern: bool,
 }
 
 /// Where a storage binding's bytes lie, with the offset into it.
@@ -71,12 +78,23 @@ impl Binding {
             frame: std::ptr::null_mut(),
             offset: 0,
             unwritten: std::ptr::null_mut(),
+            paths: std::ptr::null_mut(),
             unmade: false,
+            pattern: false,
         }
     }
 
     pub fn is_dead(&self) -> bool {
         !self.end.is_null()
+    }
+
+    /// The trie key `spelling` enters under: the one place a spelling's key is decided.
+    pub fn key(&self, spelling: &str) -> String {
+        if self.pattern {
+            spelling.to_string()
+        } else {
+            regex::escape(spelling)
+        }
     }
 
     /// The name's bytes are in a frame of its own: a type as the frame lays a field out
@@ -202,9 +220,54 @@ impl Binding {
     }
 
     /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn set_pattern(dyad: DyadPtr, pattern: bool) {
+        (*Self::fields(dyad)).pattern = pattern;
+    }
+
+    /// # Safety
     /// As `Binding::read`; `fields` null or an `array` node from the store.
     pub unsafe fn set_unwritten(dyad: DyadPtr, fields: DyadPtr) {
         (*Self::fields(dyad)).unwritten = fields;
+    }
+
+    /// The binding of the path under the name that ends at `field`, null while no `move` or
+    /// `free` reached it.
+    ///
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn path(dyad: DyadPtr, field: DyadPtr) -> DyadPtr {
+        let paths = (*Self::fields(dyad)).paths;
+        if paths.is_null() {
+            return std::ptr::null_mut();
+        }
+        super::array::items(paths)
+            .iter()
+            .copied()
+            .find(|&p| (*Self::fields(p)).dyad == field)
+            .unwrap_or(std::ptr::null_mut())
+    }
+
+    /// # Safety
+    /// As `add_gate`; `path` a binding dyad from the store.
+    pub unsafe fn add_path(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, path: DyadPtr) {
+        let paths = (*Self::fields(dyad)).paths;
+        let mut items =
+            if paths.is_null() { Vec::new() } else { super::array::items(paths).to_vec() };
+        items.push(path);
+        (*Self::fields(dyad)).paths = super::array::build(store, array_ty, &items);
+    }
+
+    /// Whether a path under the name has ended, at any depth, so the name is dead as a whole.
+    ///
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn has_ended_path(dyad: DyadPtr) -> bool {
+        let paths = (*Self::fields(dyad)).paths;
+        !paths.is_null()
+            && super::array::items(paths)
+                .iter()
+                .any(|&p| !(*Self::fields(p)).end.is_null() || Self::has_ended_path(p))
     }
 
     /// # Safety
@@ -224,15 +287,6 @@ impl Binding {
             if gates.is_null() { Vec::new() } else { super::array::items(gates).to_vec() };
         items.insert(0, gate);
         (*Self::fields(dyad)).gate = super::array::build(store, array_ty, &items);
-    }
-
-    /// The gate set of another binding, the array shared: no gate is added after a
-    /// declaration closes, and every edit builds a new array.
-    ///
-    /// # Safety
-    /// As `Binding::read`, for both.
-    pub unsafe fn copy_gates(dyad: DyadPtr, from: DyadPtr) {
-        (*Self::fields(dyad)).gate = (*Self::fields(from)).gate;
     }
 
     /// # Safety
