@@ -308,8 +308,8 @@ unsafe fn heap_free(ptr: *mut u8) {
 }
 
 /// The pointee is the value's own type (`alloc 2 of i32 5` allocates two `i32`), `u8` with
-/// no value; the count must be an integer. A value of a type built by a Logos `parse` takes
-/// a cell of its address; any other non-scalar value is rejected.
+/// no value; the count must be an integer. Each cell is the place the value is copied into, as
+/// a declaration's is; a value no place holds whole is rejected.
 pub(super) fn build_alloc(
     store: &mut Store,
     types: &Core,
@@ -329,13 +329,12 @@ pub(super) fn build_alloc(
         None => types.numtypes[numtype::NumType::U8 as usize],
         // SAFETY: as above.
         Some(init) if unsafe { types.is_hole(init) } => unsafe { super::hole::type_in(init) },
-        // SAFETY: as above.
-        Some(init) => match unsafe { crate::identities::scalar_binding_type(store, types, init) } {
-            Some((t, _)) => t,
+        Some(init) => {
             // SAFETY: as above.
-            None => unsafe { crate::identities::node_output(types, init) }
-                .ok_or(ParseError::UnsupportedOperands)?,
-        },
+            unsafe { crate::identities::copy_place(store, types, init) }
+                .ok_or(ParseError::UnsupportedOperands)?
+                .0
+        }
     };
     // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
     // SAFETY: `init` is a reduced dyad just parsed.
@@ -1018,7 +1017,8 @@ pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Teardown {
 /// `value` must be a reduced dyad from the store, `t` its output type.
 unsafe fn type_free(types: &Core, value: DyadPtr, t: DyadPtr) -> DyadPtr {
     let typed = super::node_output(types, value).is_some()
-        || (super::by_copy::record_width(types, t).is_some() && meta::is_record_type(t));
+        || (matches!(super::read::carry_of(types, t), Some(super::read::Carry::Bytes(_)))
+            && meta::is_record_type(t));
     if typed {
         meta::instances_free_of(t)
     } else {
@@ -1083,9 +1083,9 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Err(RunError::BadCount(count));
         }
         let init = *slots.add(ALLOC_INIT);
-        let bits = if init.is_null() { None } else { Some(rt.run(init)?) };
-        let nt = super::read::cell_numtype(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
-        let width = nt.bytes();
+        let carry = super::read::carry_of(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
+        let taken = if init.is_null() { None } else { Some(super::assign::take(rt, carry, init)?) };
+        let width = carry.width();
         let count = count as usize;
         let Some(total) = count.checked_mul(width) else {
             return Err(RunError::OutOfMemory);
@@ -1094,9 +1094,9 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if mem.is_null() {
             return Err(RunError::OutOfMemory);
         }
-        if let Some(bits) = bits {
+        if let Some(taken) = taken {
             for k in 0..count {
-                numtype::write_scalar_nt(nt, mem.add(k * width), bits);
+                super::assign::put(carry, mem.add(k * width), taken);
             }
         }
         rt.note_alloc();

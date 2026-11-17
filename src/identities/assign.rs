@@ -2,20 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `=`: assignment. Constructed at discovery, it reads the place to its left
-//! and drives its right side to the boundary; its builder bakes the target's
-//! width into the store leaf in the op slot. `=` returns nothing.
-//! DESIGN ›The scope's constructor is the driver‹
+//! and drives its right side to the boundary; its builder bakes how the place's type
+//! moves into the store leaf in the op slot. `=` returns nothing. Beside it, the one
+//! mover every whole-value write runs. DESIGN ›The scope's constructor is the driver‹
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{of_type_node, NumType};
-use super::read::{call_place, place_of, read_kind, Place, Read};
+use super::numtype::{read_scalar_nt, write_scalar_nt, NumType};
+use super::read::{call_place, carry_of, place_of, read_kind, Carry, Place, Read};
 use super::{meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ParseError};
+use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
 /// The run natives are the per-width store leaves ([`crate::identities::ops`]).
@@ -226,29 +227,23 @@ pub(super) fn build_store(
             super::pointer::build_storeptr(store, types, place, rhs)
         };
     }
-    // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
-    let (target, marked) = unsafe { (read_kind(types, lhs_d), types.is_storage(lhs_d)) };
-    match target {
-        Read::Container(t) if !t.is_null() => {
-            // SAFETY: as above.
-            let rhs = unsafe { super::land(store, types, rhs, t) }?;
-            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
-        }
-        Read::Rational => {
-            // SAFETY: as above.
-            let rhs = unsafe { super::land(store, types, rhs, types.rational) }?;
-            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.rational_store]));
-        }
-        Read::Scalar(_) | Read::Pointer(_) if marked => {}
-        Read::Literal => {
-            // SAFETY: a `Literal` read is a rational node with its fraction blob.
-            return Err(ParseError::AssignToLiteral(Box::new(unsafe {
-                super::rational::spell(lhs_d)
-            })));
-        }
-        _ => return Err(ParseError::BadAssignTarget),
+    // SAFETY: `lhs_d` is a reduced dyad from the store.
+    if unsafe { read_kind(types, lhs_d) } == Read::Literal {
+        // SAFETY: a `Literal` read is a rational node with its fraction blob.
+        return Err(ParseError::AssignToLiteral(Box::new(unsafe {
+            super::rational::spell(lhs_d)
+        })));
     }
-    // SAFETY: as above.
+    // SAFETY: as above; `lhs_type` is null or a type node.
+    let carry = unsafe { types.is_storage(lhs_d).then(|| carry_of(types, lhs_type)) }.flatten();
+    let Some(carry) = carry else {
+        return Err(ParseError::BadAssignTarget);
+    };
+    // SAFETY: `lhs_type` is null or a type node.
+    if lhs_ty == types.field_ && !unsafe { crate::parse::fits_field(types, lhs_type) } {
+        return Err(ParseError::WideFieldNotInSeed);
+    }
+    // SAFETY: `rhs` is a reduced dyad from the store.
     let rhs = unsafe { super::land(store, types, rhs, lhs_type) }?;
     // A non-owning value in an owning place ends in a double free at scope exit.
     // SAFETY: `rhs` is a reduced dyad from the store.
@@ -256,9 +251,83 @@ pub(super) fn build_store(
     if super::drop_model::is_owning_place(types, lhs_d) && !rhs_owning {
         return Err(ParseError::NonOwningIntoOwning);
     }
-    // SAFETY: `lhs` is a typed variable checked assignable above.
-    let nt = unsafe { of_type_node(lhs_type) };
-    Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(nt)]))
+    Ok(store.alloc_words(op, &[lhs, rhs, types.ops.put_leaf(carry)]))
+}
+
+/// What `value` hands a place of `carry`: the word it runs to, or the address of its bytes.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store whose type moves as `carry`.
+pub(crate) unsafe fn take(rt: &mut Runtime, carry: Carry, value: DyadPtr) -> Result<i64, RunError> {
+    match carry {
+        Carry::Word(_) => rt.run(value),
+        Carry::Bytes(_) => super::by_copy::record_addr(rt, value).map(|addr| addr as i64),
+    }
+}
+
+/// Write what [`take`] handed over into the place at `dest`, the type's width of bytes.
+///
+/// # Safety
+/// `dest` must be writable for `carry.width()` bytes; `taken` what [`take`] gave for `carry`.
+pub(crate) unsafe fn put(carry: Carry, dest: *mut u8, taken: i64) {
+    match carry {
+        Carry::Word(nt) => write_scalar_nt(nt, dest, taken),
+        // `v = v` copies a place onto itself.
+        Carry::Bytes(width) => std::ptr::copy(taken as usize as *const u8, dest, width),
+    }
+}
+
+/// What a whole read of the place at `at` hands over, as [`take`] does.
+///
+/// # Safety
+/// `at` must be readable for `carry.width()` bytes.
+pub(crate) unsafe fn load(carry: Carry, at: *mut u8) -> i64 {
+    match carry {
+        Carry::Word(nt) => read_scalar_nt(nt, at),
+        Carry::Bytes(_) => at as i64,
+    }
+}
+
+/// [`take`]'s compiled half.
+///
+/// # Safety
+/// As [`take`].
+pub(crate) unsafe fn lower_take(
+    lw: &mut Lowerer,
+    carry: Carry,
+    value: DyadPtr,
+) -> Result<Value, CompileError> {
+    match carry {
+        Carry::Word(_) => lw.lower(value),
+        Carry::Bytes(_) => super::by_copy::lower_record_addr(lw, value),
+    }
+}
+
+/// [`put`]'s compiled half, `offset` bytes past `dest`.
+pub(crate) fn lower_put(lw: &mut Lowerer, carry: Carry, dest: Value, offset: i64, taken: Value) {
+    match carry {
+        Carry::Word(nt) => lw.store_at(nt.cranelift_type(), dest, offset, taken),
+        Carry::Bytes(width) => {
+            let dest = lw.offset_addr(dest, offset);
+            lw.copy_bytes(dest, taken, width);
+        }
+    }
+}
+
+/// [`load`]'s compiled half, `offset` bytes past `at`.
+pub(crate) fn lower_load(lw: &mut Lowerer, carry: Carry, at: Value, offset: i64) -> Value {
+    match carry {
+        Carry::Word(nt) => lw.load_at(nt.cranelift_type(), at, offset),
+        Carry::Bytes(_) => lw.offset_addr(at, offset),
+    }
+}
+
+/// The machine type what [`lower_take`] and [`lower_load`] hand over is held at.
+pub(crate) fn handed_type(carry: Carry) -> cranelift_codegen::ir::Type {
+    match carry {
+        Carry::Word(nt) => nt.cranelift_type(),
+        Carry::Bytes(_) => NumType::U64.cranelift_type(),
+    }
 }
 
 /// Whether a `t` box, `type` or `dyad`, takes `value`: a type, a name whose place holds one,
@@ -289,22 +358,28 @@ pub(crate) unsafe fn box_takes(types: &Core, t: DyadPtr, value: DyadPtr) -> bool
     }
 }
 
-/// Guards a null storage address like the interpreter's `Uninitialized`; the
-/// width comes from the node's own store leaf, the one decision read twice.
+/// Guards a null storage address like the interpreter's `Uninitialized`; what moves is what
+/// the place's type moves as, the decision the leaf was picked by.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a valid `=` application `[lhs, rhs, store leaf]`.
+    // SAFETY: `node` is a valid `=` application `[lhs, rhs, store leaf]` over a storage place.
     unsafe {
         let (lhs, rhs) = operands(node);
-        let leaf = *(dyad::value(node) as *const DyadPtr).add(2);
-        let Some(nt) = lw.types().ops.store_nt_of(leaf) else {
-            return Err(CompileError::Internal("a store node holds a store leaf"));
-        };
         let lhs = lw.through(lhs);
         if lw.types().is_hole(lhs) {
             return Err(CompileError::Uninitialized);
         }
-        let v = lw.lower(rhs)?;
-        lw.write_place(lhs, nt.cranelift_type(), v)?;
+        let Some(carry) = carry_of(lw.types(), lw.types().type_of(lhs)) else {
+            return Err(CompileError::Internal("a store node's place moves whole"));
+        };
+        let v = lower_take(lw, carry, rhs)?;
+        match carry {
+            // A word may live in a register the place was promoted to.
+            Carry::Word(nt) => lw.write_place(lhs, nt.cranelift_type(), v)?,
+            Carry::Bytes(_) => {
+                let dest = lw.place_addr(lhs)?;
+                lower_put(lw, carry, dest, 0, v);
+            }
+        }
         Ok(v)
     }
 }

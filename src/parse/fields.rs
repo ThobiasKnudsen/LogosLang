@@ -574,12 +574,16 @@ impl<'a> Parser<'a> {
                 }
             };
             let types = self.types;
+            let field_type = crate::identities::hole::type_in(field);
+            if !super::fits_field(types, field_type) {
+                return Err(ParseError::WideFieldNotInSeed);
+            }
             return Ok((
                 crate::identities::pointer::build_deref(
                     self.rt.store,
                     types,
                     ptr_expr,
-                    crate::identities::hole::type_in(field),
+                    field_type,
                     base_off as usize + offset,
                 ),
                 0,

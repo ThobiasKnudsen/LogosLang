@@ -290,18 +290,53 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     }
 }
 
-/// The machine type a cell of `t` is loaded and stored at through a pointer: a scalar's own,
-/// and eight bytes of address for a pointer or a value of a type built by a Logos `parse`
-/// (DESIGN ›A value of a type built by a Logos `parse` travels as a pointer‹). `None` when a
-/// cell of `t` has no whole-value load.
+/// How a whole value moves into a place and back out of one. Either way the write is the
+/// type's width of bytes through the place's address (DESIGN ›`=` sits beside `:=`, and returns
+/// nothing‹); the two differ in what a run of the value hands over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Carry {
+    /// The value itself, one word, written at this machine type's width.
+    Word(NumType),
+    /// The address of the value's bytes, this many of which are copied.
+    Bytes(usize),
+}
+
+impl Carry {
+    /// The bytes a place of the type takes.
+    pub fn width(self) -> usize {
+        match self {
+            Carry::Word(nt) => nt.bytes(),
+            Carry::Bytes(width) => width,
+        }
+    }
+
+    /// The width a value handed over by its address is copied at.
+    pub fn bytes(self) -> Option<usize> {
+        match self {
+            Carry::Bytes(width) => Some(width),
+            Carry::Word(_) => None,
+        }
+    }
+}
+
+/// How a whole value of `t` is put into a place: the one answer `=`, a declaration's first
+/// write, a cell through a pointer, `alloc` and a call's argument block ask. A number is a word
+/// at its own type; a pointer and every eight-byte box a word of address (DESIGN ›A value of a
+/// type built by a Logos `parse` travels as a pointer‹); a run-time rational and a record a
+/// `type (…)` body wrote are their bytes. `None` where no whole value of `t` moves, a native
+/// record (a tape handle, a map) among them.
 ///
 /// # Safety
 /// `t` must be null or a valid dyad from the store.
-pub unsafe fn cell_numtype(types: &Core, t: DyadPtr) -> Option<NumType> {
+pub unsafe fn carry_of(types: &Core, t: DyadPtr) -> Option<Carry> {
     match place_layout(types, t)? {
-        (Read::Scalar(nt), _) => Some(nt),
-        (Read::Pointer(_), _) => Some(NumType::U64),
-        (Read::Container(c), _) if meta::is_node_valued(c, types.fn_type) => Some(NumType::U64),
+        (Read::Scalar(nt), _) => Some(Carry::Word(nt)),
+        (Read::Pointer(_) | Read::Container(_), _) => Some(Carry::Word(NumType::U64)),
+        (Read::Rational, width) => Some(Carry::Bytes(width)),
+        (Read::Aggregate, width) => {
+            let t = super::type_identity_of(types, t)?;
+            (!meta::record_body_of(t).is_null()).then_some(Carry::Bytes(width))
+        }
         _ => None,
     }
 }

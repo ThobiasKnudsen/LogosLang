@@ -328,6 +328,16 @@ pub fn parse_message(e: &ParseError) -> String {
             "moving a plain record is not in the seed yet: its bytes are not copied into a name"
                 .into()
         }
+        ParseError::WideFieldNotInSeed => {
+            "this field's type takes more bytes than its record lays out for it; reaching it \
+             whole is not in the seed yet"
+                .into()
+        }
+        ParseError::HeldRecordThroughPointerNotInSeed => {
+            "writing a record whose type fills `free` through a pointer is not in the seed yet: \
+             the value it displaces would never be freed"
+                .into()
+        }
         ParseError::MoveOfBorrow => {
             "this name borrows what it holds, so it cannot move it; only its owner can".into()
         }

@@ -9,8 +9,10 @@
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, RunFn, Runtime};
 
+use super::assign::{put, take};
 use super::callable::{self, Callables};
-use super::numtype::{apply_arith, apply_compare, write_scalar_nt, ArithOp, CmpOp, NumType};
+use super::numtype::{apply_arith, apply_compare, ArithOp, CmpOp, NumType};
+use super::read::{carry_of, Carry};
 use super::{operands, Cx};
 
 /// The parse-time resolver's table; the interpreter never consults it, each shim's type being
@@ -24,10 +26,10 @@ pub struct OpLeaves {
     /// The leaves over rational values, interpreted only.
     pub(crate) rational_arith: [DyadPtr; 5],
     pub(crate) rational_cmp: [DyadPtr; 6],
-    /// The `=` into a rational place.
-    pub(crate) rational_store: DyadPtr,
-    /// `[NumType]`: the `=` store leaf at that width; a pointer target stores as `U64`.
+    /// `[NumType]`: the `=` of a word at that width.
     pub(crate) store: [DyadPtr; 10],
+    /// The `=` of a value that is its bytes.
+    pub(crate) store_bytes: DyadPtr,
     pub(crate) and_: DyadPtr,
     pub(crate) or_: DyadPtr,
     pub(crate) convert_: DyadPtr,
@@ -87,9 +89,7 @@ impl OpLeaves {
     /// What the compiler refuses: every step over rational values.
     pub(crate) fn is_rational_leaf(&self, leaf: DyadPtr) -> bool {
         !leaf.is_null()
-            && (self.rational_arith.contains(&leaf)
-                || self.rational_cmp.contains(&leaf)
-                || self.rational_store == leaf)
+            && (self.rational_arith.contains(&leaf) || self.rational_cmp.contains(&leaf))
     }
 
     /// The op an arithmetic leaf over rationals stands for; `None` for any other leaf.
@@ -100,17 +100,12 @@ impl OpLeaves {
         self.rational_arith.iter().position(|&l| l == leaf).map(|i| ArithOp::from_tag(i as u8))
     }
 
-    pub(crate) fn store_leaf(&self, nt: NumType) -> DyadPtr {
-        self.store[nt as usize]
-    }
-
-    /// The width is in the node: re-deriving it from the target's type disagrees for a
-    /// `type ?` or `dyad ?` box. `None` for a pointer that is not a store leaf.
-    pub(crate) fn store_nt_of(&self, leaf: DyadPtr) -> Option<NumType> {
-        if leaf.is_null() {
-            return None;
+    /// The `=` leaf that writes a whole value of a type moving as `carry`.
+    pub(crate) fn put_leaf(&self, carry: Carry) -> DyadPtr {
+        match carry {
+            Carry::Word(nt) => self.store[nt as usize],
+            Carry::Bytes(_) => self.store_bytes,
         }
-        self.store.iter().position(|&l| l == leaf).map(|i| NumType::from_tag(i as u8))
     }
 
     /// The reverse of `cmp_leaf`; `None` for a pointer that is not a comparison leaf.
@@ -149,16 +144,33 @@ fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Resul
 fn store_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an assignment application `[lhs, rhs, op]`; `lhs` is a
     // typed variable whose storage the builder checked assignable.
+    unsafe { put_into(rt, node, Carry::Word(NumType::from_tag(NT))) }
+}
+
+/// The `=` of a value that is its bytes: as many as a place of its type takes, copied.
+fn store_bytes_run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: as `store_run`; the place's type moves as its bytes.
     unsafe {
-        let (lhs, rhs) = operands(node);
-        let bits = rt.run(rhs)?;
-        let slot = rt.place_addr(lhs).ok_or(RunError::NoActivation)?;
-        if slot.is_null() {
-            return Err(RunError::Uninitialized);
-        }
-        write_scalar_nt(NumType::from_tag(NT), slot, bits);
-        Ok(bits)
+        let types = rt.types();
+        let carry =
+            carry_of(types, types.type_of(operands(node).0)).ok_or(RunError::NoWholeRead)?;
+        put_into(rt, node, carry)
     }
+}
+
+/// `[lhs, rhs, op]`: the right side taken, then put into the place on the left.
+///
+/// # Safety
+/// `node` must be an assignment application over a storage place whose type moves as `carry`.
+unsafe fn put_into(rt: &mut Runtime, node: DyadPtr, carry: Carry) -> Result<i64, RunError> {
+    let (lhs, rhs) = operands(node);
+    let taken = take(rt, carry, rhs)?;
+    let slot = rt.place_addr(lhs).ok_or(RunError::NoActivation)?;
+    if slot.is_null() {
+        return Err(RunError::Uninitialized);
+    }
+    put(carry, slot, taken);
+    Ok(taken)
 }
 
 /// A function item coerces to the `RunFn` pointer in a const array.
@@ -241,16 +253,15 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
     for (o, &run) in super::rational::CMP_RUNS.iter().enumerate() {
         rational_cmp[o] = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     }
-    let rational_store =
-        callable::mint_native(cx.store, cs.callable, super::rational::STORE_RUN, cs.seed_native);
+    let store_bytes = callable::mint_native(cx.store, cs.callable, store_bytes_run, cs.seed_native);
     // The single-native leaves are minted by their own registrations.
     OpLeaves {
         arith,
         cmp,
         rational_arith,
         rational_cmp,
-        rational_store,
         store,
+        store_bytes,
         and_: std::ptr::null_mut(),
         or_: std::ptr::null_mut(),
         convert_: std::ptr::null_mut(),

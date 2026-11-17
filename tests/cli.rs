@@ -4896,6 +4896,199 @@ fn a_run_body_takes_a_plain_record_field_by_copy() {
     }
 }
 
+/// Runs each program and checks its whole stdout.
+fn assert_runs(cases: &[(String, &str)]) {
+    for (src, want) in cases {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(0), *want), "{src}: stderr: {stderr}");
+    }
+}
+
+/// DESIGN ›`=` sits beside `:=`, and returns nothing‹: `=` writes a whole record through the
+/// address its left side gives, from a constructor, a name, a call or itself, on both tiers.
+#[test]
+fn equals_writes_a_whole_record_into_its_place() {
+    let defs = "q := type ( x := i32 ? ), w := q(4), mk := fn () -> q ( q(5) )";
+    let mut cases = Vec::new();
+    for (body, want) in [
+        ("mut v := q(1), v = q(3), v.x", "3\n"),
+        ("mut v := q(1), v = w, v.x", "4\n"),
+        ("mut v := q(1), v = mk(), v.x", "5\n"),
+        ("mut v := q(1), v = v, v.x", "1\n"),
+        ("mut v := q(1), p := &v, p@ = q(3), v.x", "3\n"),
+        ("mut v := q(0), mut i := i32 0, while i < 3 ( v = q(i), i = i + 1 ), v.x", "2\n"),
+    ] {
+        cases.push((format!("{defs}, {body}"), want));
+        cases.push((format!("{defs}, f := fn () -> i32 ( {body} ), f()"), want));
+        cases.push((format!("{defs}, f := fn () -> i32 ( {body} ), f.compile(), f()"), want));
+    }
+    // Into a hole, a parameter and a field that fits it; a `T ?` record local does not compile yet.
+    let param = "f := fn (mut v := q ?) -> i32 ( v = q(3), v.x )";
+    cases.extend([
+        (format!("{defs}, mut v := q ?, v = q(3), v.x"), "3\n"),
+        (format!("{defs}, {param}, f(q(1))"), "3\n"),
+        (format!("{defs}, {param}, f.compile(), f(q(1))"), "3\n"),
+        (
+            "q2 := type ( mut x := i32 ?, mut y := i32 ? ), o := type ( mut a := q2 ?, mut b := i32 ? ), \
+             mut v := o ?, v.b = 5, v.a = q2(3, 4), v.a.y * 10 + v.b"
+                .to_string(),
+            "45\n",
+        ),
+    ]);
+    assert_runs(&cases);
+}
+
+/// DESIGN ›`:=` decides nothing about copy or reference; the type's reading rule does‹: a plain
+/// record's name gets a copy of its own, from a name, a parameter or a dereference.
+#[test]
+fn a_declaration_copies_a_plain_record() {
+    let q = "q := type ( mut x := i32 ? ), pt := type ( mut a := i64 ?, mut b := i32 ? )";
+    let mut cases = Vec::new();
+    for (ty, body, want) in [
+        ("i32", "v := q(3), mut w := v, w.x = 9, v.x", "3\n"),
+        ("bool", "v := q(3), w := v, &v == &w", "false\n"),
+        ("i32", "v := q(3), w := v, mut u := w, u.x = 4, v.x * 100 + w.x * 10 + u.x", "334\n"),
+        ("i32", "v := pt(1, 2), p := &v, w := p@, w.b", "2\n"),
+    ] {
+        cases.push((format!("{q}, {body}"), want));
+        cases.push((format!("{q}, f := fn () -> {ty} ( {body} ), f()"), want));
+        cases.push((format!("{q}, f := fn () -> {ty} ( {body} ), f.compile(), f()"), want));
+    }
+    for (f, call) in [
+        ("f := fn (a := q ?) -> i32 ( mut b := a, b.x = 9, a.x )", "f(q(3))"),
+        ("f := fn (mut v := q ?) -> i32 ( w := v, v.x = 9, w.x )", "f(q(3))"),
+    ] {
+        cases.push((format!("{q}, {f}, {call}"), "3\n"));
+        cases.push((format!("{q}, {f}, f.compile(), {call}"), "3\n"));
+    }
+    // A copy of a value whose type fills `free` owns nothing: the value is freed once.
+    cases.push((
+        "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), w := r(2), y := w, 0"
+            .to_string(),
+        "freed 2\n0\n",
+    ));
+    assert_runs(&cases);
+}
+
+/// DESIGN ›Explicit heap: `alloc n` and `alloc n of T v`‹: a cell through a pointer is read and
+/// written whole for every type a place of it has, a plain record, a rational, `type`, `dyad`.
+#[test]
+fn a_cell_through_a_pointer_moves_any_type_with_a_layout() {
+    let pt = "pt := type ( mut a := i64 ?, mut b := i32 ? ), g := fn (v := pt ?) -> i32 ( v.b )";
+    let mut cases = vec![
+        (format!("{pt}, p := alloc 1 of pt ?, p@.b = 7, p@.b"), "7\n"),
+        (format!("{pt}, p := alloc 2 of pt (1, 2), (p + 1)@.b"), "2\n"),
+        (format!("{pt}, p := alloc 2 of pt (1, 2), (p + 1)@ = pt(5, 6), p@.b * 10 + (p + 1)@.b"), "26\n"),
+        (format!("{pt}, f := fn (p := @pt ?) -> pt ( p@ ), w := pt(1, 2), r := f(&w), r.b"), "2\n"),
+        (
+            format!("{pt}, f := fn (p := @pt ?) -> pt ( p@ ), f.compile(), w := pt(1, 2), r := f(&w), r.b"),
+            "2\n",
+        ),
+        ("p := alloc 1 of rational_number ?, p@ = rational_number 1/2, p@".to_string(), "1/2\n"),
+        ("p := alloc 2 of rational_number (1/3), (p + 1)@".to_string(), "1/3\n"),
+        (
+            "f := fn (p := @rational_number ?) -> i32 ( p@ = rational_number 1/2, 1 ), \
+             q := alloc 1 of rational_number ?, f(q), q@"
+                .to_string(),
+            "1/2\n",
+        ),
+        (
+            "f := fn (p := @rational_number ?, r := rational_number ?) -> i32 ( p@ = r, 1 ), \
+             f.compile(), q := alloc 1 of rational_number ?, f(q, 1/2), q@"
+                .to_string(),
+            "1/2\n",
+        ),
+        (
+            "f := fn (p := @rational_number ?) -> rational_number ( p@ ), f.compile(), \
+             q := alloc 1 of rational_number ?, q@ = rational_number 2/3, f(q)"
+                .to_string(),
+            "2/3\n",
+        ),
+        ("p := alloc 1 of type ?, p@ = i32, t := p@, t".to_string(), "i32\n"),
+        ("p := alloc 1 of dyad ?, p@ = i32, d := p@, d == i32".to_string(), "true\n"),
+        (
+            "pt := type ( mut t := type ?, mut b := i32 ? ), mut v := pt ?, v.t = i32, v.b = 1, \
+             p := &v, p@.t = i64, v.t"
+                .to_string(),
+            "i64\n",
+        ),
+        (
+            "pt := type ( mut t := type ?, mut b := i32 ? ), mut v := pt ?, v.t = i32, v.b = 1, \
+             p := &v, p@.t == i32"
+                .to_string(),
+            "true\n",
+        ),
+    ];
+    for (body, want) in [
+        ("w := pt(1, 2), p := &w, g(p@)", "2\n"),
+        ("w := pt(1, 2), p := &w, mut v := pt(0, 0), v = p@, v.b", "2\n"),
+    ] {
+        cases.push((format!("{pt}, {body}"), want));
+        cases.push((format!("{pt}, f := fn () -> i32 ( {body} ), f.compile(), f()"), want));
+    }
+    assert_runs(&cases);
+}
+
+/// DESIGN ›`=` sits beside `:=`, and returns nothing‹: the one `run` frees the value it
+/// displaces by its type's `free`, on both tiers.
+#[test]
+fn equals_frees_the_record_it_displaces() {
+    let r = "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let body = "mut x := r(1), x = r(2), x.n";
+    assert_runs(&[
+        (format!("{r}, mut x := r(1), x = r(2), print «{{x.n}}»"), "freed 1\n2\nfreed 2\n"),
+        (format!("{r}, f := fn () -> i32 ( {body} ), f()"), "freed 1\nfreed 2\n2\n"),
+        (format!("{r}, f := fn () -> i32 ( {body} ), f.compile(), f()"), "freed 1\nfreed 2\n2\n"),
+    ]);
+}
+
+/// A whole value the seed cannot place yet is refused, never written past its room: a field
+/// wider than its record lays out for it, and a record whose type fills `free` through a pointer.
+#[test]
+fn a_whole_value_with_no_room_is_refused() {
+    for (src, reason) in [
+        (
+            "pt := type ( mut a := i64 ?, mut b := i64 ? ), o := type ( mut a := pt ?, mut z := i64 ? ), \
+             mut v := o ?, v.a = pt(1, 2), 0",
+            "takes more bytes than its record lays out",
+        ),
+        (
+            "o := type ( mut a := rational_number ?, mut z := i64 ? ), mut v := o ?, \
+             v.a = rational_number 1/3, 0",
+            "takes more bytes than its record lays out",
+        ),
+        (
+            "pt := type ( mut a := rational_number ?, mut b := i32 ? ), p := alloc 1 of pt ?, \
+             p@.a = rational_number 1/2, 0",
+            "takes more bytes than its record lays out",
+        ),
+        (
+            "pt := type ( mut b := i32 ?, mut a := rational_number ? ), p := alloc 1 of pt ?, p@.a",
+            "takes more bytes than its record lays out",
+        ),
+        (
+            "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), w := r(2), \
+             mut x := r(1), p := &x, p@ = w, 0",
+            "through a pointer is not in the seed yet",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(reason), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn the_repl_writes_and_copies_whole_records() {
+    let (echoes, stderr) = repl(
+        b"q := type ( mut x := i32 ? )\nmut v := q ?\nv = q(3)\nv.x\nw := q(4)\nmut u := w\n\
+          u.x = 9\nw.x\npt := type ( mut a := i64 ?, mut b := i32 ? )\np := alloc 1 of pt ?\n\
+          p@.b = 7\np@.b\nr := &v\nr@ = q(5)\nv.x\n",
+    );
+    assert_eq!(echoes, ["3", "4", "7", "5"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
 #[test]
 fn a_name_used_inside_its_own_declaration_is_a_checked_error() {
     // The binding exists from the `:=` on; the node comes with the value.
