@@ -2216,6 +2216,44 @@ fn address_of_a_parameter_works_both_tiers() {
 }
 
 #[test]
+fn address_of_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
+    for (f, args, expect) in [
+        ("f := fn (a := @i32 ?) -> i32 ( q := &(a@), q@ = 5, a@ )", "mut x := i32 3, f(&x)", 5),
+        (
+            "point := type ( x := i32 ?, y := i32 ? ), \
+             f := fn (p := @point ?) -> i32 ( q := &(p@.y), q@ = 9, p@.y )",
+            "mut v := point (1, 2), f(&v)",
+            9,
+        ),
+        (
+            "get := fn (p := @i32 ?) -> i32 ( p@ ), \
+             f := fn (a := @i32 ?) -> i32 ( q := &(get(a)), q@ = 4, a@ )",
+            "mut x := i32 3, f(&x)",
+            4,
+        ),
+    ] {
+        for compile in ["", "f.compile(), "] {
+            assert_eq!(run_script(&format!("{f}, {compile}{args}")), expect, "{f} / {compile}");
+        }
+    }
+    assert_eq!(run_script("a := alloc 1 of i32 3, p := &(a@), p@ = 7, a@"), 7);
+}
+
+#[test]
+fn address_of_what_is_no_place_or_has_no_address_is_refused() {
+    for src in [
+        "( f := fn () -> i32 ( 7 ), &(f()) )",
+        "( get := fn (p := @i32 ?) -> i32 ( return p@ ), a := alloc 1 of i32 3, &(get(a)) )",
+        "( a := alloc 2 of i32 1, &(a + 1) )",
+        "( w := type ( x := i64 ? ), &(w(7)) )",
+        "( x := i32 3, &x:name )",
+        "( m := hashmap i32 -> i32 ?, m[1] = 2, &(m[1]) )",
+    ] {
+        assert_eq!(parse_err(src), ParseError::BadAddressOf, "{src}");
+    }
+}
+
+#[test]
 fn a_pointer_steps_by_whole_cells_both_tiers() {
     // Cell k of the span `alloc n of T v` made is `(p + k)@`, for any cell width.
     assert_eq!(
