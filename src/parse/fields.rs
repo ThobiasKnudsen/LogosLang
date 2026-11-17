@@ -1213,15 +1213,15 @@ impl<'a> Parser<'a> {
 
     /// An operator expression, which `.` reads as its node (DESIGN ›Reading a path runs
     /// nothing‹): a node that runs, whose type word is an identity with a parse of its own, the
-    /// one that built it from its operands (`x + 2`, `x ^ 3`). A call's type word is a function
-    /// or an inner node with no parse (`pt(3, 4)`, `m[k]`), and the call stands for what it
-    /// returns.
+    /// one that built it from its operands (`x + 2`, `x ^ 3`), or a mint of one. A call's type
+    /// word is a function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and the call
+    /// stands for what it returns.
     ///
     /// # Safety
     /// `node` must be a reduced dyad from the store.
     unsafe fn is_operator_node(&self, node: DyadPtr) -> bool {
         use crate::identities::read::{read_kind, Read};
-        let ty = dyad::ty(node);
+        let ty = crate::identities::mint::origin(dyad::ty(node));
         matches!(read_kind(self.types, node), Read::Executable(_))
             && self.identity_head(ty).is_some()
             && !crate::identities::meta::constructor_of(ty).is_null()

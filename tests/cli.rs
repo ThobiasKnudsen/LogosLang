@@ -1992,10 +1992,24 @@ fn a_value_reads_its_type_with_a_dot_on_both_tiers() {
     for (src, want) in [
         ("x := i32 3, x.type == i32".to_string(), "true"),
         ("f := fn (x := i32 ?) -> bool ( x.type == i32 ), f.compile(), f(1)".into(), "true"),
-        // An operator expression stands for its node: `.type` is the node's own type, and what
-        // it gives is its `output_type`.
+        // An operator expression stands for its node: `.type` is the node's own type, its
+        // operator's mint for its operand types, and what it gives is the mint's `output_type`.
         ("x := i32 3, (x + i32 1).type == i32".into(), "false"),
         ("x := i32 3, (x + i32 1).output_type == i32".into(), "true"),
+        ("x := i32 3, (x + i32 1).type == (x + i32 2).type".into(), "true"),
+        ("x := i32 3, y := i64 4, (x + i32 1).type == (y + i64 1).type".into(), "false"),
+        (
+            "f := fn (x := i32 ?) -> bool ( (x + i32 1).type == (x + i32 2).type ), \
+             f.compile(), f(3)"
+                .into(),
+            "true",
+        ),
+        (
+            "f := fn (x := i32 ?, y := i64 ?) -> bool ( (x + i32 1).type == (y + i64 1).type ), \
+             f.compile(), f(3, 4)"
+                .into(),
+            "false",
+        ),
         (
             "f := fn (x := f64 ?) -> bool ( (x + 1.0).output_type == f64 ), f.compile(), f(1.0)"
                 .into(),
