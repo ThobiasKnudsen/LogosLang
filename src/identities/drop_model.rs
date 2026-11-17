@@ -389,14 +389,36 @@ pub(crate) unsafe fn only_borrows(types: &Core, holder: DyadPtr) -> bool {
         && !crate::binding::Binding::has_gate(holder, types.own_)
 }
 
+/// What a field path reaches its last field through: its name, then each field before the last.
+fn path_holders(name: DyadPtr, path: &[DyadPtr]) -> impl Iterator<Item = DyadPtr> + '_ {
+    let through = path.split_last().map_or(&[][..], |(_, through)| through);
+    std::iter::once(name).chain(through.iter().copied())
+}
+
 /// Whether a field path's name, or a field on it before the last, [`only_borrows`] what it
 /// reaches.
 ///
 /// # Safety
 /// `name` and `path` must be binding dyads from the store.
 pub(crate) unsafe fn path_borrows(types: &Core, name: DyadPtr, path: &[DyadPtr]) -> bool {
-    let through = path.split_last().map_or(&[][..], |(_, through)| through);
-    std::iter::once(name).chain(through.iter().copied()).any(|h| only_borrows(types, h))
+    path_holders(name, path).any(|h| only_borrows(types, h))
+}
+
+/// The first holder on a field path whose type fills its own `free`, as the number of the
+/// path's fields that lead to it, 0 for the name; `None` where none does. DESIGN ›`move` and
+/// `free` take a field path too‹.
+///
+/// # Safety
+/// As `path_borrows`.
+pub(crate) unsafe fn freeing_holder(
+    types: &Core,
+    name: DyadPtr,
+    path: &[DyadPtr],
+) -> Option<usize> {
+    path_holders(name, path).position(|h| {
+        let ty = types.type_of(h);
+        meta::is_record_type(ty) && !meta::instances_free_of(ty).is_null()
+    })
 }
 
 /// `own @T ?`: the hole `?` built for a pointer type becomes a place of an owning pointer
@@ -1996,57 +2018,53 @@ mod tests {
         mut x := r ?,\na := alloc 1 of i32 5,\nx.p = move a,\nb := alloc 1 of i32 6,\nx.q = move b,\n";
 
     #[test]
-    fn a_moved_path_ends_and_its_name_is_dead_as_a_whole() {
-        let dead = |n: &str| ParseError::Resolve(ResolveError::Dead(n.into()));
+    fn a_field_of_a_record_that_fills_free_is_never_ended_alone() {
+        let refused = |path: &str| ParseError::EndUnderFree(Box::new((path.into(), "x".into())));
         for (tail, want) in [
-            ("c := move x.p,\nx.p", dead("x.p")),
-            ("free x.p,\nfree x.p", dead("x.p")),
-            ("free x.p,\nd := alloc 1 of i32 7,\nx.p = move d", dead("x.p")),
-            ("c := move x.p,\nx", dead("x")),
-            ("c := move x.p,\nd := move x", dead("x")),
-            ("c := move x.p,\nx.s()", dead("x")),
-            ("c := move x.p,\nh := fn (v := r ?) -> i32 ( 1 ),\nh(x)", dead("x")),
-            ("g := fn () -> i32 ( x.q@ ),\nc := move x.p,\ng()", dead("x")),
-            ("c := move x.p,\nx := r ?", dead("x")),
-            ("k := i32 1,\nif (k == 1) ( c := move x.p, 1 ),\nx.p@", dead("x.p")),
+            ("c := move x.p,\nc@", refused("x.p")),
+            ("free x.p,\n1", refused("x.p")),
+            ("free x.q,\nx.p@", refused("x.q")),
+            ("k := i32 1,\nif (k == 1) ( c := move x.p, 1 ),\n1", refused("x.p")),
             ("for i in 0..2 ( c := move x.p )", ParseError::MoveOfOuterName),
             ("f := fn () -> i32 ( c := move x.p, c@ )", ParseError::MoveOfOuterName),
         ] {
             assert_eq!(parse_err(&format!("{PAIR}{tail}")), want, "{tail}");
         }
-        for (tail, want) in [
-            ("c := move x.p,\nx.q@ + c@", 11),
-            ("free x.p,\nx.q@", 6),
-            ("c := move x.p,\nd := move x.q,\nc@ + d@", 11),
-            ("k := i32 1,\nif (k == 1) ( c := move x.p, 1 ),\nx.q@", 6),
-            ("k := i32 0,\nif (k == 1) ( c := move x.p, 1 ),\nx.q@", 6),
-        ] {
-            assert_eq!(run(&format!("{PAIR}{tail}")), (want, 0), "{tail}");
-        }
-        // A line that fails after the move frees `x` whole and finds nothing in `p`.
-        let (e, live) = fault(&format!("{PAIR}c := move x.p,\nerror «stop»"));
-        assert!(matches!(e, RunError::Raised(_)), "{e:?}");
-        assert_eq!(live, 0);
+        // `x` frees both fields, at its end.
+        assert_eq!(run(&format!("{PAIR}x.p@ + x.q@")), (11, 0));
     }
 
+    /// `q`, a record whose type fills no `free`, `x` holding 5 and `y` 6.
+    const PLAIN: &str = "r := type ( x := i32 ?, y := i32 ?, share s := fn () -> i32 ( 2 ) ),\n\
+        q := r (5, 6),\n";
+
     #[test]
-    fn the_owner_s_end_runs_its_free_without_the_ended_field_s_line() {
-        use crate::parse::FN_BODY;
-        let mut store = Store::new();
-        let mut trie = RegexTrie::new();
-        let core = Core::build(&mut store, &mut trie);
-        let items = exit_items(&mut store, &mut trie, &core, &format!("{PAIR}c := move x.p,\n0"));
-        let (since, free) = items
-            .iter()
-            .find_map(|item| item.free_from)
-            .expect("`x`'s item runs its free without `free p`");
-        assert_eq!(since, 6, "from the line of the move on");
-        // SAFETY: `free` is the `fn` node the parse built over the `free` slot's body.
-        unsafe {
-            let body = *(dyad::value(free) as *const DyadPtr).add(FN_BODY);
-            let lines = super::super::scope::exprs_of(body).expect("the body's lines");
-            assert!(numtype::is_comment_type(dyad::ty(lines[0])), "`free p` stands as prose");
-            assert_eq!(dyad::ty(lines[1]), core.free_, "`free q` runs");
+    fn a_freed_path_ends_and_its_name_is_dead_as_a_whole() {
+        let dead = |n: &str| ParseError::Resolve(ResolveError::Dead(n.into()));
+        for (tail, want) in [
+            ("free q.x,\nq.x", dead("q.x")),
+            ("free q.x,\nfree q.x", dead("q.x")),
+            ("free q.x,\nq", dead("q")),
+            ("free q.x,\nd := move q", dead("q")),
+            ("free q.x,\nq.s()", dead("q")),
+            ("free q.x,\nh := fn (v := r ?) -> i32 ( 1 ),\nh(q)", dead("q")),
+            ("g := fn () -> i32 ( q.y ),\nfree q.x,\ng()", dead("q")),
+            ("free q.x,\nq := r (1, 2)", dead("q")),
+            ("k := i32 1,\nif (k == 1) ( free q.x, 1 ),\nq.x", dead("q.x")),
+            ("for i in 0..2 ( free q.x )", ParseError::MoveOfOuterName),
+            ("f := fn () -> i32 ( free q.x, 1 )", ParseError::MoveOfOuterName),
+            // A field that owns nothing moves nowhere yet.
+            ("c := move q.x,\nc", ParseError::MoveOfUnownedPath),
+        ] {
+            assert_eq!(parse_err(&format!("{PLAIN}{tail}")), want, "{tail}");
+        }
+        for (tail, want) in [
+            ("free q.x,\nq.y", 6),
+            ("k := i32 1,\nif (k == 1) ( free q.x, 1 ),\nq.y", 6),
+            ("k := i32 0,\nif (k == 1) ( free q.x, 1 ),\nq.y", 6),
+            ("f := fn () -> i32 ( p := r (1, 2), free p.x, p.y ),\nf.compile(),\nf()", 2),
+        ] {
+            assert_eq!(run(&format!("{PLAIN}{tail}")), (want, 0), "{tail}");
         }
     }
 
