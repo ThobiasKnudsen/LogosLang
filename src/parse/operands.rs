@@ -402,43 +402,78 @@ impl<'a> Parser<'a> {
     /// too‹); `None` for a place that is no field, and for a field of the value a type's `free`
     /// or `parse` body works on. A field the parse cannot follow back to a name that holds it
     /// is refused where `cell`, the operand's, stands: through a pointer, an element, a value
-    /// no name holds or a borrow, or of a `share` function's own value.
+    /// no name holds or a borrow, or of a `share` function's own value. A cell that holds a value
+    /// with an end is refused where something it is reached through only borrows it.
     fn ended_path(&mut self, place: DyadPtr, cell: &Cell) -> Result<Option<Ended>, ParseError> {
+        use crate::identities::drop_model::{cell_free, is_owning_place, path_borrows};
         use crate::identities::this::{field_path, FieldPath};
         let (at, held) = (cell.start, self.settled_type(cell.root));
+        // SAFETY: `place` is a reduced dyad from the store.
+        let owns = unsafe {
+            self.is_owning_read(place)
+                || is_owning_place(self.types, place)
+                || cell_free(self.types, place).is_some()
+        };
         // SAFETY: `place` is a reduced dyad from the store, the cell's root null or a binding.
         let (binding, path) = match unsafe { field_path(self.types, place, cell.root, held) } {
             // A field of a node the parse holds is read as the node its slot holds.
             FieldPath::NoField if !cell.target.0.is_null() => (cell.target.0, vec![cell.target.1]),
-            FieldPath::NoField => return Ok(None),
+            FieldPath::NoField => {
+                // Judged as written: a call's place lies in its callee, reached through a parameter.
+                // SAFETY: the cell's dyad is a reduced dyad from the store.
+                if owns && unsafe { self.reached_through_borrow(cell.dyad) } {
+                    return Err(self.fail_at(at, ParseError::EndThroughBorrow));
+                }
+                return Ok(None);
+            }
             FieldPath::Unfollowed => return Err(self.fail_at(at, ParseError::UnfollowedPath)),
             FieldPath::From(binding, path) => (binding, path),
         };
-        if let Some(def) = self.cx.definitions.last().filter(|d| d.this_param == binding) {
-            if def.in_parse || def.in_free {
-                return Ok(None);
-            }
-            return Err(self.fail_at(at, ParseError::UnfollowedPath));
+        match self.own_value_borrowed(binding) {
+            Some(false) => return Ok(None),
+            Some(true) => return Err(self.fail_at(at, ParseError::UnfollowedPath)),
+            None => {}
         }
         // SAFETY: `binding` and the path's fields are binding dyads from the store.
         unsafe {
             if self.cx.scopes.crosses_barrier(Binding::read(binding).scope) {
                 return Err(self.fail_at(at, ParseError::MoveOfOuterName));
             }
-            let owns = self.is_owning_read(place)
-                || crate::identities::drop_model::is_owning_place(self.types, place);
-            // A record kept in its bytes is the name's own; a node only an `own` name holds.
-            let borrows = |b: DyadPtr| {
-                let ty = self.types.type_of(b);
-                crate::identities::meta::is_node_valued(ty, self.types.fn_type)
-                    && !self.owns_node(b)
-            };
-            let (_, through) = path.split_last().expect("a field path names a field");
-            if owns && (borrows(binding) || through.iter().any(|&f| borrows(f))) {
+            if owns && path_borrows(self.types, binding, &path) {
                 return Err(self.fail_at(at, ParseError::UnfollowedPath));
             }
         }
         Ok(Some(Ended { binding, path }))
+    }
+
+    /// Whether `place` is reached through something that only borrows it
+    /// (`drop_model::only_borrows`): a cell through its pointer, past the steps `p + k`, and
+    /// whatever that pointer is reached through in turn; a field path through its name and fields.
+    ///
+    /// # Safety
+    /// `place` must be a reduced dyad from the store.
+    unsafe fn reached_through_borrow(&self, place: DyadPtr) -> bool {
+        use crate::identities::drop_model::{only_borrows, path_borrows};
+        use crate::identities::this::{field_path, FieldPath};
+        let types = self.types;
+        if dyad::ty(place) == types.deref_ {
+            let (pointer, _, _) = crate::identities::pointer::deref_parts(place);
+            let pointer = crate::identities::binary::step_base(types, pointer);
+            return only_borrows(types, pointer) || self.reached_through_borrow(pointer);
+        }
+        let null = std::ptr::null_mut();
+        let FieldPath::From(name, path) = field_path(types, place, null, null) else {
+            return false;
+        };
+        self.own_value_borrowed(name).unwrap_or_else(|| path_borrows(types, name, &path))
+    }
+
+    /// Whether the value the body being defined works on, when `name` is it, is borrowed there:
+    /// a `share` function's own value is, the one a type's own `free` or `parse` body ends or
+    /// builds is not. `None` for any other name.
+    fn own_value_borrowed(&self, name: DyadPtr) -> Option<bool> {
+        let def = self.cx.definitions.last().filter(|d| d.this_param == name)?;
+        Some(!(def.in_parse || def.in_free))
     }
 
     /// The one read every prefix constructor makes (`return x`, `not x`, a

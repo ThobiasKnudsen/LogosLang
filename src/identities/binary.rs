@@ -253,6 +253,22 @@ unsafe fn pointer_step(
     Ok(Some(store.alloc_words(op, &[lhs, offset, types.ops.arith_leaf(a, NumType::I64), output])))
 }
 
+/// The pointer the steps `p + k` and `p - k` start from, whose block holds every cell they
+/// reach; `node` itself when it is no step.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn step_base(types: &Core, node: DyadPtr) -> DyadPtr {
+    let node = types.through(node);
+    let op = dyad::ty(node);
+    if (op == types.plus || op == types.minus)
+        && super::numtype::is_pointer_type(super::read::output_type(types, node))
+    {
+        return step_base(types, *(dyad::value(node) as *const DyadPtr));
+    }
+    node
+}
+
 /// When either side is a rational value, the other must be one too or a literal; a
 /// concrete number beside a rational is the mismatch. `None` when neither side is one.
 ///

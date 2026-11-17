@@ -4071,6 +4071,65 @@ fn a_plain_record_s_owner_runs_its_free_once() {
     assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
 }
 
+/// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹: "`free p@` does the same for
+/// a cell an owning pointer reaches, a record kept in the cell's bytes included", on both tiers.
+#[test]
+fn free_of_a_cell_runs_the_free_of_the_record_it_holds() {
+    let mk =
+        "mk := fn () -> own @bag ( alloc 1 of bag (5) ), g := fn () -> i32 ( free (mk())@, 1 )";
+    for (tail, printed) in [
+        ("p := alloc 1 of bag (5), free p@, 0".to_string(), "freed 5\n0\n"),
+        (
+            "p := alloc 2 of bag (5), (p + 1)@.n = 6, free (p + 1)@, free (p + 2 - 2)@, 0"
+                .to_string(),
+            "freed 6\nfreed 5\n0\n",
+        ),
+        (
+            "g := fn () -> i32 ( p := alloc 1 of bag (5), free p@, 1 ), g()".to_string(),
+            "freed 5\n1\n",
+        ),
+        (format!("{mk}, g()"), "freed 5\n1\n"),
+        (format!("{mk}, g.compile(), g()"), "freed 5\n1\n"),
+        // The block's own `free` runs nothing for the records its cells hold.
+        ("p := alloc 1 of bag (5), free p, 0".to_string(), "0\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+}
+
+/// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹: "Something that only borrows
+/// a value cannot end it: through a pointer `&` made (`pp := &a, free pp@`) … `free` and `move`
+/// are refused where they are written". A cell with nothing to end keeps the inert `free`.
+#[test]
+fn a_cell_reached_through_a_borrow_is_not_ended_there() {
+    let borrowed = "this cell is reached through something that only borrows it";
+    for tail in [
+        "a := bag(1), pp := &a, free pp@, 0",
+        "a := bag(1), pp := &a, b := move pp@, 0",
+        "a := alloc 1 of i32 5, pp := &a, free pp@, 0",
+        "a := alloc 1 of i32 5, pp := &a, b := move pp@, 0",
+        "p := alloc 1 of bag (5), q := p, free q@, 0",
+        "p := alloc 2 of bag (5), q := p, free (q + 1)@, 0",
+        "f := fn (p := @bag ?) -> i32 ( free p@, 1 )",
+        "id := fn (q := @bag ?) -> @bag ( q ), p := alloc 1 of bag (5), free (id(p))@, 0",
+        "import ./identities/array.logos, t := array i32, tt := array t, \
+         g := fn (h := tt ?) -> i32 ( free (h.ptr + 0)@, 1 )",
+    ] {
+        let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(borrowed), "{tail}: {stderr}");
+    }
+    for (tail, printed) in [
+        ("a := i32 5, pp := &a, free pp@, print «after»", "after\n"),
+        ("f := fn (p := @i32 ?) -> i32 ( free p@, 1 ), a := i32 5, f(&a)", "1\n"),
+        ("f := fn (p := @i32 ?) -> i32 ( free p@, 1 ), f.compile(), a := i32 5, f(&a)", "1\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(tail);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+}
+
 /// `h0` makes with `-> RESULT`, and each `h1` to `hN` hands on the one before from both arms.
 fn own_chain(result: &str, depth: usize) -> String {
     let mut src = format!("c := i32 1, h0 := fn () -> {result} ( bag(1) )");

@@ -258,6 +258,10 @@ pub enum ParseError {
     /// through a pointer, an element, a value no name holds or a borrow, or of a `share`
     /// function's own value.
     UnfollowedPath,
+    /// `move` or `free` of a cell reached through something that only borrows it: a pointer
+    /// `&` made, a copy of an owner or a parameter without `own`, or a name that borrows the node
+    /// whose pointer reaches it.
+    EndThroughBorrow,
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
     /// a `free`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,
