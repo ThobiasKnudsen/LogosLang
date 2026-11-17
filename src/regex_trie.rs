@@ -30,22 +30,28 @@ pub enum RegexTrieError {
     BadPattern(String),
 }
 
-/// The value at an end-of-word node; every alternation path of one `insert`
-/// holds the same binding pointers.
+/// A spelling whose path ends at a node, under the key it was inserted with;
+/// every alternation path of one `insert` holds the same binding pointers.
 #[derive(Debug)]
-pub struct Leaf {
-    pub regex_key: String,
-    pub bindings: Vec<DyadPtr>,
+struct Spelling {
+    key: String,
+    bindings: Vec<DyadPtr>,
 }
 
-/// `bindings` is the full candidate list, one per declaring scope; the parser
-/// picks the one live in the open scopes.
+/// One spelling's match. `bindings` is its full candidate list, one per
+/// declaring scope; the parser picks the one live in the open scopes.
 #[derive(Debug)]
 pub struct MatchResult<'a> {
     /// Bytes consumed from the start of the input.
     pub matched: usize,
     pub regex_key: &'a str,
     pub bindings: &'a [DyadPtr],
+}
+
+impl<'a> MatchResult<'a> {
+    fn of(matched: usize, spelling: &'a Spelling) -> Self {
+        MatchResult { matched, regex_key: &spelling.key, bindings: &spelling.bindings }
+    }
 }
 
 struct RegexEntry {
@@ -93,7 +99,9 @@ fn compile(pattern: &str) -> Result<Regex, RegexTrieError> {
 pub struct RegexTrie {
     child_indices: [u32; 256],
     children: Vec<Option<Box<RegexTrie>>>,
-    leaf_value: Option<Leaf>,
+    /// The paths of several spellings can end at one node (`x|ab` and `ab|y`
+    /// at `ab`), so each is kept, and found, under its own key.
+    spellings: Vec<Spelling>,
     regexes: Vec<RegexEntry>,
 }
 
@@ -108,7 +116,7 @@ impl RegexTrie {
         RegexTrie {
             child_indices: [NONE; 256],
             children: Vec::new(),
-            leaf_value: None,
+            spellings: Vec::new(),
             regexes: Vec::new(),
         }
     }
@@ -127,13 +135,17 @@ impl RegexTrie {
         idx != NONE && self.children[idx as usize].is_none()
     }
 
-    /// The leaf a match of `matched` bytes ends at. A spelling is never
-    /// empty, so a leaf reached having matched nothing is no match.
-    fn leaf_at(&self, matched: usize) -> Option<&Leaf> {
+    /// The spellings a match of `matched` bytes ends at. A spelling is never
+    /// empty, so a node reached having matched nothing ends none.
+    fn ends_at(&self, matched: usize) -> &[Spelling] {
         if matched == 0 || !self.check_eow() {
-            return None;
+            return &[];
         }
-        self.leaf_value.as_ref()
+        &self.spellings
+    }
+
+    fn spelling(&self, key: &str) -> Option<&Spelling> {
+        self.spellings.iter().find(|s| s.key == key)
     }
 
     /// Any literal child other than EOW, or any regex branch.
@@ -221,10 +233,10 @@ impl RegexTrie {
     }
 
     fn collect_in(&self, scope: DyadPtr, out: &mut Vec<DyadPtr>) {
-        if let Some(leaf) = &self.leaf_value {
+        for spelling in &self.spellings {
             // SAFETY: every pointer the trie stores is a binding dyad from the store.
             out.extend(
-                leaf.bindings.iter().filter(|&&b| unsafe { Binding::read(b).scope } == scope),
+                spelling.bindings.iter().filter(|&&b| unsafe { Binding::read(b).scope } == scope),
             );
         }
         for child in self.children.iter().flatten() {
@@ -240,8 +252,7 @@ impl RegexTrie {
     pub fn bindings_for_key(&self, key: &str) -> Option<&[DyadPtr]> {
         let path = regex_splitting(key).into_iter().next()?;
         let node = self.locate(&path).filter(|n| n.check_eow())?;
-        let leaf = node.leaf_value.as_ref().filter(|v| v.regex_key == key)?;
-        Some(&leaf.bindings)
+        Some(&node.spelling(key)?.bindings)
     }
 
     /// Appends: a spelling carries one binding per scope it is declared in. The
@@ -256,7 +267,7 @@ impl RegexTrie {
         for path in &regex_splitting(key) {
             let leaf = Self::walk_create(self, path);
             leaf.ensure_eow();
-            push_binding(&mut leaf.leaf_value, key, binding);
+            leaf.push_binding(key, binding);
         }
     }
 
@@ -266,17 +277,23 @@ impl RegexTrie {
             current = current.lit_child_or_create(c);
         }
         current.ensure_eow();
-        push_binding(&mut current.leaf_value, s, binding);
+        current.push_binding(s, binding);
+    }
+
+    fn push_binding(&mut self, key: &str, binding: DyadPtr) {
+        match self.spellings.iter_mut().find(|s| s.key == key) {
+            Some(s) => s.bindings.push(binding),
+            None => self.spellings.push(Spelling { key: key.to_string(), bindings: vec![binding] }),
+        }
     }
 
     /// Longest match at the start of `string`; a literal beats a regex of
-    /// equal length, so a short keyword never blocks a longer identifier.
+    /// equal length, so a short keyword never blocks a longer identifier. Of
+    /// several spellings ending at that node, the first inserted.
     pub fn get(&self, string: &str) -> Result<MatchResult<'_>, RegexTrieError> {
         debug_assert!(!string.is_empty());
         match self.longest(string.as_bytes(), 0)? {
-            Some((matched, leaf)) => {
-                Ok(MatchResult { matched, regex_key: &leaf.regex_key, bindings: &leaf.bindings })
-            }
+            Some((matched, spelling)) => Ok(MatchResult::of(matched, spelling)),
             None => Err(RegexTrieError::NodeNotFound),
         }
     }
@@ -288,8 +305,8 @@ impl RegexTrie {
         &'s self,
         hay: &[u8],
         pos: usize,
-    ) -> Result<Option<(usize, &'s Leaf)>, RegexTrieError> {
-        let mut best: Option<(usize, &'s Leaf)> = self.leaf_at(pos).map(|leaf| (pos, leaf));
+    ) -> Result<Option<(usize, &'s Spelling)>, RegexTrieError> {
+        let mut best = self.ends_at(pos).first().map(|spelling| (pos, spelling));
         if let Some(&c) = hay.get(pos).filter(|&&c| c != 0) {
             if let Some(child) = self.lit_child(c) {
                 if let Some(cand) = child.longest(hay, pos + 1)? {
@@ -311,20 +328,14 @@ impl RegexTrie {
         Ok(best)
     }
 
-    /// Every match at the start of `string`, for ambiguity inspection.
+    /// Every match at the start of `string`, one per spelling, for ambiguity inspection.
     pub fn get_all_matches(&self, string: &str) -> Result<Vec<MatchResult<'_>>, RegexTrieError> {
         let bytes = string.as_bytes();
         let mut out: Vec<MatchResult<'_>> = Vec::new();
         let mut stack: Vec<(&RegexTrie, usize)> = vec![(self, 0)];
 
         while let Some((current, pos)) = stack.pop() {
-            if let Some(v) = current.leaf_at(pos) {
-                out.push(MatchResult {
-                    matched: pos,
-                    regex_key: &v.regex_key,
-                    bindings: &v.bindings,
-                });
-            }
+            out.extend(current.ends_at(pos).iter().map(|spelling| MatchResult::of(pos, spelling)));
             if let Some(&c) = bytes.get(pos).filter(|&&c| c != 0) {
                 if let Some(child) = current.lit_child(c) {
                     stack.push((child, pos + 1));
@@ -349,47 +360,51 @@ impl RegexTrie {
         // Verify every path before mutating anything.
         let mut held: Option<DyadPtr> = None;
         for path in &paths {
-            let node = self.locate(path).filter(|n| n.check_eow());
-            let ident = match node.and_then(|n| n.leaf_value.as_ref()) {
-                Some(v) if v.regex_key == regex_key => {
-                    match v.bindings.iter().find(|&&r| is_live_in(r, scope)) {
-                        // SAFETY: every stored pointer is a binding dyad.
-                        Some(&r) => unsafe { Binding::read(r).dyad },
-                        None => return Err(RegexTrieError::NodeNotFound),
-                    }
-                }
+            let live = self
+                .locate(path)
+                .filter(|n| n.check_eow())
+                .and_then(|n| n.spelling(regex_key))
+                .and_then(|s| s.bindings.iter().copied().find(|&r| is_live_in(r, scope)));
+            match (live, held) {
+                (Some(r), None) => held = Some(r),
+                (Some(r), Some(h)) if r == h => {}
                 _ => return Err(RegexTrieError::NodeNotFound),
-            };
-            match held {
-                None => held = Some(ident),
-                Some(h) if h == ident => {}
-                Some(_) => return Err(RegexTrieError::NodeNotFound),
             }
         }
+        let binding = held.ok_or(RegexTrieError::NodeNotFound)?;
 
         for path in &paths {
             let steps = flatten(path);
-            Self::prune_remove(self, &steps, 0, scope);
+            Self::prune_remove(self, &steps, 0, regex_key, binding);
         }
 
-        Ok(held.expect("at least one path verified"))
+        // SAFETY: every stored pointer is a binding dyad.
+        Ok(unsafe { Binding::read(binding).dyad })
     }
 
     /// Returns true when `node` became empty and the caller should drop the link to it.
-    fn prune_remove(node: &mut RegexTrie, steps: &[Step], i: usize, scope: DyadPtr) -> bool {
+    fn prune_remove(
+        node: &mut RegexTrie,
+        steps: &[Step],
+        i: usize,
+        key: &str,
+        binding: DyadPtr,
+    ) -> bool {
         if i == steps.len() {
-            if let Some(leaf) = &mut node.leaf_value {
-                leaf.bindings.retain(|&r| !is_live_in(r, scope));
-                if leaf.bindings.is_empty() {
-                    node.leaf_value = None;
-                    let eow = node.child_indices[EOW];
-                    if eow != NONE {
-                        node.child_indices[EOW] = NONE;
-                        node.children[eow as usize] = None;
-                    }
+            if let Some(at) = node.spellings.iter().position(|s| s.key == key) {
+                node.spellings[at].bindings.retain(|&r| r != binding);
+                if node.spellings[at].bindings.is_empty() {
+                    node.spellings.remove(at);
                 }
             }
-            return !node.has_children() && node.leaf_value.is_none() && !node.check_eow();
+            if node.spellings.is_empty() {
+                let eow = node.child_indices[EOW];
+                if eow != NONE {
+                    node.child_indices[EOW] = NONE;
+                    node.children[eow as usize] = None;
+                }
+            }
+            return !node.has_children() && node.spellings.is_empty() && !node.check_eow();
         }
 
         match &steps[i] {
@@ -399,7 +414,7 @@ impl RegexTrie {
                     return false;
                 }
                 let child_empty = match &mut node.children[idx as usize] {
-                    Some(child) => Self::prune_remove(child, steps, i + 1, scope),
+                    Some(child) => Self::prune_remove(child, steps, i + 1, key, binding),
                     None => return false,
                 };
                 if child_empty {
@@ -410,7 +425,7 @@ impl RegexTrie {
             Step::Regex(p) => match node.regexes.iter().position(|e| &e.pattern == p) {
                 Some(ri) => {
                     let child_empty =
-                        Self::prune_remove(&mut node.regexes[ri].node, steps, i + 1, scope);
+                        Self::prune_remove(&mut node.regexes[ri].node, steps, i + 1, key, binding);
                     if child_empty {
                         node.regexes.remove(ri);
                     }
@@ -419,7 +434,7 @@ impl RegexTrie {
             },
         }
 
-        !node.has_children() && node.leaf_value.is_none() && !node.check_eow()
+        !node.has_children() && node.spellings.is_empty() && !node.check_eow()
     }
 
     /// The trie as text, literal chains compressed.
@@ -535,13 +550,6 @@ fn is_live_in(binding: DyadPtr, scope: DyadPtr) -> bool {
     // SAFETY: every pointer the trie stores is a binding dyad from the store.
     let fields = unsafe { Binding::read(binding) };
     fields.scope == scope && !fields.is_dead()
-}
-
-fn push_binding(leaf: &mut Option<Leaf>, key: &str, binding: DyadPtr) {
-    match leaf {
-        Some(l) => l.bindings.push(binding),
-        None => *leaf = Some(Leaf { regex_key: key.to_string(), bindings: vec![binding] }),
-    }
 }
 
 fn flatten(path: &[Segment]) -> Vec<Step> {
@@ -952,5 +960,44 @@ mod tests {
         assert_eq!(t.bindings_for_key("a"), None);
         assert_eq!(t.bindings_for_key("a[0-9]x"), None);
         assert_eq!(t.bindings_for_key("[0-9]"), None);
+    }
+
+    #[test]
+    fn spellings_ending_at_one_node_are_each_found_by_their_own_key() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (xab, aby) = (dummy(1), dummy(2));
+        let (xab_rec, aby_rec) = (rec(xab, root), rec(aby, root));
+        t.insert("x|ab", xab_rec);
+        t.insert("ab|y", aby_rec);
+
+        let mut keys: Vec<&str> =
+            t.get_all_matches("ab").unwrap().iter().map(|m| m.regex_key).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["ab|y", "x|ab"]);
+        assert_eq!(t.bindings_for_key("x|ab"), Some(&[xab_rec][..]));
+        assert_eq!(t.bindings_for_key("ab|y"), Some(&[aby_rec][..]));
+
+        assert_eq!(t.remove("ab|y", root).unwrap(), aby);
+        assert!(t.get("y").is_err());
+        assert_eq!(t.bindings_for_key("ab|y"), None);
+        let m = t.get("ab").unwrap();
+        assert_eq!((m.regex_key, f(m.bindings[0]).dyad), ("x|ab", xab));
+        assert_eq!(t.remove("x|ab", root).unwrap(), xab);
+        assert!(t.get("ab").is_err());
+    }
+
+    #[test]
+    fn a_whole_optional_pattern_is_removed_by_its_own_key() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (a, b) = (dummy(1), dummy(2));
+        t.insert("a*", rec(a, root));
+        t.insert("b*", rec(b, root));
+
+        assert_eq!(t.remove("b*", root).unwrap(), b);
+        assert!(t.get("bb").is_err());
+        let m = t.get("aa").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (2, a));
     }
 }
