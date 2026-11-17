@@ -17,10 +17,13 @@
 //! [34..42]   u64  pointer type: the interned `@T` of this type, or 0
 //! [42..50]   u64  extent: a `seed-extent` callable leaf for a token that reads its own
 //!                 extent, or 0
-//! [50..]     payload, per kind:
+//! [50..58]   u64  mints: this type's mints made so far, an array of `[key, mint]` pairs, or 0
+//! [58..66]   u64  mint of: the type this one is a mint of, or 0
+//! [66..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
-//!                                 none), then arity × `dyad@` role-name strings
+//!                                 none), then arity × `dyad@` role-name strings; a mint's
+//!                                 then `[output_type, op]`, the words its nodes share
 //! ```
 //!
 //! The kind byte continues `numtype`'s tag space (`NumType` 0–9, `VOID_TAG` 10,
@@ -68,7 +71,9 @@ const RUN_BODY_OFF: usize = 26;
 /// The interned `@T` of this type, so two spellings of `@i32` are one node.
 const POINTER_TYPE_OFF: usize = 34;
 const EXTENT_OFF: usize = 42;
-pub(crate) const PAYLOAD_OFF: usize = 50;
+const MINTS_OFF: usize = 50;
+const MINT_OF_OFF: usize = 58;
+pub(crate) const PAYLOAD_OFF: usize = 66;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -151,6 +156,79 @@ pub(crate) fn operand_record(
         blob.extend_from_slice(&(name as usize).to_ne_bytes());
     }
     cx.store.alloc_bytes(&blob)
+}
+
+/// A mint's record: `origin`'s operand record, its roles the same strings, with no op slot and
+/// no output slot, then the words every node of the mint shares.
+///
+/// # Safety
+/// `origin` must carry a `TUPLE_TAG` operand record.
+pub(crate) unsafe fn mint_record(
+    store: &mut Store,
+    origin: DyadPtr,
+    output_type: DyadPtr,
+    op: DyadPtr,
+) -> *mut u8 {
+    debug_assert_eq!(kind_of(origin), Some(TUPLE_TAG), "a mint's nodes are fixed operand runs");
+    let arity = arity_of(origin);
+    let mut blob = header(TUPLE_TAG, Assoc::Left, prec::INERT).to_vec();
+    blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(origin as usize).to_ne_bytes());
+    blob.extend_from_slice(&[arity as u8, NO_SLOT, NO_SLOT]);
+    for i in 0..arity {
+        blob.extend_from_slice(&(role_of(origin, i) as usize).to_ne_bytes());
+    }
+    for word in [output_type, op] {
+        blob.extend_from_slice(&(word as usize).to_ne_bytes());
+    }
+    store.alloc_bytes(&blob)
+}
+
+/// This type's mints made so far, an array of `[key, mint]` pairs; null while it has none.
+///
+/// # Safety
+/// As `parse_rank_of`.
+pub(crate) unsafe fn mints_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned(dyad::head(id).add(MINTS_OFF) as *const DyadPtr)
+}
+
+/// # Safety
+/// `id` must carry a record and `mints` must be an array node of `[key, mint]` pairs.
+pub(crate) unsafe fn install_mints(id: DyadPtr, mints: DyadPtr) {
+    std::ptr::write_unaligned(dyad::head(id).add(MINTS_OFF) as *mut DyadPtr, mints);
+}
+
+/// The type `id` is a mint of; null for a type that is no mint.
+///
+/// # Safety
+/// As `parse_rank_of`.
+pub(crate) unsafe fn mint_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned(dyad::head(id).add(MINT_OF_OFF) as *const DyadPtr)
+}
+
+const MINT_OUTPUT: usize = 0;
+const MINT_OP: usize = 1;
+
+/// # Safety
+/// `id` must be a mint (`mint_of` non-null), its record from `mint_record`.
+unsafe fn mint_word(id: DyadPtr, k: usize) -> DyadPtr {
+    let at = ROLES_OFF + (arity_of(id) + k) * std::mem::size_of::<DyadPtr>();
+    std::ptr::read_unaligned(dyad::head(id).add(at) as *const DyadPtr)
+}
+
+/// The type every node of the mint gives back.
+///
+/// # Safety
+/// As `mint_word`.
+pub(crate) unsafe fn mint_output_of(id: DyadPtr) -> DyadPtr {
+    mint_word(id, MINT_OUTPUT)
+}
+
+/// The machine operation every node of the mint runs.
+///
+/// # Safety
+/// As `mint_word`.
+pub(crate) unsafe fn mint_op_of(id: DyadPtr) -> DyadPtr {
+    mint_word(id, MINT_OP)
 }
 
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {

@@ -55,6 +55,7 @@ pub mod lex;
 #[path = "logos.rs"]
 mod logos_mod;
 pub(crate) mod meta;
+pub(crate) mod mint;
 mod not;
 pub(crate) mod numtype;
 pub(crate) mod ops;
