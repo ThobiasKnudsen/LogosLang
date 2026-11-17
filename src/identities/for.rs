@@ -43,7 +43,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::RANGE);
     let range = cx.store.alloc_head(cx.type_, record);
-    cx.declare(r"\.\.", range);
+    cx.declare("..", range);
 
     (for_, leaf, in_, range)
 }

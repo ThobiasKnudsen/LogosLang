@@ -52,6 +52,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::Empty => "nothing to evaluate here".into(),
         ParseError::BadLiteral => "this is not a valid literal".into(),
         ParseError::UnclosedBracket => "this bracket is never closed".into(),
+        ParseError::StrayCloser(closer) => {
+            format!("this `{closer}` closes nothing: no bracket is open here")
+        }
         ParseError::ExpectedOpen => "expected a `(` here".into(),
         ParseError::ExpectedField => "expected a field name here".into(),
         ParseError::ExpectedArrow => "expected `->` before the return type".into(),
@@ -80,10 +83,25 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
-            "these types do not match (crossing types needs an explicit cast)".into()
+            "these types do not match: a value converts only into a type known to hold every value \
+             of it; a number that may lose part of itself converts into a number type with `lossy`, \
+             as `i32 lossy (x)`"
+                .into()
         }
         ParseError::UncomputableLiteral => {
-            "this literal has no exact value in the type it lands in".into()
+            "this literal has no exact value in the type it lands in; into a number type, `lossy` \
+             converts it anyway, as `f64 lossy 0.1`"
+                .into()
+        }
+        ParseError::LiteralArithmetic => {
+            "this arithmetic on plain numbers has no value: a division by zero, or a result past \
+             what a fraction of two i64s holds"
+                .into()
+        }
+        ParseError::LossyOutOfPlace => {
+            "`lossy` stands between a number type and the value it converts, as `i32 lossy (x)` or \
+             `f64 lossy 0.1`"
+                .into()
         }
         ParseError::ReturnOutsideFunction => "`return` is written only inside a function".into(),
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
@@ -151,7 +169,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::UnsettledInclusion => {
-            "`⊆` answers only for a type and itself or two integer types; \
+            "`⊆` answers only for a type and itself, or between number types and `bool`; \
              between other types what each can hold is not settled yet"
                 .into()
         }
@@ -162,14 +180,14 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ExpectedRange => "expected a range like `0..10` here".into(),
         ParseError::BadStep => "a literal loop step must be positive".into(),
         ParseError::BadAddressOf => "`&` needs a variable to take the address of".into(),
-        ParseError::BadCast => "a conversion takes exactly one numeric value".into(),
+        ParseError::BadCast => "a conversion takes exactly one value".into(),
         ParseError::BadDeclaredType => {
             "the declared or assigned type must be a type value"
                 .into()
         }
-        ParseError::DyadResultNotNode => {
-            "a `-> dyad` function gives back only what `=` writes into a `dyad ?` place, as a \
-             type, and not a number or a parameter yet"
+        ParseError::DyadTakesNode => {
+            "a `dyad ?` place takes only a node, not a number yet, and a `-> dyad` function does \
+             not give back a parameter, which a call may fill with a number"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {
@@ -308,6 +326,16 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::RecordMoveNotInSeed => {
             "moving a plain record is not in the seed yet: its bytes are not copied into a name"
+                .into()
+        }
+        ParseError::WideFieldNotInSeed => {
+            "this field's type takes more bytes than its record lays out for it; reaching it \
+             whole is not in the seed yet"
+                .into()
+        }
+        ParseError::HeldRecordThroughPointerNotInSeed => {
+            "writing a record whose type fills `free` through a pointer is not in the seed yet: \
+             the value it displaces would never be freed"
                 .into()
         }
         ParseError::MoveOfBorrow => {
@@ -460,6 +488,15 @@ pub fn run_message(e: &RunError) -> String {
         RunError::UncomputableLiteral => {
             "a literal here has no exact value in the type it lands in".into()
         }
+        RunError::NoWholeNumber => "a float that is not a number (NaN) or is infinite has no \
+                                    whole number, so `lossy` cannot convert it into an integer \
+                                    type"
+            .into(),
+        RunError::RationalArithmetic => {
+            "this arithmetic on `rational_number` values has no value: a division by zero, or a \
+             result past what a fraction of two i64s holds"
+                .into()
+        }
         RunError::ArityMismatch => "a call's argument count does not match its function".into(),
         RunError::CompilerUnavailable => {
             "compile() is not available here (parse-time evaluation runs without the compiler)"
@@ -480,7 +517,7 @@ pub fn run_message(e: &RunError) -> String {
             "`caller` alone is not a value the seed reads; read `caller.scope`".into()
         }
         RunError::UnsettledInclusion => {
-            "`⊆` answers only for a type and itself or two integer types; \
+            "`⊆` answers only for a type and itself, or between number types and `bool`; \
              between other types what each can hold is not settled yet"
                 .into()
         }

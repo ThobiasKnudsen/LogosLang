@@ -260,25 +260,27 @@ pub(crate) unsafe fn build_write(
     if let Some(ty) = load_type(types, read) {
         // The slot holds the node the right side yields, its address, never the expression.
         if meta::is_node_valued(ty, types.fn_type) {
-            if super::node_output(types, value) != Some(ty) {
-                return Err(crate::parse::ParseError::TypeMismatch);
-            }
+            let value = super::land(store, types, value, ty)?;
             let ops = [this, k, value, owner];
             return Ok(act(store, types.this.write, types.this.write_leaf, &ops));
         }
+        // An `if` whose arms give two types gives a value in each, which lands on its own.
+        let arms_differ =
+            super::read::value_type(types, value) == Err(crate::parse::ParseError::ArmsDiffer);
         let yields_value = matches!(super::operand_of(types, value), super::Operand::Literal)
+            || arms_differ
             || match super::read::place_layout(types, super::read::output_type(types, value)) {
                 Some((super::read::Read::Scalar(_), _)) => true,
                 Some((super::read::Read::Pointer(p), _)) => p != types.dyad_,
                 _ => false,
             };
         if yields_value {
-            let value = super::commit_fn_body(store, types, value, ty)?;
-            super::check_store_type(types, ty, value)?;
+            let value = super::land(store, types, value, ty)?;
             let ops = [this, k, value, ty, owner];
             return Ok(act(store, types.this.store, types.this.store_leaf, &ops));
         }
     }
+    super::read::value_type(types, value)?;
     let value = super::tape::cell_arg(store, types, value);
     let ops = [this, k, value, owner];
     Ok(act(store, types.this.write, types.this.write_leaf, &ops))

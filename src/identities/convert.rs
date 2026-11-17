@@ -1,10 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Numeric conversion, `i32(a)`, `f64(x)`: one shared `convert` identity for
-//! every scalar cast, the node `[operand, from, to, op]` with the source and
-//! target as numtype nodes, or `rational_number` as the source for a rational value, read
-//! at run. The only cross-type path; there is no implicit coercion.
+//! Numeric conversion, written (`i64 (a)`, `i32 lossy (x)`) or not: one shared `convert`
+//! identity for every conversion between number types, the node `[operand, from, to, op]`
+//! with the source and target as numtype nodes, or `rational_number` as the source for a
+//! rational value, read at run.
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
@@ -69,7 +69,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             }
             return Ok(super::rational::cast_pair(num, den, to));
         }
-        Ok(apply_cast(of_type_node(from), to, v))
+        apply_cast(of_type_node(from), to, v).ok_or(RunError::NoWholeNumber)
     }
 }
 

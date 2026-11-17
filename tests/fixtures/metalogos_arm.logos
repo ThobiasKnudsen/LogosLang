@@ -11,6 +11,6 @@ metalogos := fn (i := i32 ?) -> logos (
 t := metalogos(3),
 mut a := t ?,
 a = if (t == i32) (9)
-    else if (t == f32 or t == f64) (9.9)
+    else if (t == f32 or t == f64) (9.5)
     else (i32),
 print «{a}»

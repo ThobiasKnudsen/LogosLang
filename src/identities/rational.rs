@@ -23,7 +23,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let id = cx.store.alloc_head(cx.type_, record);
     // Unanchored: the lexer longest-matches a prefix. The span is unsigned: `-` is
     // always the operator, else `a-1` would lex as `a` then `-1`.
-    cx.declare(r"[0-9]+(?:\.[0-9]+)?", id);
+    cx.declare_pattern(r"[0-9]+(?:\.[0-9]+)?", id);
     // `rational_number ?` is a place of the type, `rational_number 1` the literal as a runtime
     // value.
     cx.declare("rational_number", id);
@@ -101,7 +101,7 @@ pub(crate) fn fold_arith(
         }
         match fold_pair(op, l, r) {
             Some((num, den)) => Ok(Some(build_literal(store, rational, num, den))),
-            None => Err(ParseError::UncomputableLiteral),
+            None => Err(ParseError::LiteralArithmetic),
         }
     }
 }
@@ -288,8 +288,8 @@ pub(crate) unsafe fn write_at(p: *mut u8, num: i64, den: i64) {
     std::ptr::write_unaligned(p.add(8) as *mut i64, den);
 }
 
-/// An integer target needs an exact in-range integer; a float target takes `num/den`;
-/// `None` where there is no exact value.
+/// The value of `nt` the plain number is exactly, `None` where there is none. DESIGN ›A plain
+/// number is a `rational_number`, and a number type's definition converts it‹.
 pub(crate) fn mold_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
     let p = unsafe { dyad::value(node) };
@@ -303,12 +303,14 @@ pub(crate) fn mold_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     }
     use NumType::*;
     if nt.is_float() {
-        let v = num as f64 / den as f64;
-        return match nt {
-            F32 => Some(i64::from((v as f32).to_bits())),
-            F64 => Some(v.to_bits() as i64),
-            _ => None,
-        };
+        // Reduced, so exact only over a power of two, with no more significant bits than the
+        // float's digits.
+        let n = num.unsigned_abs();
+        let significant = (u64::BITS - n.leading_zeros()).saturating_sub(n.trailing_zeros());
+        if !(den as u64).is_power_of_two() || significant as usize > nt.digits() {
+            return None;
+        }
+        return Some(cast_pair(num, den, nt));
     }
     if num % den != 0 {
         return None;
@@ -332,8 +334,8 @@ pub(crate) fn mold(node: DyadPtr) -> Option<i32> {
     mold_to(node, NumType::I32).map(|b| b as i32)
 }
 
-/// `as` semantics, for the `T(literal)` conversion: an integer target takes the truncated
-/// integer part then wraps to width; `None` for a malformed rational.
+/// What `lossy` gives for a plain number: an integer type takes its whole part, wrapped to
+/// width, a float type its nearest value; `None` for a malformed rational.
 pub(crate) fn cast_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
     let p = unsafe { dyad::value(node) };
@@ -348,18 +350,41 @@ pub(crate) fn cast_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     Some(cast_pair(num, den, nt))
 }
 
-/// `as` semantics on a fraction, `den > 0`.
+/// [`cast_to`] on a fraction, `den > 0`: a float type rounds the exact fraction once.
 pub(crate) fn cast_pair(num: i64, den: i64, nt: NumType) -> i64 {
-    if nt.is_float() {
-        let v = num as f64 / den as f64;
-        return match nt {
-            NumType::F32 => i64::from((v as f32).to_bits()),
-            NumType::F64 => v.to_bits() as i64,
-            _ => unreachable!("nt is a float here"),
-        };
+    // `|num / den|` lies in [2^-63, 2^63], inside both floats' normal range: the scaling by
+    // `2^-s` is exact, and no fraction is subnormal or past the largest finite value.
+    match nt {
+        NumType::F32 => {
+            let (m, s) = sticky_quotient(num, den, nt.digits());
+            let scale =
+                f32::from_bits(((f32::MAX_EXP - 1 - s) as u32) << (f32::MANTISSA_DIGITS - 1));
+            i64::from((m as f32 * scale).to_bits())
+        }
+        NumType::F64 => {
+            let (m, s) = sticky_quotient(num, den, nt.digits());
+            let scale =
+                f64::from_bits(((f64::MAX_EXP - 1 - s) as u64) << (f64::MANTISSA_DIGITS - 1));
+            (m as f64 * scale).to_bits() as i64
+        }
+        // Through the shared integer wrap, so it matches a runtime `i64` to `nt` convert.
+        _ => super::numtype::encode_from_i128(nt, i128::from(num / den)),
     }
-    // Through the shared cast, so it matches a runtime `i64` to `nt` convert.
-    super::numtype::apply_cast(NumType::I64, nt, num / den)
+}
+
+/// `num / den` as `m / 2^s`: `|m|` is the quotient scaled to `digits + 2` or `digits + 3`
+/// bits, its lowest bit set when the division leaves a remainder. That bit lies below the
+/// rounding bit, so `m as` a float of `digits` rounds as the exact fraction does: to nearest,
+/// ties to even.
+fn sticky_quotient(num: i64, den: i64, digits: usize) -> (i64, i32) {
+    if num == 0 {
+        return (0, 0);
+    }
+    let (a, b) = (u128::from(num.unsigned_abs()), den as u128);
+    let s = digits as i32 + 2 + a.leading_zeros() as i32 - b.leading_zeros() as i32;
+    let (n, d) = if s >= 0 { (a << s, b) } else { (a, b << -s) };
+    let m = (n / d) as i64 | i64::from(n % d != 0);
+    (if num < 0 { -m } else { m }, s)
 }
 
 /// `rational_number 1` hands the literal on as a run-time value, its bytes the value's;
@@ -464,21 +489,9 @@ pub(crate) unsafe fn run_into(
     let op = rt.types().ops.rational_arith_op_of(*ops.add(2)).ok_or(RunError::NoLeaf)?;
     let l = value_of(rt, *ops)?;
     let r = value_of(rt, *ops.add(1))?;
-    let (num, den) = fold_pair(op, l, r).ok_or(RunError::UncomputableLiteral)?;
+    let (num, den) = fold_pair(op, l, r).ok_or(RunError::RationalArithmetic)?;
     write_at(dest, num, den);
     Ok(())
-}
-
-/// The `=` into a rational place, `[place, value, leaf]`: sixteen bytes copied.
-fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a store node `assign::build` made over a rational place.
-    unsafe {
-        let ops = dyad::value(node) as *const DyadPtr;
-        let dest = rt.place_addr(*ops).ok_or(RunError::NoActivation)?;
-        let (num, den) = value_of(rt, *ops.add(1))?;
-        write_at(dest, num, den);
-        Ok(0)
-    }
 }
 
 /// An arithmetic node runs through its `result` slot, never bare.
@@ -515,7 +528,6 @@ pub(crate) const ARITH_RUNS: [crate::run::RunFn; 5] = [run_arith_unslotted; 5];
 /// Indexed as `CmpOp`.
 pub(crate) const CMP_RUNS: [crate::run::RunFn; 6] =
     [run_lt, run_gt, run_le, run_ge, run_eq, run_ne];
-pub(crate) const STORE_RUN: crate::run::RunFn = run_store;
 
 #[cfg(test)]
 mod tests {
@@ -536,5 +548,26 @@ mod tests {
     #[test]
     fn rejects_overflowing_literals() {
         assert_eq!(parse_fraction("99999999999999999999999999"), None);
+    }
+
+    #[test]
+    fn a_fraction_rounds_once_to_the_nearest_float() {
+        let f32_of = |num, den| f32::from_bits(cast_pair(num, den, NumType::F32) as u32);
+        let f64_of = |num, den| f64::from_bits(cast_pair(num, den, NumType::F64) as u64);
+        let up = 1.0 + f32::EPSILON;
+        // 1 + 2^-24 + 2^-60 and 1 + 3 * 2^-24 - 2^-60: through an `f64` each became a tie.
+        assert_eq!(f32_of((1 << 60) + (1 << 36) + 1, 1 << 60), up);
+        assert_eq!(f32_of(-(1 << 60) - (1 << 36) - 1, 1 << 60), -up);
+        assert_eq!(f32_of((1 << 60) + (3 << 36) - 1, 1 << 60), up);
+        assert_eq!(f32_of((1 << 24) + 1, 1 << 24), 1.0);
+        assert_eq!(f32_of((1 << 24) + 3, 1 << 24), up + f32::EPSILON);
+        // Parts past 2^53, which an `f64` rounds before the division does.
+        assert_eq!(f64_of((1 << 55) + 2, 3), 12009599006321324.0);
+        assert_eq!(f64_of(-(1 << 55) - 2, 3), -12009599006321324.0);
+        assert_eq!(f64_of(1, (1 << 53) + 1).to_bits(), (1.0 / (1u64 << 53) as f64).to_bits() - 1);
+        assert_eq!(f32_of(i64::MIN, 1), i64::MIN as f32);
+        assert_eq!(f32_of(i64::MAX, 1), -(i64::MIN as f32));
+        assert_eq!(f64_of(1, i64::MAX), 1.0 / -(i64::MIN as f64));
+        assert_eq!(f64_of(0, 7).to_bits(), 0);
     }
 }

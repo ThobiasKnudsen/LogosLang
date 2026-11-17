@@ -415,6 +415,15 @@ impl Lowerer<'_, '_> {
         emit_copy(self.builder, self.flags, dst, src, width);
     }
 
+    /// The address `offset` bytes past `addr`.
+    pub(crate) fn offset_addr(&mut self, addr: Value, offset: i64) -> Value {
+        if offset == 0 {
+            addr
+        } else {
+            self.builder.ins().iadd_imm(addr, offset)
+        }
+    }
+
     /// `v` in its `i64` container, as an argument travels.
     pub(crate) fn widen(&mut self, v: Value, nt: NumType) -> Value {
         widen_to_i64(self.builder, v, nt)
@@ -625,8 +634,7 @@ impl Lowerer<'_, '_> {
         }
     }
 
-    /// Cast `v` from `from` to `to` as the interpreter's `apply_cast` does
-    /// (Rust `as`); float→int saturates rather than trapping.
+    /// Cast `v` from `from` to `to` as the interpreter's `apply_cast` does.
     pub(crate) fn emit_cast(&mut self, from: NumType, to: NumType, v: Value) -> Value {
         let tct = to.cranelift_type();
         match (from.is_float(), to.is_float()) {
@@ -651,13 +659,14 @@ impl Lowerer<'_, '_> {
                     self.builder.ins().fcvt_from_uint(tct, v)
                 }
             }
-            // Saturating, NaN → 0, matching Rust `as`.
+            // The wrap and the NaN fault are the interpreter's own function.
             (true, false) => {
-                if to.is_signed_int() {
-                    self.builder.ins().fcvt_to_sint_sat(tct, v)
-                } else {
-                    self.builder.ins().fcvt_to_uint_sat(tct, v)
-                }
+                let bits = widen_to_i64(self.builder, v, from);
+                let from_tag = self.builder.ins().iconst(types::I64, from as i64);
+                let to_tag = self.builder.ins().iconst(types::I64, to as i64);
+                let entry = crate::run::convert_float_to_int as *const () as usize;
+                let whole = self.call_seed(entry, &[bits, from_tag, to_tag]);
+                narrow_from_i64(self.builder, whole, to)
             }
             (true, true) => {
                 if to.bytes() > from.bytes() {
@@ -1184,7 +1193,9 @@ unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, Com
         Ok(None)
     } else if out == types.type_
         || crate::identities::meta::is_node_valued(out, types.fn_type)
-        || by_copy::record_width(types, out).is_some()
+        || crate::identities::read::carry_of(types, out)
+            .and_then(crate::identities::read::Carry::bytes)
+            .is_some()
     {
         Ok(Some(NumType::I64))
     } else if crate::identities::numtype::is_scalar_type(out) {

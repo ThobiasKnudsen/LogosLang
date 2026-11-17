@@ -574,12 +574,16 @@ impl<'a> Parser<'a> {
                 }
             };
             let types = self.types;
+            let field_type = crate::identities::hole::type_in(field);
+            if !super::fits_field(types, field_type) {
+                return Err(ParseError::WideFieldNotInSeed);
+            }
             return Ok((
                 crate::identities::pointer::build_deref(
                     self.rt.store,
                     types,
                     ptr_expr,
-                    crate::identities::hole::type_in(field),
+                    field_type,
                     base_off as usize + offset,
                 ),
                 0,
@@ -786,7 +790,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let (scope, key) = self.parse_block(true)?;
+        let (scope, key) = self.parse_block(true, LinesEnd::Closer)?;
         let key = key.dyad;
         self.take_closer(self.types.open_sq_)?;
         // An index right after a tape value is the element read, a slot node

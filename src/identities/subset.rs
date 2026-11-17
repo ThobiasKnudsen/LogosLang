@@ -65,12 +65,15 @@ unsafe fn type_valued(types: &Core, n: DyadPtr, k: Read) -> bool {
         || dyad::ty(types.through(n)) == types.tape.cell_type
 }
 
-/// `None` where DESIGN leaves the answer open: two different types unless both are integers,
-/// or one is a type a Logos `parse` builds, whose values are its own nodes alone.
+/// Whether every value of `a` is a value of `b`: the one lies-inside test, which a conversion
+/// written or not asks too (DESIGN ›A type's `parse` decides what converts into it; unwritten, a
+/// value converts only into a type that holds it exactly‹). `None` where DESIGN leaves the answer
+/// open: two different types that are not number types or `bool`, unless one is a type a Logos
+/// `parse` builds, whose values are its own nodes alone.
 ///
 /// # Safety
 /// `a` and `b` are null or dyads from the store.
-unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {
+pub(crate) unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {
     let is_type = |t: DyadPtr| !t.is_null() && dyad::ty(t) == types.type_;
     if !is_type(a) || !is_type(b) {
         return None;
@@ -83,17 +86,21 @@ unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {
     {
         return Some(false);
     }
-    let integer = |t: DyadPtr| {
+    let number = |t: DyadPtr| {
         let nt = types.numtypes.iter().position(|&n| n == t)? as u8;
-        let nt = NumType::from_tag(nt);
-        (!nt.is_float()).then_some(nt)
+        Some(NumType::from_tag(nt))
     };
-    let (a, b) = (integer(a)?, integer(b)?);
-    // An unsigned type needs a strictly wider signed one to hold its top half.
-    Some(match (a.is_signed_int(), b.is_signed_int()) {
-        (true, false) => false,
-        (false, true) => a.bytes() < b.bytes(),
-        _ => a.bytes() <= b.bytes(),
+    if a == types.bool_ || b == types.bool_ {
+        let other = if a == types.bool_ { b } else { a };
+        return number(other).map(|_| false);
+    }
+    let (a, b) = (number(a)?, number(b)?);
+    Some(if a.is_float() {
+        b.is_float() && a.bytes() <= b.bytes()
+    } else if a.is_signed_int() && !b.is_signed_int() && !b.is_float() {
+        false
+    } else {
+        a.digits() <= b.digits()
     })
 }
 

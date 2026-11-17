@@ -272,6 +272,18 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
         ("2 ^ 0.5", "1.4142135623730954"),
         ("g := fn (x := f64 ?) -> f64 ( x ^ 1.5 ), g.compile(), g(f64 4.0)", "8.0"),
         ("f(2) + 2 ^ 3 ^ 2", "521"),
+        ("x := f64 2.0, x ^ (f64 0.0 / 0.0)", "NaN"),
+        ("x := f64 2.0, x ^ (f64 1.0 / 0.0)", "inf"),
+        ("x := f64 2.0, x ^ (f64 -1.0 / 0.0)", "0.0"),
+        ("x := f64 1.0, x ^ (f64 0.0 / 0.0)", "NaN"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 0.0 / 0.0)", "NaN"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 1.0 / 0.0)", "inf"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 -1.0 / 0.0)", "0.0"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 3.0)", "8.0"),
+        ("x := f64 2.0, x ^ (f64 -1000000000000000000 * 1000000000000000000)", "0.0"),
+        ("x := f64 0.5, x ^ (f64 1000000000000000000 * 1000000000000000000)", "0.0"),
+        ("x := f64 2.0, x ^ (f64 1000000000000000000 * 1000000000000000000)", "inf"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 -1000000000000000000 * 1000000000000000000)", "0.0"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{body}\n{tail}"));
         assert_eq!((code, stdout.trim()), (Some(0), want), "{tail}: stderr: {stderr}");
@@ -287,13 +299,20 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
 }
 
 #[test]
-fn a_conversion_reads_a_rational_value_when_it_runs() {
-    let (code, stdout, stderr) = run_line(
-        "q := type ( a := ?, output_type := type ?, share run = ( f64(a) * 2.0 ), \
-         share parse_rank = 60, share parse = ( tape[0].type = q, tape[0].a = tape[1], \
-         tape[0].output_type = f64, tape.remove(1), tape.is_constructed[0] = true ) ), q 0.75",
-    );
+fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
+    let q = |conversion: &str| {
+        format!(
+            "q := type ( a := ?, output_type := type ?, share run = ( {conversion} * 2.0 ), \
+             share parse_rank = 60, share parse = ( tape[0].type = q, tape[0].a = tape[1], \
+             tape[0].output_type = f64, tape.remove(1), tape.is_constructed[0] = true ) ), q 0.75"
+        )
+    };
+    let (code, stdout, stderr) = run_line(&q("f64 lossy (a)"));
     assert_eq!((code, stdout.as_str()), (Some(0), "1.5\n"), "stderr: {stderr}");
+    // A `rational_number` lies inside no float type: 1/3 has no `f64`.
+    let (code, _, stderr) = run_line(&q("f64 (a)"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
 }
 
 #[test]
@@ -642,6 +661,7 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("b := a", ""),
         ("b := a, b[1]", "2"),
         ("t := array i32, mut x := t ?, x = [4, 5], x[1]", "5"),
+        ("b := array f64 [i32 1, 2], b[0]", "1.0"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -659,6 +679,8 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("b := array i32 (1, 2)", "the list is written in square brackets, `array i32 [1, 2]`"),
         ("t := array u8, mut x := t ?, x = [4, 300]", "an element does not fit the element type"),
         ("b := array array u8 [[1, 300]]", "an element does not fit the element type"),
+        ("b := array f32 [i32 1]", "an element does not fit the element type"),
+        ("a[f64 1.0]", "the index is not an integer"),
         // `array ?` is an empty node of `array`, with nothing to run.
         ("n := array ?", "was never written by its constructor"),
     ] {
@@ -755,6 +777,7 @@ fn an_array_element_is_written_where_the_read_finds_it() {
              g := fn (r := @i32 ?) -> i32 ( q := alloc 1 of i32 1, free q, r@ ), g(p) = 5, p@",
             "5",
         ),
+        ("x := u8 3, a[0] = x, a[0]", "3"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -771,7 +794,7 @@ fn an_array_element_is_written_where_the_read_finds_it() {
             "index out of range",
         ),
         ("a[0] = i64 4", "these types do not match"),
-        ("x := u8 3, a[0] = x", "these types do not match"),
+        ("x := u32 3, a[0] = x", "these types do not match"),
         ("a[0] = 1.5", "this literal has no exact value"),
         ("b := array u8 [1, 2], b[1] = 300", "this literal has no exact value"),
         ("a[-1] = 1", "the index type is not within the size type"),
@@ -991,7 +1014,7 @@ fn rational_places_and_operators_run_interpreted_and_are_refused_compiled() {
 
 #[test]
 fn a_pattern_spelling_is_declared_through_regex() {
-    // `<=>` beats `<=` `>` by length at equal rank; the core's `..` is spelled `\.\.`.
+    // `<=>` beats `<=` `>` by length at equal rank; the core's `..` enters the index as `\.\.`.
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[0-9]+[kK]\xc2\xbb := type ()\n(5k).type == type\n\
           regex \xc2\xab<=>\xc2\xbb := type ()\n(<=>).type == type\n\
@@ -1021,6 +1044,109 @@ fn a_pattern_whose_class_can_eat_its_own_literal_still_lexes() {
           regex \xc2\xab[0-9]+(?:[0-9]k)?x\xc2\xbb := type ()\n(12kx).type == type\n",
     );
     assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_quantifier_in_a_pattern_covers_its_whole_group_or_escape() {
+    for src in [
+        "regex «(a[0-9])+» := type (), (a1a2).type == type",
+        "regex «(a\\\\.b)+» := type (), (a.ba.b).type == type",
+        "regex «q\\\\.+» := type (), (q..).type == type",
+        "regex «(a|b)+c» := type (), (abc).type == type",
+        "regex «xb{0}c» := type (), (xc).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    for (src, name) in [
+        ("regex «(a\\\\.b)+» := type (), (axb).type == type", "axb"),
+        ("regex «x([a-z]+ing)?» := type (), (xab).type == type", "xab"),
+    ] {
+        let (_, _, stderr) = run_line(src);
+        assert!(stderr.contains(&format!("unknown name `{name}`")), "{src}: {stderr}");
+    }
+}
+
+#[test]
+fn a_pattern_is_read_as_the_regex_crate_reads_it() {
+    for src in [
+        "regex «k\\\\x41» := type (), (kA).type == type",
+        "regex «k\\\\u{41}» := type (), (kA).type == type",
+        "regex «(?i)abc» := type (), (ABC).type == type",
+        "regex «k(?-u:[a-z])» := type (), (kq).type == type",
+        "regex «(ab|cd|ef|gh|ij){5}» := type (), (ijijijijij).type == type",
+        "regex «(?:a+)?b» := type (), (b).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    for (src, name) in [
+        ("regex «k\\\\x41» := type (), (kx41).type == type", "kx41"),
+        ("regex «k\\\\t» := type (), (kt).type == type", "kt"),
+        ("regex «k\\\\n» := type (), (kn).type == type", "kn"),
+    ] {
+        let (_, _, stderr) = run_line(src);
+        assert!(stderr.contains(&format!("unknown name `{name}`")), "{src}: {stderr}");
+    }
+    // A rolled-back pattern that can match nothing as a whole leaves no entry behind.
+    let (echoes, stderr) =
+        repl("regex «a*» := type ()\nregex «b*» := type (), zz\n(bb).type == type\n".as_bytes());
+    assert!(echoes.is_empty(), "echoes: {echoes:?}");
+    assert!(stderr.contains("unknown name `bb`"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_pattern_judges_a_word_boundary_by_the_char_before_it() {
+    for src in [
+        "regex «q\\B[0-9]+» := type (), (q1).type == type",
+        "regex «q-\\b[0-9]+» := type (), (q-1).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    let (_, _, stderr) = run_line("regex «q\\b[0-9]+» := type (), (q1).type == type");
+    assert!(stderr.contains("unknown name `q1`"), "{stderr}");
+}
+
+#[test]
+fn a_pattern_part_that_matches_nothing_still_lets_it_lex() {
+    for src in [
+        "regex «^ab» := type (), (ab).type == type",
+        "regex «\\bfoo» := type (), (foo).type == type",
+        "regex «(?:[0-9]*)x» := type (), (x).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    // A pattern that can match nothing as a whole lexes only where it matches something.
+    let (echoes, stderr) = repl(
+        "regex «a*» := type ()\n(aaa).type == type\nb := 3\nb\n\
+         regex «x{0,3}» := type ()\n(xx).type == type\n"
+            .as_bytes(),
+    );
+    assert_eq!(echoes, ["true", "3", "true"], "stderr: {stderr}");
+}
+
+#[test]
+fn spellings_ending_at_one_node_are_each_found_by_their_own_key() {
+    // A rolled-back declaration leaves nothing behind, though another spelling ends where it did.
+    for (program, gone, kept) in [
+        ("regex «x|ab» := type ()\nregex «ab|y» := type (), zz\n(y).type == type\n", "y", "ab"),
+        ("regex «a*» := type ()\nregex «b*» := type (), zz\n(bb).type == type\n", "bb", "aa"),
+    ] {
+        let (echoes, stderr) = repl(format!("{program}({kept}).type == type\n").as_bytes());
+        assert_eq!(echoes, ["true"], "{program}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("unknown name `{gone}`")), "{program}: stderr: {stderr}");
+    }
+    let (_, _, stderr) =
+        run_line("regex «x|ab» := type (), regex «ab|y» := type (), regex «ab|y» := type (), 5");
+    assert!(stderr.contains("`ab|y` is already declared"), "stderr: {stderr}");
+    let (_, _, stderr) = run_line("regex «x|ab» := type (), regex «ab|y» := type (), ab");
+    assert!(stderr.contains("same lex_rank"), "stderr: {stderr}");
 }
 
 #[test]
@@ -1125,7 +1251,7 @@ fn prose_may_stand_before_a_field_a_member_or_a_slot_fill() {
                share y := i32 2,\n\
                # a slot\n\
                share parse_rank = 5\n\
-               ), q := t (4), q.x + t.y + i32 (t.parse_rank)";
+               ), q := t (4), q.x + t.y + i32 lossy (t.parse_rank)";
     let (code, stdout, stderr) = run_line(src);
     assert_eq!((code, stdout.as_str()), (Some(0), "11\n"), "stderr: {stderr}");
 }
@@ -1467,9 +1593,189 @@ fn inclusion_between_integer_types_follows_their_value_ranges() {
 }
 
 #[test]
-fn inclusion_the_design_leaves_open_is_a_checked_error() {
-    for src in ["f32 ⊆ f64\n", "i32 ⊆ f64\n", "bool ⊆ i32\n", "i32 ⊆ type\n", "u8 ⊆ dyad\n"]
+fn an_integer_lies_inside_a_float_that_holds_every_value_of_it() {
+    let (echoes, stderr) = repl(
+        "i32 ⊆ f64\ni32 ⊆ f32\nu16 ⊆ f32\nu32 ⊆ f64\ni64 ⊆ f64\nf32 ⊆ f64\nf64 ⊆ f32\n\
+         f64 ⊆ i64\nbool ⊆ i32\ni32 ⊆ bool\n"
+            .as_bytes(),
+    );
+    assert_eq!(
+        echoes,
+        ["true", "false", "true", "true", "false", "true", "false", "false", "false", "false"],
+        "stderr: {stderr}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn a_line_checked_against_a_float_reads_as_that_float() {
+    let q = "q := type ( share parse_rank = 60, share parse = ( \
+             if (not tape[1].type ⊆ f64) (error «not within f64»), \
+             print «{tape[1] + 0.5}», tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) )";
+    let out = logos().args([&format!("{q}, q (i32 3)")]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3.5\n1\n");
+    let out = logos().args([&format!("{q}, q (i64 3)")]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && stderr.contains("not within f64"), "stderr: {stderr}");
+}
+
+#[test]
+fn lossy_gives_what_each_number_type_defines_on_both_tiers() {
+    let huge = "f64 4000000000.0 * 4000000000.0 * 4000000000.0 * 4000000000.0 * 4000000000.0";
+    for (ty, from, value, expect) in [
+        ("i32", "f64", "f64 2.5", "2"),
+        ("f32", "i32", "i32 16777217", "16777216.0"),
+        ("i32", "i64", "i64 5000000000", "705032704"),
+        ("i32", "f64", "f64 3000000000", "-1294967296"),
+        ("f32", "f64", huge, "inf"),
+        ("i32", "i32", "i32 7", "7"),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            let src =
+                format!("g := fn (x := {from} ?) -> {ty} ( {ty} lossy (x) ), {compile}g({value})");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.trim()), (Some(0), expect), "{src}: stderr: {stderr}");
+        }
+    }
+    for (src, expect) in
+        [("f64 lossy 0.1", "0.1"), ("i32 lossy -2.5", "-2"), ("u8 lossy 300", "44")]
     {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.trim()), (Some(0), expect), "{src}: stderr: {stderr}");
+    }
+    for compile in ["", "g.compile(), "] {
+        for x in ["f64 1.0 / 0.0", "f64 -1.0 / 0.0", "f64 0.0 / 0.0"] {
+            let src = format!("g := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), {compile}g({x})");
+            let (code, _, stderr) = run_line(&src);
+            assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+            assert!(stderr.contains("has no whole number"), "{src}: stderr: {stderr}");
+        }
+    }
+}
+
+#[test]
+fn a_value_lands_unwritten_only_in_a_type_that_holds_every_value_of_it() {
+    let pt = "pt := type ( a := i64 ?, output_type := type ?, share run = ( a + a ), \
+              share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = pt, \
+              tape[0].a = tape[-1], tape[0].output_type = i64, tape.is_constructed[0] = true, \
+              tape.remove(-1) ) )";
+    for compile in ["", "f.compile(), "] {
+        for (src, printed) in [
+            ("f := fn () -> f64 ( i32 3 ), {c}f()", "3.0"),
+            ("f := fn () -> f64 ( u32 4000000000 ), {c}f()", "4000000000.0"),
+            ("f := fn () -> i64 ( mut x := i64 0, y := i32 -9, x = y, x ), {c}f()", "-9"),
+            ("f := fn (a := f64 ?) -> f64 ( a ), {c}f(i32 3)", "3.0"),
+            ("f := fn (b := i32 ?) -> i64 ( if (b < 1) (return i32 4), i64 2 ), {c}f(0)", "4"),
+            ("f := fn () -> f64 ( mut a := f64 0.0, p := &a, p@ = i32 5, a ), {c}f()", "5.0"),
+            ("f := fn () -> i64 ( x := i32 3, x pt ), {c}f()", "6"),
+            ("f := fn (a) -> i64 ( a ), {c}f(42)", "42"),
+        ] {
+            let src = format!("{pt}, {}", src.replace("{c}", compile));
+            let out = logos().arg(&src).output().unwrap();
+            assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+        }
+    }
+    for (src, printed) in [
+        ("rec := type ( a := i64 ?, b := f64 ? ), v := rec (i32 3, i32 4), v.b", "4.0"),
+        ("m := hashmap i64 -> i64 ?, m[i32 3] = i16 4, m[3]", "4"),
+        ("x := i32 3, x pt", "6"),
+    ] {
+        let out = logos().arg(format!("{pt}, {src}")).output().unwrap();
+        assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+    }
+    for src in [
+        "f := fn () -> i32 ( f64 2.5 ), f()",
+        "f := fn () -> i32 ( true ), f()",
+        "f := fn () -> @i32 ( i32 5 ), f()",
+        "f := fn () -> f32 ( i32 3 ), f()",
+        "mut x := i32 0, y := i64 9, x = y",
+        "mut b := bool ?, b = i32 1",
+        "f := fn (a := i64 ?) -> i64 ( a ), f(f64 3.0)",
+        "mut a := i32 0, p := &a, p@ = i64 5",
+        "rec := type ( a := i64 ?, b := f64 ? ), v := rec (i32 3, i64 4)",
+        "m := hashmap i32 -> i32 ?, m[i64 3] = 4",
+        "x := f64 3.5, x pt",
+        "g := fn (b) -> i32 ( mut x := i32 0, x = b, x ), g.compile(), g(f64 2.5)",
+        "g := fn (b) -> i32 ( h := fn (a := i32 ?) -> i32 ( a ), h(b) ), g(5)",
+        "g := fn (b) -> i64 ( b pt ), g(i64 3)",
+        "mut d := dyad ?, d = i32, mut x := i32 0, x = d",
+        "mut d := dyad ?, d = i32, f := fn () -> i32 ( d ), f()",
+        "g := fn (q := dyad ?) -> i32 ( q ), g(i32)",
+    ] {
+        let out = logos().arg(format!("{pt}, {src}")).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("these types do not match"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn an_if_lands_each_arm_and_an_operation_meets_in_the_wider_type() {
+    for compile in ["", "f.compile(), "] {
+        for (src, printed) in [
+            (
+                "f := fn (c := bool ?) -> i64 ( mut x := i64 0, x = if c (i32 1) else (i64 2), x ), \
+                 {c}f(true)",
+                "1",
+            ),
+            ("f := fn (c := bool ?) -> f64 ( if c (1) else (f64 2.5) ), {c}f(true)", "1.0"),
+            ("g := fn (a := i64 ?) -> i64 ( a ), f := fn (c := bool ?) -> i64 ( g(if c (i32 1) else (i64 2)) ), {c}f(false)", "2"),
+            (
+                "f := fn (c := i32 ?) -> i64 ( if c == 1 (i32 1) else if c == 2 (i16 7) else (i64 3) ), \
+                 {c}f(2)",
+                "7",
+            ),
+            ("f := fn (a := i32 ?, b := i64 ?) -> i64 ( a * b ), {c}f(3, 4)", "12"),
+            ("f := fn (a := f64 ?, b := i32 ?) -> f64 ( a + b ), {c}f(1.5, 1)", "2.5"),
+            ("f := fn (a := u8 ?, b := i32 ?) -> bool ( a < b ), {c}f(1, 2)", "true"),
+            ("f := fn () -> i64 ( mut s := i64 0, for i in (i32 0)..(i64 3) ( s = s + i ), s ), {c}f()", "3"),
+        ] {
+            let src = src.replace("{c}", compile);
+            let out = logos().arg(&src).output().unwrap();
+            assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+        }
+    }
+    for (src, expect) in [
+        ("c := true, x := if c (i32 1) else (i64 2)", "the arms of this `if` give different types"),
+        ("c := true, mut x := i64 0, x = if c (i32 1) else (f64 2.0)", "these types do not match"),
+        ("f32 1.5 + i32 1", "these types do not match"),
+        ("x := u64 1, y := i64 1, x + y", "these types do not match"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_dyad_place_takes_every_node_named_or_not_and_no_number() {
+    let array = "import ./identities/array.logos";
+    for tail in
+        ["mut d := dyad ?, d = array i32 [1, 2]", "a := array i32 [1, 2], mut d := dyad ?, d = a"]
+    {
+        let out = logos().arg(format!("{array}, {tail}, print «taken»")).output().unwrap();
+        assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "taken\n", "{tail}");
+    }
+    for src in [
+        "mut d := dyad ?, d = 5",
+        "mut d := dyad ?, d = i32 5",
+        "f := fn (q := dyad ?) -> i32 ( 1 ), f(5)",
+        "fn () -> dyad ( i32 5 )",
+        "fn (q := dyad ?) -> dyad ( q )",
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("takes only a node, not a number"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn inclusion_the_design_leaves_open_is_a_checked_error() {
+    for src in ["i32 ⊆ type\n", "u8 ⊆ dyad\n", "bool ⊆ type\n"] {
         let (echoes, stderr) = repl(src.as_bytes());
         assert!(echoes.is_empty() && stderr.contains("not settled"), "{src}: stderr: {stderr}");
     }
@@ -1486,7 +1792,9 @@ fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
     let out = logos().args([&format!("{q}, q (u32 3)")]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
-    for (arg, expect) in [("i8 3", "not within the size type"), ("f64 3.0", "not settled")] {
+    for (arg, expect) in
+        [("i8 3", "not within the size type"), ("f64 3.0", "not within the size type")]
+    {
         let out = logos().args([&format!("{q}, q ({arg})")]).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success() && stderr.contains(expect), "{arg}: stderr: {stderr}");
@@ -1549,7 +1857,7 @@ fn a_declared_hashmap_is_empty_and_readable_at_once() {
     );
     assert_eq!(echoes, ["type ?", "2"], "stderr: {stderr}");
     assert!(stderr.contains("the map holds no value at this key"), "stderr: {stderr}");
-    assert!(!stderr.contains("<repl>"), "no line is refused at parse: {stderr}");
+    assert!(!stderr.contains("<repl>:1:"), "no line is refused at parse: {stderr}");
 }
 
 #[test]
@@ -1558,11 +1866,17 @@ fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
         let (_echoes, stderr) = repl(format!("{line}\n").as_bytes());
         assert!(stderr.contains("`hashmap` is followed by `K -> V`"), "{line}: {stderr}");
     }
-    for line in ["m[i32] = 1", "m[1] = i32", "n[1] = 2", "n[i32] = 2"] {
+    for (line, expect) in [
+        ("m[i32] = 1", "these types do not match"),
+        ("m[1] = i32", "these types do not match"),
+        ("m[i64 1] = 1", "these types do not match"),
+        ("n[1] = 2", "must be a type value"),
+        ("n[i32] = 2", "must be a type value"),
+    ] {
         let (_echoes, stderr) = repl(
             format!("m := hashmap i32 -> i32\nn := hashmap type -> type\n{line}\n").as_bytes(),
         );
-        assert!(stderr.contains("these types do not match"), "{line}: {stderr}");
+        assert!(stderr.contains(expect), "{line}: {stderr}");
     }
 }
 
@@ -2034,7 +2348,7 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
             format!("{g}, r := type ( share parse_rank = fn.parse_rank, share parse = ( {body} {tail}, r i32");
         let out = logos().args([&src]).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("these types do not match"), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("must be a type value"), "{src}: stderr: {stderr}");
     }
     // A loop edits the tape after the read was checked: the read checks again when it runs.
     let src = format!(
@@ -2211,7 +2525,7 @@ fn the_metatypefn_example_runs() {
     // The expected value tracks the file's current argument; the deep arm is pinned by the metalogos_arm fixture.
     let out = logos().args(["import", "examples/metatypefn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "9.9\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "9.5\n");
 }
 
 #[test]
@@ -2627,7 +2941,7 @@ fn the_dyad_box_says_what_it_holds() {
     );
 
     let (_e, stderr) = repl(b"mut a := dyad ?\na = 5\n");
-    assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
+    assert!(stderr.contains("takes only a node, not a number"), "stderr: {stderr}");
 }
 
 #[test]
@@ -2864,8 +3178,6 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
         ("print «{x»", "this `{` has no `}`"),
         ("print «x}»", "this `}` closes no `{`"),
         ("print «{nope}»", "unknown name `nope`"),
-        ("print «{1, 2}»", "expected one expression"),
-        ("print «{}»", "nothing to evaluate"),
     ] {
         let out = logos().arg(src).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -4664,6 +4976,199 @@ fn a_run_body_takes_a_plain_record_field_by_copy() {
     }
 }
 
+/// Runs each program and checks its whole stdout.
+fn assert_runs(cases: &[(String, &str)]) {
+    for (src, want) in cases {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(0), *want), "{src}: stderr: {stderr}");
+    }
+}
+
+/// DESIGN ›`=` sits beside `:=`, and returns nothing‹: `=` writes a whole record through the
+/// address its left side gives, from a constructor, a name, a call or itself, on both tiers.
+#[test]
+fn equals_writes_a_whole_record_into_its_place() {
+    let defs = "q := type ( x := i32 ? ), w := q(4), mk := fn () -> q ( q(5) )";
+    let mut cases = Vec::new();
+    for (body, want) in [
+        ("mut v := q(1), v = q(3), v.x", "3\n"),
+        ("mut v := q(1), v = w, v.x", "4\n"),
+        ("mut v := q(1), v = mk(), v.x", "5\n"),
+        ("mut v := q(1), v = v, v.x", "1\n"),
+        ("mut v := q(1), p := &v, p@ = q(3), v.x", "3\n"),
+        ("mut v := q(0), mut i := i32 0, while i < 3 ( v = q(i), i = i + 1 ), v.x", "2\n"),
+    ] {
+        cases.push((format!("{defs}, {body}"), want));
+        cases.push((format!("{defs}, f := fn () -> i32 ( {body} ), f()"), want));
+        cases.push((format!("{defs}, f := fn () -> i32 ( {body} ), f.compile(), f()"), want));
+    }
+    // Into a hole, a parameter and a field that fits it; a `T ?` record local does not compile yet.
+    let param = "f := fn (mut v := q ?) -> i32 ( v = q(3), v.x )";
+    cases.extend([
+        (format!("{defs}, mut v := q ?, v = q(3), v.x"), "3\n"),
+        (format!("{defs}, {param}, f(q(1))"), "3\n"),
+        (format!("{defs}, {param}, f.compile(), f(q(1))"), "3\n"),
+        (
+            "q2 := type ( mut x := i32 ?, mut y := i32 ? ), o := type ( mut a := q2 ?, mut b := i32 ? ), \
+             mut v := o ?, v.b = 5, v.a = q2(3, 4), v.a.y * 10 + v.b"
+                .to_string(),
+            "45\n",
+        ),
+    ]);
+    assert_runs(&cases);
+}
+
+/// DESIGN ›`:=` decides nothing about copy or reference; the type's reading rule does‹: a plain
+/// record's name gets a copy of its own, from a name, a parameter or a dereference.
+#[test]
+fn a_declaration_copies_a_plain_record() {
+    let q = "q := type ( mut x := i32 ? ), pt := type ( mut a := i64 ?, mut b := i32 ? )";
+    let mut cases = Vec::new();
+    for (ty, body, want) in [
+        ("i32", "v := q(3), mut w := v, w.x = 9, v.x", "3\n"),
+        ("bool", "v := q(3), w := v, &v == &w", "false\n"),
+        ("i32", "v := q(3), w := v, mut u := w, u.x = 4, v.x * 100 + w.x * 10 + u.x", "334\n"),
+        ("i32", "v := pt(1, 2), p := &v, w := p@, w.b", "2\n"),
+    ] {
+        cases.push((format!("{q}, {body}"), want));
+        cases.push((format!("{q}, f := fn () -> {ty} ( {body} ), f()"), want));
+        cases.push((format!("{q}, f := fn () -> {ty} ( {body} ), f.compile(), f()"), want));
+    }
+    for (f, call) in [
+        ("f := fn (a := q ?) -> i32 ( mut b := a, b.x = 9, a.x )", "f(q(3))"),
+        ("f := fn (mut v := q ?) -> i32 ( w := v, v.x = 9, w.x )", "f(q(3))"),
+    ] {
+        cases.push((format!("{q}, {f}, {call}"), "3\n"));
+        cases.push((format!("{q}, {f}, f.compile(), {call}"), "3\n"));
+    }
+    // A copy of a value whose type fills `free` owns nothing: the value is freed once.
+    cases.push((
+        "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), w := r(2), y := w, 0"
+            .to_string(),
+        "freed 2\n0\n",
+    ));
+    assert_runs(&cases);
+}
+
+/// DESIGN ›Explicit heap: `alloc n` and `alloc n of T v`‹: a cell through a pointer is read and
+/// written whole for every type a place of it has, a plain record, a rational, `type`, `dyad`.
+#[test]
+fn a_cell_through_a_pointer_moves_any_type_with_a_layout() {
+    let pt = "pt := type ( mut a := i64 ?, mut b := i32 ? ), g := fn (v := pt ?) -> i32 ( v.b )";
+    let mut cases = vec![
+        (format!("{pt}, p := alloc 1 of pt ?, p@.b = 7, p@.b"), "7\n"),
+        (format!("{pt}, p := alloc 2 of pt (1, 2), (p + 1)@.b"), "2\n"),
+        (format!("{pt}, p := alloc 2 of pt (1, 2), (p + 1)@ = pt(5, 6), p@.b * 10 + (p + 1)@.b"), "26\n"),
+        (format!("{pt}, f := fn (p := @pt ?) -> pt ( p@ ), w := pt(1, 2), r := f(&w), r.b"), "2\n"),
+        (
+            format!("{pt}, f := fn (p := @pt ?) -> pt ( p@ ), f.compile(), w := pt(1, 2), r := f(&w), r.b"),
+            "2\n",
+        ),
+        ("p := alloc 1 of rational_number ?, p@ = rational_number 1/2, p@".to_string(), "1/2\n"),
+        ("p := alloc 2 of rational_number (1/3), (p + 1)@".to_string(), "1/3\n"),
+        (
+            "f := fn (p := @rational_number ?) -> i32 ( p@ = rational_number 1/2, 1 ), \
+             q := alloc 1 of rational_number ?, f(q), q@"
+                .to_string(),
+            "1/2\n",
+        ),
+        (
+            "f := fn (p := @rational_number ?, r := rational_number ?) -> i32 ( p@ = r, 1 ), \
+             f.compile(), q := alloc 1 of rational_number ?, f(q, 1/2), q@"
+                .to_string(),
+            "1/2\n",
+        ),
+        (
+            "f := fn (p := @rational_number ?) -> rational_number ( p@ ), f.compile(), \
+             q := alloc 1 of rational_number ?, q@ = rational_number 2/3, f(q)"
+                .to_string(),
+            "2/3\n",
+        ),
+        ("p := alloc 1 of type ?, p@ = i32, t := p@, t".to_string(), "i32\n"),
+        ("p := alloc 1 of dyad ?, p@ = i32, d := p@, d == i32".to_string(), "true\n"),
+        (
+            "pt := type ( mut t := type ?, mut b := i32 ? ), mut v := pt ?, v.t = i32, v.b = 1, \
+             p := &v, p@.t = i64, v.t"
+                .to_string(),
+            "i64\n",
+        ),
+        (
+            "pt := type ( mut t := type ?, mut b := i32 ? ), mut v := pt ?, v.t = i32, v.b = 1, \
+             p := &v, p@.t == i32"
+                .to_string(),
+            "true\n",
+        ),
+    ];
+    for (body, want) in [
+        ("w := pt(1, 2), p := &w, g(p@)", "2\n"),
+        ("w := pt(1, 2), p := &w, mut v := pt(0, 0), v = p@, v.b", "2\n"),
+    ] {
+        cases.push((format!("{pt}, {body}"), want));
+        cases.push((format!("{pt}, f := fn () -> i32 ( {body} ), f.compile(), f()"), want));
+    }
+    assert_runs(&cases);
+}
+
+/// DESIGN ›`=` sits beside `:=`, and returns nothing‹: the one `run` frees the value it
+/// displaces by its type's `free`, on both tiers.
+#[test]
+fn equals_frees_the_record_it_displaces() {
+    let r = "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let body = "mut x := r(1), x = r(2), x.n";
+    assert_runs(&[
+        (format!("{r}, mut x := r(1), x = r(2), print «{{x.n}}»"), "freed 1\n2\nfreed 2\n"),
+        (format!("{r}, f := fn () -> i32 ( {body} ), f()"), "freed 1\nfreed 2\n2\n"),
+        (format!("{r}, f := fn () -> i32 ( {body} ), f.compile(), f()"), "freed 1\nfreed 2\n2\n"),
+    ]);
+}
+
+/// A whole value the seed cannot place yet is refused, never written past its room: a field
+/// wider than its record lays out for it, and a record whose type fills `free` through a pointer.
+#[test]
+fn a_whole_value_with_no_room_is_refused() {
+    for (src, reason) in [
+        (
+            "pt := type ( mut a := i64 ?, mut b := i64 ? ), o := type ( mut a := pt ?, mut z := i64 ? ), \
+             mut v := o ?, v.a = pt(1, 2), 0",
+            "takes more bytes than its record lays out",
+        ),
+        (
+            "o := type ( mut a := rational_number ?, mut z := i64 ? ), mut v := o ?, \
+             v.a = rational_number 1/3, 0",
+            "takes more bytes than its record lays out",
+        ),
+        (
+            "pt := type ( mut a := rational_number ?, mut b := i32 ? ), p := alloc 1 of pt ?, \
+             p@.a = rational_number 1/2, 0",
+            "takes more bytes than its record lays out",
+        ),
+        (
+            "pt := type ( mut b := i32 ?, mut a := rational_number ? ), p := alloc 1 of pt ?, p@.a",
+            "takes more bytes than its record lays out",
+        ),
+        (
+            "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), w := r(2), \
+             mut x := r(1), p := &x, p@ = w, 0",
+            "through a pointer is not in the seed yet",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(reason), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn the_repl_writes_and_copies_whole_records() {
+    let (echoes, stderr) = repl(
+        b"q := type ( mut x := i32 ? )\nmut v := q ?\nv = q(3)\nv.x\nw := q(4)\nmut u := w\n\
+          u.x = 9\nw.x\npt := type ( mut a := i64 ?, mut b := i32 ? )\np := alloc 1 of pt ?\n\
+          p@.b = 7\np@.b\nr := &v\nr@ = q(5)\nv.x\n",
+    );
+    assert_eq!(echoes, ["3", "4", "7", "5"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
 #[test]
 fn a_name_used_inside_its_own_declaration_is_a_checked_error() {
     // The binding exists from the `:=` on; the node comes with the value.
@@ -4812,6 +5317,8 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
                 share parse = ( tape[0].type = pass, tape[0].a = tape[-1], \
                 tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, \
                 tape.remove(-1) ) )";
+    let at = "at := fn (q := @i32 ?) -> @i32 ( q )";
+    let pt = "pt := type (u := i32 ?, v := i32 ?)";
     for (src, want) in [
         (
             format!(
@@ -4835,9 +5342,215 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
             ),
             "7 5 2.5 42\n",
         ),
+        (format!("{pass}, n := i32 5, p := &n, q := p pass, q@"), "5\n"),
+        (
+            format!(
+                "{pass}, f := fn (q := @i32 ?) -> @i32 ( q pass ), f.compile(), n := i32 5, f(&n)@"
+            ),
+            "5\n",
+        ),
+        (format!("{pass}, {at}, n := i32 5, (at(&n) pass)@"), "5\n"),
+        (
+            format!(
+                "{pass}, {at}, f := fn (q := @i32 ?) -> i32 ( (at(q) pass)@ ), f.compile(), \
+                 n := i32 5, f(&n)"
+            ),
+            "5\n",
+        ),
+        (format!("{pass}, {pt}, r := pt(3, 4), q := r pass, print «{{q.u}} {{q.v}}»"), "3 4\n"),
+        (format!("{pass}, {pt}, q := pt(3, 4) pass, q.v"), "4\n"),
+        (
+            format!(
+                "{pass}, {pt}, g := fn (r := pt ?) -> i32 ( q := r pass, q.v ), g.compile(), \
+                 g(pt(3, 4))"
+            ),
+            "4\n",
+        ),
+        (format!("{pass}, mut t := type ?, t = i32, q := t pass, q"), "i32\n"),
+        (format!("{pass}, ty := fn () -> type ( i32 ), (ty() pass) == i32"), "true\n"),
+        (format!("{pass}, (i32 pass) == i32"), "true\n"),
+        (format!("{pass}, g := fn (u := type ?) -> type ( u pass ), g.compile(), g(i32)"), "i32\n"),
+        (
+            format!("{pass}, g := fn (b := bool ?) -> bool ( b pass ), g.compile(), g(true)"),
+            "true\n",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
         assert_eq!(stdout, want, "{src}");
     }
+    // The field holds the operand's value, so an operand that gives none is refused.
+    let src = format!("{pass}, mut x := i32 5, (x = i32 3) pass");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: {stderr}");
+    assert!(stderr.contains("this gives nothing"), "{src}: {stderr}");
+}
+
+#[test]
+fn an_input_with_nothing_in_it_has_no_value_on_the_command_line_and_in_a_file() {
+    for src in [
+        "# hi",
+        "# «x»",
+        "# a\n# b",
+        "",
+        "   ",
+        "import tests/fixtures/only_prose.logos",
+        "import tests/fixtures/empty.logos",
+    ] {
+        assert_eq!(run_line(src), (Some(0), String::new(), String::new()), "{src:?}");
+    }
+    // The same lines read as a block, after other lines, and before a value.
+    for (src, want) in [
+        ("( # note\n), 7", "7"),
+        ("x := 1,\n# hi", ""),
+        ("1, # done", "1"),
+        ("( y := i32 2, y + 1 )", "3"),
+        ("x := 1, y := 2, x + y", "3"),
+        ("import tests/fixtures/only_prose.logos, 1", "1"),
+        ("import tests/fixtures/empty.logos, 1", "1"),
+    ] {
+        assert_eq!(line(src), want, "{src:?}");
+    }
+}
+
+#[test]
+fn a_closer_no_bracket_opened_is_one_error_naming_it() {
+    for (src, message) in [
+        ("1 )", "<command line>:1:3: error: this `)` closes nothing: no bracket is open here"),
+        ("1 ], 5", "<command line>:1:3: error: this `]` closes nothing: no bracket is open here"),
+        (")", "<command line>:1:1: error: this `)` closes nothing: no bracket is open here"),
+        (
+            "import tests/fixtures/stray_closer.logos, 2",
+            "stray_closer.logos:1:3: error: this `)` closes nothing: no bracket is open here",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stdout: {stdout}");
+        assert!(stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_repl_line_is_a_line_of_the_program() {
+    let (echoes, stderr) = repl(
+        b"# hello\n\
+          # \xc2\xabx\xc2\xbb\n\
+          \n   \n\
+          x := 1, y := 2\n\
+          x + y\n\
+          1, # done\n\
+          z := i32 1,\n\
+          z\n\
+          import tests/fixtures/only_prose.logos, 7\n\
+          w := i32 1, 5\n\
+          6, v := i32 1\n\
+          v\n",
+    );
+    assert_eq!(echoes, ["3", "1", "1", "7", "5", "1"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"1 )\n)\n2\n");
+    assert_eq!(echoes, ["2"], "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:3: error: this `)` closes nothing"), "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:1: error: this `)` closes nothing"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_failed_repl_line_leaves_no_trace() {
+    // Neither declaration of a line that fails is known after it.
+    let (echoes, stderr) = repl(b"x := i32 1, y := zz\nx\ny\nx := i32 3, y := i32 4\nx + y\n");
+    assert_eq!(echoes, ["7"], "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `zz`"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `x`"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `y`"), "stderr: {stderr}");
+    // What the line's own lines hold ends at its fault; what an earlier line holds ends only
+    // where the failing line reached its `free`.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let (echoes, stderr) = repl(
+        format!(
+            "{bag}\nc := bag(7), error «boom»\nc\nk := bag(1)\nfree k, error «x»\n\
+             m := bag(2)\nerror «y», free m\nm.n\n"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(echoes, ["freed 7", "freed 1", "2", "freed 2"], "stderr: {stderr}");
+    assert!(stderr.contains("<repl>: run error: boom"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `c`"), "stderr: {stderr}");
+    // Its lines leave the session's scope.
+    let (echoes, stderr) = repl(b"a := i32 1\nb := i32 2, zz\nhere.scope.dyads.size\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
+    let held = "import ./tests/fixtures/held.logos";
+    // Neither a fault, a failed parse after the import, nor a `free` the line parsed and never
+    // ran ends the file: the session does, once.
+    for failing in [
+        format!("{held}, error «boom»"),
+        format!("{held}, zz"),
+        format!("{held}, error «boom», free h"),
+        format!("{held}, free h, zz"),
+    ] {
+        let (echoes, stderr) = repl(format!("{failing}\n{held}\nh.n\n").as_bytes());
+        assert_eq!(echoes, ["9", "freed 9"], "{failing}: stderr: {stderr}");
+    }
+    // A `free` the line ran before its fault ended the value there.
+    let (echoes, stderr) = repl(format!("{held}, free h, error «boom»\n1\n").as_bytes());
+    assert_eq!(echoes, ["freed 9", "1"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(
+        b"import ./tests/fixtures/owning_pub.logos, error \xc2\xabboom\xc2\xbb\n\
+          import ./tests/fixtures/owning_pub.logos, p@\n",
+    );
+    assert_eq!(echoes, ["7"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(
+        b"import ./tests/fixtures/counter.logos, error \xc2\xabboom\xc2\xbb\n\
+          import ./tests/fixtures/counter.logos\nc@\n",
+    );
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+    // The line's own holds still end at its fault, and the names it published roll back.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let line_holds = format!("c := bag(1), {held}, d := bag(2), error «boom»");
+    let (echoes, stderr) = repl(format!("{bag}\n{line_holds}\nh.n\n").as_bytes());
+    assert_eq!(echoes, ["freed 2", "freed 1", "freed 9"], "stderr: {stderr}");
+    assert!(stderr.contains("`h` is not in scope here"), "stderr: {stderr}");
+    // On the command line the run ends at the fault, and the file with it.
+    let (code, stdout, _) = run_line("import ./tests/fixtures/deferring.logos, error «x»");
+    assert_eq!((code, stdout.as_str()), (Some(1), "file ends\n"));
+}
+
+#[test]
+fn a_quote_s_braces_are_a_scope_whose_text_is_its_tail() {
+    for (src, printed) in [
+        ("print «a{ y := i32 2, y + 1 }b»", "a3b\n"),
+        ("print «a{ # c\n}b»", "ab\n"),
+        ("print «a{ # «c» }b»", "ab\n"),
+        ("print «a{}b»", "ab\n"),
+        ("print «{1, 2}»", "2\n"),
+        ("print «{}»", "\n"),
+        ("f := fn () -> void ( print «a{ y := i32 2, y + 1 }b» ), f()", "a3b\n"),
+        ("f := fn () -> void ( print «a{ # c\n}b» ), f()", "ab\n"),
+        ("f := fn () -> void ( print «a{ # «c» }b», print «a{}b» ), f()", "ab\nab\n"),
+        // A comment in the braces is a line of their scope, not of the one around them.
+        ("print «{5 # «c» * 2}», here.scope.dyads.size", "10\n1\n"),
+        ("( print «{5 # «c» * 2}», here.scope.dyads.size )", "10\n1\n"),
+    ] {
+        assert_eq!(run_line(src), (Some(0), printed.to_string(), String::new()), "{src:?}");
+    }
+    for (src, message) in [("error «a{ y := 2, y }b»", "a2b"), ("error «a{ # «c» }b»", "ab")]
+    {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains(&format!("run error: {message}")), "{src}: stderr: {stderr}");
+    }
+    // A tail that gives nothing is no tail missing: a value is read there.
+    for src in ["print «a{ x := i32 1 }b»", "print «a{ y := i32 1, print «in» }b»"] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains("gives nothing, and a value is needed here"), "{src}: {stderr}");
+    }
+    // Its names are its own, and a closer in it closes nothing.
+    let (_, _, stderr) = run_line("print «a{ y := i32 2, y }b», y");
+    assert!(stderr.contains("`y` is not in scope here"), "stderr: {stderr}");
+    let (_, _, stderr) = run_line("print «{ 1 ) }»");
+    assert!(stderr.contains("1:12: error: this `)` closes nothing"), "stderr: {stderr}");
 }

@@ -89,6 +89,16 @@ unsafe fn field_width(logos: DyadPtr) -> u64 {
     }
 }
 
+/// Whether a whole value of `logos` fits the room [`field_width`] gives a field of it.
+/// stand-in for #221
+///
+/// # Safety
+/// `logos` must be null or a type node from the store.
+pub(crate) unsafe fn fits_field(types: &Core, logos: DyadPtr) -> bool {
+    crate::identities::read::carry_of(types, logos)
+        .is_none_or(|carry| carry.width() as u64 <= field_width(logos))
+}
+
 /// Each field's offset inside a value of `ty`, packed in order by `field_width`, written
 /// onto the field's binding (DESIGN ›A scope lays out its declarations…‹).
 ///
@@ -1120,8 +1130,13 @@ impl<'a> Parser<'a> {
         if held.is_null() {
             return Ok(None);
         }
-        let Some(key) = self.field_type_key(ty, node)? else {
-            return Ok(None);
+        let key = match self.field_type_key(ty, node) {
+            Ok(Some(key)) => key,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                self.cx.pos = at;
+                return Err(e);
+            }
         };
         let mut spec = crate::identities::run_body::lookup(held, &key);
         if spec.is_null() {
@@ -1140,7 +1155,10 @@ impl<'a> Parser<'a> {
         // A run whose result is copied out is copied where it runs: into the name that
         // takes it, else scratch.
         let out = *(dyad::value(spec) as *const DyadPtr).add(FN_OUTPUT);
-        if crate::identities::by_copy::record_width(self.types, out).is_none() {
+        if crate::identities::read::carry_of(self.types, out)
+            .and_then(crate::identities::read::Carry::bytes)
+            .is_none()
+        {
             return Ok(None);
         }
         Ok(Some(crate::identities::by_copy::build_result(
@@ -1219,7 +1237,6 @@ impl<'a> Parser<'a> {
         ty: DyadPtr,
         node: DyadPtr,
     ) -> Result<Option<Vec<DyadPtr>>, ParseError> {
-        use crate::identities::{operand_of, Operand};
         let types = self.types;
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
         let slots = dyad::value(node) as *mut DyadPtr;
@@ -1241,58 +1258,25 @@ impl<'a> Parser<'a> {
                 && declared != types.square_brackets
                 && declared != types.scope
             {
-                // A literal stays as it stands in a rational field: its bytes are the value's.
-                if matches!(operand_of(types, slot), Operand::Literal) {
-                    let lit = types.through(slot);
-                    if crate::identities::is_numtype_node(types, declared) {
-                        *slots.add(i) = crate::identities::commit_literal_to(
-                            self.rt.store,
-                            types,
-                            lit,
-                            declared,
-                        )?;
-                    }
-                }
+                *slots.add(i) = crate::identities::land(self.rt.store, types, slot, declared)?;
                 declared
-            } else if crate::identities::rational::is_rational_value(types, slot) {
-                types.rational
-            } else if let Some(bracket) = self.bracket_type(slot) {
+            } else if let Some(bracket) = crate::identities::tape::bracket_kind(types, slot) {
                 if dyad::ty(slot) != types.tape.bracket_arg {
                     *slots.add(i) =
                         crate::identities::tape::build_bracket_arg(self.rt.store, types, slot)?;
                 }
                 bracket
             } else {
-                // A literal's own type is `rational_number`; its bytes are the value the call
-                // copies.
-                let out = crate::identities::read::output_type(types, slot);
-                match crate::identities::read::place_layout(types, out) {
-                    Some((
-                        crate::identities::read::Read::Scalar(_)
-                        | crate::identities::read::Read::Rational,
-                        _,
-                    )) => out,
-                    _ => return Ok(None),
+                // The operand's value at its own type: a literal's is `rational_number`, its
+                // bytes the value the call copies.
+                let given = crate::identities::read::value_type(types, slot)?;
+                if given.is_null() {
+                    return Ok(None);
                 }
+                given
             };
             key.push(entry);
         }
         Ok(Some(key))
-    }
-
-    /// The kind of bracket an untyped field holds, written or already wrapped to run per node.
-    ///
-    /// # Safety
-    /// `slot` must be a dyad from the store.
-    unsafe fn bracket_type(&self, slot: DyadPtr) -> Option<DyadPtr> {
-        let types = self.types;
-        let slot = types.through(slot);
-        let bracket = if dyad::ty(slot) == types.tape.bracket_arg {
-            *(dyad::value(slot) as *const DyadPtr)
-        } else {
-            slot
-        };
-        let ty = dyad::ty(bracket);
-        (ty == types.scope || ty == types.square_brackets).then_some(ty)
     }
 }

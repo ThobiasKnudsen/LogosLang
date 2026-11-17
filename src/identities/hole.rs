@@ -44,11 +44,10 @@ pub(crate) unsafe fn default_in(node: DyadPtr) -> DyadPtr {
     *(dyad::value(node) as *const DyadPtr).add(1)
 }
 
-/// Escaped: `?` is a regex metacharacter.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::HOLE);
     let id = cx.store.alloc_head(cx.type_, record);
-    cx.declare(r"\?", id);
+    cx.declare("?", id);
     cx.metas.insert(id, |p, id, tape| p.construct_hole(id, tape));
     id
 }

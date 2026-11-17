@@ -9,8 +9,8 @@
 //! one. The natives run interpreted.
 
 use super::callable::{self, Callables};
-use super::read::{read_kind, Read};
-use super::{array, meta, operand_of, Cx, Operand};
+use super::read::Read;
+use super::{array, meta, Cx};
 use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
@@ -155,39 +155,6 @@ pub(crate) unsafe fn is_hashmap(types: &Core, t: DyadPtr) -> bool {
     params_of(types, t).is_some()
 }
 
-/// `node` checked against `want`, a literal committed to it.
-///
-/// # Safety
-/// `want` must be a type `param` accepted and `node` a reduced dyad from the store.
-unsafe fn accept(
-    store: &mut Store,
-    types: &Core,
-    want: DyadPtr,
-    node: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    if want == types.type_ || want == types.dyad_ {
-        let ok = match read_kind(types, node) {
-            Read::Identity => true,
-            Read::Container(c) => {
-                if want == types.type_ {
-                    c == types.type_
-                } else {
-                    !c.is_null()
-                }
-            }
-            Read::Address => want == types.dyad_,
-            Read::Executable(_) => super::read::output_type(types, node) == want,
-            _ => false,
-        };
-        return if ok { Ok(node) } else { Err(ParseError::TypeMismatch) };
-    }
-    if matches!(operand_of(types, node), Operand::Literal) {
-        return super::commit_literal_to(store, types, types.through(node), want);
-    }
-    super::check_store_type(types, want, node)?;
-    Ok(node)
-}
-
 /// `m[k]` when `lhs` is a `hashmap` place, else `None`.
 ///
 /// # Safety
@@ -205,7 +172,7 @@ pub(crate) unsafe fn build_get(
     let Some((k, v)) = params_of(types, types.type_of(place)) else {
         return Ok(None);
     };
-    let key = accept(store, types, k, key)?;
+    let key = super::land(store, types, key, k)?;
     let map = super::pointer::build_addr(store, types, place);
     Ok(Some(store.alloc_words(types.hashmap.get, &[map, key, types.hashmap.get_leaf, v])))
 }
@@ -219,7 +186,7 @@ pub(crate) unsafe fn build_put(
     value: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     let v = super::read::output_type(types, get);
-    let value = accept(store, types, v, value)?;
+    let value = super::land(store, types, value, v)?;
     let ops = dyad::value(get) as *const DyadPtr;
     let put = [*ops, *ops.add(1), value, types.hashmap.put_leaf];
     Ok(store.alloc_words(types.hashmap.put, &put))
