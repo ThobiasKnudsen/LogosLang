@@ -280,6 +280,10 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
         ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 1.0 / 0.0)", "inf"),
         ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 -1.0 / 0.0)", "0.0"),
         ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 3.0)", "8.0"),
+        ("x := f64 2.0, x ^ (f64 -1000000000000000000 * 1000000000000000000)", "0.0"),
+        ("x := f64 0.5, x ^ (f64 1000000000000000000 * 1000000000000000000)", "0.0"),
+        ("x := f64 2.0, x ^ (f64 1000000000000000000 * 1000000000000000000)", "inf"),
+        ("g := fn (x := f64 ?, y := f64 ?) -> f64 ( x ^ y ), g.compile(), g(f64 2.0, f64 -1000000000000000000 * 1000000000000000000)", "0.0"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{body}\n{tail}"));
         assert_eq!((code, stdout.trim()), (Some(0), want), "{tail}: stderr: {stderr}");
