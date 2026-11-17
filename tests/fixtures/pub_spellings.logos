@@ -1,0 +1,3 @@
+# A `pub` pattern and a `pub` name with a rank of its own.
+pub regex «[0-9]+k» := type (),
+pub r := type (share lex_rank = 3)

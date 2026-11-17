@@ -3026,6 +3026,17 @@ fn an_imported_pub_name_keeps_its_gates() {
 }
 
 #[test]
+fn an_imported_pub_spelling_is_keyed_and_ranked_as_the_file_declared_it() {
+    let lib = "import ./tests/fixtures/pub_spellings.logos";
+    assert_eq!(line(&format!("{lib}, (5k).type == type")), "true");
+    assert_eq!(line(&format!("{lib}, {lib}, (5k).type == type")), "true");
+    assert_eq!(line(&format!("{lib}, r:lex_rank")), "3.0");
+    let (code, _, stderr) = run_line(&format!("regex «[0-9]+k» := type (), {lib}"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`[0-9]+k` is already declared"), "stderr: {stderr}");
+}
+
+#[test]
 fn an_import_tail_runs_once() {
     assert_eq!(line("import ./tests/fixtures/counter.logos, c@"), "1");
     // An import is a statement: nothing echoes, and the second import runs nothing.

@@ -150,27 +150,34 @@ impl<'a> Parser<'a> {
         identity: DyadPtr,
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
-        let scope = self.cx.scopes.current().expect("declare needs an open scope");
-        let binding = self.mint_binding(identity, scope, name.as_bytes());
-        // SAFETY: `binding` was minted by `Binding::alloc` just above.
-        if let Err(e) = unsafe { self.cx.scopes.declare(self.trie, name, binding) } {
-            self.cx.pos = at;
-            return Err(ParseError::Resolve(e));
-        }
-        Ok(binding)
+        self.declare_spelling(name, false, identity, at)
     }
 
-    /// The pattern twin of `declare_name`.
-    pub(crate) fn declare_pattern(
+    /// `declare_name` for a spelling that is a name or, with `pattern`, a pattern.
+    pub(crate) fn declare_spelling(
         &mut self,
-        key: &str,
+        spelling: &str,
+        pattern: bool,
         identity: DyadPtr,
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.cx.scopes.current().expect("declare needs an open scope");
-        let binding = self.mint_binding(identity, scope, key.as_bytes());
+        let binding = self.mint_binding(identity, scope, spelling.as_bytes());
         // SAFETY: `binding` was minted by `Binding::alloc` just above.
-        if let Err(e) = unsafe { self.cx.scopes.declare_pattern(self.trie, key, binding) } {
+        unsafe { Binding::set_pattern(binding, pattern) };
+        self.enter_binding(spelling, binding, at)
+    }
+
+    /// Enter a minted binding under its spelling in the open scope; a failure is reported
+    /// at `at`.
+    pub(crate) fn enter_binding(
+        &mut self,
+        spelling: &str,
+        binding: DyadPtr,
+        at: usize,
+    ) -> Result<DyadPtr, ParseError> {
+        // SAFETY: the caller hands a binding dyad from the store.
+        if let Err(e) = unsafe { self.cx.scopes.declare(self.trie, spelling, binding) } {
             self.cx.pos = at;
             return Err(ParseError::Resolve(e));
         }
@@ -576,31 +583,23 @@ impl<'a> Parser<'a> {
         let Some(tok) = tape.at(-1).copied() else {
             return Ok(Constructed::Decline);
         };
-        let pattern: Option<Vec<u8>> = if tok.constructed {
-            // SAFETY: a constructed cell holds a node from the store.
-            if unsafe { dyad::ty(tok.dyad) } == self.types.regex_ {
-                // SAFETY: a `regex` node's value is a text blob.
-                Some(unsafe { crate::identities::string::text(tok.dyad) }.to_vec())
-            } else {
-                return Ok(Constructed::Decline);
-            }
-        } else {
-            None
-        };
         // Copied out: the cell's text is independent of the `&mut self` the
         // declaration and value parse need.
-        let name: String = match &pattern {
-            Some(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-            None => tok.spelling().to_string(),
+        let (name, pattern): (String, bool) = if tok.constructed {
+            // SAFETY: a constructed cell holds a node from the store.
+            if unsafe { dyad::ty(tok.dyad) } != self.types.regex_ {
+                return Ok(Constructed::Decline);
+            }
+            // SAFETY: a `regex` node's value is a text blob.
+            let text = unsafe { crate::identities::string::text(tok.dyad) };
+            (String::from_utf8_lossy(text).into_owned(), true)
+        } else {
+            (tok.spelling().to_string(), false)
         };
         let name: &str = &name;
         // The binding is the name's home before its node exists (DESIGN ›An unknown spelling
         // stays text on the tape; `:=` makes the binding, and the node comes with the value‹).
-        let declared = if pattern.is_some() {
-            self.declare_pattern(name, std::ptr::null_mut(), tok.start)
-        } else {
-            self.declare_name(name, std::ptr::null_mut(), tok.start)
-        };
+        let declared = self.declare_spelling(name, pattern, std::ptr::null_mut(), tok.start);
         let binding = match declared {
             Ok(binding) => binding,
             Err(e) => {
