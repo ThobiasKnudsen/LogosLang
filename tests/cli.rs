@@ -2968,6 +2968,30 @@ fn only_a_marked_place_is_written_or_addressed() {
 }
 
 #[test]
+fn an_element_has_an_address_and_taking_it_checks_the_index() {
+    let arr = "import ./identities/array.logos";
+    assert_eq!(line(&format!("{arr}, a := array i32 [1, 2], p := &(a[1]), p@ = 8, a[1]")), "8");
+    assert_eq!(
+        line(&format!(
+            "{arr}, g := fn () -> i32 ( a := array i32 [1, 2], p := &(a[1]), p@ ), g.compile(), g()"
+        )),
+        "2"
+    );
+    for src in [
+        format!("{arr}, a := array i32 [1, 2], p := &(a[5]), 1"),
+        format!(
+            "{arr}, g := fn () -> i32 ( a := array i32 [1, 2], p := &(a[5]), 1 ), g.compile(), g()"
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("index out of range"), "{src}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl(b"a := alloc 1 of i32 3\np := &(a@)\np@ = 9\na@\n");
+    assert_eq!(echoes, ["9"], "stderr: {stderr}");
+}
+
+#[test]
 fn declaring_from_a_box_copies_it() {
     let (echoes, stderr) = repl(
         b"mut a := type ?\na = i32\nmut x := a\nx = f64\na == i32\nx == f64\n\
