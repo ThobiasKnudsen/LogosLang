@@ -348,6 +348,7 @@ pub(super) fn register_type(
     let binding_ = cx.binding_;
     let scope = super::scope::mint(cx.store, scope_ty, std::ptr::null_mut());
     let mut fields = Vec::with_capacity(9);
+    let mut bindings = Vec::with_capacity(9);
     // SAFETY: `dyad_ty` is the type node `Core::build` minted.
     let at_dyad = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty) };
     // `name` is a place of type `string`: the eight-byte container every type without a
@@ -369,14 +370,17 @@ pub(super) fn register_type(
         // SAFETY: `binding` was just minted by `declare_in`; `binding_` is the type node.
         unsafe { Binding::set_field_offset(binding, binding_, i * 8) };
         fields.push(field);
+        bindings.push(binding);
     }
     // The Logos-visible fields come first and are each one word; the rest is the seed's.
     debug_assert_eq!(fields.len() * 8, std::mem::offset_of!(Binding, unwritten));
     let fields_arr = super::array::build(cx.store, array_ty, &fields);
+    let bindings = super::array::build(cx.store, array_ty, &bindings);
     let layout = super::meta::record_layout(
         cx.store,
         scope,
         fields_arr,
+        bindings,
         (fields.len() * 8) as u64,
         std::ptr::null_mut(),
         super::meta::prec::APPLY,

@@ -7,11 +7,12 @@
 //! byte offset inside the record's storage, so every scalar read, write and lowering path
 //! serves it unchanged.
 
+use crate::binding::Binding;
 use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
-use super::numtype::{self, NumType};
+use super::read::{carry_of, Carry};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -107,35 +108,28 @@ pub(crate) unsafe fn field_parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     (*p, *p.add(1))
 }
 
-/// `(type node, width tag, byte offset)` per field, and the total size.
-pub(crate) type FieldLayout = (Vec<(DyadPtr, NumType, usize)>, usize);
-
-/// Each field with its numeric type and byte offset, in declaration order, plus the
-/// total size. Fields must be numeric or pointer-typed; there is no nested layout.
+/// Each field of a value of `ty` with its offset in the value, the one its binding carries.
 ///
 /// # Safety
-/// `record_logos` must be a record type node from the store.
-pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseError> {
-    // A field's type must be a type node: that excludes a nested record definition and a
-    // value node standing in type position, whose bytes would be misread as a width tag.
-    let type_root = dyad::ty(dyad::ty(record_logos));
-    let mut fields = Vec::new();
-    let mut offset = 0usize;
-    for &field in super::array::items(meta::record_fields_of(record_logos)) {
-        let fty = super::hole::type_in(field);
-        if fty.is_null() || dyad::ty(fty) != type_root || !numtype::is_scalar_type(fty) {
-            return Err(ParseError::UnsupportedOperands);
-        }
-        let nt = numtype::of_type_node(fty);
-        fields.push((field, nt, offset));
-        offset += nt.bytes();
-    }
-    debug_assert_eq!(
-        offset as u64,
-        meta::record_size_of(record_logos),
-        "the walked layout matches the size stored at definition"
-    );
-    Ok((fields, offset))
+/// `ty` must be a record type node from the store.
+pub(crate) unsafe fn field_offsets<'a>(ty: DyadPtr) -> impl Iterator<Item = (DyadPtr, usize)> + 'a {
+    let fields = super::array::items(meta::record_fields_of(ty));
+    let bindings = super::array::items(meta::record_field_bindings_of(ty));
+    fields.iter().zip(bindings).map(|(&field, &binding)| {
+        // SAFETY: the record keeps a binding per field, minted when its field was declared.
+        (field, unsafe { Binding::read(binding) }.offset)
+    })
+}
+
+/// Where each field of a value of `ty` lies and how a whole value of its type moves into it;
+/// `None` where a field's type moves none, as a `?` field's.
+///
+/// # Safety
+/// `ty` must be a record type node from the store.
+unsafe fn places(types: &Core, ty: DyadPtr) -> Option<Vec<(usize, Carry)>> {
+    field_offsets(ty)
+        .map(|(field, offset)| Some((offset, carry_of(types, super::hole::type_in(field))?)))
+        .collect()
 }
 
 /// `[target, type, op, output_type, args…, null]`: the value is made into the name `target`
@@ -151,8 +145,8 @@ pub(crate) unsafe fn build_ctor(
     record_logos: DyadPtr,
     args: &[DyadPtr],
 ) -> Result<DyadPtr, ParseError> {
-    let (fields, _) = layout(record_logos)?;
-    if args.len() != fields.len() {
+    let places = places(types, record_logos).ok_or(ParseError::UnsupportedOperands)?;
+    if args.len() != places.len() {
         return Err(ParseError::CtorArity);
     }
     let mut ops = Vec::with_capacity(ARGS + args.len() + 1);
@@ -160,7 +154,8 @@ pub(crate) unsafe fn build_ctor(
     ops.push(record_logos);
     ops.push(types.ops.construct_);
     ops.push(record_logos);
-    for (&arg, &(field, _, _)) in args.iter().zip(&fields) {
+    for (&arg, &field) in args.iter().zip(super::array::items(meta::record_fields_of(record_logos)))
+    {
         ops.push(super::land(store, types, arg, super::hole::type_in(field))?);
     }
     ops.push(std::ptr::null_mut());
@@ -174,14 +169,14 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let ty = *ops.add(1);
-        let (fields, _) = layout(ty).map_err(|_| RunError::NoLayout(ty))?;
-        let mut bits = Vec::with_capacity(fields.len());
-        for i in 0..fields.len() {
-            bits.push(rt.run(*ops.add(ARGS + i))?);
+        let places = places(rt.types(), ty).ok_or(RunError::NoLayout(ty))?;
+        let mut taken = Vec::with_capacity(places.len());
+        for (i, &(_, carry)) in places.iter().enumerate() {
+            taken.push(super::assign::take(rt, carry, *ops.add(ARGS + i))?);
         }
         let blob = super::by_copy::dest_of(rt, node)?;
-        for (&(field, _, offset), &b) in fields.iter().zip(&bits) {
-            numtype::write_scalar(super::hole::type_in(field), blob.add(offset), b);
+        for (&(offset, carry), &value) in places.iter().zip(&taken) {
+            super::assign::put(carry, blob.add(offset), value);
         }
         Ok(blob as i64)
     }
@@ -192,11 +187,11 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let ty = *ops.add(1);
-        let (fields, _) = layout(ty).map_err(|_| CompileError::NoLayout(ty))?;
+        let places = places(lw.types(), ty).ok_or(CompileError::NoLayout(ty))?;
         let base = super::by_copy::lower_dest_of(lw, node)?;
-        for (i, &(_, nt, offset)) in fields.iter().enumerate() {
-            let v = lw.lower(*ops.add(ARGS + i))?;
-            lw.store_at(nt.cranelift_type(), base, offset as i64, v);
+        for (i, &(offset, carry)) in places.iter().enumerate() {
+            let value = super::assign::lower_take(lw, carry, *ops.add(ARGS + i))?;
+            super::assign::lower_put(lw, carry, base, offset as i64, value);
         }
         Ok(base)
     }

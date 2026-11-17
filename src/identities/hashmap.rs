@@ -119,11 +119,12 @@ unsafe fn mint(store: &mut Store, types: &Core, key: DyadPtr, value: DyadPtr) ->
         return *t;
     }
     let scope = super::scope::mint(store, types.scope, std::ptr::null_mut());
-    let fields = array::build(store, types.array_, &[]);
+    let none = array::build(store, types.array_, &[]);
     let layout = meta::record_layout(
         store,
         scope,
-        fields,
+        none,
+        none,
         8,
         std::ptr::null_mut(),
         meta::prec::APPLY,

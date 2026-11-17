@@ -84,10 +84,10 @@ pub enum Shape {
         callee: DyadPtr,
         args: Vec<DyadPtr>,
     },
-    /// A value of a record type: fields at derived offsets.
+    /// A value of a record type: each field at the offset its binding carries.
     Instance {
-        /// Each field's declaration node, machine type, and byte offset.
-        fields: Vec<(DyadPtr, NumType, usize)>,
+        /// Each field's declaration node and byte offset.
+        fields: Vec<(DyadPtr, usize)>,
         size: usize,
     },
     /// The node is itself a type carrying a shared-member record.
@@ -158,9 +158,9 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
         return Shape::Container;
     }
     if meta::is_record_type(logos) {
-        return match instance::layout(logos) {
-            Ok((fields, size)) => Shape::Instance { fields, size },
-            Err(_) => Shape::Undefined,
+        return Shape::Instance {
+            fields: instance::field_offsets(logos).collect(),
+            size: meta::record_size_of(logos) as usize,
         };
     }
     if dyad::ty(logos) == types.fn_type {

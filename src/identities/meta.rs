@@ -52,8 +52,8 @@ pub(crate) const CONVENTION_TAG: u8 = 21;
 /// Values are `[len: u64][data: @dyad]`, 16 bytes; a list never lives inline in a node.
 pub(crate) const ARRAY_TAG: u8 = 22;
 /// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]
-/// [body: @dyad][free: @dyad]`, 40 bytes, locked at definition; `body` is null where the type
-/// has none, `free` where its body fills none.
+/// [body: @dyad][free: @dyad][bracket builder: @dyad][field bindings: @dyad]`, 56 bytes, locked
+/// at definition; `body` is null where the type has none, `free` where its body fills none.
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Values are dyad views: the value IS the viewed node's address.
 pub(crate) const DYAD_TAG: u8 = 24;
@@ -159,10 +159,13 @@ pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
     store.alloc_bytes(&blob)
 }
 
+/// `bindings` is the array of the fields' bindings, in the order of `fields`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn record_layout(
     store: &mut Store,
     scope: DyadPtr,
     fields: DyadPtr,
+    bindings: DyadPtr,
     size_bytes: u64,
     body: DyadPtr,
     parse_rank: f64,
@@ -175,6 +178,7 @@ pub(crate) fn record_layout(
     blob.extend_from_slice(&(body as usize).to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
+    blob.extend_from_slice(&(bindings as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }
 
@@ -238,6 +242,18 @@ pub(crate) unsafe fn bracket_builder_of(id: DyadPtr) -> DyadPtr {
 /// `id` must carry a `RECORD_TAG` record; `builder` a type node from the store.
 pub(crate) unsafe fn install_bracket_builder(id: DyadPtr, builder: DyadPtr) {
     std::ptr::write_unaligned(dyad::head(id).add(BRACKET_BUILDER_OFF) as *mut DyadPtr, builder);
+}
+
+const FIELD_BINDINGS_OFF: usize = PAYLOAD_OFF + 48;
+
+/// The array of the fields' bindings, in the order of `record_fields_of`, each carrying its
+/// field's offset in a value (DESIGN ›A scope lays out its declarations; a use reaches the
+/// offset through its binding‹).
+///
+/// # Safety
+/// As `record_scope_of`.
+pub(crate) unsafe fn record_field_bindings_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned(dyad::head(id).add(FIELD_BINDINGS_OFF) as *const DyadPtr)
 }
 
 fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {

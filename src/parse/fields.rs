@@ -608,7 +608,6 @@ impl<'a> Parser<'a> {
                         // A record laid out in bytes is handed on as the address of its bytes,
                         // any other value by a `dyad` view, as a `dyad ?` parameter takes a node.
                         let view = if storage {
-                            crate::identities::instance::layout(record_logos)?;
                             let types = self.types;
                             crate::identities::by_copy::build_out(self.rt.store, types, lhs)
                         } else {

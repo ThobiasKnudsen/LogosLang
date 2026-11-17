@@ -115,15 +115,17 @@ impl<'a> Parser<'a> {
     }
 
     /// The record node over a field list: its fields laid out onto their bindings, then the
-    /// record holding the scope, the fields and their total.
+    /// record holding the scope, the fields, their bindings and their total.
     fn record_node(&mut self, scope: DyadPtr, fields: DyadPtr, bindings: &[DyadPtr]) -> DyadPtr {
         let input = self.rt.store.alloc_leaf(self.types.type_);
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         let size_bytes = unsafe { lay_out_fields(self.types, input, fields, bindings) };
+        let bindings = crate::identities::array::build(self.rt.store, self.types.array_, bindings);
         let record = crate::identities::meta::record_layout(
             self.rt.store,
             scope,
             fields,
+            bindings,
             size_bytes,
             std::ptr::null_mut(),
             crate::identities::meta::prec::APPLY,
@@ -658,10 +660,12 @@ impl<'a> Parser<'a> {
         self.expect_close()?;
         // SAFETY: the bindings were just minted for these fields; `def.self_type` is the type node.
         let size_bytes = unsafe { lay_out_fields(self.types, def.self_type, fields, &bindings) };
+        let bindings = crate::identities::array::build(self.rt.store, self.types.array_, &bindings);
         let layout = crate::identities::meta::record_layout(
             self.rt.store,
             field_scope,
             fields,
+            bindings,
             size_bytes,
             scope,
             def.parse_rank,

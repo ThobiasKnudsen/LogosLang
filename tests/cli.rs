@@ -5432,6 +5432,124 @@ fn a_field_takes_the_width_a_place_of_its_type_takes() {
     assert_runs(&cases);
 }
 
+/// DESIGN ›`X (…)` is one spelling, and X's constructor decides what the bracket is‹: a type's
+/// constructor fills its holes positionally, each argument moved whole into its field at the
+/// offset the field's binding carries, a rational, a type and a record too, on both tiers.
+#[test]
+fn a_constructor_fills_each_field_at_its_place() {
+    let q = "q := type ( x := i32 ? )";
+    let mut cases = vec![
+        (
+            "pt := type ( a := rational_number ?, b := i32 ? ), p := pt(rational_number 1/2, 7), \
+             print «{p.a} {p.b}»"
+                .to_string(),
+            "1/2 7\n",
+        ),
+        ("pt := type ( t := type ? ), p := pt(i32), p.t".to_string(), "i32\n"),
+        (
+            format!("{q}, pt := type ( a := q ?, b := i32 ? ), p := pt(q(1), 3), print «{{p.a.x}} {{p.b}}»"),
+            "1 3\n",
+        ),
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!(
+                "pt := type ( b := i32 ?, a := rational_number ? ), \
+                 f := fn (r := rational_number ?) -> rational_number ( p := pt(7, r), p.a ), \
+                 {compile}f(rational_number 1/2)"
+            ),
+            "1/2\n",
+        ));
+        cases.push((
+            format!(
+                "{q}, pt := type ( a := q ?, b := i32 ? ), \
+                 f := fn () -> i32 ( p := pt(q(4), 3), p.a.x + p.b ), {compile}f()"
+            ),
+            "7\n",
+        ));
+        cases.push((
+            format!(
+                "pt := type ( t := type ? ), f := fn () -> i32 ( p := pt(i32), 3 ), {compile}f()"
+            ),
+            "3\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
+/// DESIGN ›There is no `this`‹: a `share` function over a plain record reads and writes each
+/// field at the offset its binding carries, a rational, a type and a record as whole values.
+#[test]
+fn a_share_function_reaches_each_field_of_a_plain_record_whole() {
+    let ab = "mut a := rational_number ?, mut b := i32 ?";
+    let set = "mut v := pt ?, v.a = rational_number 1/2, v.b = 7";
+    assert_runs(&[
+        (
+            format!("pt := type ( {ab}, share get := fn () -> rational_number ( a ) ), {set}, v.get()"),
+            "1/2\n",
+        ),
+        (format!("pt := type ( {ab}, share getb := fn () -> i32 ( b ) ), {set}, v.getb()"), "7\n"),
+        (
+            format!(
+                "pt := type ( {ab}, share set := fn () -> void ( a = rational_number 3/4 ) ), {set}, \
+                 v.set(), print «{{v.a}} {{v.b}}»"
+            ),
+            "3/4 7\n",
+        ),
+        (
+            format!(
+                "pt := type ( {ab}, share both := fn (r := rational_number ?) -> void ( a = r, b = 3 ) ), \
+                 {set}, v.both(rational_number 1/5), print «{{v.a}} {{v.b}}»"
+            ),
+            "1/5 3\n",
+        ),
+        (
+            "pt := type ( mut a := rational_number ?, mut c := rational_number ?, \
+             share cp := fn () -> void ( c = a ) ), mut v := pt ?, v.a = rational_number 1/2, \
+             v.c = rational_number 1/3, v.cp(), print «{v.a} {v.c}»"
+                .to_string(),
+            "1/2 1/2\n",
+        ),
+        (
+            "pt := type ( mut t := type ?, mut u := type ?, share swap := fn () -> void ( u = t ) ), \
+             mut v := pt ?, v.t = i32, v.u = i64, v.swap(), v.u"
+                .to_string(),
+            "i32\n",
+        ),
+        // Packed, `t` lies at an odd offset.
+        (
+            "pt := type ( mut c := i8 ?, mut t := type ?, mut u := type ?, \
+             share swap := fn () -> void ( u = t ) ), mut v := pt ?, v.c = 1, v.t = i32, v.u = i64, \
+             v.swap(), print «{v.c} {v.u}»"
+                .to_string(),
+            "1 i32\n",
+        ),
+        (
+            "q := type ( x := i32 ? ), pt := type ( mut a := q ?, mut b := i32 ?, \
+             share seta := fn () -> void ( a = q(9) ) ), mut v := pt ?, v.a = q(1), v.b = 2, v.seta(), \
+             print «{v.a.x} {v.b}»"
+                .to_string(),
+            "9 2\n",
+        ),
+        (
+            format!(
+                "pt := type ( {ab}, share get := fn () -> rational_number ( a ) ), \
+                 f := fn () -> rational_number ( mut v := pt ?, v.a = rational_number 1/3, v.get() ), f()"
+            ),
+            "1/3\n",
+        ),
+        // A node a Logos `parse` built keeps a rational field as its operand node.
+        (
+            "pt := type ( a := rational_number ?, output_type := type ?, share run = ( a ), \
+             share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = pt, \
+             tape[0].a = rational_number 1/2, tape[0].output_type = rational_number, \
+             tape.is_constructed[0] = true ) ), pt"
+                .to_string(),
+            "1/2\n",
+        ),
+    ]);
+}
+
 #[test]
 fn the_repl_writes_and_copies_whole_records() {
     let (echoes, stderr) = repl(

@@ -102,12 +102,14 @@ pub(super) fn register(
     // SAFETY: `void_ty` is the type node `Core::build` minted.
     let at_void = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, void_ty) };
     let cells = super::hole::build(cx.store, cx.unknown, at_void, std::ptr::null_mut());
-    cx.declare_in(scope, "cells", cells);
+    let binding = cx.declare_in(scope, "cells", cells);
     let fields = super::array::build(cx.store, array_ty, &[cells]);
+    let bindings = super::array::build(cx.store, array_ty, &[binding]);
     let layout = meta::record_layout(
         cx.store,
         scope,
         fields,
+        bindings,
         8,
         std::ptr::null_mut(),
         meta::prec::APPLY,
