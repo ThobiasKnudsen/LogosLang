@@ -296,17 +296,6 @@ pub(crate) unsafe fn field_path(
     FieldPath::From(at, fields)
 }
 
-/// The name the field path `node` starts at; `node` itself when it is no such path.
-///
-/// # Safety
-/// As [`field_path`].
-pub(crate) unsafe fn path_root(types: &Core, node: DyadPtr) -> DyadPtr {
-    match field_path(types, node, std::ptr::null_mut(), std::ptr::null_mut()) {
-        FieldPath::From(root, _) => root,
-        _ => node,
-    }
-}
-
 /// A number or pointer field takes the value the right side yields, molded to the
 /// field's type; a right side that yields a node, the operand as graph, is stored as
 /// that node (DESIGN ›Execution is function application‹, item 4).

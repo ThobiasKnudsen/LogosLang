@@ -476,7 +476,7 @@ pub(crate) unsafe fn value_of(rt: &mut Runtime, node: DyadPtr) -> Result<(i64, i
     Ok((num, den))
 }
 
-/// Run the arithmetic node `node`, `[lhs, rhs, leaf]`, its result written to `dest`.
+/// Run the arithmetic node `node`, `[lhs, rhs]` under its mint, its result written to `dest`.
 ///
 /// # Safety
 /// `node` must be a rational arithmetic node from the store; `dest` sixteen writable bytes.
@@ -486,7 +486,8 @@ pub(crate) unsafe fn run_into(
     dest: *mut u8,
 ) -> Result<(), RunError> {
     let ops = dyad::value(node) as *const DyadPtr;
-    let op = rt.types().ops.rational_arith_op_of(*ops.add(2)).ok_or(RunError::NoLeaf)?;
+    let leaf = super::mint::operation_of(dyad::ty(node)).ok_or(RunError::NoLeaf)?;
+    let op = rt.types().ops.rational_arith_op_of(leaf).ok_or(RunError::NoLeaf)?;
     let l = value_of(rt, *ops)?;
     let r = value_of(rt, *ops.add(1))?;
     let (num, den) = fold_pair(op, l, r).ok_or(RunError::RationalArithmetic)?;

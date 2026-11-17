@@ -114,10 +114,13 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             }
         }
         meta::TUPLE_TAG | meta::LIST_TAG => {
-            let Some(idx) = meta::op_slot_of(op) else {
-                return Read::Executable(Dispatch::None);
+            // A mint holds the operation its nodes share; a type that does not mint keeps it in
+            // each node.
+            let leaf = match (super::mint::operation_of(op), meta::op_slot_of(op)) {
+                (Some(leaf), _) => leaf,
+                (None, Some(idx)) => *(value as *const DyadPtr).add(idx),
+                (None, None) => return Read::Executable(Dispatch::None),
             };
-            let leaf = *(value as *const DyadPtr).add(idx);
             if !leaf.is_null() && callable::is_callable(leaf) {
                 Read::Executable(Dispatch::Leaf(leaf))
             } else {
@@ -154,12 +157,12 @@ pub(crate) unsafe fn handed_on(types: &Core, node: DyadPtr) -> DyadPtr {
 }
 
 /// The type `node` gives back when it runs, read from the node: a place's declared type, a
-/// call's `-> T`, the output a Logos-written type's set was built for, the `output_type` slot
-/// a built-in's parse wrote, what an `if`'s arms or a block's last line give, `void` for a
-/// node that runs and declares no `output_type`; a node of no other kind is a value and gives
-/// back its own type. Null where nothing knows it before the program runs. DESIGN ›A node's
-/// output type is per node, and its parse writes it‹, ›`=` sits beside `:=`, and returns
-/// nothing‹.
+/// call's `-> T`, the output a Logos-written type's set was built for, the `output_type` its
+/// mint shares, the `output_type` slot a built-in that does not mint wrote, what an `if`'s arms
+/// or a block's last line give, `void` for a node that runs and declares no `output_type`; a
+/// node of no other kind is a value and gives back its own type. Null where nothing knows it
+/// before the program runs. ›A node's output type is written by its parse, on the mint for a
+/// type that mints‹ [[R194]], ›`=` sits beside `:=`, and returns nothing‹ [[R277]].
 ///
 /// # Safety
 /// `node` must be null or a reduced dyad from the store.
@@ -194,6 +197,9 @@ pub unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
     }
     if op == types.scope {
         return super::scope::output_type(types, node);
+    }
+    if let Some(t) = super::mint::output_type_of(op) {
+        return t;
     }
     match meta::output_slot_of(op) {
         Some(i) => *(dyad::value(node) as *const DyadPtr).add(i),
@@ -636,8 +642,8 @@ mod tests {
             let spec = crate::identities::run_body::spec_of(exprs[2]);
             assert!(!spec.is_null());
             assert_eq!(read_kind(types, exprs[2]), Read::Executable(Dispatch::Call(spec)));
-            let leafless = store
-                .alloc_words(core.plus, &[exprs[2], exprs[2], std::ptr::null_mut(), core.i32_]);
+            // A node of `+` itself, no mint of it, has no operation to run.
+            let leafless = store.alloc_words(core.plus, &[exprs[2], exprs[2]]);
             assert_eq!(read_kind(types, leafless), Read::Executable(Dispatch::None));
         }
     }
