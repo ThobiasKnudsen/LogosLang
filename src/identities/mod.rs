@@ -957,25 +957,30 @@ unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
     }
 }
 
-/// The place type and byte width a declaration's binding needs for the value: a number or a
-/// `bool` at its type's width, a pointer as a plain `@pointee` place 8 bytes wide, the
-/// borrow, whatever the value's own pointer type; `None` for any other value.
+/// The place type and byte width a value is copied into, by a declaration or `alloc`: the type
+/// of what it gives at that type's width, a pointer as a plain `@pointee` place, the borrow,
+/// whatever the value's own pointer type. `None` for a value no place holds whole, and for a
+/// plain number, which stays the literal it is until a typed place molds it.
 ///
 /// # Safety
 /// `value` must be a reduced dyad from the store.
-pub(crate) unsafe fn scalar_binding_type(
+pub(crate) unsafe fn copy_place(
     store: &mut Store,
     types: &Core,
     value: DyadPtr,
 ) -> Option<(DyadPtr, usize)> {
-    let t = read::output_type(types, value);
-    match read::place_layout(types, t)? {
-        (read::Read::Scalar(_), width) => Some((t, width)),
-        (read::Read::Pointer(pointee), width) => {
-            Some((pointer::make_pointer_type(store, types.type_, pointee), width))
-        }
-        _ => None,
+    if read::read_kind(types, value) == read::Read::Literal {
+        return None;
     }
+    let t = read::output_type(types, value);
+    let width = read::carry_of(types, t)?.width();
+    if numtype::is_pointer_type(t) {
+        return Some((
+            pointer::make_pointer_type(store, types.type_, numtype::pointee_of(t)),
+            width,
+        ));
+    }
+    Some((t, width))
 }
 
 /// The initializing store of a declaration, the node `=` builds, past `=`'s gates: the
@@ -1179,7 +1184,7 @@ pub(crate) unsafe fn commit_fn_body(
         }
         let landed = land(store, types, leaf, output)?;
         // A record result is handed back as the address of its bytes, which the call copies.
-        if by_copy::record_width(types, output).is_some() {
+        if read::carry_of(types, output).and_then(read::Carry::bytes).is_some() {
             return Ok(by_copy::build_out(store, types, landed));
         }
         Ok(landed)

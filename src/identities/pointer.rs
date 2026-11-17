@@ -10,8 +10,9 @@ use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
-use super::numtype::{self, NumType};
-use super::{meta, Cx};
+use super::numtype::NumType;
+use super::read::carry_of;
+use super::{assign, meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -200,7 +201,7 @@ pub(crate) unsafe fn deref_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u64) {
     (*p, *p.add(1), off)
 }
 
-/// The pointee must be a place with a whole-value store (a whole record cannot be stored).
+/// The pointee must be a type a whole value of which moves into a place.
 ///
 /// # Safety
 /// `deref` must be a deref node; `rhs` a reduced dyad, both from the store.
@@ -212,8 +213,12 @@ pub(crate) unsafe fn build_storeptr(
 ) -> Result<DyadPtr, ParseError> {
     let (ptr_expr, pointee, _) = deref_parts(deref);
     let off_node = *((dyad::value(deref) as *const DyadPtr).add(2));
-    if super::read::cell_numtype(types, pointee).is_none() {
+    if carry_of(types, pointee).is_none() {
         return Err(ParseError::BadAssignTarget);
+    }
+    // stand-in for #240: no free runs over a value displaced through a pointer.
+    if super::this::is_plain(types, pointee) && !meta::instances_free_of(pointee).is_null() {
+        return Err(ParseError::HeldRecordThroughPointerNotInSeed);
     }
     let rhs = if dyad::ty(types.through(rhs)) == types.tape.cell_dyad_at {
         // A line no check narrowed: what it holds is known only when the store runs.
@@ -238,20 +243,20 @@ pub(crate) unsafe fn deref_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut 
     Ok(base.wrapping_add(off) as *mut u8)
 }
 
-/// A record pointee has no whole-value read; its fields go through `p@.x`.
+/// A cell's whole read hands over what the pointee's type moves as: its word, or the address
+/// of its bytes, from which a copy reads them.
 fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
         let (ptr_expr, pointee, off) = deref_parts(node);
-        let nt = super::read::cell_numtype(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
+        let carry = carry_of(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
         // The base is checked, not base + offset, so a field read through a null `p` is
         // caught at any offset; reading a hole is the checked error, never undefined.
         let base = rt.run(ptr_expr)? as u64;
         if base == 0 {
             return Err(RunError::NullPointer);
         }
-        let addr = base.wrapping_add(off) as *const u8;
-        Ok(numtype::read_scalar_nt(nt, addr))
+        Ok(assign::load(carry, base.wrapping_add(off) as *mut u8))
     }
 }
 
@@ -261,16 +266,15 @@ fn run_storeptr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let p = dyad::value(node) as *const DyadPtr;
         let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
         let off = std::ptr::read_unaligned(dyad::value(*p.add(3)) as *const u64);
-        let nt = super::read::cell_numtype(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
-        let bits = rt.run(rhs)?;
+        let carry = carry_of(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
+        let taken = assign::take(rt, carry, rhs)?;
         // Same guard as `run_deref`.
         let base = rt.run(ptr_expr)? as u64;
         if base == 0 {
             return Err(RunError::NullPointer);
         }
-        let addr = base.wrapping_add(off) as *mut u8;
-        numtype::write_scalar_nt(nt, addr, bits);
-        Ok(bits)
+        assign::put(carry, base.wrapping_add(off) as *mut u8, taken);
+        Ok(taken)
     }
 }
 
@@ -278,12 +282,12 @@ fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
         let (ptr_expr, pointee, off) = deref_parts(node);
-        let ct = super::read::cell_numtype(lw.types(), pointee)
-            .ok_or(CompileError::NotDerefable)?
-            .cranelift_type();
+        let carry = carry_of(lw.types(), pointee).ok_or(CompileError::NotDerefable)?;
         let addr = lw.lower(ptr_expr)?;
         // The same null guard the interpreter makes, so both tiers agree.
-        lw.guard_non_null(addr, ct, |s| Ok(s.load_at(ct, addr, off as i64)))
+        lw.guard_non_null(addr, assign::handed_type(carry), |s| {
+            Ok(assign::lower_load(s, carry, addr, off as i64))
+        })
     }
 }
 
@@ -293,14 +297,12 @@ fn lower_storeptr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError
         let p = dyad::value(node) as *const DyadPtr;
         let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
         let off = std::ptr::read_unaligned(dyad::value(*p.add(3)) as *const u64);
-        let ct = super::read::cell_numtype(lw.types(), pointee)
-            .ok_or(CompileError::NotDerefable)?
-            .cranelift_type();
-        let v = lw.lower(rhs)?;
+        let carry = carry_of(lw.types(), pointee).ok_or(CompileError::NotDerefable)?;
+        let v = assign::lower_take(lw, carry, rhs)?;
         let addr = lw.lower(ptr_expr)?;
         // The store happens only on the non-null arm; the yielded value is the stored one.
-        lw.guard_non_null(addr, ct, |s| {
-            s.store_at(ct, addr, off as i64, v);
+        lw.guard_non_null(addr, assign::handed_type(carry), |s| {
+            assign::lower_put(s, carry, addr, off as i64, v);
             Ok(v)
         })
     }

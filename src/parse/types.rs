@@ -89,6 +89,16 @@ unsafe fn field_width(logos: DyadPtr) -> u64 {
     }
 }
 
+/// Whether a whole value of `logos` fits the room [`field_width`] gives a field of it.
+/// stand-in for #221
+///
+/// # Safety
+/// `logos` must be null or a type node from the store.
+pub(crate) unsafe fn fits_field(types: &Core, logos: DyadPtr) -> bool {
+    crate::identities::read::carry_of(types, logos)
+        .is_none_or(|carry| carry.width() as u64 <= field_width(logos))
+}
+
 /// Each field's offset inside a value of `ty`, packed in order by `field_width`, written
 /// onto the field's binding (DESIGN ›A scope lays out its declarations…‹).
 ///
@@ -1145,7 +1155,10 @@ impl<'a> Parser<'a> {
         // A run whose result is copied out is copied where it runs: into the name that
         // takes it, else scratch.
         let out = *(dyad::value(spec) as *const DyadPtr).add(FN_OUTPUT);
-        if crate::identities::by_copy::record_width(self.types, out).is_none() {
+        if crate::identities::read::carry_of(self.types, out)
+            .and_then(crate::identities::read::Carry::bytes)
+            .is_none()
+        {
             return Ok(None);
         }
         Ok(Some(crate::identities::by_copy::build_result(

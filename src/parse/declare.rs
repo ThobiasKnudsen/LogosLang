@@ -629,14 +629,6 @@ impl<'a> Parser<'a> {
         // the dyad behind it and keeps `value` as what the initializer stores.
         // SAFETY: `value` is a dyad from the store.
         let read = unsafe { self.types.through(value) };
-        // A box on the right is decided first: a value that gives back a type, a node's
-        // address or a rational gets a place of that type.
-        // SAFETY: `read` is a dyad from the store.
-        let box_ty = unsafe {
-            let out = crate::identities::read::output_type(self.types, read);
-            let rational = crate::identities::rational::is_rational_value(self.types, read);
-            (rational || out == self.types.type_ || out == self.types.dyad_).then_some(out)
-        };
         // SAFETY: `binding`, `value` and `read` are dyads from the store.
         let declared = unsafe {
             let empty_node = cell.hole
@@ -715,25 +707,24 @@ impl<'a> Parser<'a> {
                 // A type value: the name becomes another spelling of the type.
                 self.cx.scopes.rebind(binding, read);
                 read
-            } else if let Some(t) = box_ty {
-                // A box on the right: reads are copy by default, so `x` gets
-                // its own box and a copy of what `a` holds; a rational's is sixteen bytes.
-                let width = crate::identities::read::place_layout(self.types, t)
-                    .map_or(8, |(_, width)| width);
-                let place = self.place_for(binding, t, width);
-                crate::identities::build_init(self.rt.store, self.types, place, read)?
-            } else if let Some(t) = crate::identities::node_output(self.types, value).filter(|_| {
-                crate::identities::read::read_kind(self.types, read)
-                    != crate::identities::read::Read::Node
-            }) {
-                // A node a Logos `parse` builds is held by its address: `b := a` borrows it,
-                // and a value just made or moved makes the name its owner.
-                let place = self.place_for(binding, t, 8);
-                let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                if let Teardown::Node(_) = teardown_of(self.types, value) {
-                    self.hold_node(binding);
+            } else if let Some(t) = crate::identities::node_output(self.types, value) {
+                if crate::identities::read::read_kind(self.types, read)
+                    == crate::identities::read::Read::Node
+                {
+                    // The node the parse already built: the name denotes it.
+                    Binding::set_dyad(binding, read);
+                    read
+                } else {
+                    // A node a Logos `parse` builds is held by its address: `b := a` borrows it,
+                    // and a value just made or moved makes the name its owner.
+                    let place = self.place_for(binding, t, 8);
+                    let init =
+                        crate::identities::build_init(self.rt.store, self.types, place, value)?;
+                    if let Teardown::Node(_) = teardown_of(self.types, value) {
+                        self.hold_node(binding);
+                    }
+                    init
                 }
-                init
             } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {
                 // An owning value lands in a place of an owning `@pointee`, which the scope holds.
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
@@ -748,11 +739,12 @@ impl<'a> Parser<'a> {
                 self.hold(binding);
                 init
             } else if let Some((ty_node, width)) =
-                crate::identities::scalar_binding_type(self.rt.store, self.types, value)
+                crate::identities::copy_place(self.rt.store, self.types, value)
             {
-                // A runtime numeric, `bool` or pointer value is snapshotted: fresh
-                // per-call storage, the name bound to it, the value kept as a
-                // re-runnable initializer, so a read is a plain load and a loop-body local re-initializes on entry.
+                // A run-time value is a copy (DESIGN ›`:=` decides nothing about copy or
+                // reference; the type's reading rule does‹): fresh per-call storage of its type,
+                // the name bound to it, the value kept as a re-runnable initializer, so a read is
+                // a plain load and a loop-body local re-initializes on entry.
                 let place = self.place_for(binding, ty_node, width);
                 crate::identities::build_init(self.rt.store, self.types, place, value)?
             } else if self.types.frame_of(read).is_some() && dyad::ty(read) == self.types.binding_ {

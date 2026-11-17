@@ -9,7 +9,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
-use super::read::{place_layout, read_kind, Dispatch, Read};
+use super::read::{carry_of, place_layout, read_kind, Carry, Dispatch, Read};
 use super::{array, meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -101,27 +101,13 @@ pub(crate) unsafe fn build_out(store: &mut Store, types: &Core, expr: DyadPtr) -
     store.alloc_words(types.by_copy.out, &[expr, types.by_copy.out_leaf, output])
 }
 
-/// The width a value of `t` is copied at: `Some` for a plain record a `type (…)` body
-/// wrote, whose value is its bytes, and for a rational; `None` for everything that
-/// travels in one 8-byte container, a native record (a tape handle, a map) among them.
-///
-/// # Safety
-/// `t` must be null or a valid dyad from the store.
-pub(crate) unsafe fn record_width(types: &Core, t: DyadPtr) -> Option<usize> {
-    let t = super::type_identity_of(types, t)?;
-    match place_layout(types, t)? {
-        (Read::Aggregate, width) if !meta::record_body_of(t).is_null() => Some(width),
-        (Read::Rational, width) => Some(width),
-        _ => None,
-    }
-}
-
-/// The width of `f`'s record result, whose slot address rides the block's first word.
+/// The width of `f`'s result when it is its bytes, whose slot address rides the block's first
+/// word.
 ///
 /// # Safety
 /// `f` must be a `fn` node from the store.
 pub(crate) unsafe fn result_width(types: &Core, f: DyadPtr) -> Option<usize> {
-    record_width(types, *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT))
+    carry_of(types, *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT)).and_then(Carry::bytes)
 }
 
 /// One parameter's place in the argument block: its first 8-byte word, the record width
@@ -161,7 +147,7 @@ pub(crate) unsafe fn slots<'a>(types: &'a Core, f: DyadPtr) -> impl Iterator<Ite
         // SAFETY: each parameter is a dyad from the store.
         let (width, own) = unsafe {
             let ty = super::hole::type_in(param);
-            (record_width(types, ty), param_width(types, ty))
+            (carry_of(types, ty).and_then(Carry::bytes), param_width(types, ty))
         };
         let slot = Slot { param, word, width, offset };
         word += width.map_or(1, |w| w.div_ceil(8));
@@ -179,31 +165,27 @@ pub(crate) unsafe fn words(types: &Core, f: DyadPtr) -> usize {
     slots(types, f).last().map_or(first, |s| s.word + s.width.map_or(1, |w| w.div_ceil(8)))
 }
 
-/// Evaluate a record-valued `node` and yield the address of its bytes.
+/// Evaluate `node`, whose value is its bytes, and yield their address: a record place's own, a
+/// literal's, or the address the node runs to, as every node that makes or reaches such a
+/// value does.
 ///
 /// # Safety
-/// `node` must be a valid dyad from the store.
+/// `node` must be a valid dyad from the store whose type moves as its bytes.
 pub(crate) unsafe fn record_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut u8, RunError> {
     let node = rt.through(node);
-    let ty = dyad::ty(node);
-    let types = rt.types();
-    let (result, out, construct) = (types.by_copy.result, types.by_copy.out, types.construct_);
-    let kind = read_kind(types, node);
-    // Each yields the address of the bytes it made.
-    if ty == result || ty == out || ty == construct {
-        return rt.run(node).map(|addr| addr as usize as *mut u8);
-    }
-    let place = match kind {
-        Read::Aggregate | Read::Rational => node,
+    match read_kind(rt.types(), node) {
         // A literal's bytes are a rational value's.
-        Read::Literal => return Ok(dyad::value(node)),
-        _ => return Err(RunError::NoWholeRead),
-    };
-    let addr = rt.place_addr(place).ok_or(RunError::NoActivation)?;
-    if addr.is_null() {
-        return Err(RunError::Uninitialized);
+        Read::Literal => Ok(dyad::value(node)),
+        // No whole read of a record place: its bytes are where it lies.
+        Read::Aggregate => {
+            let addr = rt.place_addr(node).ok_or(RunError::NoActivation)?;
+            if addr.is_null() {
+                return Err(RunError::Uninitialized);
+            }
+            Ok(addr)
+        }
+        _ => rt.run(node).map(|addr| addr as usize as *mut u8),
     }
-    Ok(addr)
 }
 
 /// [`record_addr`]'s compiled half.
@@ -215,18 +197,11 @@ pub(crate) unsafe fn lower_record_addr(
     node: DyadPtr,
 ) -> Result<Value, CompileError> {
     let node = lw.through(node);
-    let ty = dyad::ty(node);
-    let types = lw.types();
-    let (result, out, construct) = (types.by_copy.result, types.by_copy.out, types.construct_);
-    let kind = read_kind(types, node);
-    if ty == result || ty == out || ty == construct {
-        return lw.lower(node);
-    }
-    match kind {
-        Read::Aggregate | Read::Rational => lw.place_addr(node),
+    match read_kind(lw.types(), node) {
         // A literal is source: its bytes' address is a constant.
         Read::Literal => Ok(lw.const_i64(dyad::value(node) as usize as i64)),
-        _ => Err(CompileError::NotLowerable(node)),
+        Read::Aggregate => lw.place_addr(node),
+        _ => lw.lower(node),
     }
 }
 

@@ -1198,7 +1198,9 @@ impl<'a> Parser<'a> {
             let record_out = unsafe {
                 if dyad::ty(callee) == types.fn_type {
                     let out = *(dyad::value(callee) as *const DyadPtr).add(FN_OUTPUT);
-                    crate::identities::by_copy::record_width(types, out).map(|w| (out, w))
+                    crate::identities::read::carry_of(types, out)
+                        .and_then(crate::identities::read::Carry::bytes)
+                        .map(|w| (out, w))
                 } else {
                     None
                 }

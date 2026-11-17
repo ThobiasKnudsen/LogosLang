@@ -494,18 +494,6 @@ pub(crate) unsafe fn run_into(
     Ok(())
 }
 
-/// The `=` into a rational place, `[place, value, leaf]`: sixteen bytes copied.
-fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a store node `assign::build` made over a rational place.
-    unsafe {
-        let ops = dyad::value(node) as *const DyadPtr;
-        let dest = rt.place_addr(*ops).ok_or(RunError::NoActivation)?;
-        let (num, den) = value_of(rt, *ops.add(1))?;
-        write_at(dest, num, den);
-        Ok(0)
-    }
-}
-
 /// An arithmetic node runs through its `result` slot, never bare.
 fn run_arith_unslotted(_rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunError> {
     Err(RunError::NoWholeRead)
@@ -540,7 +528,6 @@ pub(crate) const ARITH_RUNS: [crate::run::RunFn; 5] = [run_arith_unslotted; 5];
 /// Indexed as `CmpOp`.
 pub(crate) const CMP_RUNS: [crate::run::RunFn; 6] =
     [run_lt, run_gt, run_le, run_ge, run_eq, run_ne];
-pub(crate) const STORE_RUN: crate::run::RunFn = run_store;
 
 #[cfg(test)]
 mod tests {

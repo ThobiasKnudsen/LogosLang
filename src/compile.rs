@@ -415,6 +415,15 @@ impl Lowerer<'_, '_> {
         emit_copy(self.builder, self.flags, dst, src, width);
     }
 
+    /// The address `offset` bytes past `addr`.
+    pub(crate) fn offset_addr(&mut self, addr: Value, offset: i64) -> Value {
+        if offset == 0 {
+            addr
+        } else {
+            self.builder.ins().iadd_imm(addr, offset)
+        }
+    }
+
     /// `v` in its `i64` container, as an argument travels.
     pub(crate) fn widen(&mut self, v: Value, nt: NumType) -> Value {
         widen_to_i64(self.builder, v, nt)
@@ -1184,7 +1193,9 @@ unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, Com
         Ok(None)
     } else if out == types.type_
         || crate::identities::meta::is_node_valued(out, types.fn_type)
-        || by_copy::record_width(types, out).is_some()
+        || crate::identities::read::carry_of(types, out)
+            .and_then(crate::identities::read::Carry::bytes)
+            .is_some()
     {
         Ok(Some(NumType::I64))
     } else if crate::identities::numtype::is_scalar_type(out) {
