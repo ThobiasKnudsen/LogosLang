@@ -26,8 +26,8 @@ pub(super) fn register(cx: &mut Cx) {
     let mut mint = |pattern: &str| {
         let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
         let id = cx.store.alloc_head(cx.type_, record);
-        let entry = cx.declare(pattern, id);
-        // SAFETY: `entry` is the binding dyad `declare` just minted.
+        let entry = cx.declare_pattern(pattern, id);
+        // SAFETY: `entry` is the binding dyad `declare_pattern` just minted.
         unsafe { crate::binding::Binding::set_lex_rank(entry, FRESH_LEX_RANK) };
     };
     mint(WORD);

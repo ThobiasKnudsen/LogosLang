@@ -44,6 +44,31 @@ fn place(store: &mut Store, core: &Core, ty: DyadPtr, bytes: &[u8]) -> (DyadPtr,
 }
 
 #[test]
+fn a_spelling_of_the_start_is_named_as_written_and_a_pattern_by_its_text() {
+    let (_store, trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    for (text, name) in [
+        ("(", "("),
+        (")", ")"),
+        (".", "."),
+        ("..", ".."),
+        ("[", "["),
+        ("]", "]"),
+        ("?", "?"),
+        ("+", "+"),
+        ("*", "*"),
+        ("->", "->"),
+        ("12", r"[0-9]+(?:\.[0-9]+)?"),
+    ] {
+        let r = scopes.resolve(&trie, text).unwrap();
+        assert_eq!(r.matched, text.len(), "{text}");
+        // SAFETY: a resolved binding is a binding dyad from the store.
+        assert_eq!(unsafe { Binding::spelling(r.binding) }, name);
+    }
+}
+
+#[test]
 fn parses_a_equals_a_plus_one() {
     let (mut store, mut trie, core) = new_core();
 
