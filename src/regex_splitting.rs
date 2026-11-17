@@ -1,13 +1,14 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Splitting a regex pattern into literal runs and residual regex segments for
+//! Splitting a regex pattern into literal runs and residual regex chunks for
 //! the trie: alternation yields several paths, each an ordered list of
-//! [`Segment`]s.
+//! [`Segment`]s. The pattern is read once, by `regex-syntax`, and the split
+//! walks the tree it gives.
 
-use regex_syntax::hir::{Class, Hir, HirKind, Literal};
+use regex_syntax::hir::{Capture, Class, Hir, HirKind, Literal, Repetition};
 
-/// Cap on path explosion from cartesian alternation.
+/// A part whose paths would pass this many stays one chunk.
 const MAX_PATHS: usize = 1000;
 
 /// A literal run or a residual regex chunk.
@@ -26,57 +27,14 @@ impl Segment {
     }
 }
 
-fn bytes_to_string(b: &[u8]) -> String {
-    String::from_utf8_lossy(b).into_owned()
-}
-
-/// Literal arms consume whole UTF-8 sequences and copy their raw bytes: `lead
-/// as char` would re-encode a non-ASCII byte as different bytes, corrupting `«`.
-fn utf8_len(lead: u8) -> usize {
-    match lead {
-        b if b < 0x80 => 1,
-        b if b >= 0xF0 => 4,
-        b if b >= 0xE0 => 3,
-        _ => 2,
-    }
+/// The pattern as the trie's engine reads it, over any bytes.
+fn parse(pattern: &str) -> Option<Hir> {
+    regex_syntax::ParserBuilder::new().utf8(false).build().parse(pattern).ok()
 }
 
 /// No regex metacharacters: such patterns go straight to the trie's byte-path.
 pub fn is_pure_literal(s: &str) -> bool {
-    for &c in s.as_bytes() {
-        match c {
-            b'.' | b'*' | b'+' | b'?' | b'|' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'^'
-            | b'$' | b'\\' => return false,
-            _ => {}
-        }
-    }
-    true
-}
-
-/// `(min, max)` of a quantifier, `usize::MAX` standing for infinity.
-fn get_quant_n(q: &str) -> (usize, usize) {
-    const INF: usize = usize::MAX;
-    match q {
-        "*" => return (0, INF),
-        "+" => return (1, INF),
-        "?" => return (0, 1),
-        _ => {}
-    }
-    let b = q.as_bytes();
-    if b.len() > 1 && b[0] == b'{' && b[b.len() - 1] == b'}' {
-        let inner = &q[1..q.len() - 1];
-        if let Some(comma) = inner.find(',') {
-            let min_s = &inner[..comma];
-            let max_s = &inner[comma + 1..];
-            let min_n = if !min_s.is_empty() { min_s.parse().unwrap_or(0) } else { 0 };
-            let max_n = if !max_s.is_empty() { max_s.parse().unwrap_or(INF) } else { INF };
-            return (min_n, max_n);
-        } else {
-            let n = inner.parse().unwrap_or(0);
-            return (n, n);
-        }
-    }
-    (0, 0)
+    !s.chars().any(regex_syntax::is_meta_character)
 }
 
 /// The trie matches a path segment by segment and never backs up between
@@ -107,7 +65,7 @@ fn may_eat(chunk: &str, literal: &str) -> bool {
     };
     let mut buf = [0u8; 4];
     let first_bytes = first.encode_utf8(&mut buf).as_bytes();
-    let Ok(hir) = regex_syntax::ParserBuilder::new().utf8(false).build().parse(chunk) else {
+    let Some(hir) = parse(chunk) else {
         return true;
     };
     // `varying` counts the repetitions of varying length, a repetition around
@@ -161,325 +119,93 @@ fn merge_adjacent(path: &mut Vec<Segment>) {
     *path = out;
 }
 
-fn parse_atom(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
-    let mut result: Vec<Vec<Segment>> = Vec::new();
-    if *pos >= s.len() {
-        return result;
-    }
+/// `hir` as one regex chunk, in the text `regex-syntax` prints for it.
+fn chunk(hir: &Hir) -> Segment {
+    Segment::rx(&bare(hir).to_string())
+}
 
-    let c = s[*pos];
-    if c == b'\\' {
-        *pos += 1;
-        if *pos >= s.len() {
-            result.push(vec![Segment::lit("\\")]);
-            return result;
+/// `hir` without capture groups, which change nothing a chunk matches, while a
+/// named one a count repeats would be declared twice in the chunk. A repetition
+/// of a repetition keeps a group, since the printer writes `(?:a+)?` as `a+?`.
+fn bare(hir: &Hir) -> Hir {
+    match hir.kind() {
+        HirKind::Capture(cap) => bare(&cap.sub),
+        HirKind::Concat(subs) => Hir::concat(subs.iter().map(bare).collect()),
+        HirKind::Alternation(subs) => Hir::alternation(subs.iter().map(bare).collect()),
+        HirKind::Repetition(rep) => {
+            let mut sub = bare(&rep.sub);
+            if matches!(sub.kind(), HirKind::Repetition(_)) {
+                sub = Hir::capture(Capture { index: 1, name: None, sub: Box::new(sub) });
+            }
+            Hir::repetition(Repetition {
+                min: rep.min,
+                max: rep.max,
+                greedy: rep.greedy,
+                sub: Box::new(sub),
+            })
         }
-        let esc = s[*pos];
-        *pos += 1;
-        match esc {
-            b'd' | b'D' | b'w' | b'W' | b's' | b'S' | b'b' | b'B' | b'A' | b'Z' | b'z' | b'R' => {
-                let mut t = String::from("\\");
-                t.push(esc as char);
-                result.push(vec![Segment::rx(&t)]);
-            }
-            b'p' | b'P' => {
-                if *pos < 2 {
-                    result.push(vec![Segment::lit(&(esc as char).to_string())]);
-                    return result;
-                }
-                let start = *pos - 2;
-                while *pos < s.len() && s[*pos] != b'}' {
-                    *pos += 1;
-                }
-                if *pos < s.len() {
-                    *pos += 1;
-                }
-                result.push(vec![Segment::rx(&bytes_to_string(&s[start..*pos]))]);
-            }
-            b'Q' => {
-                let q_start = *pos;
-                let mut closed = false;
-                while *pos + 1 < s.len() {
-                    if s[*pos] == b'\\' && s[*pos + 1] == b'E' {
-                        result.push(vec![Segment::lit(&bytes_to_string(&s[q_start..*pos]))]);
-                        *pos += 2;
-                        closed = true;
-                        break;
-                    }
-                    *pos += 1;
-                }
-                if !closed {
-                    result.push(vec![Segment::lit(&bytes_to_string(&s[q_start..]))]);
-                    *pos = s.len();
-                }
-            }
-            _ => {
-                // An escaped literal char, byte-preserving; see `utf8_len`.
-                let start = *pos - 1;
-                let end = (start + utf8_len(esc)).min(s.len());
-                *pos = end;
-                result.push(vec![Segment::lit(&bytes_to_string(&s[start..end]))]);
-            }
-        }
-        result
-    } else if c == b'.' {
-        *pos += 1;
-        result.push(vec![Segment::rx(".")]);
-        result
-    } else if c == b'[' {
-        let start = *pos;
-        *pos += 1;
-        let mut empty_class = true;
-        while *pos < s.len() && s[*pos] != b']' {
-            empty_class = false;
-            if s[*pos] == b'\\' && *pos + 1 < s.len() {
-                *pos += 1;
-            }
-            if *pos < s.len() {
-                *pos += 1;
-            }
-        }
-        if *pos < s.len() && s[*pos] == b']' {
-            *pos += 1;
-        }
-        let class = if empty_class { "[]".to_string() } else { bytes_to_string(&s[start..*pos]) };
-        result.push(vec![Segment::rx(&class)]);
-        result
-    } else if c == b'(' {
-        *pos += 1;
-        let mut is_look = false;
-        let look_pos = *pos;
-        if *pos + 1 < s.len() && s[*pos] == b'?' {
-            *pos += 1;
-            if *pos >= s.len() {
-                if *pos > 0 {
-                    *pos -= 1;
-                }
-            } else {
-                let next = s[*pos];
-                if next == b'=' || next == b'!' || next == b':' {
-                    is_look = true;
-                } else if *pos > 0 {
-                    *pos -= 1;
-                }
-            }
-        }
-        if is_look {
-            if *pos < 2 {
-                *pos = look_pos;
-            } else {
-                let group_start = *pos - 2;
-                let mut level: i32 = 1;
-                while *pos < s.len() {
-                    if s[*pos] == b'(' {
-                        level += 1;
-                    } else if s[*pos] == b')' {
-                        level -= 1;
-                        if level == 0 {
-                            break;
-                        }
-                    }
-                    *pos += 1;
-                }
-                let mut length = *pos - group_start;
-                if *pos < s.len() && s[*pos] == b')' {
-                    length += 1;
-                    *pos += 1;
-                } else {
-                    *pos = s.len();
-                }
-                result.push(vec![Segment::rx(&bytes_to_string(
-                    &s[group_start..group_start + length],
-                ))]);
-                return result;
-            }
-        }
-        // A capturing group: parse its contents, drop the parens.
-        let mut paths = parse_re(s, pos);
-        if *pos < s.len() && s[*pos] == b')' {
-            *pos += 1;
-        } else {
-            let tail = bytes_to_string(&s[*pos..]);
-            for path in paths.iter_mut() {
-                path.push(Segment::rx(&tail));
-            }
-        }
-        paths
-    } else if c == b'^' || c == b'$' {
-        *pos += 1;
-        result.push(vec![Segment::rx(&(c as char).to_string())]);
-        result
-    } else {
-        // A plain literal char: the whole UTF-8 sequence, byte-preserving.
-        let end = (*pos + utf8_len(c)).min(s.len());
-        let lit = bytes_to_string(&s[*pos..end]);
-        *pos = end;
-        result.push(vec![Segment::lit(&lit)]);
-        result
+        _ => hir.clone(),
     }
 }
 
-fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
-    let atom_start = *pos;
-    let paths = parse_atom(s, pos);
-    if paths.is_empty() {
-        return paths;
+/// Each prefix followed by each suffix, or `None` past [`MAX_PATHS`].
+fn product(prefixes: &[Vec<Segment>], suffixes: &[Vec<Segment>]) -> Option<Vec<Vec<Segment>>> {
+    if prefixes.len() * suffixes.len() > MAX_PATHS {
+        return None;
     }
-
-    let quant_begin = *pos;
-    let mut has_quant = false;
-    if *pos < s.len() {
-        let qc = s[*pos];
-        if qc == b'*' || qc == b'+' || qc == b'?' {
-            *pos += 1;
-            has_quant = true;
-        } else if qc == b'{' {
-            let brace_start = *pos;
-            *pos += 1;
-            while *pos < s.len() && s[*pos].is_ascii_digit() {
-                *pos += 1;
-            }
-            if *pos < s.len() && s[*pos] == b',' {
-                *pos += 1;
-            }
-            while *pos < s.len() && s[*pos].is_ascii_digit() {
-                *pos += 1;
-            }
-            if *pos < s.len() && s[*pos] == b'}' {
-                *pos += 1;
-                has_quant = true;
-            } else {
-                *pos = brace_start;
-            }
+    let mut out = Vec::with_capacity(prefixes.len() * suffixes.len());
+    for prefix in prefixes {
+        for suffix in suffixes {
+            let mut path = prefix.clone();
+            path.extend(suffix.iter().cloned());
+            merge_adjacent(&mut path);
+            out.push(path);
         }
     }
-    if !has_quant {
-        return paths;
-    }
+    Some(out)
+}
 
-    let quant_str = bytes_to_string(&s[quant_begin..*pos]);
-    // A trailing `?` (lazy) or `+` (possessive) becomes part of the carried quant.
-    if *pos < s.len() && (s[*pos] == b'?' || s[*pos] == b'+') {
-        *pos += 1;
-    }
-    let full_quant = bytes_to_string(&s[quant_begin..*pos]);
-
-    let (min, max) = get_quant_n(&quant_str);
-
-    // Small fixed repetition expands by cartesian product, bounded by MAX_PATHS
-    // each round so `(a|b|c|d|e){9}` cannot explode before the cap applies.
-    if max == min && (1..10).contains(&min) {
-        let mut repeated: Vec<Vec<Segment>> = vec![Vec::new()];
-        for _ in 0..min {
-            let mut new_rep: Vec<Vec<Segment>> = Vec::new();
-            'outer: for pre in &repeated {
-                for p in &paths {
-                    if new_rep.len() >= MAX_PATHS {
-                        break 'outer;
-                    }
-                    let mut np = pre.clone();
-                    np.extend(p.iter().cloned());
-                    merge_adjacent(&mut np);
-                    new_rep.push(np);
-                }
-            }
-            repeated = new_rep;
+/// Every way through `hir`, at most [`MAX_PATHS`] of them.
+fn paths_of(hir: &Hir) -> Vec<Vec<Segment>> {
+    let paths = match hir.kind() {
+        HirKind::Empty => Some(vec![Vec::new()]),
+        HirKind::Literal(Literal(bytes)) => match std::str::from_utf8(bytes) {
+            // Byte 0 is the trie's end-of-word mark.
+            Ok(text) if !text.contains('\0') => Some(vec![vec![Segment::lit(text)]]),
+            _ => None,
+        },
+        HirKind::Class(_) | HirKind::Look(_) => None,
+        HirKind::Capture(cap) => Some(paths_of(&cap.sub)),
+        HirKind::Concat(subs) => {
+            subs.iter().try_fold(vec![Vec::new()], |paths, sub| product(&paths, &paths_of(sub)))
         }
-        return repeated;
-    }
-
-    // Any other quantifier covers its atom as written, so the atom is one regex
-    // segment; a group drops its capture, as an unquantified one drops its parens.
-    let atom = bytes_to_string(&s[atom_start..quant_begin]);
-    let atom = match atom.strip_prefix('(') {
-        Some(inner) if !inner.starts_with('?') => format!("(?:{inner}"),
-        _ => atom,
+        HirKind::Alternation(subs) => {
+            let paths: Vec<_> = subs.iter().flat_map(paths_of).collect();
+            (paths.len() <= MAX_PATHS).then_some(paths)
+        }
+        // A small exact count is the atom written that many times; any other
+        // quantifier covers its whole atom, so the atom stays one chunk.
+        HirKind::Repetition(rep) if rep.max == Some(rep.min) && rep.min < 10 => {
+            let once = paths_of(&rep.sub);
+            (0..rep.min).try_fold(vec![Vec::new()], |paths, _| product(&paths, &once))
+        }
+        HirKind::Repetition(_) => None,
     };
-    let mut new_paths = vec![vec![Segment::rx(&format!("{atom}{full_quant}"))]];
-    if min == 0 {
-        // The empty path last, so longer alternatives win first.
-        new_paths.push(Vec::new());
-    }
-    new_paths
+    paths.unwrap_or_else(|| vec![vec![chunk(hir)]])
 }
 
-fn parse_concat(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
-    let mut sub_groups: Vec<Vec<Vec<Segment>>> = Vec::new();
-    while *pos < s.len() && s[*pos] != b'|' && s[*pos] != b')' {
-        let sub = parse_term(s, pos);
-        if !sub.is_empty() {
-            sub_groups.push(sub);
-        } else {
-            break;
-        }
-    }
-
-    let mut current: Vec<Vec<Segment>> = vec![Vec::new()];
-    for group in &sub_groups {
-        let mut new_current: Vec<Vec<Segment>> = Vec::new();
-        'outer: for prefix in &current {
-            for suffix in group {
-                if new_current.len() >= MAX_PATHS {
-                    break 'outer;
-                }
-                let mut np = prefix.clone();
-                np.extend(suffix.iter().cloned());
-                merge_adjacent(&mut np);
-                new_current.push(np);
-            }
-        }
-        current = new_current;
-        if current.is_empty() {
-            return current;
-        }
-    }
-    current
-}
-
-fn parse_alt(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
-    let mut paths = parse_concat(s, pos);
-    while *pos < s.len() && s[*pos] == b'|' {
-        *pos += 1;
-        let sub = parse_concat(s, pos);
-        for sp in sub {
-            paths.push(sp);
-        }
-    }
-    if *pos < s.len() && s[*pos] != b')' {
-        let tail = bytes_to_string(&s[*pos..]);
-        for path in paths.iter_mut() {
-            path.push(Segment::rx(&tail));
-        }
-    }
-    paths
-}
-
-fn parse_re(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
-    parse_alt(s, pos)
-}
-
-/// The paths the trie inserts for `pattern`; a pure literal is one one-segment path.
+/// The paths the trie inserts for `pattern`; a pure literal is one one-segment
+/// path. A pattern the parser rejects, or one that matches only nothing, is one
+/// chunk: the trie reports the first at lookup, and the second never lexes.
 pub fn regex_splitting(pattern: &str) -> Vec<Vec<Segment>> {
     if is_pure_literal(pattern) {
         return vec![vec![Segment::lit(pattern)]];
     }
-
-    let s = pattern.as_bytes();
-    let mut pos = 0usize;
-    let mut paths = parse_re(s, &mut pos);
-
-    if pos > s.len() {
-        pos = s.len();
-    }
-    if pos < s.len() {
-        let tail = bytes_to_string(&s[pos..]);
-        if paths.is_empty() {
-            paths.push(vec![Segment::rx(&tail)]);
-        } else {
-            for path in paths.iter_mut() {
-                path.push(Segment::rx(&tail));
-            }
-        }
+    let mut paths = parse(pattern).map(|hir| paths_of(&hir)).unwrap_or_default();
+    // A match of nothing is no match, so an empty path would end at a leaf no lex reaches.
+    paths.retain(|path| !path.is_empty());
+    if paths.is_empty() {
+        return vec![vec![Segment::rx(pattern)]];
     }
     for path in paths.iter_mut() {
         keep_eatable_literals(path);
@@ -521,12 +247,13 @@ mod tests {
     #[test]
     fn alternation_splits_into_paths() {
         assert_eq!(regex_splitting("ab|cd"), vec![vec![lit("ab")], vec![lit("cd")]]);
+        assert_eq!(regex_splitting("(?:a|ab)c"), vec![vec![lit("ac")], vec![lit("abc")]]);
     }
 
     #[test]
-    fn optional_appends_empty_path_last() {
-        // The empty tail is appended last, so the longer path wins.
-        assert_eq!(regex_splitting("ab?"), vec![vec![lit("a"), rx("b?")], vec![lit("a")]]);
+    fn an_optional_atom_is_one_chunk_that_may_match_nothing() {
+        assert_eq!(regex_splitting("ab?"), vec![vec![lit("a"), rx("b?")]]);
+        assert_eq!(regex_splitting("a*"), vec![vec![rx("a*")]]);
     }
 
     #[test]
@@ -542,8 +269,8 @@ mod tests {
     #[test]
     fn a_quantifier_covers_its_whole_group() {
         assert_eq!(regex_splitting("(a[0-9])+"), vec![vec![rx("(?:a[0-9])+")]]);
-        assert_eq!(regex_splitting("([a-z]+ing)?"), vec![vec![rx("(?:[a-z]+ing)?")], vec![]]);
-        assert_eq!(regex_splitting("(a|b)+c"), vec![vec![rx("(?:a|b)+"), lit("c")]]);
+        assert_eq!(regex_splitting("([a-z]+ing)?"), vec![vec![rx("(?:[a-z]+(?:ing))?")]]);
+        assert_eq!(regex_splitting("(a|b)+c"), vec![vec![rx("[ab]+"), lit("c")]]);
     }
 
     #[test]
@@ -553,11 +280,57 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_count_leaves_a_path_without_its_atom() {
+    fn a_zero_count_drops_its_atom() {
+        assert_eq!(regex_splitting("xb{0}c"), vec![vec![lit("xc")]]);
+    }
+
+    #[test]
+    fn an_escape_is_read_as_the_regex_crate_reads_it() {
+        assert_eq!(regex_splitting("k\\x41"), vec![vec![lit("kA")]]);
+        assert_eq!(regex_splitting("k\\u{41}"), vec![vec![lit("kA")]]);
+        assert_eq!(regex_splitting("k\\t"), vec![vec![lit("k\t")]]);
+        assert_eq!(regex_splitting("k\\n"), vec![vec![lit("k\n")]]);
+    }
+
+    #[test]
+    fn an_inline_flag_applies_to_what_it_covers() {
+        assert_eq!(regex_splitting("(?i)ab"), vec![vec![rx("[Aa][Bb]")]]);
+        assert_eq!(regex_splitting("k(?-u:[a-z])"), vec![vec![lit("k"), rx("(?-u:[a-z])")]]);
+        assert_eq!(regex_splitting("(?x) a b [0-9]"), vec![vec![lit("ab"), rx("[0-9]")]]);
+    }
+
+    #[test]
+    fn a_byte_the_byte_path_cannot_hold_is_a_chunk() {
+        assert_eq!(regex_splitting("a\\x00"), vec![vec![rx("(?:a\u{0})")]]);
+        assert_eq!(regex_splitting("(?-u:\\xFF)"), vec![vec![rx("(?-u:\\xFF)")]]);
+    }
+
+    #[test]
+    fn a_repetition_of_a_repetition_keeps_its_group() {
+        assert_eq!(regex_splitting("(?:a+)?"), vec![vec![rx("(a+)?")]]);
+        assert_eq!(regex_splitting("(?:a{2})?"), vec![vec![rx("(a{2})?")]]);
+    }
+
+    #[test]
+    fn a_count_names_its_group_once() {
+        assert_eq!(regex_splitting("(?:(?P<n>a)+){2}"), vec![vec![rx("a+a+")]]);
+    }
+
+    #[test]
+    fn a_part_past_the_path_cap_stays_one_chunk() {
         assert_eq!(
-            regex_splitting("xb{0}c"),
-            vec![vec![lit("x"), rx("b{0}"), lit("c")], vec![lit("xc")]]
+            regex_splitting("(ab|cd|ef|gh|ij){5}"),
+            vec![vec![rx("(?:(?:ab)|(?:cd)|(?:ef)|(?:gh)|(?:ij)){5}")]]
         );
+        assert_eq!(regex_splitting("(ab|cd|ef){4}").len(), 81);
+    }
+
+    #[test]
+    fn a_pattern_without_a_path_of_its_own_is_one_chunk() {
+        assert_eq!(regex_splitting("(?:)"), vec![vec![rx("(?:)")]]);
+        assert_eq!(regex_splitting("a{0}"), vec![vec![rx("a{0}")]]);
+        assert_eq!(regex_splitting("(?=foo)"), vec![vec![rx("(?=foo)")]]);
+        assert_eq!(regex_splitting("a|"), vec![vec![lit("a")]]);
     }
 
     #[test]
@@ -565,12 +338,9 @@ mod tests {
         assert_eq!(regex_splitting("[a-z]+ing"), vec![vec![rx("[a-z]+ing")]]);
         assert_eq!(regex_splitting("[0-9]+0"), vec![vec![rx("[0-9]+0")]]);
         // Every atom of the chunk counts, not only the one before the literal.
-        assert_eq!(
-            regex_splitting("[a-z]+ing[0-9]*a"),
-            vec![vec![rx("[a-z]+ing[0-9]*a")], vec![rx("[a-z]+inga")]]
-        );
+        assert_eq!(regex_splitting("[a-z]+ing[0-9]*a"), vec![vec![rx("[a-z]+ing[0-9]*a")]]);
         // The literal is escaped as it joins the chunk.
-        assert_eq!(regex_splitting("[a-z.]+\\.x"), vec![vec![rx("[a-z.]+\\.x")]]);
+        assert_eq!(regex_splitting("[a-z.]+\\.x"), vec![vec![rx("[\\.a-z]+\\.x")]]);
     }
 
     #[test]
@@ -586,24 +356,13 @@ mod tests {
     #[test]
     fn a_lazy_or_alternating_chunk_keeps_its_literal() {
         assert_eq!(regex_splitting("[0-9]+?x"), vec![vec![rx("[0-9]+?x")]]);
-        assert_eq!(regex_splitting("(?:a|ab)c"), vec![vec![rx("(?:a|ab)c")]]);
+        assert_eq!(regex_splitting("(?:a|ab)+c"), vec![vec![rx("(?:a|(?:ab))+c")]]);
     }
 
     #[test]
     fn a_chunk_with_two_varying_repetitions_keeps_its_literal() {
-        assert_eq!(
-            regex_splitting("a*(ab)?c"),
-            vec![
-                vec![rx("a*(?:ab)?c")],
-                vec![rx("a*"), lit("c")],
-                vec![rx("(?:ab)?"), lit("c")],
-                vec![lit("c")]
-            ]
-        );
-        assert_eq!(
-            regex_splitting("[0-9]+(?:[0-9]k)?x"),
-            vec![vec![rx("[0-9]+(?:[0-9]k)?x")], vec![rx("[0-9]+"), lit("x")]]
-        );
+        assert_eq!(regex_splitting("a*(ab)?c"), vec![vec![rx("a*(?:ab)?c")]]);
+        assert_eq!(regex_splitting("[0-9]+(?:[0-9]k)?x"), vec![vec![rx("[0-9]+(?:[0-9]k)?x")]]);
         // A fixed count around a varying repetition counts as a second one.
         assert_eq!(regex_splitting("(?:a*b){12}x"), vec![vec![rx("(?:a*b){12}x")]]);
         // One varying repetition alone still lets the literal split off.
@@ -624,7 +383,7 @@ mod tests {
 
     #[test]
     fn single_char_and_class_repetition_are_left_bare() {
-        assert_eq!(regex_splitting("ab?"), vec![vec![lit("a"), rx("b?")], vec![lit("a")]]);
+        assert_eq!(regex_splitting("ab?"), vec![vec![lit("a"), rx("b?")]]);
         assert_eq!(regex_splitting("[0-9]+"), vec![vec![rx("[0-9]+")]]);
     }
 }

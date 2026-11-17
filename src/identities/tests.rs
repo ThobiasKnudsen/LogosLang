@@ -44,6 +44,31 @@ fn place(store: &mut Store, core: &Core, ty: DyadPtr, bytes: &[u8]) -> (DyadPtr,
 }
 
 #[test]
+fn a_spelling_of_the_start_is_named_as_written_and_a_pattern_by_its_text() {
+    let (_store, trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    for (text, name) in [
+        ("(", "("),
+        (")", ")"),
+        (".", "."),
+        ("..", ".."),
+        ("[", "["),
+        ("]", "]"),
+        ("?", "?"),
+        ("+", "+"),
+        ("*", "*"),
+        ("->", "->"),
+        ("12", r"[0-9]+(?:\.[0-9]+)?"),
+    ] {
+        let r = scopes.resolve(&trie, text).unwrap();
+        assert_eq!(r.matched, text.len(), "{text}");
+        // SAFETY: a resolved binding is a binding dyad from the store.
+        assert_eq!(unsafe { Binding::spelling(r.binding) }, name);
+    }
+}
+
+#[test]
 fn parses_a_equals_a_plus_one() {
     let (mut store, mut trie, core) = new_core();
 
@@ -3765,6 +3790,28 @@ fn casts_fold_literal_operands() {
     diff_typed_call("fn () -> f64 ( f64 1/2 )", "f()", 0.5f64.to_bits() as i64);
     diff_typed_call("fn () -> f64 ( f64 lossy 0.1 )", "f()", 0.1f64.to_bits() as i64);
     diff_typed_call("fn () -> f32 ( f32 lossy 0.1 )", "f()", i64::from(0.1f32.to_bits()));
+}
+
+#[test]
+fn lossy_rounds_a_fraction_once_to_the_nearest_float_on_both_tiers() {
+    let up = i64::from((1.0 + f32::EPSILON).to_bits());
+    let near = 12009599006321324.0f64;
+    for (body, expect) in [
+        ("f32 lossy (1152921573326323713/1152921504606846976)", up),
+        ("f32 lossy (1152921710765277183/1152921504606846976)", up),
+        (
+            "f32 lossy (-1152921573326323713/1152921504606846976)",
+            i64::from((-1.0 - f32::EPSILON).to_bits()),
+        ),
+        ("f32 lossy (16777217/16777216)", i64::from(1.0f32.to_bits())),
+        ("f64 lossy (36028797018963970/3)", near.to_bits() as i64),
+        ("f64 lossy (-36028797018963970/3)", (-near).to_bits() as i64),
+    ] {
+        let ty = &body[..3];
+        diff_typed_call(&format!("fn () -> {ty} ( {body} )"), "f()", expect);
+    }
+    let x = "x := rational_number 1152921573326323713/1152921504606846976, f32 lossy (x)";
+    assert_eq!(run_script(x), up, "{x}");
 }
 
 #[test]

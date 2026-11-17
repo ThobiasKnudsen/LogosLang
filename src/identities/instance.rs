@@ -59,10 +59,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
     );
     let field = cx.store.alloc_head(cx.type_, record);
 
-    // Escaped, because `.` is a regex metacharacter.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
     let dot = cx.store.alloc_head(cx.type_, record);
-    cx.declare(r"\.", dot);
+    cx.declare(".", dot);
     // `.` reads its member's spelling off the cell to its right, and a `[i]` or `()` cell after
     // that where the read takes one.
     cx.metas.insert(dot, |p, _id, tape| p.construct_field_access(tape));
@@ -71,11 +70,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
     // `square_brackets` cell the reads after `.` consume, or, after a tape, into the element read.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
     let open_sq = cx.store.alloc_head(cx.type_, record);
-    cx.declare(r"\[", open_sq);
+    cx.declare("[", open_sq);
     cx.metas.insert(open_sq, |p, _id, tape| p.construct_index(tape));
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
     let close_sq = cx.store.alloc_head(cx.type_, record);
-    cx.declare(r"\]", close_sq);
+    cx.declare("]", close_sq);
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,

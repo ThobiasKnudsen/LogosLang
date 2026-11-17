@@ -1014,7 +1014,7 @@ fn rational_places_and_operators_run_interpreted_and_are_refused_compiled() {
 
 #[test]
 fn a_pattern_spelling_is_declared_through_regex() {
-    // `<=>` beats `<=` `>` by length at equal rank; the core's `..` is spelled `\.\.`.
+    // `<=>` beats `<=` `>` by length at equal rank; the core's `..` enters the index as `\.\.`.
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[0-9]+[kK]\xc2\xbb := type ()\n(5k).type == type\n\
           regex \xc2\xab<=>\xc2\xbb := type ()\n(<=>).type == type\n\
@@ -1069,6 +1069,35 @@ fn a_quantifier_in_a_pattern_covers_its_whole_group_or_escape() {
 }
 
 #[test]
+fn a_pattern_is_read_as_the_regex_crate_reads_it() {
+    for src in [
+        "regex «k\\\\x41» := type (), (kA).type == type",
+        "regex «k\\\\u{41}» := type (), (kA).type == type",
+        "regex «(?i)abc» := type (), (ABC).type == type",
+        "regex «k(?-u:[a-z])» := type (), (kq).type == type",
+        "regex «(ab|cd|ef|gh|ij){5}» := type (), (ijijijijij).type == type",
+        "regex «(?:a+)?b» := type (), (b).type == type",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, "true\n", "{src}: {stderr}");
+    }
+    for (src, name) in [
+        ("regex «k\\\\x41» := type (), (kx41).type == type", "kx41"),
+        ("regex «k\\\\t» := type (), (kt).type == type", "kt"),
+        ("regex «k\\\\n» := type (), (kn).type == type", "kn"),
+    ] {
+        let (_, _, stderr) = run_line(src);
+        assert!(stderr.contains(&format!("unknown name `{name}`")), "{src}: {stderr}");
+    }
+    // A rolled-back pattern that can match nothing as a whole leaves no entry behind.
+    let (echoes, stderr) =
+        repl("regex «a*» := type ()\nregex «b*» := type (), zz\n(bb).type == type\n".as_bytes());
+    assert!(echoes.is_empty(), "echoes: {echoes:?}");
+    assert!(stderr.contains("unknown name `bb`"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_pattern_judges_a_word_boundary_by_the_char_before_it() {
     for src in [
         "regex «q\\B[0-9]+» := type (), (q1).type == type",
@@ -1100,6 +1129,24 @@ fn a_pattern_part_that_matches_nothing_still_lets_it_lex() {
             .as_bytes(),
     );
     assert_eq!(echoes, ["true", "3", "true"], "stderr: {stderr}");
+}
+
+#[test]
+fn spellings_ending_at_one_node_are_each_found_by_their_own_key() {
+    // A rolled-back declaration leaves nothing behind, though another spelling ends where it did.
+    for (program, gone, kept) in [
+        ("regex «x|ab» := type ()\nregex «ab|y» := type (), zz\n(y).type == type\n", "y", "ab"),
+        ("regex «a*» := type ()\nregex «b*» := type (), zz\n(bb).type == type\n", "bb", "aa"),
+    ] {
+        let (echoes, stderr) = repl(format!("{program}({kept}).type == type\n").as_bytes());
+        assert_eq!(echoes, ["true"], "{program}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("unknown name `{gone}`")), "{program}: stderr: {stderr}");
+    }
+    let (_, _, stderr) =
+        run_line("regex «x|ab» := type (), regex «ab|y» := type (), regex «ab|y» := type (), 5");
+    assert!(stderr.contains("`ab|y` is already declared"), "stderr: {stderr}");
+    let (_, _, stderr) = run_line("regex «x|ab» := type (), regex «ab|y» := type (), ab");
+    assert!(stderr.contains("same lex_rank"), "stderr: {stderr}");
 }
 
 #[test]
