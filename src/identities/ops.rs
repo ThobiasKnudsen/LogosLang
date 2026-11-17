@@ -3,8 +3,8 @@
 
 //! The concrete machine operations, `add_i32`, `lt_f64`, `store_u8`, …: one
 //! spelling-less `callable` leaf per (operation, machine type), minted from one
-//! table-driven loop. A surface operator resolves each application to a leaf and
-//! stores it in the node's op slot, so run reads the slot and jumps.
+//! table-driven loop. A surface operator's mint holds its leaf, and a statement's node its
+//! own in its op slot, so run reads it and jumps.
 
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, RunFn, Runtime};
@@ -122,7 +122,7 @@ impl OpLeaves {
 
 /// The concrete op never reads a type from the node; its type is this instantiation.
 fn arith_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a resolved binary application whose first two slots are its operands.
+    // SAFETY: `node` is a node of a binary operator's mint, its two words its operands.
     unsafe {
         let (lhs, rhs) = operands(node);
         let l = rt.run(lhs)?;
@@ -333,19 +333,28 @@ mod tests {
         assert_eq!(seen.len(), 5 * 10 - 2 + 6 * 10 + 10);
     }
 
-    #[test]
-    fn the_op_slot_dispatches_through_the_graph_alone() {
-        let mut store = Store::new();
-        let mut trie = RegexTrie::new();
-        let core = Core::build(&mut store, &mut trie);
-
+    /// `20 + 22` over `i32`, a node of `+`'s mint for `i32`.
+    fn sum_node(store: &mut Store, core: &Core) -> DyadPtr {
         let lhs = store.alloc_blob(core.i32_, &20i32.to_ne_bytes());
         let rhs = store.alloc_blob(core.i32_, &22i32.to_ne_bytes());
         let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
-        let node = store.alloc_words(core.plus, &[lhs, rhs, leaf, core.i32_]);
+        let key = [core.i32_, core.i32_];
+        // SAFETY: `+` carries an operand record; the key and output are type nodes and the
+        // leaf a minted callable, all from `store`.
+        let mint =
+            unsafe { crate::identities::mint::of(store, core, core.plus, &key, core.i32_, leaf) };
+        store.alloc_words(mint, &[lhs, rhs])
+    }
+
+    #[test]
+    fn the_mints_operation_dispatches_through_the_graph_alone() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let node = sum_node(&mut store, &core);
 
         let mut rt = Runtime::new(&core, &mut store);
-        // SAFETY: the node and its operands were just built; the leaf is a
+        // SAFETY: the node and its operands were just built; the mint's leaf is a
         // minted seed-native callable.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 42);
     }
@@ -355,11 +364,8 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-
-        let lhs = store.alloc_blob(core.i32_, &20i32.to_ne_bytes());
-        let rhs = store.alloc_blob(core.i32_, &22i32.to_ne_bytes());
+        let node = sum_node(&mut store, &core);
         let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
-        let node = store.alloc_words(core.plus, &[lhs, rhs, leaf, core.i32_]);
 
         let mut rt = Runtime::new(&core, &mut store);
         // SAFETY: the leaf was minted from a seed-native RunFn shim; the node's
