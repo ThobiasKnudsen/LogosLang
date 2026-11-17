@@ -51,6 +51,9 @@ pub struct Binding {
     /// Declared outside any function in a body the pass does not run in parse order, a loop
     /// or a branch: at parse the name holds no value yet.
     pub unmade: bool,
+    /// The spelling is a pattern, keyed in the trie as the recognizer it is; any other
+    /// spelling is keyed escaped, so it stands for itself.
+    pub pattern: bool,
 }
 
 /// Where a storage binding's bytes lie, with the offset into it.
@@ -77,11 +80,21 @@ impl Binding {
             unwritten: std::ptr::null_mut(),
             paths: std::ptr::null_mut(),
             unmade: false,
+            pattern: false,
         }
     }
 
     pub fn is_dead(&self) -> bool {
         !self.end.is_null()
+    }
+
+    /// The trie key `spelling` enters under: the one place a spelling's key is decided.
+    pub fn key(&self, spelling: &str) -> String {
+        if self.pattern {
+            spelling.to_string()
+        } else {
+            regex::escape(spelling)
+        }
     }
 
     /// The name's bytes are in a frame of its own: a type as the frame lays a field out
@@ -207,6 +220,12 @@ impl Binding {
     }
 
     /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn set_pattern(dyad: DyadPtr, pattern: bool) {
+        (*Self::fields(dyad)).pattern = pattern;
+    }
+
+    /// # Safety
     /// As `Binding::read`; `fields` null or an `array` node from the store.
     pub unsafe fn set_unwritten(dyad: DyadPtr, fields: DyadPtr) {
         (*Self::fields(dyad)).unwritten = fields;
@@ -268,15 +287,6 @@ impl Binding {
             if gates.is_null() { Vec::new() } else { super::array::items(gates).to_vec() };
         items.insert(0, gate);
         (*Self::fields(dyad)).gate = super::array::build(store, array_ty, &items);
-    }
-
-    /// The gate set of another binding, the array shared: no gate is added after a
-    /// declaration closes, and every edit builds a new array.
-    ///
-    /// # Safety
-    /// As `Binding::read`, for both.
-    pub unsafe fn copy_gates(dyad: DyadPtr, from: DyadPtr) {
-        (*Self::fields(dyad)).gate = (*Self::fields(from)).gate;
     }
 
     /// # Safety

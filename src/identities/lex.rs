@@ -50,6 +50,18 @@ pub(crate) unsafe fn is_fragment(types: &Core, node: DyadPtr) -> bool {
     !d.is_null() && dyad::ty(d) == types.lex.lex
 }
 
+/// The text a `lex «…»` node quotes, read without lexing it; none for any other node.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn quoted<'a>(types: &Core, node: DyadPtr) -> Option<&'a [u8]> {
+    if dyad::ty(node) != types.lex.lex {
+        return None;
+    }
+    let text = *(dyad::value(node) as *const DyadPtr);
+    (!text.is_null() && dyad::ty(text) == types.string_).then(|| super::string::text(text))
+}
+
 /// The text operand is the quote's string node, or a node that runs to one
 /// (`tape.spelling[k]`).
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

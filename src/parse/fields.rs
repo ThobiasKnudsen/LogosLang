@@ -917,7 +917,8 @@ impl<'a> Parser<'a> {
 
     /// `&`'s constructor: an `addr` node that resolves the place's address at
     /// run/lower time, so a frame-relative local yields a per-activation
-    /// address. A comptime binding has no storage.
+    /// address. Of the places, a frame's and a dereference's cell have an address
+    /// to hand out.
     pub(crate) fn construct_address_of(
         &mut self,
         tape: &mut ParsingTape,
@@ -935,23 +936,25 @@ impl<'a> Parser<'a> {
         let node = self.operand_dyad(cell)?;
         // SAFETY: `node` is a resolved dyad from the store.
         let addr = unsafe {
-            // A place the reading rule can name, marked as storage: a literal's
-            // blob is not one, nor a node of a code-carrying type (an operand run, no fields).
-            use crate::identities::read::{read_kind, Read};
-            let placed = matches!(
-                read_kind(self.types, node),
-                Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
-            ) && self.types.is_storage(node);
-            // A binding's fields are read; `lex_rank` alone is a place a program writes.
-            let binding_field = self
-                .types
-                .binding_field_of(node)
-                .is_some_and(|f| Binding::spelling(f) != "lex_rank");
-            if !placed || binding_field {
+            use crate::identities::read::{
+                is_lex_rank_field, output_type, place_kind, place_node, Read,
+            };
+            let types = self.types;
+            let addressed = |p: DyadPtr| {
+                (types.is_storage(p) || dyad::ty(p) == types.deref_)
+                    && matches!(
+                        place_kind(types, output_type(types, p)),
+                        Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
+                    )
+            };
+            let Some(place) = place_node(self.rt.store, types, node)
+                .or_else(|| is_lex_rank_field(types, node).then_some(node))
+                .filter(|&p| addressed(p))
+            else {
                 return Err(ParseError::BadAddressOf);
-            }
+            };
             self.check_capture(node)?;
-            crate::identities::pointer::build_addr(self.rt.store, self.types, node)
+            crate::identities::pointer::build_addr(self.rt.store, types, place)
         };
         tape.remove(1);
         tape.place(addr);

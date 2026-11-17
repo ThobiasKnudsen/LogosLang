@@ -2,7 +2,7 @@
 
 Logos is a systems language built on one idea: the program, its types, its proofs, the compiler, and the rules of the language's own syntax all live in a single structure, the **Logic Graph**, which the language can read and rewrite. There is no line between "the language" and "what is written in it".
 
-What you can download today is the **bootstrap seed**: a small Rust program that turns Logos source into the Logic Graph, interprets it, and compiles the functions you ask it to compile with Cranelift. It is the fixed starting point the rest of the language is being built on, in Logos. It is not the finished language. The design lives in [DESIGN.md](./DESIGN.md), which is the ruling document. This README is the short version.
+What you can download today is the **bootstrap seed**: a small Rust program that turns Logos source into the Logic Graph, interprets it, and compiles the functions you ask it to compile with Cranelift. It is the fixed starting point the rest of the language is being built on, in Logos. It is not the finished language. The design lives in the project's rules, the ruling document, which the maintainer keeps on a rules server; their last copy in this repository is [DESIGN.md at 51e2a15](https://github.com/ThobiasKnudsen/LogosLang/blob/51e2a15/DESIGN.md). This README is the short version.
 
 ## The idea in five points
 
@@ -191,7 +191,7 @@ The seed runs:
 - `import`, the command line as source, and the REPL;
 - `pub`, `mut`, `immut` and `share` on a name's binding: a name is written after its declaration only where it says `mut`, a write along a field path needs `mut` on every step, and `immut` on a field refuses even its constructor's fill.
 
-Specified in DESIGN.md and not yet built:
+Specified in the rules and not yet built:
 
 - **The rest of the gates.** `lock`, the write permission through pointers, and gates as body nodes, one read-or-write rule for visibility, borrowing, and reflection alike.
 - **The borrow checker.** Many readers or one writer, checked per place, with lexical lifetimes.
@@ -238,8 +238,8 @@ Stable Rust is enough. Cranelift is the one heavy dependency. The Rust toolchain
 
 ### Repository layout
 
-- `DESIGN.md` is the ruling document. Where anything else disagrees with it, it wins.
-- `language_sketch.logos` illustrates DESIGN.md in code, including parts not yet built.
+- The ruling document is not in the tree: it is the rules on the maintainer's rules server, last copied here as `DESIGN.md` at 51e2a15. Where anything else disagrees with it, it wins.
+- `language_sketch.logos` illustrates the rules in code, including parts not yet built.
 - `identities/` holds Logos-source specs of the core identities the seed hand-builds: `dyad`, `type`, `fn`, `scope`, `array`, `(`, `proof`.
 - `src/` is the seed: the parser, the runtime, the Cranelift lowering, reflection, the node store, the name index, and one file per built-in identity under `src/identities/`.
 - `examples/` holds runnable programs, shipped in every release archive.
@@ -292,8 +292,8 @@ lightweight alternative to a contributor agreement, and it is how the project ca
 commit by commit, that every line was given deliberately by someone entitled to give it.
 Run `git config core.hooksPath .githooks` to have the line added for you.
 
-And [DESIGN.md](./DESIGN.md) rules: quote the passage that licenses a spec-governed
-change, and stop and ask when two sources disagree.
+And the rules rule: quote the rule that licenses a spec-governed change, and stop and
+ask when two sources disagree.
 
 [CONTRIBUTING.md](./CONTRIBUTING.md) has the rest.
 

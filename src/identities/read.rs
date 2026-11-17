@@ -391,6 +391,15 @@ pub unsafe fn place_of(types: &Core, node: DyadPtr) -> Option<Place> {
     call_tail(types, node).map(Place::Call)
 }
 
+/// `x:lex_rank`: a binding's own field and so no place, yet the one a program sets after the
+/// declaration (DESIGN ›`lex_rank` belongs to the binding, not the type‹).
+///
+/// # Safety
+/// As `place_of`.
+pub unsafe fn is_lex_rank_field(types: &Core, node: DyadPtr) -> bool {
+    types.binding_field_of(node).is_some_and(|f| crate::binding::Binding::spelling(f) == "lex_rank")
+}
+
 /// The node an owning field's slot holds, which a read of a node known at parse folds to:
 /// only a field's slot is typed an owning pointer, never a value, and a hole's type is `?`.
 ///
@@ -769,6 +778,8 @@ mod tests {
                 assert_eq!(place_of(types, exprs[k]), None, "{what}");
                 assert_eq!(place_node(&mut store, types, exprs[k]), None, "{what}");
             }
+            assert!(is_lex_rank_field(types, exprs[16]));
+            assert!(!is_lex_rank_field(types, exprs[8]));
         }
     }
 

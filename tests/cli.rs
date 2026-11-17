@@ -1038,6 +1038,31 @@ fn a_pattern_spelling_is_declared_through_regex() {
 }
 
 #[test]
+fn a_literal_spelling_is_declared_by_its_whole_text() {
+    // `@` is declared and outranks the fresh-name pattern, so only the quote declares `@!`.
+    for (src, out) in [
+        ("lex «@!» := i32 5, @!", "5"),
+        ("lex «@!» := i32 5, @!:name", "@!"),
+        ("lex «~.» := i32 5, ~.:name", "~."),
+        ("mut lex «@!» := i32 5, @! = 6, @!", "6"),
+        ("f := fn () -> i32 (lex «@!» := i32 5, @!), f()", "5"),
+        ("f := fn () -> i32 (lex «@!» := i32 5, @!), f.compile(), f()", "5"),
+    ] {
+        assert_eq!(line(src), out, "{src}");
+    }
+    for (src, expect) in [
+        ("lex «..» := i32 5, 1", "`..` is already declared"),
+        ("lex «@!» := i32 5, lex «@!» := i32 6, 1", "`@!` is already declared"),
+        ("lex «12» := i32 5, 1", "`12` is already declared"),
+        ("lex «» := i32 5, 1", "must not be empty"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: {stderr}");
+        assert!(stderr.contains(expect), "{src}: {stderr}");
+    }
+}
+
+#[test]
 fn a_pattern_whose_class_can_eat_its_own_literal_still_lexes() {
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[a-z]+ing\xc2\xbb := type ()\n(running).type == type\n(ring).type == type\n\
@@ -2968,6 +2993,30 @@ fn only_a_marked_place_is_written_or_addressed() {
 }
 
 #[test]
+fn an_element_has_an_address_and_taking_it_checks_the_index() {
+    let arr = "import ./identities/array.logos";
+    assert_eq!(line(&format!("{arr}, a := array i32 [1, 2], p := &(a[1]), p@ = 8, a[1]")), "8");
+    assert_eq!(
+        line(&format!(
+            "{arr}, g := fn () -> i32 ( a := array i32 [1, 2], p := &(a[1]), p@ ), g.compile(), g()"
+        )),
+        "2"
+    );
+    for src in [
+        format!("{arr}, a := array i32 [1, 2], p := &(a[5]), 1"),
+        format!(
+            "{arr}, g := fn () -> i32 ( a := array i32 [1, 2], p := &(a[5]), 1 ), g.compile(), g()"
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("index out of range"), "{src}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl(b"a := alloc 1 of i32 3\np := &(a@)\np@ = 9\na@\n");
+    assert_eq!(echoes, ["9"], "stderr: {stderr}");
+}
+
+#[test]
 fn declaring_from_a_box_copies_it() {
     let (echoes, stderr) = repl(
         b"mut a := type ?\na = i32\nmut x := a\nx = f64\na == i32\nx == f64\n\
@@ -3023,6 +3072,18 @@ fn an_imported_pub_name_keeps_its_gates() {
     let (code, _, stderr) = run_line("import ./tests/fixtures/gated.logos, s = 3, s");
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("`s` is not `mut`"), "stderr: {stderr}");
+}
+
+#[test]
+fn an_imported_pub_spelling_is_keyed_and_ranked_as_the_file_declared_it() {
+    let lib = "import ./tests/fixtures/pub_spellings.logos";
+    assert_eq!(line(&format!("{lib}, (5k).type == type")), "true");
+    assert_eq!(line(&format!("{lib}, {lib}, (5k).type == type")), "true");
+    assert_eq!(line(&format!("{lib}, {lib}, @!")), "7");
+    assert_eq!(line(&format!("{lib}, r:lex_rank")), "3.0");
+    let (code, _, stderr) = run_line(&format!("regex «[0-9]+k» := type (), {lib}"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`[0-9]+k` is already declared"), "stderr: {stderr}");
 }
 
 #[test]

@@ -611,19 +611,20 @@ impl Cx<'_> {
     /// A native record type's field names live in the type's own scope. The
     /// spelling enters the index as a literal key, as a declared name does.
     pub(crate) fn declare_in(&mut self, scope: DyadPtr, spelling: &str, id: DyadPtr) -> DyadPtr {
-        self.enter(scope, spelling, &regex::escape(spelling), id)
+        self.enter(scope, spelling, false, id)
     }
 
     /// Declare `pattern` at the root scope, entered as the recognizer it is.
     pub(crate) fn declare_pattern(&mut self, pattern: &str, id: DyadPtr) -> DyadPtr {
         let root = self.root_scope;
-        self.enter(root, pattern, pattern, id)
+        self.enter(root, pattern, true, id)
     }
 
-    fn enter(&mut self, scope: DyadPtr, name: &str, key: &str, id: DyadPtr) -> DyadPtr {
-        let name = string::build_text(self.store, self.string_, name.as_bytes());
-        let binding = Binding::alloc(self.store, self.binding_, Binding::new(id, scope, name));
-        self.trie.insert(key, binding);
+    fn enter(&mut self, scope: DyadPtr, spelling: &str, pattern: bool, id: DyadPtr) -> DyadPtr {
+        let name = string::build_text(self.store, self.string_, spelling.as_bytes());
+        let rec = Binding { pattern, ..Binding::new(id, scope, name) };
+        let binding = Binding::alloc(self.store, self.binding_, rec);
+        self.trie.insert(&rec.key(spelling), binding);
         binding
     }
 }

@@ -2,7 +2,7 @@
 
 Thank you for looking. LogosLang is Apache-2.0, and contributions are welcome on the
 terms below. Two of them are load-bearing and are checked by CI: every commit carries a
-sign-off, and [`DESIGN.md`](./DESIGN.md) rules.
+sign-off, and the ruling document rules.
 
 ## Sign your commits (Developer Certificate of Origin)
 
@@ -74,26 +74,27 @@ bash .github/scripts/dco-check.test.sh
 `main` is protected and takes a pull request, never a direct push. Work on a branch off
 `dev`.
 
-## DESIGN.md rules
+## The ruling document
 
-LogosLang is a spec-governed project. [`DESIGN.md`](./DESIGN.md) is the ruling document;
-`language_sketch.logos` illustrates it. Issues, plans, comments, and the existing code
-are downstream of it and can be stale.
+LogosLang is a spec-governed project. Its ruling document is the project's rules, which
+the maintainer keeps on a rules server; their last copy in this repository is
+[`DESIGN.md` at 51e2a15](https://github.com/ThobiasKnudsen/LogosLang/blob/51e2a15/DESIGN.md),
+and git history keeps every earlier one. `language_sketch.logos` illustrates the rules.
+Issues, plans, comments, and the existing code are downstream of them and can be stale.
 
-- Before changing anything the spec governs, find the passage in `DESIGN.md` that
-  licenses the change and quote it in the pull request. No passage means the change is
-  not ready: open an issue and ask.
+- Before changing anything the spec governs, find the rule that licenses the change and
+  quote it in the pull request. No rule, or one the copy may hold in an older wording,
+  means the change is not ready: open an issue and ask.
 - If two sources disagree, stop and say so in the issue with both quotes. Do not pick a
   side quietly, and do not assume the newer one wins.
-- A passage that no longer holds is kept and marked `superseded`. A live one carries
-  `ruled` or `settled` and a date. Grep for either to see what is in force.
+- A rule that no longer holds is kept and marked superseded, with why.
 
 ## The shape of a good change
 
 - One logical change per pull request, and a subject line that says what it does:
-  `seed: …` for the Rust bootstrap, `DESIGN: …` for the spec, `docs: …`, `ci: …`.
+  `seed: …` for the Rust bootstrap, `docs: …`, `ci: …`.
 - New behaviour comes with a test. The seed's tests live in `tests/`.
-- Public spelling changes touch `DESIGN.md`, the seed, `language_sketch.logos`, and the
+- Public spelling changes touch the rules, the seed, `language_sketch.logos`, and the
   docs together, so no reader is left with the old word.
 - Do not edit `docs/vX.Y.Z/` for a version at or below the newest release tag. Those are
   frozen, and the guard will fail the pull request.
