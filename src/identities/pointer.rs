@@ -207,6 +207,24 @@ pub(crate) unsafe fn deref_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u64) {
     (*p, *p.add(1), off)
 }
 
+/// Whether the dereference reads a field `p@.f` folded into it: past the record's start, or of
+/// another type than the record its pointer points at.
+///
+/// # Safety
+/// `node` must be a deref node from `build_deref`.
+pub(crate) unsafe fn reads_folded_field(types: &Core, node: DyadPtr) -> bool {
+    let (ptr, pointee, offset) = deref_parts(node);
+    if offset != 0 {
+        return true;
+    }
+    let target = super::read::output_type(types, ptr);
+    if target.is_null() || !super::numtype::is_pointer_type(target) {
+        return false;
+    }
+    let record = super::numtype::pointee_of(target);
+    !record.is_null() && record != pointee && meta::is_record_type(record)
+}
+
 /// The pointee must be a type a whole value of which moves into a place.
 ///
 /// # Safety

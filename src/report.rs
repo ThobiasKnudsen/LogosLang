@@ -327,6 +327,12 @@ pub fn parse_message(e: &ParseError) -> String {
              moves whatever it holds"
                 .into()
         }
+        ParseError::UnfollowedPath => {
+            "this field is reached through a pointer, an element, a value no name holds, a name \
+             that borrows it or a `share` function's own value, so nothing here can end it: \
+             `move` and `free` take a field through the name that holds it, `move x.p`"
+                .into()
+        }
         ParseError::RecordMoveNotInSeed => {
             "moving a plain record is not in the seed yet: its bytes are not copied into a name"
                 .into()

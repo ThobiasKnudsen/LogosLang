@@ -1112,19 +1112,6 @@ pub(crate) unsafe fn resolve_loop_parts(
     Ok(logos)
 }
 
-/// The `i32 32` juxtaposition: a plain number landed in a number type.
-///
-/// # Safety
-/// `lit` must be a rational literal from the store; `ty_node` a numeric type node.
-pub(crate) unsafe fn commit_literal_to(
-    store: &mut Store,
-    types: &Core,
-    lit: DyadPtr,
-    ty_node: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    land(store, types, lit, ty_node)
-}
-
 /// Land a call's arguments in their parameters' types, so `f(3000000000)` is exact for an `i64`
 /// parameter. Extra arguments are left for the arity check.
 ///

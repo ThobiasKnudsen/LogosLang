@@ -341,13 +341,8 @@ impl Lowerer<'_, '_> {
         let last = last?;
         for &item in exit.iter().rev() {
             let item = drop_model::exit_item_of(item);
-            if !item.held_at(usize::MAX) {
-                continue;
-            }
-            if dyad::ty(item.what) == defer_ {
-                self.lower(drop_model::deferred_inner_of(item.what))?;
-            } else {
-                drop_model::lower_end_held(self, item.what)?;
+            if item.held_at(usize::MAX) {
+                item.lower(self)?;
             }
         }
         Ok(last)

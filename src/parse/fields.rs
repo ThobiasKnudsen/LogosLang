@@ -683,25 +683,29 @@ impl<'a> Parser<'a> {
         // SAFETY: a bracket cell is a node from the store.
         let call = bracket.map(|d| unsafe { self.args_of(d) });
         let key = self.index_node_at(tape, 2);
-        let writes = index.is_none()
-            && key.is_none()
-            && bracket.is_none()
-            && tape
-                .at(2)
-                .is_some_and(|c| !c.constructed && self.cell_identity(c) == self.types.assign);
+        let plain = index.is_none() && key.is_none() && bracket.is_none();
+        let next_is =
+            |id: DyadPtr| tape.at(2).is_some_and(|c| !c.constructed && self.cell_identity(c) == id);
+        let (writes, dotted) =
+            (plain && next_is(self.types.assign), plain && next_is(self.types.dot_));
         let source = self.cx.source;
         // A name its value's parse woke stands constructed and still holds its binding.
         let woke = tape.at(-1).filter(|c| c.constructed && !c.dyad.is_null()).map(|c| c.dyad);
         // SAFETY: a constructed cell's dyad is a dyad from the store.
         let named = woke.filter(|&d| unsafe { dyad::ty(d) } == self.types.binding_).unwrap_or(root);
-        // SAFETY: `named` is null or a binding dyad; `lhs` a reduced dyad off the tape.
-        let fills = unsafe {
-            self.check_field_unwritten(named, lhs, &source[nstart..nstart + nlen], writes)
+        let path_root = if named.is_null() { left.root } else { named };
+        // SAFETY: `named` and the left cell's root are null or binding dyads; `lhs` a reduced
+        // dyad off the tape.
+        let reached = match unsafe {
+            let member = &source[nstart..nstart + nlen];
+            self.check_name_field(named, left.root, lhs, member, writes, dotted)
+        } {
+            Ok(reached) => reached,
+            Err(e) => {
+                self.cx.pos = nstart;
+                return Err(e);
+            }
         };
-        if let Err(e) = fills {
-            self.cx.pos = nstart;
-            return Err(e);
-        }
         self.cx.member_root = root;
         self.cx.member_path.clear();
         let member = Member { start: nstart, len: nlen, index, key, call };
@@ -733,8 +737,9 @@ impl<'a> Parser<'a> {
             tape.place(node);
             let cell = tape.at_mut(0).expect("placed above");
             cell.path = path;
-            if let Ok(Some(fill)) = fills {
-                cell.target = fill;
+            if plain {
+                cell.target = reached;
+                cell.root = path_root;
             }
         }
         Ok(Constructed::Placed)

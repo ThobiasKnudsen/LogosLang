@@ -84,17 +84,31 @@ struct Pending {
     endpoint: Endpoint,
 }
 
-/// A bare name a `move` or `free` is about to make dead, handed back so the
-/// keyword's constructor can mark it dead with the node it built.
+/// A bare name or a field path `name.f.g` a `move` or `free` is about to end, handed back so
+/// the keyword's constructor can mark it dead with the node it built.
 #[derive(Debug)]
 pub(crate) struct Ended {
     pub(crate) binding: DyadPtr,
+    /// The bindings of the fields the path goes through, the name's first; empty when the
+    /// name itself ends.
+    pub(crate) path: Vec<DyadPtr>,
+}
+
+impl Ended {
+    pub(crate) fn name(binding: DyadPtr) -> Self {
+        Ended { binding, path: Vec::new() }
+    }
+
+    /// The name itself, not a path under it.
+    pub(crate) fn is_name(&self) -> bool {
+        self.path.is_empty()
+    }
 }
 
 /// The operand of a `move` or `free`.
 #[derive(Debug)]
 pub(crate) enum Taken {
-    /// The node the place is reached through, and the name it ends when it is a bare name.
+    /// The node the place is reached through, and the name or the path under a name it ends.
     Place(DyadPtr, Option<Ended>),
     /// A value no name holds, and where it starts in the source.
     Value(DyadPtr, usize),
