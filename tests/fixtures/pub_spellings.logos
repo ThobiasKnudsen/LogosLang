@@ -1,0 +1,4 @@
+# A `pub` pattern, a `pub` literal spelling and a `pub` name with a rank of its own.
+pub regex «[0-9]+k» := type (),
+pub lex «@!» := i32 7,
+pub r := type (share lex_rank = 3)

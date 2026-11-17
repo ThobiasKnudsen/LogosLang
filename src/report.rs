@@ -127,6 +127,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ExpectedPath => "`import` must be followed by a file path".into(),
         ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
         ParseError::ExpectedQuote(word) => format!("`{word}` must be followed by a «…» quote"),
+        ParseError::EmptySpelling => {
+            "a declared spelling must not be empty: no text could ever lex as it".into()
+        }
         ParseError::StrayInterpolationClose => {
             "this `}` closes no `{`: write `\\}` to print a brace".into()
         }
