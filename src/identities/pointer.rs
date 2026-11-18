@@ -92,7 +92,21 @@ pub(crate) unsafe fn build_addr(
     place: DyadPtr,
     held: DyadPtr,
 ) -> DyadPtr {
-    let pointee = super::read::output_type(types, place);
+    build_addr_as(store, types, place, held, super::read::output_type(types, place))
+}
+
+/// [`build_addr`] handing the address out as `@pointee`, which need not be the type the place's
+/// bytes are read by: `void` erases it.
+///
+/// # Safety
+/// As [`build_addr`]; `pointee` a type node from the store.
+pub(crate) unsafe fn build_addr_as(
+    store: &mut Store,
+    types: &Core,
+    place: DyadPtr,
+    held: DyadPtr,
+    pointee: DyadPtr,
+) -> DyadPtr {
     let output = make_pointer_type(store, types.type_, pointee);
     store.alloc_words(types.addr_, &[place, pointee, held, types.ops.addr_, output])
 }

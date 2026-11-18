@@ -166,9 +166,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ExpectedIndexBracket => {
             "expected `[index]` — element access is `[…]`, `(…)` is application".into()
         }
-        ParseError::CellNotReachable => {
-            "nothing reaches a value's cell as a whole — read its type with \
-             `x.type` and its fields with `x.f`"
+        ParseError::NoNodeYet => {
+            "this name has no node yet: its bytes lie in its frame and its type on its binding, \
+             so read `x:dyad.type` or `x:dyad.value`"
                 .into()
         }
         ParseError::UnsettledInclusion => {

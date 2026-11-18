@@ -2124,11 +2124,50 @@ fn a_value_reads_its_type_with_a_dot_on_both_tiers() {
 }
 
 #[test]
-fn nothing_reaches_the_cell_as_a_whole() {
-    for src in [&b"x := i32 5\nx:dyad\n"[..], b"x := i32 5\nx:value\n"] {
-        let (echoes, stderr) = repl(src);
-        assert!(echoes.is_empty() && stderr.contains("as a whole"), "stderr: {stderr}");
+fn a_name_s_dyad_reads_its_type_and_its_bytes_address_on_both_tiers() {
+    let pt = "pt := type ( a := i32 ?, b := i32 ? )";
+    let inc = "f := fn (a := i32 ?) -> i32 ( a + 1 )";
+    for (src, want) in [
+        // A name laid out in a frame: its type from its binding, its value the address of its
+        // bytes, an `@void`.
+        ("x := i32 5, x:dyad.type == i32".to_string(), "true"),
+        ("x := i32 5, x:dyad.type == x.type".into(), "true"),
+        ("x := i32 5, x:dyad.value == &x".into(), "true"),
+        ("x := i32 5, y := i32 5, x:dyad.value == y:dyad.value".into(), "false"),
+        ("x := i32 5, x:dyad.value.type == @void".into(), "true"),
+        ("f := fn (a := i32 ?) -> bool ( a:dyad.type == i32 ), f(3)".into(), "true"),
+        ("f := fn (a := i32 ?) -> bool ( a:dyad.type == i32 ), f.compile(), f(3)".into(), "true"),
+        ("f := fn (a := i32 ?) -> bool ( a:dyad.value == &a ), f(3)".into(), "true"),
+        ("f := fn (a := i32 ?) -> bool ( a:dyad.value == &a ), f.compile(), f(3)".into(), "true"),
+        (
+            format!(
+                "{pt}, f := fn (q := pt ?) -> bool ( q:dyad.value == &q ), f.compile(), f(pt(1, 2))"
+            ),
+            "true",
+        ),
+        // A name of a type or a function, and a node reached by path, have their node.
+        (format!("{pt}, pt:dyad.type == type"), "true"),
+        (format!("{inc}, f:dyad.type == f.type"), "true"),
+        (format!("{inc}, f:dyad.value.type == @void"), "true"),
+        (format!("{inc}, d := f:dyad, d.type == f.type"), "true"),
+        ("x := i32 5, b := x + 1, b:start.rhs:dyad.type == b:start.rhs.type".into(), "true"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: {stderr}");
     }
+    for (src, error) in [
+        ("x := i32 5, d := x:dyad", "has no node yet"),
+        ("f := fn (a := i32 ?) -> i32 ( d := a:dyad, a ), f.compile(), f(1)", "has no node yet"),
+        ("x := i32 5, x:value", "unknown name `value`"),
+        ("f := fn (a := i32 ?) -> i32 ( a:dyad.value@ ), f.compile(), f(1)", "cannot compute"),
+        ("x := i32 5, x:dyad.lhs", "does not fit"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: {stderr}");
+        assert!(stderr.contains(error), "{src}: {stderr}");
+    }
+    let (echoes, stderr) = repl(b"x := i32 5\nx:dyad\n");
+    assert!(echoes.is_empty() && stderr.contains("has no node yet"), "stderr: {stderr}");
 }
 
 #[test]
