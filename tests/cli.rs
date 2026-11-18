@@ -6666,3 +6666,33 @@ fn a_quote_s_braces_are_a_scope_whose_text_is_its_tail() {
     let (_, _, stderr) = run_line("print «{ 1 ) }»");
     assert!(stderr.contains("1:12: error: this `)` closes nothing"), "stderr: {stderr}");
 }
+
+#[test]
+fn an_array_element_lands_by_the_element_type() {
+    let array = "import ./identities/array.logos";
+    for (src, printed) in [
+        (format!("{array}, a := array bool [true, false], a[1]"), "false\n"),
+        (format!("{array}, a := array (array i32) [[1, 2], [3]], a[0][1]"), "2\n"),
+    ] {
+        assert_eq!(run_line(&src), (Some(0), printed.to_string(), String::new()), "{src}");
+    }
+    // Refused, not a crash.
+    let src = format!("{array}, pt := type ( a := i32 ?, b := i32 ? ), a := array pt [pt(1, 2)]");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "{src}: stderr: {stderr}");
+}
+
+#[test]
+fn a_tape_line_no_check_narrowed_is_checked_through_a_record_pointer() {
+    let q = "pt := type ( mut a := u64 ?, mut b := u64 ? ), \
+             q := type ( v := u64 ?, share parse_rank = 61, share parse = ( tape[0].type = q, \
+             p := alloc 1 of pt ?, p@.a = tape[1].dyads[0], tape[0].v = p@.a, \
+             tape.remove(1), tape.is_constructed[0] = true ) )";
+    let src = format!("{q}, x := q [5], x.v");
+    assert_eq!(run_line(&src), (Some(0), "5\n".to_string(), String::new()), "{src}");
+    let src = format!("{q}, x := q [«a»]");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("holds no literal or constant of it"), "{src}: stderr: {stderr}");
+}

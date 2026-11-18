@@ -4294,3 +4294,69 @@ fn a_line_the_pass_ran_keeps_its_node_and_is_not_run_again() {
         assert_eq!((dyad::ty(call), dyad::value(call)), (ty, value), "running changed nothing");
     }
 }
+
+/// A `q` whose `parse` runs `body` and then takes its bracket off the tape.
+fn tape_line_q(body: &str) -> String {
+    format!(
+        "pt := type ( mut a := u64 ?, mut b := u64 ? ), \
+         q := type ( v := u64 ?, share parse_rank = 61, share parse = ( tape[0].type = q, \
+         {body}, tape.remove(1), tape.is_constructed[0] = true ) )"
+    )
+}
+
+#[test]
+fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_place_is_reached() {
+    let constant = "holds no literal or constant of it";
+    for body in [
+        "mut n := u64 0, n = tape[1].dyads[0], tape[0].v = n",
+        "mut n := u64 ?, n = tape[1].dyads[0], tape[0].v = n",
+        "mut r := pt ?, r.b = 0, r.a = tape[1].dyads[0], tape[0].v = r.a",
+        "p := alloc 1 of u64 0, p@ = tape[1].dyads[0], tape[0].v = p@",
+        "mut n := u64 0, p := &n, p@ = tape[1].dyads[0], tape[0].v = n",
+    ] {
+        let q = tape_line_q(body);
+        assert_eq!(run_script(&format!("{q}, 7")), 7, "{body}: the definition alone");
+        assert_eq!(run_script(&format!("{q}, x := q [5], x.v")), 5, "{body}");
+        assert_eq!(run_script(&format!("{q}, x := q [u8 7], x.v")), 7, "{body}");
+        let compiled = format!("{q}, h := fn () -> u64 ( x := q [5], x.v ), h.compile(), h()");
+        assert_eq!(run_script(&compiled), 5, "{body}: compiled");
+        for line in ["«a»", "m", "1.5", "-1", "i32 7"] {
+            let src = format!("{q}, m := u64 3, x := q [{line}], x.v");
+            assert!(
+                matches!(script_parse_err(&src), ParseError::ConstructorFailed(e) if e.contains(constant)),
+                "{body}: q [{line}]"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
+    // A `bool` takes `true` and `false`, and no number lies inside it.
+    for (place, read) in [("mut b := bool ?, b", "b"), ("p := alloc 1 of bool ?, p@", "p@")] {
+        let q = tape_line_q(&format!(
+            "{place} = tape[1].dyads[0], if {read} ( tape[0].v = 1 ) else ( tape[0].v = 2 )"
+        ));
+        assert_eq!(run_script(&format!("{q}, x := q [true], x.v")), 1, "{place}");
+        assert_eq!(run_script(&format!("{q}, x := q [false], x.v")), 2, "{place}");
+        for line in ["1", "7"] {
+            let src = format!("{q}, x := q [{line}]");
+            assert!(
+                matches!(script_parse_err(&src), ParseError::ConstructorFailed(_)),
+                "{place}: q [{line}]"
+            );
+        }
+    }
+    // Any other place refuses the line where the parse body is read, by name as through a pointer.
+    for (place, err) in [
+        ("mut t := type ?, t", ParseError::BadDeclaredType),
+        ("p := alloc 1 of type ?, p@", ParseError::BadDeclaredType),
+        ("mut r := rational_number ?, r", ParseError::TypeMismatch),
+        ("p := alloc 1 of rational_number 0, p@", ParseError::TypeMismatch),
+        ("p := alloc 1 of dyad ?, p@", ParseError::DyadTakesNode),
+        ("p := alloc 1 of @u64 ?, p@", ParseError::TypeMismatch),
+    ] {
+        let q = tape_line_q(&format!("{place} = tape[1].dyads[0], tape[0].v = 1"));
+        assert_eq!(script_parse_err(&format!("{q}, 7")), err, "{place}");
+    }
+}
