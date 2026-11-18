@@ -74,6 +74,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let (write, write_leaf) = op(cx, &["value", "k", "v", "owner", "op"], run_write);
     let (load, load_leaf) =
         op(cx, &["value", "k", "type", "binding", "fill", "owner", "op", "output_type"], run_load);
+    cx.lower.insert(load, lower_load);
     let fill = {
         let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
         cx.store.alloc_head(cx.type_, record)
@@ -414,6 +415,19 @@ unsafe fn field_of(
     owner: DyadPtr,
 ) -> Result<Field, RunError> {
     let this = rt.run(*ops)? as DyadPtr;
+    field_at(rt, this, ops, owner)
+}
+
+/// As [`field_of`], of the value `this` the read's first operand gave.
+///
+/// # Safety
+/// As [`field_of`]; `this` is null or what the first operand yields.
+unsafe fn field_at(
+    rt: &mut Runtime,
+    this: DyadPtr,
+    ops: *const DyadPtr,
+    owner: DyadPtr,
+) -> Result<Field, RunError> {
     if this.is_null() {
         return Err(RunError::NoThis);
     }
@@ -503,27 +517,64 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe { Ok(held(rt, node)? as i64) }
 }
 
+fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a load node from `build_load`, its receiver its first operand.
+    unsafe {
+        let this = rt.run(*(dyad::value(node) as *const DyadPtr))? as DyadPtr;
+        load(rt, node, this)
+    }
+}
+
 /// The value the field holds, as a whole read of a place of its type hands it over: read from a
 /// plain record's bytes, or yielded by the node a slot holds; an unfilled slot is the checked
 /// error. A number field of the parse's own node has a value only where it holds a constant.
-fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: as `run_slot`; the node a slot holds is one this file or a constructor stored,
-    // a record's bytes are its layout's.
+///
+/// # Safety
+/// `node` must be a load node from `build_load`; `this` what its first operand yields. The node
+/// a slot holds is one this file or a constructor stored; a record's bytes are its layout's.
+unsafe fn load(rt: &mut Runtime, node: DyadPtr, this: DyadPtr) -> Result<i64, RunError> {
+    let ops = dyad::value(node) as *const DyadPtr;
+    let ty = *ops.add(2);
+    let carry = carry_of(rt.types(), ty).ok_or(RunError::NoLayout(ty))?;
+    match field_at(rt, this, ops, *ops.add(5))? {
+        Field::Bytes(addr, ..) => Ok(super::assign::load(carry, addr)),
+        Field::Slot(slot, k) if (*slot).is_null() => Err(RunError::UnfilledField(k)),
+        Field::Slot(slot, _) if is_fill(rt.types(), node) && super::numtype::is_scalar_type(ty) => {
+            super::tape::constant_number(rt.types(), *slot, ty).ok_or(RunError::NotAConstant(ty))
+        }
+        Field::Slot(slot, _) => super::assign::take(rt, carry, *slot),
+    }
+}
+
+/// The receiver is read in the compiled frame and the field by [`load`], so both tiers read a
+/// field one way.
+fn lower_load(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a load node from `build_load`, `[this, k, type, binding, fill, owner]`.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let ty = *ops.add(2);
-        let carry = carry_of(rt.types(), ty).ok_or(RunError::NoLayout(ty))?;
-        if is_fill(rt.types(), node) && super::numtype::is_scalar_type(ty) {
-            let held = held(rt, node)?;
-            return super::tape::constant_number(rt.types(), held, ty)
-                .ok_or(RunError::NotAConstant(ty));
-        }
-        match field_of(rt, ops, *ops.add(5))? {
-            Field::Bytes(addr, ..) => Ok(super::assign::load(carry, addr)),
-            Field::Slot(slot, k) if (*slot).is_null() => Err(RunError::UnfilledField(k)),
-            Field::Slot(slot, _) => super::assign::take(rt, carry, *slot),
-        }
+        let carry = carry_of(lw.types(), ty);
+        // A rational travels as the address of its bytes; a record's bytes do not lower yet.
+        let nt = match carry {
+            Some(Carry::Word(nt)) => Some(nt),
+            Some(Carry::Bytes(_)) if ty == lw.types().rational => None,
+            _ => return Err(CompileError::NotLowerable(node)),
+        };
+        let this = lw.lower(*ops)?;
+        let read = lw.node_addr(node);
+        let bits = lw.call_seed(compiled_load as *const () as usize, &[read, this]);
+        Ok(match nt {
+            Some(nt) => lw.narrow(bits, nt),
+            None => bits,
+        })
     }
+}
+
+/// # Safety
+/// Called only by compiled code, with its context, a load node `lower_load` baked and the
+/// value its first operand gave there.
+unsafe extern "C" fn compiled_load(ctx: *mut crate::run::Context, read: DyadPtr, this: i64) -> i64 {
+    crate::run::interpret_step(ctx, |rt| load(rt, read, this as usize as DyadPtr))
 }
 
 /// Into a plain record's bytes, the value itself. Into a slot, a number or pointer as a fresh

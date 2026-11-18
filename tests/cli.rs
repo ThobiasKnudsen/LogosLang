@@ -387,6 +387,42 @@ fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
 }
 
 #[test]
+fn a_typed_field_read_through_a_name_gives_its_value_on_both_tiers() {
+    let q = |ty: &str, body: &str| {
+        format!(
+            "q := type ( v := {ty} ?, w := {ty} ?, share parse_rank = 61, \
+             share parse = ( tape[0].type = q, {body}, \
+             tape.remove(1), tape.is_constructed[0] = true ) )"
+        )
+    };
+    let f = |ty: &str, body: &str, read: &str| {
+        format!("{}, f := fn () -> {ty} ( x := q [5], {read} )", q(ty, body))
+    };
+    let checked = "if not tape[1].dyads[0].type ⊆ u64 error «no», tape[0].v = tape[1].dyads[0] + 1";
+    for (src, want) in [
+        (f("u64", checked, "x.v"), "6"),
+        (f("u64", "tape[0].v = 5 + 1", "x.v + x.v"), "12"),
+        (f("i32", "tape[0].v = 0 - 5 + 1", "x.v"), "-4"),
+        (f("f64", "tape[0].v = 2.5", "x.v"), "2.5"),
+    ] {
+        for call in ["f()", "f.compile(), f()"] {
+            let src = format!("{src}, {call}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: stderr: {stderr}");
+        }
+    }
+    for call in ["f()", "f.compile(), f()"] {
+        let src = format!("{}, {call}", f("u64", "tape[0].v = 1", "x.w"));
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(
+            stderr.contains("field 2 of this node's type body was never written"),
+            "{src}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
     // `x[k]` places the call `x.get(k)`, the line `k` its operand, run where it stands.
     let q = "q := type ( n := u64 ?, share get := fn (i := u64 ?) -> u64 ( n + i ), \

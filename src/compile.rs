@@ -436,6 +436,11 @@ impl Lowerer<'_, '_> {
         widen_to_i64(self.builder, v, nt)
     }
 
+    /// The `nt` value an `i64` container holds, as a call's result is read.
+    pub(crate) fn narrow(&mut self, v: Value, nt: NumType) -> Value {
+        narrow_from_i64(self.builder, v, nt)
+    }
+
     /// `width` bytes of this function's frame for a result nobody named: the compiled
     /// form of the interpreter's scratch, picked at compile time.
     pub(crate) fn scratch_slot(&mut self, width: usize) -> Value {

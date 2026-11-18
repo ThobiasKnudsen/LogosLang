@@ -174,8 +174,7 @@ unsafe fn call_machine(p: *const u8, ctx: *mut Context, args: &[i64]) -> i64 {
 pub type MachineFn = unsafe extern "C" fn(*mut Context, *const i64, usize) -> i64;
 
 /// The jump a compiled caller makes into a callee that is not compiled: the
-/// context's runtime applies the callee by value. An error or a panic is
-/// parked in the context and 0 returned, since neither may cross into machine code.
+/// context's runtime applies the callee by value.
 ///
 /// # Safety
 /// Called only by compiled code the seed emitted, with the context it was
@@ -187,18 +186,30 @@ pub unsafe extern "C" fn interpret_call(
     argc: usize,
     argv: *const i64,
 ) -> i64 {
+    // SAFETY: `argv` holds `argc` words; `fn_node` is the fn the caller baked.
+    interpret_step(ctx, |rt| unsafe {
+        let args = if argc == 0 { &[][..] } else { std::slice::from_raw_parts(argv, argc) };
+        rt.apply_values(fn_node, args)
+    })
+}
+
+/// A step compiled code hands the interpreter. An error or a panic is parked in the context
+/// and 0 returned, since neither may cross into machine code.
+///
+/// # Safety
+/// Called only from a function compiled code called, with the context it was called with.
+pub(crate) unsafe fn interpret_step(
+    ctx: *mut Context,
+    step: impl FnOnce(&mut Runtime) -> Result<i64, RunError>,
+) -> i64 {
     let rt = runtime_of(ctx);
     // SAFETY: `rt` is the runtime that made this very jump, live for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
     // SAFETY: as above.
     let depth = unsafe { (*rt).ctx.depth };
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: as above; `argv` holds `argc` words; `fn_node` is the fn the caller baked.
-        unsafe {
-            let args = if argc == 0 { &[][..] } else { std::slice::from_raw_parts(argv, argc) };
-            (*rt).apply_values(fn_node, args)
-        }
-    }));
+    // SAFETY: as above.
+    let outcome =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| step(unsafe { &mut *rt })));
     // The machine code runs on with the 0 and may call back in before the park
     // surfaces, so the interpreter's mid-call state is unwound here.
     let restore = move || {
