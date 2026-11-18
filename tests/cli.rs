@@ -3937,17 +3937,14 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         format!(
             "q := type ( n := ?, m := ?, share parse_rank = 60, share parse = ( tape[0].type = q, \
              tape[0].n = tape[1].dyads.size, {body}, tape[0] = tape[0].m, tape.remove(1), \
-             tape.is_constructed[0] = true ) ), q (1, 2, 3)"
+             tape.is_constructed[0] = true ) )"
         )
     };
-    let wide = |line: &str| {
-        format!(
-            "n := i32 5, p := type ( rhs := ?, output_type := type ?, share run = ( rhs ), \
-             share parse_rank = 60, share parse = ( tape[0].type = p, \
-             if tape[1].type ⊆ i64 ( tape[0].rhs = i64 (tape[1]) ), tape[0].output_type = i64, \
-             tape.remove(1), tape.is_constructed[0] = true ) ), p {line}"
-        )
-    };
+    let checked_n = counted("if tape[0].n.type ⊆ u64 ( tape[0].m = tape[0].n * 2 )");
+    let wide = "p := type ( rhs := ?, output_type := type ?, share run = ( rhs ), \
+                share parse_rank = 60, share parse = ( tape[0].type = p, \
+                if tape[1].type ⊆ i64 ( tape[0].rhs = i64 (tape[1]) ), tape[0].output_type = i64, \
+                tape.remove(1), tape.is_constructed[0] = true ) )";
     for (src, want) in [
         // A narrowed line into a number field, at any depth.
         (field("tape[0].v = w(tape[-1])") + ", x := i32 7, x sq", "8"),
@@ -3998,14 +3995,22 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
             "10",
         ),
         // A `?` field is a number only inside a check of its type.
-        (counted("if tape[0].n.type ⊆ u64 ( tape[0].m = tape[0].n * 2 )"), "6"),
-        (wide("n"), "5"),
-        (wide("5"), "5"),
+        (format!("{checked_n}, q (1, 2, 3)"), "6"),
+        (format!("{checked_n}, f := fn () -> u64 ( q (1, 2, 3) ), f()"), "6"),
+        (format!("{checked_n}, f := fn () -> u64 ( q (1, 2, 3) ), f.compile(), f()"), "6"),
+        // A conversion placed over a line holds that line.
+        (format!("n := i32 5, {wide}, p n"), "5"),
+        (format!("{wide}, p 5"), "5"),
+        (format!("{wide}, f := fn (n := i32 ?) -> i64 ( p n ), f(5)"), "5"),
+        (format!("{wide}, f := fn (n := i32 ?) -> i64 ( p n ), f.compile(), f(5)"), "5"),
+        (format!("{wide}, f := fn () -> i64 ( p 5 ), f()"), "5"),
+        (format!("{wide}, f := fn () -> i64 ( p 5 ), f.compile(), f()"), "5"),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: stderr: {stderr}");
     }
     let constant = "this is read as `i32`, but it holds no literal or constant of it";
+    let used = ", q (1, 2, 3)";
     for (src, refused) in [
         // An unnarrowed line is no number.
         (
@@ -4028,13 +4033,13 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
             constant,
         ),
         // A `?` field unchecked, or after a write of it or a tape edit, is no number.
-        (counted("tape[0].m = tape[0].n * 2"), "cannot compute over these operands"),
+        (counted("tape[0].m = tape[0].n * 2") + used, "cannot compute over these operands"),
         (
-            counted("if tape[0].n.type ⊆ u64 ( tape[0].n = 2, tape[0].m = tape[0].n * 2 )"),
+            counted("if tape[0].n.type ⊆ u64 ( tape[0].n = 2, tape[0].m = tape[0].n * 2 )") + used,
             "cannot compute over these operands",
         ),
         (
-            counted("if tape[0].n.type ⊆ u64 ( tape.remove(1), tape[0].m = tape[0].n * 2 )"),
+            counted("if tape[0].n.type ⊆ u64 ( tape.remove(1), tape[0].m = tape[0].n * 2 )") + used,
             "cannot compute over these operands",
         ),
     ] {
@@ -5444,13 +5449,15 @@ fn a_fields_type_reads_its_declared_type() {
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "u64\n"), "stderr: {stderr}");
     // An untyped field has the type of the node it holds.
-    let (code, stdout, stderr) = run_line(
-        "q := type ( size := ?, share parse_rank = 60, \
-         share parse = ( tape[0].type = q, tape[0].size = 3, \
-         if tape[0].size.type == rational_number ( tape[0] = u64 1 ) else ( tape[0] = u64 2 ), \
-         tape.is_constructed[0] = true ) ), q",
-    );
-    assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "stderr: {stderr}");
+    let q = "q := type ( size := ?, share parse_rank = 60, \
+             share parse = ( tape[0].type = q, tape[0].size = 3, \
+             if tape[0].size.type == rational_number ( tape[0] = u64 1 ) else ( tape[0] = u64 2 ), \
+             tape.is_constructed[0] = true ) )";
+    for use_ in ["q", "f := fn () -> u64 ( q ), f()", "f := fn () -> u64 ( q ), f.compile(), f()"] {
+        let src = format!("{q}, {use_}");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]
