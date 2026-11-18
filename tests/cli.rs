@@ -404,6 +404,7 @@ fn a_typed_field_read_through_a_name_gives_its_value_on_both_tiers() {
         (f("u64", "tape[0].v = 5 + 1", "x.v + x.v"), "12"),
         (f("i32", "tape[0].v = 0 - 5 + 1", "x.v"), "-4"),
         (f("f64", "tape[0].v = 2.5", "x.v"), "2.5"),
+        (f("rational_number", "tape[0].v = 1 / 3", "x.v"), "1/3"),
     ] {
         for call in ["f()", "f.compile(), f()"] {
             let src = format!("{src}, {call}");
