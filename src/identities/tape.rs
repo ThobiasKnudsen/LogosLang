@@ -766,6 +766,10 @@ pub(crate) unsafe fn constant_number(types: &Core, cell: DyadPtr, ty: DyadPtr) -
     let nt = of_type_node(ty);
     let from = dyad::ty(cell);
     if from == types.rational {
+        // `bool` shares `i32`'s machine form, but no number lies inside it.
+        if !super::is_numtype_node(types, ty) {
+            return None;
+        }
         return super::rational::mold_to(cell, nt);
     }
     let v = dyad::value(cell);
@@ -822,18 +826,29 @@ fn run_cell_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// A line no check narrowed, stored into a place of `ty`: `=` decides it when it runs.
+/// A line no check narrowed, written by `=` into a place of `ty`, is decided by that type when
+/// the write runs: a number type or `bool` takes the literal or constant the line holds, and a
+/// type a Logos `parse` builds builds a bracket by that parse. `None` for a place of any other
+/// type, which [`super::land`] decides. ›A tape read checked against a number type reads as that
+/// number‹ [[R229]], ›What `=` does is decided by the type of the place on its left‹ [[R192]].
 ///
 /// # Safety
-/// `read` must be a line node from `build_cell_dyad_at`; `ty` a type node.
+/// `read` must be a line node from `build_cell_dyad_at`; `ty` null or a type node.
 pub(crate) unsafe fn build_cell_into(
     store: &mut Store,
     types: &Core,
     read: DyadPtr,
     ty: DyadPtr,
-) -> DyadPtr {
+) -> Option<DyadPtr> {
+    use super::read::{place_layout, Read};
+    let ty = super::type_identity_of(types, ty)?;
+    match place_layout(types, ty)?.0 {
+        Read::Scalar(_) => {}
+        Read::Container(t) if meta::is_node_valued(t, types.fn_type) => {}
+        _ => return None,
+    }
     let (recv, k, i) = read_parts(types, read);
-    node(store, types.tape.cell_into, types.tape.cell_into_leaf, &[recv, k, i, ty], ty)
+    Some(node(store, types.tape.cell_into, types.tape.cell_into_leaf, &[recv, k, i, ty], ty))
 }
 
 /// A bracket is built by `ty`'s parse, then the line must be a value of `ty`.
