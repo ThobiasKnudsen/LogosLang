@@ -760,13 +760,13 @@ fn run_cell_value(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// dyad, an expression whose value is known only when it runs, is refused.
 ///
 /// # Safety
-/// `cell` must be a dyad from the store; `ty` a number type node.
+/// `cell` must be a dyad from the store; `ty` a number type, `bool` or a pointer type node.
 pub(crate) unsafe fn constant_number(types: &Core, cell: DyadPtr, ty: DyadPtr) -> Option<i64> {
     use super::numtype::{apply_cast, of_type_node, read_scalar};
     let nt = of_type_node(ty);
     let from = dyad::ty(cell);
     if from == types.rational {
-        // `bool` shares `i32`'s machine form, but no number lies inside it.
+        // `bool` and a pointer share a number's machine form, but no plain number lies inside them.
         if !super::is_numtype_node(types, ty) {
             return None;
         }
