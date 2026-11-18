@@ -2269,15 +2269,6 @@ fn a_block_that_fails_to_parse_frees_what_its_run_lines_hold() {
 }
 
 #[test]
-fn an_owning_value_that_nothing_can_free_is_refused() {
-    let out = logos().args(["import", "tests/fixtures/unbound_owning.logos"]).output().unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("must be bound to a name"), "stderr: {err}");
-    assert!(out.stdout.is_empty());
-}
-
-#[test]
 fn the_repl_compiles_a_fn_across_lines() {
     let (echoes, stderr) =
         repl(b"double := fn (x := i64 ?) -> i64 ( x + x )\ndouble.compile()\ndouble(21)\n");
@@ -3973,6 +3964,97 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
         let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ), \
+               share get := fn () -> i32 ( n ) )";
+    for (src, printed) in [
+        // Made or moved in the argument: the parameter holds it, on either tier.
+        (format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), f(box (1, 2)), print «after»"), "free\nafter\n"),
+        (
+            format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), f.compile(), f(box (1, 2)), print «after»"),
+            "free\nafter\n",
+        ),
+        (
+            format!(
+                "{BOX}, f := fn (q := box ?) -> i32 ( 1 ), g := fn () -> i32 ( f(box (1, 2)) ), \
+                 g.compile(), g(), print «after»"
+            ),
+            "free\nafter\n",
+        ),
+        (
+            format!("{BOX}, b := box (1, 2), f := fn (q := box ?) -> i32 ( 1 ), f(move b), print «after»"),
+            "free\nafter\n",
+        ),
+        (
+            format!(
+                "{BOX}, mk := fn () -> own box ( box (1, 2) ), f := fn (q := box ?) -> i32 ( 1 ), \
+                 f(mk()), print «after»"
+            ),
+            "free\nafter\n",
+        ),
+        (format!("{BOX}, f := fn (q := dyad ?) -> i32 ( 1 ), f(box (1, 2)), print «after»"), "free\nafter\n"),
+        (
+            format!(
+                "{BOX}, c := true, f := fn (q := box ?) -> i32 ( 1 ), \
+                 f(if c (box (1, 2)) else (box (3, 4))), print «after»"
+            ),
+            "free\nafter\n",
+        ),
+        // A record in its bytes, freed over the bytes the call passed; the last argument first.
+        (
+            format!("{bag}, f := fn (p := bag ?, q := bag ?) -> i32 ( p.n + q.n ), print «{{f(bag(1), bag(2))}}»"),
+            "freed 2\nfreed 1\n3\n",
+        ),
+        (
+            format!(
+                "{bag}, f := fn (q := bag ?) -> i32 ( q.n ), g := fn () -> i32 ( f(bag(1)) ), \
+                 g.compile(), g(), print «after»"
+            ),
+            "freed 1\nafter\n",
+        ),
+        // A name passed, or a receiver, is a borrow: its owner's end frees it, once.
+        (
+            format!("{BOX}, b := box (1, 2), f := fn (q := box ?) -> i32 ( 1 ), f(b), print «after»"),
+            "after\nfree\n",
+        ),
+        (format!("{bag}, x := bag(1), x.get(), print «after»"), "after\nfreed 1\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{src}");
+    }
+    // A fault in the callee ends its frame as its end would, on either tier.
+    let raise = "f := fn (q := box ?) -> i32 ( error «boom» )";
+    let nan = "f := fn (q := box ?, x := f64 ?) -> i32 ( i32 lossy (x) ), f.compile()";
+    for (tail, expect) in [
+        (format!("{raise}, f(box (1, 2))"), "boom"),
+        (format!("{raise}, g := fn () -> i32 ( f(box (1, 2)) ), g.compile(), g()"), "boom"),
+        (format!("{nan}, f(box (1, 2), f64 0.0 / 0.0)"), "cannot convert"),
+        (
+            format!("{nan}, g := fn (x := f64 ?) -> i32 ( f(box (1, 2), x) ), g.compile(), g(f64 0.0 / 0.0)"),
+            "cannot convert",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, "free\n", "{tail}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+    // Nothing holds it yet: a record's field and a parameter `=` may write over.
+    for tail in [
+        "holder := type ( b := box ? ), h := holder(box (1, 2))",
+        "f := fn (mut q := box ?) -> i32 ( 1 ), f(box (1, 2))",
+    ] {
+        let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(
+            stderr.contains("an owning value must be bound to a name"),
+            "{tail}: stderr: {stderr}"
+        );
     }
 }
 

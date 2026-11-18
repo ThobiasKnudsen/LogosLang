@@ -1139,7 +1139,8 @@ impl<'a> Parser<'a> {
                 return crate::identities::group::join(self.rt.store, self.types, connective, a, b);
             }
         }
-        for &arg in &args {
+        let mut held = Vec::new();
+        for (i, &arg) in args.iter().enumerate() {
             // An `if` whose arms give two types gives one where its parameter's type lands each
             // arm.
             // SAFETY: `args` are reduced dyads just parsed.
@@ -1147,11 +1148,17 @@ impl<'a> Parser<'a> {
                 Ok(_) | Err(ParseError::ArmsDiffer) => {}
                 Err(e) => return Err(e),
             }
-            // Fail-closed until ownership-gated parameters let the callee declare
-            // that it takes the value.
-            // SAFETY: as above.
-            if unsafe { crate::identities::drop_model::is_owning_value(self.types, arg) } {
-                return Err(ParseError::UnboundOwningValue);
+            // A value made or moved here is held by the parameter it is passed to
+            // (›Holding is decided at the binding site, parameters included‹ [[R61]]).
+            // SAFETY: as above; `callee` is a resolved dyad from the store.
+            unsafe {
+                use crate::identities::drop_model::{param_holds, teardown_of, Teardown};
+                if teardown_of(self.types, arg) != Teardown::Nothing {
+                    if !param_holds(self.types, callee, i) {
+                        return Err(ParseError::UnboundOwningValue);
+                    }
+                    held.push(i);
+                }
             }
         }
         // SAFETY: `callee` is a resolved dyad from the store; a record type carries the record `run_body_of` reads.
@@ -1192,6 +1199,10 @@ impl<'a> Parser<'a> {
             // SAFETY: `callee` and `args` are reduced dyads from the store.
             unsafe {
                 crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
+                for &i in &held {
+                    args[i] =
+                        crate::identities::drop_model::build_hold(self.rt.store, types, args[i]);
+                }
             }
             let call = build_call(self.rt.store, callee, &args);
             // SAFETY: `callee` is a reduced dyad; a `fn` node holds `FN_SLOTS` words.

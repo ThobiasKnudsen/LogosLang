@@ -768,8 +768,12 @@ impl<'a> Runtime<'a> {
         node: DyadPtr,
         dest: Option<*mut u8>,
     ) -> Result<i64, RunError> {
-        let values = self.eval_args(f, node, dest)?;
-        self.apply_values(f, &values)
+        let mut values = self.eval_args(f, node, dest)?;
+        let result = self.apply_values(f, &values);
+        // A fault in the callee ends its frame as its end would.
+        let ended = crate::identities::drop_model::end_held_args(self, f, node, &mut values);
+        let value = result?;
+        ended.map(|()| value)
     }
 
     /// Apply `f` to its argument block (the words `by_copy::slots` lays out): jump to

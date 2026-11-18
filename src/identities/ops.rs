@@ -66,6 +66,8 @@ pub struct OpLeaves {
     pub(crate) defer_: DyadPtr,
     /// An `=`'s right side over a place that holds: built, then the displaced value freed.
     pub(crate) displace_: DyadPtr,
+    /// A call's argument the call holds: it runs the value.
+    pub(crate) hold_: DyadPtr,
     pub(crate) import_: DyadPtr,
 }
 
@@ -289,6 +291,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         free_: std::ptr::null_mut(),
         defer_: std::ptr::null_mut(),
         displace_: std::ptr::null_mut(),
+        hold_: std::ptr::null_mut(),
         import_: std::ptr::null_mut(),
     }
 }
