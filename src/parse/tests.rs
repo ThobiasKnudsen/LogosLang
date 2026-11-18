@@ -255,7 +255,9 @@ fn lex_hands_back_the_tape_unconstructed() {
 
     let five = lex_fragment(&scopes, &trie, &mut store, types, " 5 ").unwrap();
     assert_eq!(five.len(), 1);
-    assert_eq!(five.at(0).unwrap().identity(types), types.rational);
+    let number = scopes.resolve(&trie, "5").unwrap().identity;
+    assert_ne!(number, types.rational, "a plain number is an identity of its own");
+    assert_eq!(five.at(0).unwrap().identity(types), number);
     assert_eq!(five.spelling(0), Some("5"), "`lex «5»` carries «5»");
 
     let none = lex_fragment(&scopes, &trie, &mut store, types, "  ").unwrap();
@@ -500,7 +502,8 @@ fn the_tape_affordances_are_reachable_from_logos() {
         assert_eq!(v, 0, "a spliced cell is unconstructed");
         let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
         assert_eq!(dyad::ty(v as DyadPtr), core.binding_, "the spliced cell is a binding");
-        assert_eq!(types.through(v as DyadPtr), core.rational, "the number pattern's");
+        let number = s.resolve(&trie, "9").unwrap().identity;
+        assert_eq!(types.through(v as DyadPtr), number, "the number pattern's");
         let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
         assert_eq!(
             crate::identities::string::text(v as DyadPtr),

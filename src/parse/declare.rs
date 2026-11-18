@@ -963,7 +963,7 @@ impl<'a> Parser<'a> {
                 let left = self.cell_identity(&cell);
                 let waiting = !cell.constructed
                     && self.ctor_of(left).is_some()
-                    && self.precedence_of_cell(left) < crate::identities::meta::prec::HOLE;
+                    && self.precedence_of_cell(left) < crate::identities::meta::prec::CONVERT;
                 if cell.is_fresh(types) || waiting {
                     None
                 } else {

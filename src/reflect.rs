@@ -341,8 +341,9 @@ mod tests {
             ("in", prec::INERT, false),
             ("of", prec::INERT, false),
             ("..", prec::RANGE, false),
-            ("i32", prec::APPLY, true),
-            ("f64", prec::APPLY, true),
+            ("i32", prec::CONVERT, true),
+            ("f64", prec::CONVERT, true),
+            ("rational_number", prec::CONVERT, true),
             ("bool", prec::INERT, false),
             ("void", prec::INERT, false),
         ];
@@ -695,7 +696,7 @@ mod tests {
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, parse_rank), (NumType::I32 as u8, meta::prec::APPLY));
+            assert_eq!((kind, parse_rank), (NumType::I32 as u8, meta::prec::CONVERT));
             assert!(!constructor.is_null() && destructor.is_null());
             let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
                 describe(types, core.type_)

@@ -130,7 +130,7 @@ impl NumType {
 }
 
 pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
-    let record = super::meta::record(cx.store, nt as u8, super::meta::prec::APPLY);
+    let record = super::meta::record(cx.store, nt as u8, super::meta::prec::CONVERT);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(spelling, id);
     cx.metas.insert(id, construct);

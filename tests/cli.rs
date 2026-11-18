@@ -5759,6 +5759,79 @@ fn a_type_converts_the_name_to_its_right() {
     assert_runs(&cases);
 }
 
+/// ›A parse is ranked by what it takes from its right‹ [[R116]]: a number type sits below `(`,
+/// so `.`, `@`, a call and an `if` are built before it, on both tiers.
+#[test]
+fn a_number_type_takes_the_value_built_at_discovery_before_it() {
+    let pt = "pt := type (a := i32 ?, b := i32 ?)";
+    let g = "g := fn (n := i32 ?) -> i32 ( n )";
+    let mut cases = vec![
+        (format!("{pt}, p := pt(7, 8), i64 p.a"), "7\n"),
+        (format!("{pt}, p := pt(7, 8), i32 lossy p.a"), "7\n"),
+        (format!("{pt}, p := pt(7, 8), x := alloc 1 of i32 p.a, x@"), "7\n"),
+        ("q := i32 5, r := &q, i64 r@".to_string(), "5\n"),
+        (format!("{g}, i64 g(3)"), "3\n"),
+        ("c := true, x := i64 if c (i32 1) else (i64 2), x".to_string(), "1\n"),
+        (
+            "pt := type (a := rational_number ?, b := i32 ?), p := pt(1/3, 8), rational_number p.a"
+                .to_string(),
+            "1/3\n",
+        ),
+        ("m := i32 3, i64 m + i64 1".to_string(), "4\n"),
+        ("m := i32 3, q := &i64 m, q@".to_string(), "3\n"),
+        ("i32 -5".to_string(), "-5\n"),
+        ("x := 5, x.type == rational_number".to_string(), "true\n"),
+        ("(1/3).type == rational_number".to_string(), "true\n"),
+        ("rational_number 1.05".to_string(), "21/20\n"),
+        ("i32.parse_rank == rational_number.parse_rank".to_string(), "true\n"),
+    ];
+    for (f, call, want) in [
+        (format!("{pt}, f := fn (q := pt ?) -> i64 ( i64 q.a )"), "f(pt(7, 8))", "7\n"),
+        ("f := fn (r := @i32 ?) -> i64 ( i64 r@ )".to_string(), "q := i32 5, f(&q)", "5\n"),
+        (format!("{g}, f := fn () -> i64 ( i64 g(3) )"), "f()", "3\n"),
+        ("f := fn (m := i32 ?) -> i64 ( i64 m + i64 1 )".to_string(), "f(3)", "4\n"),
+        (
+            "f := fn (c := bool ?) -> i64 ( i64 if c (i32 1) else (i64 2) )".to_string(),
+            "f(false)",
+            "2\n",
+        ),
+        ("f := fn () -> i32 ( i32 -5 )".to_string(), "f()", "-5\n"),
+    ] {
+        cases.push((format!("{f}, {call}"), want));
+        cases.push((format!("{f}, f.compile(), {call}"), want));
+    }
+    assert_runs(&cases);
+}
+
+/// What a number type's lower rank leaves refused: an `if` arm the type cannot hold, a sign
+/// before a name (›A type's `parse` decides what converts into it; unwritten, a value converts
+/// only into a type that holds it exactly‹ [[R155]] keeps `i32 -m` open), a bracket read through
+/// `.`, two types in a row, and a type left of `=` reading past it.
+#[test]
+fn a_number_type_below_open_refuses_what_it_cannot_take() {
+    let mismatch = "these types do not match";
+    let operator = "this operator cannot compute over these operands";
+    for (src, want) in [
+        ("c := true, x := i64 if c (f64 1.5) else (i64 2), x", mismatch),
+        ("c := true, x := i64 if c (u64 1) else (i64 2), x", mismatch),
+        (
+            "f := fn (c := bool ?) -> i64 ( i64 if c (u64 1) else (i64 2) ), f.compile(), f(true)",
+            mismatch,
+        ),
+        ("m := i32 3, i64 -m", operator),
+        ("m := i32 3, i64 - m", operator),
+        ("f := fn (m := i32 ?) -> i64 ( i64 -m ), f.compile(), f(3)", operator),
+        ("x := i32 5, i32 (x).type", mismatch),
+        ("i64 i32 5", "expected one expression, found more"),
+        ("i32 = 4", "`i32` is not `mut`"),
+        ("mut x := f64 0.0, f64 = 2.5, x", "`f64` is not `mut`"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(want), "{src}: stderr: {stderr}");
+    }
+}
+
 /// DESIGN ›`=` sits beside `:=`, and returns nothing‹: the one `run` frees the value it
 /// displaces by its type's `free`, on both tiers.
 #[test]

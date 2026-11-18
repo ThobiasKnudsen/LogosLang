@@ -18,34 +18,35 @@ use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
 
+/// The type, ranked as a type taking a value, and the plain number, an identity of its own built
+/// as it is lexed, whose node is of the type (›Unknown spellings are two pattern identities‹
+/// [[R252]]).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, meta::FRACTION_TAG, meta::prec::LITERAL);
+    let record = meta::record(cx.store, meta::FRACTION_TAG, meta::prec::CONVERT);
     let id = cx.store.alloc_head(cx.type_, record);
-    // Unanchored: the lexer longest-matches a prefix. The span is unsigned: `-` is
-    // always the operator, else `a-1` would lex as `a` then `-1`.
-    cx.declare_pattern(r"[0-9]+(?:\.[0-9]+)?", id);
     // `rational_number ?` is a place of the type, `rational_number 1` the literal as a runtime
     // value.
     cx.declare("rational_number", id);
-    cx.metas.insert(id, construct);
+    cx.metas.insert(id, convert);
+    let record = meta::record(cx.store, meta::FRACTION_TAG, meta::prec::LITERAL);
+    let number = cx.store.alloc_head(cx.type_, record);
+    // Unanchored: the lexer longest-matches a prefix. The span is unsigned: `-` is
+    // always the operator, else `a-1` would lex as `a` then `-1`.
+    cx.declare_pattern(r"[0-9]+(?:\.[0-9]+)?", number);
+    cx.metas.insert(number, construct);
     id
 }
 
 fn construct(
     p: &mut Parser,
-    id: DyadPtr,
+    _id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
     let span = tape.own_text().ok_or(ParseError::BadLiteral)?;
-    if !span.starts_with(|c: char| c.is_ascii_digit()) {
-        // The type's name, or a cell folded to the type: the conversion form, or the type
-        // standing as itself.
-        return convert(p, tape);
-    }
-    let node = build(p.store(), id, span)?;
+    let types = p.types();
+    let node = build(p.store(), types.rational, span)?;
     // A `-` directly to the left with no completed operand before it is the negative
     // literal, folded now: `x := -5`, `2 * -3`, while `a - 5` keeps its subtraction.
-    let types = p.types();
     let negated = matches!(tape.at(-1), Some(c) if !c.constructed && c.identity(types) == types.minus)
         && !tape.at(-2).is_some_and(|c| p.is_operand_cell(c));
     let node = if negated {
@@ -391,7 +392,11 @@ fn sticky_quotient(num: i64, den: i64, digits: usize) -> (i64, i32) {
 /// as a run-time value, its bytes the value's; `rational_number r` passes a rational value as it
 /// is, and a value of any other type is refused, as it is where it lands in a rational place. With
 /// no value to the right the type stands as itself.
-fn convert(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
+fn convert(
+    p: &mut Parser,
+    _id: DyadPtr,
+    tape: &mut ParsingTape,
+) -> Result<Constructed, ParseError> {
     let types = p.types();
     let Some(operand) = p.type_operand(tape, 1)? else {
         return Ok(Constructed::Decline);
