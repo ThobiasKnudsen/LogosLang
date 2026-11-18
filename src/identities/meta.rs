@@ -560,7 +560,8 @@ pub(crate) unsafe fn op_slot_of(id: DyadPtr) -> Option<usize> {
 }
 
 /// The slot named `output_type`, where the parse writes the type the node gives back.
-/// DESIGN ›A node's output type is per node, and its parse writes it‹.
+/// ›A mint's output type is written in its `share output_type` declaration; a type that does not
+/// mint has its parse write it into each node‹ [[R194]].
 ///
 /// # Safety
 /// As `op_slot_of`.
