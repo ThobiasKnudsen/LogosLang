@@ -234,18 +234,12 @@ pub enum ParseError {
     /// function: a closure capture, which v1 does not support; it would read
     /// the wrong frame at run time.
     CapturedLocal,
-    /// An owning value stood where no name binds it: the teardown attaches at
-    /// the binding site (DESIGN ›Holding is decided at the binding site‹),
-    /// so it would leak. Fail-closed until ownership-gated parameters.
+    /// A value with an end passed to a call whose parameter cannot hold it
+    /// (`drop_model::param_holds`), so nothing would end it.
     UnboundOwningValue,
-    /// A `return` hands out a place a scope it leaves owns: the teardowns run on
-    /// the way out, so the value would already be freed. A last value moves out instead.
-    OwningEscape,
     /// A scope's value or a `return` is `&x` of a name a scope it leaves holds: that
     /// scope's end frees the value under the address.
     AddressOfHeld,
-    /// A `return` hands out an owning value, which only a last value moves out to the caller.
-    OwnershipAcrossReturn,
     /// `move b` where `b` borrows the node it names: only the owner can move it.
     MoveOfBorrow,
     /// `move a` of a plain record: its bytes are not copied into a name yet. stand-in for #193

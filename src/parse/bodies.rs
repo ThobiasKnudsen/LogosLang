@@ -677,8 +677,9 @@ impl<'a> Parser<'a> {
     }
 
     /// A `return` just built, its word at `at`, written only inside a function: it leaves
-    /// every scope open since the body began, so it may not hand out a place one of them
-    /// holds, nor an owning value; the body's close commits it to the result type.
+    /// every scope open since the body began, so a name one of them holds moves out, as the
+    /// body's last line does, and the address of one may not leave; the body's close checks
+    /// what it hands on against the result and commits it to the result type.
     ///
     /// # Safety
     /// `node` must be a `return` node `[value, op]` from the store.
@@ -690,22 +691,22 @@ impl<'a> Parser<'a> {
         let Some(frame) = self.cx.frames.last() else {
             return Err(self.fail_at(at, ParseError::ReturnOutsideFunction));
         };
+        let open_below = frame.open_below;
         let types = self.types;
-        let value = *(dyad::value(node) as *const DyadPtr);
-        let place = types.through(value);
-        let left = |p: DyadPtr| self.holder_of(p).is_some_and(|holder| holder >= frame.open_below);
-        if left(place) {
-            return Err(ParseError::OwningEscape);
-        }
+        let place = types.through(*(dyad::value(node) as *const DyadPtr));
+        let left = |p: DyadPtr| self.holder_of(p).is_some_and(|holder| holder >= open_below);
         if crate::identities::drop_model::lent_place(types, place).is_some_and(left) {
             return Err(ParseError::AddressOfHeld);
         }
-        // Whether the operand is owned is read from one arm, so every arm must agree first.
-        let made = crate::identities::drop_model::handed_ends(types, value)?;
-        if crate::identities::drop_model::is_owning_value(types, value) {
-            return Err(ParseError::OwnershipAcrossReturn);
+        if left(place) {
+            self.return_moves_out(node, place)?;
         }
-        let live = self.cx.open[frame.open_below..]
+        // Whether the operand is owned is read from one arm, so every arm must agree first.
+        let made = crate::identities::drop_model::handed_ends(
+            types,
+            *(dyad::value(node) as *const DyadPtr),
+        )?;
+        let live = self.cx.open[open_below..]
             .iter()
             .flat_map(|s| &s.exit)
             .filter(|item| item.end.is_none())
@@ -722,6 +723,34 @@ impl<'a> Parser<'a> {
             cursor: self.cx.ended_log.len(),
         };
         self.cx.frames.last_mut().expect("checked above").returns.push(open);
+        Ok(())
+    }
+
+    /// `return a` of a name a scope the `return` leaves holds: the operand becomes `move a`, a
+    /// plain record's handed on by its bytes' address, and `a` is dead from this line, as a
+    /// written `move a` makes it (›A last value moves out‹ [[R66]]).
+    ///
+    /// # Safety
+    /// `node` must be a `return` node `[value, op]` from the store; `binding` the name's
+    /// binding, held by an open scope.
+    unsafe fn return_moves_out(
+        &mut self,
+        node: DyadPtr,
+        binding: DyadPtr,
+    ) -> Result<(), ParseError> {
+        if self.cx.scopes.crosses_barrier(Binding::read(binding).scope) {
+            return Err(ParseError::MoveOfOuterName);
+        }
+        let types = self.types;
+        let store = &mut *self.rt.store;
+        let moved = crate::identities::drop_model::build_move(store, types, binding);
+        *(dyad::value(node) as *mut DyadPtr) =
+            if crate::identities::this::is_plain(types, types.type_of(binding)) {
+                crate::identities::by_copy::build_out(store, types, moved)
+            } else {
+                moved
+            };
+        self.mark_dead(Ended::name(binding), moved);
         Ok(())
     }
 
@@ -1349,16 +1378,16 @@ impl<'a> Parser<'a> {
             let types = self.types;
             let tail = exprs.iter().rposition(|&e| is_value(e)).expect("values >= 1");
             // A last value that is a place this scope holds moves out to whoever takes the
-            // value, so the scope's end holds it no longer; a `return` of one would hand out
-            // freed memory. An enclosing scope's place is an ordinary borrow.
+            // value, so the scope's end holds it no longer; `note_return` moved a `return`'s
+            // already. An enclosing scope's place is an ordinary borrow.
             // SAFETY: `exprs[tail]` is a reduced dyad just parsed.
-            let (tail_value, returned) = unsafe {
+            let tail_value = unsafe {
                 let t = exprs[tail];
                 // `return x` yields `x`, so the escape rides its operand.
                 if dyad::ty(t) == types.return_ {
-                    (*(dyad::value(t) as *const DyadPtr), true)
+                    *(dyad::value(t) as *const DyadPtr)
                 } else {
-                    (t, false)
+                    t
                 }
             };
             // SAFETY: `tail_value` is a reduced dyad from the store.
@@ -1372,10 +1401,6 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::AddressOfHeld);
             }
             if let Some(at) = held_at(place) {
-                if returned {
-                    self.end_after_fault(&closed);
-                    return Err(ParseError::OwningEscape);
-                }
                 closed.exit[at].end = Some(tail);
                 // A plain record moves out as its bytes' address, which the taker copies.
                 // SAFETY: `place` is a place this scope's binding site laid out, and

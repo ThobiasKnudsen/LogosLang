@@ -2992,19 +2992,18 @@ fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
 }
 
 #[test]
-fn an_early_return_hands_out_no_place_a_scope_it_leaves_frees() {
-    assert_eq!(
-        parse_err("fn (n := i32 ?) -> i32 ( p := alloc 1 of i32 7, if (n > 2) (return p), 0 )"),
-        ParseError::OwningEscape
-    );
-    assert_eq!(
-        parse_err("fn (n := i32 ?) -> i32 ( ( p := alloc 1 of i32 7, if (n > 2) (return p) ), 0 )"),
-        ParseError::OwningEscape
-    );
-    assert_eq!(
-        parse_err("fn (n := i32 ?) -> i32 ( if (n > 2) (return alloc 1 of i32 7), 0 )"),
-        ParseError::OwnershipAcrossReturn
-    );
+fn an_early_return_hands_on_a_held_or_made_value_only_under_own() {
+    for body in [
+        "p := alloc 1 of i32 7, if (n > 2) (return p), &n",
+        "( p := alloc 1 of i32 7, if (n > 2) (return p) ), &n",
+        "if (n > 2) (return alloc 1 of i32 7), &n",
+    ] {
+        assert_eq!(
+            parse_err(&format!("fn (n := i32 ?) -> @i32 ( {body} )")),
+            ParseError::HandsOnMade("@i32".into()),
+            "{body}"
+        );
+    }
 }
 
 #[test]

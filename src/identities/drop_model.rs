@@ -1081,7 +1081,7 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
-pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     moved_out(types, node).and_then(|out| owning_pointee(super::read::output_type(types, out)))
 }
 
@@ -1156,14 +1156,6 @@ unsafe fn moved_out(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
         }
     }
     None
-}
-
-/// Whether a value owns a block: binding it mints an owning place its scope holds.
-///
-/// # Safety
-/// As `owning_pointee_of`.
-pub(crate) unsafe fn is_owning_value(types: &Core, node: DyadPtr) -> bool {
-    owning_pointee_of(types, node).is_some()
 }
 
 /// What ends the life of a value a name or a `free` holds (DESIGN ›Holding is decided at the
@@ -2380,16 +2372,39 @@ mod tests {
     }
 
     #[test]
-    fn a_returned_owned_place_is_refused() {
-        // The scope's end would free it on the way out and hand back a freed pointer.
-        assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc 1 of i32 7, return p ),\nmk()"),
-            ParseError::OwningEscape
-        );
-        assert_eq!(
-            parse_err("mk := fn () -> @i32 ( return alloc 1 of i32 7 ),\nmk()"),
-            ParseError::OwnershipAcrossReturn
-        );
+    fn a_return_hands_on_what_it_made_or_holds_only_under_own() {
+        for mk in [
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, return p )",
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, return move p )",
+            "mk := fn () -> own @i32 ( return alloc 1 of i32 7 )",
+        ] {
+            assert_eq!(run(&format!("{mk},\nm := mk(),\nm@")), (7, 0), "{mk}");
+            assert_eq!(free_log(), vec![7], "{mk}: freed once, by the caller's owner");
+        }
+        // The names it leaves are freed on the way out; an arm that does not return frees
+        // what the returning arm moved.
+        let mk =
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, q := alloc 1 of i32 8, return p )";
+        assert_eq!(run(&format!("{mk},\nm := mk(),\nm@")), (7, 0));
+        assert_eq!(free_log(), vec![8, 7]);
+        let mk = "mk := fn (n := i32 ?) -> own @i32 ( p := alloc 1 of i32 7, \
+                  if (n > 2) (return p) else (alloc 1 of i32 8) )";
+        assert_eq!(run(&format!("{mk},\nm := mk(3),\nm@")), (7, 0));
+        assert_eq!(run(&format!("{mk},\nm := mk(1),\nm@")), (8, 0));
+        assert_eq!(free_log(), vec![7, 8]);
+        let mk = "mk := fn (n := i32 ?) -> own @i32 ( ( p := alloc 1 of i32 7, \
+                  if (n > 2) (return p) ), alloc 1 of i32 8 )";
+        assert_eq!(run(&format!("{mk},\nm := mk(3),\nm@")), (7, 0));
+        assert_eq!(free_log(), vec![7]);
+        assert_eq!(run(&format!("{mk},\nm := mk(1),\nm@")), (8, 0));
+        assert_eq!(free_log(), vec![7, 8]);
+        for mk in [
+            "mk := fn () -> @i32 ( p := alloc 1 of i32 7, return p )",
+            "mk := fn () -> @i32 ( return alloc 1 of i32 7 )",
+        ] {
+            let e = parse_err(&format!("{mk},\nmk()"));
+            assert!(matches!(e, ParseError::HandsOnMade(_)), "{mk}: {e:?}");
+        }
     }
 
     #[test]

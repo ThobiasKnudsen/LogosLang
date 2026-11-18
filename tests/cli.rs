@@ -4340,6 +4340,57 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
                 x := mk(1), print «got»";
     let (code, stdout, stderr) = run_line(&format!("{RECORD}, {made}"));
     assert_eq!((code, stdout.as_str()), (Some(0), "got\nfreed 3\n"), "stderr: {stderr}");
+    // A name the function holds moves out, as a last line's does, and the `return` frees the
+    // function's other names as it leaves.
+    for (src, printed) in [
+        (
+            format!(
+                "{RECORD}, mk := fn () -> own bag ( a := bag(1), b := bag(2), return a ), \
+                 x := mk(), print «got {{x.n}}»"
+            ),
+            "freed 2\ngot 1\nfreed 1\n",
+        ),
+        (
+            format!("{BOX}, mk := fn () -> own box ( b := box (1, 2), return b ), w := mk(), print «after»"),
+            "after\nfree\n",
+        ),
+        (
+            format!(
+                "{BOX}, mk := fn () -> own box ( b := box (1, 2), return b ), mk.compile(), \
+                 w := mk(), print «after»"
+            ),
+            "after\nfree\n",
+        ),
+        (
+            format!(
+                "{BOX}, mk := fn (c := i32 ?) -> own box ( b := box (1, 2), \
+                 if (c == 1) (return b) else (print «no»), box (3, 4, 5) ), \
+                 w := mk(1), print «{{w.size}}», v := mk(2), print «{{v.size}}»"
+            ),
+            "2\nno\nfree\n3\nfree\nfree\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{src}");
+    }
+    for (src, refused) in [
+        (
+            format!("{RECORD}, mk := fn () -> bag ( a := bag(1), return a ), x := mk()"),
+            "write `-> own bag`",
+        ),
+        (
+            format!(
+                "{BOX}, mk := fn () -> own box ( b := box (1, 2), \
+                 for i in 0..3 ( if (i == 1) (return b) ), b ), w := mk()"
+            ),
+            "declared outside this loop",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(refused), "{src}: {stderr}");
+    }
     // A type's `run` whose last value is made is marked `own`, and its `return` is held to it.
     let run = "g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, \
                share run = ( if (elements.dyads.size == 3) (return g), mut v := output_type ?, \
