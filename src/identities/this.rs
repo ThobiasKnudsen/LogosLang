@@ -649,7 +649,7 @@ fn lower_load(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         };
         let this = lw.lower(*ops)?;
         let read = lw.node_addr(node);
-        let bits = lw.call_seed(compiled_load as *const () as usize, &[read, this]);
+        let bits = lw.call_seed(compiled_load as *const () as usize, &[read, this])?;
         Ok(match nt {
             Some(nt) => lw.narrow(bits, nt),
             None => bits,
@@ -710,7 +710,7 @@ fn lower_copy(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a copy node from `build_copy`.
     let template = unsafe { *(dyad::value(node) as *const DyadPtr) };
     let template = lw.node_addr(template);
-    Ok(lw.call_seed(compiled_copy as *const () as usize, &[template]))
+    lw.call_seed(compiled_copy as *const () as usize, &[template])
 }
 
 /// # Safety
@@ -806,7 +806,7 @@ fn lower_pack(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         }
         let argv = lw.spill(&values);
         let (ty, arr) = (lw.node_addr(ty), lw.node_addr(arr));
-        Ok(lw.call_seed(compiled_pack as *const () as usize, &[ty, arr, argv]))
+        lw.call_seed(compiled_pack as *const () as usize, &[ty, arr, argv])
     }
 }
 

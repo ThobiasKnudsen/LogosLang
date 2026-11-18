@@ -82,6 +82,6 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             return Err(CompileError::NotLowerable(node));
         }
         let v = lw.lower(operand)?;
-        Ok(lw.emit_cast(of_type_node(from), to, v))
+        lw.emit_cast(of_type_node(from), to, v)
     }
 }

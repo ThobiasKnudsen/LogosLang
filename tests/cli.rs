@@ -4622,6 +4622,155 @@ fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
     }
 }
 
+/// ›A checked error is a fault: the task that hit it is cancelled‹ [[R141]]: "no further
+/// steps", each scope it leaves ended as at its end, and a `free` that fails during that cleanup
+/// stopping its scope's cleanup, on both tiers.
+#[test]
+fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
+    let nan = "a float that is not a number (NaN)";
+    let range = "index out of range";
+    let checked = "import ./identities/array.logos, \
+         h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
+         bag := type ( mut v := f64 ?, share free = ( print «freed {h(v)}» ) ), z := f64 0.0";
+    let say = "say := fn (k := i32 ?) -> i32 ( print «say {k}», k )";
+    let fault = "z := f64 0.0, g(z / z)";
+    for (before, after, printed, error) in [
+        // Nothing after the fault runs: a `print`, a call, a declaration.
+        (
+            "g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), print «n {n}», n )".to_string(),
+            fault,
+            "",
+            nan,
+        ),
+        (
+            format!("{say}, g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), say(n) )"),
+            fault,
+            "",
+            nan,
+        ),
+        (
+            format!("{RECORD}, g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), d := bag(3), n )"),
+            fault,
+            "",
+            nan,
+        ),
+        // What was declared before it ends, a `defer` and an `if` arm's included.
+        (
+            format!(
+                "{RECORD}, g := fn (x := f64 ?) -> i32 ( b := bag(4), n := i32 lossy (x), \
+                 d := bag(3), n )"
+            ),
+            fault,
+            "freed 4\n",
+            nan,
+        ),
+        (
+            format!(
+                "{say}, g := fn (x := f64 ?) -> i32 ( defer say(1), n := i32 lossy (x), say(n) )"
+            ),
+            fault,
+            "say 1\n",
+            nan,
+        ),
+        (
+            format!(
+                "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), y := if (x > 0.0) \
+                 ( b := bag(2), i32 lossy (x / 0.0) ) else ( i32 0 ), d := bag(3), y )"
+            ),
+            "g(f64 1.0)",
+            "freed 2\nfreed 1\n",
+            nan,
+        ),
+        // A null pointer, and the call-depth limit.
+        (
+            "g := fn (q := @@i32 ?) -> i32 ( n := q@@, print «n {n}», n )".to_string(),
+            "p := alloc 1 of @i32 ?, g(p)",
+            "",
+            "this pointer holds nothing yet",
+        ),
+        (
+            "g := fn (n := i32 ?) -> i32 ( k := g(n + 1), print «back», k )".to_string(),
+            "g(0)",
+            "",
+            "calls nested deeper than 10000",
+        ),
+        // A `free` that faults in the cleanup stops its scope's cleanup, and a call's.
+        (
+            format!(
+                "{checked}, g := fn (n := i32 ?) -> i32 ( a := bag(f64 1.5), c := bag(z / z), \
+                 b := array i32 [1, 2], b[n] )"
+            ),
+            "g(5)",
+            "",
+            range,
+        ),
+        (
+            format!(
+                "{checked}, g := fn (n := i32 ?) -> i32 ( a := bag(f64 1.5), \
+                 x := ( c := bag(z / z), b := array i32 [1, 2], b[n] ), x )"
+            ),
+            "g(5)",
+            "freed 1\n",
+            range,
+        ),
+        (
+            format!(
+                "{checked}, k := fn (p := bag ?, q := bag ?, n := i32 ?) -> i32 \
+                 ( b := array i32 [1, 2], b[n] ), \
+                 g := fn (n := i32 ?) -> i32 ( k(bag(f64 1.5), bag(z / z), n) )"
+            ),
+            "g(5)",
+            "",
+            range,
+        ),
+        // A `return` in a `defer` the cleanup runs runs the rest of its end; a fault stops it.
+        (
+            format!(
+                "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), defer ( return 7 ), \
+                 b := bag(2), n := i32 lossy (x), n )"
+            ),
+            fault,
+            "freed 2\nfreed 1\n",
+            nan,
+        ),
+        (
+            format!(
+                "{RECORD}, h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), \
+                 g := fn (x := f64 ?) -> i32 ( a := bag(1), defer ( h(x) ), b := bag(2), 3 )"
+            ),
+            fault,
+            "freed 2\n",
+            nan,
+        ),
+        // A node the failing line ended and did not reach is freed, one it reached is not.
+        (
+            format!(
+                "{BOX}, f := fn () -> i32 ( error «stop» ), \
+                 g := fn () -> i32 ( a := box (1, 2), x := f() + (free a, i32 1), x )"
+            ),
+            "print «before», g()",
+            "before\nfree\n",
+            "run error: stop",
+        ),
+        (
+            format!(
+                "{BOX}, f := fn () -> i32 ( error «stop» ), \
+                 g := fn () -> i32 ( a := box (1, 2), x := (free a, i32 1) + f(), x )"
+            ),
+            "print «before», g()",
+            "before\nfree\n",
+            "run error: stop",
+        ),
+    ] {
+        let interpreted = run_line(&format!("{before}, {after}"));
+        let compiled = run_line(&format!("{before}, g.compile(), {after}"));
+        assert_eq!(compiled, interpreted, "{before}");
+        let (code, stdout, stderr) = interpreted;
+        assert_eq!((code, stdout.as_str()), (Some(1), printed), "{before}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{before}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn assignment_frees_the_value_it_displaces() {
     for (tail, printed) in [

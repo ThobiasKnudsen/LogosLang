@@ -122,7 +122,7 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         }
         let values = lw.spill(&values);
         let node = lw.node_addr(node);
-        lw.call_seed(compiled_print as *const () as usize, &[node, values]);
+        lw.call_seed(compiled_print as *const () as usize, &[node, values])?;
     }
     Ok(lw.const_i32(0))
 }

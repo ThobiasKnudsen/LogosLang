@@ -133,6 +133,9 @@ pub struct Context {
     /// The program frame's base, the store's arena: a top-level or `share` place is an
     /// offset from it.
     pub root: *mut u8,
+    /// How many faults were parked in this run, never reset: compiled code leaves the moment
+    /// it reads a count above the one it last saw, a fault its cleanup meets included.
+    pub faults: usize,
     /// The checked error a step under compiled code raised; an `extern "C"`
     /// function cannot return it, so the runtime reads it back the moment the
     /// machine code returns.
@@ -147,6 +150,7 @@ impl Context {
         Context {
             depth: 0,
             root: std::ptr::null_mut(),
+            faults: 0,
             pending: None,
             runtime: std::ptr::null_mut(),
         }
@@ -213,7 +217,7 @@ pub(crate) unsafe fn interpret_step(
     // SAFETY: as above.
     let outcome =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| step(unsafe { &mut *rt })));
-    // The machine code runs on with the 0 and may call back in before the park
+    // The machine code's way out calls back in to end what it holds before the park
     // surfaces, so the interpreter's mid-call state is unwound here.
     let restore = move || {
         // SAFETY: as above.
@@ -247,8 +251,7 @@ pub(crate) unsafe fn interpret_step(
 }
 
 /// The fault a compiled read or write through a null pointer raises: parked
-/// in the context as [`interpret_call`] parks one; the zero is discarded when
-/// the runtime reads the park back.
+/// in the context as [`interpret_call`] parks one; the code leaves before the zero is read.
 ///
 /// # Safety
 /// Called only by compiled code, on the null arm of a pointer guard, with the
@@ -281,12 +284,13 @@ pub unsafe extern "C" fn convert_float_to_int(
     }
 }
 
-/// The first fault parked is the cause: machine code runs on with the zero it left, so a
-/// later fault, a null guard over that zero, is its consequence and never replaces it.
+/// Every fault is counted, so the machine code that reads the count leaves; the first one
+/// parked stays the one shown, a later one being met by that code's cleanup.
 ///
 /// # Safety
 /// `ctx` must be the context of the runtime whose machine code is running.
 unsafe fn park(ctx: *mut Context, e: RunError) {
+    (*ctx).faults += 1;
     (*ctx).pending.get_or_insert(e);
 }
 

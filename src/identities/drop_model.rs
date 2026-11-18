@@ -678,7 +678,7 @@ pub(crate) unsafe fn lower_end_held_arg(
         return Err(CompileError::NotLowerable(arg));
     }
     let free = lw.node_addr(meta::instances_free_of(ty));
-    lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]);
+    lw.call_seed(compiled_instance_free as *const () as usize, &[this, free])?;
     Ok(())
 }
 
@@ -774,7 +774,7 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             return Ok(lw.const_i32(0));
         }
         let free = lw.node_addr(pointee);
-        return Ok(lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]));
+        return lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]);
     }
     if op == lw.types().ops.held_free_ {
         // SAFETY: `place` is a name the binding site made an owner.
@@ -1074,7 +1074,7 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
         held
     };
     let free = lw.node_addr(meta::instances_free_of(ty));
-    lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]);
+    lw.call_seed(compiled_instance_free as *const () as usize, &[this, free])?;
     Ok(())
 }
 

@@ -1096,7 +1096,7 @@ unsafe fn lower_bracket(lw: &mut Lowerer, bracket: DyadPtr) -> Result<Value, Com
     let values = lw.spill(&bits);
     let bracket = lw.node_addr(bracket);
     let entry = compiled_bracket as *const () as usize;
-    Ok(lw.call_seed(entry, &[bracket, values]))
+    lw.call_seed(entry, &[bracket, values])
 }
 
 /// # Safety

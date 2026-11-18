@@ -105,16 +105,19 @@ pub enum CompileError {
     Cranelift(String),
 }
 
-/// One thing being lowered that ends values when a `return` leaves through it, read from the
-/// list its run frees by as the `return` unwinds it.
+/// One thing being lowered that ends values when a `return` or a fault leaves through it, read
+/// from the list its run frees by as the interpreter unwinds it.
 #[derive(Clone, Copy)]
 enum Unwind<'a> {
-    /// A scope at its line `line`: those of `items`, its exit items still to run, held there.
-    Scope { items: &'a [DyadPtr], line: usize },
+    /// A scope at its line `line`: those of `items`, its exit items still to run, held there,
+    /// and once that line `failed`, those it ended and may not have reached. A `rest` is what
+    /// its end has still to run while one of its items is lowered, which a fault there skips.
+    Scope { items: &'a [DyadPtr], line: usize, failed: bool, rest: bool },
     /// An `if` arm's or condition's ends.
     Ends(&'a [DyadPtr]),
-    /// An argument a call holds, passed as `this`.
-    Held { arg: DyadPtr, this: Value },
+    /// An argument a call holds, passed as `this`; `first` marks the call's first, from which
+    /// its arguments end as one.
+    Held { arg: DyadPtr, this: Value, first: bool },
 }
 
 /// The lowering context: a Cranelift function under construction, the rule
@@ -151,7 +154,9 @@ pub struct Lowerer<'a, 'f> {
     ctx: Value,
     /// The call-depth counter the epilogue counts this call out of.
     depth_addr: Value,
-    /// What a `return` lowered now leaves through, outermost first.
+    /// The run's fault count as this code last read it, at entry or at the fault it is leaving.
+    faults_seen: Value,
+    /// What a `return` or a fault lowered now leaves through, outermost first.
     unwind: Vec<Unwind<'a>>,
 }
 
@@ -351,52 +356,104 @@ impl<'a> Lowerer<'a, '_> {
     ) -> Result<Option<Value>, CompileError> {
         let (defer_, at) = (self.types.defer_, self.unwind.len());
         let items = crate::identities::scope::exit_items(node);
-        self.unwind.push(Unwind::Scope { items, line: 0 });
+        let open = |line| Unwind::Scope { items, line, failed: false, rest: false };
+        self.unwind.push(open(0));
         let mut last = None;
         for (line, &expr) in lines.iter().enumerate() {
             let ty = dyad::ty(expr);
             if crate::identities::numtype::is_comment_type(ty) || ty == defer_ {
                 continue;
             }
-            self.unwind[at] = Unwind::Scope { items, line };
+            self.unwind[at] = open(line);
             last = Some(self.lower(expr)?);
         }
-        self.unwind[at] = Unwind::Scope { items, line: lines.len() };
+        self.unwind[at] = open(lines.len());
         self.end_to(at)?;
         Ok(last)
     }
 
-    /// Ends what is open above `at`, innermost first: its own end, or a `return` leaving it, as
-    /// `scope::run_exit` and the interpreter's unwinding do. Each is closed before its teardowns
-    /// are lowered, so a `return` among them leaves what lies outside it, and a scope's items
-    /// still to run stay open while one is lowered, so a `return` in a `defer` runs them too.
+    /// Ends what is open above `at`, innermost first: its own end, or a `return` or fault
+    /// leaving it, as `scope::run_exit`, `scope::run_exit_after_fault` and the interpreter's
+    /// unwinding do. Each is closed before its teardowns are lowered, so a `return` or fault
+    /// among them leaves what lies outside it; a scope's items still to run stay open while one
+    /// is lowered, so a `return` in a `defer` runs them too; a call's held arguments close
+    /// together, so a fault in one's `free` skips the rest, as `drop_model::end_held_args` does.
     ///
     /// # Safety
     /// Every open scope's items must be exit item nodes and every end a held place.
     unsafe fn end_to(&mut self, at: usize) -> Result<(), CompileError> {
         use crate::identities::drop_model;
-        for k in (at..self.unwind.len()).rev() {
-            let open = self.unwind[k];
-            self.unwind.truncate(k);
-            match open {
-                Unwind::Scope { items, line } => {
+        while self.unwind.len() > at {
+            let k = self.unwind.len() - 1;
+            match self.unwind[k] {
+                Unwind::Scope { items, line, failed, .. } => {
+                    self.unwind.truncate(k);
                     for (i, &item) in items.iter().enumerate().rev() {
                         let item = drop_model::exit_item_of(item);
-                        if item.held_at(line) {
-                            self.unwind.push(Unwind::Scope { items: &items[..i], line });
+                        let runs = if failed {
+                            item.held_at_fault(self.types, line)
+                        } else {
+                            item.held_at(line)
+                        };
+                        if runs {
+                            let rest =
+                                Unwind::Scope { items: &items[..i], line, failed, rest: true };
+                            self.unwind.push(rest);
                             item.lower(self)?;
                             self.unwind.truncate(k);
                         }
                     }
                 }
                 Unwind::Ends(ends) => {
+                    self.unwind.truncate(k);
                     for &place in ends.iter().rev() {
                         drop_model::lower_end_held(self, place)?;
                     }
                 }
-                Unwind::Held { arg, this } => drop_model::lower_end_held_arg(self, arg, this)?,
+                Unwind::Held { .. } => {
+                    let first = (at..=k)
+                        .rev()
+                        .find(|&j| matches!(self.unwind[j], Unwind::Held { first: true, .. }))
+                        .unwrap_or(at);
+                    for held in self.unwind.split_off(first).into_iter().rev() {
+                        if let Unwind::Held { arg, this, .. } = held {
+                            drop_model::lower_end_held_arg(self, arg, this)?;
+                        }
+                    }
+                }
             }
         }
+        Ok(())
+    }
+
+    /// After a step that can park a fault: when the run's fault count passed the one this code
+    /// last saw, it leaves as a `return` leaves, through [`Self::end_to`], every scope it stops
+    /// having failed at its line and an end it stops in skipped (DESIGN ›A checked error is a
+    /// fault: the task that hit it is cancelled‹ [[R141]]).
+    fn leave_at_fault(&mut self) -> Result<(), CompileError> {
+        let faults_at = std::mem::offset_of!(crate::run::Context, faults) as i64;
+        let now = self.load_at(types::I64, self.ctx, faults_at);
+        let faulted = self.builder.ins().icmp(IntCC::NotEqual, now, self.faults_seen);
+        let (out, on) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.ins().brif(faulted, out, &[], on, &[]);
+        self.builder.seal_block(out);
+        self.builder.seal_block(on);
+        self.builder.switch_to_block(out);
+        let (open, seen) = (self.unwind.clone(), std::mem::replace(&mut self.faults_seen, now));
+        self.unwind.retain(|u| !matches!(u, Unwind::Scope { rest: true, .. }));
+        for u in &mut self.unwind {
+            if let Unwind::Scope { failed, .. } = u {
+                *failed = true;
+            }
+        }
+        // SAFETY: what is open was opened by the lowering of exit items and held places.
+        let left = unsafe { self.end_to(0) };
+        (self.unwind, self.faults_seen) = (open, seen);
+        left?;
+        count_out(self.builder, self.depth_addr);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().return_(&[zero]);
+        self.builder.switch_to_block(on);
         Ok(())
     }
 
@@ -409,10 +466,8 @@ impl<'a> Lowerer<'a, '_> {
         self.builder.ins().load(ct, self.flags, addr, offset as i32)
     }
 
-    /// Run `ok` unless `addr` is null; on null, park the null-pointer fault and
-    /// yield a zero of `ct`. Compiled code cannot simply stop (a block needs its
-    /// terminator, and there is no trap handler), so the faulted call runs on
-    /// over zeros the runtime discards when it reads the park back.
+    /// Run `ok` unless `addr` is null; on null, park the null-pointer fault and leave. The
+    /// arm's zero of `ct` stands where the merge needs a value and is never read.
     pub(crate) fn guard_non_null<F>(
         &mut self,
         addr: Value,
@@ -427,13 +482,7 @@ impl<'a> Lowerer<'a, '_> {
         self.branch(
             is_null,
             |s| {
-                let mut sig = s.module.make_signature();
-                sig.params.push(AbiParam::new(s.ptr_ty));
-                sig.returns.push(AbiParam::new(types::I64));
-                let sigref = s.builder.import_signature(sig);
-                let entry = crate::run::park_null_pointer as *const () as usize;
-                let a = s.builder.ins().iconst(s.ptr_ty, entry as i64);
-                s.builder.ins().call_indirect(sigref, a, &[s.ctx]);
+                s.call_seed(crate::run::park_null_pointer as *const () as usize, &[])?;
                 Ok(s.zero_of(ct))
             },
             ok,
@@ -531,8 +580,12 @@ impl<'a> Lowerer<'a, '_> {
 
     /// A call to the seed's `extern "C"` function at `entry`, the context first, then
     /// every argument and the result an `i64`: a step whose work is the store's, which
-    /// machine code cannot allocate in.
-    pub(crate) fn call_seed(&mut self, entry: usize, args: &[Value]) -> Value {
+    /// machine code cannot allocate in. A fault it parks is left at once.
+    pub(crate) fn call_seed(
+        &mut self,
+        entry: usize,
+        args: &[Value],
+    ) -> Result<Value, CompileError> {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(self.ptr_ty));
         for _ in args {
@@ -543,7 +596,9 @@ impl<'a> Lowerer<'a, '_> {
         let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
         let all: Vec<Value> = std::iter::once(self.ctx).chain(args.iter().copied()).collect();
         let inst = self.builder.ins().call_indirect(sigref, addr, &all);
-        self.builder.inst_results(inst)[0]
+        let result = self.builder.inst_results(inst)[0];
+        self.leave_at_fault()?;
+        Ok(result)
     }
 
     /// Kept for `not`, which lowers `not x` as `x == 0`.
@@ -708,9 +763,14 @@ impl<'a> Lowerer<'a, '_> {
     }
 
     /// Cast `v` from `from` to `to` as the interpreter's `apply_cast` does.
-    pub(crate) fn emit_cast(&mut self, from: NumType, to: NumType, v: Value) -> Value {
+    pub(crate) fn emit_cast(
+        &mut self,
+        from: NumType,
+        to: NumType,
+        v: Value,
+    ) -> Result<Value, CompileError> {
         let tct = to.cranelift_type();
-        match (from.is_float(), to.is_float()) {
+        Ok(match (from.is_float(), to.is_float()) {
             // Same width is a no-op: signedness is the consumer's concern.
             (false, false) => {
                 if to.bytes() == from.bytes() {
@@ -738,7 +798,7 @@ impl<'a> Lowerer<'a, '_> {
                 let from_tag = self.builder.ins().iconst(types::I64, from as i64);
                 let to_tag = self.builder.ins().iconst(types::I64, to as i64);
                 let entry = crate::run::convert_float_to_int as *const () as usize;
-                let whole = self.call_seed(entry, &[bits, from_tag, to_tag]);
+                let whole = self.call_seed(entry, &[bits, from_tag, to_tag])?;
                 narrow_from_i64(self.builder, whole, to)
             }
             (true, true) => {
@@ -750,7 +810,7 @@ impl<'a> Lowerer<'a, '_> {
                     v
                 }
             }
-        }
+        })
     }
 
     /// A two-way branch on `cond`, each arm yielding a value of one agreed type,
@@ -1134,7 +1194,8 @@ impl<'a> Lowerer<'a, '_> {
                     let dst = self.builder.ins().stack_addr(self.ptr_ty, block, at);
                     self.copy_bytes(dst, src, width);
                     if holds {
-                        self.unwind.push(Unwind::Held { arg, this: dst });
+                        let first = self.unwind.len() == held_from;
+                        self.unwind.push(Unwind::Held { arg, this: dst, first });
                     }
                     continue;
                 }
@@ -1142,22 +1203,26 @@ impl<'a> Lowerer<'a, '_> {
                 let v = self.container(arg, v);
                 self.builder.ins().stack_store(v, block, at);
                 if holds {
-                    self.unwind.push(Unwind::Held { arg, this: v });
+                    let first = self.unwind.len() == held_from;
+                    self.unwind.push(Unwind::Held { arg, this: v, first });
                 }
             }
             self.builder.ins().stack_addr(self.ptr_ty, block, 0)
         };
         let argc = self.builder.ins().iconst(types::I64, words as i64);
         let ctx = self.ctx;
+        // Each call of machine code leaves at a fault it parked, as `call_seed` does.
         let r = if callee == self.self_fn {
             let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
             let inst = self.builder.ins().call(fref, &[ctx, argv, argc]);
-            self.builder.inst_results(inst)[0]
+            let r = self.builder.inst_results(inst)[0];
+            self.leave_at_fault()?;
+            r
         } else {
             let fn_node = self.node_addr(callee);
             let interpret = |s: &mut Self| -> Result<Value, CompileError> {
                 let entry = crate::run::interpret_call as *const () as usize;
-                Ok(s.call_seed(entry, &[fn_node, argc, argv]))
+                s.call_seed(entry, &[fn_node, argc, argv])
             };
             let bcode = *fields.add(FN_BCODE);
             if bcode.is_null() {
@@ -1181,7 +1246,9 @@ impl<'a> Lowerer<'a, '_> {
                         sig.returns.push(AbiParam::new(types::I64));
                         let sigref = s.builder.import_signature(sig);
                         let inst = s.builder.ins().call_indirect(sigref, entry, &[ctx, argv, argc]);
-                        Ok(s.builder.inst_results(inst)[0])
+                        let r = s.builder.inst_results(inst)[0];
+                        s.leave_at_fault()?;
+                        Ok(r)
                     },
                     interpret,
                 )?
@@ -1433,6 +1500,8 @@ unsafe fn build_pass(
         builder.ins().return_(&[zero]);
         builder.switch_to_block(body_b);
         builder.seal_block(body_b);
+        let faults_at = std::mem::offset_of!(crate::run::Context, faults) as i32;
+        let faults_seen = builder.ins().load(types::I64, MemFlagsData::new(), run_ctx, faults_at);
 
         // The activation record, 8-byte aligned; a frameless function gets none.
         let frame_size = if self_fn.is_null() { 0 } else { fn_frame_size(self_fn) };
@@ -1530,6 +1599,7 @@ unsafe fn build_pass(
                 ret_dest,
                 ctx: run_ctx,
                 depth_addr,
+                faults_seen,
                 unwind: Vec::new(),
             };
             lw.lower(root)?
