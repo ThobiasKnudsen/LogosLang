@@ -5,15 +5,14 @@
 //! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, and
 //! the cell reads `t[k]:name`, `t[k].type`, a `t[k]` checked to hold a type as that
 //! type or checked against a number type as that number, and a scope or `[…]` cell's
-//! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does,
-//! and a call written into a cell, placed with its tape lines as operands. The type's one field,
-//! `cells`, is the seed's `ParsingTape` handle. The natives run interpreted; only the bracket a
-//! placed call is handed lowers.
+//! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does. The
+//! type's one field, `cells`, is the seed's `ParsingTape` handle. The natives run interpreted;
+//! only the bracket a placed call is handed lowers.
 
 use super::callable::{self, Callables};
 use super::numtype::NumType;
 use super::pointer::at_dyad;
-use super::{meta, operand_of, Cx, Operand};
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -71,10 +70,6 @@ pub struct TapeIds {
     /// `t[k].dyads[i]`: the scope cell's line i, as its address.
     pub cell_dyad_at: DyadPtr,
     pub cell_dyad_at_leaf: DyadPtr,
-    /// A call a constructor places, `[call, op]`: yields a copy of the call whose arguments
-    /// are the tape lines they read, as operands, and the values of the others.
-    pub placed_call: DyadPtr,
-    pub placed_call_leaf: DyadPtr,
     /// `[bracket, op]`: a bracket handed to a placed call, its lines evaluated when it runs.
     pub bracket_arg: DyadPtr,
     pub bracket_arg_leaf: DyadPtr,
@@ -143,14 +138,13 @@ pub(super) fn register(
     let (remove, remove_leaf) = read(cx, &["tape", "k"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
     let (slot_name, slot_name_leaf) = read(cx, &["tape", "k"], run_slot_name);
-    let (cell_type, cell_type_leaf) = read(cx, &["tape", "k", "i"], run_cell_type);
+    let (cell_type, cell_type_leaf) = read(cx, &["tape", "k", "i"], run_line_type);
     let (cell_value, cell_value_leaf) = read(cx, &["tape", "k", "i"], run_cell_value);
     let (cell_number, cell_number_leaf) = read(cx, &["tape", "k", "i", "type"], run_cell_number);
     let (cell_node, cell_node_leaf) = read(cx, &["tape", "k", "i", "type"], run_cell_node);
     let (cell_dyads, cell_dyads_leaf) = read(cx, &["tape", "k"], run_cell_dyads);
     let (cell_dyads_size, cell_dyads_size_leaf) = read(cx, &["tape", "k"], run_cell_dyads_size);
     let (cell_dyad_at, cell_dyad_at_leaf) = read(cx, &["tape", "k", "i"], run_cell_dyad_at);
-    let (placed_call, placed_call_leaf) = read(cx, &["call"], run_placed_call);
     let (bracket_arg, bracket_arg_leaf) = read(cx, &["bracket"], run_bracket_arg);
     let (cell_into, cell_into_leaf) = read(cx, &["tape", "k", "i", "type"], run_cell_into);
     let (cell_identity, cell_identity_leaf) = read(cx, &["tape", "k"], run_cell_identity);
@@ -199,8 +193,6 @@ pub(super) fn register(
         cell_dyads_size_leaf,
         cell_dyad_at,
         cell_dyad_at_leaf,
-        placed_call,
-        placed_call_leaf,
         bracket_arg,
         bracket_arg_leaf,
         nothing,
@@ -272,46 +264,8 @@ pub(crate) fn build_slot(store: &mut Store, types: &Core, recv: DyadPtr, k: Dyad
     node(store, types.tape.slot, types.tape.slot_leaf, &[recv, k], output)
 }
 
-/// A value that already yields a node's address, a dyad or a type, passes as it stands;
-/// any other node is handed by identity, its own address as an `@dyad` value.
-pub(crate) fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPtr {
-    // A field read by value is handed as the node the field holds, which yields that value.
-    // SAFETY: `cell` is a reduced dyad from the store; a load node's operands are
-    // `[this, k, type, binding, fill]`.
-    unsafe {
-        if dyad::ty(cell) == types.this.load {
-            let ops = dyad::value(cell) as *const DyadPtr;
-            return super::this::build_slot(
-                store,
-                types,
-                *ops,
-                *ops.add(1),
-                *ops.add(3),
-                *ops.add(4),
-                *ops.add(5),
-            );
-        }
-    }
-    // SAFETY: `cell` is a reduced dyad from the store.
-    let yields_node = unsafe {
-        let out = super::read::output_type(types, cell);
-        out == types.dyad_
-            || out == types.type_
-            || matches!(operand_of(types, cell), Operand::Pointer(p) if p == types.dyad_)
-    };
-    if yields_node {
-        return cell;
-    }
-    // SAFETY: as above.
-    let read = unsafe { super::read::read_kind(types, types.through(cell)) };
-    if let super::read::Read::Executable(super::read::Dispatch::Call(_)) = read {
-        // SAFETY: as above.
-        let output = unsafe { super::read::output_type(types, cell) };
-        return node(store, types.tape.placed_call, types.tape.placed_call_leaf, &[cell], output);
-    }
-    super::pointer::address_value(store, types, types.dyad_, cell)
-}
-
+/// The cell takes the node placing makes of `cell` when the write runs.
+///
 /// # Safety
 /// `slot` must be a slot node from `build_slot`.
 pub(crate) unsafe fn build_write(
@@ -322,7 +276,7 @@ pub(crate) unsafe fn build_write(
 ) -> DyadPtr {
     let ops = dyad::value(slot) as *const DyadPtr;
     let (recv, k) = (*ops, *ops.add(1));
-    let cell = cell_arg(store, types, cell);
+    let cell = super::place::build(store, types, cell);
     act(store, types.tape.write, types.tape.write_leaf, &[recv, k, cell])
 }
 
@@ -744,16 +698,49 @@ pub(crate) unsafe fn read_target(
 }
 
 /// A bracket is a `scope` or `square_brackets`, whose lines the constructor reads; any other
-/// cell's type is the type of what it yields.
-fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+/// line's type is the type of what it yields.
+pub(crate) fn run_line_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a node `is_line_type_read` accepts.
     unsafe {
-        let target = read_target(rt, dyad::value(node) as *const DyadPtr)?;
+        let line = line_of_type_read(rt, node)?;
         let types = rt.types();
-        let ty =
-            bracket_kind(types, target).unwrap_or_else(|| super::read::output_type(types, target));
-        Ok(ty as i64)
+        Ok(bracket_kind(types, line).unwrap_or_else(|| super::read::output_type(types, line))
+            as i64)
     }
+}
+
+/// `.type` of a line a parse holds: a tape cell, a line of one, or a `?` field of the parse's own
+/// node.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_line_type_read(types: &Core, node: DyadPtr) -> bool {
+    dyad::ty(node) == types.tape.cell_type || dyad::ty(node) == types.this.field_type
+}
+
+/// The line a `.type` read reads the type of.
+///
+/// # Safety
+/// `read` must be a node `is_line_type_read` accepts.
+pub(crate) unsafe fn line_of_type_read(
+    rt: &mut Runtime,
+    read: DyadPtr,
+) -> Result<DyadPtr, RunError> {
+    if dyad::ty(read) == rt.types().this.field_type {
+        return super::this::held(rt, *(dyad::value(read) as *const DyadPtr));
+    }
+    read_target(rt, dyad::value(read) as *const DyadPtr)
+}
+
+/// The cell, line or field a `.type` read names, as a check narrows it.
+///
+/// # Safety
+/// `read` must be a node `is_line_type_read` accepts.
+pub(crate) unsafe fn type_read_key(types: &Core, read: DyadPtr) -> Option<(DyadPtr, i32, Line)> {
+    if dyad::ty(read) == types.this.field_type {
+        return super::this::field_key(types, *(dyad::value(read) as *const DyadPtr));
+    }
+    cell_key(types, read)
 }
 
 /// Checked again here: a tape edited between the check and this read may hold another cell.
@@ -803,7 +790,7 @@ fn run_cell_number(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let ops = dyad::value(node) as *const DyadPtr;
         let cell = read_target(rt, ops)?;
         let ty = *ops.add(3);
-        constant_number(rt.types(), cell, ty).ok_or(RunError::CellNotANumber(ty))
+        constant_number(rt.types(), cell, ty).ok_or(RunError::NotAConstant(ty))
     }
 }
 
@@ -857,7 +844,7 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let mut line = read_target(rt, ops)?;
         let ty = *ops.add(3);
         if !super::meta::is_node_valued(ty, rt.types().fn_type) {
-            return constant_number(rt.types(), line, ty).ok_or(RunError::CellNotANumber(ty));
+            return constant_number(rt.types(), line, ty).ok_or(RunError::NotAConstant(ty));
         }
         if is_bracket(rt.types(), line) {
             let built = rt.construct_on_pass(ty, line)? as DyadPtr;
@@ -907,7 +894,10 @@ fn run_cell_dyads_size(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError>
 ///
 /// # Safety
 /// `read` must be a reduced dyad from the store.
-unsafe fn named_dyad(rt: &mut Runtime, read: DyadPtr) -> Option<Result<DyadPtr, RunError>> {
+pub(crate) unsafe fn named_line(
+    rt: &mut Runtime,
+    read: DyadPtr,
+) -> Option<Result<DyadPtr, RunError>> {
     let ids = rt.types().tape;
     let ty = dyad::ty(read);
     if ty == ids.slot || ty == ids.cell_dyad_at {
@@ -919,97 +909,13 @@ unsafe fn named_dyad(rt: &mut Runtime, read: DyadPtr) -> Option<Result<DyadPtr, 
     None
 }
 
-/// A line a check narrowed to a number type reads as that type: a line of a type within it
-/// is converted when the call runs, which keeps its value. DESIGN ›A tape read checked
-/// against a number type reads as that number‹.
+/// The number type a read of a cell or line was checked against; `None` for any other node.
 ///
 /// # Safety
-/// `read` must be the placed call's argument, `operand` the line it names.
-unsafe fn narrowed_operand(rt: &mut Runtime, read: DyadPtr, operand: DyadPtr) -> DyadPtr {
-    let types: *const Core = rt.types();
-    let types = &*types;
-    if dyad::ty(read) != types.tape.cell_number {
-        return operand;
-    }
-    // SAFETY: a checked number read's fourth operand is the number type it was checked against.
-    let to = *(dyad::value(read) as *const DyadPtr).add(3);
-    match operand_of(types, operand) {
-        Operand::Concrete(from) if types.numtypes[from as usize] != to => {
-            let from = types.numtypes[from as usize];
-            super::convert::build_convert(rt.store(), types, operand, from, to)
-        }
-        _ => operand,
-    }
-}
-
-/// The operand landed in the parameter's type.
-///
-/// # Safety
-/// `operand` must be a dyad from the store; `ty` a number type node.
-unsafe fn typed_operand(
-    rt: &mut Runtime,
-    operand: DyadPtr,
-    ty: DyadPtr,
-) -> Result<DyadPtr, RunError> {
-    let types: *const crate::Core = rt.types();
-    // SAFETY: the `Core` outlives the runtime that borrowed it.
-    super::land(rt.store(), &*types, operand, ty).map_err(|e| RunError::Parse(Box::new(e)))
-}
-
-/// An argument read from the tape is the operand it names, typed now and run when the placed
-/// call runs; any other argument reads the constructor's node or locals, gone by then, so it
-/// runs now. DESIGN ›`a[k]` is an application, exactly as `a(k)`‹.
-fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a `[call, op]` node `cell_arg` built over a call node.
-    unsafe {
-        let call = rt.through(*(dyad::value(node) as *const DyadPtr));
-        let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
-            super::read::read_kind(rt.types(), call)
-        else {
-            return Err(RunError::NoLeaf);
-        };
-        let input = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_INPUT);
-        let params = super::array::items(meta::record_fields_of(input));
-        let given = crate::parse::null_terminated(dyad::value(call) as *const DyadPtr);
-        if params.len() != given.len() {
-            return Err(RunError::ArityMismatch);
-        }
-        let mut args = Vec::with_capacity(params.len());
-        for (i, &param) in params.iter().enumerate() {
-            let ty = super::hole::type_in(param);
-            let scalar = super::numtype::is_scalar_type(ty);
-            if let Some(operand) = named_dyad(rt, given[i]) {
-                let operand = operand?;
-                let types = rt.types();
-                let bracket =
-                    dyad::ty(operand) == types.scope || dyad::ty(operand) == types.square_brackets;
-                if bracket {
-                    owned_lines(types, operand).map_err(|e| RunError::Parse(Box::new(e)))?;
-                }
-                args.push(if scalar {
-                    let operand = narrowed_operand(rt, given[i], operand);
-                    typed_operand(rt, operand, ty)?
-                } else if bracket {
-                    let types: *const Core = types;
-                    let output = at_dyad(rt.store(), &*types);
-                    let (op, leaf) = ((*types).tape.bracket_arg, (*types).tape.bracket_arg_leaf);
-                    self::node(rt.store(), op, leaf, &[operand], output)
-                } else {
-                    operand
-                });
-                continue;
-            }
-            let bits = rt.run(given[i])?;
-            args.push(if scalar {
-                let width = super::numtype::of_type_node(ty).bytes();
-                let store = rt.store();
-                store.alloc_blob(ty, &bits.to_ne_bytes()[..width])
-            } else {
-                node_operand(rt, bits as usize as DyadPtr)
-            });
-        }
-        Ok(crate::parse::build_call(rt.store(), f, &args) as i64)
-    }
+/// `read` must be a reduced dyad from the store.
+pub(crate) unsafe fn checked_number(types: &Core, read: DyadPtr) -> Option<DyadPtr> {
+    (dyad::ty(read) == types.tape.cell_number)
+        .then(|| *(dyad::value(read) as *const DyadPtr).add(3))
 }
 
 /// A bracket a type's `parse` hands to the call it places is the list the new value is built
@@ -1031,15 +937,15 @@ unsafe fn owned_lines(types: &Core, bracket: DyadPtr) -> Result<(), crate::parse
     Ok(())
 }
 
-/// The argument a node's address gives a placed call: for a type's own fresh node, a copy
-/// made each time the call runs; for a name or a call yielding a node of a type a Logos
-/// `parse` builds, that expression, run when the call runs; any other node by a `dyad`
+/// The operand a node's address gives a placed node: for a type's own fresh node, a copy
+/// made each time the placed node runs; for a name or a call yielding a node of a type a Logos
+/// `parse` builds, that expression, run when the placed node runs; any other node by a `dyad`
 /// view. DESIGN ›A name of a type with an instances' `parse` wakes it, as the
 /// instance does‹.
 ///
 /// # Safety
-/// `d` must be what a `dyad`-valued argument yielded: null or a node's address.
-unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
+/// `d` must be what a `dyad`-valued operand yielded: null or a node's address.
+pub(crate) unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
     let types: *const Core = rt.types();
     if rt.fresh_this() == Some(d) {
         return super::this::build_copy(rt.store(), &*types, d);
@@ -1109,7 +1015,7 @@ unsafe fn scalar_line(types: &Core, line: DyadPtr) -> Option<(DyadPtr, NumType)>
 /// frame, and the callee reads a new bracket of the same kind holding the values; a nested
 /// bracket is evaluated here too, since the callee builds it where these names are not.
 fn run_bracket_arg(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a `[bracket, op]` node `run_placed_call` built over a bracket node.
+    // SAFETY: `node` is a `[bracket, op]` node `build_bracket_arg` built over a bracket node.
     unsafe {
         let bracket = rt.through(*(dyad::value(node) as *const DyadPtr));
         Ok(evaluate_bracket(rt, bracket)? as i64)
@@ -1138,7 +1044,7 @@ unsafe fn evaluate_bracket(rt: &mut Runtime, bracket: DyadPtr) -> Result<DyadPtr
 /// The number lines run in the compiled frame, their values in a block; only the new
 /// bracket, the store's, is made by calling back into the seed.
 fn lower_bracket_arg(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a `[bracket, op]` node `run_placed_call` built over a bracket node.
+    // SAFETY: `node` is a `[bracket, op]` node `build_bracket_arg` built over a bracket node.
     unsafe {
         let bracket = lw.through(*(dyad::value(node) as *const DyadPtr));
         lower_bracket(lw, bracket)

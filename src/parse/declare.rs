@@ -395,16 +395,24 @@ impl<'a> Parser<'a> {
     /// The `=` just built, with the name and the field's binding its target `v.f` reached, or
     /// nulls: the item the sibling rule reads.
     pub(crate) fn note_write(&mut self, node: DyadPtr, fill: (DyadPtr, DyadPtr)) {
+        let ids = &self.types.this;
         // SAFETY: `node` is the `=` node just built.
-        if unsafe { dyad::ty(node) } == self.types.tape.write {
+        let ty = unsafe { dyad::ty(node) };
+        if ty == self.types.tape.write {
             self.forget_narrowed();
+        } else if ty == ids.write || ty == ids.store {
+            // SAFETY: a field write keeps the value and the field's index first.
+            let key = unsafe { crate::identities::this::field_key(self.types, node) };
+            for s in &mut self.cx.open {
+                s.narrowed.retain(|n| Some(n.0) != key);
+            }
         }
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
         self.cx.last_write = LastWrite { node, scope, fill };
     }
 
-    /// The type a check has narrowed the cell or line to, the innermost check first.
-    fn narrowed_to(&self, key: CellKey) -> Option<DyadPtr> {
+    /// The type a check has narrowed the cell, line or field to, the innermost check first.
+    pub(super) fn narrowed_to(&self, key: CellKey) -> Option<DyadPtr> {
         self.cx
             .open
             .iter()

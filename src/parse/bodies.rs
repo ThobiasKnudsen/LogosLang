@@ -220,8 +220,9 @@ pub(crate) unsafe fn bool_literal_value(types: &Core, node: DyadPtr) -> Option<b
 pub(crate) type CellKey = (DyadPtr, i32, crate::identities::tape::Line);
 
 /// `tape[k].type == T` or `!=` with `T` a number type or `type`, either side first, or
-/// `tape[k].type ⊆ T` with `T` a number type, each under any number of `not`: the cell
-/// checked, the type it narrows to, and whether the branch that holds is the `then`.
+/// `tape[k].type ⊆ T` with `T` a number type, each under any number of `not`, or the same of
+/// `tape[0].f.type` for a `?` field `f`: the cell or field checked, the type it narrows to, and
+/// whether the branch that holds is the `then`.
 ///
 /// # Safety
 /// `cond` must be a reduced dyad from the store.
@@ -238,7 +239,7 @@ unsafe fn type_check_of(types: &Core, cond: DyadPtr) -> Option<(CellKey, DyadPtr
     }
     let ops = dyad::value(cond) as *const DyadPtr;
     let (l, r) = (types.through(*ops), types.through(*ops.add(1)));
-    let is_read = |n: DyadPtr| dyad::ty(n) == types.tape.cell_type;
+    let is_read = |n: DyadPtr| crate::identities::tape::is_line_type_read(types, n);
     let (read, ty) = if is_read(l) {
         (l, r)
     } else if is_read(r) && !subset {
@@ -251,7 +252,7 @@ unsafe fn type_check_of(types: &Core, cond: DyadPtr) -> Option<(CellKey, DyadPtr
     if !number && (subset || ty != types.type_) {
         return None;
     }
-    crate::identities::tape::cell_key(types, read).map(|key| (key, ty, eq))
+    crate::identities::tape::type_read_key(types, read).map(|key| (key, ty, eq))
 }
 
 /// Trailing comment nodes are prose, not the tail; `None` for a scope with

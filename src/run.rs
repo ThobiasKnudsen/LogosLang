@@ -46,8 +46,9 @@ pub enum RunError {
     NoName,
     /// A tape cell checked to hold a type holds something else by the time it is read.
     CellNotAType,
-    /// A cell or line checked against a number type holds no constant of it.
-    CellNotANumber(DyadPtr),
+    /// A cell, line or field of the parse's node, read as a number type while the parse runs,
+    /// holds no constant of it.
+    NotAConstant(DyadPtr),
     /// A cell or line checked against a type a Logos `parse` builds holds no value of it.
     CellNotANode,
     /// `insert` of a null fragment.

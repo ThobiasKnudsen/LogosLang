@@ -54,15 +54,15 @@ fn build(
     Err(ParseError::UnsupportedOperands)
 }
 
-/// A type standing as a value, a `type` box, or a tape cell's `.type`: each reads as a
-/// type's address.
+/// A type standing as a value, a `type` box, or the `.type` of a line a parse holds: each reads
+/// as a type's address.
 ///
 /// # Safety
 /// `n` is a reduced dyad from the store.
 unsafe fn type_valued(types: &Core, n: DyadPtr, k: Read) -> bool {
     matches!(k, Read::Identity)
         || k == Read::Container(types.type_)
-        || dyad::ty(types.through(n)) == types.tape.cell_type
+        || super::tape::is_line_type_read(types, types.through(n))
 }
 
 /// Whether every value of `a` is a value of `b`: the one lies-inside test, which a conversion
@@ -104,8 +104,8 @@ pub(crate) unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bo
     })
 }
 
-/// A tape cell or line holding a literal answers by whether the literal molds into the
-/// number type, a literal taking the type beside it.
+/// A line a parse holds that is a literal answers by whether the literal molds into the number
+/// type, a literal taking the type beside it.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `⊆` node `[lhs, rhs, op]`; each operand runs to a type's address.
     unsafe {
@@ -113,8 +113,8 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let read = rt.through(*ops);
         let b = rt.run(*ops.add(1))? as DyadPtr;
         let types = rt.types();
-        if dyad::ty(read) == types.tape.cell_type && super::is_numtype_node(types, b) {
-            let cell = super::tape::read_target(rt, dyad::value(read) as *const DyadPtr)?;
+        if super::tape::is_line_type_read(types, read) && super::is_numtype_node(types, b) {
+            let cell = super::tape::line_of_type_read(rt, read)?;
             if dyad::ty(cell) == rt.types().rational {
                 let nt = super::numtype::of_type_node(b);
                 return Ok(i64::from(super::rational::mold_to(cell, nt).is_some()));

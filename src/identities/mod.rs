@@ -61,6 +61,7 @@ pub(crate) mod numtype;
 pub(crate) mod ops;
 mod or;
 mod paren;
+pub(crate) mod place;
 pub(crate) mod pointer;
 pub mod print;
 pub(crate) mod rational;
@@ -163,6 +164,7 @@ pub struct Core {
     pub hashmap: hashmap::HashmapIds,
     pub held_type: held_type::HeldTypeIds,
     pub this: this::ThisIds,
+    pub place: place::PlaceIds,
     pub lex: lex::LexIds,
     pub print: print::PrintIds,
     pub error: error::ErrorIds,
@@ -352,6 +354,7 @@ impl Core {
         let hashmap = hashmap::register(&mut cx, &callables, array_);
         let held_type = held_type::register(&mut cx, &callables);
         let this = this::register(&mut cx, &callables);
+        let place = place::register(&mut cx, &callables);
         let lex = lex::register(&mut cx, &callables);
         let print = print::register(&mut cx, &callables);
         immediate::register(&mut cx);
@@ -462,6 +465,7 @@ impl Core {
             hashmap,
             held_type,
             this,
+            place,
             lex,
             print,
             error,
@@ -1274,7 +1278,9 @@ unsafe fn is_parameter(types: &Core, node: DyadPtr) -> bool {
 }
 
 /// The written `T(value)`, or `T lossy (value)` with `lossy`, checked as an unwritten value
-/// landing in `T` is.
+/// landing in `T` is. Over a line a check narrowed to `T`, the conversion stays a node, since
+/// the line it places may be of another type (›A tape read checked against a number type reads
+/// as that number‹ [[R229]]).
 ///
 /// # Safety
 /// `target` is a numeric type node; `args` are valid dyads from the store.
@@ -1288,6 +1294,9 @@ pub(crate) unsafe fn build_cast(
     let [operand] = args else {
         return Err(ParseError::BadCast);
     };
+    if tape::checked_number(types, *operand) == Some(target) {
+        return Ok(convert::build_convert(store, types, *operand, target, target));
+    }
     land_as(store, types, *operand, target, lossy)
 }
 
