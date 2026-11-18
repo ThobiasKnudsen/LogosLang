@@ -146,54 +146,51 @@ pub(crate) fn register_lossy(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// Juxtaposition: a directly following rational literal (or `- <rational>`) converts
-/// exactly to this type; a following `(` is the conversion `i32(x)`; `lossy` before either
-/// converts what may lose part of the value; anything else declines the right and the type
-/// stands as a value, so `f(i32, 3)` passes the type.
+/// Juxtaposition: the value to the right (`Parser::type_operand`) converts into this type as
+/// any value lands in it; a bracket is the written conversion `i32(x)`; `lossy` before the value
+/// converts what may lose part of it. With no value to the right the type stands as a value, so
+/// `f(i32, 3)` passes the type.
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
     let types = p.types();
-    // Runs at discovery, before the loop has lexed past the right cell. A sign there
-    // belongs to the literal after it, which folds it at its own discovery, so that
-    // literal is lexed too.
-    let mut right = p.cell_at(tape, 1)?;
     // A number type reads `lossy` itself: stand-in for #212.
+    let right = p.cell_at(tape, 1)?;
     let lossy = matches!(right, Some(c) if !c.constructed && c.identity(types) == types.lossy);
-    if lossy {
-        tape.remove(1);
-        right = p.cell_at(tape, 1)?;
-    }
-    if matches!(right, Some(c) if !c.constructed && c.identity(types) == types.minus) {
-        p.cell_at(tape, 2)?;
-        right = tape.at(1).copied();
-    }
-    let node = match right {
-        Some(c)
-            // SAFETY: a constructed, non-bracket cell holds a node from the store.
-            if c.constructed && !c.is_bracket() && unsafe { dyad::ty(c.dyad) } == types.rational =>
-        {
-            let l = c.dyad;
-            tape.remove(1);
-            // SAFETY: `l` is rational-typed by the guard; `id` is this numeric type's node.
-            unsafe { super::land_as(p.store(), types, l, id, lossy) }?
+    let at = if lossy { 2 } else { 1 };
+    let Some(operand) = p.type_operand(tape, at)? else {
+        if lossy {
+            return Err(crate::parse::ParseError::LossyOutOfPlace);
         }
+        let node = p.stand_as_value(tape, id);
+        tape.place(node);
+        return Ok(crate::parse::Constructed::Placed);
+    };
+    let node = if operand.is_bracket() {
         // `i32(x)`: the bracket is this type's to read, a conversion, never `(`'s call.
-        Some(c) if c.is_bracket() => {
-            let scope = c.dyad;
-            // SAFETY: `scope` is the bracket's node from the store.
-            let args = unsafe { p.args_of(scope) };
-            tape.remove(1);
-            // SAFETY: `id` is this numeric type's node; `args` are reduced dyads.
-            unsafe { p.build_call_as(id, &args, lossy) }?
-        }
-        _ if lossy => return Err(crate::parse::ParseError::LossyOutOfPlace),
-        _ => p.stand_as_value(tape, id),
+        // SAFETY: a bracket cell holds its node from the store.
+        let args = unsafe { p.args_of(operand.dyad) };
+        take_cells(tape, at);
+        // SAFETY: `id` is this numeric type's node; `args` are reduced dyads.
+        unsafe { p.build_call_as(id, &args, lossy) }?
+    } else {
+        let value = p.as_operand(operand)?;
+        take_cells(tape, at);
+        // SAFETY: `value` is a reduced dyad from the store; `id` is this numeric type's node.
+        unsafe { super::land_as(p.store(), types, value, id, lossy) }
+            .map_err(|e| p.fail_at(operand.start, e))?
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
+}
+
+/// Removes the cells right of the center up to `at`: the value, and `lossy` before it.
+fn take_cells(tape: &mut crate::parse::ParsingTape, at: isize) {
+    for k in (1..=at).rev() {
+        tape.remove(k);
+    }
 }
 
 /// One past every `NumType` discriminant, so a void type node is told apart by its tag alone.

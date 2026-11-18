@@ -5356,6 +5356,32 @@ fn a_cell_through_a_pointer_moves_any_type_with_a_layout() {
     assert_runs(&cases);
 }
 
+/// ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type
+/// that holds it exactly‹ [[R155]]: a type takes the name to its right as it takes a number.
+#[test]
+fn a_type_converts_the_name_to_its_right() {
+    let mut cases = vec![
+        ("f := fn (n := i32 ?) -> i32 ( x := alloc 1 of i32 n, x@ ), f(4)".to_string(), "4\n"),
+        ("r := rational_number 1/3, rational_number r".to_string(), "1/3\n"),
+        (
+            "f := fn (r := rational_number ?) -> rational_number ( rational_number r ), f(1/3)"
+                .to_string(),
+            "1/3\n",
+        ),
+        ("m := i32 3, i64 m == i64 3".to_string(), "true\n"),
+    ];
+    for (f, call, want) in [
+        ("fn (n := i32 ?) -> i64 ( i64 n )", "f(4)", "4\n"),
+        ("fn (n := i32 ?) -> f64 ( f64 n )", "f(4)", "4.0\n"),
+        ("fn (n := f64 ?) -> i32 ( i32 lossy n )", "f(2.5)", "2\n"),
+        ("fn (n := i32 ?, m := i32 ?) -> i64 ( i64 n * i64 m )", "f(4, 5)", "20\n"),
+    ] {
+        cases.push((format!("f := {f}, {call}"), want));
+        cases.push((format!("f := {f}, f.compile(), {call}"), want));
+    }
+    assert_runs(&cases);
+}
+
 /// DESIGN ›`=` sits beside `:=`, and returns nothing‹: the one `run` frees the value it
 /// displaces by its type's `free`, on both tiers.
 #[test]

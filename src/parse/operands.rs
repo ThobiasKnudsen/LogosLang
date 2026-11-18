@@ -500,6 +500,47 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
+    /// What a type at the center takes from its right, the cell at `k` (›A type's `parse` decides
+    /// what converts into it; unwritten, a value converts only into a type that holds it
+    /// exactly‹ [[R155]]): a built value (a number, a bracket, a text) or a bare name. `None`
+    /// where the type stands as itself: nothing there, a comment, or a cell that is no value of
+    /// its own (`?`, `+`, `->`, a `.` reading the type). A sign belongs to the number after it.
+    pub(crate) fn type_operand(
+        &mut self,
+        tape: &mut ParsingTape,
+        k: isize,
+    ) -> Result<Option<Cell>, ParseError> {
+        use crate::identities::meta::prec;
+        let types = self.types;
+        let mut right = self.cell_at(tape, k)?;
+        // The number after a sign folds it at its own discovery.
+        if matches!(right, Some(c) if !c.constructed && c.identity(types) == types.minus) {
+            self.cell_at(tape, k + 1)?;
+            right = tape.at(k).copied();
+        }
+        let Some(cell) = right else { return Ok(None) };
+        if cell.constructed {
+            // SAFETY: a constructed cell holds null or a node from the store.
+            let comment = !cell.dyad.is_null() && unsafe { dyad::ty(cell.dyad) } == types.comment_;
+            return Ok((!comment).then_some(cell));
+        }
+        let id = self.cell_identity(&cell);
+        let name = self.is_operand_cell(&cell);
+        // A value still to be finished by what is built at discovery after the type, a call, an
+        // `if` or a tight read of a name, is taken only bracketed: stand-in for #212.
+        let built_later = !name
+            && self.ctor_of(id).is_some()
+            && (prec::OPEN..prec::TIGHT).contains(&self.precedence_of_cell(id));
+        let continued = name
+            && self.cell_at(tape, k + 1)?.is_some_and(|n| {
+                !n.constructed && self.precedence_of_cell(self.cell_identity(&n)) == prec::TIGHT
+            });
+        if built_later || continued {
+            return Err(self.fail_at(cell.start, ParseError::UnfinishedOperand));
+        }
+        Ok(name.then_some(cell))
+    }
+
     /// Whether the cell right of the center is the unconstructed marker word `id`.
     pub(crate) fn marker_right(&self, tape: &ParsingTape, id: DyadPtr) -> bool {
         tape.at(1).is_some_and(|cell| !cell.constructed && self.cell_identity(cell) == id)
