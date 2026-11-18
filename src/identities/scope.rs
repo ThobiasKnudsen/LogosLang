@@ -193,6 +193,24 @@ pub(crate) unsafe fn run_exit(
     run_exit_items(rt, node, |_, item| item.held_at(reached))
 }
 
+/// [`run_exit`] compiled: the scope's end, or a `return` leaving it at line `reached`.
+///
+/// # Safety
+/// `node` must be a scope node from the store, its places laid out in the frame `lw` lowers.
+pub(crate) unsafe fn lower_exit(
+    lw: &mut Lowerer,
+    node: DyadPtr,
+    reached: usize,
+) -> Result<(), CompileError> {
+    for &item in exit_items(node).iter().rev() {
+        let item = super::drop_model::exit_item_of(item);
+        if item.held_at(reached) {
+            item.lower(lw)?;
+        }
+    }
+    Ok(())
+}
+
 /// The scope's end after its line `failed` faulted: what [`run_exit`] would run there, and what
 /// that line ended and did not reach (DESIGN ›`free` and `move` end a name; no drop flag‹).
 ///
@@ -286,11 +304,6 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let Some(exprs) = exprs_of(node) else {
             return Err(CompileError::EmptyScope);
         };
-        let lines: Vec<DyadPtr> = exprs
-            .iter()
-            .copied()
-            .filter(|&e| !super::numtype::is_comment_type(dyad::ty(e)))
-            .collect();
-        lw.lower_with_teardowns(&lines, exit_items(node))?.ok_or(CompileError::EmptyScope)
+        lw.lower_scope(node, exprs)?.ok_or(CompileError::EmptyScope)
     }
 }

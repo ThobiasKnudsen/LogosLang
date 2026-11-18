@@ -4914,6 +4914,93 @@ fn a_return_frees_what_its_line_ends_after_it_compiled_or_not() {
     }
 }
 
+/// DESIGN ›A value's teardown runs where its life ends; the ending identity reads the type's
+/// `free` slot‹ [[R57]] and ›A last value moves out‹ [[R66]]: "the teardowns of the scopes it
+/// leaves run on the way out", and an `if`'s and a call's, in the same order on both tiers.
+#[test]
+fn a_return_ends_what_each_scope_if_and_call_it_leaves_holds_compiled_or_not() {
+    // `say` stays interpreted, so a compiled body can print through it.
+    let fns = "say := fn (k := i32 ?) -> void ( print «say {k}» ), \
+               f := fn (q := bag ?, m := i32 ?) -> i32 ( q.n + m ), \
+               p := fn (q := @bag ?, k := i32 ?) -> i32 ( q@.n + k )";
+    for (g, calls, printed) in [
+        (
+            "g := fn () -> i32 ( b := bag(4), return b.n + 1 )",
+            "print «got {g()}»",
+            "freed 4\ngot 5\n",
+        ),
+        (
+            "g := fn (k := i32 ?) -> i32 ( a := bag(1), for i in 0..3 ( b := bag(10 + i), \
+             if (i == k) ( c := bag(20 + i), return a.n + b.n + c.n ), say(i) ), say(9), 0 )",
+            "print «got {g(1)}», print «got {g(5)}»",
+            "say 0\nfreed 10\nfreed 21\nfreed 11\nfreed 1\ngot 33\n\
+             say 0\nfreed 10\nsay 1\nfreed 11\nsay 2\nfreed 12\nsay 9\nfreed 1\ngot 0\n",
+        ),
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(1), mut k := i32 0, \
+             while k < 3 ( b := bag(10 + k), if (k == c) (return k), k = k + 1 ), 9 )",
+            "print «got {g(1)}», print «got {g(7)}»",
+            "freed 10\nfreed 11\nfreed 1\ngot 1\nfreed 10\nfreed 11\nfreed 12\nfreed 1\ngot 9\n",
+        ),
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(1), defer say(0), \
+             ( b := bag(2), if (c == 1) (return 5) ), 9 )",
+            "print «got {g(1)}», print «got {g(0)}»",
+            "freed 2\nsay 0\nfreed 1\ngot 5\nfreed 2\nsay 0\nfreed 1\ngot 9\n",
+        ),
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(1), x := ( b := bag(2), \
+             if (c == 1) (return 5), 7 ), d := bag(3), x )",
+            "print «got {g(1)}», print «got {g(0)}»",
+            "freed 2\nfreed 1\ngot 5\nfreed 2\nfreed 3\nfreed 1\ngot 7\n",
+        ),
+        // The arm the `return` leaves frees what the other arm freed.
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(7), if (c > 0) ( b := bag(8), \
+             if (c == 1) (return 5) else (free a), say(1) ) else ( say(2) ), 9 )",
+            "print «got {g(1)}», print «got {g(2)}», print «got {g(0)}»",
+            "freed 7\nfreed 8\ngot 5\nfreed 7\nsay 1\nfreed 8\ngot 9\nsay 2\nfreed 7\ngot 9\n",
+        ),
+        // A condition the `return` leaves frees what either arm would have.
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(7), \
+             x := if ((if (c == 1) (return 5), i32 2) == 2) (free a, i32 1) else (i32 3), x )",
+            "print «got {g(1)}», print «got {g(0)}»",
+            "freed 7\ngot 5\nfreed 7\ngot 1\n",
+        ),
+        // A call frees the arguments it holds before the one the `return` leaves.
+        (
+            "g := fn (c := i32 ?) -> i32 ( f(bag(1), (if (c == 1) (return 7), i32 2)) )",
+            "print «got {g(1)}», print «got {g(0)}»",
+            "freed 1\ngot 7\nfreed 1\ngot 3\n",
+        ),
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(1), \
+             x := f(bag(2), f(bag(3), (if (c == 1) (return 5), i32 4))), x )",
+            "print «got {g(1)}», print «got {g(0)}»",
+            "freed 3\nfreed 2\nfreed 1\ngot 5\nfreed 3\nfreed 2\nfreed 1\ngot 9\n",
+        ),
+        // What `&` holds, named or not, in the `return`'s line or in a call's arguments.
+        (
+            "g := fn () -> i32 ( b := bag(4), return p(&b, 1) )",
+            "print «got {g()}»",
+            "freed 4\ngot 5\n",
+        ),
+        ("g := fn () -> i32 ( return p(&bag(4), 1) )", "print «got {g()}»", "freed 4\ngot 5\n"),
+        (
+            "g := fn (n := i32 ?) -> i32 ( a := bag(1), p(&bag(n), ( if (n > 2) (return 9), 4 )) )",
+            "print «got {g(5)}», print «got {g(1)}»",
+            "freed 5\nfreed 1\ngot 9\nfreed 1\nfreed 1\ngot 5\n",
+        ),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            let src = format!("{RECORD}, {fns}, {g}, {compile}{calls}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(0), printed), "{compile}{g}: {stderr}");
+        }
+    }
+}
+
 #[test]
 fn a_line_that_fails_frees_a_node_it_ended_and_did_not_reach() {
     let g = "g := fn () -> i32 ( error «stop» )";
