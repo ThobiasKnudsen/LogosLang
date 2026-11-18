@@ -2171,6 +2171,40 @@ fn a_name_s_dyad_reads_its_type_and_its_bytes_address_on_both_tiers() {
 }
 
 #[test]
+fn a_dot_on_an_if_or_a_statement_reads_its_node_and_uses_no_value_on_both_tiers() {
+    let two = "(if c (i32 1) else (i64 2))";
+    for body in [
+        format!("{two}.type == (if c (u8 1) else (i32 2)).type"),
+        format!("{two}.type == (if c (u8 1)).type"),
+        format!("(if c (return true) else (i32 2)).type == {two}.type"),
+        format!("not ({two}.type == (x + 1).type)"),
+        format!("not ({two}.type == i32)"),
+        format!("not ({two}.type == (while c (c = false)).type)"),
+        format!("(c, {two}).type == scope"),
+        "(x = 4).type == (x = 5).type and x == 3".into(),
+        "(for i in 0..2 (i)).type == (for i in 0..3 (i)).type and x == 3".into(),
+    ] {
+        let lines = format!("mut c := true, mut x := i32 3, f := fn () -> bool ( {body} )");
+        for call in ["f()", "f.compile(), f()"] {
+            let src = format!("{lines}, {call}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.trim()), (Some(0), "true"), "{src}: {stderr}");
+        }
+    }
+    for (tail, echo) in [(format!("{two}.type"), "type\n"), (format!("t := {two}.type, 0"), "0\n")]
+    {
+        let src = format!("mut c := true, {tail}");
+        assert_eq!(run_line(&src), (Some(0), echo.to_string(), String::new()), "{src}");
+    }
+    // Its value used, the `if` is still refused.
+    for tail in [two.to_string(), format!("x := {two}, 0")] {
+        let (code, _, stderr) = run_line(&format!("mut c := true, {tail}"));
+        assert_eq!(code, Some(1), "{tail}");
+        assert!(stderr.contains("give different types"), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_reflect_read_that_does_not_fit_is_an_error() {
     let (_echoes, stderr) = repl(b"x := i32 5\nb := x + x\nb:start.rhs.type.roles[5]\n");
     assert!(stderr.contains("does not fit"), "stderr: {stderr}");
@@ -2971,11 +3005,9 @@ fn a_return_hands_the_call_its_operand_as_the_last_line_does() {
 #[test]
 fn the_echo_reads_the_tail_value_as_any_use_does() {
     // Refused before the tail runs, so `ran` never prints.
-    for tail in [
-        "if c (i32 1) else (i64 2)",
-        "( y := i32 1, if c (print «ran», i32 1) else (i64 2) )",
-        "(if c (i32 1) else (i64 2)).type",
-    ] {
+    for tail in
+        ["if c (i32 1) else (i64 2)", "( y := i32 1, if c (print «ran», i32 1) else (i64 2) )"]
+    {
         let (code, stdout, stderr) = run_line(&format!("mut c := true, {tail}"));
         assert_eq!(code, Some(1), "{tail}");
         assert_eq!(stdout, "", "{tail}");

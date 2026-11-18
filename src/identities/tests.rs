@@ -1354,7 +1354,6 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         // A block's value is its last line's, refused for that line's reason.
         ("x := ( y := i32 1, if c (i32 1) else (i64 2) )", ParseError::ArmsDiffer),
         ("x := ( y := i32 1, if c (5) )", ParseError::MissingElse),
-        ("x := (if c (i32 1) else (i64 2)).type", ParseError::ArmsDiffer),
     ] {
         assert_eq!(parse_err(&f(body)), error, "{body}");
     }
@@ -1369,6 +1368,8 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         "if c (return 1) else (mut y := i32 2, y = 3)",
         // Each `alloc` mints its own owning `@i32`, one type with the other.
         "x := if c (alloc 1 of i32 5) else (alloc 1 of i32 6)",
+        // A `.` reads the `if` node and uses no arm's value.
+        "x := (if c (i32 1) else (i64 2)).type",
     ] {
         assert_eq!(parses(&f(body)), Ok(()), "{body}");
     }
