@@ -80,6 +80,8 @@ pub enum ParseError {
     PerMintMember(Box<String>),
     /// A field named in a `share` line of a type that mints, other than for its `.type`.
     MintFieldHasNoValue(Box<String>),
+    /// A minting type's `share output_type` line marked `mut`, or giving no value (`?`).
+    MintOutputNotGiven,
     /// `tape[0].f` naming no field declared above; carries `f`.
     NoSuchField(Box<String>),
     /// `tape.is_constructed[k] = v` with a `v` that is no bool.

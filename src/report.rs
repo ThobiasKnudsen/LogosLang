@@ -286,6 +286,12 @@ pub fn parse_message(e: &ParseError) -> String {
             "`{name}` is a field, and a `share` line of a type that mints is made once per mint, \
              with no node to read the field from: it reads only the field's type, `{name}.type`"
         ),
+        ParseError::MintOutputNotGiven => {
+            "a type that mints writes each mint's output type in its declaration line, once, from \
+             the types its fields have in the mint, with no `mut` and no `?`: \
+             `share output_type := lhs.type`"
+                .into()
+        }
         ParseError::PerNodeThroughType(name) => format!(
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),

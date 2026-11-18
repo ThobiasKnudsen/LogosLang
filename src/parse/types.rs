@@ -529,6 +529,17 @@ impl<'a> Parser<'a> {
             self.cx.pos = word_at;
             return Ok(false);
         }
+        // The line gives the mint's output type once (›A mint's output type is written in its
+        // `share output_type` declaration; a type that does not mint has its parse write it
+        // into each node‹ [[R194]]).
+        if name == crate::identities::mint::SHARED_FIELD {
+            let mutable = cells[..k].iter().any(|c| c.identity(types) == types.mut_);
+            let unvalued = cells.last().is_some_and(|c| c.identity(types) == types.unknown);
+            if mutable || unvalued {
+                self.cx.pos = at;
+                return Err(ParseError::MintOutputNotGiven);
+            }
+        }
         let def = self.cx.definitions.last().expect("checked above");
         let shadows = shadows
             || def.kept.iter().any(|(kept, _)| *kept == name)

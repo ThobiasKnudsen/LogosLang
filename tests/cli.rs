@@ -418,6 +418,33 @@ fn a_mints_output_type_is_what_its_declaration_line_gives_from_its_field_types()
 }
 
 #[test]
+fn a_minting_types_output_type_line_gives_its_type_once() {
+    // A later write of the member would leave the built run and its callers on the old type.
+    let p = |line: &str| {
+        format!(
+            "p := type ( v := ?, {line}, share set := fn () -> i32 ( output_type = f64, i32 0 ), \
+             share run = ( v ), share parse_rank = 60, share parse = ( tape[0].type = p, \
+             tape[0].v = tape[1], tape.remove(1), tape.is_constructed[0] = true ) ), \
+             x := i32 4, s := (p x).set(), p x"
+        )
+    };
+    for line in [
+        "share output_type := type ?",
+        "share mut output_type := type ?",
+        "share mut output_type := v.type",
+        "share output_type := ?",
+    ] {
+        let src = p(line);
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(
+            stderr.contains("writes each mint's output type in its declaration line, once"),
+            "{src}: stderr: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn a_minting_types_kept_share_line_is_refused_at_its_definition_or_its_mint() {
     let shadowed = "`g` is already declared and still in scope";
     for (src, expect) in [
