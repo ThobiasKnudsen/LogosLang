@@ -298,6 +298,38 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
 }
 
 #[test]
+fn the_power_demo_converts_a_whole_exponent_so_each_mint_has_one_result_type() {
+    let demo = std::fs::read_to_string("identities/power.logos").unwrap();
+    let body =
+        demo.trim_end().rsplit_once('\n').unwrap().0.replace("import ", "import identities/");
+    // The last word: whether `a` and `b` are nodes of one mint of `^`.
+    let same = "print «{a} {b} {a:start.rhs.type == b:start.rhs.type}»";
+    let int_then_float = "9 1.7320508075688774 false";
+    for (tail, want) in [
+        (format!("x := i32 3, a := x ^ 2, b := x ^ 0.5, {same}"), int_then_float),
+        (format!("x := i32 3, b := x ^ 0.5, a := x ^ 2, {same}"), int_then_float),
+        (format!("x := i32 3, n := i32 4, a := x ^ n, b := x ^ 2, {same}"), "81 9 true"),
+        (format!("x := i32 3, n := i64 4, a := x ^ n, b := x ^ 2, {same}"), "81 9 true"),
+        (format!("x := i32 3, n := u8 2, a := x ^ n, b := x ^ 2, {same}"), "9 9 true"),
+        (format!("y := f64 2.0, a := y ^ 2, b := y ^ 0.5, {same}"), "4.0 1.4142135623730954 false"),
+        ("a := 2 ^ 3, b := 2 ^ (1/3), print «{a} {b}»".to_string(), "8 1.259921049894873"),
+        ("g := fn (y := i32 ?, n := i32 ?) -> i32 ( y ^ n ), g(3, 4)".to_string(), "81"),
+        (
+            "g := fn (y := i32 ?, n := i32 ?) -> i32 ( y ^ n ), g.compile(), g(3, 4)".to_string(),
+            "81",
+        ),
+        ("g := fn (y := i32 ?) -> f64 ( f64(y ^ 2) + y ^ 0.5 ), g(4)".to_string(), "18.0"),
+        (
+            "g := fn (y := i32 ?) -> f64 ( f64(y ^ 2) + y ^ 0.5 ), g.compile(), g(4)".to_string(),
+            "18.0",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{body}\n{tail}"));
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
     let q = |conversion: &str| {
         format!(
@@ -4001,6 +4033,9 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         // A conversion placed over a line holds that line.
         (format!("n := i32 5, {wide}, p n"), "5"),
         (format!("{wide}, p 5"), "5"),
+        // Over a literal line the field holds the constant a written `i64 (5)` makes, so the
+        // node folds.
+        (format!("{wide}, a := p 5, print «{{a}} {{a:start.rhs.type}}»"), "5 i64"),
         (format!("{wide}, f := fn (n := i32 ?) -> i64 ( p n ), f(5)"), "5"),
         (format!("{wide}, f := fn (n := i32 ?) -> i64 ( p n ), f.compile(), f(5)"), "5"),
         (format!("{wide}, f := fn () -> i64 ( p 5 ), f()"), "5"),
