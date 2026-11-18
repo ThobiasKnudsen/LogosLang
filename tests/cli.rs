@@ -5033,6 +5033,63 @@ fn a_return_ends_what_each_scope_if_and_call_it_leaves_holds_compiled_or_not() {
     }
 }
 
+/// ›A value's teardown runs where its life ends; the ending identity reads the type's `free`
+/// slot‹ [[R57]] and ›A scope's value is what it evaluates to, and `return` is an optional early
+/// exit from the enclosing function‹ [[R207]]: a `return` in a `defer` runs the rest of its
+/// scope's end before it leaves, on both tiers.
+#[test]
+fn a_return_in_a_defer_runs_the_rest_of_its_scopes_end_compiled_or_not() {
+    let f = "f := fn (q := bag ?, m := i32 ?) -> i32 ( q.n + m )";
+    for (g, calls, printed) in [
+        (
+            "g := fn () -> i32 ( a := bag(1), defer ( return 7 ), b := bag(2), 3 )",
+            "print «got {g()}»",
+            "freed 2\nfreed 1\ngot 7\n",
+        ),
+        (
+            "g := fn () -> i32 ( a := bag(1), defer ( b := bag(5), return 7 ), c := bag(2), 3 )",
+            "print «got {g()}»",
+            "freed 2\nfreed 5\nfreed 1\ngot 7\n",
+        ),
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(1), defer ( if (c == 1) (return 7) ), \
+             b := bag(2), 3 )",
+            "print «got {g(1)}», print «got {g(0)}»",
+            "freed 2\nfreed 1\ngot 7\nfreed 2\nfreed 1\ngot 3\n",
+        ),
+        (
+            "g := fn () -> i32 ( a := bag(1), x := ( b := bag(2), defer ( return 7 ), \
+             c := bag(3), i32 5 ), d := bag(4), x )",
+            "print «got {g()}»",
+            "freed 3\nfreed 2\nfreed 1\ngot 7\n",
+        ),
+        (
+            "g := fn () -> i32 ( a := bag(1), for 0..2 ( b := bag(2), defer ( return 7 ), \
+             c := bag(3) ), 4 )",
+            "print «got {g()}»",
+            "freed 3\nfreed 2\nfreed 1\ngot 7\n",
+        ),
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(1), if (c > 0) ( b := bag(2), \
+             defer ( return 7 ), d := bag(4) ) else ( free a ), 3 )",
+            "print «got {g(1)}», print «got {g(0)}»",
+            "freed 4\nfreed 2\nfreed 1\ngot 7\nfreed 1\ngot 3\n",
+        ),
+        (
+            "g := fn () -> i32 ( a := bag(1), f(bag(2), ( b := bag(3), defer ( return 7 ), \
+             c := bag(4), i32 5 )) )",
+            "print «got {g()}»",
+            "freed 4\nfreed 3\nfreed 2\nfreed 1\ngot 7\n",
+        ),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            let src = format!("{RECORD}, {f}, {g}, {compile}{calls}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(0), printed), "{compile}{g}: {stderr}");
+        }
+    }
+}
+
 #[test]
 fn a_line_that_fails_frees_a_node_it_ended_and_did_not_reach() {
     let g = "g := fn () -> i32 ( error «stop» )";

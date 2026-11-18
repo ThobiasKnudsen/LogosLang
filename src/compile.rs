@@ -109,8 +109,8 @@ pub enum CompileError {
 /// list its run frees by as the `return` unwinds it.
 #[derive(Clone, Copy)]
 enum Unwind<'a> {
-    /// A scope at its line `line`: its exit items held there.
-    Scope { node: DyadPtr, line: usize },
+    /// A scope at its line `line`: those of `items`, its exit items still to run, held there.
+    Scope { items: &'a [DyadPtr], line: usize },
     /// An `if` arm's or condition's ends.
     Ends(&'a [DyadPtr]),
     /// An argument a call holds, passed as `this`.
@@ -350,35 +350,44 @@ impl<'a> Lowerer<'a, '_> {
         lines: &[DyadPtr],
     ) -> Result<Option<Value>, CompileError> {
         let (defer_, at) = (self.types.defer_, self.unwind.len());
-        self.unwind.push(Unwind::Scope { node, line: 0 });
+        let items = crate::identities::scope::exit_items(node);
+        self.unwind.push(Unwind::Scope { items, line: 0 });
         let mut last = None;
         for (line, &expr) in lines.iter().enumerate() {
             let ty = dyad::ty(expr);
             if crate::identities::numtype::is_comment_type(ty) || ty == defer_ {
                 continue;
             }
-            self.unwind[at] = Unwind::Scope { node, line };
+            self.unwind[at] = Unwind::Scope { items, line };
             last = Some(self.lower(expr)?);
         }
-        self.unwind[at] = Unwind::Scope { node, line: lines.len() };
+        self.unwind[at] = Unwind::Scope { items, line: lines.len() };
         self.end_to(at)?;
         Ok(last)
     }
 
-    /// Ends what is open above `at`, innermost first: its own end, or a `return` leaving it.
-    /// Each is closed before its teardowns are lowered, so a `return` among them leaves only
-    /// what lies outside it, as the interpreter's does.
+    /// Ends what is open above `at`, innermost first: its own end, or a `return` leaving it, as
+    /// `scope::run_exit` and the interpreter's unwinding do. Each is closed before its teardowns
+    /// are lowered, so a `return` among them leaves what lies outside it, and a scope's items
+    /// still to run stay open while one is lowered, so a `return` in a `defer` runs them too.
     ///
     /// # Safety
-    /// Every open scope must be a scope node from the store and every end a held place.
+    /// Every open scope's items must be exit item nodes and every end a held place.
     unsafe fn end_to(&mut self, at: usize) -> Result<(), CompileError> {
         use crate::identities::drop_model;
         for k in (at..self.unwind.len()).rev() {
             let open = self.unwind[k];
             self.unwind.truncate(k);
             match open {
-                Unwind::Scope { node, line } => {
-                    crate::identities::scope::lower_exit(self, node, line)?;
+                Unwind::Scope { items, line } => {
+                    for (i, &item) in items.iter().enumerate().rev() {
+                        let item = drop_model::exit_item_of(item);
+                        if item.held_at(line) {
+                            self.unwind.push(Unwind::Scope { items: &items[..i], line });
+                            item.lower(self)?;
+                            self.unwind.truncate(k);
+                        }
+                    }
                 }
                 Unwind::Ends(ends) => {
                     for &place in ends.iter().rev() {
