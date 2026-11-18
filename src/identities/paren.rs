@@ -14,7 +14,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     let open = cx.store.alloc_head(cx.type_, record);
     cx.declare("(", open);
     cx.metas.insert(open, |p, _id, tape| {
-        let body = p.parse_sequence_cell()?;
+        let body = p.parse_paren_cell(tape)?;
         p.expect_close()?;
         tape.place_bracket_cell(body);
         Ok(crate::parse::Constructed::Placed)
