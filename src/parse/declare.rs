@@ -726,18 +726,38 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = std::ptr::null_mut();
         let cell = value?;
         let value = cell.dyad;
-        if !cell.hole {
-            // SAFETY: `value` is a reduced dyad from the store.
-            unsafe { crate::identities::read::value_type(self.types, value) }?;
+        // SAFETY: `binding` is the binding just declared; `value` a reduced dyad from the store.
+        let declared = unsafe { self.land_at_binding(binding, value, cell.hole, cell.owning) }?;
+        let node =
+            crate::identities::declare::build(self.rt.store, self.types, binding, value, declared);
+        tape.remove(-1); // the name token, consumed
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// Where `value` lands for `binding`, and whether the open scope holds it: the binding
+    /// site's one decision, which `:=` and `&` of a value nothing names both ask (DESIGN
+    /// ›Holding is decided at the binding site, parameters included‹ [[R61]]). Returns what the declare
+    /// node runs.
+    ///
+    /// # Safety
+    /// `binding` must be the binding being declared; `value` a reduced dyad from the store.
+    pub(super) unsafe fn land_at_binding(
+        &mut self,
+        binding: DyadPtr,
+        value: DyadPtr,
+        hole: bool,
+        owning: bool,
+    ) -> Result<DyadPtr, ParseError> {
+        if !hole {
+            crate::identities::read::value_type(self.types, value)?;
         }
         // A bare name as the value is its binding (a use); the declaration inspects
         // the dyad behind it and keeps `value` as what the initializer stores.
-        // SAFETY: `value` is a dyad from the store.
-        let read = unsafe { self.types.through(value) };
-        // SAFETY: `binding`, `value` and `read` are dyads from the store.
-        let declared = unsafe {
-            let empty_node = cell.hole
-                && !cell.owning
+        let read = self.types.through(value);
+        Ok({
+            let empty_node = hole
+                && !owning
                 && crate::identities::meta::is_node_valued(
                     crate::identities::hole::type_in(value),
                     self.types.fn_type,
@@ -756,7 +776,7 @@ impl<'a> Parser<'a> {
                 // A field with a default starts with it, the empty node's slot holding it.
                 self.leave_fields_unwritten(binding, t, true);
                 init
-            } else if cell.hole {
+            } else if hole {
                 // `x := i32 ?`: the name gets the hole's type at the type's width; nothing
                 // initializes it, and `?`'s entry refuses a read until a sibling write fills
                 // it. A hashmap's zeroed place is already its empty map, so nothing is
@@ -768,7 +788,7 @@ impl<'a> Parser<'a> {
                 // the owner of whatever is written into it later.
                 let record_free = crate::identities::this::is_plain(self.types, t)
                     && !crate::identities::meta::instances_free_of(t).is_null();
-                if cell.owning || record_free {
+                if owning || record_free {
                     self.hold_node(binding);
                 }
                 // `a := own @T ?`: the owner of whatever block is written into it later.
@@ -860,12 +880,7 @@ impl<'a> Parser<'a> {
                 Binding::set_dyad(binding, read);
                 read
             }
-        };
-        let node =
-            crate::identities::declare::build(self.rt.store, self.types, binding, value, declared);
-        tape.remove(-1); // the name token, consumed
-        tape.place(node);
-        Ok(Constructed::Placed)
+        })
     }
 
     /// `dyad (T, v)` builds a store-owned cell of type `T` (DESIGN ›Feasibility‹):

@@ -18,6 +18,19 @@ struct Member {
     call: Option<Vec<DyadPtr>>,
 }
 
+/// Whether what `p` gives is read whole, a scalar, a pointer, or bytes a record or a run-time
+/// rational keeps: an address of it can be handed out.
+///
+/// # Safety
+/// `p` must be a reduced dyad from the store.
+unsafe fn has_address(types: &crate::Core, p: DyadPtr) -> bool {
+    use crate::identities::read::{output_type, place_kind, Read};
+    matches!(
+        place_kind(types, output_type(types, p)),
+        Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate | Read::Rational
+    )
+}
+
 impl<'a> Parser<'a> {
     /// The cell before is an unbuilt `.` or `:`, whose right side is a member's spelling.
     pub(super) fn after_tight_read(&self, tape: &ParsingTape) -> bool {
@@ -906,7 +919,7 @@ impl<'a> Parser<'a> {
     /// `&`'s constructor: an `addr` node that resolves the place's address at
     /// run/lower time, so a frame-relative local yields a per-activation
     /// address. Of the places, a frame's and a dereference's cell have an address
-    /// to hand out.
+    /// to hand out; a value nothing names is held first, in a place of its own.
     pub(crate) fn construct_address_of(
         &mut self,
         tape: &mut ParsingTape,
@@ -914,32 +927,84 @@ impl<'a> Parser<'a> {
         let Some(&cell) = tape.at(1) else {
             return Err(ParseError::BadAddressOf);
         };
-        // Keywords, operators, literals: not places.
+        // A value not built yet, a call or a literal, is waited for, as `free` waits for it.
         if !cell.constructed && self.ctor_of(self.cell_identity(&cell)).is_some() {
-            return Err(ParseError::BadAddressOf);
+            return Err(ParseError::MissingOperand);
         }
-        let node = self.operand_dyad(cell)?;
+        let operand = self.as_operand(cell)?;
+        // SAFETY: `operand` is a dyad from the store.
+        let (named, node) = unsafe {
+            (
+                dyad::ty(operand) == self.types.binding_,
+                self.settled_type(self.types.through(operand)),
+            )
+        };
         // SAFETY: `node` is a resolved dyad from the store.
         let addr = unsafe {
-            use crate::identities::read::{output_type, place_kind, place_node, Read};
+            use crate::identities::read::place_node;
             let types = self.types;
-            let addressed = |p: DyadPtr| {
-                (types.is_storage(p) || dyad::ty(p) == types.deref_)
-                    && matches!(
-                        place_kind(types, output_type(types, p)),
-                        Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
-                    )
-            };
-            let Some(place) = place_node(self.rt.store, types, node).filter(|&p| addressed(p))
-            else {
+            if types.is_hole(node) {
                 return Err(ParseError::BadAddressOf);
-            };
-            self.check_capture(node)?;
-            crate::identities::pointer::build_addr(self.rt.store, types, place)
+            }
+            match place_node(self.rt.store, types, node) {
+                Some(place) if types.is_storage(place) || dyad::ty(place) == types.deref_ => {
+                    if !has_address(types, place) {
+                        return Err(ParseError::BadAddressOf);
+                    }
+                    self.check_capture(node)?;
+                    crate::identities::pointer::build_addr(
+                        self.rt.store,
+                        types,
+                        place,
+                        std::ptr::null_mut(),
+                    )
+                }
+                // A node's field, a map entry, a tape cell: a place with no address to hand out.
+                Some(_) => return Err(ParseError::BadAddressOf),
+                // A name names its value already: one that is no place, `x := 5`, has no address.
+                None if named => return Err(ParseError::BadAddressOf),
+                None => {
+                    self.check_capture(node)?;
+                    self.address_of_value(node)?
+                }
+            }
         };
         tape.remove(1);
         tape.place(addr);
         Ok(Constructed::Placed)
+    }
+
+    /// `&` of a value nothing names: the value lands in an unspelled name of the open scope, as
+    /// `:=` lands it, which holds it to the scope's end, and `&` hands out that name's address
+    /// (DESIGN ›Holding is decided at the binding site, parameters included‹ [[R61]]).
+    ///
+    /// # Safety
+    /// `value` must be a reduced dyad from the store, no place and no hole.
+    unsafe fn address_of_value(&mut self, value: DyadPtr) -> Result<DyadPtr, ParseError> {
+        use crate::identities::read::{read_kind, value_type, Read};
+        let types = self.types;
+        value_type(types, value)?;
+        if !has_address(types, value) {
+            return Err(ParseError::BadAddressOf);
+        }
+        // A literal is a constant that no place holds: held, it is a run-time `rational_number`,
+        // as `rational_number 1` makes one (DESIGN ›A plain number is a `rational_number`, and a
+        // number type's definition converts it‹).
+        let value = if read_kind(types, value) == Read::Literal {
+            crate::identities::by_copy::build_out(self.rt.store, types, types.through(value))
+        } else {
+            value
+        };
+        let scope = self.cx.scopes.current().expect("`&` parses in an open scope");
+        let binding = self.mint_binding(std::ptr::null_mut(), scope, b"");
+        let declared = self.land_at_binding(binding, value, false, false)?;
+        // Only a landing that lays out bytes holds the value, so a refusal here holds nothing.
+        if !types.is_storage(binding) {
+            return Err(ParseError::BadAddressOf);
+        }
+        let held =
+            crate::identities::declare::build(self.rt.store, types, binding, value, declared);
+        Ok(crate::identities::pointer::build_addr(self.rt.store, types, binding, held))
     }
 
     /// Every further `@` cell to the right, then the base type cell, any type

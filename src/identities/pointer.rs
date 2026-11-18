@@ -69,7 +69,7 @@ pub(super) fn register(
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["place", "pointee", "op", "output_type"],
+        &["place", "pointee", "held", "op", "output_type"],
     );
     let addr = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(addr, lower_addr);
@@ -78,26 +78,50 @@ pub(super) fn register(
     (deref, addr, deref_leaf, addr_leaf, at)
 }
 
-/// The address resolves at run/lower time, so a frame-relative local yields a
-/// per-activation address.
+/// `[place, pointee, held, op, output_type]`. The address resolves at run/lower time, so a
+/// frame-relative local yields a per-activation address. `held` is null for a place, and for a
+/// value nothing names the declaration that lands it in `place`, an unspelled name its scope
+/// holds, run before the address is handed out.
 ///
 /// # Safety
-/// `place` must be a frame's place or a deref node from the store.
-pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
+/// `place` must be a frame's place or a deref node from the store; `held` null or a declare
+/// node whose binding is `place`.
+pub(crate) unsafe fn build_addr(
+    store: &mut Store,
+    types: &Core,
+    place: DyadPtr,
+    held: DyadPtr,
+) -> DyadPtr {
     let pointee = super::read::output_type(types, place);
     let output = make_pointer_type(store, types.type_, pointee);
-    store.alloc_words(types.addr_, &[place, pointee, types.ops.addr_, output])
+    store.alloc_words(types.addr_, &[place, pointee, held, types.ops.addr_, output])
+}
+
+/// # Safety
+/// `node` must be an addr node from [`build_addr`].
+unsafe fn addr_parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
+    let p = dyad::value(node) as *const DyadPtr;
+    (*p, *p.add(2))
 }
 
 fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an addr node; its first operand is a frame's place or a deref node.
-    unsafe { place_addr(rt, *(dyad::value(node) as *const DyadPtr)).map(|addr| addr as i64) }
+    // SAFETY: `node` is an addr node from `build_addr`.
+    unsafe {
+        let (place, held) = addr_parts(node);
+        if !held.is_null() {
+            rt.run(held)?;
+        }
+        place_addr(rt, place).map(|addr| addr as i64)
+    }
 }
 
 fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is an addr node; its first operand is a frame's place or a deref node.
+    // SAFETY: `node` is an addr node from `build_addr`.
     unsafe {
-        let place = *(dyad::value(node) as *const DyadPtr);
+        let (place, held) = addr_parts(node);
+        if !held.is_null() {
+            lw.lower(held)?;
+        }
         lower_at_place(lw, place, NumType::U64.cranelift_type(), |_, addr| Ok(addr))
     }
 }

@@ -2353,18 +2353,46 @@ fn a_cell_that_owns_takes_only_a_value_just_made_or_moved() {
 }
 
 #[test]
-fn address_of_what_is_no_place_or_has_no_address_is_refused() {
+fn address_of_what_has_no_address_is_refused() {
     for src in [
-        "( f := fn () -> i32 ( 7 ), &(f()) )",
-        "( get := fn (p := @i32 ?) -> i32 ( return p@ ), a := alloc 1 of i32 3, &(get(a)) )",
-        "( a := alloc 2 of i32 1, &(a + 1) )",
-        "( w := type ( x := i64 ? ), &(w(7)) )",
+        // A name that is no place names its value already.
+        "( x := 5, &x )",
+        "( x := 1 + 2, &(x) )",
+        "( &(i32 ?) )",
+        "( &i32 )",
         "( x := i32 3, &x:name )",
-        "( x := i32 3, &x:lex_rank )",
         "( m := hashmap i32 -> i32 ?, m[1] = 2, &(m[1]) )",
     ] {
         assert_eq!(parse_err(src), ParseError::BadAddressOf, "{src}");
     }
+}
+
+#[test]
+fn address_of_a_value_nothing_names_holds_it_both_tiers() {
+    for (f, args, expect) in [
+        ("w := type ( x := i64 ? ), g := fn () -> i64 ( p := &w(7), p@.x )", "g()", 7),
+        ("f := fn () -> i32 ( 7 ), g := fn () -> i32 ( p := &(f()), p@ )", "g()", 7),
+        ("g := fn (a := i32 ?) -> i32 ( p := &(a + 1), q := &(a + 2), p@ * 10 + q@ )", "g(3)", 45),
+        (
+            "g := fn (a := i32 ?) -> i32 ( mut s := i32 0, \
+             for i in 0..3 ( p := &(a + i), s = s + p@ ), s )",
+            "g(1)",
+            6,
+        ),
+        // A call that ends in a `return` is no place: `&` holds a copy of what it gives.
+        (
+            "get := fn (p := @i32 ?) -> i32 ( return p@ ), \
+             g := fn (a := @i32 ?) -> i32 ( p := &(get(a)), p@ = 9, a@ )",
+            "mut x := i32 3, g(&x)",
+            3,
+        ),
+        ("g := fn (a := @i32 ?) -> i32 ( p := &(a + 1), (p@ - 1)@ )", "mut x := i32 4, g(&x)", 4),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            assert_eq!(run_script(&format!("{f}, {compile}{args}")), expect, "{f} / {compile}");
+        }
+    }
+    assert_eq!(run_script("x := i32 3, p := &x:lex_rank, p@ == x:lex_rank"), 1);
 }
 
 #[test]

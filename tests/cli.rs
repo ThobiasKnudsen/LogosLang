@@ -2703,7 +2703,8 @@ fn a_binding_reads_its_frame_and_offset() {
 #[test]
 fn a_binding_s_fields_are_read_and_only_lex_rank_is_written() {
     // A write into `frame` or `offset` would move where `s` reads; `lex_rank` is the one
-    // field a program sets after the declaration.
+    // field a program sets after the declaration. `&` of a field holds a copy of what the line
+    // read, so a write through its address moves nothing.
     let (echoes, stderr) = repl(
         b"s := i32 5
 s:offset = 7
@@ -2711,6 +2712,7 @@ s:frame = s:scope
 s:scope = s:scope
 s:end = s:scope
           p := &s:offset
+p@ = 9
 s:lex_rank = 7
 s:lex_rank
 s
@@ -2718,7 +2720,7 @@ s
     );
     assert_eq!(echoes, ["7.0", "5"], "stderr: {stderr}");
     assert_eq!(stderr.matches("not an assignable place").count(), 4, "stderr: {stderr}");
-    assert_eq!(stderr.matches("`&` needs a variable").count(), 1, "stderr: {stderr}");
+    assert_eq!(stderr.matches("error").count(), 4, "stderr: {stderr}");
 }
 
 #[test]
@@ -3013,8 +3015,7 @@ fn only_a_marked_place_is_written_or_addressed() {
         ("i32 5 = 3\n", "not an assignable place"),
         ("mut a := 5\na = 6\n", "`5` is a literal with no storage"),
         ("mut a := 5\na = 6\n", "as in `mut x := i32 5`"),
-        ("x := &(i32 5)\n", "needs a variable"),
-        (&format!("{pw}\np := &(2 pw 3)\n"), "needs a variable"),
+        ("mut a := 5\np := &a\n", "needs a variable"),
     ] {
         let (_e, stderr) = repl(src.as_bytes());
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
@@ -3024,6 +3025,10 @@ fn only_a_marked_place_is_written_or_addressed() {
           mut a := type ?\nmut b := type ?\na = i32\nb = a\nb == i32\nmut d := dyad ?\nd = i32\nd.type == type\n",
     );
     assert_eq!(echoes, ["6", "7", "true", "true"], "stderr: {stderr}");
+    // A value nothing names is held in a place of its own, whose address `&` hands out.
+    let (echoes, stderr) =
+        repl(format!("x := &(i32 5)\nx@\n{pw}\np := &(2 pw 3)\np@\n").as_bytes());
+    assert_eq!(echoes, ["5", "6"], "stderr: {stderr}");
 }
 
 #[test]
@@ -4233,6 +4238,35 @@ fn a_plain_record_s_owner_runs_its_free_once() {
     // A later REPL line frees what an earlier one holds, and the session's end frees it no more.
     let (echoes, stderr) = repl(format!("{RECORD}\na := bag(13)\nfree a\n").as_bytes());
     assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
+}
+
+/// DESIGN ›Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of‹
+/// [[R162]].
+#[test]
+fn the_address_of_a_value_nothing_names_holds_it_to_the_scope_s_end() {
+    let g = "g := fn () -> i32 ( p := &bag(4), p@.n )";
+    for (tail, printed) in [
+        ("p := &bag(1), print «after», p@.n", "after\nfreed 1\n1\n"),
+        (&format!("{g}, print «before», g(), print «after»"), "before\nfreed 4\nafter\n"),
+        (
+            &format!("{g}, g.compile(), print «before», g(), print «after»"),
+            "before\nfreed 4\nafter\n",
+        ),
+        (
+            "for i in 0..2 ( p := &bag(i), print «in {p@.n}» ), print «end»",
+            "in 0\nfreed 0\nin 1\nfreed 1\nend\n",
+        ),
+        ("x := if true ( p := &bag(2), p@.n ) else ( 3 ), print «x {x}»", "freed 2\nx 2\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    // The scope's end frees it, so its address may not leave the scope, as a named one may not.
+    for tail in ["f := fn () -> @bag ( &bag(4) ), 1", "f := fn () -> @bag ( b := bag(4), &b ), 1"] {
+        let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("hands out the address of a name its scope holds"), "{tail}");
+    }
 }
 
 /// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹: "`free p@` does the same for
