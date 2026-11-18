@@ -3420,6 +3420,93 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
     }
 }
 
+/// DESIGN ›Source becomes runnable by interpretation, one token at a time; compilation is
+/// opt-in‹ [[R164]]: "runtime code keeps I/O", so a `print` in a compiled body writes what the
+/// interpreted one writes, each `{…}` read in the compiled frame (›`print «…»` is the output
+/// word‹ [[R304]]).
+#[test]
+fn a_print_in_a_compiled_body_writes_what_the_interpreted_one_writes() {
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let mut cases = Vec::new();
+    for compile in ["", "g.compile(), "] {
+        for (program, printed) in [
+            ("g := fn (k := i32 ?) -> i32 ( print «hi», k ), {compile}g(1)".to_string(), "hi\n1\n"),
+            ("g := fn (k := i32 ?) -> i32 ( print «hi {k}», k ), {compile}g(1)".to_string(), "hi 1\n1\n"),
+            (
+                "g := fn (k := i32 ?) -> i32 ( for i in 0..3 ( print «turn {i}» ), 0 ), {compile}g(1)"
+                    .to_string(),
+                "turn 0\nturn 1\nturn 2\n0\n",
+            ),
+            (
+                "g := fn (k := i32 ?) -> i32 ( mut s := i32 0, while s < k ( s = s + 1, \
+                 print «s {s}» ), s ), {compile}g(2)"
+                    .to_string(),
+                "s 1\ns 2\n2\n",
+            ),
+            (
+                "g := fn (k := f64 ?) -> f64 ( print «{k} {k > 1.0} {k * 2.0}», k ), {compile}g(1.5)"
+                    .to_string(),
+                "1.5 true 3.0\n1.5\n",
+            ),
+            ("g := fn (k := f32 ?) -> f32 ( print «{k}», k ), {compile}g(f32 2.5)".to_string(), "2.5\n2.5\n"),
+            (
+                "g := fn (k := u32 ?) -> u32 ( print «{k}», k ), {compile}g(4000000000)".to_string(),
+                "4000000000\n4000000000\n",
+            ),
+            ("g := fn (k := i8 ?) -> i8 ( print «{k}», k ), {compile}g(i8 -7)".to_string(), "-7\n-7\n"),
+            (
+                "g := fn (k := i64 ?) -> i64 ( print «{k} {-k}», k ), {compile}g(-7)".to_string(),
+                "-7 7\n-7\n",
+            ),
+            (
+                "g := fn (k := i32 ?) -> i32 ( print «{k} \\{b\\} {i32} {3} {k == 3} {k:name} \
+                 {k.type}», k ), {compile}g(3)"
+                    .to_string(),
+                "3 {b} i32 3 true k i32\n3\n",
+            ),
+            (
+                "top := i32 9, h := fn (k := i32 ?) -> i32 ( k * 2 ), g := fn (k := i32 ?) -> i32 \
+                 ( print «{top} {h(k)} { a := k + 1, a * 2 }», k ), {compile}g(4)"
+                    .to_string(),
+                "9 8 10\n4\n",
+            ),
+            (
+                "r := rational_number 1/3, g := fn (k := i32 ?) -> i32 ( print «{r}», k ), \
+                 {compile}g(3)"
+                    .to_string(),
+                "1/3\n3\n",
+            ),
+            (
+                "g := fn (k := @i32 ?) -> i32 ( print «{k@}», k@ ), x := i32 5, {compile}g(&x)"
+                    .to_string(),
+                "5\n5\n",
+            ),
+            (
+                "g := fn (k := i32 ?) -> i32 ( if (k > 2) ( print «big {k}» ) else \
+                 ( print «small {k}» ), k ), {compile}g(4), g(1)"
+                    .to_string(),
+                "big 4\nsmall 1\n1\n",
+            ),
+            (
+                "g := fn (k := i32 ?) -> i32 ( defer print «bye {k}», print «hi {k}», k ), \
+                 {compile}g(1)"
+                    .to_string(),
+                "hi 1\nbye 1\n1\n",
+            ),
+            (
+                format!(
+                    "{bag}, g := fn (k := i32 ?) -> i32 ( b := bag(k), print «made {{b.n}}», \
+                     b.n + 1 ), {{compile}}g(4)"
+                ),
+                "made 4\nfreed 4\n5\n",
+            ),
+        ] {
+            cases.push((program.replace("{compile}", compile), printed));
+        }
+    }
+    assert_runs(&cases);
+}
+
 #[test]
 fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
     for (src, printed) in [
@@ -4951,7 +5038,6 @@ fn a_return_frees_what_its_line_ends_after_it_compiled_or_not() {
 /// leaves run on the way out", and an `if`'s and a call's, in the same order on both tiers.
 #[test]
 fn a_return_ends_what_each_scope_if_and_call_it_leaves_holds_compiled_or_not() {
-    // `say` stays interpreted, so a compiled body can print through it.
     let fns = "say := fn (k := i32 ?) -> void ( print «say {k}» ), \
                f := fn (q := bag ?, m := i32 ?) -> i32 ( q.n + m ), \
                p := fn (q := @bag ?, k := i32 ?) -> i32 ( q@.n + k )";
