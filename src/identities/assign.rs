@@ -222,13 +222,10 @@ pub(super) fn build_store(
     }
     // Left: a place with an address, a frame's or a dereference's cell, a call place's
     // included, written through it whole.
-    let (lhs, lhs_d) = match place {
-        Some(Place::Call(call)) => {
-            // SAFETY: `call` came from `place_of`.
-            let cell = unsafe { call_place(store, types, call) };
-            (cell, cell)
-        }
-        _ => (lhs, lhs_d),
+    let lhs_d = match place {
+        // SAFETY: `call` came from `place_of`.
+        Some(Place::Call(call)) => unsafe { call_place(store, types, call) },
+        _ => lhs_d,
     };
     // SAFETY: `lhs_d` is a reduced dyad from the store.
     let (through_pointer, place_type) =
@@ -269,7 +266,10 @@ pub(super) fn build_store(
     let mint = unsafe {
         mint::of(store, types, op, &[place_type], types.void_, types.ops.put_leaf(carry))
     };
-    Ok(store.alloc_words(mint, &[lhs, rhs]))
+    // A frame's place stays the name, which lifting a `?`'s read veto reads; a cell is held as
+    // its dereference, which both tiers write through.
+    let written = if through_pointer { lhs_d } else { lhs };
+    Ok(store.alloc_words(mint, &[written, rhs]))
 }
 
 /// What `value` hands a place of `carry`: the word it runs to, or the address of its bytes.
