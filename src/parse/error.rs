@@ -72,6 +72,12 @@ pub enum ParseError {
     /// the type's spelling at the use and the failure rendered against the
     /// body's text.
     RunBodyFailed { name: String, rendered: String },
+    /// A `share` line a type that mints keeps could not be made for one of its mints; carries
+    /// the type's spelling at the use and the failure rendered against the line's text.
+    MintShareFailed { name: String, rendered: String },
+    /// `t.x` or a parse's `tape[0].x` where `x` is a `share` member each mint of `t` makes for
+    /// itself, so no mint is there to read it from.
+    PerMintMember(Box<String>),
     /// `tape[0].f` naming no field declared above; carries `f`.
     NoSuchField(Box<String>),
     /// `tape.is_constructed[k] = v` with a `v` that is no bool.

@@ -3,7 +3,7 @@
 
 //! The one mint maker: a type whose field is `?` makes one mint per set of field types its parse
 //! chooses, built once and kept on the type. A node's type is its mint, and the mint holds what its
-//! nodes share: the type they give back and what they run.
+//! nodes share: the type they give back, what they run, and its own `share` members.
 //! ›A type with a `run` whose field is `?` mints too, so its `run` body is parsed once per mint‹
 //! [[R301]]
 
@@ -155,6 +155,32 @@ pub(crate) unsafe fn output_type_of(t: DyadPtr) -> Option<DyadPtr> {
 /// As `is_mint`.
 pub(crate) unsafe fn shared_field(t: DyadPtr, name: &str) -> Option<DyadPtr> {
     output_type_of(t).filter(|t| name == SHARED_FIELD && !t.is_null())
+}
+
+/// The scope the mint `t`'s own `share` members are declared in; `None` when `t` is no mint or
+/// its members are not made yet.
+///
+/// # Safety
+/// As `is_mint`.
+pub(crate) unsafe fn shares_of(t: DyadPtr) -> Option<DyadPtr> {
+    is_mint(t).then(|| meta::mint_shares_of(t)).filter(|s| !s.is_null())
+}
+
+/// Whether `t`, or the type it is a mint of, keeps a `share` member `name` for each mint to
+/// make for itself.
+///
+/// # Safety
+/// As `is_mint`.
+pub(crate) unsafe fn keeps_share(t: DyadPtr, name: &str) -> bool {
+    let origin = origin(t);
+    if t.is_null() || meta::kind_of(origin) != Some(meta::RECORD_TAG) {
+        return false;
+    }
+    let kept = meta::kept_shares_of(origin);
+    !kept.is_null()
+        && array::items(kept)
+            .iter()
+            .any(|&pair| super::string::text(array::items(pair)[0]) == name.as_bytes())
 }
 
 /// What every node of the mint `t` runs; `None` when `t` is no mint.

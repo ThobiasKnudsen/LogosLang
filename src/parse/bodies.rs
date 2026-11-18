@@ -344,6 +344,10 @@ impl<'a> Parser<'a> {
             nested.push(scope);
         }
         let base_depth = nested.depth();
+        // The mint's own `share` members are names of its body, as its fields are.
+        if let Some(shares) = crate::identities::mint::shares_of(ty) {
+            nested.push(shares);
+        }
         let spec = self.rt.store.alloc_words(types.fn_type, &[std::ptr::null_mut(); FN_SLOTS]);
         crate::identities::run_body::insert(self.rt.store, types, held, key, spec);
 

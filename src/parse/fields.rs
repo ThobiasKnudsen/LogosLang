@@ -182,6 +182,10 @@ impl<'a> Parser<'a> {
                 return Ok(r.identity);
             }
             self.cx.pos = at;
+            let def = self.cx.definitions.last().expect("checked above");
+            if def.kept.iter().any(|(kept, _)| kept == name) {
+                return Err(ParseError::PerMintMember(Box::new(name.to_string())));
+            }
             return Err(ParseError::NoSuchField(Box::new(name.to_string())));
         };
         if let Some(def) = self.cx.definitions.last_mut() {
@@ -1422,6 +1426,9 @@ impl<'a> Parser<'a> {
             _ if self.per_node_field_of(logos, name) => {
                 Err(ParseError::PerNodeThroughType(name.to_string()))
             }
+            _ if crate::identities::mint::keeps_share(logos, name) => {
+                Err(ParseError::PerMintMember(Box::new(name.to_string())))
+            }
             _ => Err(ParseError::BadReflectRead),
         }
     }
@@ -1486,7 +1493,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The identity and binding of `logos`'s `share` member `name`, declared
-    /// in the definition body's scope.
+    /// in the definition body's scope, or for a mint in its own.
     ///
     /// # Safety
     /// `logos` must be a type identity node from the store.
@@ -1501,6 +1508,9 @@ impl<'a> Parser<'a> {
         }
         let mut members = ScopeStack::new();
         members.push(body);
+        if let Some(own) = crate::identities::mint::shares_of(logos) {
+            members.push(own);
+        }
         let r = members.resolve(self.trie, name).ok()?;
         Some((r.identity, r.binding))
     }

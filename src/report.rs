@@ -275,6 +275,13 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::SlotOutsideDefinition => {
             "a slot is filled on a line of the type body itself: `share parse_rank = …`, `share run = (…)`".into()
         }
+        ParseError::MintShareFailed { name, rendered } => {
+            format!("a `share` line of `{name}` could not be made for this mint:\n{rendered}")
+        }
+        ParseError::PerMintMember(name) => format!(
+            "`{name}` is a `share` member of a type that mints, one place per mint: read it \
+             through a node of the mint"
+        ),
         ParseError::PerNodeThroughType(name) => format!(
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),

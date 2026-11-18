@@ -329,6 +329,86 @@ fn the_power_demo_converts_a_whole_exponent_so_each_mint_has_one_result_type() {
     }
 }
 
+/// `p` mints one type per type of `v`; the `share` lines written below `v` are its mints'.
+fn per_mint(shares: &str, run: &str) -> String {
+    format!(
+        "p := type ( v := ?, share output_type := type ?, {shares}, share run = ( {run} ), \
+         share parse_rank = 60, share parse = ( tape[0].type = p, tape[0].v = tape[1], \
+         tape[0].output_type = tape[1].type, tape.remove(1), tape.is_constructed[0] = true ) )"
+    )
+}
+
+#[test]
+fn a_minting_types_share_lines_are_made_once_per_mint() {
+    let bump = "bump := fn () -> i32 ( print «bump», 1 )";
+    let g = per_mint("share g := bump()", "v");
+    let n = per_mint("share mut n := i32 0", "n = n + 1, v");
+    let counted =
+        "f := fn (x := i32 ?, y := f64 ?) -> i32 ( a := p x, b := p y, c := p x, (p x).n )";
+    for (src, want) in [
+        (
+            format!("{bump}, {g}, print «defined», x := i32 4, y := f64 2.0, print «{{p x}} {{p y}} {{p x}}»"),
+            "defined\nbump\nbump\n4 2.0 4",
+        ),
+        (
+            format!(
+                "{bump}, {g}, print «defined», \
+                 f := fn (x := i32 ?, y := f64 ?) -> i32 ( a := p x, b := p y, (p x).g ), \
+                 f.compile(), print «{{f(4, 2.0)}}»"
+            ),
+            "defined\nbump\nbump\n1",
+        ),
+        (
+            format!(
+                "{n}, x := i32 4, y := f64 2.0, a := p x, b := p y, c := p x, \
+                 print «{{(p x).n}} {{(p y).n}}»"
+            ),
+            "2 1",
+        ),
+        (format!("{n}, {counted}, print «{{f(4, 2.0)}} {{f(4, 2.0)}}»"), "2 4"),
+        (format!("{n}, {counted}, f.compile(), print «{{f(4, 2.0)}} {{f(4, 2.0)}}»"), "2 4"),
+        (
+            format!("{}, x := i32 4, print «{{p x}} {{(p x).k}}»", per_mint("share k := i32 7", "v + k")),
+            "11 7",
+        ),
+        (
+            format!(
+                "{}, x := i32 4, p x",
+                per_mint("share k := i32 7, share j := k + 1", "v + j")
+            ),
+            "12",
+        ),
+        (
+            format!(
+                "{}, x := i32 4, (p x).twice()",
+                per_mint("share twice := fn () -> i32 ( i32 2 )", "v")
+            ),
+            "2",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_minting_types_kept_share_line_is_refused_at_its_definition_or_its_mint() {
+    let shadowed = "`g` is already declared and still in scope";
+    for (src, expect) in [
+        ("g := i32 1, p := type ( v := ?, share g := i32 7 ), 0".to_string(), shadowed),
+        ("p := type ( v := ?, share g := i32 7, share g := i32 8 ), 0".to_string(), shadowed),
+        ("p := type ( v := ?, share g := i32 7, g := i32 ? ), 0".to_string(), shadowed),
+        (
+            format!("{}, x := i32 4, p x", per_mint("share k := nope", "v")),
+            "a `share` line of `p` could not be made for this mint",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
     let q = |conversion: &str| {
