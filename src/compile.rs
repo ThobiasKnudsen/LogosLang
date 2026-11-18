@@ -231,16 +231,26 @@ impl Lowerer<'_, '_> {
         self.place_addr_raw(node)
     }
 
-    /// The offset of a call-frame place in this call's activation record, what promotion
-    /// keys on; `None` for a program-frame place and for a literal's bytes.
+    /// The offset of a place of the compiled function's own frame in this call's activation
+    /// record, what promotion keys on; `None` for a program-frame place, another function's
+    /// place and a literal's bytes.
     ///
     /// # Safety
     /// `node` must be a valid dyad from the store.
     unsafe fn frame_offset(&self, node: DyadPtr) -> Option<usize> {
         match self.types.frame_of(node) {
-            Some((crate::binding::Frame::Call(_), off)) => Some(off),
-            Some((crate::binding::Frame::Root, _)) | None => None,
+            Some((crate::binding::Frame::Call(f), off)) if self.is_own_frame(f) => Some(off),
+            Some(_) | None => None,
         }
+    }
+
+    /// Whether a place of `f`'s frame lies in this call's: the two instance one record.
+    ///
+    /// # Safety
+    /// `f` must be a `fn` node from the store.
+    unsafe fn is_own_frame(&self, f: DyadPtr) -> bool {
+        !self.self_fn.is_null()
+            && crate::run::frame_record(f) == crate::run::frame_record(self.self_fn)
     }
 
     /// [`Self::place_addr`] without the analysis bookkeeping; the one place the
@@ -253,14 +263,14 @@ impl Lowerer<'_, '_> {
                 let base = self.load_at(self.ptr_ty, self.ctx, at);
                 Ok(self.builder.ins().iadd_imm(base, off as i64))
             }
-            // A call-frame place with no frame under it: the checked error the interpreter
-            // gives for the same shape, not a panic.
-            Some((crate::binding::Frame::Call(_), off)) => {
-                let Some(slot) = self.frame_slot else {
-                    return Err(CompileError::NoActivation);
-                };
-                Ok(self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32))
-            }
+            // A place of another function's frame, or of none under this code: the checked
+            // error the interpreter gives for the same shape, not a panic.
+            Some((crate::binding::Frame::Call(f), off)) => match self.frame_slot {
+                Some(slot) if self.is_own_frame(f) => {
+                    Ok(self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32))
+                }
+                _ => Err(CompileError::NoActivation),
+            },
             // A literal's own bytes: an immediate, since literals and the code are both per-run.
             None => Ok(self.builder.ins().iconst(self.ptr_ty, dyad::value(node) as usize as i64)),
         }

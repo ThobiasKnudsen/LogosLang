@@ -3842,6 +3842,26 @@ fn a_number_field_is_read_and_written_by_value_in_a_parse_body() {
 }
 
 #[test]
+fn a_function_local_is_read_only_inside_a_call_of_its_function() {
+    // A parse runs in a call of its own, and `f`'s body runs the node the parse built.
+    let pr = "pr := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, \
+              share run = ( lhs + rhs ), share parse_rank = *.parse_rank + 1, share parse = ( \
+              tape[0].type = pr, tape[0].lhs = tape[-1], tape[0].rhs = tape[0].lhs, \
+              tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )";
+    let sq = "sq := type ( share parse_rank = *.parse_rank + 1, share parse = ( n := i32 40, \
+              tape[0] = n + 1, tape.is_constructed[0] = true, tape.remove(-1) ) )";
+    for src in [
+        format!("{pr}, f := fn (x := i32 ?) -> i32 ( x pr ), f(4)"),
+        format!("{pr}, f := fn (x := i32 ?) -> i32 ( x pr ), f.compile(), f(4)"),
+        format!("{sq}, f := fn (y := i32 ?) -> i32 ( a := i32 91, b := i32 92, y sq ), f(3)"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("a function's local was read outside any call"), "{src}: {stderr}");
+    }
+}
+
+#[test]
 fn a_share_function_names_its_fields_bare() {
     let (code, _, stderr) =
         run_line("x := type ( n := u64 ?, share twice := fn () -> u64 ( n * 2 ) ), 1");

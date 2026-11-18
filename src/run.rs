@@ -10,7 +10,7 @@ use crate::dyad;
 use crate::dyad::{Dyad, DyadPtr};
 use crate::identities::by_copy;
 use crate::identities::read::{read_kind, Dispatch, Read};
-use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_OUTPUT};
+use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// What a `seed-native` callable's entry points at: takes the application
 /// node, returns its scalar result.
@@ -357,13 +357,25 @@ impl FrameStack {
 struct Activation {
     /// The frame's base: a place reads `base + offset`.
     base: *mut u8,
+    /// The [`frame_record`] of the `fn` this frame is a call of; null for the program's.
+    record: DyadPtr,
     cursors: Vec<(DyadPtr, usize)>,
 }
 
 impl Activation {
-    fn new(base: *mut u8) -> Self {
-        Activation { base, cursors: Vec::new() }
+    fn new(base: *mut u8, record: DyadPtr) -> Self {
+        Activation { base, record, cursors: Vec::new() }
     }
+}
+
+/// The record a call of the `fn` node `f` is an instance of: its input record, which each
+/// `fn` parses for itself and a copy of `f` shares. ›A scope lays out its declarations; a
+/// use reaches the offset through its binding‹ [[R294]].
+///
+/// # Safety
+/// `f` must be a `fn` node from the store.
+pub(crate) unsafe fn frame_record(f: DyadPtr) -> DyadPtr {
+    *(dyad::value(f) as *const DyadPtr).add(FN_INPUT)
 }
 
 /// A running evaluation. Operand computation rides the Rust call stack; the
@@ -448,7 +460,7 @@ impl<'a> Runtime<'a> {
             types,
             live_allocs: 0,
             stack: FrameStack::new(),
-            activations: vec![Activation::new(store.arena_base())],
+            activations: vec![Activation::new(store.arena_base(), std::ptr::null_mut())],
             compiler: None,
             store,
             lexer: None,
@@ -709,8 +721,9 @@ impl<'a> Runtime<'a> {
 
     /// The machine address a place denotes: its offset from the program frame's base or
     /// from the innermost call's, for storage reached through a binding; a literal's own
-    /// bytes otherwise. `None`: a call-frame place with no call in progress (parse-time
-    /// evaluation), which callers map to [`RunError::NoActivation`].
+    /// bytes otherwise. `None`: a call-frame place read where the innermost call is not of
+    /// its function, as in parse-time evaluation or a node another call runs, which
+    /// callers map to [`RunError::NoActivation`].
     ///
     /// # Safety
     /// `node` must be a valid place node.
@@ -718,17 +731,13 @@ impl<'a> Runtime<'a> {
         let node = self.through(node);
         match self.types.frame_of(node) {
             Some((crate::binding::Frame::Root, off)) => Some(self.store.arena_at(off)),
-            Some((crate::binding::Frame::Call(_), off)) => {
-                self.in_call().then(|| self.frame_base().add(off))
+            Some((crate::binding::Frame::Call(f), off)) => {
+                let top = self.activations.last().expect("the program frame is never popped");
+                (top.record == frame_record(f)).then(|| top.base.add(off))
             }
             // A literal's own bytes.
             None => Some(dyad::value(node)),
         }
-    }
-
-    /// The innermost frame's base.
-    fn frame_base(&self) -> *mut u8 {
-        self.activations.last().expect("the program frame is never popped").base
     }
 
     /// `width` zeroed bytes for a result nobody named, live until the line that made it
@@ -808,7 +817,7 @@ impl<'a> Runtime<'a> {
             return Err(e);
         }
         self.ctx.depth += 1;
-        self.activations.push(Activation::new(base));
+        self.activations.push(Activation::new(base, frame_record(f)));
         let mut result = match self.run(body) {
             Err(RunError::Return(v)) => Ok(v),
             other => other,
