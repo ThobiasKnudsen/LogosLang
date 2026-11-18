@@ -282,6 +282,8 @@ pub enum ParseError {
     NoSuchSlot(String),
     /// A type body with an `own` field and no `free = (…)` to free it.
     OwningFieldNeedsFree,
+    /// `output_type` declared per node in a type with a `?` field, which keeps it on each mint.
+    OutputTypeNotShared,
     /// `own @T ?` on a parameter, which would consume the caller's argument.
     OwnParameterNotInSeed,
     /// A `move` or `free` inside a loop or `fn` body names a place declared

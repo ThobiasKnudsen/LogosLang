@@ -156,7 +156,7 @@ fn construct(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
     let types = p.types();
-    // A number type reads `lossy` itself: stand-in for #212.
+    // A number type reads `lossy` itself: stand-in for #260.
     let right = p.cell_at(tape, 1)?;
     let lossy = matches!(right, Some(c) if !c.constructed && c.identity(types) == types.lossy);
     let at = if lossy { 2 } else { 1 };

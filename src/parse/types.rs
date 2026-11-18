@@ -658,6 +658,18 @@ impl<'a> Parser<'a> {
         if !held.is_empty() {
             return Err(ParseError::DeferInTypeBody);
         }
+        // ›A node's output type is written by its parse, on the mint for a type that mints‹
+        // [[R194]].
+        // SAFETY: `fields` is the block's array node and `bindings` their bindings.
+        let per_node_output = unsafe {
+            crate::identities::mint::has_untyped_field(crate::identities::array::items(fields))
+                && bindings
+                    .iter()
+                    .any(|&b| Binding::spelling(b) == crate::identities::mint::SHARED_FIELD)
+        };
+        if per_node_output {
+            return Err(ParseError::OutputTypeNotShared);
+        }
         self.expect_close()?;
         // SAFETY: the bindings were just minted for these fields; `def.self_type` is the type node.
         let size_bytes = unsafe { lay_out_fields(self.types, def.self_type, fields, &bindings) };
@@ -1088,19 +1100,22 @@ impl<'a> Parser<'a> {
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN
     /// ›Deferral is authored‹): the function for its field-type set, found on
-    /// the type or built now; a field whose type is unknown leaves the slot empty.
+    /// the type or built now, held by the node's mint where its type mints (›A type with a
+    /// `run` whose field is `?` mints too, so its `run` body is parsed once per mint‹
+    /// [[R301]]), else in the node; a field whose type is unknown leaves it unresolved.
     ///
     /// # Safety
-    /// `node` must be the node `run_logos_ctor` minted for a type whose
-    /// record carries a run body, `[field…, null, spec]`.
+    /// `node` must be the node `run_logos_ctor` minted for a type whose record carries a run
+    /// body, or for one of its mints.
     pub(crate) unsafe fn resolve_specialization(
         &mut self,
         node: DyadPtr,
         at: usize,
         spelling: &str,
     ) -> Result<Option<DyadPtr>, ParseError> {
-        let ty = dyad::ty(node);
-        let held = crate::identities::meta::run_body_of(ty);
+        use crate::identities::{meta, mint, run_body};
+        let ty = mint::origin(dyad::ty(node));
+        let held = meta::run_body_of(ty);
         if held.is_null() {
             return Ok(None);
         }
@@ -1112,11 +1127,15 @@ impl<'a> Parser<'a> {
                 return Err(e);
             }
         };
-        let mut spec = crate::identities::run_body::lookup(held, &key);
+        let mint = mint::takes_mint(ty).then(|| mint::stamp(self.rt.store, self.types, node, &key));
+        let mut spec = run_body::lookup(held, &key);
         if spec.is_null() {
-            spec = self.construct_run_body(ty, held, &key, at, spelling)?;
+            spec = self.construct_run_body(mint.unwrap_or(ty), held, &key, at, spelling)?;
         }
-        crate::identities::run_body::set_spec(node, spec);
+        match mint {
+            Some(mint) => meta::install_mint_op(mint, spec),
+            None => run_body::set_spec(node, spec),
+        }
         // The node is a call of the function: a use of every outer name the
         // body reads, checked before a comptime node runs it.
         if let Err(e) = self.check_call_reads(spec) {
@@ -1200,12 +1219,12 @@ impl<'a> Parser<'a> {
         Ok(Some(folded))
     }
 
-    /// One type per instance field in order (DESIGN ›Execution is function
-    /// application‹): a typed field's type, a `type` field's held type, or for
-    /// an untyped hole the written value's type. `None` while one is unknown.
+    /// The node's field types (`run_body::field_types`), once each typed field holds its
+    /// operand at its type and each bracket field the bracket as an argument. `None` while one
+    /// is unknown.
     ///
     /// # Safety
-    /// As `resolve_specialization`; `ty` the node's type.
+    /// As `resolve_specialization`; `ty` the node's type's origin.
     unsafe fn field_type_key(
         &mut self,
         ty: DyadPtr,
@@ -1214,43 +1233,25 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
         let slots = dyad::value(node) as *mut DyadPtr;
-        let mut key = Vec::with_capacity(fields.len());
         for (i, &field) in fields.iter().enumerate() {
             let declared = crate::identities::hole::type_in(field);
             let slot = *slots.add(i);
             if slot.is_null() {
                 return Ok(None);
             }
-            let entry = if declared == types.type_ {
-                let held = types.through(slot);
-                if !crate::identities::is_type_value(types, held) {
-                    return Ok(None);
-                }
-                held
-            } else if !declared.is_null()
-                // A field typed as a bracket holds its lines, evaluated as an untyped one's.
-                && declared != types.square_brackets
-                && declared != types.scope
-            {
+            if declared == types.type_ {
+                continue;
+            }
+            // A field typed as a bracket holds its lines, evaluated as an untyped one's.
+            if !declared.is_null() && declared != types.square_brackets && declared != types.scope {
                 *slots.add(i) = crate::identities::land(self.rt.store, types, slot, declared)?;
-                declared
-            } else if let Some(bracket) = crate::identities::tape::bracket_kind(types, slot) {
-                if dyad::ty(slot) != types.tape.bracket_arg {
-                    *slots.add(i) =
-                        crate::identities::tape::build_bracket_arg(self.rt.store, types, slot)?;
-                }
-                bracket
-            } else {
-                // The operand's value at its own type: a literal's is `rational_number`, its
-                // bytes the value the call copies.
-                let given = crate::identities::read::value_type(types, slot)?;
-                if given.is_null() {
-                    return Ok(None);
-                }
-                given
-            };
-            key.push(entry);
+            } else if crate::identities::tape::bracket_kind(types, slot).is_some()
+                && dyad::ty(slot) != types.tape.bracket_arg
+            {
+                *slots.add(i) =
+                    crate::identities::tape::build_bracket_arg(self.rt.store, types, slot)?;
+            }
         }
-        Ok(Some(key))
+        crate::identities::run_body::field_types(types, ty, node)
     }
 }

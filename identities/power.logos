@@ -2,14 +2,17 @@
 # used in the same file, and compiled with f.compile().
 #
 # An operator is a type, and its body describes one level: the operands as named
-# fields, the output the parse writes per node, the run every node shares (a bare
-# body over the fields), where `^` binds (parse_rank), which way it associates,
-# and its one parse, a body over the parsing tape `tape`. The parse makes its own
-# cell a new ^ node with tape[0].type = ^ and fills it by name, tape[0].lhs; the
-# node it built runs and is never parsed again. The run names the fields bare. It
-# is lexed once here and constructed once per set of field types a ^ node is built
-# with, so `^` over i32 and over f64 is this one definition. A node's fields are
-# read through the graph, b:start.rhs.lhs for b := a ^ c, and that runs nothing.
+# fields, the type its nodes give back, the run every node shares (a bare body over
+# the fields), where `^` binds (parse_rank), which way it associates, and its one
+# parse, a body over the parsing tape `tape`. The parse makes its own cell a new ^
+# node with tape[0].type = ^ and fills it by name, tape[0].lhs; the node it built
+# runs and is never parsed again. The fields' types choose the node's mint, `^`
+# over i32 one and over f64 another. A whole exponent is converted to i64 first, so
+# x ^ 2 and x ^ n share a mint and x ^ 0.5 has its own. The parse writes the mint's
+# output_type, a `share` member: one place per mint. The run names the fields bare. It is lexed once
+# here and constructed once per mint, so both mints are this one definition. A
+# node's fields are read through the graph, b:start.rhs.lhs for b := a ^ c, and
+# that runs nothing.
 #
 # A whole exponent multiplies, a negative one divides; any other exponent goes
 # through exp and ln, in exp.logos and ln.logos. A float on either side, or a fraction as
@@ -21,19 +24,23 @@ import exp.logos,
 ^ := type (
     lhs := ?,
     rhs := ?,
-    output_type := type ?,
+    share output_type := type ?,
 
     share parse_rank = *.parse_rank + 1,
     share associativity = right,
     share parse = (
         tape[0].type = ^,
         tape[0].lhs = tape[-1],
-        tape[0].rhs = tape[1],
+        if tape[1].type ⊆ i64 (
+            tape[0].rhs = i64 (tape[1])
+        ) else (
+            tape[0].rhs = tape[1]
+        ),
         if tape[-1].type == f64 or tape[1].type == f64 (
             tape[0].output_type = f64
         ) else if tape[-1].type == f32 or tape[1].type == f32 (
             tape[0].output_type = f32
-        ) else if tape[1].type == rational_number and not (tape[1].type ⊆ i64) (
+        ) else if tape[0].rhs.type == rational_number (
             tape[0].output_type = f64
         ) else (
             tape[0].output_type = tape[-1].type

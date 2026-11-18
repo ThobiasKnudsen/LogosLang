@@ -164,6 +164,21 @@ impl<'a> Parser<'a> {
             let mut members = ScopeStack::new();
             members.push(body);
             if let Ok(r) = members.resolve(self.trie, name) {
+                // A type with a `?` field keeps its `output_type` on each of its mints, one
+                // place per mint, which its parse writes (›A type without a `run` whose field
+                // is `?` mints one type per set of field types, as `array` mints one per
+                // element type‹ [[R300]]).
+                let in_parse = self.cx.definitions.last().is_some_and(|d| d.in_parse);
+                // SAFETY: the block's items are field declaration dyads from the store.
+                let mints = unsafe { crate::identities::mint::has_untyped_field(&items) };
+                if in_parse && mints && name == crate::identities::mint::SHARED_FIELD {
+                    let types = self.types;
+                    return Ok(crate::identities::this::build_mint_output(
+                        self.rt.store,
+                        types,
+                        this,
+                    ));
+                }
                 return Ok(r.identity);
             }
             self.cx.pos = at;
@@ -273,8 +288,7 @@ impl<'a> Parser<'a> {
         let slot = match meta::kind_of(ty) {
             Some(meta::TUPLE_TAG | meta::LIST_TAG) => (0..meta::arity_of(ty))
                 .find(|&i| crate::reflect::text_of(meta::role_of(ty, i)) == name.as_bytes()),
-            // `[field…, null, spec]`: the fields are the nodes the constructor filled,
-            // for every node a Logos-written `parse` built.
+            // The fields are the first words of every node a Logos-written `parse` built.
             Some(meta::RECORD_TAG)
                 if !meta::run_body_of(ty).is_null() || self.is_logos_ctor(ty) =>
             {

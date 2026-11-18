@@ -22,8 +22,10 @@
 //! [66..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
-//!                                 none), then arity × `dyad@` role-name strings; a mint's
-//!                                 then `[output_type, op]`, the words its nodes share
+//!                                 none), then arity × `dyad@` role-name strings
+//!              RECORD            see `RECORD_TAG`
+//!            a mint's is its origin's, no op or output slot, then `[output_type, op]`, the
+//!            words its nodes share
 //! ```
 //!
 //! The kind byte continues `numtype`'s tag space (`NumType` 0–9, `VOID_TAG` 10,
@@ -161,24 +163,38 @@ pub(crate) fn operand_record(
     cx.store.alloc_bytes(&blob)
 }
 
-/// A mint's record: `origin`'s operand record, its roles the same strings, with no op slot and
-/// no output slot, then the words every node of the mint shares.
+/// A mint's record: an operand record's roles with no op slot and no output slot, or a
+/// Logos-written type's whole record, its parse, run body and layout, so its nodes are read as
+/// its origin's; then the words every node of the mint shares. Its memo of mints and its `@T`
+/// are its own.
 ///
 /// # Safety
-/// `origin` must carry a `TUPLE_TAG` operand record.
+/// `origin` must carry a `TUPLE_TAG` operand record or a `RECORD_TAG` record.
 pub(crate) unsafe fn mint_record(
     store: &mut Store,
     origin: DyadPtr,
     output_type: DyadPtr,
     op: DyadPtr,
 ) -> *mut u8 {
-    debug_assert_eq!(kind_of(origin), Some(TUPLE_TAG), "a mint's nodes are fixed operand runs");
-    let arity = arity_of(origin);
-    let mut blob = header(TUPLE_TAG, Assoc::Left, prec::INERT).to_vec();
+    let kind = kind_of(origin).expect("a mint's origin carries a record");
+    let mut blob = if kind == RECORD_TAG {
+        let mut whole =
+            std::slice::from_raw_parts(dyad::head(origin), PAYLOAD_OFF + RECORD_PAYLOAD).to_vec();
+        for off in [MINTS_OFF, POINTER_TYPE_OFF] {
+            whole[off..off + 8].fill(0);
+        }
+        whole
+    } else {
+        header(kind, Assoc::Left, prec::INERT).to_vec()
+    };
     blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(origin as usize).to_ne_bytes());
-    blob.extend_from_slice(&[arity as u8, NO_SLOT, NO_SLOT]);
-    for i in 0..arity {
-        blob.extend_from_slice(&(role_of(origin, i) as usize).to_ne_bytes());
+    if kind != RECORD_TAG {
+        debug_assert_eq!(kind, TUPLE_TAG, "a built-in's mint's nodes are fixed operand runs");
+        let arity = arity_of(origin);
+        blob.extend_from_slice(&[arity as u8, NO_SLOT, NO_SLOT]);
+        for i in 0..arity {
+            blob.extend_from_slice(&(role_of(origin, i) as usize).to_ne_bytes());
+        }
     }
     for word in [output_type, op] {
         blob.extend_from_slice(&(word as usize).to_ne_bytes());
@@ -211,27 +227,45 @@ pub(crate) unsafe fn mint_of(id: DyadPtr) -> DyadPtr {
 const MINT_OUTPUT: usize = 0;
 const MINT_OP: usize = 1;
 
+/// Where the mint's `k`th shared word lies, after its payload.
+///
 /// # Safety
 /// `id` must be a mint (`mint_of` non-null), its record from `mint_record`.
-unsafe fn mint_word(id: DyadPtr, k: usize) -> DyadPtr {
-    let at = ROLES_OFF + (arity_of(id) + k) * std::mem::size_of::<DyadPtr>();
-    std::ptr::read_unaligned(dyad::head(id).add(at) as *const DyadPtr)
+unsafe fn mint_word_at(id: DyadPtr, k: usize) -> *mut DyadPtr {
+    let words = match kind_of(id) {
+        Some(RECORD_TAG) => PAYLOAD_OFF + RECORD_PAYLOAD,
+        _ => ROLES_OFF + arity_of(id) * std::mem::size_of::<DyadPtr>(),
+    };
+    dyad::head(id).add(words + k * std::mem::size_of::<DyadPtr>()) as *mut DyadPtr
 }
 
-/// The type every node of the mint gives back.
+/// The type every node of the mint gives back; null while it is not known.
 ///
 /// # Safety
-/// As `mint_word`.
+/// As `mint_word_at`.
 pub(crate) unsafe fn mint_output_of(id: DyadPtr) -> DyadPtr {
-    mint_word(id, MINT_OUTPUT)
+    mint_word_at(id, MINT_OUTPUT).read_unaligned()
 }
 
-/// The machine operation every node of the mint runs.
+/// What every node of the mint runs: a built-in's machine operation, or the function a
+/// Logos-written type's `run` body was built into for the mint; null until it is built.
 ///
 /// # Safety
-/// As `mint_word`.
+/// As `mint_word_at`.
 pub(crate) unsafe fn mint_op_of(id: DyadPtr) -> DyadPtr {
-    mint_word(id, MINT_OP)
+    mint_word_at(id, MINT_OP).read_unaligned()
+}
+
+/// # Safety
+/// As `mint_word_at`; `output_type` a type node.
+pub(crate) unsafe fn install_mint_output(id: DyadPtr, output_type: DyadPtr) {
+    mint_word_at(id, MINT_OUTPUT).write_unaligned(output_type);
+}
+
+/// # Safety
+/// As `mint_word_at`; `run` a `fn` node.
+pub(crate) unsafe fn install_mint_op(id: DyadPtr, run: DyadPtr) {
+    mint_word_at(id, MINT_OP).write_unaligned(run);
 }
 
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
@@ -326,6 +360,7 @@ pub(crate) unsafe fn install_bracket_builder(id: DyadPtr, builder: DyadPtr) {
 }
 
 const FIELD_BINDINGS_OFF: usize = PAYLOAD_OFF + 48;
+const RECORD_PAYLOAD: usize = 56;
 
 /// The array of the fields' bindings, in the order of `record_fields_of`, each carrying its
 /// field's offset in a value (DESIGN ›A scope lays out its declarations; a use reaches the

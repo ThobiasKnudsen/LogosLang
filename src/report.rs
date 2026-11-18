@@ -387,6 +387,11 @@ pub fn parse_message(e: &ParseError) -> String {
              type body does not fill"
                 .into()
         }
+        ParseError::OutputTypeNotShared => {
+            "a type with a `?` field mints one type per set of field types, and each mint keeps \
+             its own `output_type`: declare it `share output_type := type ?`"
+                .into()
+        }
         ParseError::OwnParameterNotInSeed => {
             "an `own` parameter, which takes its argument's ownership, is not in the seed yet".into()
         }
@@ -482,6 +487,11 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoThis => "no value holds this field here".into(),
         RunError::FieldBeforeStamp => {
             "`tape[0]` still holds the type: `tape[0].type = T` makes it a new node first".into()
+        }
+        RunError::MintUnchosen => {
+            "the node's mint is chosen from its fields' types when the parse writes \
+             `tape[0].output_type`: write every field first, and read `output_type` after"
+                .into()
         }
         RunError::UnfilledField(i) => format!(
             "field {} of this node's type body was never written by its constructor",
