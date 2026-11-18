@@ -3981,11 +3981,48 @@ fn a_written_conversion_is_checked_as_an_unwritten_one() {
 
 #[test]
 fn lossy_stands_only_between_a_number_type_and_its_value() {
-    for src in ["x := lossy (f64 2.5)", "m := f64 2.5, i32 lossy m", "lossy 1"] {
+    for src in ["x := lossy (f64 2.5)", "lossy 1", "x := i32 lossy, 0", "n := i32 lossy ?, 0"] {
         assert_eq!(script_parse_err(src), ParseError::LossyOutOfPlace, "{src}");
     }
     assert_eq!(parse_err("i32 lossy (true)"), ParseError::TypeMismatch);
     assert_eq!(parse_err("i32 lossy (1, 2)"), ParseError::BadCast);
+}
+
+#[test]
+fn a_number_type_takes_the_name_to_its_right() {
+    diff_typed_call("fn (n := i32 ?) -> i64 ( i64 n )", "f(4)", 4);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( i32 n )", "f(-4)", -4);
+    diff_typed_call("fn (n := i32 ?) -> f64 ( f64 n )", "f(4)", 4.0f64.to_bits() as i64);
+    diff_typed_call("fn (n := i32 ?) -> i64 ( i64 n + i64 1 )", "f(4)", 5);
+    diff_typed_call("fn (n := f64 ?) -> i32 ( i32 lossy n )", "f(2.5)", 2);
+    assert_eq!(run_script("m := i32 3, x := alloc 1 of i32 m, x@"), 3);
+    assert_eq!(run_script("m := i32 3, mut y := i32 0, y = i32 m, y"), 3);
+    assert_eq!(run_script("r := 3, i32 r"), 3);
+    assert_eq!(run_script("r := rational_number 1/3, i32 lossy r"), 0);
+    for src in [
+        "m := i64 3, i32 m",
+        "m := f64 3, i32 m",
+        "m := i32 3, rational_number m",
+        "r := rational_number 6, i32 r",
+        "m := i32 3, i32 true",
+        "i32 «5»",
+    ] {
+        assert_eq!(script_parse_err(src), ParseError::TypeMismatch, "{src}");
+    }
+}
+
+#[test]
+fn a_type_takes_a_value_still_to_be_finished_only_bracketed() {
+    let pt = "pt := type (a := i32 ?, b := i32 ?), p := pt(7, 8)";
+    for src in [
+        format!("{pt}, i32 p.a"),
+        "m := i32 3, q := &m, i32 q@".to_string(),
+        "g := fn (a := i32 ?) -> i32 ( a + 1 ), i32 g(3)".to_string(),
+        "c := true, i64 if c (i32 1) else (i64 2)".to_string(),
+    ] {
+        assert_eq!(script_parse_err(&src), ParseError::UnfinishedOperand, "{src}");
+    }
+    assert_eq!(run_script(&format!("{pt}, i32 (p.a)")), 7);
 }
 
 #[test]
