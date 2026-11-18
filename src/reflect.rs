@@ -513,13 +513,8 @@ mod tests {
                 assert_eq!(meta::arity_of(id), arity);
                 assert_eq!(meta::output_slot_of(id), Some(arity - 1));
             }
-            for (id, arity) in [
-                (core.while_, 3),
-                (core.for_, 6),
-                (core.storeptr_, 5),
-                (core.return_, 3),
-                (core.if_, 7),
-            ] {
+            for (id, arity) in [(core.while_, 3), (core.for_, 6), (core.return_, 3), (core.if_, 7)]
+            {
                 assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
                 assert_eq!(meta::arity_of(id), arity);
                 assert_eq!(meta::output_slot_of(id), None);

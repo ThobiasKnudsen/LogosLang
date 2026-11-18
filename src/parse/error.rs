@@ -122,8 +122,11 @@ pub enum ParseError {
     UncomputableLiteral,
     /// Arithmetic on plain numbers with no value: a division by zero, or past an `i64` fraction.
     LiteralArithmetic,
-    /// `lossy` not between a number type and a bracketed value or a plain number.
+    /// `lossy` not between a number type and the value it converts.
     LossyOutOfPlace,
+    /// A type before a value that a tight read, a call or an `if` is still to finish, which the
+    /// seed takes only bracketed.
+    UnfinishedOperand,
     /// A `return` with no function around it to leave.
     ReturnOutsideFunction,
     /// A node that gives nothing (a statement, a `-> void` call) stood where a value is

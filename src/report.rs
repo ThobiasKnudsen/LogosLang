@@ -103,6 +103,11 @@ pub fn parse_message(e: &ParseError) -> String {
              `f64 lossy 0.1`"
                 .into()
         }
+        ParseError::UnfinishedOperand => {
+            "a type takes the value to its right once that value is finished, which is not built \
+             here yet: write the brackets, as `i64 (p.a)`"
+                .into()
+        }
         ParseError::ReturnOutsideFunction => "`return` is written only inside a function".into(),
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),

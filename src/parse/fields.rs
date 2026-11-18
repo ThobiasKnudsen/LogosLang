@@ -921,9 +921,7 @@ impl<'a> Parser<'a> {
         let node = self.operand_dyad(cell)?;
         // SAFETY: `node` is a resolved dyad from the store.
         let addr = unsafe {
-            use crate::identities::read::{
-                is_lex_rank_field, output_type, place_kind, place_node, Read,
-            };
+            use crate::identities::read::{output_type, place_kind, place_node, Read};
             let types = self.types;
             let addressed = |p: DyadPtr| {
                 (types.is_storage(p) || dyad::ty(p) == types.deref_)
@@ -932,9 +930,7 @@ impl<'a> Parser<'a> {
                         Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
                     )
             };
-            let Some(place) = place_node(self.rt.store, types, node)
-                .or_else(|| is_lex_rank_field(types, node).then_some(node))
-                .filter(|&p| addressed(p))
+            let Some(place) = place_node(self.rt.store, types, node).filter(|&p| addressed(p))
             else {
                 return Err(ParseError::BadAddressOf);
             };

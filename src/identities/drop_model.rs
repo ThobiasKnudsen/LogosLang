@@ -782,17 +782,15 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     if !pointee.is_null() {
         return Err(CompileError::NotLowerable(node));
     }
-    // SAFETY: `place` is a reduced dyad from the store; a deref node's parts are valid.
+    // A frame's place needs no code to reach, and taking its address would keep it out of a
+    // register.
+    // SAFETY: `place` is a node `read::place_node` gave.
     unsafe {
-        if dyad::ty(place) == lw.types().deref_ {
-            let addr = lw.lower(super::pointer::deref_parts(place).0)?;
-            return lw.guard_non_null(addr, types::I32, |s| Ok(s.const_i32(0)));
+        if lw.types().is_storage(place) {
+            return Ok(lw.const_i32(0));
         }
-        if super::this::is_field_read(lw.types(), place) {
-            return Err(CompileError::NotLowerable(node));
-        }
+        super::pointer::lower_at_place(lw, place, types::I32, |s, _| Ok(s.const_i32(0)))
     }
-    Ok(lw.const_i32(0))
 }
 
 /// # Safety
@@ -1043,7 +1041,7 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
 /// # Safety
 /// `place` must be a name laid out in the frame `rt` runs, a cell, or an owning field's slot.
 unsafe fn take_held(rt: &mut Runtime, place: DyadPtr, ty: DyadPtr) -> Result<i64, RunError> {
-    let slot = owned_slot(rt, place)?;
+    let slot = super::pointer::place_addr(rt, place)?;
     if slot.is_null() {
         return Err(RunError::Uninitialized);
     }
@@ -1298,7 +1296,7 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_teardown(rt: &mut Runtime, place: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `place` is a place of an owning pointer type.
     unsafe {
-        let slot = owned_slot(rt, place)?;
+        let slot = super::pointer::place_addr(rt, place)?;
         if slot.is_null() {
             return Err(RunError::Uninitialized);
         }
@@ -1330,7 +1328,7 @@ fn run_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let slots = dyad::value(node) as *const DyadPtr;
         let place = *slots.add(TEARDOWN_PLACE);
         if (*slots.add(TEARDOWN_POINTEE)).is_null() {
-            reached_slot(rt, place)?;
+            super::pointer::place_addr(rt, place)?;
             return Ok(0);
         }
         let dtor = meta::destructor_of(super::read::output_type(rt.types(), place));
@@ -1423,33 +1421,6 @@ fn run_value_release(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Where an owned value's address lies: a name's place, the cell a dereference reaches, or
-/// the slot of an owning field, which holds the node itself.
-///
-/// # Safety
-/// `place` must be the place operand of a `move` or `free` node.
-unsafe fn owned_slot(rt: &mut Runtime, place: DyadPtr) -> Result<*mut u8, RunError> {
-    match reached_slot(rt, place)? {
-        Some(slot) => Ok(slot),
-        None => rt.place_addr(place).ok_or(RunError::NoActivation),
-    }
-}
-
-/// The cell a dereference reaches or the field a field read reaches, found by running the code
-/// that leads there; `None` for a place a frame holds, found by its offset alone.
-///
-/// # Safety
-/// As `owned_slot`.
-unsafe fn reached_slot(rt: &mut Runtime, place: DyadPtr) -> Result<Option<*mut u8>, RunError> {
-    if dyad::ty(place) == rt.types().deref_ {
-        return super::pointer::deref_addr(rt, place).map(Some);
-    }
-    if super::this::is_field_read(rt.types(), place) {
-        return super::this::field_addr(rt, place).map(Some);
-    }
-    Ok(None)
-}
-
 /// A move reads the value; the parse ended a moved name or field, whose place is NULL from
 /// here when it holds an address, so a line that fails later finds nothing there (DESIGN
 /// ›`move` and `free` take a field path too‹).
@@ -1461,7 +1432,7 @@ fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let value = rt.run(place)?;
         let types = rt.types();
         if dyad::ty(place) != types.binding_ || holds_by_address(types, types.type_of(place)) {
-            let slot = owned_slot(rt, place)?;
+            let slot = super::pointer::place_addr(rt, place)?;
             std::ptr::write_unaligned(slot as *mut i64, 0);
         }
         Ok(value)
