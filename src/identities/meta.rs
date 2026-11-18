@@ -161,8 +161,9 @@ pub(crate) fn operand_record(
 }
 
 /// A mint's record: an operand record's roles with no op slot and no output slot, or a
-/// Logos-written type's parse, run body and layout, so its nodes are read as its origin's;
-/// then the words every node of the mint shares.
+/// Logos-written type's whole record, its parse, run body and layout, so its nodes are read as
+/// its origin's; then the words every node of the mint shares. Its memo of mints and its `@T`
+/// are its own.
 ///
 /// # Safety
 /// `origin` must carry a `TUPLE_TAG` operand record or a `RECORD_TAG` record.
@@ -173,17 +174,18 @@ pub(crate) unsafe fn mint_record(
     op: DyadPtr,
 ) -> *mut u8 {
     let kind = kind_of(origin).expect("a mint's origin carries a record");
-    let mut blob = header(kind, Assoc::Left, prec::INERT).to_vec();
-    blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(origin as usize).to_ne_bytes());
-    if kind == RECORD_TAG {
-        for off in [CTOR_OFF, RUN_BODY_OFF] {
-            let word = std::ptr::read_unaligned(dyad::head(origin).add(off) as *const usize);
-            blob[off..off + 8].copy_from_slice(&word.to_ne_bytes());
+    let mut blob = if kind == RECORD_TAG {
+        let mut whole =
+            std::slice::from_raw_parts(dyad::head(origin), PAYLOAD_OFF + RECORD_PAYLOAD).to_vec();
+        for off in [MINTS_OFF, POINTER_TYPE_OFF] {
+            whole[off..off + 8].fill(0);
         }
-        let payload =
-            std::slice::from_raw_parts(dyad::head(origin).add(PAYLOAD_OFF), RECORD_PAYLOAD);
-        blob.extend_from_slice(payload);
+        whole
     } else {
+        header(kind, Assoc::Left, prec::INERT).to_vec()
+    };
+    blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(origin as usize).to_ne_bytes());
+    if kind != RECORD_TAG {
         debug_assert_eq!(kind, TUPLE_TAG, "a built-in's mint's nodes are fixed operand runs");
         let arity = arity_of(origin);
         blob.extend_from_slice(&[arity as u8, NO_SLOT, NO_SLOT]);
