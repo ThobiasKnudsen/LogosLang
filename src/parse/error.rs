@@ -200,8 +200,8 @@ pub enum ParseError {
     /// A collection member (`.roles`) without its `[index]`: the
     /// bare collection as a first-class value waits for the array type.
     ExpectedIndexBracket,
-    /// `:dyad` or `:value`: nothing reaches a value's cell as a whole.
-    CellNotReachable,
+    /// `x:dyad` handed on whole for a name whose bytes lie in a frame, with no node of their own.
+    NoNodeYet,
     /// `⊆` over two different types that are not both integer types.
     UnsettledInclusion,
     /// A record construction's argument count did not match its field count.
@@ -245,6 +245,10 @@ pub enum ParseError {
     /// A scope's value or a `return` is `&x` of a name a scope it leaves holds: that
     /// scope's end frees the value under the address.
     AddressOfHeld,
+    /// `&` of a value in a call's argument list, where the scope the call stands in holds it
+    /// across a part that runs again, a `while` condition: one place would hold every pass's
+    /// value. stand-in for #264
+    AddressHeldEachPassNotInSeed,
     /// `move b` where `b` borrows the node it names: only the owner can move it.
     MoveOfBorrow,
     /// `move a` of a plain record: its bytes are not copied into a name yet. stand-in for #193

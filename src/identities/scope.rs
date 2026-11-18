@@ -181,7 +181,7 @@ pub(crate) unsafe fn extend_exit(
 /// The scope's end, reached after `reached` of its lines completed: every exit item held
 /// there runs, last first, an authored `defer` its expression and a held name its
 /// value's teardown (DESIGN ›A value's teardown runs where its life ends; the ending
-/// identity reads the type's `free` slot‹).
+/// identity reads the type's `free` slot‹ [[R57]]). Compiled, `Lowerer::end_to`.
 ///
 /// # Safety
 /// `node` must be a scope node from the store, its places laid out in the frame `rt` runs.
@@ -206,6 +206,8 @@ unsafe fn run_exit_after_fault(
     run_exit_items(rt, node, |types, item| item.held_at_fault(types, failed))
 }
 
+/// A `return` in a `defer` leaves once the rest of the end has run; a fault stops the end.
+///
 /// # Safety
 /// As [`run_exit`].
 unsafe fn run_exit_items(
@@ -213,13 +215,18 @@ unsafe fn run_exit_items(
     node: DyadPtr,
     runs: impl Fn(&crate::Core, &ExitItem) -> bool,
 ) -> Result<(), RunError> {
+    let mut left = Ok(());
     for &item in exit_items(node).iter().rev() {
         let item = super::drop_model::exit_item_of(item);
         if runs(rt.types(), &item) {
-            item.run(rt)?;
+            match item.run(rt) {
+                Err(RunError::Return(v)) => left = Err(RunError::Return(v)),
+                Err(fault) => return Err(fault),
+                Ok(()) => {}
+            }
         }
     }
-    Ok(())
+    left
 }
 
 /// Null at the arche.
@@ -286,11 +293,6 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let Some(exprs) = exprs_of(node) else {
             return Err(CompileError::EmptyScope);
         };
-        let lines: Vec<DyadPtr> = exprs
-            .iter()
-            .copied()
-            .filter(|&e| !super::numtype::is_comment_type(dyad::ty(e)))
-            .collect();
-        lw.lower_with_teardowns(&lines, exit_items(node))?.ok_or(CompileError::EmptyScope)
+        lw.lower_scope(node, exprs)?.ok_or(CompileError::EmptyScope)
     }
 }

@@ -905,7 +905,7 @@ impl ExitItem {
         }
     }
 
-    /// [`Self::run`] compiled, at the end of a scope whose lines all ran.
+    /// [`Self::run`] compiled.
     ///
     /// # Safety
     /// As [`Self::run`].

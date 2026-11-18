@@ -709,7 +709,7 @@ impl<'a> Parser<'a> {
         };
         // The optional `[i]` or `(…)` after the member, lexed on demand; a
         // bracket is the member's argument list.
-        self.cell_at(tape, 2)?;
+        self.read_arguments(tape, 2)?;
         let index = self.index_at(tape, 2);
         let bracket = tape.at(2).filter(|c| c.is_bracket()).map(|c| c.dyad);
         // SAFETY: a bracket cell is a node from the store.
@@ -955,6 +955,11 @@ impl<'a> Parser<'a> {
         else {
             return Err(ParseError::UnsupportedOperands);
         };
+        // An `@void` says nothing of how its bytes are read (›`undefined`, `?`, `@void` and
+        // `native`‹ [[R135]]).
+        if pointee == self.types.void_ {
+            return Err(ParseError::UnsupportedOperands);
+        }
         let types = self.types;
         Ok(crate::identities::pointer::build_deref(self.rt.store, types, lhs, pointee, 0))
     }
@@ -994,13 +999,8 @@ impl<'a> Parser<'a> {
                     if !has_address(types, place) {
                         return Err(ParseError::BadAddressOf);
                     }
-                    self.check_capture(node)?;
-                    crate::identities::pointer::build_addr(
-                        self.rt.store,
-                        types,
-                        place,
-                        std::ptr::null_mut(),
-                    )
+                    let pointee = crate::identities::read::output_type(types, place);
+                    self.place_address(place, node, pointee)?
                 }
                 // A node's field, a map entry, a tape cell: a place with no address to hand out.
                 Some(_) => return Err(ParseError::BadAddressOf),
@@ -1015,6 +1015,29 @@ impl<'a> Parser<'a> {
         tape.remove(1);
         tape.place(addr);
         Ok(Constructed::Placed)
+    }
+
+    /// The address of a place's bytes, a frame's or a dereference's cell, as `@pointee`: read when
+    /// the code runs, so a frame's place gives each activation's own.
+    ///
+    /// # Safety
+    /// `place` must be a frame's place or a deref node from the store, `node` the operand it was
+    /// read from, and `pointee` a type node.
+    unsafe fn place_address(
+        &mut self,
+        place: DyadPtr,
+        node: DyadPtr,
+        pointee: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
+        self.check_capture(node)?;
+        let types = self.types;
+        Ok(crate::identities::pointer::build_addr_as(
+            self.rt.store,
+            types,
+            place,
+            std::ptr::null_mut(),
+            pointee,
+        ))
     }
 
     /// `&` of a value nothing names: the value lands in an unspelled name of the open scope, as
@@ -1045,6 +1068,7 @@ impl<'a> Parser<'a> {
         if !types.is_storage(binding) {
             return Err(ParseError::BadAddressOf);
         }
+        self.note_address_hold(binding);
         let held =
             crate::identities::declare::build(self.rt.store, types, binding, value, declared);
         Ok(crate::identities::pointer::build_addr(self.rt.store, types, binding, held))
@@ -1108,8 +1132,11 @@ impl<'a> Parser<'a> {
         let Some((nstart, nlen)) = member else {
             return Err(ParseError::ExpectedField);
         };
+        let dotted = self
+            .cell_at(tape, 2)?
+            .is_some_and(|c| !c.constructed && self.cell_identity(&c) == self.types.dot_);
         // SAFETY: `lhs` is a dyad off the tape.
-        let node = unsafe { self.binding_read_each(lhs, nstart, nlen)? };
+        let node = unsafe { self.binding_read_each(lhs, nstart, nlen, dotted)? };
         tape.remove(1);
         tape.remove(-1);
         tape.place(node);
@@ -1117,6 +1144,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A group's read is each member's; a name reads its own binding, never what it holds.
+    /// `dotted`: a `.` follows the member.
     ///
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
@@ -1125,6 +1153,7 @@ impl<'a> Parser<'a> {
         lhs: DyadPtr,
         nstart: usize,
         nlen: usize,
+        dotted: bool,
     ) -> Result<DyadPtr, ParseError> {
         let group = if dyad::ty(lhs) == self.types.binding_ {
             None
@@ -1132,16 +1161,16 @@ impl<'a> Parser<'a> {
             crate::identities::group::members(self.types, lhs)
         };
         let Some((connective, a, b)) = group else {
-            return self.binding_read(lhs, nstart, nlen);
+            return self.binding_read(lhs, nstart, nlen, dotted);
         };
-        let a = self.binding_read_each(a, nstart, nlen)?;
-        let b = self.binding_read_each(b, nstart, nlen)?;
+        let a = self.binding_read_each(a, nstart, nlen, dotted)?;
+        let b = self.binding_read_each(b, nstart, nlen, dotted)?;
         crate::identities::group::join(self.rt.store, self.types, connective, a, b)
     }
 
-    /// On a binding, `start` is the declaring line once it is complete, and any other
-    /// field the instance-field read in `binding`'s own scope; on a constructed node the
-    /// path answers (DESIGN ›Meta-navigation‹), `start`/`end` null.
+    /// On a binding, `start` is the declaring line once it is complete, `dyad` the node the name
+    /// stands for, and any other field the instance-field read in `binding`'s own scope; on a
+    /// constructed node the path answers (DESIGN ›Meta-navigation‹), `start`/`end` null.
     ///
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
@@ -1150,26 +1179,24 @@ impl<'a> Parser<'a> {
         lhs: DyadPtr,
         nstart: usize,
         nlen: usize,
+        dotted: bool,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         let source = self.cx.source;
         let name = &source[nstart..nstart + nlen];
-        // The binding's `dyad` field is storage, not a spelling.
-        if name == "dyad" || name == "value" {
-            return Err(ParseError::CellNotReachable);
-        }
         // A name answers from its own binding; a node reached by path from itself.
-        let lhs = if dyad::ty(lhs) == types.binding_ {
-            lhs
-        } else {
-            self.known_node(lhs, std::ptr::null_mut()).unwrap_or(lhs)
-        };
+        let named = dyad::ty(lhs) == types.binding_;
+        let reached = if named { None } else { self.known_node(lhs, std::ptr::null_mut()) };
+        let lhs = reached.unwrap_or(lhs);
         if crate::identities::tape::is_cell_read(types, lhs) {
             // `t[k]:name`: the spelling of the binding the cell holds.
             if name == "name" {
                 return Ok(crate::identities::tape::build_slot_name(self.rt.store, types, lhs));
             }
             return Err(ParseError::ExpectedField);
+        }
+        if name == "dyad" && (named || reached.is_some()) {
+            return self.dyad_read(lhs, dotted);
         }
         if dyad::ty(lhs) == types.binding_ {
             // `b:start`: the declaring line, once it is complete, is a node
@@ -1199,6 +1226,29 @@ impl<'a> Parser<'a> {
             }
         };
         Ok(self.address_value(types.dyad_, value))
+    }
+
+    /// `x:dyad`, as a `dyad`: the node a name stands for (›`x.type` reads the type word of the node
+    /// a name or an expression stands for‹ [[R279]]), or a node reached by path itself (›A
+    /// constructed node answers `:` from the path it was reached by‹ [[R320]]). Read by `.`, a
+    /// name's view holds its binding, which [`Parser::view_member`] reads; handed on whole, a name
+    /// gives the node it denotes, and one whose bytes lie in a frame has none yet.
+    ///
+    /// # Safety
+    /// `lhs` must be a binding dyad or a node from the store.
+    unsafe fn dyad_read(&mut self, lhs: DyadPtr, dotted: bool) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        let node = if dyad::ty(lhs) != types.binding_ || dotted {
+            lhs
+        } else if types.is_storage(lhs) {
+            return Err(ParseError::NoNodeYet);
+        } else {
+            Binding::read(lhs).dyad
+        };
+        if node.is_null() {
+            return Err(ParseError::BadReflectRead);
+        }
+        Ok(self.rt.store.alloc_head(types.dyad_, node.cast()))
     }
 
     /// The binding's own record as storage: a spelling-less binding over the record's
@@ -1300,12 +1350,10 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
-        // An expression the parse refuses where it is written, as an `if` whose arms give two
-        // types, is refused for that reason first.
-        let t = crate::identities::read::value_type(types, lhs)?;
         if self.is_operator_node(lhs) {
             return Ok(dyad::ty(lhs));
         }
+        let t = crate::identities::read::value_type(types, lhs)?;
         if t.is_null() {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }
@@ -1328,23 +1376,37 @@ impl<'a> Parser<'a> {
             && !crate::identities::meta::constructor_of(ty).is_null()
     }
 
-    /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's
-    /// read surface‹); nothing else reads through the view, and nothing here writes.
+    /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's read surface‹), the
+    /// value as the address of its bytes, an `@void` (›`undefined`, `?`, `@void` and `native`‹
+    /// [[R135]]); nothing else reads through the view, and nothing here writes. A view of a name's
+    /// binding, `x:dyad`, reads `.type` as `x.type` does, and a name whose bytes lie in a frame
+    /// gives their address there, read when the code runs.
     ///
     /// # Safety
     /// `view` must be a node of type `dyad`.
     unsafe fn view_member(&mut self, view: DyadPtr, name: &str) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
         let viewed = dyad::head(view) as DyadPtr;
         if viewed.is_null() {
             return Err(ParseError::BadReflectRead);
         }
+        let named = dyad::ty(viewed) == types.binding_;
         match name {
+            "type" if named => {
+                let root = std::mem::replace(&mut self.cx.member_root, viewed);
+                let lhs = self.settled_type(types.through(viewed));
+                let t = self.type_read(lhs);
+                self.cx.member_root = root;
+                t
+            }
             "type" => Ok(dyad::ty(viewed)),
-            // The raw address as a u64; the `@void` spelling waits for pointer-value plumbing.
-            "value" => Ok(self.scalar_value(
-                crate::identities::numtype::NumType::U64,
-                dyad::value(viewed) as usize as i64,
-            )),
+            "value" if named && types.is_storage(viewed) => {
+                self.place_address(viewed, viewed, types.void_)
+            }
+            "value" => {
+                let node = if named { types.through(viewed) } else { viewed };
+                Ok(self.address_value(types.void_, dyad::value(node).cast()))
+            }
             _ => Err(ParseError::BadReflectRead),
         }
     }

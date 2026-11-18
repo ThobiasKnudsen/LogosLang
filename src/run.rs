@@ -46,9 +46,9 @@ pub enum RunError {
     NoName,
     /// A tape cell checked to hold a type holds something else by the time it is read.
     CellNotAType,
-    /// A cell, line or field of the parse's node, read as a number type while the parse runs,
-    /// holds no constant of it.
-    NotAConstant(DyadPtr),
+    /// A cell, line or field of the parse's node, read as a number type, `bool` or a pointer
+    /// while the parse runs, holds no constant of it; the type as the message names it.
+    NotAConstant(Box<String>),
     /// A cell or line checked against a type a Logos `parse` builds holds no value of it.
     CellNotANode,
     /// `insert` of a null fragment.
@@ -851,8 +851,10 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// Jump to machine code with this runtime's context, and read back any
-    /// error parked in it when the code returns (0 is a value).
+    /// Jump to machine code with this runtime's context, and read back the
+    /// error this jump's code parked when it returns (0 is a value). A fault
+    /// parked before the jump, by the compiled code whose cleanup or interpreted
+    /// call made it, is set aside and put back: it stays the first.
     ///
     /// # Safety
     /// `entry` must be live machine code of the one compiled signature
@@ -867,11 +869,12 @@ impl<'a> Runtime<'a> {
         let this: *mut Runtime<'static> = (self as *mut Runtime<'a>).cast();
         (*this).ctx.runtime = this;
         (*this).ctx.root = (*this).store.arena_base();
-        (*this).ctx.pending = None;
+        let outer = (*this).ctx.pending.take();
         (*this).store.enter_jump();
         let r = call_machine(entry, std::ptr::addr_of_mut!((*this).ctx), args);
         self.store.leave_jump();
-        match self.ctx.pending.take() {
+        let own = std::mem::replace(&mut self.ctx.pending, outer);
+        match own {
             Some(e) => Err(e),
             None => Ok(r),
         }

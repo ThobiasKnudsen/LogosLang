@@ -760,12 +760,27 @@ fn run_cell_value(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// dyad, an expression whose value is known only when it runs, is refused.
 ///
 /// # Safety
-/// `cell` must be a dyad from the store; `ty` a number type node.
-pub(crate) unsafe fn constant_number(types: &Core, cell: DyadPtr, ty: DyadPtr) -> Option<i64> {
+/// `cell` must be a dyad from the store; `ty` a number type, `bool` or a pointer type node.
+pub(crate) unsafe fn constant_number(
+    types: &Core,
+    cell: DyadPtr,
+    ty: DyadPtr,
+) -> Result<i64, RunError> {
+    constant_of(types, cell, ty)
+        .ok_or_else(|| RunError::NotAConstant(Box::new(super::message_type_name(types, ty))))
+}
+
+/// # Safety
+/// As [`constant_number`].
+unsafe fn constant_of(types: &Core, cell: DyadPtr, ty: DyadPtr) -> Option<i64> {
     use super::numtype::{apply_cast, of_type_node, read_scalar};
     let nt = of_type_node(ty);
     let from = dyad::ty(cell);
     if from == types.rational {
+        // `bool` and a pointer share a number's machine form, but no plain number lies inside them.
+        if !super::is_numtype_node(types, ty) {
+            return None;
+        }
         return super::rational::mold_to(cell, nt);
     }
     let v = dyad::value(cell);
@@ -789,8 +804,7 @@ fn run_cell_number(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let cell = read_target(rt, ops)?;
-        let ty = *ops.add(3);
-        constant_number(rt.types(), cell, ty).ok_or(RunError::NotAConstant(ty))
+        constant_number(rt.types(), cell, *ops.add(3))
     }
 }
 
@@ -822,18 +836,29 @@ fn run_cell_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// A line no check narrowed, stored into a place of `ty`: `=` decides it when it runs.
+/// A line no check narrowed, written by `=` into a place of `ty`, is decided by that type when
+/// the write runs: a number type or `bool` takes the literal or constant the line holds, and a
+/// type a Logos `parse` builds builds a bracket by that parse. `None` for a place of any other
+/// type, which [`super::land`] decides. ›A tape read checked against a number type reads as that
+/// number‹ [[R229]], ›What `=` does is decided by the type of the place on its left‹ [[R192]].
 ///
 /// # Safety
-/// `read` must be a line node from `build_cell_dyad_at`; `ty` a type node.
+/// `read` must be a line node from `build_cell_dyad_at`; `ty` null or a type node.
 pub(crate) unsafe fn build_cell_into(
     store: &mut Store,
     types: &Core,
     read: DyadPtr,
     ty: DyadPtr,
-) -> DyadPtr {
+) -> Option<DyadPtr> {
+    use super::read::{place_layout, Read};
+    let ty = super::type_identity_of(types, ty)?;
+    match place_layout(types, ty)?.0 {
+        Read::Scalar(_) => {}
+        Read::Container(t) if meta::is_node_valued(t, types.fn_type) => {}
+        _ => return None,
+    }
     let (recv, k, i) = read_parts(types, read);
-    node(store, types.tape.cell_into, types.tape.cell_into_leaf, &[recv, k, i, ty], ty)
+    Some(node(store, types.tape.cell_into, types.tape.cell_into_leaf, &[recv, k, i, ty], ty))
 }
 
 /// A bracket is built by `ty`'s parse, then the line must be a value of `ty`.
@@ -844,7 +869,7 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let mut line = read_target(rt, ops)?;
         let ty = *ops.add(3);
         if !super::meta::is_node_valued(ty, rt.types().fn_type) {
-            return constant_number(rt.types(), line, ty).ok_or(RunError::NotAConstant(ty));
+            return constant_number(rt.types(), line, ty);
         }
         if is_bracket(rt.types(), line) {
             let built = rt.construct_on_pass(ty, line)? as DyadPtr;

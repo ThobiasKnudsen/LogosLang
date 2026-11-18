@@ -166,9 +166,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ExpectedIndexBracket => {
             "expected `[index]` — element access is `[…]`, `(…)` is application".into()
         }
-        ParseError::CellNotReachable => {
-            "nothing reaches a value's cell as a whole — read its type with \
-             `x.type` and its fields with `x.f`"
+        ParseError::NoNodeYet => {
+            "this name has no node yet: its bytes lie in its frame and its type on its binding, \
+             so read `x:dyad.type` or `x:dyad.value`"
                 .into()
         }
         ParseError::UnsettledInclusion => {
@@ -348,6 +348,11 @@ pub fn parse_message(e: &ParseError) -> String {
                  `{holder}` whole"
             )
         }
+        ParseError::AddressHeldEachPassNotInSeed => {
+            "`&` of a value in a `while` condition is not in the seed yet: the condition makes a \
+             new value each pass, and the scope that holds it has one place for them all"
+                .into()
+        }
         ParseError::RecordMoveNotInSeed => {
             "moving a plain record is not in the seed yet: its bytes are not copied into a name"
                 .into()
@@ -481,10 +486,8 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::NotAConstant(ty) => format!(
-            "this is read as `{}`, but it holds no literal or constant of it: \
-             while the parse runs, only a constant is read as its number",
-            // SAFETY: the type a read was checked against or declared with is a number type node.
-            unsafe { crate::identities::numtype::of_type_node(*ty) }.spelling()
+            "this is read as `{ty}`, but it holds no literal or constant of it: \
+             while the parse runs, only a constant is read as its number"
         ),
         RunError::CellNotANode => {
             "this cell was checked against a type, but the tape changed since and it holds no value of it"

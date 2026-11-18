@@ -250,11 +250,14 @@ pub(super) fn build_store(
     // SAFETY: `rhs` is a reduced dyad from the store.
     let rhs = unsafe {
         let line = types.through(rhs);
-        if through_pointer && dyad::ty(line) == types.tape.cell_dyad_at {
-            // A line no check narrowed: what it holds is known only when the write runs.
+        let into = if dyad::ty(line) == types.tape.cell_dyad_at {
             super::tape::build_cell_into(store, types, line, place_type)
         } else {
-            super::land(store, types, rhs, place_type)?
+            None
+        };
+        match into {
+            Some(into) => into,
+            None => super::land(store, types, rhs, place_type)?,
         }
     };
     // A non-owning value in an owning place ends in a double free at scope exit.
