@@ -4341,10 +4341,24 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
         for line in ["1", "7"] {
             let src = format!("{q}, x := q [{line}]");
             assert!(
-                matches!(script_parse_err(&src), ParseError::ConstructorFailed(_)),
+                matches!(script_parse_err(&src), ParseError::ConstructorFailed(e)
+                    if e.contains("this is read as `bool`, but it holds no literal or constant")),
                 "{place}: q [{line}]"
             );
         }
+    }
+    // The message names the type the place has, a pointer as it is written.
+    for (field, named) in [("@u64", "@u64"), ("@bool", "@bool")] {
+        let src = format!(
+            "q := type ( p := {field} ?, share parse_rank = 61, share parse = ( tape[0].type = q, \
+             tape[0].p = tape[1].dyads[0], r := tape[0].p, tape.remove(1), \
+             tape.is_constructed[0] = true ) ), n := u64 3, x := q [&n]"
+        );
+        let want = format!("this is read as `{named}`, but it holds no literal or constant");
+        assert!(
+            matches!(script_parse_err(&src), ParseError::ConstructorFailed(e) if e.contains(&want)),
+            "{field}"
+        );
     }
     // Any other place refuses the line where the parse body is read, by name as through a pointer.
     for (place, err) in [

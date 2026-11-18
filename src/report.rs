@@ -474,10 +474,8 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::NotAConstant(ty) => format!(
-            "this is read as `{}`, but it holds no literal or constant of it: \
-             while the parse runs, only a constant is read as its number",
-            // SAFETY: the type a read was checked against or declared with is a number type node.
-            unsafe { crate::identities::numtype::of_type_node(*ty) }.spelling()
+            "this is read as `{ty}`, but it holds no literal or constant of it: \
+             while the parse runs, only a constant is read as its number"
         ),
         RunError::CellNotANode => {
             "this cell was checked against a type, but the tape changed since and it holds no value of it"

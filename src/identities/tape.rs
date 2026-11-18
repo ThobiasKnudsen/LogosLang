@@ -761,7 +761,18 @@ fn run_cell_value(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 ///
 /// # Safety
 /// `cell` must be a dyad from the store; `ty` a number type, `bool` or a pointer type node.
-pub(crate) unsafe fn constant_number(types: &Core, cell: DyadPtr, ty: DyadPtr) -> Option<i64> {
+pub(crate) unsafe fn constant_number(
+    types: &Core,
+    cell: DyadPtr,
+    ty: DyadPtr,
+) -> Result<i64, RunError> {
+    constant_of(types, cell, ty)
+        .ok_or_else(|| RunError::NotAConstant(Box::new(super::message_type_name(types, ty))))
+}
+
+/// # Safety
+/// As [`constant_number`].
+unsafe fn constant_of(types: &Core, cell: DyadPtr, ty: DyadPtr) -> Option<i64> {
     use super::numtype::{apply_cast, of_type_node, read_scalar};
     let nt = of_type_node(ty);
     let from = dyad::ty(cell);
@@ -793,8 +804,7 @@ fn run_cell_number(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let cell = read_target(rt, ops)?;
-        let ty = *ops.add(3);
-        constant_number(rt.types(), cell, ty).ok_or(RunError::NotAConstant(ty))
+        constant_number(rt.types(), cell, *ops.add(3))
     }
 }
 
@@ -859,7 +869,7 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let mut line = read_target(rt, ops)?;
         let ty = *ops.add(3);
         if !super::meta::is_node_valued(ty, rt.types().fn_type) {
-            return constant_number(rt.types(), line, ty).ok_or(RunError::NotAConstant(ty));
+            return constant_number(rt.types(), line, ty);
         }
         if is_bracket(rt.types(), line) {
             let built = rt.construct_on_pass(ty, line)? as DyadPtr;

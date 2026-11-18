@@ -627,7 +627,7 @@ unsafe fn load(rt: &mut Runtime, node: DyadPtr, this: DyadPtr) -> Result<i64, Ru
         Field::Bytes(addr, ..) => Ok(super::assign::load(carry, addr)),
         Field::Slot(slot, k) if (*slot).is_null() => Err(RunError::UnfilledField(k)),
         Field::Slot(slot, _) if is_fill(rt.types(), node) && super::numtype::is_scalar_type(ty) => {
-            super::tape::constant_number(rt.types(), *slot, ty).ok_or(RunError::NotAConstant(ty))
+            super::tape::constant_number(rt.types(), *slot, ty)
         }
         Field::Slot(slot, _) => super::assign::take(rt, carry, *slot),
     }

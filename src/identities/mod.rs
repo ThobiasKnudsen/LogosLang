@@ -975,6 +975,19 @@ unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
     }
 }
 
+/// A type as an error message names it: a pointer type as it is written, `@` before its
+/// pointee, which the echo leaves to the type's `print` slot (›A value is shown as the text its
+/// type's `print` slot gives back‹ [[R305]]); any other type as [`type_name`] spells it.
+///
+/// # Safety
+/// `node` must be a type identity.
+pub(crate) unsafe fn message_type_name(types: &Core, node: DyadPtr) -> String {
+    if numtype::is_pointer_type(node) {
+        return format!("@{}", message_type_name(types, numtype::pointee_of(node)));
+    }
+    type_name(types, node)
+}
+
 /// The place type and byte width a value is copied into, by a declaration or `alloc`: the type
 /// of what it gives at that type's width, a pointer as a plain `@pointee` place, the borrow,
 /// whatever the value's own pointer type. `None` for a value no place holds whole, and for a
