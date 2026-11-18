@@ -4566,6 +4566,63 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
 }
 
 #[test]
+fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
+    let nan = "a float that is not a number (NaN)";
+    let range = "index out of range";
+    let checked = "import ./identities/array.logos, \
+         h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
+         bag := type ( mut v := f64 ?, share free = ( print «freed {h(v)}» ) ), z := f64 0.0";
+    for (before, after, printed, error) in [
+        // The fault's cleanup enters compiled code.
+        (
+            "h := fn (k := i32 ?) -> i32 ( k ), h.compile(), \
+             bag := type ( mut n := i32 ?, share free = ( print «freed {h(n)}» ) ), \
+             g := fn (x := f64 ?) -> i32 ( b := bag(4), n := i32 lossy (x), n )"
+                .to_string(),
+            "z := f64 0.0, g(z / z)",
+            "freed 4\n",
+            nan,
+        ),
+        // A call through the interpreter after the fault enters compiled code.
+        (
+            "h := fn (k := i32 ?) -> i32 ( k ), h.compile(), \
+             say := fn (k := i32 ?) -> i32 ( h(k) ), \
+             g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), say(n) )"
+                .to_string(),
+            "z := f64 0.0, g(z / z)",
+            "",
+            nan,
+        ),
+        // The cleanup's compiled call faults too: the first fault is the one shown.
+        (
+            format!(
+                "{checked}, \
+                 g := fn (n := i32 ?) -> i32 ( a := bag(z / z), b := array i32 [1, 2], b[n] )"
+            ),
+            "g(5)",
+            "",
+            range,
+        ),
+        (
+            format!(
+                "{checked}, \
+                 g := fn (n := i32 ?) -> i32 ( a := bag(f64 1.5), b := array i32 [1, 2], b[n] )"
+            ),
+            "g(5)",
+            "freed 1\n",
+            range,
+        ),
+    ] {
+        let interpreted = run_line(&format!("{before}, {after}"));
+        let compiled = run_line(&format!("{before}, g.compile(), {after}"));
+        assert_eq!(compiled, interpreted, "{before}");
+        let (code, stdout, stderr) = interpreted;
+        assert_eq!((code, stdout.as_str()), (Some(1), printed), "{before}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{before}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn assignment_frees_the_value_it_displaces() {
     for (tail, printed) in [
         ("mut x := box (1, 2), x = box (3, 4), print «after»", "free\nafter\nfree\n"),
