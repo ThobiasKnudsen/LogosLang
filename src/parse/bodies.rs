@@ -1370,10 +1370,12 @@ impl<'a> Parser<'a> {
                 // SAFETY: `place` is a place this scope's binding site laid out, and
                 // `tail` indexes the scope's own lines, which nothing else reads yet.
                 unsafe {
+                    let store = &mut *self.rt.store;
+                    let moved = crate::identities::drop_model::build_move(store, types, place);
                     let moved = if crate::identities::this::is_plain(types, types.type_of(place)) {
-                        crate::identities::by_copy::build_out(self.rt.store, types, place)
+                        crate::identities::by_copy::build_out(store, types, moved)
                     } else {
-                        crate::identities::drop_model::build_move(self.rt.store, types, place)
+                        moved
                     };
                     let (_, lines) = crate::identities::array::parts(
                         crate::identities::scope::exprs_array(scope),

@@ -234,12 +234,22 @@ fn lower_result(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> 
     }
 }
 
+/// What an out node hands on the bytes of: the place a block's last line moves out, or its
+/// expression.
+///
+/// # Safety
+/// `node` must be an out node from `build_out`.
+unsafe fn out_of(types: &Core, node: DyadPtr) -> DyadPtr {
+    let expr = *(dyad::value(node) as *const DyadPtr);
+    super::drop_model::moved_place(types, expr).unwrap_or(expr)
+}
+
 fn run_out(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an out node from `build_out`.
-    unsafe { record_addr(rt, *(dyad::value(node) as *const DyadPtr)).map(|addr| addr as i64) }
+    unsafe { record_addr(rt, out_of(rt.types(), node)).map(|addr| addr as i64) }
 }
 
 fn lower_out(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run_out`].
-    unsafe { lower_record_addr(lw, *(dyad::value(node) as *const DyadPtr)) }
+    unsafe { lower_record_addr(lw, out_of(lw.types(), node)) }
 }

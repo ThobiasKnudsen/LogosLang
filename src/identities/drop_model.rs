@@ -843,6 +843,15 @@ pub(crate) unsafe fn lent_place(types: &Core, value: DyadPtr) -> Option<DyadPtr>
     (dyad::ty(value) == types.addr_).then(|| types.through(*(dyad::value(value) as *const DyadPtr)))
 }
 
+/// The place a `move` empties when `value` is one.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn moved_place(types: &Core, value: DyadPtr) -> Option<DyadPtr> {
+    (dyad::ty(value) == types.move_)
+        .then(|| *(dyad::value(value) as *const DyadPtr).add(TEARDOWN_PLACE))
+}
+
 /// A later REPL line moved or freed the name the item holds: the session's end frees it no
 /// more.
 ///
@@ -1003,18 +1012,13 @@ unsafe fn moved_out(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
         return Some(node);
     }
     // A record call's result moves out when its callee's value does; a record handed on by
-    // its bytes' address, when a name that held it or what it copies does.
+    // its bytes' address, when what it copies does.
     if logos == types.by_copy.result {
         let call = *(dyad::value(node) as *const DyadPtr).add(1);
         return moved_out(types, call);
     }
     if logos == types.by_copy.out {
-        let inner = types.through(*(dyad::value(node) as *const DyadPtr));
-        if dyad::ty(inner) == types.binding_ && crate::binding::Binding::has_gate(inner, types.own_)
-        {
-            return Some(inner);
-        }
-        return moved_out(types, inner);
+        return moved_out(types, *(dyad::value(node) as *const DyadPtr));
     }
     if logos == types.scope {
         return crate::parse::last_sequence_expr(node).and_then(|tail| moved_out(types, tail));
