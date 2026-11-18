@@ -751,7 +751,9 @@ impl<'a> Parser<'a> {
             return Ok(Constructed::Placed);
         }
         // The bracket, lexed on demand: application runs at discovery.
-        if let Some(scope) = self.cell_at(tape, 1)?.filter(|c| c.is_bracket()).map(|c| c.dyad) {
+        if let Some(scope) =
+            self.read_arguments(tape, 1)?.filter(|c| c.is_bracket()).map(|c| c.dyad)
+        {
             // SAFETY: `scope` is the bracket's node from the store.
             let args = unsafe { self.args_of(scope) };
             // SAFETY: `id` is the resolved callee, a reduced dyad.

@@ -4512,6 +4512,88 @@ fn the_address_of_a_value_nothing_names_holds_it_to_the_scope_s_end() {
     }
 }
 
+/// DESIGN ›Holding is decided at the binding site, parameters included‹ [[R61]]: a call's
+/// argument list is never the scope `&` holds a value to.
+#[test]
+fn the_address_of_a_value_in_a_call_s_arguments_holds_it_to_the_scope_the_call_stands_in() {
+    let f = "f := fn (q := @bag ?) -> i32 ( q@.n )";
+    let f2 = "f := fn (q := @bag ?, k := i32 ?) -> i32 ( q@.n + k )";
+    let g = "g := fn () -> i32 ( f(&bag(4)) )";
+    let sum = "g := fn () -> i32 ( mut s := i32 0, for i in 0..2 ( s = s + f(&bag(i)) ), s )";
+    let get = "holder := type ( k := i32 ?, share get := fn (q := @bag ?) -> i32 ( k + q@.n ) )";
+    let r = "r := fn (n := i32 ?) -> i32 ( return f(&bag(n)) )";
+    let r_if = "r := fn (n := i32 ?) -> i32 ( if f(&bag(n)) > 2 (return f(&bag(n + 10))), 0 )";
+    let r_in = "r := fn (n := i32 ?) -> i32 ( f(&bag(n), ( if (n > 2) (return 9), 4 )) )";
+    let w = "mut i := i32 0, while (f(&bag(i)) < 2) ( i = i + 1 )";
+    for (tail, printed) in [
+        (format!("{f}, f(&bag(3))"), "freed 3\n3\n"),
+        (format!("{f}, f.compile(), f(&bag(3))"), "freed 3\n3\n"),
+        (format!("{f}, x := f(&bag(3)), print «after {{x}}»"), "after 3\nfreed 3\n"),
+        (format!("{f}, {g}, print «before», g(), print «after»"), "before\nfreed 4\nafter\n"),
+        (
+            format!("{f}, f.compile(), {g}, g.compile(), print «before», g(), print «after»"),
+            "before\nfreed 4\nafter\n",
+        ),
+        (
+            format!("{f}, for i in 0..2 ( x := f(&bag(i)), print «got {{x}}» ), print «end»"),
+            "got 0\nfreed 0\ngot 1\nfreed 1\nend\n",
+        ),
+        (format!("{f}, {sum}, g.compile(), g()"), "freed 0\nfreed 1\n1\n"),
+        (format!("{f}, h := fn (k := i32 ?) -> i32 ( k + 1 ), h(f(&bag(3)))"), "freed 3\n4\n"),
+        (format!("{f}, x := f(&bag(3)) + f(&bag(4)), print «x {{x}}»"), "x 7\nfreed 4\nfreed 3\n"),
+        // A list of several arguments hands it on too.
+        (format!("{f2}, f(&bag(3), 5)"), "freed 3\n8\n"),
+        (format!("{f2}, f.compile(), f(&bag(3), 5)"), "freed 3\n8\n"),
+        (format!("{get}, h := holder(1), h.get(&bag(6))"), "freed 6\n7\n"),
+        (
+            format!(
+                "{get}, g := fn () -> i32 ( h := holder(1), h.get(&bag(6)) ), g.compile(), g()"
+            ),
+            "freed 6\n7\n",
+        ),
+        // A `while` condition in a bracket is the scope its call stands in, ended each pass.
+        (format!("{f}, {w}, print «end {{i}}»"), "freed 0\nfreed 1\nfreed 2\nend 2\n"),
+        (
+            format!("{f}, g := fn () -> i32 ( {w}, i ), g.compile(), g()"),
+            "freed 0\nfreed 1\nfreed 2\n2\n",
+        ),
+        // A `return` leaves before its line ends, so it frees what the line holds itself.
+        (format!("{f}, {r}, print «got {{r(5)}}», print «end»"), "freed 5\ngot 5\nend\n"),
+        (format!("{f}, {r_if}, print «got {{r(5)}}»"), "freed 15\nfreed 5\ngot 15\n"),
+        (format!("{f}, {r_if}, print «got {{r(1)}}»"), "freed 1\ngot 0\n"),
+        (
+            format!("{f2}, {r_in}, print «got {{r(5)}}», print «got {{r(1)}}»"),
+            "freed 5\ngot 9\nfreed 1\ngot 5\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl(format!("{RECORD}\n{f}\nf(&bag(3))\nprint «after»\n").as_bytes());
+    assert_eq!(echoes, ["3", "after", "freed 3"], "stderr: {stderr}");
+
+    // A bracket no call takes is the scope that holds it, so its address may not leave.
+    for tail in [
+        format!("{f}, f(( b := bag(3), &b ))"),
+        format!("{f}, f(( &bag(3) ))"),
+        "x := ( &bag(3) ), 1".to_string(),
+        "f := fn (q := @bag ?, r := @bag ?) -> i32 ( q@.n ), f(b := bag(3), &b)".to_string(),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("hands out the address of a name its scope holds"), "{tail}");
+    }
+    // A bare `while` condition makes a value each pass, and its scope has one place for them.
+    for tail in [
+        format!("{f}, mut i := i32 0, while f(&bag(i)) < 2 ( i = i + 1 ), print «end»"),
+        format!("{f}, g := fn () -> i32 ( mut i := i32 0, while f(&bag(i)) < 2 ( i = i + 1 ), i ), g.compile(), g()"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("`&` of a value in a `while` condition is not in the seed yet"), "{tail}");
+    }
+}
+
 /// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹: "`free p@` does the same for
 /// a cell an owning pointer reaches, a record kept in the cell's bytes included", on both tiers.
 #[test]

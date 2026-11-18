@@ -42,6 +42,9 @@ pub(super) struct OpenReturn {
     live: Vec<DyadPtr>,
     /// The names its line ended after it.
     ended: Vec<DyadPtr>,
+    /// The values `&` landed before it in the line it leaves of a scope it leaves, or in an
+    /// argument list around it: no scope's end runs them at the `return`, so it frees them.
+    landed: Vec<DyadPtr>,
     /// The innermost scope it is still inside, whose line holding it is closed or not.
     level: usize,
     line_closed: bool,
@@ -89,6 +92,15 @@ pub(super) struct OpenScope {
     /// A `[…]`: its items go whole to the call that takes them, never pending
     /// (DESIGN ›A bracket goes to the call whole‹).
     pub(super) list: bool,
+    /// A call's argument list, which is never the scope its lines stand in: at its close, what
+    /// it holds for `&` goes to the scope the call stands in.
+    arguments: bool,
+    /// The names `exit` holds for `&`: values `&` landed here, and those an argument list
+    /// read here handed on.
+    address_holds: Vec<DyadPtr>,
+    /// Where the callee starts whose argument list a call is reading: a `(` right after it
+    /// opens that list.
+    arguments_after: Option<usize>,
     /// The tape cells and lines a check in this scope has narrowed, each with the type
     /// its read yields.
     pub(super) narrowed: Vec<(CellKey, DyadPtr)>,
@@ -681,8 +693,13 @@ impl<'a> Parser<'a> {
             }
         }
         for r in returns {
-            let ends: Vec<DyadPtr> =
-                r.live.iter().copied().filter(|name| r.ended.contains(name)).collect();
+            let ends: Vec<DyadPtr> = r
+                .live
+                .iter()
+                .copied()
+                .filter(|name| r.ended.contains(name))
+                .chain(r.landed.iter().copied())
+                .collect();
             // SAFETY: `r.node` is a `return` node built in this body, not yet run; `ends` are
             // places the scopes it leaves hold.
             unsafe {
@@ -748,12 +765,23 @@ impl<'a> Parser<'a> {
             .filter(|item| item.end.is_none())
             .map(|item| item.what)
             .collect();
+        let landed = self.cx.open[open_below..]
+            .iter()
+            .flat_map(|s| {
+                let in_line = |h: &ExitItem| s.arguments || h.from == s.lines + 1;
+                s.exit.iter().filter(move |h| {
+                    h.end.is_none() && in_line(h) && s.address_holds.contains(&h.what)
+                })
+            })
+            .map(|h| h.what)
+            .collect();
         let open = OpenReturn {
             node,
             at,
             made,
             live,
             ended: Vec::new(),
+            landed,
             level: self.cx.open.len() - 1,
             line_closed: false,
             cursor: self.cx.ended_log.len(),
@@ -1377,10 +1405,47 @@ impl<'a> Parser<'a> {
         list: bool,
         end: LinesEnd,
     ) -> Result<(DyadPtr, Cell), ParseError> {
+        self.parse_block_as(list, false, end)
+    }
+
+    /// The lines of a `(` just lexed, `tape`'s center: a call's argument list when the call
+    /// reading it marked its left neighbour as the callee ([`Self::read_arguments`]).
+    pub(crate) fn parse_paren_cell(&mut self, tape: &ParsingTape) -> Result<Cell, ParseError> {
+        let left = tape.at(-1).map(|c| c.start);
+        let arguments =
+            left.is_some() && self.cx.open.last().is_some_and(|o| o.arguments_after == left);
+        self.parse_block_as(false, arguments, LinesEnd::Closer).map(|(_, value)| value)
+    }
+
+    /// The cell `offset` right of the center, read by a call whose callee stands just left of
+    /// it: a `(` lexed there is the call's argument list.
+    pub(crate) fn read_arguments(
+        &mut self,
+        tape: &mut ParsingTape,
+        offset: isize,
+    ) -> Result<Option<Cell>, ParseError> {
+        let callee = tape.at(offset - 1).map(|c| c.start);
+        let was =
+            self.cx.open.last_mut().map(|o| std::mem::replace(&mut o.arguments_after, callee));
+        let cell = self.cell_at(tape, offset);
+        if let (Some(open), Some(was)) = (self.cx.open.last_mut(), was) {
+            open.arguments_after = was;
+        }
+        cell
+    }
+
+    fn parse_block_as(
+        &mut self,
+        list: bool,
+        arguments: bool,
+        end: LinesEnd,
+    ) -> Result<(DyadPtr, Cell), ParseError> {
         self.check_depth(0)?;
         let scope = self.open_scope();
         let narrowed = self.cx.narrow_next.take().into_iter().collect();
-        self.cx.open.push(OpenScope { narrowed, scope: Some(scope), list, ..OpenScope::default() });
+        let open =
+            OpenScope { narrowed, scope: Some(scope), list, arguments, ..OpenScope::default() };
+        self.cx.open.push(open);
         let array_ = self.types.array_;
         let tail = match self.read_lines(end) {
             Ok(tail) => tail,
@@ -1402,6 +1467,12 @@ impl<'a> Parser<'a> {
         // what it did run stands in the body as its result.
         let mut closed = self.cx.open.pop().expect("pushed above");
         self.close_returns(self.cx.open.len());
+        if closed.arguments {
+            if let Err(e) = self.hand_on_address_holds(&mut closed) {
+                self.end_after_fault(&closed);
+                return Err(e);
+            }
+        }
         // Prose and a `defer` (it runs at exit, never as the tail) are
         // invisible to value flow.
         let defer_ = self.types.defer_;
@@ -1516,6 +1587,38 @@ impl<'a> Parser<'a> {
             self.cx.open[depth].exit.push(deferred);
         }
         self.cx.open[depth].lines += 1;
+    }
+
+    /// A call's argument list closed: the names it holds for `&` are held from here by the scope
+    /// the call stands in, whose end frees them (DESIGN ›Holding is decided at the binding site,
+    /// parameters included‹ [[R61]]).
+    fn hand_on_address_holds(&mut self, list: &mut OpenScope) -> Result<(), ParseError> {
+        let held: Vec<DyadPtr> = list
+            .address_holds
+            .iter()
+            .copied()
+            .filter(|&name| list.exit.iter().any(|h| h.what == name && h.end.is_none()))
+            .collect();
+        if held.is_empty() {
+            return Ok(());
+        }
+        // stand-in for #264
+        if self.cx.scopes.current().is_some_and(|s| self.cx.scopes.crosses_barrier(s)) {
+            return Err(ParseError::AddressHeldEachPassNotInSeed);
+        }
+        list.exit.retain(|h| !held.contains(&h.what));
+        for name in held {
+            self.hold(name);
+            self.note_address_hold(name);
+        }
+        Ok(())
+    }
+
+    /// `name`, which `&` landed a value in, is held for `&` by the scope that holds it.
+    pub(super) fn note_address_hold(&mut self, name: DyadPtr) {
+        if let Some(at) = self.holder_of(name) {
+            self.cx.open[at].address_holds.push(name);
+        }
     }
 
     /// The block at `depth` closed: a `return` inside it stands in the enclosing scope's line

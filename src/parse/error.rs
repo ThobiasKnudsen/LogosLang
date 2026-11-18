@@ -237,6 +237,10 @@ pub enum ParseError {
     /// A scope's value or a `return` is `&x` of a name a scope it leaves holds: that
     /// scope's end frees the value under the address.
     AddressOfHeld,
+    /// `&` of a value in a call's argument list, where the scope the call stands in holds it
+    /// across a part that runs again, a `while` condition: one place would hold every pass's
+    /// value. stand-in for #264
+    AddressHeldEachPassNotInSeed,
     /// `move b` where `b` borrows the node it names: only the owner can move it.
     MoveOfBorrow,
     /// `move a` of a plain record: its bytes are not copied into a name yet. stand-in for #193

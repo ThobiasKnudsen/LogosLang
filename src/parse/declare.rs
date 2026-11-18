@@ -247,7 +247,7 @@ impl<'a> Parser<'a> {
     /// teardown at its end (DESIGN ›Holding is decided at the binding site, parameters
     /// included‹). That scope is the name's own, or the program for a `share` place, which
     /// lives as long as the program.
-    fn hold(&mut self, binding: DyadPtr) {
+    pub(super) fn hold(&mut self, binding: DyadPtr) {
         let at =
             if self.cx.once_at == Some(self.cx.frames.len()) { 0 } else { self.cx.open.len() - 1 };
         let open = &mut self.cx.open[at];

@@ -715,7 +715,7 @@ impl<'a> Parser<'a> {
         };
         // The optional `[i]` or `(…)` after the member, lexed on demand; a
         // bracket is the member's argument list.
-        self.cell_at(tape, 2)?;
+        self.read_arguments(tape, 2)?;
         let index = self.index_at(tape, 2);
         let bracket = tape.at(2).filter(|c| c.is_bracket()).map(|c| c.dyad);
         // SAFETY: a bracket cell is a node from the store.
@@ -1039,6 +1039,7 @@ impl<'a> Parser<'a> {
         if !types.is_storage(binding) {
             return Err(ParseError::BadAddressOf);
         }
+        self.note_address_hold(binding);
         let held =
             crate::identities::declare::build(self.rt.store, types, binding, value, declared);
         Ok(crate::identities::pointer::build_addr(self.rt.store, types, binding, held))
