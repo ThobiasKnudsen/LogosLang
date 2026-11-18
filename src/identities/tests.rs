@@ -1108,6 +1108,26 @@ fn assignment_mints_once_per_place_type() {
 }
 
 #[test]
+fn a_write_through_a_pointer_or_a_call_place_is_a_node_of_the_mint_a_name_writes_with() {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let src = "mut x := i32 0, a := alloc 2 of i32 3, get := fn (p := @i32 ?) -> i32 ( p@ ), \
+               x = 9, a@ = 4, (a + 1)@ = 5, get(a) = 6";
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
+    let root = p.parse_sequence().unwrap();
+    // SAFETY: `root` is the sequence just parsed into `store`, which is alive.
+    unsafe {
+        let lines = scope::exprs_of(root).unwrap();
+        let name_write = dyad::ty(lines[3]);
+        for write in &lines[4..7] {
+            assert_eq!(dyad::ty(*write), name_write);
+            assert_eq!(dyad::ty(super::operands(*write).0), core.deref_);
+        }
+    }
+}
+
+#[test]
 fn logical_operators_match_between_tiers() {
     diff_nullary_fn("fn () -> bool ( true and true )", 1);
     diff_nullary_fn("fn () -> bool ( true and false )", 0);
@@ -2292,6 +2312,44 @@ fn address_of_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
         }
     }
     assert_eq!(run_script("a := alloc 1 of i32 3, p := &(a@), p@ = 7, a@"), 7);
+}
+
+#[test]
+fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
+    for (f, args, expect) in [
+        ("f := fn (a := @i32 ?) -> i32 ( a@ = 4, a@ )", "mut x := i32 1, f(&x)", 4),
+        (
+            "point := type ( x := i32 ?, y := i32 ? ), \
+             f := fn (p := @point ?) -> i32 ( p@.y = 9, p@ = point(5, p@.y), p@.x + p@.y )",
+            "mut v := point (1, 2), f(&v)",
+            14,
+        ),
+        (
+            "get := fn (p := @i32 ?) -> i32 ( p@ ), \
+             f := fn (a := @i32 ?) -> i32 ( get(a) = 7, a@ )",
+            "mut x := i32 3, f(&x)",
+            7,
+        ),
+    ] {
+        for compile in ["", "f.compile(), "] {
+            assert_eq!(run_script(&format!("{f}, {compile}{args}")), expect, "{f} / {compile}");
+        }
+    }
+    // The base is checked before the write, as a read through it checks it.
+    for compile in ["", "f.compile(), "] {
+        let src = format!(
+            "f := fn (q := @@i32 ?) -> i32 ( q@@ = 7, 1 ), {compile}p := alloc 1 of @i32 ?, f(p)"
+        );
+        let got = run_script_result(&src);
+        assert!(matches!(got, Err(crate::run::RunError::NullPointer)), "{src}: {got:?}");
+    }
+}
+
+#[test]
+fn a_cell_that_owns_takes_only_a_value_just_made_or_moved() {
+    let made = "q := alloc 1 of own @i32 ?, a := alloc 1 of i32 5";
+    assert_eq!(parse_err(&format!("( {made}, q@ = a )")), ParseError::NonOwningIntoOwning);
+    assert_eq!(run_script(&format!("{made}, q@ = move a, q@@")), 5);
 }
 
 #[test]

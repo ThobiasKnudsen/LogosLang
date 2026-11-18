@@ -179,8 +179,6 @@ pub(super) fn build_store(
     let lhs_d = unsafe { types.through(lhs) };
     // SAFETY: `through` hands back its argument, the dyad a binding names, or the storage.
     let lhs_ty = unsafe { dyad::ty(lhs_d) };
-    // SAFETY: as above.
-    let lhs_type = unsafe { types.type_of(lhs_d) };
     // SAFETY: `lhs_d` is a reduced dyad from the store.
     let place = unsafe { place_of(types, lhs_d) };
     // SAFETY: as above.
@@ -222,34 +220,55 @@ pub(super) fn build_store(
         // SAFETY: `lhs_d` is a field read, `rhs` a reduced dyad.
         return unsafe { super::this::build_write(store, types, lhs_d, rhs) };
     }
-    if lhs_ty == types.deref_ {
-        // SAFETY: `lhs_d` is a deref node, `rhs` a reduced dyad.
-        return unsafe { super::pointer::build_storeptr(store, types, lhs_d, rhs) };
+    // Left: a place with an address, a frame's or a dereference's cell, a call place's
+    // included, written through it whole.
+    let (lhs, lhs_d) = match place {
+        Some(Place::Call(call)) => {
+            // SAFETY: `call` came from `place_of`.
+            let cell = unsafe { call_place(store, types, call) };
+            (cell, cell)
+        }
+        _ => (lhs, lhs_d),
+    };
+    // SAFETY: `lhs_d` is a reduced dyad from the store.
+    let (through_pointer, place_type) =
+        unsafe { (dyad::ty(lhs_d) == types.deref_, super::read::output_type(types, lhs_d)) };
+    // SAFETY: as above; `place_type` is null or a type node.
+    let carry = unsafe {
+        (through_pointer || types.is_storage(lhs_d)).then(|| carry_of(types, place_type))
     }
-    if let Some(Place::Call(call)) = place {
-        // SAFETY: `call` came from `place_of`, `rhs` is a reduced dyad.
-        return unsafe {
-            let deref = call_place(store, types, call);
-            super::pointer::build_storeptr(store, types, deref, rhs)
-        };
-    }
-    // Left: a frame's place, written at its offset when its type moves whole.
-    // SAFETY: `lhs_d` is a reduced dyad from the store; `lhs_type` is null or a type node.
-    let carry = unsafe { types.is_storage(lhs_d).then(|| carry_of(types, lhs_type)) }.flatten();
+    .flatten();
     let Some(carry) = carry else {
         return Err(ParseError::BadAssignTarget);
     };
+    // SAFETY: `place_type` is the type node `carry` was read from.
+    let held_record = unsafe {
+        super::this::is_plain(types, place_type) && !meta::instances_free_of(place_type).is_null()
+    };
+    // stand-in for #240: no free runs over a value displaced through a pointer.
+    if through_pointer && held_record {
+        return Err(ParseError::HeldRecordThroughPointerNotInSeed);
+    }
     // SAFETY: `rhs` is a reduced dyad from the store.
-    let rhs = unsafe { super::land(store, types, rhs, lhs_type) }?;
+    let rhs = unsafe {
+        let line = types.through(rhs);
+        if through_pointer && dyad::ty(line) == types.tape.cell_dyad_at {
+            // A line no check narrowed: what it holds is known only when the write runs.
+            super::tape::build_cell_into(store, types, line, place_type)
+        } else {
+            super::land(store, types, rhs, place_type)?
+        }
+    };
     // A non-owning value in an owning place ends in a double free at scope exit.
     // SAFETY: `rhs` is a reduced dyad from the store.
     let rhs_owning = unsafe { super::drop_model::is_owning_value(types, rhs) };
     if super::drop_model::is_owning_place(types, lhs_d) && !rhs_owning {
         return Err(ParseError::NonOwningIntoOwning);
     }
-    // SAFETY: `op` is `=`, an operand record; `lhs_type` is the type node `carry` was read from.
-    let mint =
-        unsafe { mint::of(store, types, op, &[lhs_type], types.void_, types.ops.put_leaf(carry)) };
+    // SAFETY: `op` is `=`, an operand record; `place_type` is the type node `carry` was read from.
+    let mint = unsafe {
+        mint::of(store, types, op, &[place_type], types.void_, types.ops.put_leaf(carry))
+    };
     Ok(store.alloc_words(mint, &[lhs, rhs]))
 }
 
@@ -360,25 +379,25 @@ pub(crate) unsafe fn box_takes(types: &Core, t: DyadPtr, value: DyadPtr) -> bool
 /// Guards a null storage address like the interpreter's `Uninitialized`; what moves is what
 /// the place's type moves as, the decision the leaf was picked by.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a node of one of `=`'s mints, `[lhs, rhs]` over a storage place.
+    // SAFETY: `node` is a node of one of `=`'s mints, `[lhs, rhs]` over a place with an address.
     unsafe {
         let (lhs, rhs) = operands(node);
         let lhs = lw.through(lhs);
         if lw.types().is_hole(lhs) {
             return Err(CompileError::Uninitialized);
         }
-        let Some(carry) = carry_of(lw.types(), lw.types().type_of(lhs)) else {
+        let Some(carry) = carry_of(lw.types(), super::read::output_type(lw.types(), lhs)) else {
             return Err(CompileError::Internal("a store node's place moves whole"));
         };
         let v = lower_take(lw, carry, rhs)?;
-        match carry {
-            // A word may live in a register the place was promoted to.
-            Carry::Word(nt) => lw.write_place(lhs, nt.cranelift_type(), v)?,
-            Carry::Bytes(_) => {
-                let dest = lw.place_addr(lhs)?;
-                lower_put(lw, carry, dest, 0, v);
-            }
+        // A frame's word may live in a register the place was promoted to, which has no address.
+        if let (Carry::Word(nt), true) = (carry, lw.types().is_storage(lhs)) {
+            lw.write_place(lhs, nt.cranelift_type(), v)?;
+            return Ok(v);
         }
-        Ok(v)
+        super::pointer::lower_at_place(lw, lhs, handed_type(carry), |s, dest| {
+            lower_put(s, carry, dest, 0, v);
+            Ok(v)
+        })
     }
 }

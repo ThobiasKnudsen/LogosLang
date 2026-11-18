@@ -128,8 +128,6 @@ pub struct Core {
     /// `p.x` over a record's storage: a place read through two bindings.
     pub field_: DyadPtr,
     pub deref_: DyadPtr,
-    /// The store-through node `=` builds over a deref left side.
-    pub storeptr_: DyadPtr,
     pub addr_: DyadPtr,
     pub alloc_: DyadPtr,
     /// The gate word in a type position, `own @T ?`.
@@ -319,10 +317,8 @@ impl Core {
             close_sq: close_sq_,
         } = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
-        let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf, at_) =
-            pointer::register(&mut cx, &callables);
+        let (deref_, addr_, deref_leaf, addr_leaf, at_) = pointer::register(&mut cx, &callables);
         op_leaves.deref_ = deref_leaf;
-        op_leaves.storeptr_ = storeptr_leaf;
         op_leaves.addr_ = addr_leaf;
         // After pointers: the owning pointer is an `@T`.
         let dm = drop_model::register(&mut cx, &callables);
@@ -430,7 +426,6 @@ impl Core {
             construct_,
             field_,
             deref_,
-            storeptr_,
             addr_,
             alloc_,
             own_,

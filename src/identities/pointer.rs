@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Pointers: the `@T` type, `&x` address-of, `x@` dereference (`p@.x` folds the field
-//! offset into the deref node), and store-through `p@ = v`. Prefix `@` is the type, `@`
+//! offset into the deref node), and where a place's bytes lie. Prefix `@` is the type, `@`
 //! after a completed dyad is deref, so no ambiguity exists. A pointer value is an
 //! ordinary 8-byte scalar; raw and unchecked in the seed.
 
@@ -16,16 +16,15 @@ use super::{assign, meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, ParseError};
+use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// `deref` and `storeptr` have no spelling: the parser builds deref nodes from postfix
-/// `@` and storeptr nodes from `=` over a deref.
+/// `deref` has no spelling: the parser builds deref nodes from postfix `@`.
 pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
-) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
+) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
     let at = cx.store.alloc_head(cx.type_, record);
     cx.declare("@", at);
@@ -64,17 +63,6 @@ pub(super) fn register(
     cx.lower.insert(deref, lower_deref);
     let deref_leaf = callable::mint_native(cx.store, cs.callable, run_deref, cs.seed_native);
 
-    let record = meta::operand_record(
-        cx,
-        meta::TUPLE_TAG,
-        meta::prec::INERT,
-        Assoc::Left,
-        &["pointer", "value", "pointee", "offset", "op"],
-    );
-    let storeptr = cx.store.alloc_head(cx.type_, record);
-    cx.lower.insert(storeptr, lower_storeptr);
-    let storeptr_leaf = callable::mint_native(cx.store, cs.callable, run_storeptr, cs.seed_native);
-
     // `addr` has no spelling beyond the `&` token.
     let record = meta::operand_record(
         cx,
@@ -87,7 +75,7 @@ pub(super) fn register(
     cx.lower.insert(addr, lower_addr);
     let addr_leaf = callable::mint_native(cx.store, cs.callable, run_addr, cs.seed_native);
 
-    (deref, storeptr, addr, deref_leaf, storeptr_leaf, addr_leaf, at)
+    (deref, addr, deref_leaf, addr_leaf, at)
 }
 
 /// The address resolves at run/lower time, so a frame-relative local yields a
@@ -216,35 +204,6 @@ pub(crate) unsafe fn reads_folded_field(types: &Core, node: DyadPtr) -> bool {
     !record.is_null() && record != pointee && meta::is_record_type(record)
 }
 
-/// The pointee must be a type a whole value of which moves into a place.
-///
-/// # Safety
-/// `deref` must be a deref node; `rhs` a reduced dyad, both from the store.
-pub(crate) unsafe fn build_storeptr(
-    store: &mut Store,
-    types: &Core,
-    deref: DyadPtr,
-    rhs: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    let (ptr_expr, pointee, _) = deref_parts(deref);
-    let off_node = *((dyad::value(deref) as *const DyadPtr).add(2));
-    if carry_of(types, pointee).is_none() {
-        return Err(ParseError::BadAssignTarget);
-    }
-    // stand-in for #240: no free runs over a value displaced through a pointer.
-    if super::this::is_plain(types, pointee) && !meta::instances_free_of(pointee).is_null() {
-        return Err(ParseError::HeldRecordThroughPointerNotInSeed);
-    }
-    let rhs = if dyad::ty(types.through(rhs)) == types.tape.cell_dyad_at {
-        // A line no check narrowed: what it holds is known only when the store runs.
-        super::tape::build_cell_into(store, types, types.through(rhs), pointee)
-    } else {
-        super::land(store, types, rhs, pointee)?
-    };
-    let ops = [ptr_expr, rhs, pointee, off_node, types.ops.storeptr_];
-    Ok(store.alloc_words(types.storeptr_, &ops))
-}
-
 /// Where a place's bytes lie: a dereference's cell, its base checked as `run_deref` checks it;
 /// a field's, found by the read that reaches it; or a frame's. The one address `&` hands out,
 /// `=` writes through, and `free` and `move` reach.
@@ -310,24 +269,6 @@ fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-fn run_storeptr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a storeptr node from `build_storeptr`.
-    unsafe {
-        let p = dyad::value(node) as *const DyadPtr;
-        let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
-        let off = std::ptr::read_unaligned(dyad::value(*p.add(3)) as *const u64);
-        let carry = carry_of(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
-        let taken = assign::take(rt, carry, rhs)?;
-        // Same guard as `run_deref`.
-        let base = rt.run(ptr_expr)? as u64;
-        if base == 0 {
-            return Err(RunError::NullPointer);
-        }
-        assign::put(carry, base.wrapping_add(off) as *mut u8, taken);
-        Ok(taken)
-    }
-}
-
 fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
@@ -337,23 +278,6 @@ fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         // The same null guard the interpreter makes, so both tiers agree.
         lw.guard_non_null(addr, assign::handed_type(carry), |s| {
             Ok(assign::lower_load(s, carry, addr, off as i64))
-        })
-    }
-}
-
-fn lower_storeptr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a storeptr node from `build_storeptr`.
-    unsafe {
-        let p = dyad::value(node) as *const DyadPtr;
-        let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
-        let off = std::ptr::read_unaligned(dyad::value(*p.add(3)) as *const u64);
-        let carry = carry_of(lw.types(), pointee).ok_or(CompileError::NotDerefable)?;
-        let v = assign::lower_take(lw, carry, rhs)?;
-        let addr = lw.lower(ptr_expr)?;
-        // The store happens only on the non-null arm; the yielded value is the stored one.
-        lw.guard_non_null(addr, assign::handed_type(carry), |s| {
-            assign::lower_put(s, carry, addr, off as i64, v);
-            Ok(v)
         })
     }
 }

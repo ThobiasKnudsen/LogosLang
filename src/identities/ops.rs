@@ -42,7 +42,6 @@ pub struct OpLeaves {
     pub(crate) subset_: DyadPtr,
     pub(crate) construct_: DyadPtr,
     pub(crate) deref_: DyadPtr,
-    pub(crate) storeptr_: DyadPtr,
     pub(crate) addr_: DyadPtr,
     pub(crate) scope_: DyadPtr,
     pub(crate) declare_: DyadPtr,
@@ -152,8 +151,8 @@ fn store_bytes_run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `store_run`; the place's type moves as its bytes.
     unsafe {
         let types = rt.types();
-        let carry =
-            carry_of(types, types.type_of(operands(node).0)).ok_or(RunError::NoWholeRead)?;
+        let carry = carry_of(types, super::read::output_type(types, operands(node).0))
+            .ok_or(RunError::NoWholeRead)?;
         put_into(rt, node, carry)
     }
 }
@@ -161,11 +160,12 @@ fn store_bytes_run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// `[lhs, rhs]`: the right side taken, then put into the place on the left.
 ///
 /// # Safety
-/// `node` must be an assignment application over a storage place whose type moves as `carry`.
+/// `node` must be an assignment application over a place with an address whose type moves as
+/// `carry`.
 unsafe fn put_into(rt: &mut Runtime, node: DyadPtr, carry: Carry) -> Result<i64, RunError> {
     let (lhs, rhs) = operands(node);
     let taken = take(rt, carry, rhs)?;
-    let slot = rt.place_addr(lhs).ok_or(RunError::NoActivation)?;
+    let slot = super::pointer::place_addr(rt, lhs)?;
     if slot.is_null() {
         return Err(RunError::Uninitialized);
     }
@@ -273,7 +273,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         subset_: std::ptr::null_mut(),
         construct_: std::ptr::null_mut(),
         deref_: std::ptr::null_mut(),
-        storeptr_: std::ptr::null_mut(),
         addr_: std::ptr::null_mut(),
         scope_: std::ptr::null_mut(),
         declare_: std::ptr::null_mut(),
