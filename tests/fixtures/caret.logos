@@ -7,7 +7,7 @@
 ^ := type (
     lhs := ?,
     rhs := i32 ?,
-    output_type := type ?,
+    share output_type := type ?,
     share run = (
         mut r := output_type 1,
         for 0..rhs ( r = r * lhs ),

@@ -415,23 +415,58 @@ impl<'a> Parser<'a> {
             };
             params.push((name, ty));
         }
+        let shared =
+            crate::identities::mint::shared_field(ty, crate::identities::mint::SHARED_FIELD);
         let mut scope = ScopeStack::new();
         scope.push(field_scope);
         let output = scope
-            .resolve(self.trie, "output_type")
+            .resolve(self.trie, crate::identities::mint::SHARED_FIELD)
             .ok()
             .and_then(|r| fields.iter().position(|&f| f == r.identity))
             .filter(|&i| crate::identities::hole::type_in(fields[i]) == types.type_)
-            .map_or(types.void_, |i| key[i]);
+            .map(|i| key[i])
+            .or(shared)
+            .unwrap_or(types.void_);
         let (input, places) = self.hidden_param_record(&params, 0)?;
         self.cx.run_fields = Some((ty, places.clone()));
         let param_scope = crate::identities::meta::record_scope_of(input);
         self.cx.scopes.push(param_scope);
         let declared =
             type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
+        let declared = declared.and_then(|()| match shared {
+            Some(t) => self.declare_mint_output(ty, t),
+            None => Ok(()),
+        });
         self.cx.scopes.pop();
         declared?;
         self.fn_over_body(types.fn_type, input, &places, output, None, spec, std::ptr::null_mut())
+    }
+
+    /// The mint's own `output_type`, which its parse wrote, declared over its origin's as a
+    /// field of type `type` is, so `output_type 1` reads `f64 1` in the run built for `^`'s
+    /// mint for `f64`; each cell of the held body the definition bound to the origin's member
+    /// now names it (›A type without a `run` whose field is `?` mints one type per set of field
+    /// types, as `array` mints one per element type‹ [[R300]]).
+    ///
+    /// # Safety
+    /// `mint` must be a mint of a type with a body; `output` a type node.
+    unsafe fn declare_mint_output(
+        &mut self,
+        mint: DyadPtr,
+        output: DyadPtr,
+    ) -> Result<(), ParseError> {
+        use crate::identities::mint::SHARED_FIELD;
+        let binding = self.declare_field_name(SHARED_FIELD, output, 0)?;
+        let mut members = ScopeStack::new();
+        members.push(crate::identities::meta::record_body_of(mint));
+        if let (Ok(origin), Some(feed)) =
+            (members.resolve(self.trie, SHARED_FIELD), self.cx.feed.as_mut())
+        {
+            for cell in feed.cells.iter_mut().filter(|c| c.dyad == origin.binding) {
+                cell.dyad = binding;
+            }
+        }
+        Ok(())
     }
 
     /// `(start, len)` of the text inside the `( … )` at the cursor, consumed

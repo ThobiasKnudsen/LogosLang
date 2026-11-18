@@ -552,7 +552,7 @@ impl<'a> Parser<'a> {
             let built = logos && record && unsafe { !self.types.is_storage(cell.dyad) };
             if logos && record && (instance || built) {
                 let spelling = cell.spelling().to_string();
-                // SAFETY: the node is the one `run_logos_ctor` minted for `id`, `[field…, null, spec]`.
+                // SAFETY: the node is the one `run_logos_ctor` minted for `id`, or its mint's.
                 let folded =
                     unsafe { self.resolve_specialization(cell.dyad, cell.start, &spelling)? };
                 if let Some(lit) = folded {

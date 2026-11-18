@@ -301,7 +301,7 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
 fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
     let q = |conversion: &str| {
         format!(
-            "q := type ( a := ?, output_type := type ?, share run = ( {conversion} * 2.0 ), \
+            "q := type ( a := ?, share output_type := type ?, share run = ( {conversion} * 2.0 ), \
              share parse_rank = 60, share parse = ( tape[0].type = q, tape[0].a = tape[1], \
              tape[0].output_type = f64, tape.remove(1), tape.is_constructed[0] = true ) ), q 0.75"
         )
@@ -853,7 +853,7 @@ fn a_shared_name_in_a_function_is_made_once_at_the_definition() {
 }
 
 /// The power operator with the bare run body, on one line for the REPL.
-const POWER: &str = "^ := type ( lhs := ?, rhs := i32 ?, output_type := type ?, \
+const POWER: &str = "^ := type ( lhs := ?, rhs := i32 ?, share output_type := type ?, \
     share run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ), \
     share parse_rank = *.parse_rank + 1, share associativity = right, \
     share parse = ( tape[0].type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = tape[-1].type, \
@@ -2006,7 +2006,7 @@ fn a_binding_has_no_field_type() {
 
 #[test]
 fn a_value_reads_its_type_with_a_dot_on_both_tiers() {
-    let sq = "sq := type ( a := ?, output_type := type ?, share run = ( a * a ), \
+    let sq = "sq := type ( a := ?, share output_type := type ?, share run = ( a * a ), \
               share parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
               tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, tape.remove(-1) ) )";
     let pt = "pt := type ( x := i32 ? ), g := fn (x := i32 ?) -> pt ( pt(x) )";
@@ -3639,12 +3639,12 @@ fn a_declaration_on_the_command_line_is_its_names_start() {
 
 #[test]
 fn a_nodes_fields_are_read_by_name_without_running_it() {
-    let power = "^ := type ( lhs := ?, rhs := i32 ?, output_type := type ?, \
+    let power = "^ := type ( lhs := ?, rhs := i32 ?, share output_type := type ?, \
                  share run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ), \
                  share parse_rank = *.parse_rank + 1, share associativity = right, \
                  share parse = ( tape[0].type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = tape[-1].type, \
                  tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
-    let sq = "sq := type ( a := ?, output_type := type ?, share tag := i32 7, \
+    let sq = "sq := type ( a := ?, share output_type := type ?, share tag := i32 7, \
               share run = ( a * a ), share parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
               tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, tape.remove(-1) ) )";
     let mk = "pt := type ( x := i32 ? ), mk := type ( a := i32 ?, output_type := type ?, \
@@ -5748,12 +5748,12 @@ fn free_and_move_read_the_type_a_dereference_gives_back() {
 
 #[test]
 fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
-    let isbool = "isbool := type ( a := ?, output_type := type ?, \
+    let isbool = "isbool := type ( a := ?, share output_type := type ?, \
                   share run = ( if (a.type == bool) (i32 1) else (i32 2) ), \
                   share parse_rank = *.parse_rank + 1, share associativity = left, \
                   share parse = ( tape[0].type = isbool, tape[0].a = tape[-1], \
                   tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )";
-    let pass = "pass := type ( a := ?, output_type := type ?, share run = ( a ), \
+    let pass = "pass := type ( a := ?, share output_type := type ?, share run = ( a ), \
                 share parse_rank = *.parse_rank + 1, share associativity = left, \
                 share parse = ( tape[0].type = pass, tape[0].a = tape[-1], \
                 tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, \

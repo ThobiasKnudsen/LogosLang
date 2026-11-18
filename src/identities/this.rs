@@ -48,6 +48,12 @@ pub struct ThisIds {
     /// `[type, places, op]`: a new value of `type` holding a run's field values, made per run.
     pub pack: DyadPtr,
     pub pack_leaf: DyadPtr,
+    /// A parse's read of the `output_type` its node's mint keeps: `[value, op, output_type]`.
+    pub mint_output: DyadPtr,
+    pub mint_output_leaf: DyadPtr,
+    /// A write there: `[value, v, op]`, choosing the node's mint from its fields' types.
+    pub mint_output_write: DyadPtr,
+    pub mint_output_write_leaf: DyadPtr,
 }
 
 /// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
@@ -79,6 +85,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     cx.lower.insert(copy, lower_copy);
     let (pack, pack_leaf) = op(cx, &["type", "places", "op", "output_type"], run_pack);
     cx.lower.insert(pack, lower_pack);
+    let (mint_output, mint_output_leaf) = op(cx, &["value", "op", "output_type"], run_mint_output);
+    let (mint_output_write, mint_output_write_leaf) =
+        op(cx, &["value", "v", "op"], run_mint_output_write);
     ThisIds {
         slot,
         slot_leaf,
@@ -93,6 +102,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         copy_leaf,
         pack,
         pack_leaf,
+        mint_output,
+        mint_output_leaf,
+        mint_output_write,
+        mint_output_write_leaf,
     }
 }
 
@@ -140,8 +153,8 @@ pub(crate) unsafe fn build_copy(store: &mut Store, types: &Core, template: DyadP
     node(store, types.this.copy, types.this.copy_leaf, &[template], dyad::ty(template))
 }
 
-/// A node of `ty` with each field at its default or null, then the run's terminator and
-/// the slot for the node's field-type set.
+/// A node of `ty` with each field at its default or null, then the words `run_body::tail_len`
+/// counts.
 ///
 /// # Safety
 /// `ty` must be a record type from the store.
@@ -150,8 +163,82 @@ pub(crate) unsafe fn empty_node(store: &mut Store, ty: DyadPtr) -> DyadPtr {
         .iter()
         .map(|&field| super::hole::default_in(field))
         .collect();
-    slots.extend([std::ptr::null_mut(); 2]);
+    slots.resize(slots.len() + super::run_body::tail_len(ty), std::ptr::null_mut());
     store.alloc_words(ty, &slots)
+}
+
+/// `tape[0].output_type` in the parse of a type that mints: the member its node's mint keeps
+/// (›A node's output type is written by its parse, on the mint for a type that mints‹ [[R194]]).
+pub(crate) fn build_mint_output(store: &mut Store, types: &Core, this: DyadPtr) -> DyadPtr {
+    node(store, types.this.mint_output, types.this.mint_output_leaf, &[this], types.type_)
+}
+
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_mint_output(types: &Core, node: DyadPtr) -> bool {
+    dyad::ty(node) == types.this.mint_output
+}
+
+/// The parse's write of its node's mint's `output_type`, which chooses the mint (›The v0.1.0
+/// demo: a user-defined power operator `^`‹ [[R366]]).
+///
+/// # Safety
+/// `read` must be a node `is_mint_output` accepts; `value` a reduced dyad.
+pub(crate) unsafe fn build_mint_output_write(
+    store: &mut Store,
+    types: &Core,
+    read: DyadPtr,
+    value: DyadPtr,
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    super::read::value_type(types, value)?;
+    let value = super::tape::cell_arg(store, types, value);
+    let this = *(dyad::value(read) as *const DyadPtr);
+    let ops = [this, value];
+    Ok(act(store, types.this.mint_output_write, types.this.mint_output_write_leaf, &ops))
+}
+
+/// The node a parse is building, checked as a field read checks it.
+///
+/// # Safety
+/// `this` must be the value operand of a node `build_mint_output` or its write built.
+unsafe fn parsed_node(rt: &mut Runtime, this: DyadPtr) -> Result<DyadPtr, RunError> {
+    let node = rt.run(this)? as DyadPtr;
+    if node.is_null() {
+        return Err(RunError::NoThis);
+    }
+    if rt.unstamped(node) {
+        return Err(RunError::FieldBeforeStamp);
+    }
+    Ok(node)
+}
+
+fn run_mint_output(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a read from `build_mint_output`; the node it reads is a record type's.
+    unsafe {
+        let this = parsed_node(rt, *(dyad::value(node) as *const DyadPtr))?;
+        super::mint::shared_field(dyad::ty(this), super::mint::SHARED_FIELD)
+            .map(|t| t as i64)
+            .ok_or(RunError::MintUnchosen)
+    }
+}
+
+/// The mint is chosen from the types of the fields the parse has written so far.
+fn run_mint_output_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a write from `build_mint_output_write`, `[value, v, op]`; the node it
+    // writes is one of a type `takes_mint` accepts, its fields the slots before its tail.
+    unsafe {
+        let ops = dyad::value(node) as *const DyadPtr;
+        let this = parsed_node(rt, *ops)?;
+        let output = rt.run(*ops.add(1))? as DyadPtr;
+        let types: *const Core = rt.types();
+        let origin = super::mint::origin(dyad::ty(this));
+        let key = super::run_body::field_types(&*types, origin, this)
+            .map_err(|e| RunError::Parse(Box::new(e)))?
+            .ok_or(RunError::MintUnchosen)?;
+        let mint = super::mint::stamp(rt.store(), &*types, this, &key);
+        meta::install_mint_output(mint, output);
+        Ok(0)
+    }
 }
 
 /// Whether a field of `ty` holds a node itself, a `type` or a `dyad`, as its value.
@@ -528,10 +615,11 @@ unsafe extern "C" fn compiled_copy(ctx: *mut crate::run::Context, template: Dyad
 /// The slots are copied, never the nodes they hold: a field write replaces its slot.
 ///
 /// # Safety
-/// `template` must be a node `run_logos_ctor` minted, `[field…, null, spec]`.
+/// `template` must be a node `run_logos_ctor` minted, `[field…]` and the words
+/// `run_body::tail_len` counts.
 unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
     let ty = dyad::ty(template);
-    let n = super::array::items(meta::record_fields_of(ty)).len() + 2;
+    let n = super::array::items(meta::record_fields_of(ty)).len() + super::run_body::tail_len(ty);
     let slots = std::slice::from_raw_parts(dyad::value(template) as *const DyadPtr, n).to_vec();
     store.alloc_words(ty, &slots)
 }
@@ -576,7 +664,7 @@ unsafe fn pack_of(
             }
         })
         .collect();
-    slots.extend([std::ptr::null_mut(); 2]);
+    slots.resize(slots.len() + super::run_body::tail_len(ty), std::ptr::null_mut());
     store.alloc_words(ty, &slots)
 }
 
