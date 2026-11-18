@@ -476,6 +476,27 @@ impl<'a> Lowerer<'a, '_> {
         widen_to_i64(self.builder, v, nt)
     }
 
+    /// `v`, the lowered value of `node`, in its `i64` container, as an argument travels and as
+    /// the interpreter's run gives it.
+    ///
+    /// # Safety
+    /// `node` must be a valid dyad from the store.
+    pub(crate) unsafe fn container(&mut self, node: DyadPtr, v: Value) -> Value {
+        // Already at the container's width: a type value or an address.
+        if self.builder.func.dfg.value_type(v) == types::I64 {
+            return v;
+        }
+        let nt = match operand_of(self.types, node) {
+            Operand::Concrete(nt) => nt,
+            // A pointer rides the container as its 8-byte address.
+            Operand::Pointer(_) => NumType::U64,
+            // An uncommitted literal is the bare-literal i32 default; a non-numeric value (a
+            // `bool`, a void call's unit) rides as the i32 unit.
+            Operand::Literal | Operand::NonNumeric => NumType::I32,
+        };
+        widen_to_i64(self.builder, v, nt)
+    }
+
     /// The `nt` value an `i64` container holds, as a call's result is read.
     pub(crate) fn narrow(&mut self, v: Value, nt: NumType) -> Value {
         narrow_from_i64(self.builder, v, nt)
@@ -1118,20 +1139,7 @@ impl<'a> Lowerer<'a, '_> {
                     continue;
                 }
                 let v = self.lower(arg)?;
-                // Already at the container's width: a type value or an address.
-                let v = if self.builder.func.dfg.value_type(v) == types::I64 {
-                    v
-                } else {
-                    let nt = match operand_of(self.types, arg) {
-                        Operand::Concrete(nt) => nt,
-                        // A pointer rides the container as its 8-byte address.
-                        Operand::Pointer(_) => NumType::U64,
-                        // An uncommitted literal is the bare-literal i32 default; a
-                        // non-numeric value (a void call's unit) rides as the i32 unit.
-                        Operand::Literal | Operand::NonNumeric => NumType::I32,
-                    };
-                    widen_to_i64(self.builder, v, nt)
-                };
+                let v = self.container(arg, v);
                 self.builder.ins().stack_store(v, block, at);
                 if holds {
                     self.unwind.push(Unwind::Held { arg, this: v });
