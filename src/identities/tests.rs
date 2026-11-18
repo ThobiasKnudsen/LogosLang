@@ -2302,6 +2302,7 @@ fn address_of_what_is_no_place_or_has_no_address_is_refused() {
         "( a := alloc 2 of i32 1, &(a + 1) )",
         "( w := type ( x := i64 ? ), &(w(7)) )",
         "( x := i32 3, &x:name )",
+        "( x := i32 3, &x:lex_rank )",
         "( m := hashmap i32 -> i32 ?, m[1] = 2, &(m[1]) )",
     ] {
         assert_eq!(parse_err(src), ParseError::BadAddressOf, "{src}");
