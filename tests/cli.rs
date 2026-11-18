@@ -4027,10 +4027,17 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
         assert_eq!(stdout, printed, "{src}");
     }
-    // A fault in the callee ends its frame as its end would, on either tier.
+    // A fault in the callee, or in a later argument, ends what the call holds, on either tier.
     let raise = "f := fn (q := box ?) -> i32 ( error «boom» )";
     let nan = "f := fn (q := box ?, x := f64 ?) -> i32 ( i32 lossy (x) ), f.compile()";
+    let later =
+        "f2 := fn (q := box ?, n := i32 ?) -> i32 ( 1 ), g := fn () -> i32 ( error «boom» )";
     for (tail, expect) in [
+        (format!("{later}, f2(box (1, 2), g())"), "boom"),
+        (format!("{later}, b := box (1, 2), f2(move b, g())"), "boom"),
+        (format!("{later}, f2.compile(), f2(box (1, 2), g())"), "boom"),
+        (format!("{later}, h := fn () -> i32 ( f2(box (1, 2), g()) ), h.compile(), h()"), "boom"),
+        (format!("{later}, f2.compile(), h := fn () -> i32 ( f2(box (1, 2), g()) ), h.compile(), h()"), "boom"),
         (format!("{raise}, f(box (1, 2))"), "boom"),
         (format!("{raise}, g := fn () -> i32 ( f(box (1, 2)) ), g.compile(), g()"), "boom"),
         (format!("{nan}, f(box (1, 2), f64 0.0 / 0.0)"), "cannot convert"),

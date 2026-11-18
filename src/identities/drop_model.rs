@@ -626,20 +626,22 @@ fn lower_hold(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 /// its bytes there for a record, run through the `free` slot of its type.
 ///
 /// # Safety
-/// `call` must be a call of the `fn` `f` and `values` the argument block it ran with.
+/// `call` must be a call of the `fn` `f` and `values` the argument block it ran with, its
+/// first `filled` arguments filled.
 pub(crate) unsafe fn end_held_args(
     rt: &mut Runtime,
     f: DyadPtr,
     call: DyadPtr,
     values: &mut [i64],
+    filled: usize,
 ) -> Result<(), RunError> {
     let args = crate::parse::null_terminated(dyad::value(call) as *const DyadPtr);
     let hold = rt.types().hold_;
-    if !args.iter().any(|&a| dyad::ty(a) == hold) {
+    if !args[..filled].iter().any(|&a| dyad::ty(a) == hold) {
         return Ok(());
     }
     let slots: Vec<_> = super::by_copy::slots(rt.types(), f).collect();
-    for (&arg, slot) in args.iter().zip(slots).rev() {
+    for (&arg, slot) in args.iter().zip(slots).take(filled).rev() {
         if dyad::ty(arg) != hold {
             continue;
         }
@@ -2083,10 +2085,17 @@ mod tests {
         assert_eq!(free_log(), Vec::<i64>::new(), "the call frees it, not `a`'s end");
         assert_eq!(run(&format!("{f}a := alloc 1 of i32 7,\nf(a) + a@")), (14, 0));
         assert_eq!(free_log(), vec![7], "a borrow: `a`'s end frees it, once");
-        let (e, live) =
-            fault("f := fn (p := @i32 ?) -> i32 ( error «stop» ),\nf(alloc 1 of i32 5)");
-        assert!(matches!(e, RunError::Raised(_)), "{e:?}");
-        assert_eq!(live, 0);
+        let raise = "g := fn () -> i32 ( error «stop» ),\n";
+        let f2 = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( p@ ),\n";
+        for src in [
+            "f := fn (p := @i32 ?) -> i32 ( error «stop» ),\nf(alloc 1 of i32 5)".to_string(),
+            format!("{raise}{f2}f(alloc 1 of i32 5, g())"),
+            format!("{raise}{f2}a := alloc 1 of i32 6,\nf(move a, g())"),
+        ] {
+            let (e, live) = fault(&src);
+            assert!(matches!(e, RunError::Raised(_)), "{src}: {e:?}");
+            assert_eq!(live, 0, "{src}");
+        }
         assert_eq!(
             parse_err("f := fn (mut p := @i32 ?) -> i32 ( p@ ),\nf(alloc 1 of i32 5)"),
             ParseError::UnboundOwningValue
