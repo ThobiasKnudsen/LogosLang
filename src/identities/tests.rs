@@ -4064,9 +4064,10 @@ fn a_written_conversion_is_checked_as_an_unwritten_one() {
 
 #[test]
 fn lossy_stands_only_between_a_number_type_and_its_value() {
-    for src in ["x := lossy (f64 2.5)", "lossy 1", "x := i32 lossy, 0", "n := i32 lossy ?, 0"] {
+    for src in ["x := lossy (f64 2.5)", "lossy 1", "x := i32 lossy, 0"] {
         assert_eq!(script_parse_err(src), ParseError::LossyOutOfPlace, "{src}");
     }
+    assert_eq!(script_parse_err("n := i32 lossy ?, 0"), ParseError::TypeMismatch);
     assert_eq!(parse_err("i32 lossy (true)"), ParseError::TypeMismatch);
     assert_eq!(parse_err("i32 lossy (1, 2)"), ParseError::BadCast);
 }
@@ -4095,17 +4096,20 @@ fn a_number_type_takes_the_name_to_its_right() {
 }
 
 #[test]
-fn a_type_takes_a_value_still_to_be_finished_only_bracketed() {
+fn a_type_takes_the_value_built_at_discovery_before_it() {
     let pt = "pt := type (a := i32 ?, b := i32 ?), p := pt(7, 8)";
-    for src in [
-        format!("{pt}, i32 p.a"),
-        "m := i32 3, q := &m, i32 q@".to_string(),
-        "g := fn (a := i32 ?) -> i32 ( a + 1 ), i32 g(3)".to_string(),
-        "c := true, i64 if c (i32 1) else (i64 2)".to_string(),
+    for (src, want) in [
+        (format!("{pt}, i32 p.a"), 7),
+        (format!("{pt}, i32 lossy p.a"), 7),
+        (format!("{pt}, i32 (p.a)"), 7),
+        ("m := i32 3, q := &m, i32 q@".to_string(), 3),
+        ("g := fn (a := i32 ?) -> i32 ( a + 1 ), i32 g(3)".to_string(), 4),
+        ("c := true, i64 if c (i32 1) else (i64 2)".to_string(), 1),
     ] {
-        assert_eq!(script_parse_err(&src), ParseError::UnfinishedOperand, "{src}");
+        assert_eq!(run_script(&src), want, "{src}");
     }
-    assert_eq!(run_script(&format!("{pt}, i32 (p.a)")), 7);
+    assert_eq!(script_parse_err("x := i32 5, i32 (x).type"), ParseError::TypeMismatch);
+    assert_eq!(script_parse_err("i64 i32 5"), ParseError::Trailing);
 }
 
 #[test]

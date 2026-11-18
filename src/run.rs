@@ -10,7 +10,7 @@ use crate::dyad;
 use crate::dyad::{Dyad, DyadPtr};
 use crate::identities::by_copy;
 use crate::identities::read::{read_kind, Dispatch, Read};
-use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_OUTPUT};
+use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// What a `seed-native` callable's entry points at: takes the application
 /// node, returns its scalar result.
@@ -46,8 +46,9 @@ pub enum RunError {
     NoName,
     /// A tape cell checked to hold a type holds something else by the time it is read.
     CellNotAType,
-    /// A cell or line checked against a number type holds no constant of it.
-    CellNotANumber(DyadPtr),
+    /// A cell, line or field of the parse's node, read as a number type while the parse runs,
+    /// holds no constant of it.
+    NotAConstant(DyadPtr),
     /// A cell or line checked against a type a Logos `parse` builds holds no value of it.
     CellNotANode,
     /// `insert` of a null fragment.
@@ -176,8 +177,7 @@ unsafe fn call_machine(p: *const u8, ctx: *mut Context, args: &[i64]) -> i64 {
 pub type MachineFn = unsafe extern "C" fn(*mut Context, *const i64, usize) -> i64;
 
 /// The jump a compiled caller makes into a callee that is not compiled: the
-/// context's runtime applies the callee by value. An error or a panic is
-/// parked in the context and 0 returned, since neither may cross into machine code.
+/// context's runtime applies the callee by value.
 ///
 /// # Safety
 /// Called only by compiled code the seed emitted, with the context it was
@@ -189,18 +189,30 @@ pub unsafe extern "C" fn interpret_call(
     argc: usize,
     argv: *const i64,
 ) -> i64 {
+    // SAFETY: `argv` holds `argc` words; `fn_node` is the fn the caller baked.
+    interpret_step(ctx, |rt| unsafe {
+        let args = if argc == 0 { &[][..] } else { std::slice::from_raw_parts(argv, argc) };
+        rt.apply_values(fn_node, args)
+    })
+}
+
+/// A step compiled code hands the interpreter. An error or a panic is parked in the context
+/// and 0 returned, since neither may cross into machine code.
+///
+/// # Safety
+/// Called only from a function compiled code called, with the context it was called with.
+pub(crate) unsafe fn interpret_step(
+    ctx: *mut Context,
+    step: impl FnOnce(&mut Runtime) -> Result<i64, RunError>,
+) -> i64 {
     let rt = runtime_of(ctx);
     // SAFETY: `rt` is the runtime that made this very jump, live for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
     // SAFETY: as above.
     let depth = unsafe { (*rt).ctx.depth };
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: as above; `argv` holds `argc` words; `fn_node` is the fn the caller baked.
-        unsafe {
-            let args = if argc == 0 { &[][..] } else { std::slice::from_raw_parts(argv, argc) };
-            (*rt).apply_values(fn_node, args)
-        }
-    }));
+    // SAFETY: as above.
+    let outcome =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| step(unsafe { &mut *rt })));
     // The machine code runs on with the 0 and may call back in before the park
     // surfaces, so the interpreter's mid-call state is unwound here.
     let restore = move || {
@@ -360,13 +372,25 @@ impl FrameStack {
 struct Activation {
     /// The frame's base: a place reads `base + offset`.
     base: *mut u8,
+    /// The [`frame_record`] of the `fn` this frame is a call of; null for the program's.
+    record: DyadPtr,
     cursors: Vec<(DyadPtr, usize)>,
 }
 
 impl Activation {
-    fn new(base: *mut u8) -> Self {
-        Activation { base, cursors: Vec::new() }
+    fn new(base: *mut u8, record: DyadPtr) -> Self {
+        Activation { base, record, cursors: Vec::new() }
     }
+}
+
+/// The record a call of the `fn` node `f` is an instance of: its input record, which each
+/// `fn` parses for itself and a copy of `f` shares. ›A scope lays out its declarations; a
+/// use reaches the offset through its binding‹ [[R294]].
+///
+/// # Safety
+/// `f` must be a `fn` node from the store.
+pub(crate) unsafe fn frame_record(f: DyadPtr) -> DyadPtr {
+    *(dyad::value(f) as *const DyadPtr).add(FN_INPUT)
 }
 
 /// A running evaluation. Operand computation rides the Rust call stack; the
@@ -451,7 +475,7 @@ impl<'a> Runtime<'a> {
             types,
             live_allocs: 0,
             stack: FrameStack::new(),
-            activations: vec![Activation::new(store.arena_base())],
+            activations: vec![Activation::new(store.arena_base(), std::ptr::null_mut())],
             compiler: None,
             store,
             lexer: None,
@@ -712,8 +736,9 @@ impl<'a> Runtime<'a> {
 
     /// The machine address a place denotes: its offset from the program frame's base or
     /// from the innermost call's, for storage reached through a binding; a literal's own
-    /// bytes otherwise. `None`: a call-frame place with no call in progress (parse-time
-    /// evaluation), which callers map to [`RunError::NoActivation`].
+    /// bytes otherwise. `None`: a call-frame place read where the innermost call is not of
+    /// its function, as in parse-time evaluation or a node another call runs, which
+    /// callers map to [`RunError::NoActivation`].
     ///
     /// # Safety
     /// `node` must be a valid place node.
@@ -721,17 +746,13 @@ impl<'a> Runtime<'a> {
         let node = self.through(node);
         match self.types.frame_of(node) {
             Some((crate::binding::Frame::Root, off)) => Some(self.store.arena_at(off)),
-            Some((crate::binding::Frame::Call(_), off)) => {
-                self.in_call().then(|| self.frame_base().add(off))
+            Some((crate::binding::Frame::Call(f), off)) => {
+                let top = self.activations.last().expect("the program frame is never popped");
+                (top.record == frame_record(f)).then(|| top.base.add(off))
             }
             // A literal's own bytes.
             None => Some(dyad::value(node)),
         }
-    }
-
-    /// The innermost frame's base.
-    fn frame_base(&self) -> *mut u8 {
-        self.activations.last().expect("the program frame is never popped").base
     }
 
     /// `width` zeroed bytes for a result nobody named, live until the line that made it
@@ -811,7 +832,7 @@ impl<'a> Runtime<'a> {
             return Err(e);
         }
         self.ctx.depth += 1;
-        self.activations.push(Activation::new(base));
+        self.activations.push(Activation::new(base, frame_record(f)));
         let mut result = match self.run(body) {
             Err(RunError::Return(v)) => Ok(v),
             other => other,

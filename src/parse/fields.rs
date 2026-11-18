@@ -206,7 +206,27 @@ impl<'a> Parser<'a> {
                 owner,
             )
         };
-        Ok(node)
+        // A `?` field a check narrowed reads as a number of the type it was checked against, as
+        // a tape cell does (›A tape read checked against a number type reads as that number‹
+        // [[R229]]).
+        // SAFETY: `node` is the field read just built.
+        let narrowed = unsafe { crate::identities::this::field_key(self.types, node) }
+            .and_then(|key| self.narrowed_to(key))
+            // SAFETY: a narrowed type is a type node.
+            .filter(|&ty| unsafe { crate::identities::numtype::is_scalar_type(ty) });
+        Ok(match narrowed {
+            Some(ty) => crate::identities::this::build_load(
+                self.rt.store,
+                self.types,
+                this,
+                k,
+                ty,
+                binding,
+                fill,
+                owner,
+            ),
+            _ => node,
+        })
     }
 
     /// A field of a node reached by path, itself reached (DESIGN ›The dyad's
@@ -292,19 +312,20 @@ impl<'a> Parser<'a> {
         Ok(Some(self.path_operand(field)))
     }
 
-    /// Whether `t`'s field `name` is declared of a type a Logos `parse` builds.
+    /// Whether a read of `t`'s field `name` moves a whole value of its declared type
+    /// ([`crate::identities::this::reads_whole`]).
     ///
     /// # Safety
     /// `t` must be a record type from the store.
-    unsafe fn holds_node(&self, t: DyadPtr, name: &str) -> bool {
+    unsafe fn reads_whole(&self, t: DyadPtr, name: &str) -> bool {
         use crate::identities::{array, meta};
         let mut fields = ScopeStack::new();
         fields.push(meta::record_scope_of(t));
         fields.resolve(self.trie, name).ok().is_some_and(|r| {
             array::items(meta::record_fields_of(t)).contains(&r.identity)
-                && meta::is_node_valued(
+                && crate::identities::this::reads_whole(
+                    self.types,
                     crate::identities::hole::type_in(r.identity),
-                    self.types.fn_type,
                 )
         })
     }
@@ -493,10 +514,12 @@ impl<'a> Parser<'a> {
                     .share_member_access(lhs, &left, ty, name, call)?
                     .ok_or(ParseError::BadReflectRead);
             }
-            // A field holding a node a Logos `parse` built is read when the code runs, even
-            // through a node the parse knows: the node it holds may be replaced before then.
+            // A field whose declared type gives a value is read when the code runs, even through a
+            // node the parse knows: the node it holds may be replaced before then, and gives that
+            // value only when it runs (›A field is filled at run, per evaluation; its type decides
+            // how the operand is used‹ [[R193]]).
             if let Some(t) = crate::identities::node_output(self.types, lhs) {
-                if self.holds_node(t, name) {
+                if self.reads_whole(t, name) {
                     if let Some(read) = self.run_node_member(lhs, left, t, name, None)? {
                         return Ok(read);
                     }
@@ -1250,16 +1273,20 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.tape.cell_dyad_at || tape::is_cell_read(types, lhs) {
             return Ok(tape::build_cell_type(self.rt.store, types, lhs));
         }
-        // An untyped field's type is the written value's, unknown until the constructor runs.
+        // An untyped field of the parse's own node has the type of the node it holds, read when
+        // the constructor runs.
         if this::is_field_read(types, lhs) {
-            let declared = if this::is_fill(types, lhs) {
-                crate::identities::hole::type_in(
-                    Binding::read(this::field_binding_of(types, lhs)).dyad,
-                )
+            if !this::is_fill(types, lhs) {
+                return Err(ParseError::BadReflectRead);
+            }
+            let declared = crate::identities::hole::type_in(
+                Binding::read(this::field_binding_of(types, lhs)).dyad,
+            );
+            return Ok(if declared.is_null() {
+                this::build_field_type(self.rt.store, types, lhs)
             } else {
-                std::ptr::null_mut()
-            };
-            return if declared.is_null() { Err(ParseError::BadReflectRead) } else { Ok(declared) };
+                declared
+            });
         }
         if let Some(node) = self.known_node(lhs, self.cx.member_root) {
             return Ok(types.type_of(node));

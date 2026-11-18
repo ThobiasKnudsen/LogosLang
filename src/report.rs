@@ -103,11 +103,6 @@ pub fn parse_message(e: &ParseError) -> String {
              `f64 lossy 0.1`"
                 .into()
         }
-        ParseError::UnfinishedOperand => {
-            "a type takes the value to its right once that value is finished, which is not built \
-             here yet: write the brackets, as `i64 (p.a)`"
-                .into()
-        }
         ParseError::ReturnOutsideFunction => "`return` is written only inside a function".into(),
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
@@ -473,10 +468,10 @@ pub fn run_message(e: &RunError) -> String {
             "this cell was checked to hold a type, but the tape changed since and it holds something else"
                 .into()
         }
-        RunError::CellNotANumber(ty) => format!(
-            "this cell was checked against `{}`, but it holds no literal or constant of it: \
-             only a constant is read as its number",
-            // SAFETY: the type operand of a checked read is a number type node.
+        RunError::NotAConstant(ty) => format!(
+            "this is read as `{}`, but it holds no literal or constant of it: \
+             while the parse runs, only a constant is read as its number",
+            // SAFETY: the type a read was checked against or declared with is a number type node.
             unsafe { crate::identities::numtype::of_type_node(*ty) }.spelling()
         ),
         RunError::CellNotANode => {
