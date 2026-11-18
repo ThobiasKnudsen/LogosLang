@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    types, AbiParam, Endianness, InstBuilder, MemFlagsData, StackSlot, StackSlotData,
+    types, AbiParam, Block, Endianness, InstBuilder, MemFlagsData, StackSlot, StackSlotData,
     StackSlotKind, Value,
 };
 use cranelift_codegen::settings::{self, Configurable};
@@ -107,7 +107,7 @@ pub enum CompileError {
 
 /// One thing being lowered that ends values when a `return` or a fault leaves through it, read
 /// from the list its run frees by as the interpreter unwinds it.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Unwind<'a> {
     /// A scope at its line `line`: those of `items`, its exit items still to run, held there,
     /// and once that line `failed`, those it ended and may not have reached. A `rest` is what
@@ -158,6 +158,8 @@ pub struct Lowerer<'a, 'f> {
     faults_seen: Value,
     /// What a `return` or a fault lowered now leaves through, outermost first.
     unwind: Vec<Unwind<'a>>,
+    /// The fault exit made for each state of what is open, every scope failed at its line.
+    exits: HashMap<Vec<Unwind<'a>>, Block>,
 }
 
 impl<'a> Lowerer<'a, '_> {
@@ -411,10 +413,7 @@ impl<'a> Lowerer<'a, '_> {
                     }
                 }
                 Unwind::Held { .. } => {
-                    let first = (at..=k)
-                        .rev()
-                        .find(|&j| matches!(self.unwind[j], Unwind::Held { first: true, .. }))
-                        .unwrap_or(at);
+                    let first = self.innermost(at);
                     for held in self.unwind.split_off(first).into_iter().rev() {
                         if let Unwind::Held { arg, this, .. } = held {
                             drop_model::lower_end_held_arg(self, arg, this)?;
@@ -426,35 +425,85 @@ impl<'a> Lowerer<'a, '_> {
         Ok(())
     }
 
+    /// Where the innermost thing open above `floor` starts: a call's held arguments are one,
+    /// from the first it holds.
+    fn innermost(&self, floor: usize) -> usize {
+        let k = self.unwind.len() - 1;
+        if !matches!(self.unwind[k], Unwind::Held { .. }) {
+            return k;
+        }
+        (floor..=k)
+            .rev()
+            .find(|&j| matches!(self.unwind[j], Unwind::Held { first: true, .. }))
+            .unwrap_or(floor)
+    }
+
     /// After a step that can park a fault: when the run's fault count passed the one this code
-    /// last saw, it leaves as a `return` leaves, through [`Self::end_to`], every scope it stops
-    /// having failed at its line and an end it stops in skipped (DESIGN ›A checked error is a
-    /// fault: the task that hit it is cancelled‹ [[R141]]).
+    /// last saw, it leaves as a `return` leaves, every scope it stops having failed at its line
+    /// and an end it stops in skipped (DESIGN ›A checked error is a fault: the task that hit it
+    /// is cancelled‹ [[R141]]).
     fn leave_at_fault(&mut self) -> Result<(), CompileError> {
         let faults_at = std::mem::offset_of!(crate::run::Context, faults) as i64;
         let now = self.load_at(types::I64, self.ctx, faults_at);
         let faulted = self.builder.ins().icmp(IntCC::NotEqual, now, self.faults_seen);
-        let (out, on) = (self.builder.create_block(), self.builder.create_block());
-        self.builder.ins().brif(faulted, out, &[], on, &[]);
-        self.builder.seal_block(out);
+        let open = self
+            .unwind
+            .iter()
+            .filter_map(|&u| match u {
+                Unwind::Scope { rest: true, .. } => None,
+                Unwind::Scope { items, line, .. } => {
+                    Some(Unwind::Scope { items, line, failed: true, rest: false })
+                }
+                held_or_ends => Some(held_or_ends),
+            })
+            .collect();
+        let on = self.builder.create_block();
+        self.fault_exit(open, &|b, exit| {
+            b.ins().brif(faulted, exit, &[], on, &[]);
+        })?;
         self.builder.seal_block(on);
-        self.builder.switch_to_block(out);
-        let (open, seen) = (self.unwind.clone(), std::mem::replace(&mut self.faults_seen, now));
-        self.unwind.retain(|u| !matches!(u, Unwind::Scope { rest: true, .. }));
-        for u in &mut self.unwind {
-            if let Unwind::Scope { failed, .. } = u {
-                *failed = true;
-            }
-        }
-        // SAFETY: what is open was opened by the lowering of exit items and held places.
-        let left = unsafe { self.end_to(0) };
-        (self.unwind, self.faults_seen) = (open, seen);
-        left?;
-        count_out(self.builder, self.depth_addr);
-        let zero = self.builder.ins().iconst(types::I64, 0);
-        self.builder.ins().return_(&[zero]);
         self.builder.switch_to_block(on);
         Ok(())
+    }
+
+    /// Ends the block with `branch` into the fault exit of `open`, made and filled the first
+    /// time: one exit per state of what is open, shared by every step that faults there and by
+    /// the exits inside it, so each thing open is ended once on the way out, not once per step.
+    /// The exit ends the innermost thing open through [`Self::end_to`], a fault there going
+    /// straight to the exit of what lies outside it, then goes on to that exit; the exit with
+    /// nothing open returns.
+    fn fault_exit(
+        &mut self,
+        open: Vec<Unwind<'a>>,
+        branch: &dyn Fn(&mut FunctionBuilder, Block),
+    ) -> Result<(), CompileError> {
+        if let Some(&exit) = self.exits.get(&open) {
+            branch(self.builder, exit);
+            return Ok(());
+        }
+        let exit = self.builder.create_block();
+        self.exits.insert(open.clone(), exit);
+        branch(self.builder, exit);
+        self.builder.switch_to_block(exit);
+        if open.is_empty() {
+            count_out(self.builder, self.depth_addr);
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            self.builder.ins().return_(&[zero]);
+            return Ok(());
+        }
+        let faults_at = std::mem::offset_of!(crate::run::Context, faults) as i64;
+        let now = self.load_at(types::I64, self.ctx, faults_at);
+        let outer = (std::mem::replace(&mut self.unwind, open), self.faults_seen);
+        self.faults_seen = now;
+        // SAFETY: what is open was opened by the lowering of exit items and held places.
+        let left = unsafe { self.end_to(self.innermost(0)) }.and_then(|()| {
+            let outside = self.unwind.clone();
+            self.fault_exit(outside, &|b, exit| {
+                b.ins().jump(exit, &[]);
+            })
+        });
+        (self.unwind, self.faults_seen) = outer;
+        left
     }
 
     /// The core handles, for an identity's lowering to reach the op-leaf table.
@@ -1601,6 +1650,7 @@ unsafe fn build_pass(
                 depth_addr,
                 faults_seen,
                 unwind: Vec::new(),
+                exits: HashMap::new(),
             };
             lw.lower(root)?
         };
@@ -1616,6 +1666,8 @@ unsafe fn build_pass(
         };
         count_out(&mut builder, depth_addr);
         builder.ins().return_(&[ret64]);
+        // A fault exit gains a jump from every step lowered after it, so it is sealed last.
+        builder.seal_all_blocks();
         builder.finalize();
     }
 

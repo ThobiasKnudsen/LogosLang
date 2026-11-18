@@ -4723,6 +4723,26 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
             "",
             range,
         ),
+        // Three scopes deep: each ends once, and a fault in the middle one's end skips only it.
+        (
+            format!(
+                "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), y := ( b := bag(2), \
+                 w := ( c := bag(3), i32 lossy (x) ), w ), y )"
+            ),
+            fault,
+            "freed 3\nfreed 2\nfreed 1\n",
+            nan,
+        ),
+        (
+            format!(
+                "{checked}, g := fn (n := i32 ?) -> i32 ( a := bag(f64 1.5), \
+                 y := ( b := bag(f64 2.5), d := bag(z / z), \
+                 w := ( c := bag(f64 3.5), e := array i32 [1, 2], e[n] ), w ), y )"
+            ),
+            "g(5)",
+            "freed 3\nfreed 1\n",
+            range,
+        ),
         // A `return` in a `defer` the cleanup runs runs the rest of its end; a fault stops it.
         (
             format!(
