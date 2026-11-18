@@ -236,9 +236,10 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     unsafe {
         let (cond, then, els) = branches(node);
         let (then_ends, else_ends) = arm_ends(node);
+        let condition_ends = ends_at(node, IF_CONDITION_ENDS);
         if els.is_null() {
-            return lw.lower_if_stmt(cond, then, then_ends, else_ends);
+            return lw.lower_if_stmt(cond, condition_ends, then, then_ends, else_ends);
         }
-        lw.lower_if(cond, [(then, then_ends), (els, else_ends)])
+        lw.lower_if(cond, condition_ends, [(then, then_ends), (els, else_ends)])
     }
 }

@@ -105,6 +105,18 @@ pub enum CompileError {
     Cranelift(String),
 }
 
+/// One thing being lowered that ends values when a `return` leaves through it, read from the
+/// list its run frees by as the `return` unwinds it.
+#[derive(Clone, Copy)]
+enum Unwind<'a> {
+    /// A scope at its line `line`: its exit items held there.
+    Scope { node: DyadPtr, line: usize },
+    /// An `if` arm's or condition's ends.
+    Ends(&'a [DyadPtr]),
+    /// An argument a call holds, passed as `this`.
+    Held { arg: DyadPtr, this: Value },
+}
+
 /// The lowering context: a Cranelift function under construction, the rule
 /// table, and the host pointer type. The builder is not exposed; rules use the
 /// typed helpers below.
@@ -139,11 +151,11 @@ pub struct Lowerer<'a, 'f> {
     ctx: Value,
     /// The call-depth counter the epilogue counts this call out of.
     depth_addr: Value,
-    /// Scopes being lowered whose exit runs teardowns, which a `return` would jump past.
-    teardowns: usize,
+    /// What a `return` lowered now leaves through, outermost first.
+    unwind: Vec<Unwind<'a>>,
 }
 
-impl Lowerer<'_, '_> {
+impl<'a> Lowerer<'a, '_> {
     /// Dispatch to the node's lowering rule, asking the reading rule the same
     /// question `run` asks, in the same order.
     ///
@@ -326,38 +338,57 @@ impl Lowerer<'_, '_> {
         Ok(())
     }
 
-    /// Lower `lines`, a scope's body, then its end: the items of `exit` still held after
-    /// the last line, in reverse, as the scope's run does; the value is the last line's that
-    /// is no `defer`. An item only a failing line runs leaves a `return` free to compile.
+    /// Lower the scope `node`'s `lines`, then its end, as its run does: a line stands at its
+    /// index, which a `return` in it ends the scope at. The value is the last line's that is
+    /// neither prose nor a `defer`.
     ///
     /// # Safety
-    /// `lines` must be reduced dyads from the store, none of them prose; `exit` the scope's
-    /// exit items.
-    pub(crate) unsafe fn lower_with_teardowns(
+    /// `node` must be a scope node from the store and `lines` its reduced lines.
+    pub(crate) unsafe fn lower_scope(
         &mut self,
+        node: DyadPtr,
         lines: &[DyadPtr],
-        exit: &[DyadPtr],
     ) -> Result<Option<Value>, CompileError> {
-        use crate::identities::drop_model;
-        let defer_ = self.types.defer_;
-        let held = usize::from(drop_model::any_held_somewhere(exit));
-        self.teardowns += held;
-        let mut last = Ok(None);
-        for &line in lines.iter().filter(|&&e| dyad::ty(e) != defer_) {
-            last = self.lower(line).map(Some);
-            if last.is_err() {
-                break;
+        let (defer_, at) = (self.types.defer_, self.unwind.len());
+        self.unwind.push(Unwind::Scope { node, line: 0 });
+        let mut last = None;
+        for (line, &expr) in lines.iter().enumerate() {
+            let ty = dyad::ty(expr);
+            if crate::identities::numtype::is_comment_type(ty) || ty == defer_ {
+                continue;
             }
+            self.unwind[at] = Unwind::Scope { node, line };
+            last = Some(self.lower(expr)?);
         }
-        self.teardowns -= held;
-        let last = last?;
-        for &item in exit.iter().rev() {
-            let item = drop_model::exit_item_of(item);
-            if item.held_at(usize::MAX) {
-                item.lower(self)?;
-            }
-        }
+        self.unwind[at] = Unwind::Scope { node, line: lines.len() };
+        self.end_to(at)?;
         Ok(last)
+    }
+
+    /// Ends what is open above `at`, innermost first: its own end, or a `return` leaving it.
+    /// Each is closed before its teardowns are lowered, so a `return` among them leaves only
+    /// what lies outside it, as the interpreter's does.
+    ///
+    /// # Safety
+    /// Every open scope must be a scope node from the store and every end a held place.
+    unsafe fn end_to(&mut self, at: usize) -> Result<(), CompileError> {
+        use crate::identities::drop_model;
+        for k in (at..self.unwind.len()).rev() {
+            let open = self.unwind[k];
+            self.unwind.truncate(k);
+            match open {
+                Unwind::Scope { node, line } => {
+                    crate::identities::scope::lower_exit(self, node, line)?;
+                }
+                Unwind::Ends(ends) => {
+                    for &place in ends.iter().rev() {
+                        drop_model::lower_end_held(self, place)?;
+                    }
+                }
+                Unwind::Held { arg, this } => drop_model::lower_end_held_arg(self, arg, this)?,
+            }
+        }
+        Ok(())
     }
 
     /// The core handles, for an identity's lowering to reach the op-leaf table.
@@ -731,9 +762,10 @@ impl Lowerer<'_, '_> {
     pub unsafe fn lower_if(
         &mut self,
         cond: DyadPtr,
-        [(then, then_ends), (els, else_ends)]: [(DyadPtr, &[DyadPtr]); 2],
+        condition_ends: &'a [DyadPtr],
+        [(then, then_ends), (els, else_ends)]: [(DyadPtr, &'a [DyadPtr]); 2],
     ) -> Result<Value, CompileError> {
-        let c = self.lower(cond)?;
+        let c = self.lower_condition(cond, condition_ends)?;
         // SAFETY: the arms and ends are the dyads the caller's contract covers.
         self.branch(
             c,
@@ -742,19 +774,36 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// An arm and the places it frees at its end; a `return` inside would leave past them.
+    /// An `if`'s condition, which frees `ends` only when a `return` leaves it: the arms free
+    /// them otherwise.
+    ///
+    /// # Safety
+    /// `cond` must be a valid dyad from the store, `ends` held places.
+    unsafe fn lower_condition(
+        &mut self,
+        cond: DyadPtr,
+        ends: &'a [DyadPtr],
+    ) -> Result<Value, CompileError> {
+        let at = self.unwind.len();
+        self.unwind.push(Unwind::Ends(ends));
+        let c = self.lower(cond)?;
+        self.unwind.truncate(at);
+        Ok(c)
+    }
+
+    /// An arm and the places it frees at its end, or as a `return` leaves it.
     ///
     /// # Safety
     /// `arm` must be a valid dyad from the store, `ends` held places.
-    unsafe fn lower_arm(&mut self, arm: DyadPtr, ends: &[DyadPtr]) -> Result<Value, CompileError> {
-        let held = usize::from(!ends.is_empty());
-        self.teardowns += held;
-        let value = self.lower(arm);
-        self.teardowns -= held;
-        let value = value?;
-        for &place in ends.iter().rev() {
-            crate::identities::drop_model::lower_end_held(self, place)?;
-        }
+    unsafe fn lower_arm(
+        &mut self,
+        arm: DyadPtr,
+        ends: &'a [DyadPtr],
+    ) -> Result<Value, CompileError> {
+        let at = self.unwind.len();
+        self.unwind.push(Unwind::Ends(ends));
+        let value = self.lower(arm)?;
+        self.end_to(at)?;
         Ok(value)
     }
 
@@ -921,11 +970,12 @@ impl Lowerer<'_, '_> {
     pub unsafe fn lower_if_stmt(
         &mut self,
         cond: DyadPtr,
+        condition_ends: &'a [DyadPtr],
         then: DyadPtr,
-        then_ends: &[DyadPtr],
+        then_ends: &'a [DyadPtr],
         else_ends: &[DyadPtr],
     ) -> Result<Value, CompileError> {
-        let c = self.lower(cond)?;
+        let c = self.lower_condition(cond, condition_ends)?;
         self.branch(
             c,
             |s| {
@@ -943,7 +993,8 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// `return X` leaves the function from wherever it stands, freeing `ends` last first and
+    /// `return X` leaves the function from wherever it stands, freeing `ends` last first, then
+    /// what each scope, `if` and call it leaves ends as the `return` unwinds through it, and
     /// counting the call out as the epilogue does. What follows it is unreachable, so the
     /// value handed back to the enclosing lowering is a zero of `X`'s type.
     ///
@@ -954,13 +1005,15 @@ impl Lowerer<'_, '_> {
         value: DyadPtr,
         ends: &[DyadPtr],
     ) -> Result<Value, CompileError> {
-        if self.teardowns > 0 {
-            return Err(CompileError::NotLowerable(value));
-        }
         let v = self.lower(value)?;
         for &place in ends.iter().rev() {
             crate::identities::drop_model::lower_end_held(self, place)?;
         }
+        // The lowering after the jump still stands inside everything the `return` left.
+        let open = self.unwind.clone();
+        let left = self.end_to(0);
+        self.unwind = open;
+        left?;
         let ret64 = match (self.ret_dest, self.ret) {
             (Some((dest, width)), _) => {
                 self.copy_bytes(dest, v, width);
@@ -1028,7 +1081,8 @@ impl Lowerer<'_, '_> {
             return Err(CompileError::ArityMismatch);
         }
         let words = by_copy::words(core, callee);
-        let mut held = Vec::new();
+        // Each argument the call holds is ended at its end, or by a `return` in a later one.
+        let held_from = self.unwind.len();
         let argv = if words == 0 {
             self.builder.ins().iconst(self.ptr_ty, 0)
         } else {
@@ -1050,7 +1104,7 @@ impl Lowerer<'_, '_> {
                     let dst = self.builder.ins().stack_addr(self.ptr_ty, block, at);
                     self.copy_bytes(dst, src, width);
                     if holds {
-                        held.push((arg, dst));
+                        self.unwind.push(Unwind::Held { arg, this: dst });
                     }
                     continue;
                 }
@@ -1071,7 +1125,7 @@ impl Lowerer<'_, '_> {
                 };
                 self.builder.ins().stack_store(v, block, at);
                 if holds {
-                    held.push((arg, v));
+                    self.unwind.push(Unwind::Held { arg, this: v });
                 }
             }
             self.builder.ins().stack_addr(self.ptr_ty, block, 0)
@@ -1116,9 +1170,7 @@ impl Lowerer<'_, '_> {
                 )?
             }
         };
-        for &(arg, this) in held.iter().rev() {
-            crate::identities::drop_model::lower_end_held_arg(self, arg, this)?;
-        }
+        self.end_to(held_from)?;
         Ok(match ret {
             Some(nt) => narrow_from_i64(self.builder, r, nt),
             None => self.const_i32(0),
@@ -1461,7 +1513,7 @@ unsafe fn build_pass(
                 ret_dest,
                 ctx: run_ctx,
                 depth_addr,
-                teardowns: 0,
+                unwind: Vec::new(),
             };
             lw.lower(root)?
         };
