@@ -587,7 +587,7 @@ fn lower_displace(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError
 
 /// Whether parameter `i` of `callee` holds the value a call passes it straight: a `fn`'s
 /// parameter nothing writes over. A record's field, a conversion's operand, a `mut` parameter
-/// and a callee with no signature hold nothing yet.
+/// and a callee with no signature hold nothing yet: stand-in for #256.
 ///
 /// # Safety
 /// `callee` must be a reduced dyad from the store.
