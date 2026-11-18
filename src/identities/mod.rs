@@ -128,8 +128,6 @@ pub struct Core {
     /// `p.x` over a record's storage: a place read through two bindings.
     pub field_: DyadPtr,
     pub deref_: DyadPtr,
-    /// The store-through node `=` builds over a deref left side.
-    pub storeptr_: DyadPtr,
     pub addr_: DyadPtr,
     pub alloc_: DyadPtr,
     /// The gate word in a type position, `own @T ?`.
@@ -142,6 +140,9 @@ pub struct Core {
     /// The type of an `=`'s right side over a place that holds: built, then the displaced
     /// value freed.
     pub displace_: DyadPtr,
+    /// The type of a call's argument the call holds: its value made or moved there, ended
+    /// when the call returns.
+    pub hold_: DyadPtr,
     /// The gate word; its constructor fills the declare node's gate slot.
     pub pub_: DyadPtr,
     pub mut_: DyadPtr,
@@ -319,10 +320,8 @@ impl Core {
             close_sq: close_sq_,
         } = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
-        let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf, at_) =
-            pointer::register(&mut cx, &callables);
+        let (deref_, addr_, deref_leaf, addr_leaf, at_) = pointer::register(&mut cx, &callables);
         op_leaves.deref_ = deref_leaf;
-        op_leaves.storeptr_ = storeptr_leaf;
         op_leaves.addr_ = addr_leaf;
         // After pointers: the owning pointer is an `@T`.
         let dm = drop_model::register(&mut cx, &callables);
@@ -337,8 +336,18 @@ impl Core {
         op_leaves.teardown_ = dm.teardown_leaf;
         op_leaves.defer_ = dm.defer_leaf;
         op_leaves.displace_ = dm.displace_leaf;
-        let (alloc_, own_, move_, free_, defer_, exit_item, displace_, of_) =
-            (dm.alloc_, dm.own_, dm.move_, dm.free_, dm.defer_, dm.exit_item, dm.displace_, dm.of_);
+        op_leaves.hold_ = dm.hold_leaf;
+        let (alloc_, own_, move_, free_, defer_, exit_item, displace_, hold_, of_) = (
+            dm.alloc_,
+            dm.own_,
+            dm.move_,
+            dm.free_,
+            dm.defer_,
+            dm.exit_item,
+            dm.displace_,
+            dm.hold_,
+            dm.of_,
+        );
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         let hashmap = hashmap::register(&mut cx, &callables, array_);
         let held_type = held_type::register(&mut cx, &callables);
@@ -430,7 +439,6 @@ impl Core {
             construct_,
             field_,
             deref_,
-            storeptr_,
             addr_,
             alloc_,
             own_,
@@ -439,6 +447,7 @@ impl Core {
             defer_,
             exit_item,
             displace_,
+            hold_,
             pub_,
             mut_,
             immut_,

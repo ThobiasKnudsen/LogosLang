@@ -1108,6 +1108,26 @@ fn assignment_mints_once_per_place_type() {
 }
 
 #[test]
+fn a_write_through_a_pointer_or_a_call_place_is_a_node_of_the_mint_a_name_writes_with() {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let src = "mut x := i32 0, a := alloc 2 of i32 3, get := fn (p := @i32 ?) -> i32 ( p@ ), \
+               x = 9, a@ = 4, (a + 1)@ = 5, get(a) = 6";
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
+    let root = p.parse_sequence().unwrap();
+    // SAFETY: `root` is the sequence just parsed into `store`, which is alive.
+    unsafe {
+        let lines = scope::exprs_of(root).unwrap();
+        let name_write = dyad::ty(lines[3]);
+        for write in &lines[4..7] {
+            assert_eq!(dyad::ty(*write), name_write);
+            assert_eq!(dyad::ty(super::operands(*write).0), core.deref_);
+        }
+    }
+}
+
+#[test]
 fn logical_operators_match_between_tiers() {
     diff_nullary_fn("fn () -> bool ( true and true )", 1);
     diff_nullary_fn("fn () -> bool ( true and false )", 0);
@@ -2295,17 +2315,84 @@ fn address_of_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
 }
 
 #[test]
-fn address_of_what_is_no_place_or_has_no_address_is_refused() {
+fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
+    for (f, args, expect) in [
+        ("f := fn (a := @i32 ?) -> i32 ( a@ = 4, a@ )", "mut x := i32 1, f(&x)", 4),
+        (
+            "point := type ( x := i32 ?, y := i32 ? ), \
+             f := fn (p := @point ?) -> i32 ( p@.y = 9, p@ = point(5, p@.y), p@.x + p@.y )",
+            "mut v := point (1, 2), f(&v)",
+            14,
+        ),
+        (
+            "get := fn (p := @i32 ?) -> i32 ( p@ ), \
+             f := fn (a := @i32 ?) -> i32 ( get(a) = 7, a@ )",
+            "mut x := i32 3, f(&x)",
+            7,
+        ),
+    ] {
+        for compile in ["", "f.compile(), "] {
+            assert_eq!(run_script(&format!("{f}, {compile}{args}")), expect, "{f} / {compile}");
+        }
+    }
+    // The base is checked before the write, as a read through it checks it.
+    for compile in ["", "f.compile(), "] {
+        let src = format!(
+            "f := fn (q := @@i32 ?) -> i32 ( q@@ = 7, 1 ), {compile}p := alloc 1 of @i32 ?, f(p)"
+        );
+        let got = run_script_result(&src);
+        assert!(matches!(got, Err(crate::run::RunError::NullPointer)), "{src}: {got:?}");
+    }
+}
+
+#[test]
+fn a_cell_that_owns_takes_only_a_value_just_made_or_moved() {
+    let made = "q := alloc 1 of own @i32 ?, a := alloc 1 of i32 5";
+    assert_eq!(parse_err(&format!("( {made}, q@ = a )")), ParseError::NonOwningIntoOwning);
+    assert_eq!(run_script(&format!("{made}, q@ = move a, q@@")), 5);
+}
+
+#[test]
+fn address_of_what_has_no_address_is_refused() {
     for src in [
-        "( f := fn () -> i32 ( 7 ), &(f()) )",
-        "( get := fn (p := @i32 ?) -> i32 ( return p@ ), a := alloc 1 of i32 3, &(get(a)) )",
-        "( a := alloc 2 of i32 1, &(a + 1) )",
-        "( w := type ( x := i64 ? ), &(w(7)) )",
+        // A name that is no place names its value already.
+        "( x := 5, &x )",
+        "( x := 1 + 2, &(x) )",
+        "( &(i32 ?) )",
+        "( &i32 )",
         "( x := i32 3, &x:name )",
         "( m := hashmap i32 -> i32 ?, m[1] = 2, &(m[1]) )",
     ] {
         assert_eq!(parse_err(src), ParseError::BadAddressOf, "{src}");
     }
+}
+
+#[test]
+fn address_of_a_value_nothing_names_holds_it_both_tiers() {
+    for (f, args, expect) in [
+        ("w := type ( x := i64 ? ), g := fn () -> i64 ( p := &w(7), p@.x )", "g()", 7),
+        ("f := fn () -> i32 ( 7 ), g := fn () -> i32 ( p := &(f()), p@ )", "g()", 7),
+        ("g := fn (a := i32 ?) -> i32 ( p := &(a + 1), q := &(a + 2), p@ * 10 + q@ )", "g(3)", 45),
+        (
+            "g := fn (a := i32 ?) -> i32 ( mut s := i32 0, \
+             for i in 0..3 ( p := &(a + i), s = s + p@ ), s )",
+            "g(1)",
+            6,
+        ),
+        // A call that ends in a `return` is no place: `&` holds a copy of what it gives.
+        (
+            "get := fn (p := @i32 ?) -> i32 ( return p@ ), \
+             g := fn (a := @i32 ?) -> i32 ( p := &(get(a)), p@ = 9, a@ )",
+            "mut x := i32 3, g(&x)",
+            3,
+        ),
+        ("g := fn (a := @i32 ?) -> i32 ( p := &(a + 1), (p@ - 1)@ )", "mut x := i32 4, g(&x)", 4),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            assert_eq!(run_script(&format!("{f}, {compile}{args}")), expect, "{f} / {compile}");
+        }
+    }
+    assert_eq!(run_script("x := i32 3, p := &x:lex_rank, p@ == x:lex_rank"), 1);
 }
 
 #[test]
@@ -2989,19 +3076,18 @@ fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
 }
 
 #[test]
-fn an_early_return_hands_out_no_place_a_scope_it_leaves_frees() {
-    assert_eq!(
-        parse_err("fn (n := i32 ?) -> i32 ( p := alloc 1 of i32 7, if (n > 2) (return p), 0 )"),
-        ParseError::OwningEscape
-    );
-    assert_eq!(
-        parse_err("fn (n := i32 ?) -> i32 ( ( p := alloc 1 of i32 7, if (n > 2) (return p) ), 0 )"),
-        ParseError::OwningEscape
-    );
-    assert_eq!(
-        parse_err("fn (n := i32 ?) -> i32 ( if (n > 2) (return alloc 1 of i32 7), 0 )"),
-        ParseError::OwnershipAcrossReturn
-    );
+fn an_early_return_hands_on_a_held_or_made_value_only_under_own() {
+    for body in [
+        "p := alloc 1 of i32 7, if (n > 2) (return p), &n",
+        "( p := alloc 1 of i32 7, if (n > 2) (return p) ), &n",
+        "if (n > 2) (return alloc 1 of i32 7), &n",
+    ] {
+        assert_eq!(
+            parse_err(&format!("fn (n := i32 ?) -> @i32 ( {body} )")),
+            ParseError::HandsOnMade("@i32".into()),
+            "{body}"
+        );
+    }
 }
 
 #[test]
@@ -3978,11 +4064,48 @@ fn a_written_conversion_is_checked_as_an_unwritten_one() {
 
 #[test]
 fn lossy_stands_only_between_a_number_type_and_its_value() {
-    for src in ["x := lossy (f64 2.5)", "m := f64 2.5, i32 lossy m", "lossy 1"] {
+    for src in ["x := lossy (f64 2.5)", "lossy 1", "x := i32 lossy, 0", "n := i32 lossy ?, 0"] {
         assert_eq!(script_parse_err(src), ParseError::LossyOutOfPlace, "{src}");
     }
     assert_eq!(parse_err("i32 lossy (true)"), ParseError::TypeMismatch);
     assert_eq!(parse_err("i32 lossy (1, 2)"), ParseError::BadCast);
+}
+
+#[test]
+fn a_number_type_takes_the_name_to_its_right() {
+    diff_typed_call("fn (n := i32 ?) -> i64 ( i64 n )", "f(4)", 4);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( i32 n )", "f(-4)", -4);
+    diff_typed_call("fn (n := i32 ?) -> f64 ( f64 n )", "f(4)", 4.0f64.to_bits() as i64);
+    diff_typed_call("fn (n := i32 ?) -> i64 ( i64 n + i64 1 )", "f(4)", 5);
+    diff_typed_call("fn (n := f64 ?) -> i32 ( i32 lossy n )", "f(2.5)", 2);
+    assert_eq!(run_script("m := i32 3, x := alloc 1 of i32 m, x@"), 3);
+    assert_eq!(run_script("m := i32 3, mut y := i32 0, y = i32 m, y"), 3);
+    assert_eq!(run_script("r := 3, i32 r"), 3);
+    assert_eq!(run_script("r := rational_number 1/3, i32 lossy r"), 0);
+    for src in [
+        "m := i64 3, i32 m",
+        "m := f64 3, i32 m",
+        "m := i32 3, rational_number m",
+        "r := rational_number 6, i32 r",
+        "m := i32 3, i32 true",
+        "i32 «5»",
+    ] {
+        assert_eq!(script_parse_err(src), ParseError::TypeMismatch, "{src}");
+    }
+}
+
+#[test]
+fn a_type_takes_a_value_still_to_be_finished_only_bracketed() {
+    let pt = "pt := type (a := i32 ?, b := i32 ?), p := pt(7, 8)";
+    for src in [
+        format!("{pt}, i32 p.a"),
+        "m := i32 3, q := &m, i32 q@".to_string(),
+        "g := fn (a := i32 ?) -> i32 ( a + 1 ), i32 g(3)".to_string(),
+        "c := true, i64 if c (i32 1) else (i64 2)".to_string(),
+    ] {
+        assert_eq!(script_parse_err(&src), ParseError::UnfinishedOperand, "{src}");
+    }
+    assert_eq!(run_script(&format!("{pt}, i32 (p.a)")), 7);
 }
 
 #[test]

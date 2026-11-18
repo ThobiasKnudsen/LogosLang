@@ -174,7 +174,7 @@ pub(crate) unsafe fn build_get(
         return Ok(None);
     };
     let key = super::land(store, types, key, k)?;
-    let map = super::pointer::build_addr(store, types, place);
+    let map = super::pointer::build_addr(store, types, place, std::ptr::null_mut());
     Ok(Some(store.alloc_words(types.hashmap.get, &[map, key, types.hashmap.get_leaf, v])))
 }
 

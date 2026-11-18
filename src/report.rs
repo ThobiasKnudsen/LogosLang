@@ -103,6 +103,11 @@ pub fn parse_message(e: &ParseError) -> String {
              `f64 lossy 0.1`"
                 .into()
         }
+        ParseError::UnfinishedOperand => {
+            "a type takes the value to its right once that value is finished, which is not built \
+             here yet: write the brackets, as `i64 (p.a)`"
+                .into()
+        }
         ParseError::ReturnOutsideFunction => "`return` is written only inside a function".into(),
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
@@ -307,19 +312,9 @@ pub fn parse_message(e: &ParseError) -> String {
              attaches; bind it first (`a := alloc …`) and pass the name"
                 .into()
         }
-        ParseError::OwningEscape => {
-            "this `return` hands out a place a scope it leaves owns, so the value would be \
-             freed on the way out; make it the function's last value, which moves out"
-                .into()
-        }
         ParseError::AddressOfHeld => {
             "this hands out the address of a name its scope holds, whose end frees the value \
              under the address; hand out the name itself, which moves out"
-                .into()
-        }
-        ParseError::OwnershipAcrossReturn => {
-            "a `return` cannot hand ownership out yet; make it the function's last value, \
-             which moves out to the caller"
                 .into()
         }
         ParseError::MoveOfUnownedPath => {

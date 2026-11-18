@@ -42,6 +42,9 @@ pub(super) struct DropModel {
     /// The type of an `=`'s right side over a place that holds; never spelled.
     pub displace_: DyadPtr,
     pub displace_leaf: DyadPtr,
+    /// The type of a call's argument the call holds; never spelled.
+    pub hold_: DyadPtr,
+    pub hold_leaf: DyadPtr,
     /// The word between `alloc`'s count and its value; constructs nothing itself.
     pub of_: DyadPtr,
     /// The owning pointer's stored destructor.
@@ -227,6 +230,17 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     cx.lower.insert(displace_, lower_displace);
     let displace_leaf = callable::mint_native(cx.store, cs.callable, run_displace, cs.seed_native);
 
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        Assoc::Left,
+        &["value", "op", "output_type"],
+    );
+    let hold_ = cx.store.alloc_head(cx.type_, record);
+    cx.lower.insert(hold_, lower_hold);
+    let hold_leaf = callable::mint_native(cx.store, cs.callable, run_hold, cs.seed_native);
+
     let held_free_leaf =
         callable::mint_native(cx.store, cs.callable, run_held_free, cs.seed_native);
     let instance_free_leaf =
@@ -247,6 +261,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         exit_item,
         displace_,
         displace_leaf,
+        hold_,
+        hold_leaf,
         of_,
         teardown_leaf,
         move_leaf,
@@ -569,6 +585,103 @@ fn lower_displace(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError
     }
 }
 
+/// Whether parameter `i` of `callee` holds the value a call passes it straight: a `fn`'s
+/// parameter nothing writes over. A record's field, a conversion's operand, a `mut` parameter
+/// and a callee with no signature hold nothing yet: stand-in for #256.
+///
+/// # Safety
+/// `callee` must be a reduced dyad from the store.
+pub(crate) unsafe fn param_holds(types: &Core, callee: DyadPtr, i: usize) -> bool {
+    if dyad::ty(callee) != types.fn_type {
+        return false;
+    }
+    let input = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_INPUT);
+    let bindings = super::array::items(meta::record_field_bindings_of(input));
+    bindings
+        .get(i)
+        .is_some_and(|&b| !b.is_null() && !crate::binding::Binding::has_gate(b, types.mut_))
+}
+
+/// An argument whose value the call holds, made or moved there: `[value, op, output_type]`.
+/// The call ends it once the callee's frame is gone, by its type's `free` slot.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn build_hold(store: &mut Store, types: &Core, value: DyadPtr) -> DyadPtr {
+    let output = super::read::output_type(types, value);
+    store.alloc_words(types.hold_, &[value, types.ops.hold_, output])
+}
+
+fn run_hold(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a hold node from `build_hold`.
+    unsafe { rt.run(*(dyad::value(node) as *const DyadPtr)) }
+}
+
+fn lower_hold(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: as `run_hold`.
+    unsafe { lw.lower(*(dyad::value(node) as *const DyadPtr)) }
+}
+
+/// Ends the values `call`'s hold arguments passed, last first: each one's word in `values`, or
+/// its bytes there for a record, run through the `free` slot of its type.
+///
+/// # Safety
+/// `call` must be a call of the `fn` `f` and `values` the argument block it ran with, its
+/// first `filled` arguments filled.
+pub(crate) unsafe fn end_held_args(
+    rt: &mut Runtime,
+    f: DyadPtr,
+    call: DyadPtr,
+    values: &mut [i64],
+    filled: usize,
+) -> Result<(), RunError> {
+    let args = crate::parse::null_terminated(dyad::value(call) as *const DyadPtr);
+    let hold = rt.types().hold_;
+    if !args[..filled].iter().any(|&a| dyad::ty(a) == hold) {
+        return Ok(());
+    }
+    let slots: Vec<_> = super::by_copy::slots(rt.types(), f).collect();
+    for (&arg, slot) in args.iter().zip(slots).take(filled).rev() {
+        if dyad::ty(arg) != hold {
+            continue;
+        }
+        let this = match slot.width {
+            Some(_) => values.as_mut_ptr().add(slot.word) as i64,
+            None => values[slot.word],
+        };
+        let ty = super::read::output_type(rt.types(), arg);
+        if this == 0 {
+            continue;
+        }
+        if owning_pointee(ty).is_some() {
+            heap_free(this as u64 as *mut u8);
+            rt.note_free();
+        } else {
+            rt.apply_values(meta::instances_free_of(ty), &[this])?;
+        }
+    }
+    Ok(())
+}
+
+/// [`end_held_args`] compiled, for one argument the call passed as `this`: its type's `free` is
+/// called over it; a block's free keeps the function interpreted.
+///
+/// # Safety
+/// `arg` must be a hold node from `build_hold`.
+pub(crate) unsafe fn lower_end_held_arg(
+    lw: &mut Lowerer,
+    arg: DyadPtr,
+    this: Value,
+) -> Result<(), CompileError> {
+    let ty = super::read::output_type(lw.types(), arg);
+    if owning_pointee(ty).is_some() {
+        return Err(CompileError::NotLowerable(arg));
+    }
+    let free = lw.node_addr(meta::instances_free_of(ty));
+    lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]);
+    Ok(())
+}
+
 /// `free a` where the name `a` holds its value: `[place, null, op]`, the teardown the scope's
 /// end would have run.
 fn build_held_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
@@ -671,17 +784,15 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     if !pointee.is_null() {
         return Err(CompileError::NotLowerable(node));
     }
-    // SAFETY: `place` is a reduced dyad from the store; a deref node's parts are valid.
+    // A frame's place needs no code to reach, and taking its address would keep it out of a
+    // register.
+    // SAFETY: `place` is a node `read::place_node` gave.
     unsafe {
-        if dyad::ty(place) == lw.types().deref_ {
-            let addr = lw.lower(super::pointer::deref_parts(place).0)?;
-            return lw.guard_non_null(addr, types::I32, |s| Ok(s.const_i32(0)));
+        if lw.types().is_storage(place) {
+            return Ok(lw.const_i32(0));
         }
-        if super::this::is_field_read(lw.types(), place) {
-            return Err(CompileError::NotLowerable(node));
-        }
+        super::pointer::lower_at_place(lw, place, types::I32, |s, _| Ok(s.const_i32(0)))
     }
-    Ok(lw.const_i32(0))
 }
 
 /// # Safety
@@ -843,6 +954,15 @@ pub(crate) unsafe fn lent_place(types: &Core, value: DyadPtr) -> Option<DyadPtr>
     (dyad::ty(value) == types.addr_).then(|| types.through(*(dyad::value(value) as *const DyadPtr)))
 }
 
+/// The place a `move` empties when `value` is one.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn moved_place(types: &Core, value: DyadPtr) -> Option<DyadPtr> {
+    (dyad::ty(value) == types.move_)
+        .then(|| *(dyad::value(value) as *const DyadPtr).add(TEARDOWN_PLACE))
+}
+
 /// A later REPL line moved or freed the name the item holds: the session's end frees it no
 /// more.
 ///
@@ -923,7 +1043,7 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
 /// # Safety
 /// `place` must be a name laid out in the frame `rt` runs, a cell, or an owning field's slot.
 unsafe fn take_held(rt: &mut Runtime, place: DyadPtr, ty: DyadPtr) -> Result<i64, RunError> {
-    let slot = owned_slot(rt, place)?;
+    let slot = super::pointer::place_addr(rt, place)?;
     if slot.is_null() {
         return Err(RunError::Uninitialized);
     }
@@ -963,7 +1083,7 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
-pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     moved_out(types, node).and_then(|out| owning_pointee(super::read::output_type(types, out)))
 }
 
@@ -983,7 +1103,7 @@ unsafe fn owning_pointee(ty: DyadPtr) -> Option<DyadPtr> {
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
-pub(crate) unsafe fn moves_out(types: &Core, node: DyadPtr) -> bool {
+unsafe fn moves_out(types: &Core, node: DyadPtr) -> bool {
     moved_out(types, node).is_some()
 }
 
@@ -1003,18 +1123,13 @@ unsafe fn moved_out(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
         return Some(node);
     }
     // A record call's result moves out when its callee's value does; a record handed on by
-    // its bytes' address, when a name that held it or what it copies does.
+    // its bytes' address, when what it copies does.
     if logos == types.by_copy.result {
         let call = *(dyad::value(node) as *const DyadPtr).add(1);
         return moved_out(types, call);
     }
     if logos == types.by_copy.out {
-        let inner = types.through(*(dyad::value(node) as *const DyadPtr));
-        if dyad::ty(inner) == types.binding_ && crate::binding::Binding::has_gate(inner, types.own_)
-        {
-            return Some(inner);
-        }
-        return moved_out(types, inner);
+        return moved_out(types, *(dyad::value(node) as *const DyadPtr));
     }
     if logos == types.scope {
         return crate::parse::last_sequence_expr(node).and_then(|tail| moved_out(types, tail));
@@ -1043,14 +1158,6 @@ unsafe fn moved_out(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
         }
     }
     None
-}
-
-/// Whether a value owns a block: binding it mints an owning place its scope holds.
-///
-/// # Safety
-/// As `owning_pointee_of`.
-pub(crate) unsafe fn is_owning_value(types: &Core, node: DyadPtr) -> bool {
-    owning_pointee_of(types, node).is_some()
 }
 
 /// What ends the life of a value a name or a `free` holds (DESIGN ›Holding is decided at the
@@ -1183,7 +1290,7 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_teardown(rt: &mut Runtime, place: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `place` is a place of an owning pointer type.
     unsafe {
-        let slot = owned_slot(rt, place)?;
+        let slot = super::pointer::place_addr(rt, place)?;
         if slot.is_null() {
             return Err(RunError::Uninitialized);
         }
@@ -1215,7 +1322,7 @@ fn run_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let slots = dyad::value(node) as *const DyadPtr;
         let place = *slots.add(TEARDOWN_PLACE);
         if (*slots.add(TEARDOWN_POINTEE)).is_null() {
-            reached_slot(rt, place)?;
+            super::pointer::place_addr(rt, place)?;
             return Ok(0);
         }
         let dtor = meta::destructor_of(super::read::output_type(rt.types(), place));
@@ -1308,33 +1415,6 @@ fn run_value_release(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Where an owned value's address lies: a name's place, the cell a dereference reaches, or
-/// the slot of an owning field, which holds the node itself.
-///
-/// # Safety
-/// `place` must be the place operand of a `move` or `free` node.
-unsafe fn owned_slot(rt: &mut Runtime, place: DyadPtr) -> Result<*mut u8, RunError> {
-    match reached_slot(rt, place)? {
-        Some(slot) => Ok(slot),
-        None => rt.place_addr(place).ok_or(RunError::NoActivation),
-    }
-}
-
-/// The cell a dereference reaches or the field a field read reaches, found by running the code
-/// that leads there; `None` for a place a frame holds, found by its offset alone.
-///
-/// # Safety
-/// As `owned_slot`.
-unsafe fn reached_slot(rt: &mut Runtime, place: DyadPtr) -> Result<Option<*mut u8>, RunError> {
-    if dyad::ty(place) == rt.types().deref_ {
-        return super::pointer::deref_addr(rt, place).map(Some);
-    }
-    if super::this::is_field_read(rt.types(), place) {
-        return super::this::field_addr(rt, place).map(Some);
-    }
-    Ok(None)
-}
-
 /// A move reads the value; the parse ended a moved name or field, whose place is NULL from
 /// here when it holds an address, so a line that fails later finds nothing there (DESIGN
 /// ›`move` and `free` take a field path too‹).
@@ -1346,7 +1426,7 @@ fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let value = rt.run(place)?;
         let types = rt.types();
         if dyad::ty(place) != types.binding_ || holds_by_address(types, types.type_of(place)) {
-            let slot = owned_slot(rt, place)?;
+            let slot = super::pointer::place_addr(rt, place)?;
             std::ptr::write_unaligned(slot as *mut i64, 0);
         }
         Ok(value)
@@ -1998,10 +2078,26 @@ mod tests {
     }
 
     #[test]
-    fn an_unbound_owning_temporary_is_rejected_not_leaked() {
-        // An owning value handed straight to a call has no name to hang its `free` on.
+    fn a_call_frees_the_block_a_parameter_holds_as_it_returns() {
+        let f = "f := fn (p := @i32 ?) -> i32 ( p@ ),\n";
+        assert_eq!(run(&format!("{f}f(alloc 1 of i32 5)")), (5, 0));
+        assert_eq!(run(&format!("{f}a := alloc 1 of i32 6,\nf(move a)")), (6, 0));
+        assert_eq!(free_log(), Vec::<i64>::new(), "the call frees it, not `a`'s end");
+        assert_eq!(run(&format!("{f}a := alloc 1 of i32 7,\nf(a) + a@")), (14, 0));
+        assert_eq!(free_log(), vec![7], "a borrow: `a`'s end frees it, once");
+        let raise = "g := fn () -> i32 ( error «stop» ),\n";
+        let f2 = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( p@ ),\n";
+        for src in [
+            "f := fn (p := @i32 ?) -> i32 ( error «stop» ),\nf(alloc 1 of i32 5)".to_string(),
+            format!("{raise}{f2}f(alloc 1 of i32 5, g())"),
+            format!("{raise}{f2}a := alloc 1 of i32 6,\nf(move a, g())"),
+        ] {
+            let (e, live) = fault(&src);
+            assert!(matches!(e, RunError::Raised(_)), "{src}: {e:?}");
+            assert_eq!(live, 0, "{src}");
+        }
         assert_eq!(
-            parse_err("f := fn (p := @i32 ?) -> i32 ( p@ ),\nf(alloc 1 of i32 5)"),
+            parse_err("f := fn (mut p := @i32 ?) -> i32 ( p@ ),\nf(alloc 1 of i32 5)"),
             ParseError::UnboundOwningValue
         );
     }
@@ -2285,16 +2381,39 @@ mod tests {
     }
 
     #[test]
-    fn a_returned_owned_place_is_refused() {
-        // The scope's end would free it on the way out and hand back a freed pointer.
-        assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc 1 of i32 7, return p ),\nmk()"),
-            ParseError::OwningEscape
-        );
-        assert_eq!(
-            parse_err("mk := fn () -> @i32 ( return alloc 1 of i32 7 ),\nmk()"),
-            ParseError::OwnershipAcrossReturn
-        );
+    fn a_return_hands_on_what_it_made_or_holds_only_under_own() {
+        for mk in [
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, return p )",
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, return move p )",
+            "mk := fn () -> own @i32 ( return alloc 1 of i32 7 )",
+        ] {
+            assert_eq!(run(&format!("{mk},\nm := mk(),\nm@")), (7, 0), "{mk}");
+            assert_eq!(free_log(), vec![7], "{mk}: freed once, by the caller's owner");
+        }
+        // The names it leaves are freed on the way out; an arm that does not return frees
+        // what the returning arm moved.
+        let mk =
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, q := alloc 1 of i32 8, return p )";
+        assert_eq!(run(&format!("{mk},\nm := mk(),\nm@")), (7, 0));
+        assert_eq!(free_log(), vec![8, 7]);
+        let mk = "mk := fn (n := i32 ?) -> own @i32 ( p := alloc 1 of i32 7, \
+                  if (n > 2) (return p) else (alloc 1 of i32 8) )";
+        assert_eq!(run(&format!("{mk},\nm := mk(3),\nm@")), (7, 0));
+        assert_eq!(run(&format!("{mk},\nm := mk(1),\nm@")), (8, 0));
+        assert_eq!(free_log(), vec![7, 8]);
+        let mk = "mk := fn (n := i32 ?) -> own @i32 ( ( p := alloc 1 of i32 7, \
+                  if (n > 2) (return p) ), alloc 1 of i32 8 )";
+        assert_eq!(run(&format!("{mk},\nm := mk(3),\nm@")), (7, 0));
+        assert_eq!(free_log(), vec![7]);
+        assert_eq!(run(&format!("{mk},\nm := mk(1),\nm@")), (8, 0));
+        assert_eq!(free_log(), vec![7, 8]);
+        for mk in [
+            "mk := fn () -> @i32 ( p := alloc 1 of i32 7, return p )",
+            "mk := fn () -> @i32 ( return alloc 1 of i32 7 )",
+        ] {
+            let e = parse_err(&format!("{mk},\nmk()"));
+            assert!(matches!(e, ParseError::HandsOnMade(_)), "{mk}: {e:?}");
+        }
     }
 
     #[test]

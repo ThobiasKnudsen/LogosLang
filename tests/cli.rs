@@ -2269,15 +2269,6 @@ fn a_block_that_fails_to_parse_frees_what_its_run_lines_hold() {
 }
 
 #[test]
-fn an_owning_value_that_nothing_can_free_is_refused() {
-    let out = logos().args(["import", "tests/fixtures/unbound_owning.logos"]).output().unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("must be bound to a name"), "stderr: {err}");
-    assert!(out.stdout.is_empty());
-}
-
-#[test]
 fn the_repl_compiles_a_fn_across_lines() {
     let (echoes, stderr) =
         repl(b"double := fn (x := i64 ?) -> i64 ( x + x )\ndouble.compile()\ndouble(21)\n");
@@ -2712,7 +2703,8 @@ fn a_binding_reads_its_frame_and_offset() {
 #[test]
 fn a_binding_s_fields_are_read_and_only_lex_rank_is_written() {
     // A write into `frame` or `offset` would move where `s` reads; `lex_rank` is the one
-    // field a program sets after the declaration.
+    // field a program sets after the declaration. `&` of a field holds a copy of what the line
+    // read, so a write through its address moves nothing.
     let (echoes, stderr) = repl(
         b"s := i32 5
 s:offset = 7
@@ -2720,6 +2712,7 @@ s:frame = s:scope
 s:scope = s:scope
 s:end = s:scope
           p := &s:offset
+p@ = 9
 s:lex_rank = 7
 s:lex_rank
 s
@@ -2727,7 +2720,7 @@ s
     );
     assert_eq!(echoes, ["7.0", "5"], "stderr: {stderr}");
     assert_eq!(stderr.matches("not an assignable place").count(), 4, "stderr: {stderr}");
-    assert_eq!(stderr.matches("`&` needs a variable").count(), 1, "stderr: {stderr}");
+    assert_eq!(stderr.matches("error").count(), 4, "stderr: {stderr}");
 }
 
 #[test]
@@ -3022,8 +3015,7 @@ fn only_a_marked_place_is_written_or_addressed() {
         ("i32 5 = 3\n", "not an assignable place"),
         ("mut a := 5\na = 6\n", "`5` is a literal with no storage"),
         ("mut a := 5\na = 6\n", "as in `mut x := i32 5`"),
-        ("x := &(i32 5)\n", "needs a variable"),
-        (&format!("{pw}\np := &(2 pw 3)\n"), "needs a variable"),
+        ("mut a := 5\np := &a\n", "needs a variable"),
     ] {
         let (_e, stderr) = repl(src.as_bytes());
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
@@ -3033,6 +3025,10 @@ fn only_a_marked_place_is_written_or_addressed() {
           mut a := type ?\nmut b := type ?\na = i32\nb = a\nb == i32\nmut d := dyad ?\nd = i32\nd.type == type\n",
     );
     assert_eq!(echoes, ["6", "7", "true", "true"], "stderr: {stderr}");
+    // A value nothing names is held in a place of its own, whose address `&` hands out.
+    let (echoes, stderr) =
+        repl(format!("x := &(i32 5)\nx@\n{pw}\np := &(2 pw 3)\np@\n").as_bytes());
+    assert_eq!(echoes, ["5", "6"], "stderr: {stderr}");
 }
 
 #[test]
@@ -3977,6 +3973,104 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
 }
 
 #[test]
+fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ), \
+               share get := fn () -> i32 ( n ) )";
+    for (src, printed) in [
+        // Made or moved in the argument: the parameter holds it, on either tier.
+        (format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), f(box (1, 2)), print «after»"), "free\nafter\n"),
+        (
+            format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), f.compile(), f(box (1, 2)), print «after»"),
+            "free\nafter\n",
+        ),
+        (
+            format!(
+                "{BOX}, f := fn (q := box ?) -> i32 ( 1 ), g := fn () -> i32 ( f(box (1, 2)) ), \
+                 g.compile(), g(), print «after»"
+            ),
+            "free\nafter\n",
+        ),
+        (
+            format!("{BOX}, b := box (1, 2), f := fn (q := box ?) -> i32 ( 1 ), f(move b), print «after»"),
+            "free\nafter\n",
+        ),
+        (
+            format!(
+                "{BOX}, mk := fn () -> own box ( box (1, 2) ), f := fn (q := box ?) -> i32 ( 1 ), \
+                 f(mk()), print «after»"
+            ),
+            "free\nafter\n",
+        ),
+        (format!("{BOX}, f := fn (q := dyad ?) -> i32 ( 1 ), f(box (1, 2)), print «after»"), "free\nafter\n"),
+        (
+            format!(
+                "{BOX}, c := true, f := fn (q := box ?) -> i32 ( 1 ), \
+                 f(if c (box (1, 2)) else (box (3, 4))), print «after»"
+            ),
+            "free\nafter\n",
+        ),
+        // A record in its bytes, freed over the bytes the call passed; the last argument first.
+        (
+            format!("{bag}, f := fn (p := bag ?, q := bag ?) -> i32 ( p.n + q.n ), print «{{f(bag(1), bag(2))}}»"),
+            "freed 2\nfreed 1\n3\n",
+        ),
+        (
+            format!(
+                "{bag}, f := fn (q := bag ?) -> i32 ( q.n ), g := fn () -> i32 ( f(bag(1)) ), \
+                 g.compile(), g(), print «after»"
+            ),
+            "freed 1\nafter\n",
+        ),
+        // A name passed, or a receiver, is a borrow: its owner's end frees it, once.
+        (
+            format!("{BOX}, b := box (1, 2), f := fn (q := box ?) -> i32 ( 1 ), f(b), print «after»"),
+            "after\nfree\n",
+        ),
+        (format!("{bag}, x := bag(1), x.get(), print «after»"), "after\nfreed 1\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{src}");
+    }
+    // A fault in the callee, or in a later argument, ends what the call holds, on either tier.
+    let raise = "f := fn (q := box ?) -> i32 ( error «boom» )";
+    let nan = "f := fn (q := box ?, x := f64 ?) -> i32 ( i32 lossy (x) ), f.compile()";
+    let later =
+        "f2 := fn (q := box ?, n := i32 ?) -> i32 ( 1 ), g := fn () -> i32 ( error «boom» )";
+    for (tail, expect) in [
+        (format!("{later}, f2(box (1, 2), g())"), "boom"),
+        (format!("{later}, b := box (1, 2), f2(move b, g())"), "boom"),
+        (format!("{later}, f2.compile(), f2(box (1, 2), g())"), "boom"),
+        (format!("{later}, h := fn () -> i32 ( f2(box (1, 2), g()) ), h.compile(), h()"), "boom"),
+        (format!("{later}, f2.compile(), h := fn () -> i32 ( f2(box (1, 2), g()) ), h.compile(), h()"), "boom"),
+        (format!("{raise}, f(box (1, 2))"), "boom"),
+        (format!("{raise}, g := fn () -> i32 ( f(box (1, 2)) ), g.compile(), g()"), "boom"),
+        (format!("{nan}, f(box (1, 2), f64 0.0 / 0.0)"), "cannot convert"),
+        (
+            format!("{nan}, g := fn (x := f64 ?) -> i32 ( f(box (1, 2), x) ), g.compile(), g(f64 0.0 / 0.0)"),
+            "cannot convert",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, "free\n", "{tail}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+    // Nothing holds it yet: a record's field and a parameter `=` may write over.
+    for tail in [
+        "holder := type ( b := box ? ), h := holder(box (1, 2))",
+        "f := fn (mut q := box ?) -> i32 ( 1 ), f(box (1, 2))",
+    ] {
+        let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(
+            stderr.contains("an owning value must be bound to a name"),
+            "{tail}: stderr: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn the_program_s_end_runs_its_defers_and_what_it_holds_last_first() {
     for (src, printed) in [
         ("defer print «hi», 5".to_string(), "hi\n5\n"),
@@ -4146,6 +4240,35 @@ fn a_plain_record_s_owner_runs_its_free_once() {
     assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
 }
 
+/// DESIGN ›Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of‹
+/// [[R162]].
+#[test]
+fn the_address_of_a_value_nothing_names_holds_it_to_the_scope_s_end() {
+    let g = "g := fn () -> i32 ( p := &bag(4), p@.n )";
+    for (tail, printed) in [
+        ("p := &bag(1), print «after», p@.n", "after\nfreed 1\n1\n"),
+        (&format!("{g}, print «before», g(), print «after»"), "before\nfreed 4\nafter\n"),
+        (
+            &format!("{g}, g.compile(), print «before», g(), print «after»"),
+            "before\nfreed 4\nafter\n",
+        ),
+        (
+            "for i in 0..2 ( p := &bag(i), print «in {p@.n}» ), print «end»",
+            "in 0\nfreed 0\nin 1\nfreed 1\nend\n",
+        ),
+        ("x := if true ( p := &bag(2), p@.n ) else ( 3 ), print «x {x}»", "freed 2\nx 2\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    // The scope's end frees it, so its address may not leave the scope, as a named one may not.
+    for tail in ["f := fn () -> @bag ( &bag(4) ), 1", "f := fn () -> @bag ( b := bag(4), &b ), 1"] {
+        let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("hands out the address of a name its scope holds"), "{tail}");
+    }
+}
+
 /// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹: "`free p@` does the same for
 /// a cell an owning pointer reaches, a record kept in the cell's bytes included", on both tiers.
 #[test]
@@ -4258,6 +4381,57 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
                 x := mk(1), print «got»";
     let (code, stdout, stderr) = run_line(&format!("{RECORD}, {made}"));
     assert_eq!((code, stdout.as_str()), (Some(0), "got\nfreed 3\n"), "stderr: {stderr}");
+    // A name the function holds moves out, as a last line's does, and the `return` frees the
+    // function's other names as it leaves.
+    for (src, printed) in [
+        (
+            format!(
+                "{RECORD}, mk := fn () -> own bag ( a := bag(1), b := bag(2), return a ), \
+                 x := mk(), print «got {{x.n}}»"
+            ),
+            "freed 2\ngot 1\nfreed 1\n",
+        ),
+        (
+            format!("{BOX}, mk := fn () -> own box ( b := box (1, 2), return b ), w := mk(), print «after»"),
+            "after\nfree\n",
+        ),
+        (
+            format!(
+                "{BOX}, mk := fn () -> own box ( b := box (1, 2), return b ), mk.compile(), \
+                 w := mk(), print «after»"
+            ),
+            "after\nfree\n",
+        ),
+        (
+            format!(
+                "{BOX}, mk := fn (c := i32 ?) -> own box ( b := box (1, 2), \
+                 if (c == 1) (return b) else (print «no»), box (3, 4, 5) ), \
+                 w := mk(1), print «{{w.size}}», v := mk(2), print «{{v.size}}»"
+            ),
+            "2\nno\nfree\n3\nfree\nfree\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{src}");
+    }
+    for (src, refused) in [
+        (
+            format!("{RECORD}, mk := fn () -> bag ( a := bag(1), return a ), x := mk()"),
+            "write `-> own bag`",
+        ),
+        (
+            format!(
+                "{BOX}, mk := fn () -> own box ( b := box (1, 2), \
+                 for i in 0..3 ( if (i == 1) (return b) ), b ), w := mk()"
+            ),
+            "declared outside this loop",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(refused), "{src}: {stderr}");
+    }
     // A type's `run` whose last value is made is marked `own`, and its `return` is held to it.
     let run = "g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, \
                share run = ( if (elements.dyads.size == 3) (return g), mut v := output_type ?, \
@@ -5352,6 +5526,32 @@ fn a_cell_through_a_pointer_moves_any_type_with_a_layout() {
     ] {
         cases.push((format!("{pt}, {body}"), want));
         cases.push((format!("{pt}, f := fn () -> i32 ( {body} ), f.compile(), f()"), want));
+    }
+    assert_runs(&cases);
+}
+
+/// ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type
+/// that holds it exactly‹ [[R155]]: a type takes the name to its right as it takes a number.
+#[test]
+fn a_type_converts_the_name_to_its_right() {
+    let mut cases = vec![
+        ("f := fn (n := i32 ?) -> i32 ( x := alloc 1 of i32 n, x@ ), f(4)".to_string(), "4\n"),
+        ("r := rational_number 1/3, rational_number r".to_string(), "1/3\n"),
+        (
+            "f := fn (r := rational_number ?) -> rational_number ( rational_number r ), f(1/3)"
+                .to_string(),
+            "1/3\n",
+        ),
+        ("m := i32 3, i64 m == i64 3".to_string(), "true\n"),
+    ];
+    for (f, call, want) in [
+        ("fn (n := i32 ?) -> i64 ( i64 n )", "f(4)", "4\n"),
+        ("fn (n := i32 ?) -> f64 ( f64 n )", "f(4)", "4.0\n"),
+        ("fn (n := f64 ?) -> i32 ( i32 lossy n )", "f(2.5)", "2\n"),
+        ("fn (n := i32 ?, m := i32 ?) -> i64 ( i64 n * i64 m )", "f(4, 5)", "20\n"),
+    ] {
+        cases.push((format!("f := {f}, {call}"), want));
+        cases.push((format!("f := {f}, f.compile(), {call}"), want));
     }
     assert_runs(&cases);
 }

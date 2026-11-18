@@ -1013,6 +1013,7 @@ impl Lowerer<'_, '_> {
             return Err(CompileError::ArityMismatch);
         }
         let words = by_copy::words(core, callee);
+        let mut held = Vec::new();
         let argv = if words == 0 {
             self.builder.ins().iconst(self.ptr_ty, 0)
         } else {
@@ -1028,10 +1029,14 @@ impl Lowerer<'_, '_> {
             for (i, slot) in by_copy::slots(core, callee).enumerate() {
                 let arg = args[i];
                 let at = (slot.word * 8) as i32;
+                let holds = dyad::ty(arg) == core.hold_;
                 if let Some(width) = slot.width {
                     let src = by_copy::lower_record_addr(self, arg)?;
                     let dst = self.builder.ins().stack_addr(self.ptr_ty, block, at);
                     self.copy_bytes(dst, src, width);
+                    if holds {
+                        held.push((arg, dst));
+                    }
                     continue;
                 }
                 let v = self.lower(arg)?;
@@ -1050,6 +1055,9 @@ impl Lowerer<'_, '_> {
                     widen_to_i64(self.builder, v, nt)
                 };
                 self.builder.ins().stack_store(v, block, at);
+                if holds {
+                    held.push((arg, v));
+                }
             }
             self.builder.ins().stack_addr(self.ptr_ty, block, 0)
         };
@@ -1093,6 +1101,9 @@ impl Lowerer<'_, '_> {
                 )?
             }
         };
+        for &(arg, this) in held.iter().rev() {
+            crate::identities::drop_model::lower_end_held_arg(self, arg, this)?;
+        }
         Ok(match ret {
             Some(nt) => narrow_from_i64(self.builder, r, nt),
             None => self.const_i32(0),

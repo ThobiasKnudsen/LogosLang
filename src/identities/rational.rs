@@ -387,34 +387,29 @@ fn sticky_quotient(num: i64, den: i64, digits: usize) -> (i64, i32) {
     (if num < 0 { -m } else { m }, s)
 }
 
-/// `rational_number 1` hands the literal on as a run-time value, its bytes the value's;
-/// `rational_number r` passes a rational value as it is; with nothing of the kind to the
-/// right the type stands as itself. A concrete number is not converted.
+/// The value to the right (`Parser::type_operand`): `rational_number 1` hands the literal on
+/// as a run-time value, its bytes the value's; `rational_number r` passes a rational value as it
+/// is, and a value of any other type is refused, as it is where it lands in a rational place. With
+/// no value to the right the type stands as itself.
 fn convert(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
     let types = p.types();
-    let Some(right) = p.cell_at(tape, 1)? else {
+    let Some(operand) = p.type_operand(tape, 1)? else {
         return Ok(Constructed::Decline);
     };
-    if !right.constructed {
-        return Ok(Constructed::Decline);
-    }
-    // SAFETY: a constructed cell's dyad is a node from the store.
-    let value = unsafe {
-        let read = types.through(right.dyad);
+    let value = p.as_operand(operand)?;
+    // SAFETY: `value` is a reduced dyad from the store.
+    let node = unsafe {
+        let read = types.through(value);
         if is_literal(types.rational, read) {
-            Some(super::by_copy::build_out(p.store(), types, read))
+            Ok(super::by_copy::build_out(p.store(), types, read))
         } else {
-            is_rational_value(types, right.dyad).then_some(right.dyad)
+            super::land(p.store(), types, value, types.rational)
         }
-    };
-    match value {
-        Some(v) => {
-            tape.remove(1);
-            tape.place(v);
-            Ok(Constructed::Placed)
-        }
-        None => Ok(Constructed::Decline),
     }
+    .map_err(|e| p.fail_at(operand.start, e))?;
+    tape.remove(1);
+    tape.place(node);
+    Ok(Constructed::Placed)
 }
 
 /// A rational arithmetic node runs into a slot of its own, since its value is sixteen

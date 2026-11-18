@@ -242,7 +242,7 @@ pub(crate) unsafe fn receiver_addr(
     if types.type_of(lhs) == types.tape.parsing_tape
         && (types.is_storage(lhs) || !types.is_hole(lhs))
     {
-        return Some(super::pointer::build_addr(store, types, lhs));
+        return Some(super::pointer::build_addr(store, types, lhs, std::ptr::null_mut()));
     }
     None
 }

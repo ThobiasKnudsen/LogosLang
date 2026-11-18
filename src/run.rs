@@ -771,8 +771,15 @@ impl<'a> Runtime<'a> {
         node: DyadPtr,
         dest: Option<*mut u8>,
     ) -> Result<i64, RunError> {
-        let values = self.eval_args(f, node, dest)?;
-        self.apply_values(f, &values)
+        let (mut values, mut filled) = (Vec::new(), 0);
+        let result = self
+            .eval_args(f, node, dest, &mut values, &mut filled)
+            .and_then(|()| self.apply_values(f, &values));
+        // A fault in a later argument or in the callee ends what the call holds as its end would.
+        let ended =
+            crate::identities::drop_model::end_held_args(self, f, node, &mut values, filled);
+        let value = result?;
+        ended.map(|()| value)
     }
 
     /// Apply `f` to its argument block (the words `by_copy::slots` lays out): jump to
@@ -909,8 +916,9 @@ impl<'a> Runtime<'a> {
         Ok(std::ptr::read_unaligned(slot as *const i64))
     }
 
-    /// Evaluate a call's arguments in the caller's frame into its argument block: a
-    /// record copied at its width, anything else in its container.
+    /// Evaluate a call's arguments in the caller's frame into its argument block `values`: a
+    /// record copied at its width, anything else in its container. `filled` counts the
+    /// arguments in it, so a failing one leaves the count of those before it.
     ///
     /// # Safety
     /// `fn_node` must be a valid function node and `call_node` a valid
@@ -920,13 +928,15 @@ impl<'a> Runtime<'a> {
         fn_node: DyadPtr,
         call_node: DyadPtr,
         dest: Option<*mut u8>,
-    ) -> Result<Vec<i64>, RunError> {
+        values: &mut Vec<i64>,
+        filled: &mut usize,
+    ) -> Result<(), RunError> {
         let args = crate::parse::null_terminated(dyad::value(call_node) as *const DyadPtr);
         let types = self.types;
         if args.len() != by_copy::slots(types, fn_node).count() {
             return Err(RunError::ArityMismatch);
         }
-        let mut values = vec![0i64; by_copy::words(types, fn_node)];
+        *values = vec![0i64; by_copy::words(types, fn_node)];
         if by_copy::result_width(types, fn_node).is_some() {
             values[0] = dest.ok_or(RunError::NoWholeRead)? as i64;
         }
@@ -940,8 +950,9 @@ impl<'a> Runtime<'a> {
                 }
                 None => values[slot.word] = self.run(arg)?,
             }
+            *filled = i + 1;
         }
-        Ok(values)
+        Ok(())
     }
 
     /// Copy the argument block into the parameter slots of the fresh frame at `base`: a
