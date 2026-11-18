@@ -2597,14 +2597,13 @@ fn compile_member_before_and_after_agree() {
 
 /// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol.
 const POW_TYPE: &str = "pw := type (\n\
-     a := ?, b := i32 ?, share output_type := type ?, share run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ),\n\
+     a := ?, b := i32 ?, share output_type := a.type, share run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ),\n\
      share parse_rank = *.parse_rank + 1,\n\
      share associativity = right,\n\
      share parse = (\n\
          if tape[-1].type == void error «pw takes a left operand»,\n\
          tape[0].type = pw, tape[0].a = tape[-1],\n\
          tape[0].b = tape[1],\n\
-         tape[0].output_type = tape[-1].type,\n\
          ,\n\
          tape.is_constructed[0] = true,\n\
          tape.remove(1),\n\
@@ -2657,15 +2656,6 @@ fn a_type_with_a_question_field_keeps_output_type_on_each_mint() {
     );
     // Typed fields alone: one set of field types, and `output_type` stays in each node.
     assert_eq!(run_script("t := type ( a := i32 ?, output_type := type ? ),\n0"), 0);
-    // The parse chooses the mint when it writes `output_type`, from the fields written so far.
-    let early = POW_TYPE.replace(
-        "tape[0].type = pw, tape[0].a = tape[-1],",
-        "tape[0].type = pw, tape[0].output_type = i32, tape[0].a = tape[-1],",
-    );
-    assert!(matches!(
-        parse_err_after(&[&early], "i32 2 pw 3"),
-        ParseError::ConstructorFailed(m) if m.contains("write every field first")
-    ));
 }
 
 #[test]

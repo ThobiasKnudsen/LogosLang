@@ -57,9 +57,6 @@ pub enum RunError {
     NoThis,
     /// A parse read or wrote a field of `tape[0]` while the cell still held the type.
     FieldBeforeStamp,
-    /// A parse wrote its node's mint's `output_type` before the types of its fields were known,
-    /// or read it before writing it.
-    MintUnchosen,
     /// A field of a node its constructor never wrote, by its index among the fields.
     UnfilledField(usize),
     /// A negative index.

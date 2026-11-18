@@ -392,21 +392,15 @@ impl<'a> Parser<'a> {
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         let field_scope = crate::identities::meta::record_scope_of(ty);
-        let fields =
-            crate::identities::array::items(crate::identities::meta::record_fields_of(ty)).to_vec();
         // The parameters are the fields alone, in order, each under its field's name: a
         // node's operands are its fields, and its call passes exactly those.
-        let names: HashMap<DyadPtr, String> = self
-            .trie
-            .bindings_in(field_scope)
-            .into_iter()
-            .map(|b| (Binding::read(b).dyad, Binding::spelling(b)))
-            .collect();
+        let named = self.named_fields(ty);
+        let fields: Vec<DyadPtr> = named.iter().map(|&(field, _)| field).collect();
         let mut params: Vec<(Option<&str>, DyadPtr)> = Vec::with_capacity(fields.len());
         let mut type_fields = Vec::new();
-        for (i, &field) in fields.iter().enumerate() {
-            let name = names.get(&field).map(String::as_str);
-            let ty = if crate::identities::hole::type_in(field) == types.type_ {
+        for (i, (field, name)) in named.iter().enumerate() {
+            let name = name.as_deref();
+            let ty = if crate::identities::hole::type_in(*field) == types.type_ {
                 // A field of type `type` names the type this set holds in it, so
                 // `output_type 1` reads `i32 1`; its parameter place goes unnamed.
                 type_fields.extend(name.map(|n| (n, key[i])));
@@ -438,40 +432,27 @@ impl<'a> Parser<'a> {
         self.cx.scopes.push(param_scope);
         let declared =
             type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
-        let declared = declared.and_then(|()| match shared {
-            Some(t) => self.declare_mint_output(ty, t),
-            None => Ok(()),
-        });
         self.cx.scopes.pop();
         declared?;
         self.fn_over_body(types.fn_type, input, &places, output, None, spec, std::ptr::null_mut())
     }
 
-    /// The mint's own `output_type`, which its parse wrote, declared over its origin's as a
-    /// field of type `type` is, so `output_type 1` reads `f64 1` in the run built for `^`'s
-    /// mint for `f64`; each cell of the held body the definition bound to the origin's member
-    /// now names it (›A type without a `run` whose field is `?` mints one type per set of field
-    /// types, as `array` mints one per element type‹ [[R300]]).
+    /// Each field of `ty`, in order, with the name it is declared under.
     ///
     /// # Safety
-    /// `mint` must be a mint of a type with a body; `output` a type node.
-    unsafe fn declare_mint_output(
-        &mut self,
-        mint: DyadPtr,
-        output: DyadPtr,
-    ) -> Result<(), ParseError> {
-        use crate::identities::mint::SHARED_FIELD;
-        let binding = self.declare_field_name(SHARED_FIELD, output, 0)?;
-        let mut members = ScopeStack::new();
-        members.push(crate::identities::meta::record_body_of(mint));
-        if let (Ok(origin), Some(feed)) =
-            (members.resolve(self.trie, SHARED_FIELD), self.cx.feed.as_mut())
-        {
-            for cell in feed.cells.iter_mut().filter(|c| c.dyad == origin.binding) {
-                cell.dyad = binding;
-            }
-        }
-        Ok(())
+    /// `ty` must be a record type from the store.
+    pub(super) unsafe fn named_fields(&self, ty: DyadPtr) -> Vec<(DyadPtr, Option<String>)> {
+        use crate::identities::{array, meta};
+        let names: HashMap<DyadPtr, String> = self
+            .trie
+            .bindings_in(meta::record_scope_of(ty))
+            .into_iter()
+            .map(|b| (Binding::read(b).dyad, Binding::spelling(b)))
+            .collect();
+        array::items(meta::record_fields_of(ty))
+            .iter()
+            .map(|&field| (field, names.get(&field).cloned()))
+            .collect()
     }
 
     /// `(start, len)` of the text inside the `( … )` at the cursor, consumed

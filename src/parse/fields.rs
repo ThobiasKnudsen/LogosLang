@@ -164,21 +164,6 @@ impl<'a> Parser<'a> {
             let mut members = ScopeStack::new();
             members.push(body);
             if let Ok(r) = members.resolve(self.trie, name) {
-                // A type with a `?` field keeps its `output_type` on each of its mints, one
-                // place per mint, which its parse writes (›A type without a `run` whose field
-                // is `?` mints one type per set of field types, as `array` mints one per
-                // element type‹ [[R300]]).
-                let in_parse = self.cx.definitions.last().is_some_and(|d| d.in_parse);
-                // SAFETY: the block's items are field declaration dyads from the store.
-                let mints = unsafe { crate::identities::mint::has_untyped_field(&items) };
-                if in_parse && mints && name == crate::identities::mint::SHARED_FIELD {
-                    let types = self.types;
-                    return Ok(crate::identities::this::build_mint_output(
-                        self.rt.store,
-                        types,
-                        this,
-                    ));
-                }
                 return Ok(r.identity);
             }
             self.cx.pos = at;
@@ -699,7 +684,12 @@ impl<'a> Parser<'a> {
         let Some(left) = tape.at(-1).copied() else {
             return Err(ParseError::MissingOperand);
         };
-        let (lhs, root) = (self.operand_dyad(left)?, left.binding(self.types));
+        // A field named in a mint's `share` line has its type there and no value.
+        let field_type = self.mint_field_type(left.binding(self.types));
+        let (lhs, root) = match field_type {
+            Some(t) => (t, std::ptr::null_mut()),
+            None => (self.operand_dyad(left)?, left.binding(self.types)),
+        };
         // The member is read by its spelling at the offset it was lexed at, so a
         // keyword there (`.type`) reads as a name.
         let this_read = self.is_node_cell(lhs);
@@ -736,23 +726,35 @@ impl<'a> Parser<'a> {
         // SAFETY: a constructed cell's dyad is a dyad from the store.
         let named = woke.filter(|&d| unsafe { dyad::ty(d) } == self.types.binding_).unwrap_or(root);
         let path_root = if named.is_null() { left.root } else { named };
-        // SAFETY: `named` and the left cell's root are null or binding dyads; `lhs` a reduced
-        // dyad off the tape.
-        let reached = match unsafe {
-            let member = &source[nstart..nstart + nlen];
-            self.check_name_field(named, left.root, lhs, member, writes, dotted)
-        } {
-            Ok(reached) => reached,
-            Err(e) => {
-                self.cx.pos = nstart;
-                return Err(e);
+        if field_type.is_some() && &source[nstart..nstart + nlen] != "type" {
+            self.cx.pos = left.start;
+            let name = left.spelling().to_string();
+            return Err(ParseError::MintFieldHasNoValue(Box::new(name)));
+        }
+        let reached = if field_type.is_some() {
+            (std::ptr::null_mut(), std::ptr::null_mut())
+        } else {
+            // SAFETY: `named` and the left cell's root are null or binding dyads; `lhs` a
+            // reduced dyad off the tape.
+            match unsafe {
+                let member = &source[nstart..nstart + nlen];
+                self.check_name_field(named, left.root, lhs, member, writes, dotted)
+            } {
+                Ok(reached) => reached,
+                Err(e) => {
+                    self.cx.pos = nstart;
+                    return Err(e);
+                }
             }
         };
         self.cx.member_root = root;
         self.cx.member_path.clear();
         let member = Member { start: nstart, len: nlen, index, key, call };
-        // SAFETY: `lhs` is a reduced dyad off the tape.
-        let access = unsafe { self.field_access_each(lhs, left, member) };
+        let access = match field_type {
+            Some(t) => Ok((t, 0)),
+            // SAFETY: `lhs` is a reduced dyad off the tape.
+            None => unsafe { self.field_access_each(lhs, left, member) },
+        };
         self.cx.member_root = std::ptr::null_mut();
         let path = std::mem::take(&mut self.cx.member_path);
         let (node, consumed) = access?;

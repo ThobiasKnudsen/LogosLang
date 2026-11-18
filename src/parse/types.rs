@@ -482,8 +482,7 @@ impl<'a> Parser<'a> {
     /// not built, for each mint of the type makes it for itself (›A type without a `run` whose
     /// field is `?` mints one type per set of field types, as `array` mints one per element
     /// type‹ [[R300]]). `false`, the cursor where it was, for a line built here: above every `?`
-    /// field, `output_type`, which the parse writes on the mint, or a line that is no
-    /// `name := …`, whose error the built path gives.
+    /// field, or a line that is no `name := …`, whose error the built path gives.
     fn keep_share_line(&mut self, at: usize) -> Result<bool, ParseError> {
         let types = self.types;
         let def = self.cx.definitions.last().expect("a share line is in a type body");
@@ -494,9 +493,16 @@ impl<'a> Parser<'a> {
         let word_at = self.cx.pos;
         let end = self.line_end()?;
         let source = self.cx.source;
-        let text = source[word_at..end].trim();
+        let text = crate::identities::string::build_text(
+            self.rt.store,
+            types.string_,
+            source[word_at..end].trim().as_bytes(),
+        );
+        // SAFETY: `text` is the string node just built; its bytes live for the store.
+        let held = unsafe { crate::identities::string::text(text) };
+        let held = std::str::from_utf8(held).expect("copied from the source text");
         let field_scope = self.cx.scopes.pop().expect("the field list's scope is open");
-        let lexed = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, text);
+        let lexed = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held);
         let fragment = match lexed {
             Ok(fragment) => fragment,
             Err(e) => {
@@ -519,7 +525,7 @@ impl<'a> Parser<'a> {
         let shadows = !name.is_empty()
             && self.cx.scopes.resolve(self.trie, &name).is_ok_and(|r| r.matched == name.len());
         self.cx.scopes.push(field_scope);
-        if name.is_empty() || name == crate::identities::mint::SHARED_FIELD {
+        if name.is_empty() {
             self.cx.pos = word_at;
             return Ok(false);
         }
@@ -536,7 +542,6 @@ impl<'a> Parser<'a> {
             return Err(ParseError::Resolve(ResolveError::Shadowed(name)));
         }
         let store = &mut *self.rt.store;
-        let text = crate::identities::string::build_text(store, types.string_, text.as_bytes());
         let line = crate::identities::run_body::build(
             store,
             types,
@@ -750,8 +755,8 @@ impl<'a> Parser<'a> {
         if !held.is_empty() {
             return Err(ParseError::DeferInTypeBody);
         }
-        // ›A node's output type is written by its parse, on the mint for a type that mints‹
-        // [[R194]].
+        // ›A mint's output type is written in its `share output_type` declaration; a type that
+        // does not mint has its parse write it into each node‹ [[R194]].
         // SAFETY: `fields` is the block's array node and `bindings` their bindings.
         let per_node_output = unsafe {
             crate::identities::mint::has_untyped_field(crate::identities::array::items(fields))
@@ -1227,7 +1232,7 @@ impl<'a> Parser<'a> {
         };
         let mint = mint::takes_mint(ty).then(|| mint::stamp(self.rt.store, self.types, node, &key));
         if let Some(mint) = mint {
-            self.make_mint_shares(mint, at, spelling)?;
+            self.make_mint_shares(mint, &key, at, spelling)?;
         }
         let mut spec = run_body::lookup(held, &key);
         if spec.is_null() {
@@ -1264,21 +1269,26 @@ impl<'a> Parser<'a> {
         )))
     }
 
-    /// The `share` lines `mint`'s origin keeps, made once for `mint` in a scope of its own under
-    /// the origin's body, each read as a line of that body over the names it saw there: a mint's
-    /// members are places of its own (›A type without a `run` whose field is `?` mints one type
-    /// per set of field types, as `array` mints one per element type‹ [[R300]]). A failure is
-    /// reported at `at`, the use of the type spelled `spelling`.
+    /// The `share` lines `mint`'s origin keeps, made once for `mint`, the mint for the field
+    /// types `key`, in a scope of its own under the origin's body, each read as a line of that
+    /// body over the names it saw there: a mint's members are places of its own (›A type without
+    /// a `run` whose field is `?` mints one type per set of field types, as `array` mints one
+    /// per element type‹ [[R300]]). A field there stands as its run's parameter does, with its
+    /// type in the mint and no value, and the mint's `output_type` is what its line gives
+    /// (›A mint's output type is written in its `share output_type` declaration; a type that
+    /// does not mint has its parse write it into each node‹ [[R194]]). A failure is reported at
+    /// `at`, the use of the type spelled `spelling`.
     ///
     /// # Safety
-    /// `mint` must be a mint of a Logos-written type.
+    /// `mint` must be a mint of a Logos-written type, `key` one type per field.
     unsafe fn make_mint_shares(
         &mut self,
         mint: DyadPtr,
+        key: &[DyadPtr],
         at: usize,
         spelling: &str,
     ) -> Result<(), ParseError> {
-        use crate::identities::{array, meta, run_body, scope};
+        use crate::identities::{array, hole, meta, run_body, scope};
         let origin = crate::identities::mint::origin(mint);
         let kept = meta::kept_shares_of(origin);
         if kept.is_null() || !meta::mint_shares_of(mint).is_null() {
@@ -1296,6 +1306,25 @@ impl<'a> Parser<'a> {
             nested.push(open);
         }
         let base_depth = nested.depth();
+        let fields = scope::mint(self.rt.store, self.types.scope, body);
+        nested.push(fields);
+        let g = self.enter(Context::nested(&self.cx, "", nested));
+        let declared =
+            g.0.named_fields(origin).into_iter().zip(key).try_for_each(|((field, name), &t)| {
+                let Some(name) = name else { return Ok(()) };
+                let stands = if hole::type_in(field) == g.0.types.type_ {
+                    t
+                } else {
+                    hole::build(g.0.rt.store, g.0.types.unknown, t, std::ptr::null_mut())
+                };
+                g.0.declare_name(&name, stands, 0).map(|_| ())
+            });
+        nested = std::mem::take(&mut g.0.cx.scopes);
+        drop(g);
+        if let Err(e) = declared {
+            self.cx.pos = at;
+            return Err(e);
+        }
         let own = scope::mint(self.rt.store, self.types.scope, body);
         nested.push(own);
         meta::install_mint_shares(mint, own);
@@ -1314,6 +1343,7 @@ impl<'a> Parser<'a> {
                 feed: Some(Feed { cells, next: 0, base_depth, in_run_order: true }),
                 definitions: vec![reopened],
                 member_fn_depth: Some(0),
+                mint_fields: fields,
                 ..Context::nested(&self.cx, text, nested)
             };
             let g = self.enter(cx);
@@ -1333,6 +1363,14 @@ impl<'a> Parser<'a> {
                         &crate::report::parse_message(&e),
                     ),
                 });
+            }
+        }
+        let mut members = ScopeStack::new();
+        members.push(own);
+        if let Ok(r) = members.resolve(self.trie, crate::identities::mint::SHARED_FIELD) {
+            let made = self.settled_type(self.types.through(r.binding));
+            if let Some(output) = crate::identities::type_identity_of(self.types, made) {
+                meta::install_mint_output(mint, output);
             }
         }
         Ok(())

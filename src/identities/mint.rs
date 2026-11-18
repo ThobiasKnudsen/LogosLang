@@ -12,8 +12,9 @@ use crate::dyad::{self, DyadPtr};
 use crate::store::Store;
 use crate::Core;
 
-/// The one member a mint keeps of a Logos-written type's: what its nodes give back
-/// (›A node's output type is written by its parse, on the mint for a type that mints‹ [[R194]]).
+/// The `share` member whose value a Logos-written type's mint keeps as what its nodes give back
+/// (›A mint's output type is written in its `share output_type` declaration; a type that does
+/// not mint has its parse write it into each node‹ [[R194]]).
 pub(crate) const SHARED_FIELD: &str = "output_type";
 
 /// A built-in's mint for the field types `key`, made the first time and kept on `origin`. The
@@ -42,8 +43,8 @@ pub(crate) unsafe fn of(
 }
 
 /// `node` made a node of its type's mint for the field types `key`, the mint made the first
-/// time. A Logos-written type's mint begins with neither word: its parse writes what its nodes
-/// give back, and its run is built for it after.
+/// time. A Logos-written type's mint begins with neither word: its `share output_type` line
+/// gives what its nodes give back, and its run is built for it after.
 ///
 /// # Safety
 /// `node` must be a node of a type `takes_mint` accepts, or of one of its mints; `key` one type
@@ -149,7 +150,7 @@ pub(crate) unsafe fn output_type_of(t: DyadPtr) -> Option<DyadPtr> {
 
 /// The field `name` of a node of the mint `t` that lives on the mint: `output_type`, the one a
 /// program reads there (›`x.type` reads the type word of the node a name or an expression stands
-/// for‹ [[R279]]). `None` when `t` is no mint, keeps no such field, or its parse never wrote it.
+/// for‹ [[R279]]). `None` when `t` is no mint, keeps no such field, or its line gave no type.
 ///
 /// # Safety
 /// As `is_mint`.
