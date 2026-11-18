@@ -1344,12 +1344,10 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
-        // An expression the parse refuses where it is written, as an `if` whose arms give two
-        // types, is refused for that reason first.
-        let t = crate::identities::read::value_type(types, lhs)?;
         if self.is_operator_node(lhs) {
             return Ok(dyad::ty(lhs));
         }
+        let t = crate::identities::read::value_type(types, lhs)?;
         if t.is_null() {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }
