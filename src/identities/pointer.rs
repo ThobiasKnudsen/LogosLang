@@ -103,23 +103,14 @@ pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr)
 
 fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an addr node; its first operand is a frame's place or a deref node.
-    unsafe {
-        let place = *(dyad::value(node) as *const DyadPtr);
-        if dyad::ty(place) == rt.types().deref_ {
-            return deref_addr(rt, place).map(|addr| addr as i64);
-        }
-        Ok(rt.place_addr(place).ok_or(RunError::NoActivation)? as i64)
-    }
+    unsafe { place_addr(rt, *(dyad::value(node) as *const DyadPtr)).map(|addr| addr as i64) }
 }
 
 fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is an addr node; its first operand is a frame's place or a deref node.
     unsafe {
         let place = *(dyad::value(node) as *const DyadPtr);
-        if dyad::ty(place) == lw.types().deref_ {
-            return lower_deref_addr(lw, place);
-        }
-        lw.place_addr(place)
+        lower_at_place(lw, place, NumType::U64.cranelift_type(), |_, addr| Ok(addr))
     }
 }
 
@@ -254,27 +245,52 @@ pub(crate) unsafe fn build_storeptr(
     Ok(store.alloc_words(types.storeptr_, &ops))
 }
 
-/// The address `p@` names, the base checked as `run_deref` checks it.
+/// Where a place's bytes lie: a dereference's cell, its base checked as `run_deref` checks it;
+/// a field's, found by the read that reaches it; or a frame's. The one address `&` hands out,
+/// `=` writes through, and `free` and `move` reach.
 ///
 /// # Safety
-/// `node` must be a deref node from `build_deref`.
-pub(crate) unsafe fn deref_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut u8, RunError> {
-    let (ptr_expr, _, off) = deref_parts(node);
-    let base = rt.run(ptr_expr)? as u64;
-    if base == 0 {
-        return Err(RunError::NullPointer);
+/// `place` must be a node `read::place_node` gave.
+pub(crate) unsafe fn place_addr(rt: &mut Runtime, place: DyadPtr) -> Result<*mut u8, RunError> {
+    if dyad::ty(place) == rt.types().deref_ {
+        let (ptr_expr, _, off) = deref_parts(place);
+        let base = rt.run(ptr_expr)? as u64;
+        if base == 0 {
+            return Err(RunError::NullPointer);
+        }
+        return Ok(base.wrapping_add(off) as *mut u8);
     }
-    Ok(base.wrapping_add(off) as *mut u8)
+    if super::this::is_field_read(rt.types(), place) {
+        return super::this::field_addr(rt, place);
+    }
+    rt.place_addr(place).ok_or(RunError::NoActivation)
 }
 
-/// [`deref_addr`]'s compiled half.
+/// [`place_addr`]'s compiled half, handing the address to `at`, which gives a value of `ct`: a
+/// dereference's only where its base is not null, as `lower_deref` reads. A field's has no
+/// lowering: stand-in for #164.
 ///
 /// # Safety
-/// As [`deref_addr`].
-unsafe fn lower_deref_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    let (ptr_expr, _, off) = deref_parts(node);
-    let base = lw.lower(ptr_expr)?;
-    lw.guard_non_null(base, NumType::U64.cranelift_type(), |s| Ok(s.offset_addr(base, off as i64)))
+/// As [`place_addr`].
+pub(crate) unsafe fn lower_at_place(
+    lw: &mut Lowerer,
+    place: DyadPtr,
+    ct: cranelift_codegen::ir::Type,
+    at: impl FnOnce(&mut Lowerer, Value) -> Result<Value, CompileError>,
+) -> Result<Value, CompileError> {
+    if dyad::ty(place) == lw.types().deref_ {
+        let (ptr_expr, _, off) = deref_parts(place);
+        let base = lw.lower(ptr_expr)?;
+        return lw.guard_non_null(base, ct, |s| {
+            let addr = s.offset_addr(base, off as i64);
+            at(s, addr)
+        });
+    }
+    if super::this::is_field_read(lw.types(), place) {
+        return Err(CompileError::NotLowerable(place));
+    }
+    let addr = lw.place_addr(place)?;
+    at(lw, addr)
 }
 
 /// A cell's whole read hands over what the pointee's type moves as: its word, or the address
