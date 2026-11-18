@@ -99,7 +99,8 @@ fn construct(
         // SAFETY: `target` and `value` are reduced dyads from the store.
         if unsafe {
             (dyad::ty(target) == types.binding_ && p.owns_node(target) || p.is_owning_read(target))
-                && !super::drop_model::moves_out(types, value)
+                && super::drop_model::teardown_of(types, value)
+                    == super::drop_model::Teardown::Nothing
         } {
             return Err(ParseError::NonOwningIntoOwning);
         }
@@ -243,8 +244,10 @@ pub(super) fn build_store(
     let rhs = unsafe { super::land(store, types, rhs, lhs_type) }?;
     // A non-owning value in an owning place ends in a double free at scope exit.
     // SAFETY: `rhs` is a reduced dyad from the store.
-    let rhs_owning = unsafe { super::drop_model::is_owning_value(types, rhs) };
-    if super::drop_model::is_owning_place(types, lhs_d) && !rhs_owning {
+    let rhs_ends = unsafe { super::drop_model::teardown_of(types, rhs) };
+    if super::drop_model::is_owning_place(types, lhs_d)
+        && rhs_ends == super::drop_model::Teardown::Nothing
+    {
         return Err(ParseError::NonOwningIntoOwning);
     }
     // SAFETY: `op` is `=`, an operand record; `lhs_type` is the type node `carry` was read from.

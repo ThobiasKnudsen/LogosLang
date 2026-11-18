@@ -1103,7 +1103,7 @@ unsafe fn owning_pointee(ty: DyadPtr) -> Option<DyadPtr> {
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
-pub(crate) unsafe fn moves_out(types: &Core, node: DyadPtr) -> bool {
+unsafe fn moves_out(types: &Core, node: DyadPtr) -> bool {
     moved_out(types, node).is_some()
 }
 
