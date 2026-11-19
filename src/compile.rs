@@ -870,10 +870,9 @@ impl<'a> Lowerer<'a, '_> {
         // The width is in the mint: the parse chose its leaf for the resolved operand
         // types, so they are not classified a second time here.
         let leaf = mint::operation_of(dyad::ty(node)).unwrap_or(std::ptr::null_mut());
+        // A map's compare against `?` is interpreted only.
         let Some(logos) = self.types.ops.cmp_nt_of(leaf) else {
-            return Err(CompileError::Internal(
-                "a resolved comparison node holds a comparison leaf",
-            ));
+            return Err(CompileError::NotLowerable(node));
         };
         let l = self.lower(lhs)?;
         let r = self.lower(rhs)?;

@@ -4502,6 +4502,17 @@ fn every_operation_is_typed_by_its_mint() {
         cases.push((format!("{f}, f.compile(), f({arg})"), want));
     }
     cases.push(("m := rational_number 3, n := -m, n".into(), "-3\n"));
+    // A map's compare against `?` is a node of `==`'s or `!=`'s mint.
+    let map = "m := hashmap i64 -> i64, n := hashmap i64 -> hashmap i64 -> i64";
+    for (body, want) in [
+        ("print «{m == ?} {? != m} {n[1] == ?}»", "false true true\n"),
+        ("(m == ?).output_type == bool", "true\n"),
+        ("(m == ?).type == (m != ?).type", "false\n"),
+        ("(m == ?).type == (? == m).type", "false\n"),
+        ("(m == ?).rhs == ?", "true\n"),
+    ] {
+        cases.push((format!("{map}, {body}"), want));
+    }
     assert_runs(&cases);
     for src in
         ["x := i32 3, (-x).lhs", "f := fn (x := i32 ?) -> i32 ( (-x).lhs ), f.compile(), f(3)"]

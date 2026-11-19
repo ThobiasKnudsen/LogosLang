@@ -176,7 +176,7 @@ unsafe fn build_op(
             if matches!(c, CmpOp::Eq | CmpOp::Ne) {
                 let equal = matches!(c, CmpOp::Eq);
                 if let Some(node) =
-                    super::hashmap::build_unknown_compare(store, types, equal, lhs, rhs)
+                    super::hashmap::build_unknown_compare(store, types, op, equal, lhs, rhs)
                 {
                     return Ok(node);
                 }
