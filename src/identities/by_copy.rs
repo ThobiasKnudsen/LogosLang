@@ -119,7 +119,7 @@ pub(crate) struct Slot {
 }
 
 /// The bytes a place of `t` takes, a name's in a frame or a field's in a record: its type's own
-/// layout, or the eight-byte container every other value travels in; a bare parameter's too.
+/// layout, or the eight-byte container every other value travels in; a bracket parameter's too.
 ///
 /// # Safety
 /// `t` must be null or a valid dyad from the store.

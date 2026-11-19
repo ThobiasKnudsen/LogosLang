@@ -261,7 +261,7 @@ pub(crate) type CellKey = (DyadPtr, i32, crate::identities::tape::Line);
 
 /// `tape[k].type == T` or `!=` with `T` a number type or `type`, either side first, or
 /// `tape[k].type ⊆ T` with `T` a number type, each under any number of `not`, or the same of
-/// `tape[0].f.type` for a `?` field `f`: the cell or field checked, the type it narrows to, and
+/// `tape[0].f.type` for a `dyad` field `f`: the cell or field checked, the type it narrows to, and
 /// whether the branch that holds is the `then`.
 ///
 /// # Safety
@@ -449,7 +449,8 @@ impl<'a> Parser<'a> {
                 params.push((None, types.type_));
                 continue;
             } else if key[i] == types.scope || key[i] == types.square_brackets {
-                // A bare parameter: the bracket the node's field holds, read by its lines.
+                // A bracket parameter, typeless: the bracket the node's field holds, read by
+                // its lines.
                 std::ptr::null_mut()
             } else {
                 key[i]

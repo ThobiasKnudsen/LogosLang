@@ -22,7 +22,7 @@ pub(crate) unsafe fn is_hole(unknown: DyadPtr, node: DyadPtr) -> bool {
     !node.is_null() && dyad::ty(node) == unknown
 }
 
-/// The type a hole stands for; null for a bare parameter's slot.
+/// The type a hole stands for; null for a bracket parameter's slot.
 ///
 /// # Safety
 /// `node` must be a hole built by [`build`].

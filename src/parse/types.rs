@@ -266,46 +266,7 @@ impl<'a> Parser<'a> {
                     });
                 }
             }
-            // `name := T ?` declares the field's type through the hole `?`
-            // built; a bare name leaves the type slot undefined. A default,
-            // `size := u64 0`, is a constant: the field's dyad is that value,
-            // and each new node starts with it in the field's slot.
-            let mut default = std::ptr::null_mut();
-            let mut owns_node = false;
-            let logos = if self.consume_token(self.types.declare_tok) {
-                let outer = std::mem::replace(&mut self.cx.field_hole, relaxed);
-                let value = self.parse_expression_cell();
-                self.cx.field_hole = outer;
-                let cell = value?;
-                let value = cell.dyad;
-                owns_node = cell.owning;
-                if cell.hole {
-                    // SAFETY: `value` is the place `?` just built.
-                    unsafe { crate::identities::hole::type_in(value) }
-                } else {
-                    // SAFETY: `value` is a reduced dyad just parsed.
-                    let held = unsafe { self.types.through(value) };
-                    if held == self.types.unknown {
-                        std::ptr::null_mut() // `name := ?`: no type yet
-                    } else if relaxed
-                        // SAFETY: as above.
-                        && unsafe {
-                            matches!(
-                                crate::identities::read::read_kind(self.types, held),
-                                crate::identities::read::Read::Scalar(_)
-                            ) && !self.types.is_storage(held)
-                        }
-                    {
-                        // SAFETY: as above.
-                        let ty = unsafe { dyad::ty(held) };
-                        default = held;
-                        ty
-                    } else {
-                        self.cx.pos = start;
-                        return Err(ParseError::BadDeclaredType);
-                    }
-                }
-            } else {
+            if !self.consume_token(self.types.declare_tok) {
                 // A bare field name stands alone on its line: `x = 5` in a type
                 // body writes no slot `type` declares.
                 let alone = self.at_close()
@@ -320,15 +281,51 @@ impl<'a> Parser<'a> {
                         Some(_) => ParseError::TypeBodyLine,
                     });
                 }
-                std::ptr::null_mut()
+                return Err(self.untyped(start, relaxed));
+            }
+            // `name := T ?` declares the field's type through the hole `?`
+            // built. A default, `size := u64 0`, is a constant: the field's dyad
+            // is that value, and each new node starts with it in the field's slot.
+            let mut default = std::ptr::null_mut();
+            let outer = std::mem::replace(&mut self.cx.field_hole, relaxed);
+            let value = self.parse_expression_cell();
+            self.cx.field_hole = outer;
+            let cell = value?;
+            let value = cell.dyad;
+            let owns_node = cell.owning;
+            if self.is_bare_unknown(&cell) {
+                return Err(self.untyped(start, relaxed));
+            }
+            let logos = if cell.hole {
+                // SAFETY: `value` is the place `?` just built.
+                unsafe { crate::identities::hole::type_in(value) }
+            } else {
+                // SAFETY: `value` is a reduced dyad just parsed.
+                let held = unsafe { self.types.through(value) };
+                if relaxed
+                    // SAFETY: as above.
+                    && unsafe {
+                        matches!(
+                            crate::identities::read::read_kind(self.types, held),
+                            crate::identities::read::Read::Scalar(_)
+                        ) && !self.types.is_storage(held)
+                    }
+                {
+                    // SAFETY: as above.
+                    let ty = unsafe { dyad::ty(held) };
+                    default = held;
+                    ty
+                } else {
+                    self.cx.pos = start;
+                    return Err(ParseError::BadDeclaredType);
+                }
             };
             // An `own` parameter consumes its argument, which no call does yet.
-            // SAFETY: `logos` is null or a type node.
-            let owning = !logos.is_null()
-                && unsafe {
-                    crate::identities::numtype::is_pointer_type(logos)
-                        && !crate::identities::meta::destructor_of(logos).is_null()
-                };
+            // SAFETY: `logos` is a type node.
+            let owning = unsafe {
+                crate::identities::numtype::is_pointer_type(logos)
+                    && !crate::identities::meta::destructor_of(logos).is_null()
+            };
             if !relaxed && (owning || owns_node) {
                 self.cx.pos = start;
                 return Err(ParseError::OwnParameterNotInSeed);
@@ -698,12 +695,11 @@ impl<'a> Parser<'a> {
         }
         // A type whose fields own what they point to writes the teardown that frees it
         // (DESIGN ›A type whose fields carry teardowns must write its own destructor‹).
-        // SAFETY: `fields` is the block's array node, its items field dyads typed null or by a type node.
+        // SAFETY: `fields` is the block's array node, its items field dyads typed by a type node.
         let owning_field = unsafe {
             crate::identities::array::items(fields).iter().any(|&f| {
                 let ty = crate::identities::hole::type_in(f);
-                !ty.is_null()
-                    && crate::identities::numtype::is_pointer_type(ty)
+                crate::identities::numtype::is_pointer_type(ty)
                     && !crate::identities::meta::destructor_of(ty).is_null()
             })
         };
@@ -1230,8 +1226,7 @@ impl<'a> Parser<'a> {
             if declared == types.type_ {
                 continue;
             }
-            // A field typed as a bracket holds its lines, evaluated as an untyped one's.
-            if !declared.is_null() && declared != types.square_brackets && declared != types.scope {
+            if declared != types.square_brackets && declared != types.scope {
                 *slots.add(i) = crate::identities::land(self.rt.store, types, slot, declared)?;
             } else if crate::identities::tape::bracket_kind(types, slot).is_some()
                 && dyad::ty(slot) != types.tape.bracket_arg

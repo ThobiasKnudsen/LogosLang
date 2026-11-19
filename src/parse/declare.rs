@@ -740,6 +740,9 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = std::ptr::null_mut();
         let cell = value?;
         let value = cell.dyad;
+        if self.is_bare_unknown(&cell) {
+            return Err(self.untyped(tok.start, false));
+        }
         // SAFETY: `binding` is the binding just declared; `value` a reduced dyad from the store.
         let declared = unsafe { self.land_at_binding(binding, value, cell.hole, cell.owning) }?;
         let node =
@@ -747,6 +750,24 @@ impl<'a> Parser<'a> {
         tape.remove(-1); // the name token, consumed
         tape.place(node);
         Ok(Constructed::Placed)
+    }
+
+    /// A declaration's right side is `?` alone, with no type to its left.
+    pub(super) fn is_bare_unknown(&self, cell: &Cell) -> bool {
+        // SAFETY: a parsed cell holds a reduced dyad from the store.
+        !cell.hole && unsafe { self.types.through(cell.dyad) } == self.types.unknown
+    }
+
+    /// A new name, field or parameter written without its type, the checked error where it is
+    /// written (DESIGN ›`?` is one value, the unknown; `key := T ?` declares without a value‹
+    /// [[R103]]); a field's error also names a function that builds the mints.
+    pub(super) fn untyped(&mut self, at: usize, field: bool) -> ParseError {
+        self.cx.pos = at;
+        if field {
+            ParseError::FieldNeedsType
+        } else {
+            ParseError::NameNeedsType
+        }
     }
 
     /// Where `value` lands for `binding`, and whether the open scope holds it: the binding

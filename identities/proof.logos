@@ -3,7 +3,7 @@ proof := type (
     premises := array dyad []
     pattern := @dyad ?
     replacement := @dyad ?
-    derivation := ?
+    derivation := @dyad ?
     world := array @proof ()
     static parse = (
         ?

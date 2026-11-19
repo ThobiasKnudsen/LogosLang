@@ -739,7 +739,7 @@ pub(crate) unsafe fn operand_of(types: &Core, node: DyadPtr) -> Operand {
 }
 
 /// A value of type `t` as an operand: a rational holds a run-time rational, which no machine
-/// type takes silently, a `bool` is no number, and a bare parameter's container (`t` null)
+/// type takes silently, a `bool` is no number, and a bracket parameter's container (`t` null)
 /// is none either.
 ///
 /// # Safety
@@ -1216,7 +1216,7 @@ pub(crate) unsafe fn commit_call_args(
         &[]
     };
     for (i, arg) in args.iter_mut().enumerate() {
-        // A bare `name` parameter accepts any dyad.
+        // A bracket parameter accepts any dyad.
         let pty = params.get(i).map_or(std::ptr::null_mut(), |&p| hole::type_in(p));
         if pty.is_null() {
             read::value_type(types, *arg)?;
@@ -1252,9 +1252,9 @@ pub(crate) unsafe fn commit_fn_body(
     body: DyadPtr,
     output: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    let Some((place, _)) = read::place_layout(types, output) else {
+    if read::place_layout(types, output).is_none() {
         return Ok(body);
-    };
+    }
     walk_tail(types, body, &mut |leaf| {
         // A line held for the run, and a `dyad` place's node, land in the result when they run.
         if dyad::ty(leaf) == types.waiting.line {
@@ -1268,10 +1268,6 @@ pub(crate) unsafe fn commit_fn_body(
         refuse_statement(types, leaf)?;
         // An `out` already hands back its bytes.
         if dyad::ty(leaf) == types.by_copy.out {
-            return Ok(leaf);
-        }
-        // What a bare parameter holds is known only at the call: stand-in for #222.
-        if matches!(place, read::Read::Scalar(_)) && read::output_type(types, leaf).is_null() {
             return Ok(leaf);
         }
         // The caller holds what the call gives.

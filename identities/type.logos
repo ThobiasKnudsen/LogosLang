@@ -10,7 +10,7 @@
 
 type := type (
     parse_rank := f64 ?
-    associativity := ?
+    associativity := type ?
     parse := parse ?
     run := run ?
     free := free ?

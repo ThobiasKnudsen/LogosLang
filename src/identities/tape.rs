@@ -751,8 +751,8 @@ pub(crate) fn run_line_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunE
     }
 }
 
-/// `.type` of a line a parse holds: a tape cell, a line of one, or a `?` field of the parse's own
-/// node.
+/// `.type` of a line a parse holds: a tape cell, a line of one, or a `dyad` field of the parse's
+/// own node.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.

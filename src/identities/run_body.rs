@@ -159,11 +159,10 @@ pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
     *spec_slot(node)
 }
 
-/// One type per field of `node`, a node of the Logos-written type `ty`, in order: a typed
-/// field's declared type, a `type` field's held type, a field typed as a bracket the bracket
-/// it holds, or for a `?` field the written value's type (›A function is built once; a `fn` or
-/// `run` body is built as far as it can be where it is written‹ [[R299]]). `None` while one is
-/// unknown.
+/// One type per field of `node`, a node of the Logos-written type `ty`, in order: a field's
+/// declared type, a `type` field's held type, a field typed as a bracket the bracket it holds
+/// (›A function is built once; a `fn` or `run` body is built as far as it can be where it is
+/// written‹ [[R299]]). `None` while one is unknown.
 ///
 /// # Safety
 /// `ty` must carry a `RECORD_TAG` record and `node` be `[field…]` of it.
@@ -183,15 +182,11 @@ pub(crate) unsafe fn field_types(
         }
         let entry = if declared == types.type_ {
             types.through(slot)
-        } else if !declared.is_null()
-            && declared != types.square_brackets
-            && declared != types.scope
-        {
+        } else if declared != types.square_brackets && declared != types.scope {
             declared
         } else if let Some(bracket) = super::tape::bracket_kind(types, slot) {
             bracket
         } else {
-            // The operand's value at its own type: a literal's is `rational_number`.
             super::read::value_type(types, slot)?
         };
         let known = if declared == types.type_ {

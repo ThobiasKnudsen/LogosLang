@@ -23,7 +23,7 @@ pub enum Read {
     /// Eight bytes holding an address; the pointee is here for `@` and `=` to consult.
     Pointer(DyadPtr),
     /// Eight bytes holding a node address; carries the declared type (`type`, `dyad`, or
-    /// null for a bare parameter's slot) so a writer knows what the box may take.
+    /// null for a bracket parameter's slot) so a writer knows what the box may take.
     Container(DyadPtr),
     /// A type standing as a value: its own address is the value.
     Identity,
@@ -254,7 +254,7 @@ pub unsafe fn gives_value(types: &Core, node: DyadPtr) -> Result<bool, crate::pa
 }
 
 /// How storage declared `t` reads: at the type's own layout, or as the eight-byte
-/// container every other type's place holds (a node's address, a bare parameter's operand).
+/// container every other type's place holds (a node's address, a bracket parameter's operand).
 ///
 /// # Safety
 /// `t` must be null or a valid dyad from the store.
@@ -560,7 +560,7 @@ mod tests {
              d := dyad ?,\n\
              w := type ( y := i64 ? ),\n\
              q := w(7),\n\
-             f := fn (n := i32 ?, b) -> i32 ( n ),\n\
+             f := fn (n := i32 ?, b := dyad ?) -> i32 ( n ),\n\
              true,\n\
              5,\n\
              «hi»,\n\
@@ -598,7 +598,7 @@ mod tests {
             params.push(meta::record_scope_of(input));
             let param = |name: &str| params.resolve(&_trie, name).unwrap().binding;
             assert_eq!(read_kind(types, param("n")), Read::Scalar(NumType::I32));
-            assert_eq!(read_kind(types, param("b")), Read::Container(std::ptr::null_mut()));
+            assert_eq!(read_kind(types, param("b")), Read::Container(core.dyad_));
             assert_eq!(types.frame_of(param("b")), Some((crate::binding::Frame::Call(f), 4)));
             assert_eq!(read_kind(types, exprs[7]), Read::Scalar(NumType::I32));
             assert!(!types.is_storage(exprs[7]), "a literal is no storage");
