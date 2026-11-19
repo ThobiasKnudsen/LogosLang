@@ -1008,14 +1008,13 @@ impl<'a> Parser<'a> {
     /// The runtime's way back into the parser running it: parse what waits for the run.
     ///
     /// # Safety
-    /// As `mint_host`; `node` a node `identities::waiting` built, `held` null or a live node.
+    /// As `mint_host`; `node` a node `identities::waiting` built.
     unsafe fn parse_waiting_host(
         parser: *mut (),
         node: DyadPtr,
-        held: DyadPtr,
     ) -> Result<i64, crate::run::RunError> {
         let p = &mut *parser.cast::<Self>();
-        p.parse_waiting(node, held).map(|d| d as i64)
+        p.parse_waiting(node).map(|d| d as i64)
     }
 
     /// The runtime's way back into the parser running it: construct `ty` applied to `value`

@@ -3631,6 +3631,70 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     }
 }
 
+#[test]
+fn a_dyad_no_name_holds_is_read_through_as_a_named_one_is() {
+    let g = "g := fn (q := i32 ?) -> i32 ( q + 1 )";
+    let f = "f := fn () -> dyad ( i32 5 )";
+    let defs = format!("{g}, {f}");
+    for (named, unnamed, want) in [
+        ("d := dyad (i32, 7), g(d)", "g(dyad (i32, 7))", "8"),
+        ("d := f(), g(d)", "g(f())", "6"),
+        (
+            "d := dyad (i32, 7), mut x := i32 ?, x = d, x",
+            "mut x := i32 ?, x = dyad (i32, 7), x",
+            "7",
+        ),
+        ("d := f(), mut x := i64 ?, x = d, x", "mut x := i64 ?, x = f(), x", "5"),
+        ("d := dyad (i32, 7), x := i32 d, x", "x := i32 dyad (i32, 7), x", "7"),
+        ("d := dyad (f64, 5.5), x := i32 lossy (d), x", "x := i32 lossy (dyad (f64, 5.5)), x", "5"),
+        (
+            "d := f(), print «{d.type == i32} {d.type == dyad}»",
+            "print «{f().type == i32} {f().type == dyad}»",
+            "true false",
+        ),
+    ] {
+        for src in [format!("{defs}, {named}"), format!("{defs}, {unnamed}")] {
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    // A node whose type is known where it is written is read when its line runs, on both tiers.
+    for (body, call, want) in [
+        ("h := fn (m := i32 ?) -> i32 ( dyad (i32, m) )", "h(i32 3)", "3"),
+        ("h := fn (m := i32 ?) -> i32 ( g(dyad (i32, m)) )", "h(i32 3)", "4"),
+        ("h := fn (m := i32 ?) -> i64 ( mut x := i64 ?, x = dyad (i32, m), x )", "h(i32 3)", "3"),
+        ("h := fn () -> rational_number ( dyad (rational_number, 1/2) )", "h()", "1/2"),
+    ] {
+        for src in
+            [format!("{defs}, {body}, {call}"), format!("{defs}, {body}, h.compile(), {call}")]
+        {
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    // One whose type is known only at run lands there when its line runs, in the order written.
+    let calls = "h := fn () -> i32 ( print «h», 1 ), k := fn () -> dyad ( print «k», i32 2 )";
+    let sum = "s := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b )";
+    assert_eq!(line(&format!("{calls}, {sum}, s(h(), k())")), "h\nk\n3");
+    let half = "r := fn () -> dyad ( rational_number 3/4 )";
+    for (src, want) in [
+        ("q := fn (a := i64 ?) -> i64 ( a ), q(f())", "5"),
+        ("x := i64 (f()), x", "5"),
+        ("e := fn () -> dyad ( f64 5.5 ), x := i32 lossy (e()), x", "5"),
+        ("h := fn () -> rational_number ( r() ), h()", "3/4"),
+        ("h := fn () -> i32 ( g(f()) ), h()", "6"),
+        ("h := fn () -> i32 ( g(f()) ), m := fn () -> i32 ( h() ), m.compile(), m()", "6"),
+    ] {
+        let src = format!("{defs}, {half}, {src}");
+        assert_eq!(line(&src), want, "{src}");
+    }
+    let (code, _, stderr) = run_line(&format!("{g}, e := fn () -> dyad ( i64 5 ), g(e())"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
+    // A body's line does not wait for a call's node yet: stand-in for #280.
+    let (code, _, stderr) = run_line(&format!("{f}, h := fn () -> bool ( f().type == i32 ), h()"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
+}
+
 /// Run one command line and return its stdout, asserting success.
 fn line(src: &str) -> String {
     let out = logos().arg(src).output().unwrap();

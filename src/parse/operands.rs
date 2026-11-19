@@ -335,16 +335,22 @@ impl<'a> Parser<'a> {
         Ok(Some((lhs, rhs)))
     }
 
-    /// `operand` read through when it gives a `dyad` no name holds: the node it gives stands in
-    /// its place (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹
-    /// [[R293]]). Where that node's type is known where the operand is written, it is read at
-    /// that type each time the line runs. A call whose node's type is known only at run runs
-    /// now, after the lines before its own, where the pass has reached its line (the top level,
-    /// or a body's line parsed when it runs), and stands for the node it gave, as a `dyad` name
-    /// read there does; a body's line holding one waits for the run (`waiting_line_end`). It is
-    /// refused where its own line builds something that runs before it, which would run only
-    /// after it (›The pass runs only as far as it must, in order, and never twice‹ [[R288]]).
-    fn read_through_value(&mut self, at: usize, operand: DyadPtr) -> Result<DyadPtr, ParseError> {
+    /// `operand` read through when it gives a `dyad` no name holds, where its own type is read,
+    /// as an infix's operand and by `.type`: the node it gives stands in its place (›A `dyad ?`
+    /// place is transparent: a placeholder for a new node of any type‹ [[R293]]). Where that
+    /// node's type is known where the operand is written, it is read at that type each time the
+    /// line runs (`dyad_place::read_through`, which every landing in a typed place reads it by
+    /// too). A call whose node's type is known only at run runs now, after the lines before its
+    /// own, where the pass has reached its line (the top level, or a body's line parsed when it
+    /// runs), and stands for the node it gave, as a `dyad` name read there does; a body's line
+    /// holding one waits for the run (`waiting_line_end`). It is refused where its own line
+    /// builds something that runs before it, which would run only after it (›The pass runs only
+    /// as far as it must, in order, and never twice‹ [[R288]]).
+    pub(super) fn read_through_value(
+        &mut self,
+        at: usize,
+        operand: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
         use crate::identities::{dyad_place, read};
         let types = self.types;
         // SAFETY: `operand` is a reduced dyad from the store.
@@ -352,7 +358,9 @@ impl<'a> Parser<'a> {
             if read::output_type(types, operand) != types.dyad_ {
                 return Ok(operand);
             }
-            if let Some(node) = dyad_place::build_read(self.rt.store, types, operand) {
+            let unknown = std::ptr::null_mut();
+            let read = dyad_place::read_through(self.rt.store, types, operand, unknown, false);
+            if let Some(node) = read {
                 return Ok(node);
             }
             let call = matches!(
