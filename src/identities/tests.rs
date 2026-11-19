@@ -1885,6 +1885,46 @@ fn comments_are_reflectable_nodes_invisible_to_value_flow() {
     assert_eq!(jit, interp);
 }
 
+/// ›`-` negates where a space stands before it and none after, or no value stands to its left;
+/// any other `-` subtracts‹ [[R157]]: the lexer picks one of the two identities `-` spells by
+/// what stands left of it and its spacing, the last `-` of each text being the one it asks about.
+#[test]
+fn the_lexer_tells_negation_from_subtraction_where_the_minus_stands() {
+    let (mut store, trie, core) = new_core();
+    let mut s = ScopeStack::new();
+    s.push(core.root_scope);
+    let mut last_minus = |text: &str| {
+        let tape = crate::parse::lex_fragment(&s, &trie, &mut store, &core, text).unwrap();
+        let cells = tape.cells();
+        cells.iter().rev().find(|c| c.spelling() == "-").unwrap().identity(&core)
+    };
+    for text in [
+        "-m",
+        "- m",
+        "(-m",
+        "(- m",
+        "[-m",
+        "a, -m",
+        "a = -m",
+        "a * -m",
+        "a - -m",
+        "i32 lossy -m",
+        "return -m",
+        "i32 -m",
+        "a -m",
+        "(a) -m",
+        "a@ -m",
+        "1 -m",
+    ] {
+        assert_eq!(last_minus(text), core.negate, "{text}");
+    }
+    for text in
+        ["a-m", "a - m", "a- m", "(a)-m", "(a) - m", "a@-m", "a@ - m", "1-m", "«s» - m", "a ?-m"]
+    {
+        assert_eq!(last_minus(text), core.minus, "{text}");
+    }
+}
+
 #[test]
 fn a_fragment_holds_a_quote_and_a_comment_each_as_one_cell() {
     let (mut store, mut trie, core) = new_core();
@@ -4047,7 +4087,6 @@ fn lossy_stands_only_between_a_number_type_and_its_value() {
         "x := i32 lossy, 0",
         "i32 lossy lossy (f64 2.5)",
         "rational_number lossy 2.5",
-        "m := f64 2.5, i32 lossy -m",
         "pt := type (a := i32 ?, b := i32 ?), pt lossy (f64 2.5)",
     ] {
         assert_eq!(script_parse_err(src), ParseError::LossyOutOfPlace, "{src}");
@@ -4069,6 +4108,8 @@ fn number_types_take_the_value_to_their_right_rightmost_first_on_both_tiers() {
     }
     diff_nullary_fn("fn () -> f64 ( f64 i32 5 )", 5.0f64.to_bits() as i64);
     diff_typed_call("fn (x := f64 ?) -> i32 ( i32 lossy f64 lossy (x) )", "f(2.5)", 2);
+    // Negation ranks with them, so `lossy` takes the negated value.
+    diff_typed_call("fn (m := f64 ?) -> i32 ( i32 lossy -m )", "f(2.5)", -2);
     assert_eq!(run_script("i32 lossy rational_number 5"), 5);
     assert_eq!(run_script("i32 lossy rational_number rational_number 5"), 5);
     for src in ["i32 i64 5", "i32 f64 2.5", "f64 rational_number 5"] {

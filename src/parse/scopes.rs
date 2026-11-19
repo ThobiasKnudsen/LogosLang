@@ -24,6 +24,32 @@ pub struct Resolved {
     pub scope: DyadPtr,
 }
 
+/// What stands left of a token: what tells apart the two identities one spelling names in one
+/// scope, the one that reads a value to its left and the one that does not (›`-` negates where a
+/// space stands before it and none after, or no value stands to its left; any other `-`
+/// subtracts‹ [[R157]]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Left {
+    /// No value: the start, an opener, a `,`, an operator.
+    Nothing,
+    /// A value, the token right after it.
+    Value,
+    /// A value, then whitespace before the token.
+    SpacedValue,
+}
+
+impl Left {
+    /// Whether the identity that reads no value to its left stands here, `after` being the byte
+    /// right after the spelling: none to its left, or a space before it and none after.
+    fn takes_none(self, after: Option<&u8>) -> bool {
+        match self {
+            Left::Nothing => true,
+            Left::Value => false,
+            Left::SpacedValue => !after.is_some_and(u8::is_ascii_whitespace),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
     /// Not in the name index at all; carries the leading word at the position.
@@ -246,13 +272,14 @@ impl ScopeStack {
     }
 
     pub fn resolve(&self, trie: &RegexTrie, name: &str) -> Result<Resolved, ResolveError> {
-        self.select(trie, name, false)
+        self.select(trie, name, false, Left::Value)
     }
 
     /// As `resolve`, but the fresh-spelling patterns compete too: a spelling
-    /// nothing declared answers with `fresh` set and the run's length.
-    pub fn lex(&self, trie: &RegexTrie, text: &str) -> Result<Resolved, ResolveError> {
-        self.select(trie, text, true)
+    /// nothing declared answers with `fresh` set and the run's length. `left` is what stands
+    /// left of `text`.
+    pub fn lex(&self, trie: &RegexTrie, text: &str, left: Left) -> Result<Resolved, ResolveError> {
+        self.select(trie, text, true, left)
     }
 
     /// The one selection rule (DESIGN ›The scope's constructor is the driver‹):
@@ -263,6 +290,7 @@ impl ScopeStack {
         trie: &RegexTrie,
         text: &str,
         include_fresh: bool,
+        left: Left,
     ) -> Result<Resolved, ResolveError> {
         if text.is_empty() {
             return Err(ResolveError::Unknown(String::new()));
@@ -286,13 +314,34 @@ impl ScopeStack {
             // At the frontier "range covers the point" is exactly "not dead".
             // Two live bindings of one spelling are a field's or a slot word's,
             // declared against their siblings alone: the innermost open
-            // scope's wins (DESIGN ›The constructor is a field‹).
-            let binding = m
-                .bindings
-                .iter()
-                .copied()
-                .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())
-                .max_by_key(|&r| self.position(fields(r).scope));
+            // scope's wins (DESIGN ›The constructor is a field‹). Two in one scope are the
+            // spelling's two identities, and what stands left of it picks one.
+            let live = || {
+                m.bindings
+                    .iter()
+                    .copied()
+                    .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())
+            };
+            let innermost = live().map(|r| self.position(fields(r).scope)).max();
+            let twins: Vec<DyadPtr> =
+                live().filter(|&r| Some(self.position(fields(r).scope)) == innermost).collect();
+            let binding = match twins[..] {
+                [] => None,
+                [one] => Some(one),
+                _ => {
+                    let takes_none = left.takes_none(bytes.get(m.matched));
+                    let fits = |r: DyadPtr| {
+                        // SAFETY: `r` is a binding dyad from the store, and the identity it names
+                        // is null or a dyad from the store, which `takes_lhs` is given only when
+                        // not null.
+                        unsafe {
+                            let id = fields(r).names(r);
+                            !id.is_null() && crate::identities::meta::takes_lhs(id) != takes_none
+                        }
+                    };
+                    twins.into_iter().max_by_key(|&r| fits(r))
+                }
+            };
             let Some(binding) = binding else {
                 let spelling = text[..m.matched].to_string();
                 if m.bindings.iter().any(|&r| self.is_open(fields(r).scope)) {

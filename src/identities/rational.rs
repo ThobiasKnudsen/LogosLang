@@ -35,8 +35,8 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     cx.metas.insert(id, convert);
     let record = meta::record(cx.store, meta::FRACTION_TAG, meta::prec::LITERAL);
     let number = cx.store.alloc_head(cx.type_, record);
-    // Unanchored: the lexer longest-matches a prefix. The span is unsigned: `-` is
-    // always the operator, else `a-1` would lex as `a` then `-1`.
+    // Unanchored: the lexer longest-matches a prefix. The span is unsigned, else `a-1` would
+    // lex as `a` then `-1`: a negation before it folds into it instead.
     cx.declare_pattern(r"[0-9]+(?:\.[0-9]+)?", number);
     cx.metas.insert(number, construct);
     id
@@ -50,10 +50,11 @@ fn construct(
     let span = tape.own_text().ok_or(ParseError::BadLiteral)?;
     let types = p.types();
     let node = build(p.store(), types.rational, span)?;
-    // A `-` directly to the left with no completed operand before it is the negative
-    // literal, folded now: `x := -5`, `2 * -3`, while `a - 5` keeps its subtraction.
-    let negated = matches!(tape.at(-1), Some(c) if !c.constructed && c.identity(types) == types.minus)
-        && !tape.at(-2).is_some_and(|c| p.is_operand_cell(c));
+    // A negation directly to the left is the negative literal, folded now: `x := -5`, `2 * -3`,
+    // `i32 -5` (›`-` negates where a space stands before it and none after, or no value stands
+    // to its left; any other `-` subtracts‹ [[R157]]).
+    let negated =
+        matches!(tape.at(-1), Some(c) if !c.constructed && c.identity(types) == types.negate);
     let node = if negated {
         tape.remove(-1);
         // SAFETY: `node` is the literal just built.

@@ -98,7 +98,9 @@ pub struct Core {
     /// The scalar numeric conversion `T(value)`; it has no spelling of its own.
     pub convert: DyadPtr,
     pub plus: DyadPtr,
+    /// Subtraction; negation is the other identity `-` spells.
     pub minus: DyadPtr,
+    pub negate: DyadPtr,
     pub times: DyadPtr,
     pub div_: DyadPtr,
     pub rem_: DyadPtr,
@@ -285,8 +287,20 @@ impl Core {
         // No spelling: the parser builds conversions from the `T(value)` call surface.
         let (convert, convert_leaf) = convert::register(&mut cx, &callables);
         op_leaves.convert_ = convert_leaf;
-        let binary::BinaryIds { plus, minus, times, div: div_, rem: rem_, lt, gt, eq, le, ge, ne } =
-            binary::register_all(&mut cx);
+        let binary::BinaryIds {
+            plus,
+            minus,
+            negate,
+            times,
+            div: div_,
+            rem: rem_,
+            lt,
+            gt,
+            eq,
+            le,
+            ge,
+            ne,
+        } = binary::register_all(&mut cx);
         let (and_, and_leaf) = and::register(&mut cx, &callables);
         op_leaves.and_ = and_leaf;
         let (or_, or_leaf) = or::register(&mut cx, &callables);
@@ -424,6 +438,7 @@ impl Core {
             convert,
             plus,
             minus,
+            negate,
             times,
             div_,
             rem_,

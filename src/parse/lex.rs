@@ -23,14 +23,16 @@ pub type ExtentFn = fn(&str) -> Result<Extent, ResolveError>;
 /// The one door every lexer takes to the token at the start of `text`: the selection
 /// rule's winner, its extent the trie's match unless its record says it reads its own
 /// (DESIGN ›Unknown spellings are two pattern identities‹), with the scopes such a token
-/// opened. With `fresh` the fresh-spelling patterns compete too.
+/// opened. With `fresh` the fresh-spelling patterns compete too, and `left` is what stands
+/// left of `text`.
 pub(crate) fn token(
     scopes: &ScopeStack,
     trie: &RegexTrie,
     text: &str,
     fresh: bool,
+    left: Left,
 ) -> Result<(Resolved, Opened), ResolveError> {
-    let mut r = if fresh { scopes.lex(trie, text)? } else { scopes.resolve(trie, text)? };
+    let mut r = if fresh { scopes.lex(trie, text, left)? } else { scopes.resolve(trie, text)? };
     // SAFETY: a resolved identity is null or a dyad from the store.
     let Some(read) = (unsafe { crate::identities::meta::extent_reader(r.identity) }) else {
         return Ok((r, Vec::new()));
@@ -43,14 +45,16 @@ pub(crate) fn token(
 /// The lex step the driver and `lex «…»` share: a fresh spelling lexes to a node of type
 /// `unknown_name` holding it, built into `store`, the pattern's construction done at the
 /// lex. The cell comes with the `{…}` scopes it opened, as ranges of `text`. `None` at the
-/// end of the text; `text` must outlive the cell.
-pub(crate) fn lex_token(
+/// end of the text; `text` must outlive the cell. `before` is the cells lexed left of it on
+/// its tape, nearest first.
+pub(crate) fn lex_token<'c>(
     scopes: &ScopeStack,
     trie: &RegexTrie,
     store: &mut Store,
     types: &Core,
     text: &str,
     pos: usize,
+    before: impl IntoIterator<Item = &'c Cell>,
 ) -> Result<Option<(Cell, Opened)>, ResolveError> {
     let bytes = text.as_bytes();
     let mut start = pos;
@@ -60,7 +64,14 @@ pub(crate) fn lex_token(
     if start >= bytes.len() {
         return Ok(None);
     }
-    let (r, opened) = token(scopes, trie, &text[start..], true)?;
+    let left = if !value_ends(types, before) {
+        Left::Nothing
+    } else if start > 0 && bytes[start - 1].is_ascii_whitespace() {
+        Left::SpacedValue
+    } else {
+        Left::Value
+    };
+    let (r, opened) = token(scopes, trie, &text[start..], true, left)?;
     let dyad = if r.fresh {
         crate::identities::fresh::node(store, types, &text[start..start + r.matched])
     } else {
@@ -70,6 +81,39 @@ pub(crate) fn lex_token(
     // binding or the node just built.
     let cell = unsafe { Cell::lexed(dyad, text, start, r.matched) };
     Ok(Some((cell, opened.into_iter().map(|s| start + s.start..start + s.end).collect())))
+}
+
+/// Whether a value ends where `before` ends, the cells left of a token, nearest first: a built
+/// cell, a closer, a literal, `?`, a name, a function or a type that takes a value does; an
+/// opener, `,`, an operator, a prefix word or a type whose `parse` is written in Logos does not,
+/// and a tight read leaves what stands left of it (`x@`). What tells apart the two identities
+/// `-` spells (›`-` negates where a space stands before it and none after, or no value stands to
+/// its left; any other `-` subtracts‹ [[R157]]).
+fn value_ends<'c>(types: &Core, before: impl IntoIterator<Item = &'c Cell>) -> bool {
+    use crate::identities::meta;
+    for cell in before {
+        let id = cell.identity(types);
+        if cell.constructed || id == types.unknown || id == types.close_ || id == types.close_sq_ {
+            return true;
+        }
+        // SAFETY: a lexed cell's identity is a dyad from the store; `kind_of` turns away one
+        // that carries no record, and a record holds its rank and its constructor.
+        let (kind, rank, parse) = unsafe {
+            match (!id.is_null()).then(|| meta::kind_of(id)).flatten() {
+                Some(kind) => (kind, meta::parse_rank_of(id), meta::constructor_of(id)),
+                None => return true,
+            }
+        };
+        if rank == meta::prec::TIGHT {
+            continue;
+        }
+        return match kind {
+            meta::TUPLE_TAG | meta::LIST_TAG | meta::TOKEN_TAG => rank == meta::prec::LITERAL,
+            meta::RECORD_TAG => parse.is_null(),
+            _ => true,
+        };
+    }
+    false
 }
 
 /// Every token of `text` as an unconstructed cell on a fresh tape centered on
@@ -85,7 +129,9 @@ pub fn lex_fragment(
 ) -> Result<ParsingTape, ResolveError> {
     let mut tape = ParsingTape::new();
     let mut pos = 0;
-    while let Some((cell, opened)) = lex_token(scopes, trie, store, types, text, pos)? {
+    while let Some((cell, opened)) =
+        lex_token(scopes, trie, store, types, text, pos, tape.iter_back())?
+    {
         tape.push(cell);
         pos = cell.end();
         lex_scopes(scopes, trie, store, types, text, opened, &mut tape.inner)?;
@@ -107,10 +153,12 @@ fn lex_scopes(
 ) -> Result<(), ResolveError> {
     for scope in opened {
         let mut pos = scope.start;
+        let mut own: Vec<Cell> = Vec::new();
         while let Some((cell, deeper)) =
-            lex_token(scopes, trie, store, types, &text[..scope.end], pos)?
+            lex_token(scopes, trie, store, types, &text[..scope.end], pos, own.iter().rev())?
         {
             into.push(cell);
+            own.push(cell);
             pos = cell.end();
             lex_scopes(scopes, trie, store, types, text, deeper, into)?;
         }
@@ -132,8 +180,12 @@ pub(super) struct Feed {
 impl<'a> Parser<'a> {
     /// The next token of the source as a tape cell with its offset, or `None`
     /// at the end; a spelling the trie does not know becomes a fresh-name
-    /// cell, declared by a following `:=` or reported at the boundary.
-    pub(super) fn lex_cell(&mut self) -> Result<Option<(Cell, usize)>, ParseError> {
+    /// cell, declared by a following `:=` or reported at the boundary. `tape` holds the
+    /// cells lexed left of it.
+    pub(super) fn lex_cell(
+        &mut self,
+        tape: &ParsingTape,
+    ) -> Result<Option<(Cell, usize)>, ParseError> {
         let in_run_order = match &self.cx.feed {
             Some(feed) => feed.in_run_order,
             None => true,
@@ -146,8 +198,15 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let start = self.cx.pos;
             // The scopes a quote opened are lexed by whoever builds them, from the source.
-            let lexed =
-                lex_token(&self.cx.scopes, self.trie, self.rt.store, self.types, source, start);
+            let lexed = lex_token(
+                &self.cx.scopes,
+                self.trie,
+                self.rt.store,
+                self.types,
+                source,
+                start,
+                tape.iter_back(),
+            );
             let Some((cell, _)) = lexed.map_err(|e| self.lex_error(start, e))? else {
                 return Ok(None);
             };
@@ -359,7 +418,7 @@ impl<'a> Parser<'a> {
     /// [`token`] at `pos` in the source.
     pub(super) fn token_at(&mut self, pos: usize, fresh: bool) -> Result<Resolved, ParseError> {
         let source = self.cx.source;
-        token(&self.cx.scopes, self.trie, &source[pos..], fresh)
+        token(&self.cx.scopes, self.trie, &source[pos..], fresh, Left::Value)
             .map(|(r, _)| r)
             .map_err(|e| self.lex_error(pos, e))
     }
@@ -399,7 +458,8 @@ impl<'a> Parser<'a> {
         if self.cx.pos >= source.len() {
             return None;
         }
-        let (r, _) = token(&self.cx.scopes, self.trie, &source[self.cx.pos..], false).ok()?;
+        let (r, _) =
+            token(&self.cx.scopes, self.trie, &source[self.cx.pos..], false, Left::Value).ok()?;
         Some((r.identity, r.matched))
     }
 
@@ -489,7 +549,7 @@ impl<'a> Parser<'a> {
         {
             return None;
         }
-        let (r, _) = token(&self.cx.scopes, self.trie, rest, true).ok()?;
+        let (r, _) = token(&self.cx.scopes, self.trie, rest, true, Left::Value).ok()?;
         self.cx.pos = start + r.matched;
         Some((start, r.matched, r.fresh))
     }

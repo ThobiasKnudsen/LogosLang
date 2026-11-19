@@ -1,10 +1,11 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The eleven infix operators over two operands, `+ - * / %` and `< > <= >= == !=`. Their
-//! fields are `?`, so each node is `[mint, lhs, rhs]`: the parse chooses the mint from the
-//! operand types once they meet, and the mint holds the output type and the leaf; two comptime
-//! rationals fold at parse instead.
+//! The eleven infix operators over two operands, `+ - * / %` and `< > <= >= == !=`, and
+//! negation, which `-` spells too and which builds `0 - x`. Their fields are `?`, so each
+//! node is `[mint, lhs, rhs]`: the parse chooses the mint from the operand types once they
+//! meet, and the mint holds the output type and the leaf; two comptime rationals fold at
+//! parse instead.
 
 use cranelift_codegen::ir::Value;
 
@@ -27,6 +28,7 @@ pub(super) enum Family {
 pub(super) struct BinaryIds {
     pub plus: DyadPtr,
     pub minus: DyadPtr,
+    pub negate: DyadPtr,
     pub times: DyadPtr,
     pub div: DyadPtr,
     pub rem: DyadPtr,
@@ -44,6 +46,7 @@ pub(super) fn register_all(cx: &mut Cx) -> BinaryIds {
     BinaryIds {
         plus: register(cx, "+", ADDITIVE, Family::Arith(ArithOp::Add)),
         minus: register(cx, "-", ADDITIVE, Family::Arith(ArithOp::Sub)),
+        negate: register_negate(cx),
         times: register(cx, "*", MULTIPLICATIVE, Family::Arith(ArithOp::Mul)),
         div: register(cx, "/", MULTIPLICATIVE, Family::Arith(ArithOp::Div)),
         rem: register(cx, "%", MULTIPLICATIVE, Family::Arith(ArithOp::Rem)),
@@ -66,6 +69,18 @@ fn register(cx: &mut Cx, spelling: &str, rank: f64, family: Family) -> DyadPtr {
     id
 }
 
+/// Negation, a second identity of the spelling `-` beside subtraction, the lexer picking one by
+/// what stands left of it. It takes the value to its right, so it ranks and associates as a
+/// number type does (›`-` negates where a space stands before it and none after, or no value
+/// stands to its left; any other `-` subtracts‹ [[R157]]).
+fn register_negate(cx: &mut Cx) -> DyadPtr {
+    let record = meta::record_assoc(cx.store, meta::TOKEN_TAG, meta::prec::CONVERT, Assoc::Right);
+    let id = cx.store.alloc_head(cx.type_, record);
+    cx.declare("-", id);
+    cx.metas.insert(id, construct_negate);
+    id
+}
+
 const ARITH: u8 = 0;
 const CMP: u8 = 1;
 const ADD: u8 = ArithOp::Add as u8;
@@ -80,14 +95,15 @@ const GE: u8 = CmpOp::Ge as u8;
 const EQ: u8 = CmpOp::Eq as u8;
 const NE: u8 = CmpOp::Ne as u8;
 
-/// A table entry is a plain fn pointer, so each (family, op) pair is its own function;
-/// `-` has its own constructor for its prefix form.
+/// A table entry is a plain fn pointer, so each (family, op) pair is its own function.
 fn shims(family: Family) -> (ConstructFn, LowerFn) {
     match family {
         Family::Arith(ArithOp::Add) => {
             (super::infix_construct!(build::<ARITH, ADD>), lower::<ARITH, ADD>)
         }
-        Family::Arith(ArithOp::Sub) => (construct_minus, lower::<ARITH, SUB>),
+        Family::Arith(ArithOp::Sub) => {
+            (super::infix_construct!(build::<ARITH, SUB>), lower::<ARITH, SUB>)
+        }
         Family::Arith(ArithOp::Mul) => {
             (super::infix_construct!(build::<ARITH, MUL>), lower::<ARITH, MUL>)
         }
@@ -348,27 +364,18 @@ fn build_identity_compare(
     None
 }
 
-/// At reduction it is subtraction. Opening fresh, with no left operand, it negates the
-/// operand to its right as `0 - x`, so it molds to the operand's type and lowers as a
-/// subtraction; a literal to the right was already folded at discovery.
-fn construct_minus(
+/// The value to its right negated as `0 - x`, a subtraction's node, so it molds to the value's
+/// type and lowers as a subtraction; a literal to the right folded it at discovery.
+fn construct_negate(
     p: &mut crate::parse::Parser,
-    id: DyadPtr,
+    _id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
-    if let Some((lhs, rhs)) = p.binary_operands(tape)? {
-        let types = p.types();
-        let node = group::apply(p.store(), types, id, lhs, rhs, build::<ARITH, SUB>)?;
-        // SAFETY: `node` was just built over reduced dyads.
-        let node = unsafe { rational::slotted(p, node) };
-        tape.reduce_here(node);
-        return Ok(crate::parse::Constructed::Placed);
-    }
     let types = p.types();
     let rhs = p.take_right(tape)?;
     let zero = rational::build(p.store(), types.rational, "0")?;
-    let node = group::apply(p.store(), types, id, zero, rhs, build::<ARITH, SUB>)?;
-    // SAFETY: as above.
+    let node = group::apply(p.store(), types, types.minus, zero, rhs, build::<ARITH, SUB>)?;
+    // SAFETY: `node` was just built over reduced dyads.
     let node = unsafe { rational::slotted(p, node) };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)

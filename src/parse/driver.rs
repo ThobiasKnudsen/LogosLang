@@ -125,7 +125,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         lazy: bool,
     ) -> Result<Option<Boundary>, ParseError> {
-        let Some((mut cell, start)) = self.lex_cell()? else {
+        let Some((mut cell, start)) = self.lex_cell(tape)? else {
             return Ok(Some(Boundary::Eof));
         };
         if !cell.constructed && !self.after_tight_read(tape) && self.names_own_field(&cell) {

@@ -313,6 +313,12 @@ impl ParsingTape {
         self.tail.map(|n| &self.nodes[n].cell)
     }
 
+    /// The cells from the last to the first.
+    pub(crate) fn iter_back(&self) -> impl Iterator<Item = &Cell> + '_ {
+        std::iter::successors(self.tail, move |&n| self.nodes[n].prev)
+            .map(move |n| &self.nodes[n].cell)
+    }
+
     pub fn start_of(&self, i: usize) -> usize {
         self.cell(i).map(|c| c.start).unwrap_or(0)
     }
