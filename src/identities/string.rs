@@ -16,13 +16,14 @@ use crate::parse::{Constructed, Extent, ParseError, Parser, ParsingTape, Resolve
 use crate::store::Store;
 
 /// Fills the record into the type node the build minted first (every record's `name` is a
-/// string node, so the type exists before the first declaration), and mints `«`, the reader of
-/// a quote's own text, apart from the type, so no name of the type reaches it
-/// (›Unknown spellings are two pattern identities‹ [[R252]]). Returns `«`.
+/// string node, so the type exists before the first declaration) and names it `string`, and
+/// mints `«`, the reader of a quote's own text, apart from the type, so no name of the type
+/// reaches it (›Unknown spellings are two pattern identities‹ [[R252]]). Returns `«`.
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, STRING_TAG, meta::prec::INERT);
     // SAFETY: `string_` is the string type node the build allocated, its value null until now.
     unsafe { dyad::set_head(cx.string_, record) };
+    cx.declare("string", cx.string_);
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::LITERAL);
     let quote = cx.store.alloc_head(cx.type_, record);

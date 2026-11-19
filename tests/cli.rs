@@ -3985,7 +3985,24 @@ fn a_name_of_the_text_type_stands_as_the_type() {
     cases.push((format!("{t}, t == «b».type"), "true\n"));
     cases.push((format!("{t}, print «{{t == «b».type}}», 7"), "true\n7\n"));
     cases.push(("g := fn () -> type ( «a».type ), t := g(), t, 7".to_string(), "7\n"));
+    for (src, want) in [
+        (format!("{t}, t == string"), "true\n"),
+        (format!("{t}, t == bool"), "false\n"),
+        ("f := fn () -> bool ( return «a».type == string ), f()".to_string(), "true\n"),
+        (
+            "f := fn () -> bool ( return «a».type == string ), f.compile(), f()".to_string(),
+            "true\n",
+        ),
+    ] {
+        cases.push((src, want));
+    }
     assert_runs(&cases);
+    let (code, _, stderr) = run_line("s := string ?, 0");
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("declarations of non-numeric types are not in the seed yet"),
+        "{stderr}"
+    );
     // A `»` after the name is no quote's end.
     let (code, _, stderr) = run_line(&format!("{t}, (t 1 + 2»), 7"));
     assert_eq!(code, Some(1), "{stderr}");
