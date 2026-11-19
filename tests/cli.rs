@@ -3557,6 +3557,33 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     let (code, _, stderr) = run_line(&format!("{g}, mut i := i32 0, while i < g() ( i = i + 1 )"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("cannot read a `dyad` value yet"), "stderr: {stderr}");
+    // What runs in the call's line runs in the order it is written, the lines before it first.
+    let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 )";
+    for (src, want) in [
+        (format!("{calls}, g() + h()"), "g\nh\n3"),
+        (format!("{calls}, x := ( h(), g() + 1 ), x"), "h\ng\n3"),
+        (format!("{calls}, v := g(), h() + v"), "g\nh\n3"),
+        (
+            format!("{calls}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(1, g() + 1)"),
+            "g\n4",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // Something its line runs before it would run after it: stand-in for #280.
+    for src in [
+        format!("{calls}, h() + g()"),
+        format!("{calls}, h() + (g() * 2)"),
+        format!("{calls}, (h(), 1) + g()"),
+        format!("{calls}, print «{{h()}} {{g() + 1}}»"),
+        format!("{calls}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(h(), g() + 1)"),
+        format!("{calls}, k := fn () -> i32 ( h() + g() ), k()"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stdout.is_empty(), "{src}: stdout: {stdout}");
+        assert!(stderr.contains("cannot stand yet after something in its line"), "{src}: {stderr}");
+    }
 }
 
 /// Run one command line and return its stdout, asserting success.

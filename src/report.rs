@@ -215,6 +215,12 @@ pub fn parse_message(e: &ParseError) -> String {
              condition runs again on every pass; test the value inside the loop's body"
                 .into()
         }
+        ParseError::DyadCallAfterRun => {
+            "a call that gives a `dyad` runs while its line is parsed, so it cannot stand yet \
+             after something in its line that runs, which runs only when the line runs; give \
+             its value a name on a line of its own first, as `v := g(), h() + v`"
+                .into()
+        }
         ParseError::NonNumericDeclaredType => {
             "declarations of non-numeric types are not in the seed yet"
                 .into()

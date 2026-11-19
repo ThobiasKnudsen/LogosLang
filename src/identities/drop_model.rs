@@ -1676,6 +1676,8 @@ mod tests {
             "for 0..3 ( x := dyad (i32, 2) + 1 ), 1",
             "g := fn () -> dyad ( i32 5 ), g() + 1, 1",
             "g := fn () -> dyad ( i32 5 ), x := g() + g(), 1",
+            "g := fn () -> dyad ( i32 5 ), x := ( 1, g() + 1 ), 1",
+            "g := fn () -> dyad ( i32 5 ), k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(1, g() + 1), 1",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
         }
