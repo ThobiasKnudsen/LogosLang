@@ -1,9 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `string` and its `«…»` literal: a plain value, inert in the seed (nothing
-//! consumes one yet). Storage: `[len: u64][bytes]`, the native-endian length
-//! then the UTF-8 text; the type node self-describes via [`STRING_TAG`].
+//! `string`, the text type, and `«`, the quote that makes its values: a plain value, inert
+//! in the seed (nothing consumes one yet). Storage: `[len: u64][bytes]`, the native-endian
+//! length then the UTF-8 text; the type node self-describes via [`STRING_TAG`].
 //! DESIGN ›Strings nest by depth; only five escapes; `«…»` is the only spelling‹
 
 use std::ops::Range;
@@ -15,27 +15,32 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, Extent, ParseError, Parser, ParsingTape, ResolveError};
 use crate::store::Store;
 
-/// Fills the record into the type node the build minted first (every record's
-/// `name` is a string node, so the type exists before the first declaration).
+/// Fills the record into the type node the build minted first (every record's `name` is a
+/// string node, so the type exists before the first declaration), and mints `«`, the reader of
+/// a quote's own text, apart from the type, so no name of the type reaches it
+/// (›Unknown spellings are two pattern identities‹ [[R252]]). Returns `«`.
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, STRING_TAG, meta::prec::LITERAL);
-    let id = cx.string_;
-    // SAFETY: `id` is the string type node the build allocated, its value null until now.
-    unsafe { dyad::set_head(id, record) };
-    cx.declare("«", id);
-    cx.metas.insert(id, construct);
-    cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));
-    id
+    let record = meta::record(cx.store, STRING_TAG, meta::prec::INERT);
+    // SAFETY: `string_` is the string type node the build allocated, its value null until now.
+    unsafe { dyad::set_head(cx.string_, record) };
+
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::LITERAL);
+    let quote = cx.store.alloc_head(cx.type_, record);
+    cx.declare("«", quote);
+    cx.metas.insert(quote, construct);
+    cx.extents.insert(quote, |text| read(text, 0).map(Quote::extent));
+    quote
 }
 
 fn construct(
     p: &mut Parser,
-    id: DyadPtr,
+    _id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
     let spelling = tape.own_text().ok_or(ParseError::BadLiteral)?;
     let quote = read(spelling, 0).map_err(ParseError::Resolve)?;
-    let node = build_text(p.store(), id, &quote.text(spelling));
+    let string_ = p.types().string_;
+    let node = build_text(p.store(), string_, &quote.text(spelling));
     tape.place(node);
     Ok(Constructed::Placed)
 }

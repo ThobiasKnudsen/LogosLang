@@ -3961,6 +3961,39 @@ fn an_unclosed_quote_or_brace_is_reported_at_its_opener() {
     assert!(stderr.contains("this `«` has no `»`"), "{stderr}");
 }
 
+/// ›Unknown spellings are two pattern identities‹ [[R252]]: `«` is an identity apart from
+/// `string`, the type of the values it makes, so a name of the type stands as the type, as
+/// `t := i32` does, and no reader of a quote is handed the name, wherever it is lexed.
+#[test]
+fn a_name_of_the_text_type_stands_as_the_type() {
+    let t = "t := «a».type";
+    let mut cases: Vec<(String, &str)> = [
+        "t, 7",
+        "5, t, 7",
+        "x := lex «t», 7",
+        "if false ( t ), 7",
+        "p := type ( x := t ? ), 7",
+        "p := @t ?, 7",
+        "r := t:lex_rank, 7",
+        "w := type ( n := i32 ?, static run = ( t, n ) ), 7",
+        "f := fn () -> i32 ( t, 7 ), f()",
+        "f := fn () -> i32 ( t, 7 ), f.compile(), f()",
+    ]
+    .into_iter()
+    .map(|tail| (format!("{t}, {tail}"), "7\n"))
+    .collect();
+    cases.push((format!("{t}, t == «b».type"), "true\n"));
+    cases.push((format!("{t}, print «{{t == «b».type}}», 7"), "true\n7\n"));
+    cases.push(("g := fn () -> type ( «a».type ), t := g(), t, 7".to_string(), "7\n"));
+    assert_runs(&cases);
+    // A `»` after the name is no quote's end.
+    let (code, _, stderr) = run_line(&format!("{t}, (t 1 + 2»), 7"));
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(stderr.contains("1:24: error: unknown name `»`"), "{stderr}");
+    let (echoes, stderr) = repl(format!("{t}\n7\nt\n8\n").as_bytes());
+    assert_eq!(echoes, ["7", "8"], "stderr: {stderr}");
+}
+
 #[test]
 fn error_aborts_the_run_with_its_message() {
     let out = logos()

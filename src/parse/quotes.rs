@@ -233,7 +233,7 @@ impl<'a> Parser<'a> {
     /// The `«…»` string node to the right of a raw-text word, consumed at discovery.
     fn quote_after(&mut self, word: &'static str) -> Result<DyadPtr, ParseError> {
         let (start, len) = self.quote_span_after(word)?;
-        self.construct_leaf(self.types.string_, start, len)?.ok_or(ParseError::ExpectedQuote(word))
+        self.construct_leaf(self.types.quote_, start, len)?.ok_or(ParseError::ExpectedQuote(word))
     }
 
     /// Where the `«…»` to the right of a raw-text word stands, consumed at discovery.
