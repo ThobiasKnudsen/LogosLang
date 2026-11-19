@@ -939,9 +939,9 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `dyad (T, v)` builds a store-owned cell of type `T` (DESIGN ›Feasibility‹):
-    /// a numeric `T` takes a literal `v` committed to its width, any other `T`
-    /// takes `v` as the node the value points at. Without a bracket, `dyad` stands as its value.
+    /// `dyad (T, v)`: `v` lands in `T` where the line is written, and each run of the line makes
+    /// a new node of `T` holding it (›`dyad (T, v)` makes a new node of `T` holding `v` each time
+    /// its line runs‹ [[R371]]). Without a bracket, `dyad` stands as its value.
     pub(crate) fn construct_dyad(
         &mut self,
         id: DyadPtr,
@@ -954,43 +954,26 @@ impl<'a> Parser<'a> {
             return Ok(Constructed::Placed);
         };
         // SAFETY: the bracket cell holds a node from the store; its arguments are reduced dyads.
-        let cell = unsafe {
+        let node = unsafe {
             let args = self.args_of(bracket.dyad);
             let [ty, value] = args[..] else {
                 return Err(ParseError::CtorArity);
             };
-            let ty = types.through(ty);
-            if !crate::identities::is_type_value(types, ty) {
-                return Err(ParseError::BadDeclaredType);
-            }
-            let read = types.through(value);
-            // What a cell of `ty` holds is the reading rule's answer for a
-            // place of `ty`: a scalar is storage at its width.
-            let scalar = matches!(
-                crate::identities::read::place_layout(types, ty),
-                Some((crate::identities::read::Read::Scalar(_), _))
-            );
-            if scalar && ty != types.bool_ {
-                if dyad::ty(read) != types.rational {
-                    return Err(ParseError::UnsupportedOperands);
-                }
-                crate::identities::land(self.rt.store, types, read, ty)?
-            } else if scalar {
-                // `bool` is physically an i32 0/1 in storage; only `true` and
-                // `false` have bits at parse.
-                if dyad::ty(read) != types.bool_ {
-                    return Err(ParseError::UnsupportedOperands);
-                }
-                let bits = std::ptr::read_unaligned(dyad::value(read) as *const i32);
-                self.rt.store.alloc_blob(types.bool_, &bits.to_ne_bytes())
-            } else {
-                // No other type has a whole value a cell can hold from a
-                // node: refused rather than guessed.
-                return Err(ParseError::BadDyadType);
-            }
+            let ty = self.settled_type(types.through(ty));
+            let Some(ty) = crate::identities::type_identity_of(types, ty) else {
+                // A box the pass has not filled holds its type only when the program runs, and
+                // the line does not wait for it: stand-in for #292.
+                let out = crate::identities::read::output_type(types, ty);
+                return Err(if out == types.type_ || out == types.dyad_ {
+                    ParseError::TypeKnownOnlyAtRun
+                } else {
+                    ParseError::BadDeclaredType
+                });
+            };
+            crate::identities::dyad_place::build_of_type(self.rt.store, types, ty, value)?
         };
         tape.remove(1);
-        tape.place(cell);
+        tape.place(node);
         Ok(Constructed::Placed)
     }
 

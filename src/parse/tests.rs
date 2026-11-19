@@ -478,7 +478,7 @@ fn the_tape_affordances_are_reachable_from_logos() {
         assert_eq!(v as DyadPtr, a_rec, "an index may be an expression");
         let (_, s) = go("t.recenter(-1)", &mut store, &mut trie, types, s);
 
-        let (_, s) = go("t[0] = dyad (i32, 7)", &mut store, &mut trie, types, s);
+        let (_, s) = go("t[0] = i32 7", &mut store, &mut trie, types, s);
         let c0 = *(*tape).at(0).unwrap();
         assert!(!c0.constructed, "a write replaces the pointer and nothing more");
         assert_eq!(dyad::ty(c0.dyad), core.i32_);
@@ -510,13 +510,13 @@ fn the_tape_affordances_are_reachable_from_logos() {
             b"9",
             "a spliced cell keeps the text it was lexed from"
         );
-        let (_, s) = go("t[0] = dyad (i32, 9)", &mut store, &mut trie, types, s);
+        let (_, s) = go("t[0] = i32 9", &mut store, &mut trie, types, s);
         let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
         assert_eq!(dyad::ty(v as DyadPtr), core.i32_, "the written cell, now the center");
         assert_ne!(v as DyadPtr, c0.dyad);
         let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
         assert_eq!(crate::identities::string::text(v as DyadPtr), b"9");
-        let mut p = Parser::new("t.insert(0, dyad (i32, 9))", &mut store, &mut trie, types, s);
+        let mut p = Parser::new("t.insert(0, i32 9)", &mut store, &mut trie, types, s);
         assert_eq!(p.parse_expression().unwrap_err(), ParseError::InsertTakesTape);
         let s = p.into_scopes();
 

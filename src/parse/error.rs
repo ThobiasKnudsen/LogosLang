@@ -53,8 +53,7 @@ pub enum ParseError {
     /// `=` into an owning place whose right side does not own: two teardowns
     /// over one block, or one over memory the store owns.
     NonOwningIntoOwning,
-    /// `dyad (T, v)` for a `T` whose values are bytes at a width the seed
-    /// cannot fill from a value node.
+    /// `dyad (T, v)` for a `T` whose value does not move whole into a new node.
     BadDyadType,
     /// `parse_rank = …` whose value is not a number known at the definition.
     NonComptimeRank,
@@ -246,10 +245,6 @@ pub enum ParseError {
     /// A scope's value or a `return` is `&x` of a name a scope it leaves holds: that
     /// scope's end frees the value under the address.
     AddressOfHeld,
-    /// A value a bare `while` condition makes that `&` or the line's end holds, in the scope the
-    /// condition stands in, across a part that runs again: one place would hold every pass's
-    /// value. stand-in for #264
-    HeldEachPassNotInSeed,
     /// `move b` where `b` borrows the node it names: only the owner can move it.
     MoveOfBorrow,
     /// `move a` of a plain record: its bytes are not copied into a name yet. stand-in for #193
