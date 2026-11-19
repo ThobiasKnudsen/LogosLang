@@ -6864,10 +6864,51 @@ fn a_number_type_takes_the_value_built_at_discovery_before_it() {
     assert_runs(&cases);
 }
 
+/// ›A parse is ranked by what it takes from its right‹ [[R116]]: number types, `rational_number`
+/// and `lossy` associate right, so of two in a row the one nearer the value is built first, and
+/// `lossy` makes the value the type to its left takes, on both tiers (›A type's `parse` decides
+/// what converts into it; unwritten, a value converts only into a type that holds it exactly‹
+/// [[R155]]).
+#[test]
+fn number_types_and_lossy_take_the_value_to_their_right_rightmost_first() {
+    let mut cases = vec![("i32 lossy rational_number 1/3".to_string(), "0\n")];
+    for (f, call, want) in [
+        ("fn () -> i64 ( i64 i32 5 )", "f()", "5\n"),
+        ("fn () -> f64 ( f64 i32 5 )", "f()", "5.0\n"),
+        ("fn () -> i32 ( i32 lossy f64 2.5 )", "f()", "2\n"),
+        ("fn () -> i32 ( i32 lossy i64 5000000000 )", "f()", "705032704\n"),
+        ("fn (x := f64 ?) -> i32 ( i32 lossy (x) )", "f(2.5)", "2\n"),
+        ("fn (x := f64 ?) -> i32 ( if i32 2 == i32 lossy (x) (1) else (0) )", "f(2.5)", "1\n"),
+    ] {
+        cases.push((format!("f := {f}, {call}"), want));
+        cases.push((format!("f := {f}, f.compile(), {call}"), want));
+    }
+    assert_runs(&cases);
+}
+
+/// ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type
+/// that holds it exactly‹ [[R155]]: `lossy` needs a number type to its left and a value to its
+/// right, and is refused where it is written.
+#[test]
+fn lossy_without_both_sides_is_refused_where_it_is_written() {
+    let refused = "`lossy` stands between a number type and the value it converts";
+    for (src, at) in [
+        ("x := lossy (f64 2.5), 0", "1:6:"),
+        ("lossy 2.5", "1:1:"),
+        ("x := i32 lossy, 0", "1:10:"),
+        ("rational_number lossy 2.5", "1:17:"),
+        ("f := fn () -> i32 ( x := lossy (f64 2.5), 0 ), f.compile(), f()", "1:26:"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("{at} error: {refused}")), "{src}: stderr: {stderr}");
+    }
+}
+
 /// What a number type's lower rank leaves refused: an `if` arm the type cannot hold, a sign
 /// before a name (›A type's `parse` decides what converts into it; unwritten, a value converts
 /// only into a type that holds it exactly‹ [[R155]] keeps `i32 -m` open), a bracket read through
-/// `.`, two types in a row, and a type left of `=` reading past it.
+/// `.`, a type that cannot hold the type to its right, and a type left of `=` reading past it.
 #[test]
 fn a_number_type_below_open_refuses_what_it_cannot_take() {
     let mismatch = "these types do not match";
@@ -6883,7 +6924,7 @@ fn a_number_type_below_open_refuses_what_it_cannot_take() {
         ("m := i32 3, i64 - m", operator),
         ("f := fn (m := i32 ?) -> i64 ( i64 -m ), f.compile(), f(3)", operator),
         ("x := i32 5, i32 (x).type", mismatch),
-        ("i64 i32 5", "expected one expression, found more"),
+        ("i32 i64 5", mismatch),
         ("i32 = 4", "`i32` is not `mut`"),
         ("mut x := f64 0.0, f64 = 2.5, x", "`f64` is not `mut`"),
     ] {

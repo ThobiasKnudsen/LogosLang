@@ -55,6 +55,7 @@ pub(crate) mod instance;
 pub mod lex;
 #[path = "logos.rs"]
 mod logos_mod;
+pub(crate) mod lossy;
 pub(crate) mod meta;
 pub(crate) mod mint;
 mod not;
@@ -248,7 +249,7 @@ impl Core {
             numtypes[nt as usize] = numtype::register_type(&mut cx, spelling, nt);
         }
         let i32_ = numtypes[NumType::I32 as usize];
-        let lossy = numtype::register_lossy(&mut cx);
+        let lossy = lossy::register(&mut cx);
         let void = numtype::register_void(&mut cx);
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);

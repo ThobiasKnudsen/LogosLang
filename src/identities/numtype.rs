@@ -129,68 +129,60 @@ impl NumType {
     }
 }
 
+/// Associating right, so of two in a row the one nearer the value is built first: `i64 i32 5` is
+/// `i64 (i32 5)` (›A parse is ranked by what it takes from its right‹ [[R116]]).
 pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
-    let record = super::meta::record(cx.store, nt as u8, super::meta::prec::CONVERT);
+    let record = super::meta::record_assoc(
+        cx.store,
+        nt as u8,
+        super::meta::prec::CONVERT,
+        crate::parse::Assoc::Right,
+    );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(spelling, id);
     cx.metas.insert(id, construct);
     id
 }
 
-/// `lossy`, read only by the number type to its left: standing anywhere else it is refused.
-pub(crate) fn register_lossy(cx: &mut Cx) -> DyadPtr {
-    let record = super::meta::record(cx.store, super::meta::TOKEN_TAG, super::meta::prec::PREFIX);
-    let id = cx.store.alloc_head(cx.type_, record);
-    cx.declare("lossy", id);
-    cx.metas.insert(id, |_, _, _| Err(crate::parse::ParseError::LossyOutOfPlace));
-    id
-}
-
 /// Juxtaposition: the value to the right (`Parser::type_operand`) converts into this type as
-/// any value lands in it; a bracket is the written conversion `i32(x)`; `lossy` before the value
-/// converts what may lose part of it. With no value to the right the type stands as a value, so
-/// `f(i32, 3)` passes the type.
+/// any value lands in it; a bracket is the written conversion `i32(x)`; a `lossy` value converts
+/// what it took, a bracket as a written conversion's, losing what this type cannot hold. With no
+/// value to the right the type stands as a value, so `f(i32, 3)` passes the type.
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
     let types = p.types();
-    // A number type reads `lossy` itself: stand-in for #260.
-    let right = p.cell_at(tape, 1)?;
-    let lossy = matches!(right, Some(c) if !c.constructed && c.identity(types) == types.lossy);
-    let at = if lossy { 2 } else { 1 };
-    let Some(operand) = p.type_operand(tape, at)? else {
-        if lossy {
-            return Err(crate::parse::ParseError::LossyOutOfPlace);
-        }
+    let Some(operand) = p.type_operand(tape, 1)? else {
         let node = p.stand_as_value(tape, id);
         tape.place(node);
         return Ok(crate::parse::Constructed::Placed);
     };
-    let node = if operand.is_bracket() {
+    let node = if let Some(taken) = super::lossy::taken(types, &operand) {
+        tape.remove(1);
+        // SAFETY: `taken` is the reduced dyad `lossy` took; `id` is this numeric type's node.
+        unsafe {
+            let args = p.args_of(taken);
+            p.build_call_as(id, &args, true)
+        }
+        .map_err(|e| p.fail_at(operand.start, e))?
+    } else if operand.is_bracket() {
         // `i32(x)`: the bracket is this type's to read, a conversion, never `(`'s call.
         // SAFETY: a bracket cell holds its node from the store.
         let args = unsafe { p.args_of(operand.dyad) };
-        take_cells(tape, at);
+        tape.remove(1);
         // SAFETY: `id` is this numeric type's node; `args` are reduced dyads.
-        unsafe { p.build_call_as(id, &args, lossy) }?
+        unsafe { p.build_call(id, &args) }?
     } else {
         let value = p.as_operand(operand)?;
-        take_cells(tape, at);
+        tape.remove(1);
         // SAFETY: `value` is a reduced dyad from the store; `id` is this numeric type's node.
-        unsafe { super::land_as(p.store(), types, value, id, lossy) }
+        unsafe { super::land(p.store(), types, value, id) }
             .map_err(|e| p.fail_at(operand.start, e))?
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
-}
-
-/// Removes the cells right of the center up to `at`: the value, and `lossy` before it.
-fn take_cells(tape: &mut crate::parse::ParsingTape, at: isize) {
-    for k in (1..=at).rev() {
-        tape.remove(k);
-    }
 }
 
 /// One past every `NumType` discriminant, so a void type node is told apart by its tag alone.
