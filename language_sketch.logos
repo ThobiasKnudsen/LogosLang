@@ -41,10 +41,10 @@ parsing_tape := type (
     )
 )
 
-here := ?     # where this line is written: here.scope is the scope it stands in, here.scope.back the one above, null at the arche
-caller := ?   # where it was called from: for a constructor the appearance of its identity, so caller.scope is the use site and
-              # here.scope the constructor's own body; both stand inside a constructor, the walk up being settled structure
-              # (ruled 15 September 2026, #123; a walk down stops at a section boundary, a function's scopes counting as one)
+here := type ?    # where this line is written: here.scope is the scope it stands in, here.scope.back the one above, null at the arche
+caller := type ?  # where it was called from: for a constructor the appearance of its identity, so caller.scope is the use site and
+                  # here.scope the constructor's own body; both stand inside a constructor, the walk up being settled structure
+                  # (ruled 15 September 2026, #123; a walk down stops at a section boundary, a function's scopes counting as one)
 
 mut := type (
     # a gate word (DESIGN ›`mut` is a gate on the binding‹, ruled 5-7 September 2026; its place ruled 15 September 2026): a
@@ -83,36 +83,36 @@ p5 := conjecture ( x <= x ^ 2 + 1 -> true ) where ( x.type is number ) proof (  
     -> nonneg_plus_pos(true)                # a rule whose right side is true
 )
 
-@ := ?
--> := ?
+@ := type ?
+-> := type ?
 
-lex «\«» := ?
-lex «\»» := ?
-lex «#» := ?   # the one comment constructor: takes a «…» string or raw text to end of line; builds a reflectable, void-valued comment node
+lex «\«» := type ?
+lex «\»» := type ?
+lex «#» := type ?   # the one comment constructor: takes a «…» string or raw text to end of line; builds a reflectable, void-valued comment node
 
-lex «=» := ?
-lex «:=» := ?
+lex «=» := type ?
+lex «:=» := type ?
 
-. := ?
+. := type ?
 
-+ := ?
-- := ?
-* := ?
-/ := ?
-% := ?
-^ := ?
-< := ?
-> := ?
-== := ?
-<= := ?
->= := ?
-!= := ?
-& := ?
-mut := ?
-( := ?
-) := ?
-[ := ?
-] := ?
++ := type ?
+- := type ?
+* := type ?
+/ := type ?
+% := type ?
+^ := type ?
+< := type ?
+> := type ?
+== := type ?
+<= := type ?
+>= := type ?
+!= := type ?
+& := type ?
+mut := type ?
+( := type ?
+) := type ?
+[ := type ?
+] := type ?
 
 string := type ?
 u8 := type ?
@@ -136,14 +136,14 @@ callable := type (          # the complete jump info — the ONE representation 
     )
 )
 
-if := ?
-else := ?
-for := ?
-while := ?
-and := ?
-or := ?
-xor := ?
-not := ?
+if := type ?
+else := type ?
+for := type ?
+while := type ?
+and := type ?
+or := type ?
+xor := type ?
+not := type ?
 
 
 mut a := i32 32       # mut gates a's binding, never the type (5 September 2026), standing beside the name (15 September 2026); the dyad is one block, type word first (29 September 2026), no phase, no mutability bit
@@ -246,11 +246,11 @@ a = a + 1
 # take d -> 0 for the exact value. every range is directed (start toward bound),
 # the step signed with the direction of travel, which is what gives negative
 # bounds the right sign.
-d := ?
+d := dyad ?
 inf := 1 / d       # an actual infinite number: / below accepts an infinitesimal divisor
 ninf := -inf       # prefix - is negation (ruled 5 September 2026)
-im := ?             # the imaginary unit, for the oscillating weights
-' := ?              # per-iteration change, postfix: inside a loop over i, e' is
+im := dyad ?        # the imaginary unit, for the oscillating weights
+' := type ?         # per-iteration change, postfix: inside a loop over i, e' is
                    # (e at i + step) - (e at i), so i' is the step itself (= d
                    # here) and g' is g(i + i') - g(i). both are actual numbers
                    # at the current i, so g'/i' is honest division and equals
@@ -385,37 +385,37 @@ for i in a..b..d (
 # df: nothing new, it is ' applied to f along a route. the sum telescopes to
 # f(end) - f(start) whatever route path takes: df integrates up globally,
 # which δQ below cannot
-f := fn (p) -> ? ( ? )         # a surface: one number per position
-path := fn (t) -> ? ( ? )      # a route: the position at time t
+f := fn (p := dyad ?) -> dyad ( ? )     # a surface: one number per position
+path := fn (t := dyad ?) -> dyad ( ? )  # a route: the position at time t
 for t in 0..1..d (
     += f(path(t))'
 )
 
 # ∂f/∂x: f'/x' with only x moving. the derivative loop with y frozen
-f := fn (x, y) -> ? ( ? )      # the surface, spelled per coordinate
-x := ?                          # the coordinate that moves
-y := ?                          # the coordinate held still (y' = 0)
+f := fn (x := dyad ?, y := dyad ?) -> dyad ( ? )  # the surface, spelled per coordinate
+x := dyad ?                                       # the coordinate that moves
+y := dyad ?                                       # the coordinate held still (y' = 0)
 for i in 0..(f(x + d, y) - f(x, y))..(d*d) (
     += d
 )
 
 # ∇f: one such coefficient per axis, collected by walking the AXES. on any
 # walk f' = ∇f · step, so f' is largest along ∇f and zero perpendicular
-n := ?                          # how many axes the space has
-p := ?                          # the position ∇f is taken at
-e := fn (k) -> ? ( ? )         # the unit step along axis k
-f := fn (p) -> ? ( ? )         # the surface, over n coordinates
+n := dyad ?                          # how many axes the space has
+p := dyad ?                          # the position ∇f is taken at
+e := fn (k := dyad ?) -> dyad ( ? )  # the unit step along axis k
+f := fn (p := dyad ?) -> dyad ( ? )  # the surface, over n coordinates
 for k in 1..n (
     += [(f(p + d*e(k)) - f(p)) / d]
 )
 
 # ∇_mu: the flat partial plus a correction, because here the axes themselves
 # turn as you move. straight axes: G = 0 and only the partial remains
-mu := ?                          # the axis stepped along
-c := ?                           # the component being differentiated
-v := fn (k, p) -> ? ( ? )       # a vector field: component k at position p
-G := fn (c, mu, k) -> ? ( ? )   # how much of axis k tilts into direction c
-                                # per step along mu: the axes' own primes
+mu := dyad ?                                                    # the axis stepped along
+c := dyad ?                                                     # the component being differentiated
+v := fn (k := dyad ?, p := dyad ?) -> dyad ( ? )                # a vector field: component k at position p
+G := fn (c := dyad ?, mu := dyad ?, k := dyad ?) -> dyad ( ? )  # how much of axis k tilts into direction c
+                                                                # per step along mu: the axes' own primes
 total := (v(c, p + d*e(mu)) - v(c, p)) / d
 (total += G(c, mu, k) * v(k, p)) for k in 1..n
 
@@ -423,10 +423,10 @@ total := (v(c, p + d*e(mu)) - v(c, p)) / d
 # function's two partials, so the total belongs to the route, not the
 # endpoints. two routes between the same points pay differently, which is
 # why heat is written δQ and never dQ
-qx := fn (x, y) -> ? ( ? )      # payment per unit of x-movement at (x, y)
-qy := fn (x, y) -> ? ( ? )      # payment per unit of y-movement at (x, y)
-x := fn (t) -> ? ( ? )          # the chosen route,
-y := fn (t) -> ? ( ? )          # coordinate by coordinate
+qx := fn (x := dyad ?, y := dyad ?) -> dyad ( ? )  # payment per unit of x-movement at (x, y)
+qy := fn (x := dyad ?, y := dyad ?) -> dyad ( ? )  # payment per unit of y-movement at (x, y)
+x := fn (t := dyad ?) -> dyad ( ? )                # the chosen route,
+y := fn (t := dyad ?) -> dyad ( ? )                # coordinate by coordinate
 for t in 0..1..d (
     += qx(x(t), y(t))*x(t)' + qy(x(t), y(t))*y(t)'
 )
