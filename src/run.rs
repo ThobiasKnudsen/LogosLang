@@ -63,9 +63,6 @@ pub enum RunError {
     StampNotANodeType,
     /// A parse read or wrote a field the type it stamped as it ran does not have.
     NoFieldNamed(Box<String>),
-    /// A parse wrote its node's mint's `output_type` before the types of its fields were known,
-    /// or read it before writing it.
-    MintUnchosen,
     /// A field of a node its constructor never wrote, by its index among the fields.
     UnfilledField(usize),
     /// A negative index.

@@ -428,9 +428,7 @@ impl<'a> Parser<'a> {
             };
             params.push((name, ty));
         }
-        let shared =
-            crate::identities::mint::shared_field(ty, crate::identities::mint::SHARED_FIELD)
-                .or_else(|| self.declared_output_type(ty));
+        let shared = self.declared_output_type(ty);
         let mut scope = ScopeStack::new();
         scope.push(field_scope);
         let output = scope

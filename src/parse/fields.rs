@@ -169,21 +169,6 @@ impl<'a> Parser<'a> {
             let mut members = ScopeStack::new();
             members.push(body);
             if let Ok(r) = members.resolve(self.trie, name) {
-                // A type with a `?` field keeps its `output_type` on each of its mints, one
-                // place per mint, which its parse writes (›A type without a `run` whose field
-                // is `?` mints one type per set of field types, as `array` mints one per
-                // element type‹ [[R300]]).
-                let in_parse = self.cx.definitions.last().is_some_and(|d| d.in_parse);
-                // SAFETY: the block's items are field declaration dyads from the store.
-                let mints = unsafe { crate::identities::mint::has_untyped_field(&items) };
-                if in_parse && mints && name == crate::identities::mint::SHARED_FIELD {
-                    let types = self.types;
-                    return Ok(crate::identities::this::build_mint_output(
-                        self.rt.store,
-                        types,
-                        this,
-                    ));
-                }
                 return Ok(r.identity);
             }
             self.cx.pos = at;
@@ -1365,20 +1350,22 @@ impl<'a> Parser<'a> {
         Ok(t)
     }
 
-    /// An operator expression, which `.` reads as its node (DESIGN ›Reading a path runs
-    /// nothing‹): a node that runs, whose type word is an identity with a parse of its own, the
-    /// one that built it from its operands (`x + 2`, `x ^ 3`), or a mint of one. A call's type
-    /// word is a function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and the call
-    /// stands for what it returns.
+    /// An operator expression, which `.` reads as its node (›`x.type` reads the type word of the
+    /// node a name or an expression stands for‹ [[R279]]): a node that runs, whose type word is
+    /// a type with a `run` body, the one a parse stamped (`x ^ 3`, its type minted by `^`'s
+    /// chooser), or an identity with a parse of its own, or a mint of one (`x + 2`). A call's
+    /// type word is a function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and the
+    /// call stands for what it returns.
     ///
     /// # Safety
     /// `node` must be a reduced dyad from the store.
     unsafe fn is_operator_node(&self, node: DyadPtr) -> bool {
-        use crate::identities::read::{read_kind, Read};
-        let ty = crate::identities::mint::origin(dyad::ty(node));
-        matches!(read_kind(self.types, node), Read::Executable(_))
-            && self.identity_head(ty).is_some()
-            && !crate::identities::meta::constructor_of(ty).is_null()
+        use crate::identities::{meta, read};
+        let Some(ty) = self.identity_head(crate::identities::mint::origin(dyad::ty(node))) else {
+            return false;
+        };
+        matches!(read::read_kind(self.types, node), read::Read::Executable(_))
+            && (meta::kind_of(ty) == Some(meta::RECORD_TAG) || !meta::constructor_of(ty).is_null())
     }
 
     /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's read surface‹), the

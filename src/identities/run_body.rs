@@ -146,38 +146,24 @@ unsafe fn spec_slot(node: DyadPtr) -> *mut DyadPtr {
     (dyad::value(node) as *mut DyadPtr).add(n_fields + 1)
 }
 
-/// The words a node of the Logos-written type `ty` holds after its fields: the run's
-/// terminator, then the slot for its set's function, which a node whose type is its mint
-/// does not hold (›Operands sit inline after the type word; a growing list stays behind a
-/// pointer‹ [[R153]]).
-///
-/// # Safety
-/// `ty` must carry a `RECORD_TAG` record.
-pub(crate) unsafe fn tail_len(ty: DyadPtr) -> usize {
-    if super::mint::takes_mint(ty) {
-        1
-    } else {
-        2
-    }
-}
+/// The words a node of a Logos-written type holds after its fields: the run's terminator, then
+/// the slot for its set's function (›Operands sit inline after the type word; a growing list
+/// stays behind a pointer‹ [[R153]]).
+pub(crate) const TAIL_LEN: usize = 2;
 
-/// The function the node runs: its mint's, or the one in its own slot; null while no set has
-/// been resolved for the node.
+/// The function the node runs; null while no set has been resolved for the node.
 ///
 /// # Safety
-/// As `spec_slot`, or `node` a node of a type `takes_mint` accepts.
+/// As `spec_slot`.
 pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
-    let ty = dyad::ty(node);
-    if super::mint::takes_mint(ty) {
-        return super::mint::operation_of(ty).unwrap_or(std::ptr::null_mut());
-    }
     *spec_slot(node)
 }
 
 /// One type per field of `node`, a node of the Logos-written type `ty`, in order: a typed
 /// field's declared type, a `type` field's held type, a field typed as a bracket the bracket
-/// it holds, or for a `?` field the written value's type (›A generic function body is lexed once
-/// and built once per set of field types‹ [[R299]]). `None` while one is unknown.
+/// it holds, or for a `?` field the written value's type (›A function is built once; a `fn` or
+/// `run` body is built as far as it can be where it is written‹ [[R299]]). `None` while one is
+/// unknown.
 ///
 /// # Safety
 /// `ty` must carry a `RECORD_TAG` record and `node` be `[field…]` of it.
@@ -237,8 +223,7 @@ pub(crate) unsafe fn unfilled_field(node: DyadPtr) -> Option<usize> {
 }
 
 /// # Safety
-/// As `spec_slot`, for a node of a type that does not mint; `f` a `fn` node.
+/// As `spec_slot`; `f` a `fn` node.
 pub(crate) unsafe fn set_spec(node: DyadPtr, f: DyadPtr) {
-    debug_assert!(!super::mint::takes_mint(dyad::ty(node)), "a mint holds its nodes' run");
     *spec_slot(node) = f;
 }

@@ -163,13 +163,11 @@ pub(crate) fn operand_record(
     cx.store.alloc_bytes(&blob)
 }
 
-/// A mint's record: an operand record's roles with no op slot and no output slot, or a
-/// Logos-written type's whole record, its parse, run body and layout, so its nodes are read as
-/// its origin's; then the words every node of the mint shares. Its memo of mints and its `@T`
-/// are its own.
+/// A built-in's mint's record: its operand record's roles with no op slot and no output slot,
+/// then the words every node of the mint shares.
 ///
 /// # Safety
-/// `origin` must carry a `TUPLE_TAG` operand record or a `RECORD_TAG` record.
+/// `origin` must carry a `TUPLE_TAG` operand record.
 pub(crate) unsafe fn mint_record(
     store: &mut Store,
     origin: DyadPtr,
@@ -177,24 +175,13 @@ pub(crate) unsafe fn mint_record(
     op: DyadPtr,
 ) -> *mut u8 {
     let kind = kind_of(origin).expect("a mint's origin carries a record");
-    let mut blob = if kind == RECORD_TAG {
-        let mut whole =
-            std::slice::from_raw_parts(dyad::head(origin), PAYLOAD_OFF + RECORD_PAYLOAD).to_vec();
-        for off in [MINTS_OFF, POINTER_TYPE_OFF] {
-            whole[off..off + 8].fill(0);
-        }
-        whole
-    } else {
-        header(kind, Assoc::Left, prec::INERT).to_vec()
-    };
+    debug_assert_eq!(kind, TUPLE_TAG, "a built-in's mint's nodes are fixed operand runs");
+    let mut blob = header(kind, Assoc::Left, prec::INERT).to_vec();
     blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(origin as usize).to_ne_bytes());
-    if kind != RECORD_TAG {
-        debug_assert_eq!(kind, TUPLE_TAG, "a built-in's mint's nodes are fixed operand runs");
-        let arity = arity_of(origin);
-        blob.extend_from_slice(&[arity as u8, NO_SLOT, NO_SLOT]);
-        for i in 0..arity {
-            blob.extend_from_slice(&(role_of(origin, i) as usize).to_ne_bytes());
-        }
+    let arity = arity_of(origin);
+    blob.extend_from_slice(&[arity as u8, NO_SLOT, NO_SLOT]);
+    for i in 0..arity {
+        blob.extend_from_slice(&(role_of(origin, i) as usize).to_ne_bytes());
     }
     for word in [output_type, op] {
         blob.extend_from_slice(&(word as usize).to_ne_bytes());
@@ -232,14 +219,11 @@ const MINT_OP: usize = 1;
 /// # Safety
 /// `id` must be a mint (`mint_of` non-null), its record from `mint_record`.
 unsafe fn mint_word_at(id: DyadPtr, k: usize) -> *mut DyadPtr {
-    let words = match kind_of(id) {
-        Some(RECORD_TAG) => PAYLOAD_OFF + RECORD_PAYLOAD,
-        _ => ROLES_OFF + arity_of(id) * std::mem::size_of::<DyadPtr>(),
-    };
+    let words = ROLES_OFF + arity_of(id) * std::mem::size_of::<DyadPtr>();
     dyad::head(id).add(words + k * std::mem::size_of::<DyadPtr>()) as *mut DyadPtr
 }
 
-/// The type every node of the mint gives back; null while it is not known.
+/// The type every node of the mint gives back.
 ///
 /// # Safety
 /// As `mint_word_at`.
@@ -247,25 +231,12 @@ pub(crate) unsafe fn mint_output_of(id: DyadPtr) -> DyadPtr {
     mint_word_at(id, MINT_OUTPUT).read_unaligned()
 }
 
-/// What every node of the mint runs: a built-in's machine operation, or the function a
-/// Logos-written type's `run` body was built into for the mint; null until it is built.
+/// What every node of the mint runs, its machine operation.
 ///
 /// # Safety
 /// As `mint_word_at`.
 pub(crate) unsafe fn mint_op_of(id: DyadPtr) -> DyadPtr {
     mint_word_at(id, MINT_OP).read_unaligned()
-}
-
-/// # Safety
-/// As `mint_word_at`; `output_type` a type node.
-pub(crate) unsafe fn install_mint_output(id: DyadPtr, output_type: DyadPtr) {
-    mint_word_at(id, MINT_OUTPUT).write_unaligned(output_type);
-}
-
-/// # Safety
-/// As `mint_word_at`; `run` a `fn` node.
-pub(crate) unsafe fn install_mint_op(id: DyadPtr, run: DyadPtr) {
-    mint_word_at(id, MINT_OP).write_unaligned(run);
 }
 
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
@@ -360,7 +331,6 @@ pub(crate) unsafe fn install_bracket_builder(id: DyadPtr, builder: DyadPtr) {
 }
 
 const FIELD_BINDINGS_OFF: usize = PAYLOAD_OFF + 48;
-const RECORD_PAYLOAD: usize = 56;
 
 /// The array of the fields' bindings, in the order of `record_fields_of`, each carrying its
 /// field's offset in a value (DESIGN ›A scope lays out its declarations; a use reaches the

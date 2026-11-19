@@ -662,18 +662,6 @@ impl<'a> Parser<'a> {
         if !held.is_empty() {
             return Err(ParseError::DeferInTypeBody);
         }
-        // ›A node's output type is written by its parse, on the mint for a type that mints‹
-        // [[R194]].
-        // SAFETY: `fields` is the block's array node and `bindings` their bindings.
-        let per_node_output = unsafe {
-            crate::identities::mint::has_untyped_field(crate::identities::array::items(fields))
-                && bindings
-                    .iter()
-                    .any(|&b| Binding::spelling(b) == crate::identities::mint::SHARED_FIELD)
-        };
-        if per_node_output {
-            return Err(ParseError::OutputTypeNotShared);
-        }
         self.expect_close()?;
         // SAFETY: the bindings were just minted for these fields; `def.self_type` is the type node.
         let size_bytes = unsafe { lay_out_fields(self.types, def.self_type, fields, &bindings) };
@@ -1105,21 +1093,20 @@ impl<'a> Parser<'a> {
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN
     /// ›Deferral is authored‹): the function for its field-type set, found on
-    /// the type or built now, held by the node's mint where its type mints (›A type with a
-    /// `run` whose field is `?` mints too, so its `run` body is parsed once per mint‹
-    /// [[R301]]), else in the node; a field whose type is unknown leaves it unresolved.
+    /// the type or built now, held in the node; a field whose type is unknown leaves it
+    /// unresolved.
     ///
     /// # Safety
     /// `node` must be the node `run_logos_ctor` minted for a type whose record carries a run
-    /// body, or for one of its mints.
+    /// body.
     pub(crate) unsafe fn resolve_specialization(
         &mut self,
         node: DyadPtr,
         at: usize,
         spelling: &str,
     ) -> Result<Option<DyadPtr>, ParseError> {
-        use crate::identities::{meta, mint, run_body};
-        let ty = mint::origin(dyad::ty(node));
+        use crate::identities::{meta, run_body};
+        let ty = dyad::ty(node);
         let held = meta::run_body_of(ty);
         if held.is_null() {
             return Ok(None);
@@ -1132,15 +1119,11 @@ impl<'a> Parser<'a> {
                 return Err(e);
             }
         };
-        let mint = mint::takes_mint(ty).then(|| mint::stamp(self.rt.store, self.types, node, &key));
         let mut spec = run_body::lookup(held, &key);
         if spec.is_null() {
-            spec = self.construct_run_body(mint.unwrap_or(ty), held, &key, at, spelling)?;
+            spec = self.construct_run_body(ty, held, &key, at, spelling)?;
         }
-        match mint {
-            Some(mint) => meta::install_mint_op(mint, spec),
-            None => run_body::set_spec(node, spec),
-        }
+        run_body::set_spec(node, spec);
         // The node is a call of the function: a use of every outer name the
         // body reads, checked before a comptime node runs it.
         if let Err(e) = self.check_call_reads(spec) {

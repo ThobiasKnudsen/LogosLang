@@ -1,19 +1,20 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The one mint maker: a type whose field is `?` makes one mint per set of field types its parse
-//! chooses, built once and kept on the type. A node's type is its mint, and the mint holds what its
-//! nodes share: the type they give back and what they run.
-//! ›A type with a `run` whose field is `?` mints too, so its `run` body is parsed once per mint‹
-//! [[R301]]
+//! The built-in operators' chooser: one mint per set of field types their parse chooses, built
+//! once and kept on the type. A node's type is its mint, and the mint holds what its nodes share:
+//! the type they give back and what they run. A Logos-written type mints through a function of
+//! its own. ›An operation mints through a chooser, one mint per set of operand types, so each
+//! mint's `run` body is parsed once‹ [[R301]]
 
 use super::{array, meta};
-use crate::dyad::{self, DyadPtr};
+use crate::dyad::DyadPtr;
 use crate::store::Store;
 use crate::Core;
 
-/// The one member a mint keeps of a Logos-written type's: what its nodes give back
-/// (›A node's output type is written by its parse, on the mint for a type that mints‹ [[R194]]).
+/// The member that holds what a type's nodes give back (›A mint's output type is written in its
+/// `share output_type` declaration; a type that does not mint has its parse write it into each
+/// node‹ [[R194]]).
 pub(crate) const SHARED_FIELD: &str = "output_type";
 
 /// A built-in's mint for the field types `key`, made the first time and kept on `origin`. The
@@ -41,52 +42,8 @@ pub(crate) unsafe fn of(
     make(store, types, origin, key, output_type, op)
 }
 
-/// `node` made a node of its type's mint for the field types `key`, the mint made the first
-/// time. A Logos-written type's mint begins with neither word: its parse writes what its nodes
-/// give back, and its run is built for it after.
-///
 /// # Safety
-/// `node` must be a node of a type `takes_mint` accepts, or of one of its mints; `key` one type
-/// per field, from the store.
-pub(crate) unsafe fn stamp(
-    store: &mut Store,
-    types: &Core,
-    node: DyadPtr,
-    key: &[DyadPtr],
-) -> DyadPtr {
-    let origin = origin(dyad::ty(node));
-    let mint = match find(origin, key) {
-        Some(mint) => mint,
-        None => make(store, types, origin, key, std::ptr::null_mut(), std::ptr::null_mut()),
-    };
-    debug_assert!(
-        dyad::ty(node) == origin || dyad::ty(node) == mint,
-        "a node's field types choose its mint once"
-    );
-    dyad::set_ty(node, mint);
-    mint
-}
-
-/// Whether a node of `ty` takes a mint as its type: `ty` is a Logos-written type with a `?`
-/// field, or one of its mints (›A type without a `run` whose field is `?` mints one type per set
-/// of field types, as `array` mints one per element type‹ [[R300]]).
-///
-/// # Safety
-/// `ty` must be null or a valid dyad from the store.
-pub(crate) unsafe fn takes_mint(ty: DyadPtr) -> bool {
-    !ty.is_null()
-        && meta::kind_of(ty) == Some(meta::RECORD_TAG)
-        && has_untyped_field(array::items(meta::record_fields_of(ty)))
-}
-
-/// # Safety
-/// `fields` must be field dyads from the store.
-pub(crate) unsafe fn has_untyped_field(fields: &[DyadPtr]) -> bool {
-    fields.iter().any(|&f| super::hole::type_in(f).is_null())
-}
-
-/// # Safety
-/// As `of`, for a `TUPLE_TAG` or `RECORD_TAG` origin.
+/// As `of`.
 unsafe fn make(
     store: &mut Store,
     types: &Core,
@@ -149,7 +106,7 @@ pub(crate) unsafe fn output_type_of(t: DyadPtr) -> Option<DyadPtr> {
 
 /// The field `name` of a node of the mint `t` that lives on the mint: `output_type`, the one a
 /// program reads there (›`x.type` reads the type word of the node a name or an expression stands
-/// for‹ [[R279]]). `None` when `t` is no mint, keeps no such field, or its parse never wrote it.
+/// for‹ [[R279]]). `None` when `t` is no mint or keeps no such field.
 ///
 /// # Safety
 /// As `is_mint`.
