@@ -1688,6 +1688,16 @@ mod tests {
             "g := fn () -> dyad ( i32 5 ), x := g() + g(), 1",
             "g := fn () -> dyad ( i32 5 ), x := ( 1, g() + 1 ), 1",
             "g := fn () -> dyad ( i32 5 ), k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(1, g() + 1), 1",
+            "q := fn (a := i32 ?) -> i32 ( a ), q(dyad (i32, 7)), 1",
+            "mut x := i32 ?, x = dyad (i32, 7), 1",
+            "x := i32 dyad (i32, 7), 1",
+            "x := i32 lossy (dyad (f64, 5.5)), 1",
+            "for 0..3 ( mut x := i64 ?, x = dyad (i32, 2) ), 1",
+            "g := fn () -> dyad ( i32 5 ), q := fn (a := i32 ?) -> i32 ( a ), q(g()), 1",
+            "g := fn () -> dyad ( i32 5 ), mut x := i32 ?, x = g(), 1",
+            "g := fn () -> dyad ( i32 5 ), x := i64 (g()), 1",
+            "g := fn () -> dyad ( rational_number 1/2 ), mut x := rational_number ?, x = g(), 1",
+            "g := fn () -> dyad ( i32 5 ), f := fn () -> i32 ( g() ), for 0..3 ( f() ), 1",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
         }
@@ -1697,6 +1707,13 @@ mod tests {
             ("f := fn (m := i32 ?) -> dyad ( dyad (i32, m) )", "f(i32 3), 1"),
             ("f := fn (q := dyad ?) -> i32 ( 1 )", "f(dyad (i32, 7))"),
             ("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) * 1 )", "f(i32 1)"),
+            ("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) )", "f(i32 1)"),
+            ("f := fn (m := i32 ?) -> i32 ( return dyad (i32, m) )", "f(i32 1)"),
+            ("f := fn (m := i32 ?) -> i32 ( mut x := i32 ?, x = dyad (i32, m), x )", "f(i32 1)"),
+            (
+                "q := fn (a := i32 ?) -> i32 ( a ), f := fn (m := i32 ?) -> i32 ( q(dyad (i32, m)) )",
+                "f(i32 1)",
+            ),
         ] {
             for src in [format!("{body}, {call}"), format!("{body}, f.compile(), {call}")] {
                 assert_eq!(run(&src), (1, 0), "{src}");
