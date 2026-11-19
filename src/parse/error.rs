@@ -18,24 +18,24 @@ pub enum ParseError {
     /// A line of a `type (…)` body that neither fills a slot, declares a
     /// field or member, nor is prose.
     TypeBodyLine,
-    /// `share` on a parameter, or anywhere but at the start of a type body's line.
-    ShareMisplaced,
-    /// `parse = (…)` without `share`: a slot is stored once per type.
-    SlotFillNeedsShare,
-    /// A value made once at the definition (`share`, `immediate`) read a name that
+    /// `static` on a parameter, or anywhere but at the start of a type body's line.
+    StaticMisplaced,
+    /// `parse = (…)` without `static`: a slot is stored once per type.
+    SlotFillNeedsStatic,
+    /// A value made once at the definition (`static`, `immediate`) read a name that
     /// holds no value there: a parameter or local of the function around it, or a
     /// name declared in the loop or branch around it.
     OnceReadsUnmade,
-    /// `share` not followed by a `name := value` declaration or a slot fill.
-    ShareNeedsDeclaration,
+    /// `static` not followed by a `name := value` declaration or a slot fill.
+    StaticNeedsDeclaration,
     /// A field named bare inside a parse, where it goes through `tape[0]`.
     BareFieldInParse(Box<String>),
     /// `tape[0].type = …` anywhere but on a parse's own cell.
     StampOutsideParse,
     /// `tape[0].type = T` for a `T` that gives no type.
     StampNeedsType,
-    /// A `share` function that works on a value, called bare where no value is at hand.
-    ShareFnNeedsValue(Box<String>),
+    /// A `static` function that works on a value, called bare where no value is at hand.
+    StaticFnNeedsValue(Box<String>),
     /// A slot word left of `=` where no type is being defined.
     SlotOutsideDefinition,
     /// `t.x` where `x` is a place per node, not stored with the type.
@@ -250,7 +250,7 @@ pub enum ParseError {
     /// `move p.f` or `move p@` of a field or cell that owns nothing. stand-in for #66
     MoveOfUnownedPath,
     /// `move` or `free` of a field the parse cannot follow back to a name that holds it:
-    /// through a pointer, an element, a value no name holds or a borrow, or of a `share`
+    /// through a pointer, an element, a value no name holds or a borrow, or of a `static`
     /// function's own value.
     UnfollowedPath,
     /// `move` or `free` of a cell reached through something that only borrows it: a pointer
@@ -278,7 +278,7 @@ pub enum ParseError {
     /// A `return` in a type's `run` hands on a borrow, where the `run`'s last value is made there
     /// and so marks it to hand on what it makes.
     RunReturnBorrows,
-    /// `share w = …` in a type body where `w` is no slot and nothing declared.
+    /// `static w = …` in a type body where `w` is no slot and nothing declared.
     NoSuchSlot(String),
     /// A type body with an `own` field and no `free = (…)` to free it.
     OwningFieldNeedsFree,

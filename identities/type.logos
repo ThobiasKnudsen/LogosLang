@@ -15,9 +15,9 @@ type := type (
     run := run ?
     free := free ?
 
-    share parse_rank = f64 2.0
-    share associativity = left
-    share parse = (
+    static parse_rank = f64 2.0
+    static associativity = left
+    static parse = (
         if tape[1] != lex «(»[0]
             error «type must be followed by (»
         tape[0].type = type

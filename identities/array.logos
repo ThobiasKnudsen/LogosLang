@@ -4,35 +4,35 @@
 # (DESIGN ›An array expression is a node of `array`, and its run makes the value‹).
 
 pub array := type (
-    share array_mints := hashmap type -> type,
-    share get_mint := fn (t := type ?) -> type (
+    static array_mints := hashmap type -> type,
+    static get_mint := fn (t := type ?) -> type (
         mut mint := array_mints[t],
         if mint != ? return mint,
         mint = type (
-            share element_type := t,
+            static element_type := t,
             mut ptr := own @element_type ?,
             mut size := u64 0,
-            share size_bytes := fn () -> u64 (size * element_type.size_bytes),
+            static size_bytes := fn () -> u64 (size * element_type.size_bytes),
 
-            share free = (
+            static free = (
                 for i in 0..size ( free (ptr + i)@ ),
                 free ptr
             ),
 
-            share at := fn (index := u64 ?) -> element_type (
+            static at := fn (index := u64 ?) -> element_type (
                 if index >= size error «index out of range: the index is at or past the array's size»,
                 (ptr + index)@
             ),
-            share at_signed := fn (index := i64 ?) -> element_type (
+            static at_signed := fn (index := i64 ?) -> element_type (
                 if index < 0 or u64 lossy (index) >= size
                     error «index out of range: the index is negative or at or past the array's size»,
                 (ptr + index)@
             ),
 
             # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
-            share parse_rank = dyad.parse_rank,
-            share associativity = left,
-            share parse = (
+            static parse_rank = dyad.parse_rank,
+            static associativity = left,
+            static parse = (
                 if tape[0].type != type and tape[1].type == square_brackets (
                     # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
                     if tape[1].dyads[0].type ⊆ tape[0].size.type (
@@ -58,7 +58,7 @@ pub array := type (
     elements := square_brackets ?,
     output_type := type ?,
 
-    share run = (
+    static run = (
         mut v := output_type ?,
         v.ptr = mut alloc elements.dyads.size of v.element_type ?,
         # size counts only written elements, so a failed `=` leaves free nothing unwritten to walk.
@@ -70,9 +70,9 @@ pub array := type (
     ),
 
     # Above application, so it takes its element type before anything else reads it.
-    share parse_rank = fn.parse_rank,
-    share associativity = right,
-    share parse = (
+    static parse_rank = fn.parse_rank,
+    static associativity = right,
+    static parse = (
         if tape[1] == ? (
             tape.is_constructed[0] = true
         ) else (

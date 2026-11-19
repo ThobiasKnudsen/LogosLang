@@ -44,7 +44,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Inside a `free` or a `share` function a field of the value is named bare (DESIGN
+    /// Inside a `free` or a `static` function a field of the value is named bare (DESIGN
     /// ›There is no `this`‹); fields come first, so an outer name never stands in for one.
     /// Inside a parse the same name is the checked error, the field going through `tape[0]`.
     pub(super) fn names_own_field(&self, cell: &Cell) -> bool {
@@ -105,8 +105,8 @@ impl<'a> Parser<'a> {
         Ok(tape::build_stamp(self.rt.store, types, cell, value))
     }
 
-    /// A bare call of a `share` function that works on a value takes the value the calling
-    /// body is about (DESIGN ›There is no `this`‹): a `run`'s node, a `free`'s or `share`
+    /// A bare call of a `static` function that works on a value takes the value the calling
+    /// body is about (DESIGN ›There is no `this`‹): a `run`'s node, a `free`'s or `static`
     /// function's own, or in a parse none, so only one that reads no field of its value is
     /// called bare there.
     ///
@@ -134,7 +134,7 @@ impl<'a> Parser<'a> {
         let receiver = match self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
             Some(def) => {
                 if def.in_parse && bits & RECEIVER_READS != 0 {
-                    return Err(ParseError::ShareFnNeedsValue(name()));
+                    return Err(ParseError::StaticFnNeedsValue(name()));
                 }
                 def.wrote_receiver |= writes && !def.in_parse;
                 def.this_param
@@ -143,7 +143,7 @@ impl<'a> Parser<'a> {
                 Some((ty, places)) => {
                     crate::identities::this::build_pack(self.rt.store, self.types, *ty, places)
                 }
-                None => return Err(ParseError::ShareFnNeedsValue(name())),
+                None => return Err(ParseError::StaticFnNeedsValue(name())),
             },
         };
         let mut with = vec![receiver];
@@ -164,7 +164,7 @@ impl<'a> Parser<'a> {
         let field = resolved.as_ref().map(|r| r.identity);
         let index = field.and_then(|f| items.iter().position(|&x| x == f));
         let Some(index) = index else {
-            // A `share` member is one place read through every node, so
+            // A `static` member is one place read through every node, so
             // `tape[0].element_type` is the member itself, known here.
             let mut members = ScopeStack::new();
             members.push(body);
@@ -292,7 +292,7 @@ impl<'a> Parser<'a> {
         };
         let Some(i) = slot else {
             return Ok(
-                crate::identities::mint::shared_field(ty, name).map(|f| self.path_operand(f))
+                crate::identities::mint::static_field(ty, name).map(|f| self.path_operand(f))
             );
         };
         let field = *(value as *const DyadPtr).add(i);
@@ -322,7 +322,7 @@ impl<'a> Parser<'a> {
 
     /// `lhs.f` where `lhs` yields a node of `t` only when the program runs, a place of the
     /// type or a call returning it: the field read through the node's address when it runs,
-    /// or a `share` member, a type body's `fn` called with `lhs` as its value.
+    /// or a `static` member, a type body's `fn` called with `lhs` as its value.
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store and `t` a type `is_node_valued` accepts.
@@ -358,7 +358,7 @@ impl<'a> Parser<'a> {
             );
             return Ok(Some((node, 0)));
         }
-        let Some(member) = self.share_member_read(t, name) else {
+        let Some(member) = self.static_member_read(t, name) else {
             return Ok(None);
         };
         if let Some(args) = call {
@@ -449,7 +449,7 @@ impl<'a> Parser<'a> {
                 }
                 let node = self.cx.definitions.last().expect("a parse body is open").this_param;
                 let member = self.this_field(name, nstart)?;
-                // `tape[0].f(…)`, a `share` function: called on that node.
+                // `tape[0].f(…)`, a `static` function: called on that node.
                 if let Some(args) = call {
                     if self.takes_this(member) {
                         let mut with_node = vec![node];
@@ -507,7 +507,7 @@ impl<'a> Parser<'a> {
                 }
                 let ty = dyad::ty(lhs);
                 return self
-                    .share_member_access(lhs, &left, ty, name, call)?
+                    .static_member_access(lhs, &left, ty, name, call)?
                     .ok_or(ParseError::BadReflectRead);
             }
             // A field whose declared type gives a value is read when the code runs, even through a
@@ -566,7 +566,7 @@ impl<'a> Parser<'a> {
                     return Ok((field, 0));
                 }
             }
-            // `.compile` is the fn type's shared member (DESIGN ›Execution is
+            // `.compile` is the fn type's `static` member (DESIGN ›Execution is
             // function application‹); the name-compare stands in for resolution
             // through the type's scope. The leaf is minted now, entry zero; the run patches it in.
             if &self.cx.source[nstart..nstart + nlen] == "compile"
@@ -629,7 +629,7 @@ impl<'a> Parser<'a> {
                 Ok(found) => found,
                 Err(e) => {
                     let name = &self.cx.source[nstart..nstart + nlen];
-                    return self.share_member_read(pointee, name).map(|n| (n, 0)).ok_or(e);
+                    return self.static_member_read(pointee, name).map(|n| (n, 0)).ok_or(e);
                 }
             };
             let types = self.types;
@@ -644,7 +644,7 @@ impl<'a> Parser<'a> {
                 0,
             ));
         }
-        // A `share` member of the record's type, or a field: the field's offset inside the
+        // A `static` member of the record's type, or a field: the field's offset inside the
         // record's storage, read through the record's binding and the field's.
         let storage = self.types.is_storage(lhs);
         let record_logos = self.types.type_of(lhs);
@@ -658,7 +658,7 @@ impl<'a> Parser<'a> {
             Ok(found) => found,
             Err(e) => {
                 let name = &self.cx.source[nstart..nstart + nlen];
-                return self.share_member_access(lhs, &left, record_logos, name, call)?.ok_or(e);
+                return self.static_member_access(lhs, &left, record_logos, name, call)?.ok_or(e);
             }
         };
         // A field is bytes inside storage; a node's fields are read above, through its slots.
@@ -1404,7 +1404,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The shared metadata stored once per type: `.arity`, `.roles[i]`,
-    /// `.parse_rank`, `.associativity`, `.parse`, `.run`, a `share` member,
+    /// `.parse_rank`, `.associativity`, `.parse`, `.run`, a `static` member,
     /// `.size_bytes`, `.scope`; a null slot is the honest undefined and errors until `?` exists.
     ///
     /// # Safety
@@ -1476,8 +1476,8 @@ impl<'a> Parser<'a> {
                 .rt
                 .store
                 .alloc_head(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
-            _ if self.share_member_of(logos, name).is_some() => {
-                Ok(self.share_member_read(logos, name).expect("found just above"))
+            _ if self.static_member_of(logos, name).is_some() => {
+                Ok(self.static_member_read(logos, name).expect("found just above"))
             }
             _ if self.per_node_field_of(logos, name) => {
                 Err(ParseError::PerNodeThroughType(name.to_string()))
@@ -1486,25 +1486,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A `share` member of `logos`, one place stored with the type, read
+    /// A `static` member of `logos`, one place stored with the type, read
     /// through the type or a node alike: the member's own gate decides a
     /// write, since the place is no node's.
     ///
     /// # Safety
     /// `logos` must be a type identity node from the store.
-    unsafe fn share_member_read(&mut self, logos: DyadPtr, name: &str) -> Option<DyadPtr> {
-        let (identity, binding) = self.share_member_of(logos, name)?;
+    unsafe fn static_member_read(&mut self, logos: DyadPtr, name: &str) -> Option<DyadPtr> {
+        let (identity, binding) = self.static_member_of(logos, name)?;
         self.cx.member_path = vec![binding];
         Some(identity)
     }
 
-    /// `lhs.name` read as a `share` member of `logos`, the type `lhs` is read through: the
-    /// member, or, called, a `share` function that takes `lhs` as its receiver. `None` when
+    /// `lhs.name` read as a `static` member of `logos`, the type `lhs` is read through: the
+    /// member, or, called, a `static` function that takes `lhs` as its receiver. `None` when
     /// `logos` has no such member.
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store and `logos` a type identity node.
-    unsafe fn share_member_access(
+    unsafe fn static_member_access(
         &mut self,
         lhs: DyadPtr,
         left: &Cell,
@@ -1512,7 +1512,7 @@ impl<'a> Parser<'a> {
         name: &str,
         call: Option<Vec<DyadPtr>>,
     ) -> Result<Option<(DyadPtr, usize)>, ParseError> {
-        let Some(member) = self.share_member_read(logos, name) else {
+        let Some(member) = self.static_member_read(logos, name) else {
             return Ok(None);
         };
         if let Some(args) = call {
@@ -1540,17 +1540,17 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `ty` must be a type identity node from the store.
     pub(super) unsafe fn bracket_element_type(&self, ty: DyadPtr) -> Option<DyadPtr> {
-        let (identity, _) = self.share_member_of(ty, "element_type")?;
+        let (identity, _) = self.static_member_of(ty, "element_type")?;
         let element = self.types.through(identity);
         crate::identities::is_type_value(self.types, element).then_some(element)
     }
 
-    /// The identity and binding of `logos`'s `share` member `name`, declared
+    /// The identity and binding of `logos`'s `static` member `name`, declared
     /// in the definition body's scope.
     ///
     /// # Safety
     /// `logos` must be a type identity node from the store.
-    unsafe fn share_member_of(&self, logos: DyadPtr, name: &str) -> Option<(DyadPtr, DyadPtr)> {
+    unsafe fn static_member_of(&self, logos: DyadPtr, name: &str) -> Option<(DyadPtr, DyadPtr)> {
         use crate::identities::meta;
         if !meta::is_record_type(logos) {
             return None;

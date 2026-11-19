@@ -176,47 +176,47 @@ fn a_value_reads_its_type_and_a_reached_node_its_operands() {
 #[test]
 fn a_type_body_fills_its_slots_and_declares_its_members() {
     let (echoes, stderr) = repl(
-        b"t := type (share parse_rank = *.parse_rank + 1, share associativity = right)\n\
+        b"t := type (static parse_rank = *.parse_rank + 1, static associativity = right)\n\
           t.parse_rank\nt.associativity == right\nright.type == type\n",
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
     let (echoes, stderr) =
-        repl(b"g := type (share y := 3, share z := y + 3)\ng.y\ng.z\ng.parse_rank\n");
+        repl(b"g := type (static y := 3, static z := y + 3)\ng.y\ng.z\ng.parse_rank\n");
     assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"g := type (share y := i32 7, share z := i32 (y + 3))\n\
+        b"g := type (static y := i32 7, static z := i32 (y + 3))\n\
           g.y\ng.z\ng.y + 1\n",
     );
     assert_eq!(echoes, ["7", "10", "8"], "stderr: {stderr}");
     let (echoes, stderr) =
-        repl(b"p := type (share k := 10, v := i32 ?)\nq := p(2)\nq.v\nq.k\np.k\np.size_bytes\n");
+        repl(b"p := type (static k := 10, v := i32 ?)\nq := p(2)\nq.v\nq.k\np.k\np.size_bytes\n");
     assert_eq!(echoes, ["2", "10", "10", "4"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"t := type (share # \xc2\xabnote\xc2\xbb y := 3, share z := 4 # \xc2\xabtail\xc2\xbb, v := i32 ?)\n\
+        b"t := type (static # \xc2\xabnote\xc2\xbb y := 3, static z := 4 # \xc2\xabtail\xc2\xbb, v := i32 ?)\n\
           t.y\nt.z\nt.size_bytes\n",
     );
     assert_eq!(echoes, ["3", "4", "4"], "stderr: {stderr}");
     let (echoes, stderr) =
-        repl(b"h := fn () -> i32 ( n := i64 0 - 1, p := alloc n of i32 0, 1 )\ng := type (share y := h())\n");
+        repl(b"h := fn () -> i32 ( n := i64 0 - 1, p := alloc n of i32 0, 1 )\ng := type (static y := h())\n");
     assert!(
         echoes.is_empty() && stderr.contains("a type body's own declaration failed"),
         "stderr: {stderr}"
     );
     let (echoes, stderr) =
-        repl(b"r := type (share lex_rank = 3)\nr:lex_rank\n+:lex_rank\nr.lex_rank\n");
+        repl(b"r := type (static lex_rank = 3)\nr:lex_rank\n+:lex_rank\nr.lex_rank\n");
     assert_eq!(echoes, ["3.0", "0.0"], "stderr: {stderr}");
     assert!(!stderr.is_empty(), "`.lex_rank` is no member of a type");
     let (echoes, stderr) = repl(
-        b"r := type (share lex_rank = 3)\ns := r\ns:lex_rank\ns:lex_rank = 7\ns:lex_rank\nr:lex_rank\n",
+        b"r := type (static lex_rank = 3)\ns := r\ns:lex_rank\ns:lex_rank = 7\ns:lex_rank\nr:lex_rank\n",
     );
     assert_eq!(echoes, ["0.0", "7.0", "3.0"], "stderr: {stderr}");
     let (_echoes, stderr) =
-        repl(b"f := fn (t := type ?) -> void ( )\nf(type (share lex_rank = 1))\n");
+        repl(b"f := fn (t := type ?) -> void ( )\nf(type (static lex_rank = 1))\n");
     assert!(stderr.contains("lex_rank is the name's"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"s := type (precedence = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");
-    let (echoes, stderr) = repl(b"c := type (share run = 5)\n");
-    assert!(echoes.is_empty() && stderr.contains("`share run = (…)`"), "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"c := type (static run = 5)\n");
+    assert!(echoes.is_empty() && stderr.contains("`static run = (…)`"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"x := 1\np := type (x := i32 ?)\nq := p(2)\nq.x\nx\n");
     assert_eq!(echoes, ["2", "1"], "stderr: {stderr}");
 }
@@ -330,12 +330,12 @@ fn the_power_demo_converts_a_whole_exponent_so_each_mint_has_one_result_type() {
 }
 
 #[test]
-fn a_types_share_output_type_is_what_its_nodes_give() {
+fn a_types_static_output_type_is_what_its_nodes_give() {
     let t = |output: &str| {
         format!(
-            "t := type ( lhs := i32 ?, share output_type := {output}, \
-             share run = ( output_type lossy (lhs) * output_type 2 ), share parse_rank = 60, \
-             share parse = ( tape[0].type = t, tape[0].lhs = tape[1], tape.is_constructed[0] = true, \
+            "t := type ( lhs := i32 ?, static output_type := {output}, \
+             static run = ( output_type lossy (lhs) * output_type 2 ), static parse_rank = 60, \
+             static parse = ( tape[0].type = t, tape[0].lhs = tape[1], tape.is_constructed[0] = true, \
              tape.remove(1) ) )"
         )
     };
@@ -361,9 +361,9 @@ fn a_types_share_output_type_is_what_its_nodes_give() {
 /// name, looked up in that type when the parse runs.
 fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
     format!(
-        "q := type ( share get := fn (l := type ?) -> type ( type ( {field}, \
-         share output_type := {output}, share run = ( {run} ) ) ), share parse_rank = 60, \
-         share parse = ( tape[0].type = get(tape[1].type), {fill}, tape.is_constructed[0] = true, \
+        "q := type ( static get := fn (l := type ?) -> type ( type ( {field}, \
+         static output_type := {output}, static run = ( {run} ) ) ), static parse_rank = 60, \
+         static parse = ( tape[0].type = get(tape[1].type), {fill}, tape.is_constructed[0] = true, \
          tape.remove(1) ) )"
     )
 }
@@ -372,12 +372,12 @@ fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
 /// of the operand to its left, whose field `a` holds the operand, kept in a memo.
 fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
     format!(
-        "{name} := type ( share mints := hashmap type -> type, \
-         share get_mint := fn (t := type ?) -> type ( mut mint := mints[t], \
-         if mint != ? return mint, mint = type ( a := t ?, share output_type := {output}, \
-         share run = ( {run} ) ), mints[t] = mint, mint ), \
-         share parse_rank = *.parse_rank + 1, share associativity = left, \
-         share parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1], \
+        "{name} := type ( static mints := hashmap type -> type, \
+         static get_mint := fn (t := type ?) -> type ( mut mint := mints[t], \
+         if mint != ? return mint, mint = type ( a := t ?, static output_type := {output}, \
+         static run = ( {run} ) ), mints[t] = mint, mint ), \
+         static parse_rank = *.parse_rank + 1, static associativity = left, \
+         static parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1], \
          tape.is_constructed[0] = true, tape.remove(-1) ) )"
     )
 }
@@ -411,7 +411,7 @@ fn a_parse_that_stamps_a_chosen_type_refuses_what_that_type_cannot_take() {
     let immut = chooser("immut v := l ?", "l", "v", "tape[0].v = tape[1]");
     let stamp = |ty: &str| {
         format!(
-            "q := type ( share parse_rank = 60, share parse = ( tape[0].type = {ty}, \
+            "q := type ( static parse_rank = 60, static parse = ( tape[0].type = {ty}, \
              tape.is_constructed[0] = true, tape.remove(1) ) )"
         )
     };
@@ -431,8 +431,8 @@ fn a_parse_that_stamps_a_chosen_type_refuses_what_that_type_cannot_take() {
 fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
     let q = |conversion: &str| {
         format!(
-            "q := type ( a := rational_number ?, share output_type := f64, \
-             share run = ( {conversion} * 2.0 ), share parse_rank = 60, share parse = ( \
+            "q := type ( a := rational_number ?, static output_type := f64, \
+             static run = ( {conversion} * 2.0 ), static parse_rank = 60, static parse = ( \
              tape[0].type = q, tape[0].a = tape[1], tape.remove(1), tape.is_constructed[0] = true ) ), \
              q 0.75"
         )
@@ -447,8 +447,8 @@ fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
 
 #[test]
 fn a_chooser_hands_its_cell_to_a_type_minted_at_run() {
-    let src = "mk := fn (t := type ?) -> type ( type ( share parse = ( tape.is_constructed[0] = true ) ) ), \
-               c := type ( share parse_rank = fn.parse_rank, share associativity = right, share parse = ( \
+    let src = "mk := fn (t := type ?) -> type ( type ( static parse = ( tape.is_constructed[0] = true ) ) ), \
+               c := type ( static parse_rank = fn.parse_rank, static associativity = right, static parse = ( \
                  if tape[1].type != type error «no», t := tape[1], tape[0] = mk(t), tape.remove(1) ) ), \
                x := c i32, x";
     let out = logos().arg(src).output().unwrap();
@@ -460,7 +460,7 @@ fn a_chooser_hands_its_cell_to_a_type_minted_at_run() {
 fn a_fresh_spelling_on_the_tape_is_a_node_of_type_unknown_name() {
     let k = |body: &str, operand: &str| {
         format!(
-            "k := type ( share parse = ( {body}, tape.remove(1), \
+            "k := type ( static parse = ( {body}, tape.remove(1), \
              tape.is_constructed[0] = true ) ), k {operand}"
         )
     };
@@ -481,8 +481,8 @@ fn a_fresh_spelling_on_the_tape_is_a_node_of_type_unknown_name() {
 fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
     let q = |ty: &str, body: &str| {
         format!(
-            "q := type ( v := {ty} ?, share parse_rank = 61, \
-             share parse = ( tape[0].type = q, {body}, \
+            "q := type ( v := {ty} ?, static parse_rank = 61, \
+             static parse = ( tape[0].type = q, {body}, \
              tape.remove(1), tape.is_constructed[0] = true ) )"
         )
     };
@@ -521,8 +521,8 @@ fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
 fn a_typed_field_read_through_a_name_gives_its_value_on_both_tiers() {
     let q = |ty: &str, body: &str| {
         format!(
-            "q := type ( v := {ty} ?, w := {ty} ?, share parse_rank = 61, \
-             share parse = ( tape[0].type = q, {body}, \
+            "q := type ( v := {ty} ?, w := {ty} ?, static parse_rank = 61, \
+             static parse = ( tape[0].type = q, {body}, \
              tape.remove(1), tape.is_constructed[0] = true ) )"
         )
     };
@@ -557,8 +557,8 @@ fn a_typed_field_read_through_a_name_gives_its_value_on_both_tiers() {
 #[test]
 fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
     // `x[k]` places the call `x.get(k)`, the line `k` its operand, run where it stands.
-    let q = "q := type ( n := u64 ?, share get := fn (i := u64 ?) -> u64 ( n + i ), \
-             share parse_rank = 61, share parse = ( \
+    let q = "q := type ( n := u64 ?, static get := fn (i := u64 ?) -> u64 ( n + i ), \
+             static parse_rank = 61, static parse = ( \
                if tape[0].type == type ( tape[0].type = q, tape[0].n = tape[1], tape.remove(1) ) \
                else ( if tape[1].type == square_brackets ( \
                  if not tape[1].dyads[0].type ⊆ u64 error «no», \
@@ -719,10 +719,10 @@ fn a_call_result_takes_its_index_as_a_name_does() {
 }
 
 #[test]
-fn a_share_function_called_through_a_record_built_by_application_reads_its_fields() {
-    let p = "p := type ( mut x := i32 ?, y := i32 ?, share s := fn () -> i32 ( x + y ), \
-             share add := fn (k := i32 ?) -> i32 ( x + y + k ), share d := fn () -> i32 ( s() * 2 ), \
-             share bump := fn () -> i32 ( x = x + 10, x ) ), q := p (1, 2)";
+fn a_static_function_called_through_a_record_built_by_application_reads_its_fields() {
+    let p = "p := type ( mut x := i32 ?, y := i32 ?, static s := fn () -> i32 ( x + y ), \
+             static add := fn (k := i32 ?) -> i32 ( x + y + k ), static d := fn () -> i32 ( s() * 2 ), \
+             static bump := fn () -> i32 ( x = x + 10, x ) ), q := p (1, 2)";
     for (tail, want) in [
         ("q.s()", "3\n"),
         ("q.add(10)", "13\n"),
@@ -741,17 +741,17 @@ fn a_share_function_called_through_a_record_built_by_application_reads_its_field
     }
     // Each field is read at its own width.
     let (code, stdout, stderr) = run_line(
-        "p := type ( x := u8 ?, y := i64 ?, z := f64 ?, share s := fn () -> f64 ( z ), \
-         share t := fn () -> i64 ( y * 2 ), share u := fn () -> u8 ( x ) ), q := p (u8 3, -9, 2.5), \
+        "p := type ( x := u8 ?, y := i64 ?, z := f64 ?, static s := fn () -> f64 ( z ), \
+         static t := fn () -> i64 ( y * 2 ), static u := fn () -> u8 ( x ) ), q := p (u8 3, -9, 2.5), \
          f := fn () -> i64 ( q.t() ), f.compile(), print «{q.s()} {f()} {q.u()}»",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "2.5 -18 3\n"), "stderr: {stderr}");
 }
 
 #[test]
-fn a_share_function_writes_the_value_it_is_called_on() {
-    let p = "p := type ( mut x := i32 ?, y := i32 ?, share get := fn () -> i32 ( x + y ), \
-             share bump := fn () -> i32 ( x = x + 10, x ), share twice := fn () -> i32 ( bump(), bump() ) )";
+fn a_static_function_writes_the_value_it_is_called_on() {
+    let p = "p := type ( mut x := i32 ?, y := i32 ?, static get := fn () -> i32 ( x + y ), \
+             static bump := fn () -> i32 ( x = x + 10, x ), static twice := fn () -> i32 ( bump(), bump() ) )";
     for (tail, want) in [
         ("mut m := p (1, 2), m.bump(), m.x", "11\n"),
         ("mut m := p (1, 2), m.twice(), m.x", "21\n"),
@@ -781,14 +781,14 @@ fn a_share_function_writes_the_value_it_is_called_on() {
     // Each field is written at its own width.
     let (code, stdout, stderr) = run_line(
         "p := type ( mut x := u8 ?, mut y := i64 ?, mut z := f64 ?, \
-         share s := fn () -> i64 ( x = x + u8 1, y = y * 2, z = z + 1.0, y ) ), \
+         static s := fn () -> i64 ( x = x + u8 1, y = y * 2, z = z + 1.0, y ) ), \
          mut q := p (u8 3, -9, 2.5), f := fn () -> i64 ( q.s() ), f.compile(), \
          print «{f()} {q.x} {q.y} {q.z}»",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "-18 4 -18 3.5\n"), "stderr: {stderr}");
     // A node a parse built is written through too, and meets the same gate.
-    let q = "q := type ( mut n := u64 ?, share bump := fn () -> u64 ( n = n + 10, n ), \
-             share get := fn () -> u64 ( n ), share parse_rank = 61, share parse = ( \
+    let q = "q := type ( mut n := u64 ?, static bump := fn () -> u64 ( n = n + 10, n ), \
+             static get := fn () -> u64 ( n ), static parse_rank = 61, static parse = ( \
              if tape[0].type == type ( tape[0].type = q, tape[0].n = tape[1], tape.remove(1) ), \
              tape.is_constructed[0] = true ) )";
     for (tail, want) in
@@ -803,10 +803,10 @@ fn a_share_function_writes_the_value_it_is_called_on() {
 }
 
 #[test]
-fn a_share_function_writes_only_a_mut_field() {
+fn a_static_function_writes_only_a_mut_field() {
     let p = |gate: &str| {
         format!(
-            "p := type ( {gate}x := i32 ?, share bump := fn () -> i32 ( x = x + 10, x ) ), \
+            "p := type ( {gate}x := i32 ?, static bump := fn () -> i32 ( x = x + 10, x ) ), \
              mut m := p (1), m.bump(), m.x"
         )
     };
@@ -877,7 +877,7 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
 #[test]
 fn an_empty_node_is_filled_field_by_field() {
     let src =
-        "t := type ( mut a := i32 0, mut b := i32 0, share parse = ( tape.is_constructed[0] = true ) ), \
+        "t := type ( mut a := i32 0, mut b := i32 0, static parse = ( tape.is_constructed[0] = true ) ), \
                f := fn () -> i32 ( mut v := t ?, v.a = 3, v.b = 4, v.a + v.b ), f()";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -995,21 +995,21 @@ fn an_array_element_is_written_where_the_read_finds_it() {
 }
 
 #[test]
-fn a_shared_name_in_a_function_is_made_once_at_the_definition() {
-    let src = "f := fn () -> i32 ( share n := (print «made», i32 5), n ), \
+fn a_static_name_in_a_function_is_made_once_at_the_definition() {
+    let src = "f := fn () -> i32 ( static n := (print «made», i32 5), n ), \
                print «defined», f(), f(), f()";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "made\ndefined\n5\n");
     // A type built per call reads the name, and the second call finds the first's.
-    let src = "get := fn (t := type ?) -> type ( share m := hashmap type -> type, mut r := m[t], \
-               if r != ? return r, print «miss», r = type ( x := t ?, share seen := m ), \
+    let src = "get := fn (t := type ?) -> type ( static m := hashmap type -> type, mut r := m[t], \
+               if r != ? return r, print «miss», r = type ( x := t ?, static seen := m ), \
                m[t] = r, r ), get(i32) == get(i32)";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "miss\ntrue\n");
     // An owning value is freed when the program ends, not at each call's end.
-    let src = "f := fn () -> i32 ( share p := alloc 1 of i32 7, p@ ), f() + f()";
+    let src = "f := fn () -> i32 ( static p := alloc 1 of i32 7, p@ ), f() + f()";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "14\n");
@@ -1017,13 +1017,13 @@ fn a_shared_name_in_a_function_is_made_once_at_the_definition() {
 
 /// The power operator, minting through a function of its own by the base's type, on one line
 /// for the REPL.
-const POWER: &str = "^ := type ( share power_mints := hashmap type -> type, \
-    share get_mint := fn (l := type ?) -> type ( mut mint := power_mints[l], if mint != ? return mint, \
-    mint = type ( lhs := l ?, rhs := i32 ?, share output_type := l, \
-    share run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ) ), \
+const POWER: &str = "^ := type ( static power_mints := hashmap type -> type, \
+    static get_mint := fn (l := type ?) -> type ( mut mint := power_mints[l], if mint != ? return mint, \
+    mint = type ( lhs := l ?, rhs := i32 ?, static output_type := l, \
+    static run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ) ), \
     power_mints[l] = mint, mint ), \
-    share parse_rank = *.parse_rank + 1, share associativity = right, \
-    share parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].lhs = tape[-1], tape[0].rhs = tape[1], \
+    static parse_rank = *.parse_rank + 1, static associativity = right, \
+    static parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].lhs = tape[-1], tape[0].rhs = tape[1], \
     tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
 
 #[test]
@@ -1057,8 +1057,8 @@ fn a_built_node_runs_and_is_never_parsed_again() {
 }
 
 #[test]
-fn a_shared_member_is_read_through_a_node_and_through_the_type() {
-    let point = "point := type ( x := i32 ?, y := i32 ?, share dims := i32 2 ), \
+fn a_static_member_is_read_through_a_node_and_through_the_type() {
+    let point = "point := type ( x := i32 ?, y := i32 ?, static dims := i32 2 ), \
                  p := point (1, 2)";
     for (read, expect) in [("p.dims", "2"), ("point.dims", "2"), ("p.x", "1")] {
         let out = logos().args([&format!("{point}, {read}")]).output().unwrap();
@@ -1071,8 +1071,8 @@ fn a_shared_member_is_read_through_a_node_and_through_the_type() {
         assert!(stderr.contains(expect), "{read}: stderr: {stderr}");
     }
     // The run its values share is one place, read through the type.
-    let sq = "sq := type ( a := i32 ?, share output_type := i32, share run = ( a * a ), \
-              share parse_rank = 60, share parse = ( tape[0].type = sq, tape[0].a = tape[1], \
+    let sq = "sq := type ( a := i32 ?, static output_type := i32, static run = ( a * a ), \
+              static parse_rank = 60, static parse = ( tape[0].type = sq, tape[0].a = tape[1], \
               tape.is_constructed[0] = true, tape.remove(1) ) )";
     let out = logos().args([&format!("{sq}, r := sq.run, sq.run")]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -1083,7 +1083,7 @@ fn a_shared_member_is_read_through_a_node_and_through_the_type() {
 fn a_value_runs_its_type_s_parse_as_tape_0() {
     // The type builds the value and hands the cell on; the same parse then
     // reads the value as `tape[0]` and consumes the cell to its right.
-    let q = "q := type ( size := i32 ?, share parse_rank = 61, share parse = ( \
+    let q = "q := type ( size := i32 ?, static parse_rank = 61, static parse = ( \
              if tape[0].type == type ( tape[0].type = q, tape[0].size = tape[1], tape.remove(1) ) \
              else ( tape[0] = tape[0].size, tape.remove(1), tape.is_constructed[0] = true ) ) )";
     for (src, expect) in [
@@ -1096,7 +1096,7 @@ fn a_value_runs_its_type_s_parse_as_tape_0() {
     }
     // A parse that says nothing for the value leaves the handed-on cell unconstructed.
     let out = logos()
-        .args(["q := type ( size := i32 ?, share parse_rank = 61, share parse = ( \
+        .args(["q := type ( size := i32 ?, static parse_rank = 61, static parse = ( \
                 if tape[0].type == type ( tape[0].type = q, tape[0].size = tape[1], tape.remove(1) ) ) ), \
                 q i32 5"])
         .output()
@@ -1106,17 +1106,17 @@ fn a_value_runs_its_type_s_parse_as_tape_0() {
 }
 
 #[test]
-fn a_shared_member_read_through_tape_0_is_the_member_itself() {
+fn a_static_member_read_through_tape_0_is_the_member_itself() {
     // `tape[0].element_type` folds to the identity, so `alloc … of` has a static pointee.
     let q =
-        "q := type ( share element_type := i32, v := i32 ?, share parse_rank = 60, share parse = ( \
+        "q := type ( static element_type := i32, v := i32 ?, static parse_rank = 60, static parse = ( \
              tape[0] = alloc 1 of tape[0].element_type 9, tape.is_constructed[0] = true ) )";
     let out = logos().args([&format!("{q}, a := q, a@ + 1")]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
     let out = logos()
-        .args(["q := type ( share element_type := i32, v := i32 ?, share parse_rank = 60, \
-                share parse = ( tape[0].type = q, tape[0].element_type = i64, tape.is_constructed[0] = true ) ), q"])
+        .args(["q := type ( static element_type := i32, v := i32 ?, static parse_rank = 60, \
+                static parse = ( tape[0].type = q, tape[0].element_type = i64, tape.is_constructed[0] = true ) ), q"])
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1138,8 +1138,8 @@ fn a_constructed_run_body_is_kept_on_the_type_across_repl_lines() {
 
 #[test]
 fn a_run_body_sees_its_definition_and_its_own_locals_only() {
-    let sq = "sq := type ( a := i32 ?, share output_type := i32, share run = ( a * a * k ), \
-              share parse_rank = 60, share parse = ( tape[0].type = sq, tape[0].a = tape[1], \
+    let sq = "sq := type ( a := i32 ?, static output_type := i32, static run = ( a * a * k ), \
+              static parse_rank = 60, static parse = ( tape[0].type = sq, tape[0].a = tape[1], \
               tape.is_constructed[0] = true, tape.remove(1) ) )";
     let before = format!("k := i32 2, {sq}, f := fn (x := i32 ?) -> i32 ( sq x ), f(5)");
     let out = logos().args([&before]).output().unwrap();
@@ -1211,7 +1211,7 @@ fn a_pattern_spelling_is_declared_through_regex() {
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[a-z][0-9]\xc2\xbb := type ()\nregex \xc2\xaba[0-9]\xc2\xbb := type ()\na1\n\
-          regex \xc2\xabb[0-9]\xc2\xbb := type (share lex_rank = 1)\n(b1).type == type\n",
+          regex \xc2\xabb[0-9]\xc2\xbb := type (static lex_rank = 1)\n(b1).type == type\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     assert!(stderr.contains("same lex_rank"), "stderr: {stderr}");
@@ -1368,14 +1368,14 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "92\n");
     // A parse that consumes nothing sets its flag and stands as itself.
     let (echoes, stderr) = repl(
-        b"noop := type (share parse = ( tape.is_constructed[0] = true ))\n\
+        b"noop := type (static parse = ( tape.is_constructed[0] = true ))\n\
           t := noop\nt.type == type\nnoop.parse_rank\n",
     );
     assert_eq!(echoes, ["true", "91.0"], "stderr: {stderr}");
-    let (_echoes, stderr) = repl(b"bad := type (share parse = ( tape[5] = i32 1 ))\nx := bad\n");
+    let (_echoes, stderr) = repl(b"bad := type (static parse = ( tape[5] = i32 1 ))\nx := bad\n");
     assert!(stderr.contains("constructor failed"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"named := type (share parse = ( tape[0] = tape.spelling[0], tape.is_constructed[0] = true ))\n\
+        b"named := type (static parse = ( tape[0] = tape.spelling[0], tape.is_constructed[0] = true ))\n\
           f := fn () -> void ( named )\n5\n",
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
@@ -1388,7 +1388,7 @@ fn a_binding_carries_its_spelling() {
     let (_echoes, stderr) = repl(b"a := i32 1\n(a + 1):name\n");
     assert!(stderr.contains("expected a field name"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"sp := type (share parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
+        b"sp := type (static parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := 1\nf := fn () -> void ( x sp )\n5\n",
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
@@ -1400,9 +1400,9 @@ fn the_slot_words_are_names_only_inside_a_type_body() {
     // shadow an outer name and are gone again at the close.
     let (echoes, stderr) = repl(
         b"run := 5\nrun + 1\nparse := i32 2\nparse * 3\n\
-          m := type (a := i32 ?, output_type := type ?, share run = ( a + a ), \
-          share parse_rank = *.parse_rank + 1, \
-          share parse = ( tape[0].type = m, tape[0].a = tape[-1], tape[0].output_type = i32, \
+          m := type (a := i32 ?, output_type := type ?, static run = ( a + a ), \
+          static parse_rank = *.parse_rank + 1, \
+          static parse = ( tape[0].type = m, tape[0].a = tape[-1], tape[0].output_type = i32, \
           tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := i32 3\nx m\nrun\nparse_rank := 4\nparse_rank\n",
     );
@@ -1413,16 +1413,16 @@ fn the_slot_words_are_names_only_inside_a_type_body() {
 fn a_slot_body_is_read_bare() {
     // The hidden `tape` is declared as a parameter is, so an outer `tape` is the shadowing error.
     let (echoes, stderr) = repl(
-        b"sp := type (share parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
+        b"sp := type (static parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := 1\nf := fn () -> void ( x sp )\n5\n",
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
-    let (_echoes, stderr) = repl(b"tape := 1\nsp := type (share parse = ( tape.recenter(0) ))\n");
+    let (_echoes, stderr) = repl(b"tape := 1\nsp := type (static parse = ( tape.recenter(0) ))\n");
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"minus := type (a := i32 ?, b := i32 ?, output_type := type ?, share run = ( a - b ), \
-          share parse_rank = +.parse_rank, share associativity = left, \
-          share parse = ( tape[0].type = minus, tape[0].a = tape[-1], tape[0].b = tape[1], tape[0].output_type = i32, \
+        b"minus := type (a := i32 ?, b := i32 ?, output_type := type ?, static run = ( a - b ), \
+          static parse_rank = +.parse_rank, static associativity = left, \
+          static parse = ( tape[0].type = minus, tape[0].a = tape[-1], tape[0].b = tape[1], tape[0].output_type = i32, \
           tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ))\n\
           7 minus 2\n10 minus 2 minus 3\nf := fn (x := i32 ?) -> i32 ( x minus 1 )\nf.compile()\nf(9)\nthis\n",
     );
@@ -1432,21 +1432,21 @@ fn a_slot_body_is_read_bare() {
     // run that calls a function whose body reads an operator constructs.
     let (echoes, stderr) = repl(
         b"sq := fn (a := i32 ?) -> i32 ( a * a )\n\
-          squared := type (a := i32 ?, output_type := type ?, share run = ( sq(a) ), \
-          share parse_rank = *.parse_rank + 1, \
-          share parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
+          squared := type (a := i32 ?, output_type := type ?, static run = ( sq(a) ), \
+          static parse_rank = *.parse_rank + 1, \
+          static parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
           tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := i32 4\nx squared\n",
     );
     assert_eq!(echoes, ["16"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"t := type (a := i32 ?, share run = ( s := \xc2\xaba ) b\xc2\xbb, \
+        b"t := type (a := i32 ?, static run = ( s := \xc2\xaba ) b\xc2\xbb, \
           # \xc2\xab ) \xc2\xbb (( x[0] ), 5 )))\n\
           t.type == type\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     let out = logos()
-        .args(["t := type (share run = ( x[0], # c ) d\n5 )),\n\
+        .args(["t := type (static run = ( x[0], # c ) d\n5 )),\n\
                 t.type == type"])
         .output()
         .unwrap();
@@ -1460,9 +1460,9 @@ fn prose_may_stand_before_a_field_a_member_or_a_slot_fill() {
                # a field\n\
                x := i32 ?,\n\
                # « a member »\n\
-               share y := i32 2,\n\
+               static y := i32 2,\n\
                # a slot\n\
-               share parse_rank = 5\n\
+               static parse_rank = 5\n\
                ), q := t (4), q.x + t.y + i32 lossy (t.parse_rank)";
     let (code, stdout, stderr) = run_line(src);
     assert_eq!((code, stdout.as_str()), (Some(0), "11\n"), "stderr: {stderr}");
@@ -1472,36 +1472,40 @@ fn prose_may_stand_before_a_field_a_member_or_a_slot_fill() {
 fn a_type_body_refuses_what_is_not_its_own() {
     for (src, expect) in [
         (&b"t := type (parse_rank := 5)\n"[..], "shadowed"),
-        (b"g := type (share)\n", "followed by a declaration"),
-        (b"f := fn (share a := i32 ?) -> void ( a )\n", "never on a parameter"),
-        (b"share parse_rank = 3\n", "unknown name"),
+        (b"g := type (static)\n", "followed by a declaration"),
+        (b"f := fn (static a := i32 ?) -> void ( a )\n", "never on a parameter"),
+        (b"static parse_rank = 3\n", "unknown name"),
+        (b"t := type (share y := 3)\n", "unknown name `share`"),
         (b"d := i32 5\nfree = 3\n", "a line of the type body itself"),
-        (b"t := type (share parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
-        (b"t := type (share parse = ( share parse_rank = 3 ))\n", "followed by a declaration"),
+        (b"t := type (static parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
+        (b"t := type (static parse = ( static parse_rank = 3 ))\n", "followed by a declaration"),
         (b"t := type (lex_rank = 5)\n", "its fill says so"),
         (b"t := type (parse = ( 1 ))\n", "its fill says so"),
         ("t := type (# «note» parse = ( 1 ))\n".as_bytes(), "its fill says so"),
         (b"x := 1\nt := type (x = 5)\n", "a type body line"),
         (b"t := type (fields = (a := i32 ?))\n", "unknown name `fields`"),
-        (b"t := type (share associativity = 5)\n", "`left` or `right`"),
-        (b"t := type (share free = 5)\n", "`share free = (…)`"),
-        (b"t := type (share drop = ( 0 ))\n", "`drop` names no slot"),
-        (b"t := type (share parse = ( tape[0].a = tape[-1] ))\n", "no field `a`"),
-        (b"t := type (a := i32 ?, share parse = ( tape[0].b = tape[-1] ))\n", "no field `b`"),
-        (b"t := type (a := i32 ?, share parse = ( tape.is_constructed[0] = 5 ))\n", "takes a bool"),
-        (b"p := type (y := i32 ?, share y := 3)\n", "shadowed"),
-        (b"p := type (share y := 3, y := i32 ?)\n", "shadowed"),
-        (b"t := type (share := i32 ?)\n", "followed by a declaration"),
-        (b"t := type (5)\n", "a type body line"),
-        (b"t := type (share associativity = 5)\n", "`left` or `right`"),
+        (b"t := type (static associativity = 5)\n", "`left` or `right`"),
+        (b"t := type (static free = 5)\n", "`static free = (…)`"),
+        (b"t := type (static drop = ( 0 ))\n", "`drop` names no slot"),
+        (b"t := type (static parse = ( tape[0].a = tape[-1] ))\n", "no field `a`"),
+        (b"t := type (a := i32 ?, static parse = ( tape[0].b = tape[-1] ))\n", "no field `b`"),
         (
-            b"t := type (share parse = fn (mut a := i32 ?) -> void ( a = 1 ))\n",
-            "`share parse = (…)`",
+            b"t := type (a := i32 ?, static parse = ( tape.is_constructed[0] = 5 ))\n",
+            "takes a bool",
         ),
-        (b"t := type (share parse = 5)\n", "`share parse = (…)`"),
-        (b"t := type (share run = 5)\n", "`share run = (…)`"),
-        (b"t := type (share run = ( 5 ))\nt(1)\n", "the call form of a type"),
-        (b"t := type (share run = ( 5 ),\n", "never closed"),
+        (b"p := type (y := i32 ?, static y := 3)\n", "shadowed"),
+        (b"p := type (static y := 3, y := i32 ?)\n", "shadowed"),
+        (b"t := type (static := i32 ?)\n", "followed by a declaration"),
+        (b"t := type (5)\n", "a type body line"),
+        (b"t := type (static associativity = 5)\n", "`left` or `right`"),
+        (
+            b"t := type (static parse = fn (mut a := i32 ?) -> void ( a = 1 ))\n",
+            "`static parse = (…)`",
+        ),
+        (b"t := type (static parse = 5)\n", "`static parse = (…)`"),
+        (b"t := type (static run = 5)\n", "`static run = (…)`"),
+        (b"t := type (static run = ( 5 ))\nt(1)\n", "the call form of a type"),
+        (b"t := type (static run = ( 5 ),\n", "never closed"),
     ] {
         let (_echoes, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
@@ -1596,10 +1600,10 @@ fn a_square_bracket_is_a_paren_that_closes_only_itself() {
     assert!(stderr.contains("never closed"), "stderr: {stderr}");
     // Held or skipped, a bracket ends where the built one does: at the stray closer.
     for (src, stray) in [
-        ("t := type ( a := i32 ?, share run = ( print «a» ] print «b» ) )", "] print"),
-        ("t := type ( a := i32 ?, share run = ( k := [1 ), print «b» ) )", "), print"),
+        ("t := type ( a := i32 ?, static run = ( print «a» ] print «b» ) )", "] print"),
+        ("t := type ( a := i32 ?, static run = ( k := [1 ), print «b» ) )", "), print"),
         ("f := fn () -> i32 ( t := type ( a := i32 ? ] ), 1 )", "] )"),
-        ("f := fn () -> i32 ( t := type ( share k := immediate [1 ) ), 1 )", ") ), 1"),
+        ("f := fn () -> i32 ( t := type ( static k := immediate [1 ) ), 1 )", ") ), 1"),
         ("if false ( 1 ] 2 ) else ( 3 )", "] 2"),
         ("if false ( k := [1 ) ) else ( 3 )", ") ) else"),
         ("if true ( 3 ) else ( 1 ] 2 )", "] 2"),
@@ -1619,12 +1623,12 @@ fn a_square_bracket_is_a_paren_that_closes_only_itself() {
 fn a_held_or_skipped_bracket_is_refused_where_it_is_written_before_anything_runs() {
     let bump = |body: &str, tail: &str| {
         format!(
-            "bump := type (a := i32 ?, share run = ( {body} ), share parse_rank = *.parse_rank + 1, \
-             share parse = ( tape[0].type = bump, tape[0].a = tape[-1], tape.is_constructed[0] = true, \
+            "bump := type (a := i32 ?, static run = ( {body} ), static parse_rank = *.parse_rank + 1, \
+             static parse = ( tape[0].type = bump, tape[0].a = tape[-1], tape.is_constructed[0] = true, \
              tape.remove(-1) )), {tail}"
         )
     };
-    let held_type = "print «a», t := type ( share k := immediate [1 ) ), print «b»";
+    let held_type = "print «a», t := type ( static k := immediate [1 ) ), print «b»";
     for (src, stray) in [
         (bump("print «a» ] print «b»", "3 bump"), "] print"),
         (bump("print «a», k := [1 ), print «b»", "3 bump"), "), print"),
@@ -1633,7 +1637,7 @@ fn a_held_or_skipped_bracket_is_refused_where_it_is_written_before_anything_runs
         (bump("x := ( 1 ], print «b»", "3 bump"), "], print"),
         (bump(held_type, "3 bump"), ") ), print"),
         (bump(held_type, "5"), ") ), print"),
-        ("f := fn () -> i32 ( t := type ( share k := immediate [1 ) ), 1 ), 5".into(), ") ), 1"),
+        ("f := fn () -> i32 ( t := type ( static k := immediate [1 ) ), 1 ), 5".into(), ") ), 1"),
         ("if false ( k := [1 ) ) else ( print «ok» )".into(), ") ) else"),
         ("if true ( print «ok» ) else ( k := [1 ) )".into(), ") )"),
         ("f := fn () -> i32 ( if false ( k := [1 ) ) else ( 7 ) ), f()".into(), ") ) else"),
@@ -1662,7 +1666,7 @@ fn a_held_or_skipped_bracket_is_refused_where_it_is_written_before_anything_runs
 
 #[test]
 fn a_constructor_tells_a_square_bracket_cell_from_a_scope_by_its_type() {
-    let probe = "probe := type ( share parse_rank = *.parse_rank + 1, share parse = ( \
+    let probe = "probe := type ( static parse_rank = *.parse_rank + 1, static parse = ( \
                  if (tape[1].type == square_brackets) (print «brackets») else (print «other»), \
                  if (tape[1].type != square_brackets) (print «not brackets»), \
                  tape.remove(1), tape.remove(0) ) )";
@@ -1679,9 +1683,9 @@ fn a_constructor_tells_a_square_bracket_cell_from_a_scope_by_its_type() {
 
 #[test]
 fn a_constructor_reads_a_square_bracket_cell_by_its_dyads() {
-    let first = "first := type ( share parse_rank = *.parse_rank + 1, share associativity = left, share parse = ( \
+    let first = "first := type ( static parse_rank = *.parse_rank + 1, static associativity = left, static parse = ( \
                  tape[0] = tape[1].dyads[0], tape.is_constructed[0] = true, tape.remove(1) ) )";
-    let count = "count := type ( share parse_rank = *.parse_rank + 1, share parse = ( \
+    let count = "count := type ( static parse_rank = *.parse_rank + 1, static parse = ( \
                  if (tape[1].dyads.size == 2) (print «two») else (print «not two»), \
                  tape.remove(1), tape.remove(0) ) )";
     let src = format!("{first}, {count}, count [1, 2], count [3], first [3]");
@@ -1697,7 +1701,7 @@ fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
         [("90", "type"), ("92", "type"), ("99", "type"), ("*.parse_rank + 1", "i32")]
     {
         let src = format!(
-            "r := type ( share parse_rank = {rank}, share parse = ( print «{{tape[1].type == {read}}}», \
+            "r := type ( static parse_rank = {rank}, static parse = ( print «{{tape[1].type == {read}}}», \
              tape.remove(0) ) ), r i32 5"
         );
         let out = logos().args([&src]).output().unwrap();
@@ -1705,7 +1709,7 @@ fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n5\n", "{src}");
     }
     // A name arrives as lexed, a bracket as its scope cell, and what follows is left unlexed.
-    let src = "x := i32 4, r := type ( share parse_rank = fn.parse_rank, share parse = ( \
+    let src = "x := i32 4, r := type ( static parse_rank = fn.parse_rank, static parse = ( \
                print «{tape.is_constructed[1]} {tape[2].type == scope} {tape[2].dyads.size}», \
                tape.remove(2), tape.remove(1), tape.remove(0) ) ), r x (1, 2), 7";
     let out = logos().args([src]).output().unwrap();
@@ -1713,14 +1717,14 @@ fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "false true 2\n7\n");
     // A constructor the read lexed is not woken by it: it runs in its turn if the reader
     // leaves it, and `lex` still works after it.
-    let s = "s := type ( share parse_rank = fn.parse_rank, share parse = ( tape[0] = i32 3, \
+    let s = "s := type ( static parse_rank = fn.parse_rank, static parse = ( tape[0] = i32 3, \
              tape.is_constructed[0] = true ) )";
     for (r, printed) in [
         ("print «{tape[1].type == type}», tape.remove(0)", "true\n3\n"),
         ("tape.remove(1), tape.remove(0), tape.insert(0, lex «6»)", "6\n"),
     ] {
         let src = format!(
-            "{s}, r := type ( share parse_rank = fn.parse_rank, share parse = ( {r} ) ), r s"
+            "{s}, r := type ( static parse_rank = fn.parse_rank, static parse = ( {r} ) ), r s"
         );
         let out = logos().args([&src]).output().unwrap();
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -1731,7 +1735,7 @@ fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
         [("r", "true\n"), ("r i32 5, 1", "true\n1\n"), ("(r i32 5), 1", "true\n1\n")]
     {
         let src = format!(
-            "r := type ( share parse_rank = fn.parse_rank, share parse = ( print «{{tape[3].type == void}}», \
+            "r := type ( static parse_rank = fn.parse_rank, static parse = ( print «{{tape[3].type == void}}», \
              tape.remove(2), tape.remove(1), tape.remove(0) ) ), {tail}"
         );
         let out = logos().args([&src]).output().unwrap();
@@ -1742,7 +1746,7 @@ fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
 
 #[test]
 fn a_read_where_the_tape_reaches_no_cell_is_a_constructed_void() {
-    let r = "r := type ( share parse_rank = fn.parse_rank, share parse = ( \
+    let r = "r := type ( static parse_rank = fn.parse_rank, static parse = ( \
              print «{tape[1].type == void} {tape.is_constructed[1]} {tape[-1].type == void}», \
              tape.remove(0) ) )";
     for (tail, printed) in [
@@ -1756,7 +1760,7 @@ fn a_read_where_the_tape_reaches_no_cell_is_a_constructed_void() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{tail}");
     }
     // Written into a cell, it is a finished expression that yields nothing.
-    let w = "w := type ( share parse_rank = fn.parse_rank, share parse = ( tape[0] = tape[1], \
+    let w = "w := type ( static parse_rank = fn.parse_rank, static parse = ( tape[0] = tape[1], \
              tape.is_constructed[0] = true ) )";
     let out = logos().arg(format!("{w}, (w), 4")).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -1766,7 +1770,7 @@ fn a_read_where_the_tape_reaches_no_cell_is_a_constructed_void() {
     assert!(stderr.contains("gives nothing"), "stderr: {stderr}");
     // A write is still the checked error.
     let out = logos()
-        .arg("v := type ( share parse_rank = fn.parse_rank, share parse = ( tape[1] = i32 3 ) ), v")
+        .arg("v := type ( static parse_rank = fn.parse_rank, static parse = ( tape[1] = i32 3 ) ), v")
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1776,14 +1780,14 @@ fn a_read_where_the_tape_reaches_no_cell_is_a_constructed_void() {
 #[test]
 fn a_cell_a_constructor_reads_from_the_tape_arrives_unbuilt() {
     // `i32` is the type itself, not a conversion of the bracket, which stays for the reader.
-    let src = "c := type ( share parse_rank = fn.parse_rank, share parse = ( \
+    let src = "c := type ( static parse_rank = fn.parse_rank, static parse = ( \
                print «{tape[1].type == type} {tape[2].type == scope} {tape[2].dyads.size}», \
                tape.remove(2), tape.remove(1), tape.remove(0) ) ), c i32 (1, 2, 3), 7";
     let out = logos().args([src]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true true 3\n7\n");
     // Left on the tape, `i32` takes its bracket in its own turn.
-    let src = "c := type ( share parse_rank = fn.parse_rank, share parse = ( tape.remove(0) ) ), c i32 (5)";
+    let src = "c := type ( static parse_rank = fn.parse_rank, static parse = ( tape.remove(0) ) ), c i32 (5)";
     let out = logos().args([src]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n");
@@ -1821,7 +1825,7 @@ fn an_integer_lies_inside_a_float_that_holds_every_value_of_it() {
 
 #[test]
 fn a_line_checked_against_a_float_reads_as_that_float() {
-    let q = "q := type ( share parse_rank = 60, share parse = ( \
+    let q = "q := type ( static parse_rank = 60, static parse = ( \
              if (not tape[1].type ⊆ f64) (error «not within f64»), \
              print «{tape[1] + 0.5}», tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) )";
     let out = logos().args([&format!("{q}, q (i32 3)")]).output().unwrap();
@@ -1868,8 +1872,8 @@ fn lossy_gives_what_each_number_type_defines_on_both_tiers() {
 
 #[test]
 fn a_value_lands_unwritten_only_in_a_type_that_holds_every_value_of_it() {
-    let pt = "pt := type ( a := i64 ?, output_type := type ?, share run = ( a + a ), \
-              share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = pt, \
+    let pt = "pt := type ( a := i64 ?, output_type := type ?, static run = ( a + a ), \
+              static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = pt, \
               tape[0].a = tape[-1], tape[0].output_type = i64, tape.is_constructed[0] = true, \
               tape.remove(-1) ) )";
     for compile in ["", "f.compile(), "] {
@@ -1997,7 +2001,7 @@ fn inclusion_the_design_leaves_open_is_a_checked_error() {
 
 #[test]
 fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
-    let q = "q := type ( share size := u64 0, share parse_rank = 60, share parse = ( \
+    let q = "q := type ( static size := u64 0, static parse_rank = 60, static parse = ( \
              if (not tape[1].type ⊆ tape[0].size.type) \
              (error «the index type is not within the size type»), \
              tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) )";
@@ -2172,7 +2176,7 @@ fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
 
 #[test]
 fn a_constructor_writes_its_ifs_without_brackets() {
-    let probe = "probe := type ( share parse_rank = *.parse_rank + 1, share parse = (\n\
+    let probe = "probe := type ( static parse_rank = *.parse_rank + 1, static parse = (\n\
                  if tape[1].type == square_brackets print «brackets» else print «other»,\n\
                  if tape[1].type == scope (\n    print «scope»\n),\n\
                  if not tape[1].type == square_brackets\n    print «not brackets»,\n\
@@ -2467,7 +2471,7 @@ fn the_repl_keeps_an_owning_binding_alive_across_lines() {
 #[test]
 fn a_repl_session_frees_each_line_s_value_once_at_its_end() {
     // The session's exit grows a line at a time, text made between its lines.
-    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
     let lines: String =
         (1..=5).map(|i| format!("v{i} := bag({i})\nt{i} := «text {i}»\n")).collect();
     let (echoes, stderr) = repl(format!("{bag}\n{lines}").as_bytes());
@@ -2539,7 +2543,7 @@ fn a_repl_line_that_faults_keeps_the_end_of_what_it_ended() {
 fn a_failed_repl_line_keeps_the_ends_its_pass_ran() {
     // A parse error after the pass ran the `free` keeps the name ended; a fault the pass
     // meets before the `free` ran leaves it to the session.
-    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
     let fns = "g := fn () -> i32 ( error «x» )\nh := fn () -> i32 ( 1 )";
     let (echoes, stderr) = repl(
         format!(
@@ -2555,7 +2559,7 @@ fn a_failed_repl_line_keeps_the_ends_its_pass_ran() {
 #[test]
 fn a_fault_in_the_pass_frees_what_a_nested_line_ended_once() {
     // The scope that holds the name decides, from the lines the pass ran.
-    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), \
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), \
                g := fn () -> i32 ( error «x» ), h := fn () -> i32 ( 1 ), a := bag(1)";
     for tail in [
         "x := ( free a, n := immediate g(), 1 )",
@@ -2574,7 +2578,7 @@ fn a_fault_in_the_pass_frees_what_a_nested_line_ended_once() {
 #[test]
 fn a_block_that_fails_to_parse_frees_what_its_run_lines_hold() {
     // As the top level does: the pass ran `b`'s line before the error.
-    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), \
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), \
                h := fn () -> i32 ( 1 )";
     for tail in ["nosuch", "&b", "return b", "return 1, 2"] {
         let src = format!("{bag}, x := ( b := bag(2), n := immediate h(), {tail} )");
@@ -2707,7 +2711,7 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
         ("if tape[1].type != type ( print «no» ) else print «{g(tape[1]) == u8}»,", "u8"),
     ] {
         let src = format!(
-            "{g}, r := type ( share parse_rank = fn.parse_rank, share parse = ( {check} {tail}, r {arg}"
+            "{g}, r := type ( static parse_rank = fn.parse_rank, static parse = ( {check} {tail}, r {arg}"
         );
         let out = logos().args([&src]).output().unwrap();
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -2720,14 +2724,14 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
         "if tape[1].type == type print «x», u := g(tape[1]),",
     ] {
         let src =
-            format!("{g}, r := type ( share parse_rank = fn.parse_rank, share parse = ( {body} {tail}, r i32");
+            format!("{g}, r := type ( static parse_rank = fn.parse_rank, static parse = ( {body} {tail}, r i32");
         let out = logos().args([&src]).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("must be a type value"), "{src}: stderr: {stderr}");
     }
     // A loop edits the tape after the read was checked: the read checks again when it runs.
     let src = format!(
-        "{g}, r := type ( share parse_rank = fn.parse_rank, share parse = ( \
+        "{g}, r := type ( static parse_rank = fn.parse_rank, static parse = ( \
          if tape[1].type != type error «no», mut i := i32 0, \
          while i < 2 ( u := g(tape[1]), tape.remove(1), i = i + 1 ), \
          tape.is_constructed[0] = true ) ), r i32 [1]"
@@ -2740,14 +2744,14 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
 #[test]
 fn a_type_body_in_a_function_is_built_per_call() {
     let (echoes, stderr) = repl(
-        b"mk := fn (t := type ?) -> type ( type ( share e := t ) )\n\
+        b"mk := fn (t := type ?) -> type ( type ( static e := t ) )\n\
           a := mk(i32)\nb := mk(f64)\nc := mk(i32)\n\
           a.e == i32\nb.e == f64\na == b\na == c\n\
           mints := hashmap type -> type\n\
           get := fn (t := type ?) -> type ( mut m := mints[t], if m != ? return m, \
-          m = type ( share e := t ), mints[t] = m, m )\n\
+          m = type ( static e := t ), mints[t] = m, m )\n\
           get(i32) == get(i32)\nget(i32) == get(f64)\nget(u8).e == u8\n\
-          g := fn (n := i32 ?) -> type ( type (share parse_rank = n) )\nt := g(3)\nt.parse_rank\n",
+          g := fn (n := i32 ?) -> type ( type (static parse_rank = n) )\nt := g(3)\nt.parse_rank\n",
     );
     assert_eq!(
         echoes,
@@ -2757,7 +2761,7 @@ fn a_type_body_in_a_function_is_built_per_call() {
     assert!(stderr.is_empty(), "stderr: {stderr}");
 
     // The body is read when it runs, so its mistakes are reported at the call.
-    let (_echoes, stderr) = repl(b"mk := fn () -> type ( type ( share e := nosuch ) )\nmk()\n");
+    let (_echoes, stderr) = repl(b"mk := fn () -> type ( type ( static e := nosuch ) )\nmk()\n");
     assert!(stderr.contains("building this `type (…)` failed"), "stderr: {stderr}");
     assert!(stderr.contains("nosuch"), "stderr: {stderr}");
 }
@@ -2765,15 +2769,15 @@ fn a_type_body_in_a_function_is_built_per_call() {
 #[test]
 fn a_type_body_in_a_function_declares_fields_from_the_call_s_types() {
     let (echoes, stderr) = repl(
-        b"mk := fn (t := type ?) -> type ( type ( share e := t, p := @e ?, v := t ? ) )\n\
+        b"mk := fn (t := type ?) -> type ( type ( static e := t, p := @e ?, v := t ? ) )\n\
           mk(u8).e == u8\nk := fn (t := type ?) -> type ( mk(t) )\nk(i32).e == i32\n",
     );
     assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
     // A member declared from the call's type is that type, so a function body may apply it.
     let (echoes, stderr) = repl(
-        b"mk := fn (t := type ?) -> type ( type ( share e := t, \
-          share f := fn () -> i32 ( e 5 ) ) )\nmk(i32).e == i32\n",
+        b"mk := fn (t := type ?) -> type ( type ( static e := t, \
+          static f := fn () -> i32 ( e 5 ) ) )\nmk(i32).e == i32\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -3053,11 +3057,11 @@ fn a_parameter_and_a_local_are_names_of_the_call_s_frame() {
 }
 
 #[test]
-fn a_share_function_writes_a_field_of_a_frame_local_record() {
-    // The value a `share` function is called through is the record's own bytes, in the
+fn a_static_function_writes_a_field_of_a_frame_local_record() {
+    // The value a `static` function is called through is the record's own bytes, in the
     // caller's frame, so the write lands in the local it was called on.
     let (echoes, stderr) = repl(
-        b"pt := type (mut a := i32 ?, b := i32 ?, share bump := fn () -> void ( a = a + b ))\n\
+        b"pt := type (mut a := i32 ?, b := i32 ?, static bump := fn () -> void ( a = a + b ))\n\
           f := fn () -> i32 ( mut p := pt(1, 2), p.bump(), p.bump(), p.a )\nf()\n\
           mut q := pt(10, 5)\nq.bump()\nq.a\n",
     );
@@ -3246,15 +3250,15 @@ fn a_write_along_a_path_needs_mut_on_every_step() {
     for (src, expect) in [
         (&b"p := type (mut v := i32 ?)\nq := p(1)\nq.v = 3\n"[..], "`q` is not `mut`"),
         (b"p := type (v := i32 ?)\nmut q := p(1)\nq.v = 3\n", "`v` is not `mut`"),
-        (b"t := type (share y := i32 3)\nt.y = 4\n", "`y` is not `mut`"),
-        (b"t := type (share y := i32 3)\nq := t()\nq.y = 4\n", "`y` is not `mut`"),
+        (b"t := type (static y := i32 3)\nt.y = 4\n", "`y` is not `mut`"),
+        (b"t := type (static y := i32 3)\nq := t()\nq.y = 4\n", "`y` is not `mut`"),
         (b"p := type (immut v := i32 ?)\nmut q := p(1)\nq.v = 3\n", "`v` is `immut`"),
     ] {
         let (_e, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
     }
     let (echoes, stderr) = repl(
-        b"t := type (share mut y := i32 3, v := i32 ?)\nq := t(1)\nt.y = 4\nq.y\nq.y = 5\nt.y\n",
+        b"t := type (static mut y := i32 3, v := i32 ?)\nq := t(1)\nt.y = 4\nq.y\nq.y = 5\nt.y\n",
     );
     assert_eq!(echoes, ["4", "5"], "stderr: {stderr}");
 }
@@ -3321,9 +3325,9 @@ fn the_dyad_box_says_what_it_holds() {
 
 #[test]
 fn only_a_marked_place_is_written_or_addressed() {
-    let pw = "pw := type ( mut a := i32 ?, mut b := i32 ?, output_type := type ?, share run = ( a * b ), \
-              share parse_rank = *.parse_rank + 1, share associativity = right, \
-              share parse = ( tape[0].type = pw, tape[0].a = tape[-1], tape[0].b = tape[1], tape[0].output_type = i32, \
+    let pw = "pw := type ( mut a := i32 ?, mut b := i32 ?, output_type := type ?, static run = ( a * b ), \
+              static parse_rank = *.parse_rank + 1, static associativity = right, \
+              static parse = ( tape[0].type = pw, tape[0].a = tape[-1], tape[0].b = tape[1], tape[0].output_type = i32, \
               tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     for (src, expect) in [
         ("i32 5 = 3\n", "not an assignable place"),
@@ -3449,12 +3453,12 @@ fn an_import_tail_runs_once() {
 }
 
 #[test]
-fn a_shared_name_in_a_file_imported_twice_is_one_place() {
+fn a_static_name_in_a_file_imported_twice_is_one_place() {
     let out = logos()
         .arg(
-            "import tests/fixtures/shared_importer_a.logos, \
-             import tests/fixtures/shared_importer_b.logos, \
-             import tests/fixtures/shared_counter.logos, print «{a} {b} {count}», 0",
+            "import tests/fixtures/static_importer_a.logos, \
+             import tests/fixtures/static_importer_b.logos, \
+             import tests/fixtures/static_counter.logos, print «{a} {b} {count}», 0",
         )
         .output()
         .unwrap();
@@ -3463,9 +3467,9 @@ fn a_shared_name_in_a_file_imported_twice_is_one_place() {
 }
 
 #[test]
-fn a_shared_name_in_a_top_level_loop_is_made_once() {
+fn a_static_name_in_a_top_level_loop_is_made_once() {
     let src = "print «a», mut t := i32 0, \
-               for i in 0..3 ( share p := (print «made», alloc 1 of i32 7), t = t + p@ ), \
+               for i in 0..3 ( static p := (print «made», alloc 1 of i32 7), t = t + p@ ), \
                print «end», t";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -3531,14 +3535,14 @@ fn a_name_error_names_the_name_and_points_at_it() {
 fn lex_splices_text_built_fragments() {
     // `twice` sits above `+` on the axis, so `3 + 4 twice` doubles the 4.
     let (echoes, stderr) = repl(
-        "twice := type (share parse_rank = *.parse_rank + 1, share parse = ( tape.insert(1, lex «* 2»), tape.remove(0) ))\n\
+        "twice := type (static parse_rank = *.parse_rank + 1, static parse = ( tape.insert(1, lex «* 2»), tape.remove(0) ))\n\
           5 twice\n3 + 4 twice\n"
             .as_bytes(),
     );
     assert_eq!(echoes, ["10", "11"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
         "t := lex «(a, b)»\n5\n\
-          bad := type (share parse = ( tape.insert(1, lex «zz»), tape.remove(0) ))\n\
+          bad := type (static parse = ( tape.insert(1, lex «zz»), tape.remove(0) ))\n\
           x := bad\n"
             .as_bytes(),
     );
@@ -3546,7 +3550,7 @@ fn lex_splices_text_built_fragments() {
     assert!(stderr.contains("unknown name `zz`"), "stderr: {stderr}");
     let (_echoes, stderr) = repl(
         b"y := lex 5\n\
-          bad2 := type (share parse = ( tape.insert(1, dyad (i32, 1)) ))\n",
+          bad2 := type (static parse = ( tape.insert(1, dyad (i32, 1)) ))\n",
     );
     assert!(stderr.contains("`lex` must be followed by a «…» quote"), "stderr: {stderr}");
     assert!(stderr.contains("`insert` splices a tape"), "stderr: {stderr}");
@@ -3584,7 +3588,7 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
 
     // A constructor's print runs at parse time.
     let (echoes, stderr) = repl(
-        "m := type (share parse = ( print «parsing {1 + 1}», tape.remove(0) ))\n1 m\n".as_bytes(),
+        "m := type (static parse = ( print «parsing {1 + 1}», tape.remove(0) ))\n1 m\n".as_bytes(),
     );
     assert_eq!(echoes, ["parsing 2", "1"], "stderr: {stderr}");
 
@@ -3605,7 +3609,7 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
 /// word‹ [[R304]]).
 #[test]
 fn a_print_in_a_compiled_body_writes_what_the_interpreted_one_writes() {
-    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
     let mut cases = Vec::new();
     for compile in ["", "g.compile(), "] {
         for (program, printed) in [
@@ -3698,7 +3702,7 @@ fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
         ("print «a\\\\b»", "a\\b\n"),
         ("print «\\{a\\} \\q»", "{a} \\q\n"),
         ("t := lex «print «a «b» c»», 5", "5\n"),
-        ("t := type (share greet := fn () -> void ( print «{«a»}» )), 5", "5\n"),
+        ("t := type (static greet := fn () -> void ( print «{«a»}» )), 5", "5\n"),
         ("# «a «b» c», 5", "5\n"),
         ("regex «a\\»» := type (), 5", "5\n"),
         ("regex «[0-9]+\\\\.k» := type (), (5.k).type == type", "true\n"),
@@ -3728,8 +3732,8 @@ fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
 fn a_bracket_inside_a_nested_quote_or_its_comment_is_text_in_every_body() {
     let run_body = |body: &str| {
         format!(
-            "bump := type (a := i32 ?, share run = ( {body} ), share parse_rank = *.parse_rank + 1, \
-             share parse = ( tape[0].type = bump, tape[0].a = tape[-1], tape.is_constructed[0] = true, \
+            "bump := type (a := i32 ?, static run = ( {body} ), static parse_rank = *.parse_rank + 1, \
+             static parse = ( tape[0].type = bump, tape[0].a = tape[-1], tape.is_constructed[0] = true, \
              tape.remove(-1) )), 3 bump"
         )
     };
@@ -3742,8 +3746,8 @@ fn a_bracket_inside_a_nested_quote_or_its_comment_is_text_in_every_body() {
         (run_body("\n# a ) b\nprint «hi»\n"), "hi\n"),
         ("# «a «b» c»\nprint «ok»".to_string(), "ok\n"),
         (
-            "pt := type (\n# «a «b» ) c»\na := i32 ?,\n# the rank\nshare parse_rank = *.parse_rank + 1,\n\
-             # «before the fill»\nshare parse = ( tape[0].type = pt, tape[0].a = tape[-1], \
+            "pt := type (\n# «a «b» ) c»\na := i32 ?,\n# the rank\nstatic parse_rank = *.parse_rank + 1,\n\
+             # «before the fill»\nstatic parse = ( tape[0].type = pt, tape[0].a = tape[-1], \
              tape.is_constructed[0] = true, tape.remove(-1) )\n), q := 4 pt, q.a"
                 .to_string(),
             "4\n",
@@ -3758,8 +3762,8 @@ fn a_bracket_inside_a_nested_quote_or_its_comment_is_text_in_every_body() {
 /// A type `h` whose `parse` splices `fragment` in its own place.
 fn splicer(rank: &str, fragment: &str) -> String {
     format!(
-        "h := type (share parse_rank = {rank}, \
-         share parse = ( tape.insert(1, lex «{fragment}»), tape.remove(0) ))"
+        "h := type (static parse_rank = {rank}, \
+         static parse = ( tape.insert(1, lex «{fragment}»), tape.remove(0) ))"
     )
 }
 
@@ -3814,10 +3818,10 @@ fn a_comment_built_in_the_boundary_s_build_loop_is_read_through_before_the_next_
 fn the_boundary_s_comment_lift_reads_a_built_cell_with_no_node_without_faulting() {
     // `h1` marks the unknown `zz` built, which leaves its cell with no node, and `h2`
     // removes it at the next step: the lift between the two reads that cell.
-    let src = "h1 := type (share parse_rank = *.parse_rank + 2, \
-               share parse = ( tape.is_constructed[1] = true, tape.remove(0) )), \
-               h2 := type (share parse_rank = *.parse_rank + 1, \
-               share parse = ( tape.remove(1), tape.remove(0) )), \
+    let src = "h1 := type (static parse_rank = *.parse_rank + 2, \
+               static parse = ( tape.is_constructed[1] = true, tape.remove(0) )), \
+               h2 := type (static parse_rank = *.parse_rank + 1, \
+               static parse = ( tape.remove(1), tape.remove(0) )), \
                x := 7, x h2 h1 zz";
     let (code, _, stderr) = run_line(src);
     // A panic on the work thread exits 1, as a Logos error does.
@@ -3828,8 +3832,8 @@ fn the_boundary_s_comment_lift_reads_a_built_cell_with_no_node_without_faulting(
 fn a_body_lexed_once_holds_the_scopes_of_its_quotes() {
     let run_body = |body: &str| {
         format!(
-            "mut n := i32 1, bump := type (a := i32 ?, share run = ( {body} ), \
-             share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = bump, \
+            "mut n := i32 1, bump := type (a := i32 ?, static run = ( {body} ), \
+             static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = bump, \
              tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) )), 3 bump"
         )
     };
@@ -3838,7 +3842,7 @@ fn a_body_lexed_once_holds_the_scopes_of_its_quotes() {
         (run_body("print «{n} {a + 1} {«)»} {«x {«y»}»}»"), "1 4 ) x {«y»}\n"),
         (run_body("\n# «note {a}»\nprint «a={a}»\n"), "a=3\n"),
         (
-            "f := fn () -> i32 ( t := type ( share k := immediate ( print «v {1}», 1 ) ), 1 ), f()"
+            "f := fn () -> i32 ( t := type ( static k := immediate ( print «v {1}», 1 ) ), 1 ), f()"
                 .to_string(),
             "v 1\n1\n",
         ),
@@ -3863,7 +3867,7 @@ fn an_unclosed_quote_or_brace_is_reported_at_its_opener() {
         ("# «{a»\n5", "1:4: error: this `{` has no `}`"),
         ("# «x {»} y», 5", "1:7: error: this `»` closes no `«`"),
         ("f := fn () -> void ( # «x {»} y»\n1 ), 5", "1:28: error: this `»` closes no `«`"),
-        ("t := type (a := i32 ?, share run = ( # «x {»} y»\n1 )), 5", "1:44: error: this `»`"),
+        ("t := type (a := i32 ?, static run = ( # «x {»} y»\n1 )), 5", "1:45: error: this `»`"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: {stderr}");
@@ -3888,7 +3892,7 @@ fn error_aborts_the_run_with_its_message() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("run error: too big: 5"), "stderr: {stderr}");
 
-    let out = logos().arg("t := type (share parse = (error «not here»)), t").output().unwrap();
+    let out = logos().arg("t := type (static parse = (error «not here»)), t").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("not here"), "stderr: {stderr}");
@@ -3931,7 +3935,7 @@ fn error_interpolates_braces_exactly_as_print_does() {
 fn caller_scope_is_the_use_site_and_here_scope_the_body() {
     let (echoes, stderr) = repl(
         "mut seen := here.scope\n\
-         w := type (share parse = ( seen = caller.scope, tape.remove(0) ))\n\
+         w := type (static parse = ( seen = caller.scope, tape.remove(0) ))\n\
          g := fn () -> i32 ( 1 w )\n\
          seen == here.scope\n\
          seen.back.back == here.scope\n\
@@ -4037,11 +4041,11 @@ fn a_declaration_on_the_command_line_is_its_names_start() {
 #[test]
 fn a_nodes_fields_are_read_by_name_without_running_it() {
     let power = POWER;
-    let sq = "sq := type ( a := i32 ?, share output_type := i32, share tag := i32 7, \
-              share run = ( a * a ), share parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
+    let sq = "sq := type ( a := i32 ?, static output_type := i32, static tag := i32 7, \
+              static run = ( a * a ), static parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
               tape.is_constructed[0] = true, tape.remove(-1) ) )";
     let mk = "pt := type ( x := i32 ? ), mk := type ( a := i32 ?, output_type := type ?, \
-              share run = ( pt(a) ), share parse = ( tape[0].type = mk, tape[0].a = tape[-1], \
+              static run = ( pt(a) ), static parse = ( tape[0].type = mk, tape[0].a = tape[-1], \
               tape[0].output_type = pt, tape.is_constructed[0] = true, tape.remove(-1) ) )";
     for (tail, want) in [
         ("f := fn (x := i32 ?) -> i32 ( b := x ^ 3, b:start.rhs.lhs ), f(5)", "5"),
@@ -4058,7 +4062,7 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{tail}");
     }
-    // A `share` member of the node's own type.
+    // A `static` member of the node's own type.
     for tail in
         ["x := i32 3, (x sq).tag", "f := fn (x := i32 ?) -> i32 ( (x sq).tag ), f.compile(), f(3)"]
     {
@@ -4151,15 +4155,15 @@ fn a_pointer_parameter_takes_a_pointer_of_the_same_type_however_spelled() {
 #[test]
 fn a_constructors_outcome_is_read_off_its_own_cell() {
     let (echoes, stderr) = repl(
-        b"r1 := type (share parse = ( tape.is_constructed[0] = true, tape.recenter(1) ))\n\
-          r2 := type (share parse = ( tape.is_constructed[0] = true, tape.recenter(-1) ))\n\
-          r3 := type (share parse = ( tape.is_constructed[0] = true, tape.recenter(99) ))\n\
+        b"r1 := type (static parse = ( tape.is_constructed[0] = true, tape.recenter(1) ))\n\
+          r2 := type (static parse = ( tape.is_constructed[0] = true, tape.recenter(-1) ))\n\
+          r3 := type (static parse = ( tape.is_constructed[0] = true, tape.recenter(99) ))\n\
           a := r1\nb := r2\nc := r3\na.type == type\nb.type == type\nc.type == type\n",
     );
     assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
     for src in [
-        &b"r4 := type (share parse = ( tape.recenter(1) ))\nx := r4\n"[..],
-        b"r5 := type (share parse = ( tape[0] = tape.spelling[0] ))\nf := fn () -> void ( r5 )\n",
+        &b"r4 := type (static parse = ( tape.recenter(1) ))\nx := r4\n"[..],
+        b"r5 := type (static parse = ( tape[0] = tape.spelling[0] ))\nf := fn () -> void ( r5 )\n",
     ] {
         let (_echoes, stderr) = repl(src);
         assert!(
@@ -4170,12 +4174,12 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
     }
     // `as_i32` hands its cell to `i32` with the flag false, so `as_i32 5` is `i32 5`.
     let (echoes, stderr) = repl(
-        b"as_i32 := type (share parse = ( tape[0] = i32 ))\n\
+        b"as_i32 := type (static parse = ( tape[0] = i32 ))\n\
           x := as_i32 5\nx + 1\n",
     );
     assert_eq!(echoes, ["6"], "stderr: {stderr}");
     let (_echoes, stderr) = repl(
-        "half := type (share parse = ( tape.insert(1, lex «/ 2») ))\n\
+        "half := type (static parse = ( tape.insert(1, lex «/ 2») ))\n\
           8 half\n"
             .as_bytes(),
     );
@@ -4197,23 +4201,23 @@ fn run_line(src: &str) -> (Option<i32>, String, String) {
 #[test]
 fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
     let (code, _, stderr) = run_line(
-        "probe := type ( v := i32 ?, share run = ( v ), \
-         share parse_rank = *.parse_rank + 1, \
-         share parse = ( tape[0].type = probe, tape[0].v = 7, tape.is_constructed[0] = true ) ), probe",
+        "probe := type ( v := i32 ?, static run = ( v ), \
+         static parse_rank = *.parse_rank + 1, \
+         static parse = ( tape[0].type = probe, tape[0].v = 7, tape.is_constructed[0] = true ) ), probe",
     );
     assert_eq!(code, Some(0), "stderr: {stderr}");
     for (tail, want) in [("probe", "7\n"), ("probe + 1", "8\n")] {
         let (code, stdout, stderr) = run_line(&format!(
-            "probe := type ( v := i32 ?, output_type := type ?, share run = ( v ), \
-             share parse_rank = *.parse_rank + 1, \
-             share parse = ( tape[0].type = probe, tape[0].v = 7, tape[0].output_type = i32, \
+            "probe := type ( v := i32 ?, output_type := type ?, static run = ( v ), \
+             static parse_rank = *.parse_rank + 1, \
+             static parse = ( tape[0].type = probe, tape[0].v = 7, tape[0].output_type = i32, \
              tape.is_constructed[0] = true ) ), {tail}"
         ));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "stderr: {stderr}");
     }
     let (code, stdout, stderr) = run_line(
-        "q := type ( size := u64 ?, share parse_rank = 60, \
-         share parse = ( tape[0].type = q, tape[0].size = 3, tape[0] = tape[0].size, \
+        "q := type ( size := u64 ?, static parse_rank = 60, \
+         static parse = ( tape[0].type = q, tape[0].size = 3, tape[0] = tape[0].size, \
          tape.is_constructed[0] = true ) ), q",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "3\n"), "stderr: {stderr}");
@@ -4223,15 +4227,15 @@ fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
 fn a_number_field_of_the_parse_node_holds_the_node_placed_into_it() {
     // `tape[0].n` is the node `n` holds, typed `u64`, so it takes part in arithmetic.
     let (code, stdout, stderr) = run_line(
-        "q := type ( n := u64 ?, m := u64 ?, share parse_rank = 60, share parse = ( \
+        "q := type ( n := u64 ?, m := u64 ?, static parse_rank = 60, static parse = ( \
          tape[0].type = q, tape[0].n = tape[1].dyads.size, tape[0].m = tape[0].n * 2, \
          tape[0] = tape[0].m, tape.remove(1), \
          tape.is_constructed[0] = true ) ), q (1, 2, 3)",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "6\n"), "stderr: {stderr}");
     let (code, _, stderr) = run_line(
-        "q := type ( n := u64 ?, share parse_rank = 60, \
-         share parse = ( tape[0].type = q, tape[0].n = i32 3, tape.is_constructed[0] = true ) ), q",
+        "q := type ( n := u64 ?, static parse_rank = 60, \
+         static parse = ( tape[0].type = q, tape[0].n = i32 3, tape.is_constructed[0] = true ) ), q",
     );
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
@@ -4242,12 +4246,12 @@ fn a_node_a_parse_places_inside_a_function_reads_that_functions_frame() {
     // A parse runs in a call of its own, and `f`'s body runs the node the parse built: what read
     // the parse's own names was run as it was placed, and what reads `f`'s reads `f`'s frame.
     let pr = "pr := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, \
-              share run = ( lhs + rhs ), share parse_rank = *.parse_rank + 1, share parse = ( \
+              static run = ( lhs + rhs ), static parse_rank = *.parse_rank + 1, static parse = ( \
               tape[0].type = pr, tape[0].lhs = tape[-1], tape[0].rhs = tape[0].lhs, \
               tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )";
-    let sq = "sq := type ( share parse_rank = *.parse_rank + 1, share parse = ( n := i32 40, \
+    let sq = "sq := type ( static parse_rank = *.parse_rank + 1, static parse = ( n := i32 40, \
               tape[0] = n + 1, tape.is_constructed[0] = true, tape.remove(-1) ) )";
-    let inc = "inc := type ( share parse_rank = *.parse_rank + 1, share parse = ( \
+    let inc = "inc := type ( static parse_rank = *.parse_rank + 1, static parse = ( \
                if tape[-1].type == i32 ( tape[0] = tape[-1] + 1, tape.is_constructed[0] = true ), \
                tape.remove(-1) ) )";
     let locals = "a := i32 91, b := i32 92, c := i32 93, d := i32 94";
@@ -4274,15 +4278,15 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
     // `sq` writes `v` from the line before it; `cell` writes the line's cell.
     let sq = |rank: &str, body: &str| {
         format!(
-            "{w}, sq := type ( v := i32 ?, output_type := type ?, share run = ( v ), \
-             share parse_rank = {rank}, share parse = ( tape[0].type = sq, {body}, \
+            "{w}, sq := type ( v := i32 ?, output_type := type ?, static run = ( v ), \
+             static parse_rank = {rank}, static parse = ( tape[0].type = sq, {body}, \
              tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )"
         )
     };
     let field = |body: &str| sq("*.parse_rank + 1", &format!("if tape[-1].type == i32 ( {body} )"));
     let cell = |body: &str| {
         format!(
-            "{w}, sq := type ( share parse_rank = *.parse_rank + 1, share parse = ( {body}, \
+            "{w}, sq := type ( static parse_rank = *.parse_rank + 1, static parse = ( {body}, \
              tape.remove(-1) ) )"
         )
     };
@@ -4292,22 +4296,22 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
     let local = |body: &str| cell(&format!("n := i32 40, {body}, tape.is_constructed[0] = true"));
     let any = |body: &str| {
         format!(
-            "sq := type ( v := i32 ?, share output_type := i32, share run = ( v ), \
-             share parse_rank = *.parse_rank + 1, share parse = ( n := i32 40, tape[0].type = sq, \
+            "sq := type ( v := i32 ?, static output_type := i32, static run = ( v ), \
+             static parse_rank = *.parse_rank + 1, static parse = ( n := i32 40, tape[0].type = sq, \
              {body}, tape.is_constructed[0] = true, tape.remove(-1) ) )"
         )
     };
     let in_f = "f := fn (y := i32 ?) -> i32 ( y sq )";
     let counted = |body: &str| {
         format!(
-            "q := type ( n := ?, m := ?, share parse_rank = 60, share parse = ( tape[0].type = q, \
+            "q := type ( n := ?, m := ?, static parse_rank = 60, static parse = ( tape[0].type = q, \
              tape[0].n = tape[1].dyads.size, {body}, tape[0] = tape[0].m, tape.remove(1), \
              tape.is_constructed[0] = true ) )"
         )
     };
     let checked_n = counted("if tape[0].n.type ⊆ u64 ( tape[0].m = tape[0].n * 2 )");
-    let wide = "p := type ( rhs := i64 ?, share output_type := i64, share run = ( rhs ), \
-                share parse_rank = 60, share parse = ( tape[0].type = p, \
+    let wide = "p := type ( rhs := i64 ?, static output_type := i64, static run = ( rhs ), \
+                static parse_rank = 60, static parse = ( tape[0].type = p, \
                 if tape[1].type ⊆ i64 ( tape[0].rhs = i64 (tape[1]) ), \
                 tape.remove(1), tape.is_constructed[0] = true ) )";
     for (src, want) in [
@@ -4343,16 +4347,16 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         (any("tape[0].v = n") + ", x := i32 7, x sq", "40"),
         (any("tape[0].v = n + 1") + ", x := i32 7, x sq", "41"),
         (
-            "q := type ( n := u64 ?, share output_type := u64, share run = ( n ), \
-             share parse_rank = 60, share parse = ( tape[0].type = q, \
+            "q := type ( n := u64 ?, static output_type := u64, static run = ( n ), \
+             static parse_rank = 60, static parse = ( tape[0].type = q, \
              tape[0].n = tape[1].dyads.size, tape.remove(1), tape.is_constructed[0] = true ) ), \
              q (1, 2, 3)"
                 .to_string(),
             "3",
         ),
         (
-            "q := type ( v := u64 ?, share output_type := u64, share run = ( v ), \
-             share parse_rank = 61, share parse = ( tape[0].type = q, \
+            "q := type ( v := u64 ?, static output_type := u64, static run = ( v ), \
+             static parse_rank = 61, static parse = ( tape[0].type = q, \
              if not tape[1].dyads[0].type ⊆ u64 error «no», tape[0].v = tape[1].dyads[0] + 1, \
              tape.remove(1), tape.is_constructed[0] = true ) ), q [5]"
                 .to_string(),
@@ -4399,7 +4403,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
             constant,
         ),
         (
-            "x := i32 3, q := type ( n := i32 ?, share parse_rank = 60, share parse = ( \
+            "x := i32 3, q := type ( n := i32 ?, static parse_rank = 60, static parse = ( \
              tape[0].type = q, tape[0].n = tape[1], if tape[0].n > 2 ( tape[0] = u64 7 ) \
              else ( tape[0] = u64 8 ), tape.remove(1), tape.is_constructed[0] = true ) ), q x"
                 .to_string(),
@@ -4423,14 +4427,14 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
 }
 
 #[test]
-fn a_share_function_names_its_fields_bare() {
+fn a_static_function_names_its_fields_bare() {
     let (code, _, stderr) =
-        run_line("x := type ( n := u64 ?, share twice := fn () -> u64 ( n * 2 ) ), 1");
+        run_line("x := type ( n := u64 ?, static twice := fn () -> u64 ( n * 2 ) ), 1");
     assert_eq!(code, Some(0), "stderr: {stderr}");
     // Only the type's own functions reach a field by name, and a parse never does.
     for (src, expect) in [
         ("f := fn () -> u64 ( n ), 1", "unknown name `n`"),
-        ("x := type ( n := u64 ?, share parse = ( n ) ), 1", "`tape[0].n`, never bare"),
+        ("x := type ( n := u64 ?, static parse = ( n ) ), 1", "`tape[0].n`, never bare"),
         ("f := fn () -> u64 ( this.n ), 1", "unknown name `this`"),
     ] {
         let (code, _, stderr) = run_line(src);
@@ -4442,10 +4446,10 @@ fn a_share_function_names_its_fields_bare() {
 #[test]
 fn a_free_body_fills_the_values_free() {
     let (code, stdout, stderr) =
-        run_line("x := type ( n := u64 ?, share free = ( print «gone» ) ), 1");
+        run_line("x := type ( n := u64 ?, static free = ( print «gone» ) ), 1");
     assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "stderr: {stderr}");
     for (src, expect) in [
-        ("x := type ( share free = 5 ), 1", "`share free = (…)`"),
+        ("x := type ( static free = 5 ), 1", "`static free = (…)`"),
         ("x := type ( mut p := own @i32 ? ), 1", "must be freed by the type's"),
         ("x := type ( p := own i32 ? ), 1", "written over a pointer"),
     ] {
@@ -4461,14 +4465,14 @@ fn a_free_body_fills_the_values_free() {
 const BOX: &str = "boxed := type ( \
     mut p := own @i32 ?, \
     mut size := u64 0, \
-    share free = ( print «free», free p ), \
-    share parse_rank = dyad.parse_rank, \
-    share parse = ( tape.is_constructed[0] = true ) \
+    static free = ( print «free», free p ), \
+    static parse_rank = dyad.parse_rank, \
+    static parse = ( tape.is_constructed[0] = true ) \
 ), \
 box := type ( \
     elements := scope ?, \
     output_type := type ?, \
-    share run = ( \
+    static run = ( \
         mut v := output_type ?, \
         v.p = mut alloc elements.dyads.size of i32 ?, \
         for i in 0..elements.dyads.size ( \
@@ -4477,9 +4481,9 @@ box := type ( \
         ), \
         move v \
     ), \
-    share parse_rank = dyad.parse_rank, \
-    share associativity = left, \
-    share parse = ( \
+    static parse_rank = dyad.parse_rank, \
+    static associativity = left, \
+    static parse = ( \
         if tape[1].type == scope ( \
             for i in 0..tape[1].dyads.size ( \
                 if not (tape[1].dyads[i].type ⊆ i32) error «not an i32» \
@@ -4555,8 +4559,8 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
 
 #[test]
 fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
-    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ), \
-               share get := fn () -> i32 ( n ) )";
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ), \
+               static get := fn () -> i32 ( n ) )";
     for (src, printed) in [
         // Made or moved in the argument: the parameter holds it, on either tier.
         (format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), f(box (1, 2)), print «after»"), "free\nafter\n"),
@@ -4751,12 +4755,12 @@ fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
     let range = "index out of range";
     let checked = "import ./identities/array.logos, \
          h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
-         bag := type ( mut v := f64 ?, share free = ( print «freed {h(v)}» ) ), z := f64 0.0";
+         bag := type ( mut v := f64 ?, static free = ( print «freed {h(v)}» ) ), z := f64 0.0";
     for (before, after, printed, error) in [
         // The fault's cleanup enters compiled code.
         (
             "h := fn (k := i32 ?) -> i32 ( k ), h.compile(), \
-             bag := type ( mut n := i32 ?, share free = ( print «freed {h(n)}» ) ), \
+             bag := type ( mut n := i32 ?, static free = ( print «freed {h(n)}» ) ), \
              g := fn (x := f64 ?) -> i32 ( b := bag(4), n := i32 lossy (x), n )"
                 .to_string(),
             "z := f64 0.0, g(z / z)",
@@ -4811,7 +4815,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
     let range = "index out of range";
     let checked = "import ./identities/array.logos, \
          h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
-         bag := type ( mut v := f64 ?, share free = ( print «freed {h(v)}» ) ), z := f64 0.0";
+         bag := type ( mut v := f64 ?, static free = ( print «freed {h(v)}» ) ), z := f64 0.0";
     let say = "say := fn (k := i32 ?) -> i32 ( print «say {k}», k )";
     let fault = "z := f64 0.0, g(z / z)";
     for (before, after, printed, error) in [
@@ -4987,8 +4991,8 @@ fn assignment_frees_the_value_it_displaces() {
     }
 }
 
-/// A plain record whose type fills `share free`, its free printing the one field.
-const RECORD: &str = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+/// A plain record whose type fills `static free`, its free printing the one field.
+const RECORD: &str = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
 
 #[test]
 fn a_plain_record_s_owner_runs_its_free_once() {
@@ -5206,7 +5210,7 @@ fn the_address_of_a_value_in_a_call_s_arguments_holds_it_to_the_scope_the_call_s
     let f2 = "f := fn (q := @bag ?, k := i32 ?) -> i32 ( q@.n + k )";
     let g = "g := fn () -> i32 ( f(&bag(4)) )";
     let sum = "g := fn () -> i32 ( mut s := i32 0, for i in 0..2 ( s = s + f(&bag(i)) ), s )";
-    let get = "holder := type ( k := i32 ?, share get := fn (q := @bag ?) -> i32 ( k + q@.n ) )";
+    let get = "holder := type ( k := i32 ?, static get := fn (q := @bag ?) -> i32 ( k + q@.n ) )";
     let r = "r := fn (n := i32 ?) -> i32 ( return f(&bag(n)) )";
     let r_if = "r := fn (n := i32 ?) -> i32 ( if f(&bag(n)) > 2 (return f(&bag(n + 10))), 0 )";
     let r_in = "r := fn (n := i32 ?) -> i32 ( f(&bag(n), ( if (n > 2) (return 9), 4 )) )";
@@ -5445,10 +5449,10 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
     }
     // A type's `run` whose last value is made is marked `own`, and its `return` is held to it.
     let run = "g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, \
-               share run = ( if (elements.dyads.size == 3) (return g), mut v := output_type ?, \
+               static run = ( if (elements.dyads.size == 3) (return g), mut v := output_type ?, \
                v.p = mut alloc 1 of i32 ?, v.size = 1, move v ), \
-               share parse_rank = dyad.parse_rank, share associativity = left, \
-               share parse = ( tape[0].type = pk, tape[0].elements = tape[1], \
+               static parse_rank = dyad.parse_rank, static associativity = left, \
+               static parse = ( tape[0].type = pk, tape[0].elements = tape[1], \
                tape[0].output_type = boxed, tape.remove(1), tape.is_constructed[0] = true ) ), \
                x := pk (7, 8, 9), print «{x.size}»";
     let (code, _, stderr) = run_line(&format!("{BOX}, {run}"));
@@ -5458,8 +5462,8 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
 
 #[test]
 fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
-    let r = "r := type ( mut p := own @i32 ?, share free = ( free p ), \
-             share set := fn () -> i32 ( a := alloc 1 of i32 5, p = move a, 1 ) ), mut x := r ?";
+    let r = "r := type ( mut p := own @i32 ?, static free = ( free p ), \
+             static set := fn () -> i32 ( a := alloc 1 of i32 5, p = move a, 1 ) ), mut x := r ?";
     for (tail, printed) in [
         ("x.set(), 2", "2"),
         ("a := alloc 1 of i32 5, x.p = move a, b := alloc 1 of i32 6, x.p = move b, x.p@", "6"),
@@ -5475,7 +5479,7 @@ fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
     ] {
         let (code, _, stderr) = run_line(&format!("{r}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
-        assert!(stderr.contains("the type of `x` fills its own `share free"), "{tail}: {stderr}");
+        assert!(stderr.contains("the type of `x` fills its own `static free"), "{tail}: {stderr}");
     }
 }
 
@@ -5774,16 +5778,16 @@ fn an_array_holds_arrays_as_their_addresses() {
 const HOLDER: &str = "import ./identities/array.logos, t := array i32, \
     held := type ( \
         mut items := t ?, \
-        share count := fn () -> u64 ( items.size ), \
-        share second := fn () -> i32 ( items[1] ), \
-        share parse_rank = dyad.parse_rank, \
-        share parse = ( tape.is_constructed[0] = true ) ), \
+        static count := fn () -> u64 ( items.size ), \
+        static second := fn () -> i32 ( items[1] ), \
+        static parse_rank = dyad.parse_rank, \
+        static parse = ( tape.is_constructed[0] = true ) ), \
     holder := type ( \
         output_type := type ?, \
-        share run = ( mut v := output_type ?, v.items = array i32 [4, 5, 6], v ), \
-        share parse_rank = dyad.parse_rank, \
-        share associativity = left, \
-        share parse = ( \
+        static run = ( mut v := output_type ?, v.items = array i32 [4, 5, 6], v ), \
+        static parse_rank = dyad.parse_rank, \
+        static associativity = left, \
+        static parse = ( \
             if tape[1].type == scope ( \
                 tape[0].type = holder, tape[0].output_type = held, tape.remove(1) \
             ) else ( tape[0] = held ), \
@@ -5811,7 +5815,7 @@ fn a_field_holding_an_array_reads_as_that_array() {
     }
     let (code, _, stderr) = run_line(&format!(
         "{HOLDER}, u := array u8, g := type ( mut items := t ?, \
-         share put := fn () -> u64 ( items = array u8 [1], 0 ) )"
+         static put := fn () -> u64 ( items = array u8 [1], 0 ) )"
     ));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
@@ -5825,17 +5829,17 @@ fn bag_line(tail: &str) -> String {
          bagged := type ( \
              mut items := own t ?, \
              mut b := own boxed ?, \
-             share free = ( print «bag», free items, free b ), \
-             share parse_rank = dyad.parse_rank, \
-             share parse = ( tape.is_constructed[0] = true ) ), \
+             static free = ( print «bag», free items, free b ), \
+             static parse_rank = dyad.parse_rank, \
+             static parse = ( tape.is_constructed[0] = true ) ), \
          bag := type ( \
              output_type := type ?, \
-             share run = ( \
+             static run = ( \
                  mut v := output_type ?, \
                  v.items = array i32 [4, 5, 6], v.b = box (7, 1), move v ), \
-             share parse_rank = dyad.parse_rank, \
-             share associativity = left, \
-             share parse = ( \
+             static parse_rank = dyad.parse_rank, \
+             static associativity = left, \
+             static parse = ( \
                  if tape[1].type == scope ( \
                      tape[0].type = bag, tape[0].output_type = bagged, tape.remove(1) \
                  ) else ( tape[0] = bagged ), \
@@ -5846,7 +5850,8 @@ fn bag_line(tail: &str) -> String {
 
 #[test]
 fn a_field_under_a_type_that_fills_free_is_refused_where_it_is_written() {
-    let refused = |holder: &str| format!("the type of `{holder}` fills its own `share free = (…)`");
+    let refused =
+        |holder: &str| format!("the type of `{holder}` fills its own `static free = (…)`");
     for (tail, holder) in [
         ("g := bag (), y := move g.b, 1", "g"),
         ("g := bag (), free g.b, 1", "g"),
@@ -5875,16 +5880,16 @@ fn a_field_under_a_type_that_fills_free_is_refused_where_it_is_written() {
         ("g := bag (), h := g, y := move h.b, 1", unfollowed),
         ("f := fn (q := bagged ?) -> i32 ( y := move q.b, 1 ), 1", unfollowed),
         (
-            "r := type ( mut p := own @i32 ?, share free = ( free p ), \
-             share s := fn () -> i32 ( free p, 2 ) )",
+            "r := type ( mut p := own @i32 ?, static free = ( free p ), \
+             static s := fn () -> i32 ( free p, 2 ) )",
             unfollowed,
         ),
         (
-            "r := type ( mut p := own @i32 ?, share free = ( free p ), \
-             share s := fn () -> i32 ( a := move p, 2 ) )",
+            "r := type ( mut p := own @i32 ?, static free = ( free p ), \
+             static s := fn () -> i32 ( a := move p, 2 ) )",
             unfollowed,
         ),
-        ("p := type ( x := i32 ?, share s := fn () -> i32 ( free x, 1 ) )", unfollowed),
+        ("p := type ( x := i32 ?, static s := fn () -> i32 ( free x, 1 ) )", unfollowed),
     ] {
         let (code, _, stderr) = run_line(&bag_line(tail));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -5901,11 +5906,11 @@ fn a_field_under_a_type_that_fills_free_is_refused_where_it_is_written() {
 /// type's body, so either can fill `free`.
 fn nested_line(inner: &str, outer: &str, tail: &str) -> String {
     format!(
-        "inner := type ( mut n := i32 0, {inner}share parse_rank = dyad.parse_rank, \
-             share parse = ( tape.is_constructed[0] = true ) ), \
+        "inner := type ( mut n := i32 0, {inner}static parse_rank = dyad.parse_rank, \
+             static parse = ( tape.is_constructed[0] = true ) ), \
          outer := type ( mut b := inner ?, mut m := i32 0, {outer}\
-             share parse_rank = dyad.parse_rank, \
-             share parse = ( tape.is_constructed[0] = true ) ), \
+             static parse_rank = dyad.parse_rank, \
+             static parse = ( tape.is_constructed[0] = true ) ), \
          mut g := outer ?, mut i := inner ?, g.b = i, {tail}"
     )
 }
@@ -5931,7 +5936,7 @@ fn a_freed_field_ends_its_path_and_its_holder_as_a_whole() {
         assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
     }
     // A type on the path that fills `free` refuses it; the first such holder is named.
-    let free = |word: &str| format!("share free = ( print «{word}» ), ");
+    let free = |word: &str| format!("static free = ( print «{word}» ), ");
     for (inner, outer, holder) in [
         (free("inner"), String::new(), "g.b"),
         (String::new(), free("outer"), "g"),
@@ -5939,7 +5944,7 @@ fn a_freed_field_ends_its_path_and_its_holder_as_a_whole() {
     ] {
         let (code, _, stderr) = run_line(&nested_line(&inner, &outer, "free g.b.n, g.m"));
         assert_eq!(code, Some(1), "{holder}: stderr: {stderr}");
-        let refused = format!("the type of `{holder}` fills its own `share free = (…)`");
+        let refused = format!("the type of `{holder}` fills its own `static free = (…)`");
         assert!(stderr.contains(&refused), "{holder}: stderr: {stderr}");
     }
 }
@@ -5977,7 +5982,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
     for (tail, expect) in [
         ("g := bag (), x := array i32 [1], g.items = x", "what is assigned must own too"),
         ("g := bag (), x := array i32 [1], y := x, g.items = move y", "only its owner can"),
-        ("nd := type ( mut items := own t ? )", "must be freed by the type's `share free = (…)`"),
+        ("nd := type ( mut items := own t ? )", "must be freed by the type's `static free = (…)`"),
         ("g := bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
         ("mk := fn () -> t ( array i32 [1] ), 1", "write `-> own t`"),
         ("nd := type ( mut n := own i32 ? )", "or a type whose body fills `free`"),
@@ -6058,7 +6063,7 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
         ("a := array array i32 [(1, 2)]", "the list is written in square brackets"),
         ("x := i64 5, a := array array i32 [[1], [x]]", "an element does not fit the element type"),
         (
-            "p := type ( share parse = ( tape.construct(i32, tape[1]), tape.is_constructed[0] = true ) )",
+            "p := type ( static parse = ( tape.construct(i32, tape[1]), tape.is_constructed[0] = true ) )",
             "unknown name `construct`",
         ),
     ] {
@@ -6174,7 +6179,7 @@ fn free_of_a_value_runs_it_and_frees_what_it_made() {
     // A field of a node the parse knows is followed from its name, whose type fills `free`.
     let (code, _, stderr) = run_line(&format!("{array}, {BOX}, b := box (1, 2), free b.p, 1"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("the type of `b` fills its own `share free"), "stderr: {stderr}");
+    assert!(stderr.contains("the type of `b` fills its own `static free"), "stderr: {stderr}");
 }
 
 #[test]
@@ -6242,7 +6247,7 @@ fn an_array_is_freed_by_its_owner_and_a_borrow_outliving_it_reads_nothing() {
 
 /// A type with no `run` whose own `parse` builds its nodes.
 const COUNTED: &str = "q := type ( n := u64 ?, k := u64 7, \
-    share twice := fn () -> u64 ( n * 2 ), share parse_rank = 60, share parse = ( \
+    static twice := fn () -> u64 ( n * 2 ), static parse_rank = 60, static parse = ( \
     tape[0].type = q, tape[0].n = tape[1].dyads.size, tape.remove(1), tape.is_constructed[0] = true ) )";
 
 #[test]
@@ -6271,8 +6276,8 @@ fn a_member_function_called_through_a_node_reads_that_node() {
 #[test]
 fn a_value_left_unwritten_is_filled_one_field_at_a_time() {
     let pt = "pt := type ( mut x := i32 ?, mut y := i32 ? )";
-    let bx = "bx := type ( mut p := own @i32 ?, mut size := u64 0, share free = ( free p ), \
-              share parse_rank = dyad.parse_rank, share parse = ( tape.is_constructed[0] = true ) )";
+    let bx = "bx := type ( mut p := own @i32 ?, mut size := u64 0, static free = ( free p ), \
+              static parse_rank = dyad.parse_rank, static parse = ( tape.is_constructed[0] = true ) )";
     for (src, want) in [
         (format!("{pt}, f := fn () -> i32 ( mut v := pt ?, v.x = 3, v.y = 4, v.x + v.y ), f()"), "7\n"),
         (format!("{pt}, mut v := pt ?, v.x = 3, v.y = 4, v.x * v.y"), "12\n"),
@@ -6305,18 +6310,18 @@ fn a_value_left_unwritten_is_filled_one_field_at_a_time() {
 }
 
 #[test]
-fn a_bare_share_call_works_on_the_value_the_body_is_about() {
+fn a_bare_static_call_works_on_the_value_the_body_is_about() {
     let quad = COUNTED.replace(
-        "share twice := fn () -> u64 ( n * 2 ),",
-        "share twice := fn () -> u64 ( n * 2 ), share quad := fn () -> u64 ( twice() * 2 ),",
+        "static twice := fn () -> u64 ( n * 2 ),",
+        "static twice := fn () -> u64 ( n * 2 ), static quad := fn () -> u64 ( twice() * 2 ),",
     );
     let (code, stdout, stderr) = run_line(&format!("{quad}, a := q (1, 2, 3), a.quad()"));
     assert_eq!((code, stdout.as_str()), (Some(0), "12\n"), "stderr: {stderr}");
     // From a run: a value holding this run's fields, so an operand written as an
     // expression, or a function's parameter, is read as its value.
     let inc = "inc := type ( a := i32 ?, output_type := type ?, \
-        share twice := fn () -> i32 ( a * 2 ), share run = ( twice() + 1 ), \
-        share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = inc, \
+        static twice := fn () -> i32 ( a * 2 ), static run = ( twice() + 1 ), \
+        static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = inc, \
         tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
         tape.remove(-1) ) )";
     for (tail, want) in [
@@ -6330,8 +6335,8 @@ fn a_bare_share_call_works_on_the_value_the_body_is_about() {
     // A parse has no value to hand one that reads a field; outside the type it is no name.
     for (src, expect) in [
         (
-            "q := type ( n := u64 ?, share get := fn () -> u64 ( n ), share parse_rank = 60, \
-             share parse = ( tape[0].type = q, tape[0].n = get(), tape.is_constructed[0] = true ) ), q"
+            "q := type ( n := u64 ?, static get := fn () -> u64 ( n ), static parse_rank = 60, \
+             static parse = ( tape[0].type = q, tape[0].n = get(), tape.is_constructed[0] = true ) ), q"
                 .to_string(),
             "reads no field",
         ),
@@ -6347,17 +6352,17 @@ fn a_bare_share_call_works_on_the_value_the_body_is_about() {
 fn a_parse_stamps_its_own_cell_before_it_writes_a_field() {
     for (src, expect) in [
         (
-            "q := type ( n := u64 ?, share parse_rank = 60, share parse = ( \
+            "q := type ( n := u64 ?, static parse_rank = 60, static parse = ( \
              tape[0].n = 3, tape[0].type = q, tape.is_constructed[0] = true ) ), q",
             "still holds the type",
         ),
         (
-            "r := type ( n := u64 ? ), q := type ( share parse_rank = 60, share parse = ( \
+            "r := type ( n := u64 ? ), q := type ( static parse_rank = 60, static parse = ( \
              tape[0].type = r, tape.is_constructed[0] = true ) ), q",
             "with a `run` or a `parse` of its own",
         ),
         (
-            "q := type ( share parse_rank = 60, share parse = ( \
+            "q := type ( static parse_rank = 60, static parse = ( \
              tape[1].type = q, tape.is_constructed[0] = true ) ), q 5",
             "on its own cell",
         ),
@@ -6372,13 +6377,13 @@ fn a_parse_stamps_its_own_cell_before_it_writes_a_field() {
 fn a_field_the_constructor_never_wrote_is_a_checked_error() {
     for src in [
         // The node is used as a value with its field `b` unwritten.
-        "t := type (a := i32 ?, b := i32 ?, output_type := type ?, share run = ( a ), \
-         share parse_rank = *.parse_rank + 1, \
-         share parse = ( tape[0].type = t, tape[0].a = tape[-1], tape[0].output_type = i32, \
+        "t := type (a := i32 ?, b := i32 ?, output_type := type ?, static run = ( a ), \
+         static parse_rank = *.parse_rank + 1, \
+         static parse = ( tape[0].type = t, tape[0].a = tape[-1], tape[0].output_type = i32, \
          tape.is_constructed[0] = true, tape.remove(-1) )), x := i32 4, x t",
         // The unwritten field itself is read in the parse body.
-        "q := type ( size := u64 ?, share parse_rank = 60, \
-         share parse = ( tape[0].type = q, tape[0] = tape[0].size, tape.is_constructed[0] = true ) ), q",
+        "q := type ( size := u64 ?, static parse_rank = 60, \
+         static parse = ( tape[0].type = q, tape[0] = tape[0].size, tape.is_constructed[0] = true ) ), q",
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
@@ -6389,14 +6394,14 @@ fn a_field_the_constructor_never_wrote_is_a_checked_error() {
 #[test]
 fn a_fields_type_reads_its_declared_type() {
     let (code, stdout, stderr) = run_line(
-        "q := type ( size := u64 ?, share parse_rank = 60, \
-         share parse = ( tape[0].type = q, tape[0].size = 3, tape[0] = tape[0].size.type, \
+        "q := type ( size := u64 ?, static parse_rank = 60, \
+         static parse = ( tape[0].type = q, tape[0].size = 3, tape[0] = tape[0].size.type, \
          tape.is_constructed[0] = true ) ), q",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "u64\n"), "stderr: {stderr}");
     // An untyped field has the type of the node it holds.
-    let q = "q := type ( size := ?, share parse_rank = 60, \
-             share parse = ( tape[0].type = q, tape[0].size = 3, \
+    let q = "q := type ( size := ?, static parse_rank = 60, \
+             static parse = ( tape[0].type = q, tape[0].size = 3, \
              if tape[0].size.type == rational_number ( tape[0] = u64 1 ) else ( tape[0] = u64 2 ), \
              tape.is_constructed[0] = true ) )";
     for use_ in ["q", "f := fn () -> u64 ( q ), f()", "f := fn () -> u64 ( q ), f.compile(), f()"] {
@@ -6409,16 +6414,16 @@ fn a_fields_type_reads_its_declared_type() {
 #[test]
 fn a_field_default_fills_each_new_node() {
     let q = "q := type ( mut size := u64 5, output_type := type ?, \
-             share run = ( size + 1 ), share parse_rank = 60, \
-             share parse = ( tape[0].type = q, ";
+             static run = ( size + 1 ), static parse_rank = 60, \
+             static parse = ( tape[0].type = q, ";
     let end = "tape[0].output_type = u64, tape.is_constructed[0] = true ) )";
     for (src, want) in [
         (format!("{q}{end}, q"), "6\n"),
         (format!("{q}tape[0].size = 9, {end}, q"), "10\n"),
         (format!("{q}{end}, f := fn () -> u64 ( q ), f.compile(), f()"), "6\n"),
         (
-            "q := type ( size := u64 0, share parse_rank = 60, \
-             share parse = ( tape[0].type = q, tape[0] = tape[0].size, tape.is_constructed[0] = true ) ), q"
+            "q := type ( size := u64 0, static parse_rank = 60, \
+             static parse = ( tape[0].type = q, tape[0] = tape[0].size, tape.is_constructed[0] = true ) ), q"
                 .to_string(),
             "0\n",
         ),
@@ -6544,7 +6549,7 @@ fn a_record_argument_or_result_is_checked_at_parse() {
 #[test]
 fn a_run_body_takes_a_plain_record_field_by_copy() {
     let fx = "p := type ( x := i32 ?, y := i32 ? ), fx := type ( a := p ?, output_type := type ?, \
-              share run = ( a.y ), share parse_rank = 60, share parse = ( tape[0].type = fx, \
+              static run = ( a.y ), static parse_rank = 60, static parse = ( tape[0].type = fx, \
               tape[0].a = tape[1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
               tape.remove(1) ) ), v := p (1, 2)";
     for tail in ["fx v", "g := fn () -> i32 ( fx v ), g.compile(), g()"] {
@@ -6620,7 +6625,7 @@ fn a_declaration_copies_a_plain_record() {
     }
     // A copy of a value whose type fills `free` owns nothing: the value is freed once.
     cases.push((
-        "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), w := r(2), y := w, 0"
+        "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), w := r(2), y := w, 0"
             .to_string(),
         "freed 2\n0\n",
     ));
@@ -6789,7 +6794,7 @@ fn a_number_type_below_open_refuses_what_it_cannot_take() {
 /// displaces by its type's `free`, on both tiers.
 #[test]
 fn equals_frees_the_record_it_displaces() {
-    let r = "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let r = "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
     let body = "mut x := r(1), x = r(2), x.n";
     assert_runs(&[
         (format!("{r}, mut x := r(1), x = r(2), print «{{x.n}}»"), "freed 1\n2\nfreed 2\n"),
@@ -6802,7 +6807,7 @@ fn equals_frees_the_record_it_displaces() {
 /// whose `free` would then never run.
 #[test]
 fn a_held_record_through_a_pointer_is_refused() {
-    let src = "r := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), w := r(2), \
+    let src = "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), w := r(2), \
                mut x := r(1), p := &x, p@ = w, 0";
     let (code, stdout, stderr) = run_line(src);
     assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
@@ -6953,41 +6958,41 @@ fn a_constructor_fills_each_field_at_its_place() {
     assert_runs(&cases);
 }
 
-/// DESIGN ›There is no `this`‹: a `share` function over a plain record reads and writes each
+/// DESIGN ›There is no `this`‹: a `static` function over a plain record reads and writes each
 /// field at the offset its binding carries, a rational, a type and a record as whole values.
 #[test]
-fn a_share_function_reaches_each_field_of_a_plain_record_whole() {
+fn a_static_function_reaches_each_field_of_a_plain_record_whole() {
     let ab = "mut a := rational_number ?, mut b := i32 ?";
     let set = "mut v := pt ?, v.a = rational_number 1/2, v.b = 7";
     assert_runs(&[
         (
-            format!("pt := type ( {ab}, share get := fn () -> rational_number ( a ) ), {set}, v.get()"),
+            format!("pt := type ( {ab}, static get := fn () -> rational_number ( a ) ), {set}, v.get()"),
             "1/2\n",
         ),
-        (format!("pt := type ( {ab}, share getb := fn () -> i32 ( b ) ), {set}, v.getb()"), "7\n"),
+        (format!("pt := type ( {ab}, static getb := fn () -> i32 ( b ) ), {set}, v.getb()"), "7\n"),
         (
             format!(
-                "pt := type ( {ab}, share set := fn () -> void ( a = rational_number 3/4 ) ), {set}, \
+                "pt := type ( {ab}, static set := fn () -> void ( a = rational_number 3/4 ) ), {set}, \
                  v.set(), print «{{v.a}} {{v.b}}»"
             ),
             "3/4 7\n",
         ),
         (
             format!(
-                "pt := type ( {ab}, share both := fn (r := rational_number ?) -> void ( a = r, b = 3 ) ), \
+                "pt := type ( {ab}, static both := fn (r := rational_number ?) -> void ( a = r, b = 3 ) ), \
                  {set}, v.both(rational_number 1/5), print «{{v.a}} {{v.b}}»"
             ),
             "1/5 3\n",
         ),
         (
             "pt := type ( mut a := rational_number ?, mut c := rational_number ?, \
-             share cp := fn () -> void ( c = a ) ), mut v := pt ?, v.a = rational_number 1/2, \
+             static cp := fn () -> void ( c = a ) ), mut v := pt ?, v.a = rational_number 1/2, \
              v.c = rational_number 1/3, v.cp(), print «{v.a} {v.c}»"
                 .to_string(),
             "1/2 1/2\n",
         ),
         (
-            "pt := type ( mut t := type ?, mut u := type ?, share swap := fn () -> void ( u = t ) ), \
+            "pt := type ( mut t := type ?, mut u := type ?, static swap := fn () -> void ( u = t ) ), \
              mut v := pt ?, v.t = i32, v.u = i64, v.swap(), v.u"
                 .to_string(),
             "i32\n",
@@ -6995,29 +7000,29 @@ fn a_share_function_reaches_each_field_of_a_plain_record_whole() {
         // Packed, `t` lies at an odd offset.
         (
             "pt := type ( mut c := i8 ?, mut t := type ?, mut u := type ?, \
-             share swap := fn () -> void ( u = t ) ), mut v := pt ?, v.c = 1, v.t = i32, v.u = i64, \
+             static swap := fn () -> void ( u = t ) ), mut v := pt ?, v.c = 1, v.t = i32, v.u = i64, \
              v.swap(), print «{v.c} {v.u}»"
                 .to_string(),
             "1 i32\n",
         ),
         (
             "q := type ( x := i32 ? ), pt := type ( mut a := q ?, mut b := i32 ?, \
-             share seta := fn () -> void ( a = q(9) ) ), mut v := pt ?, v.a = q(1), v.b = 2, v.seta(), \
+             static seta := fn () -> void ( a = q(9) ) ), mut v := pt ?, v.a = q(1), v.b = 2, v.seta(), \
              print «{v.a.x} {v.b}»"
                 .to_string(),
             "9 2\n",
         ),
         (
             format!(
-                "pt := type ( {ab}, share get := fn () -> rational_number ( a ) ), \
+                "pt := type ( {ab}, static get := fn () -> rational_number ( a ) ), \
                  f := fn () -> rational_number ( mut v := pt ?, v.a = rational_number 1/3, v.get() ), f()"
             ),
             "1/3\n",
         ),
         // A node a Logos `parse` built keeps a rational field as its operand node.
         (
-            "pt := type ( a := rational_number ?, output_type := type ?, share run = ( a ), \
-             share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = pt, \
+            "pt := type ( a := rational_number ?, output_type := type ?, static run = ( a ), \
+             static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = pt, \
              tape[0].a = rational_number 1/2, tape[0].output_type = rational_number, \
              tape.is_constructed[0] = true ) ), pt"
                 .to_string(),
@@ -7146,7 +7151,7 @@ fn a_bool_hole_is_a_bool_place_on_both_tiers() {
 
 #[test]
 fn free_and_move_read_the_type_a_dereference_gives_back() {
-    let r = "r := type ( mut p := own @i32 ?, share free = ( free p ) )";
+    let r = "r := type ( mut p := own @i32 ?, static free = ( free p ) )";
     let q = "q := alloc 1 of own @i32 ?, a := alloc 1 of i32 5, q@ = move a";
     let x = "mut x := r ?, a := alloc 1 of i32 5, x.p = move a";
     let src = format!("{q}, free q@, q@@");
@@ -7165,7 +7170,7 @@ fn free_and_move_read_the_type_a_dereference_gives_back() {
     }
     let (code, _, stderr) = run_line(&format!("{r}, {x}, b := move x.p, b@"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("the type of `x` fills its own `share free"), "stderr: {stderr}");
+    assert!(stderr.contains("the type of `x` fills its own `static free"), "stderr: {stderr}");
     for (src, want) in
         [(format!("{q}, b := move q@, b@"), "5\n"), ("x := 5, move x".to_string(), "5\n")]
     {
@@ -7324,7 +7329,7 @@ fn a_failed_repl_line_leaves_no_trace() {
     assert!(stderr.contains("unknown name `y`"), "stderr: {stderr}");
     // What the line's own lines hold ends at its fault; what an earlier line holds ends only
     // where the failing line reached its `free`.
-    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
     let (echoes, stderr) = repl(
         format!(
             "{bag}\nc := bag(7), error «boom»\nc\nk := bag(1)\nfree k, error «x»\n\
@@ -7368,7 +7373,7 @@ fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
     );
     assert_eq!(echoes, ["1"], "stderr: {stderr}");
     // The line's own holds still end at its fault, and the names it published roll back.
-    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
     let line_holds = format!("c := bag(1), {held}, d := bag(2), error «boom»");
     let (echoes, stderr) = repl(format!("{bag}\n{line_holds}\nh.n\n").as_bytes());
     assert_eq!(echoes, ["freed 2", "freed 1", "freed 9"], "stderr: {stderr}");
@@ -7434,7 +7439,7 @@ fn an_array_element_lands_by_the_element_type() {
 #[test]
 fn a_tape_line_no_check_narrowed_is_checked_through_a_record_pointer() {
     let q = "pt := type ( mut a := u64 ?, mut b := u64 ? ), \
-             q := type ( v := u64 ?, share parse_rank = 61, share parse = ( tape[0].type = q, \
+             q := type ( v := u64 ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
              p := alloc 1 of pt ?, p@.a = tape[1].dyads[0], tape[0].v = p@.a, \
              tape.remove(1), tape.is_constructed[0] = true ) )";
     let src = format!("{q}, x := q [5], x.v");

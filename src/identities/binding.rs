@@ -3,7 +3,7 @@
 
 //! A `binding`: one per declared name, the trie entry itself. The dyad the name
 //! denotes, the scope it was declared in, its range of life, its gate set, its
-//! spelling and its lex rank. Not the shared-member record a type carries (`meta`).
+//! spelling and its lex rank. Not the `static`-member record a type carries (`meta`).
 //! `#[repr(C)]`, so the `binding` type's field offsets are the struct's.
 
 use crate::dyad::DyadPtr;

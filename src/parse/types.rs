@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Type bodies: the field list, the slot fills and share members, a held `type (…)`
+//! Type bodies: the field list, the slot fills and `static` members, a held `type (…)`
 //! built at its run, and a run type's specialization and comptime fold.
 
 use super::*;
@@ -25,7 +25,7 @@ pub(super) struct OpenType {
     /// the type constructs it per field-type set.
     run_body: DyadPtr,
     /// The hidden receiver of the body being read, a parse's node or a `free`'s or
-    /// `share` function's value; null otherwise.
+    /// `static` function's value; null otherwise.
     pub(super) this_param: DyadPtr,
     /// `this_param` is a parse's node, whose fields are reached through `tape[0]`, never bare.
     pub(super) in_parse: bool,
@@ -36,15 +36,15 @@ pub(super) struct OpenType {
     /// The parse body read so far stamps a type it gets as it runs, so its node's fields are
     /// reached by name from here.
     pub(super) stamps_at_run: bool,
-    /// The `share` function being read has read a field of its value.
+    /// The `static` function being read has read a field of its value.
     pub(super) read_receiver: bool,
-    /// The `share` function being read has written a field of its value, itself or through a
+    /// The `static` function being read has written a field of its value, itself or through a
     /// bare call.
     pub(super) wrote_receiver: bool,
     /// The fields' scope and the fields declared so far: what a body written
     /// below them reaches by name.
     pub(super) block: (DyadPtr, Vec<DyadPtr>),
-    /// From a `share free = (…)` line: the `fn` over the value an owner's teardown runs.
+    /// From a `static free = (…)` line: the `fn` over the value an owner's teardown runs.
     instances_free: DyadPtr,
     /// A field declared `own` over a node's type, whose teardown the type's free must write.
     owns_node_field: bool,
@@ -142,7 +142,7 @@ impl<'a> Parser<'a> {
     /// A `fn`'s parameter list checks each name against every open scope, since
     /// the body reopens the list's scope; a type body's fields against their
     /// siblings alone (`relaxed`), where the list is the body itself, its
-    /// slot fills, `share` members and prose among the fields (DESIGN ›A type
+    /// slot fills, `static` members and prose among the fields (DESIGN ›A type
     /// body describes one level‹).
     /// Also the fields' bindings in order, the leading one's spelling-less; their offsets
     /// are the caller's to write once the record node exists.
@@ -204,9 +204,9 @@ impl<'a> Parser<'a> {
                     let at = self.cx.pos;
                     self.skip_prose()?;
                     if self.at_slot_word() {
-                        return Err(ParseError::SlotFillNeedsShare);
+                        return Err(ParseError::SlotFillNeedsStatic);
                     }
-                    if self.at_share_slot() {
+                    if self.at_static_slot() {
                         self.cx.pos = at;
                         self.lift_prose()?;
                         self.lex_spelling();
@@ -223,15 +223,15 @@ impl<'a> Parser<'a> {
             let word = self.cx.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
             // One place stored with the type, not a field of the layout; never a
             // parameter, which each call fills (DESIGN ›Two muts, and the storage partition‹).
-            if word == Some(self.types.share_) {
+            if word == Some(self.types.static_) {
                 if !relaxed {
                     self.cx.pos = start;
-                    return Err(ParseError::ShareMisplaced);
+                    return Err(ParseError::StaticMisplaced);
                 }
                 if self.at_slot_word() {
                     self.slot_line(self.cx.pos)?;
                 } else {
-                    self.share_member(start)?;
+                    self.static_member(start)?;
                 }
                 continue;
             }
@@ -262,7 +262,7 @@ impl<'a> Parser<'a> {
                     return Err(if declares {
                         ParseError::Resolve(ResolveError::Shadowed(name.to_string()))
                     } else {
-                        ParseError::SlotFillNeedsShare
+                        ParseError::SlotFillNeedsStatic
                     });
                 }
             }
@@ -339,7 +339,7 @@ impl<'a> Parser<'a> {
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = if relaxed {
                 // One block, one no-shadowing rule: a field is checked against
-                // the `share` members too, which live in the type's own scope.
+                // the `static` members too, which live in the type's own scope.
                 let body =
                     self.cx.definitions.last().expect("a relaxed field list is a type body").scope;
                 if self.cx.scopes.declared_in(self.trie, name, body).map_err(ParseError::Resolve)? {
@@ -368,20 +368,20 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `share name := value` in a type body: one place stored with the type,
+    /// `static name := value` in a type body: one place stored with the type,
     /// declared in the body scope (DESIGN ›Two muts, and the storage
     /// partition‹). The fields and the members stay one scope for no-shadowing.
-    fn share_member(&mut self, at: usize) -> Result<(), ParseError> {
+    fn static_member(&mut self, at: usize) -> Result<(), ParseError> {
         let body = match self.cx.definitions.last() {
             Some(def) => def.scope,
             None => {
                 self.cx.pos = at;
-                return Err(ParseError::ShareMisplaced);
+                return Err(ParseError::StaticMisplaced);
             }
         };
         if self.consume_token(self.types.declare_tok) {
             self.cx.pos = at;
-            return Err(ParseError::ShareNeedsDeclaration);
+            return Err(ParseError::StaticNeedsDeclaration);
         }
         // `=` writes what exists, so a fresh word before it names no slot.
         let word_at = self.cx.pos;
@@ -395,11 +395,11 @@ impl<'a> Parser<'a> {
         let field_scope = self.cx.scopes.pop().expect("the field list's scope is open");
         self.cx.last_declared = std::ptr::null_mut();
         let outer_member = self.cx.member_fn_depth.replace(self.cx.frames.len());
-        let items = self.share_line();
+        let items = self.static_line();
         self.cx.member_fn_depth = outer_member;
         self.cx.scopes.push(field_scope);
         // The line's one declaration, a member or a slot fill, with its prose
-        // lifted out beside it; anything else is not what `share` marks.
+        // lifted out beside it; anything else is not what `static` marks.
         let mut declared = None;
         for item in items? {
             // SAFETY: `item` is a reduced dyad just parsed.
@@ -411,12 +411,12 @@ impl<'a> Parser<'a> {
                 declared = Some(item);
             } else {
                 self.cx.pos = at;
-                return Err(ParseError::ShareNeedsDeclaration);
+                return Err(ParseError::StaticNeedsDeclaration);
             }
         }
         let Some(item) = declared else {
             self.cx.pos = at;
-            return Err(ParseError::ShareNeedsDeclaration);
+            return Err(ParseError::StaticNeedsDeclaration);
         };
         {
             // SAFETY: a declaration that fills no slot is `:=`'s, its lhs the binding.
@@ -433,9 +433,9 @@ impl<'a> Parser<'a> {
             let binding = self.cx.last_declared;
             if binding.is_null() {
                 self.cx.pos = at;
-                return Err(ParseError::ShareNeedsDeclaration);
+                return Err(ParseError::StaticNeedsDeclaration);
             }
-            self.add_gate(binding, self.types.share_)?;
+            self.add_gate(binding, self.types.static_)?;
         }
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.cx.scopes.settle_item(body, item) };
@@ -445,7 +445,7 @@ impl<'a> Parser<'a> {
     /// The first `parse_next` lexes and constructs the segment and queues
     /// what it yielded; the rest are taken while queued, before anything
     /// further is lexed, so none is left for the enclosing body's loop.
-    fn share_line(&mut self) -> Result<Vec<DyadPtr>, ParseError> {
+    fn static_line(&mut self) -> Result<Vec<DyadPtr>, ParseError> {
         let mut items = Vec::new();
         let Some(first) = self.parse_next() else {
             return Ok(items);
@@ -463,7 +463,7 @@ impl<'a> Parser<'a> {
         let body = self.cx.definitions.last().expect("a slot line is in a type body").scope;
         self.cx.pos = start;
         let field_scope = self.cx.scopes.pop().expect("the field list's scope is open");
-        let items = self.share_line();
+        let items = self.static_line();
         self.cx.scopes.push(field_scope);
         let mut filled = false;
         for item in items? {
@@ -524,14 +524,14 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// The next words are `share` and a slot word or `free`; nothing is consumed.
-    fn at_share_slot(&mut self) -> bool {
+    /// The next words are `static` and a slot word or `free`; nothing is consumed.
+    fn at_static_slot(&mut self) -> bool {
         let at = self.cx.pos;
         let word = self.lex_spelling().and_then(|(start, len)| {
             let source = self.cx.source;
             self.cx.scopes.resolve(self.trie, &source[start..start + len]).ok().map(|r| r.identity)
         });
-        let slot = word == Some(self.types.share_) && self.at_slot_word();
+        let slot = word == Some(self.types.static_) && self.at_slot_word();
         self.cx.pos = at;
         slot
     }
@@ -560,7 +560,7 @@ impl<'a> Parser<'a> {
 
     /// One body for one level (DESIGN ›A type body describes one level‹): its
     /// lines fill the type's slots, declare its values' fields, and declare
-    /// its `share` members; every other line must be prose, since nothing runs a type body later.
+    /// its `static` members; every other line must be prose, since nothing runs a type body later.
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
         if self.cx.runtime_depth > 0 {
             return self.hold_type_body();

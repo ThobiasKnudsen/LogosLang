@@ -81,7 +81,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A `share` function that writes a field of its value meets the gates `receiver.f = …`
+    /// A `static` function that writes a field of its value meets the gates `receiver.f = …`
     /// would (DESIGN ›There is no `this`‹).
     ///
     /// # Safety
@@ -105,7 +105,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `=` over a field of the value a `share` function is reading.
+    /// `=` over a field of the value a `static` function is reading.
     ///
     /// # Safety
     /// `target` must be a reduced dyad from the store.
@@ -249,7 +249,7 @@ impl<'a> Parser<'a> {
 
     /// The binding site made `binding` an owner: the scope that holds it runs its value's
     /// teardown at its end (DESIGN ›Holding is decided at the binding site, parameters
-    /// included‹). That scope is the name's own, or the program for a `share` place, which
+    /// included‹). That scope is the name's own, or the program for a `static` place, which
     /// lives as long as the program.
     pub(super) fn hold(&mut self, binding: DyadPtr) {
         let at =
@@ -587,7 +587,7 @@ impl<'a> Parser<'a> {
         Ok((root, field.binding))
     }
 
-    /// `name := value`, or `share name := value`: one place for every context
+    /// `name := value`, or `static name := value`: one place for every context
     /// that reaches the line, every call of the function around it and every
     /// pass of the loop around it, its value made once here at the definition;
     /// the line itself then only names it.
@@ -595,7 +595,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if !self.marked_share(tape) {
+        if !self.marked_static(tape) {
             return self.declare_here(tape);
         }
         let saved_init = self.cx.once_at.replace(self.cx.frames.len());
@@ -625,7 +625,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The bytes a declaration lays out belong to the program frame: outside every
-    /// function, in a held `type (…)` body built at run, in a `share` initializer.
+    /// function, in a held `type (…)` body built at run, in a `static` initializer.
     pub(super) fn in_program_frame(&self) -> bool {
         !self.in_fn_body() || self.cx.once_at == Some(self.cx.frames.len())
     }
@@ -659,8 +659,8 @@ impl<'a> Parser<'a> {
         self.cx.definitions.last().is_some_and(|def| self.cx.scopes.current() == Some(def.scope))
     }
 
-    /// The gate words left of the name being declared include `share`.
-    fn marked_share(&self, tape: &ParsingTape) -> bool {
+    /// The gate words left of the name being declared include `static`.
+    fn marked_static(&self, tape: &ParsingTape) -> bool {
         let t = self.types;
         let mut k = -2;
         while let Some(cell) = tape.at(k) {
@@ -668,7 +668,7 @@ impl<'a> Parser<'a> {
                 return false;
             }
             let id = cell.identity(t);
-            if id == t.share_ {
+            if id == t.static_ {
                 return true;
             }
             if id != t.mut_ && id != t.pub_ && id != t.immut_ {

@@ -112,7 +112,7 @@ pub fn parse_message(e: &ParseError) -> String {
              `mut x := i32 5`, to make a place"
         ),
         ParseError::GateNeedsDeclaration => {
-            "a gate word (`pub`, `mut`, `immut`, `share`) must be followed by a declaration".into()
+            "a gate word (`pub`, `mut`, `immut`, `static`) must be followed by a declaration".into()
         }
         ParseError::DoubleGate => "this gate word already stands on the declaration".into(),
         ParseError::Immutable(name) => {
@@ -198,19 +198,19 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TypeBodyLine => {
-            "a type body line fills a slot (`share parse_rank = …`, `share parse = (…)`), declares a field (`x := i32 ?`) or a member (`share y := 3`), or is prose".into()
+            "a type body line fills a slot (`static parse_rank = …`, `static parse = (…)`), declares a field (`x := i32 ?`) or a member (`static y := 3`), or is prose".into()
         }
-        ParseError::ShareMisplaced => {
-            "`share` stands at the start of a type body's line, `share y := 3`, never on a parameter, which each call fills".into()
+        ParseError::StaticMisplaced => {
+            "`static` stands at the start of a type body's line, `static y := 3`, never on a parameter, which each call fills".into()
         }
-        ParseError::SlotFillNeedsShare => {
-            "a slot is stored once per type, so its fill says so: `share parse = (…)`".into()
+        ParseError::SlotFillNeedsStatic => {
+            "a slot is stored once per type, so its fill says so: `static parse = (…)`".into()
         }
         ParseError::OnceReadsUnmade => {
-            "a value made once, where it is written (`share`, `immediate`), cannot use a name that has no value there yet: a parameter or local of the function around it, or a name of the loop or branch around it".into()
+            "a value made once, where it is written (`static`, `immediate`), cannot use a name that has no value there yet: a parameter or local of the function around it, or a name of the loop or branch around it".into()
         }
-        ParseError::ShareNeedsDeclaration => {
-            "`share` must be followed by a declaration or a slot fill, `share name := value`".into()
+        ParseError::StaticNeedsDeclaration => {
+            "`static` must be followed by a declaration or a slot fill, `static name := value`".into()
         }
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
         ParseError::TypeKnownOnlyAtRun => {
@@ -239,13 +239,13 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::BadAssociativity => "associativity is `left` or `right`".into(),
         ParseError::SlotNeedsBody(SlotKind::Parse) => {
-            "`parse` is a bare body over the tape, `share parse = (…)`".into()
+            "`parse` is a bare body over the tape, `static parse = (…)`".into()
         }
         ParseError::SlotNeedsBody(SlotKind::Free) => {
-            "`free` is a bare body over the value, `share free = (…)`".into()
+            "`free` is a bare body over the value, `static free = (…)`".into()
         }
         ParseError::SlotNeedsBody(_) => {
-            "`run` is a bare body over the value's fields, `share run = (…)`".into()
+            "`run` is a bare body over the value's fields, `static run = (…)`".into()
         }
         ParseError::NoSuchField(name) => {
             format!("no field `{name}` is declared above in the type body")
@@ -259,8 +259,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::StampNeedsType => {
             "`tape[0].type = T` takes a type: a type's name, or a call that gives one".into()
         }
-        ParseError::ShareFnNeedsValue(name) => format!(
-            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `free` or `share` functions; a parse calls bare only a function that reads no field"
+        ParseError::StaticFnNeedsValue(name) => format!(
+            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `free` or `static` functions; a parse calls bare only a function that reads no field"
         ),
         ParseError::FlagTakesBool => {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
@@ -272,13 +272,13 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("the run body of `{name}` could not be constructed for these field types:\n{rendered}")
         }
         ParseError::SlotOutsideDefinition => {
-            "a slot is filled on a line of the type body itself: `share parse_rank = …`, `share run = (…)`".into()
+            "a slot is filled on a line of the type body itself: `static parse_rank = …`, `static run = (…)`".into()
         }
         ParseError::PerNodeThroughType(name) => format!(
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),
         ParseError::LexRankNeedsName => {
-            "lex_rank is the name's: write it in a declaration, `x := type (share lex_rank = …)`, \
+            "lex_rank is the name's: write it in a declaration, `x := type (static lex_rank = …)`, \
              or on the name, `x:lex_rank = …`"
                 .into()
         }
@@ -318,7 +318,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::UnfollowedPath => {
             "this field is reached through a pointer, an element, a value no name holds, a name \
-             that borrows it or a `share` function's own value, so nothing here can end it: \
+             that borrows it or a `static` function's own value, so nothing here can end it: \
              `move` and `free` take a field through the name that holds it, `move x.p`"
                 .into()
         }
@@ -331,7 +331,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::EndUnderFree(spelled) => {
             let (path, holder) = &**spelled;
             format!(
-                "the type of `{holder}` fills its own `share free = (…)`, which frees `{path}` with \
+                "the type of `{holder}` fills its own `static free = (…)`, which frees `{path}` with \
                  the rest of `{holder}`: `move` and `free` cannot take `{path}` out alone; free \
                  `{holder}` whole"
             )
@@ -380,11 +380,11 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::NoSuchSlot(name) => format!(
-            "`{name}` names no slot: a type body fills `share parse = (…)`, `share run = (…)`, \
-             `share free = (…)` and its ranks, and declares a member of its own, `share {name} := …`"
+            "`{name}` names no slot: a type body fills `static parse = (…)`, `static run = (…)`, \
+             `static free = (…)` and its ranks, and declares a member of its own, `static {name} := …`"
         ),
         ParseError::OwningFieldNeedsFree => {
-            "a field declared `own` must be freed by the type's `share free = (…)`, which this \
+            "a field declared `own` must be freed by the type's `static free = (…)`, which this \
              type body does not fill"
                 .into()
         }

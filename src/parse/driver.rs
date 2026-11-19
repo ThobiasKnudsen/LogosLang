@@ -405,7 +405,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `None` for an inert cell (a value, a delimiter). The identity's own
-    /// slot first; failing that, its type's shared instance constructor,
+    /// slot first; failing that, its type's `static` instance constructor,
     /// application (DESIGN ›The constructor is a field‹).
     pub(super) fn ctor_of(&self, id: DyadPtr) -> Option<ConstructFn> {
         // SAFETY: `id` is a resolved dyad from the store.
@@ -605,7 +605,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A `share` function of a type body, whose first parameter is the value it works on.
+    /// A `static` function of a type body, whose first parameter is the value it works on.
     ///
     /// # Safety
     /// `f` must be a resolved dyad from the store.

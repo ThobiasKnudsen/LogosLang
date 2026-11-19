@@ -13,9 +13,9 @@ use crate::store::Store;
 use crate::Core;
 
 /// The member that holds what a type's nodes give back (›A mint's output type is written in its
-/// `share output_type` declaration; a type that does not mint has its parse write it into each
+/// `static output_type` declaration; a type that does not mint has its parse write it into each
 /// node‹ [[R194]]).
-pub(crate) const SHARED_FIELD: &str = "output_type";
+pub(crate) const STATIC_FIELD: &str = "output_type";
 
 /// A built-in's mint for the field types `key`, made the first time and kept on `origin`. The
 /// parse that chooses it gives the type its nodes give back and the operation they run; the
@@ -110,8 +110,8 @@ pub(crate) unsafe fn output_type_of(t: DyadPtr) -> Option<DyadPtr> {
 ///
 /// # Safety
 /// As `is_mint`.
-pub(crate) unsafe fn shared_field(t: DyadPtr, name: &str) -> Option<DyadPtr> {
-    output_type_of(t).filter(|t| name == SHARED_FIELD && !t.is_null())
+pub(crate) unsafe fn static_field(t: DyadPtr, name: &str) -> Option<DyadPtr> {
+    output_type_of(t).filter(|t| name == STATIC_FIELD && !t.is_null())
 }
 
 /// What every node of the mint `t` runs; `None` when `t` is no mint.

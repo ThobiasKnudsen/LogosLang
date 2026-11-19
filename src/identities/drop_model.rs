@@ -1067,7 +1067,7 @@ pub(crate) unsafe fn ended_at_run(rt: &Runtime, place: DyadPtr) -> bool {
 /// The one teardown of the value a held place holds, the `free` slot of the place's type run
 /// over it: an owning pointer's destructor frees its block, a type that fills `free` runs it
 /// over the value, a node by its address and a plain record by its bytes' address, as a
-/// `share` function takes its receiver. A place holding an address is NULL from here; one
+/// `static` function takes its receiver. A place holding an address is NULL from here; one
 /// already NULL frees nothing.
 ///
 /// # Safety
@@ -1995,7 +1995,7 @@ mod tests {
 
     /// `x`, a record with two owning fields, `p` holding 5 and `q` 6.
     const PAIR: &str = "r := type ( mut p := own @i32 ?, mut q := own @i32 ?, \
-        share free = ( free p, free q ), share s := fn () -> i32 ( 2 ) ),\n\
+        static free = ( free p, free q ), static s := fn () -> i32 ( 2 ) ),\n\
         mut x := r ?,\na := alloc 1 of i32 5,\nx.p = move a,\nb := alloc 1 of i32 6,\nx.q = move b,\n";
 
     #[test]
@@ -2016,7 +2016,7 @@ mod tests {
     }
 
     /// `q`, a record whose type fills no `free`, `x` holding 5 and `y` 6.
-    const PLAIN: &str = "r := type ( x := i32 ?, y := i32 ?, share s := fn () -> i32 ( 2 ) ),\n\
+    const PLAIN: &str = "r := type ( x := i32 ?, y := i32 ?, static s := fn () -> i32 ( 2 ) ),\n\
         q := r (5, 6),\n";
 
     #[test]
@@ -2054,15 +2054,15 @@ mod tests {
     const BAG: &str = "import ./identities/array.logos, t := array i32, \
         bagged := type ( \
             mut items := own t ?, \
-            share free = ( free items ), \
-            share parse_rank = dyad.parse_rank, \
-            share parse = ( tape.is_constructed[0] = true ) ), \
+            static free = ( free items ), \
+            static parse_rank = dyad.parse_rank, \
+            static parse = ( tape.is_constructed[0] = true ) ), \
         bag := type ( \
             output_type := type ?, \
-            share run = ( mut v := output_type ?, v.items = array i32 [4, 5, 6], move v ), \
-            share parse_rank = dyad.parse_rank, \
-            share associativity = left, \
-            share parse = ( \
+            static run = ( mut v := output_type ?, v.items = array i32 [4, 5, 6], move v ), \
+            static parse_rank = dyad.parse_rank, \
+            static associativity = left, \
+            static parse = ( \
                 if tape[1].type == scope ( \
                     tape[0].type = bag, tape[0].output_type = bagged, tape.remove(1) \
                 ) else ( tape[0] = bagged ), \
@@ -2091,7 +2091,7 @@ mod tests {
             assert_eq!(run(&format!("{BAG}{tail}")), (1, 0), "{tail}");
         }
         // The count sees the array: a free that leaves the field alone leaks its one block.
-        let forgetful = BAG.replace("share free = ( free items )", "share free = ( 0 )");
+        let forgetful = BAG.replace("static free = ( free items )", "static free = ( 0 )");
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
@@ -2206,7 +2206,7 @@ mod tests {
             ParseError::Resolve(ResolveError::Unknown("drop".into()))
         );
         assert_eq!(
-            parse_err("t := type ( a := i32 ?, share drop = ( 0 ) ),\n1"),
+            parse_err("t := type ( a := i32 ?, static drop = ( 0 ) ),\n1"),
             ParseError::NoSuchSlot("drop".into())
         );
         assert_eq!(
@@ -2583,10 +2583,10 @@ mod tests {
     fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                a := i32 ?, b := i32 ?, output_type := type ?, share run = ( a * b * n ),\n\
-                share parse_rank = *.parse_rank + 1,\n\
-                share associativity = right,\n\
-                share parse = (\n\
+                a := i32 ?, b := i32 ?, output_type := type ?, static run = ( a * b * n ),\n\
+                static parse_rank = *.parse_rank + 1,\n\
+                static associativity = right,\n\
+                static parse = (\n\
                     tape[0].type = ^, tape[0].a = tape[-1],\n\
                     tape[0].b = tape[1],\n\
                     tape[0].output_type = i32,\n\

@@ -136,10 +136,10 @@ struct Context<'a> {
     held_depth: usize,
     /// A cell the branch about to open is checked against a type, with that type.
     narrow_next: Option<(CellKey, DyadPtr)>,
-    /// While a `share` line of a type body is read, the frame depth a
+    /// While a `static` line of a type body is read, the frame depth a
     /// `fn` written as the member's value opens at: that `fn` takes the value first.
     member_fn_depth: Option<usize>,
-    /// While a `share` name's value or an `immediate` operand parses: the frame depth
+    /// While a `static` name's value or an `immediate` operand parses: the frame depth
     /// it stands at. It runs once, at the definition, so its places are global
     /// and no call's slot is in reach (DESIGN ›Two muts, and the storage partition‹).
     once_at: Option<usize>,

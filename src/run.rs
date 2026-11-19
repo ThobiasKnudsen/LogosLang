@@ -133,7 +133,7 @@ pub struct Context {
     /// The calls in flight across both tiers: the interpreter and each compiled
     /// prologue count in and out, and both refuse the frame past [`MAX_CALL_DEPTH`].
     pub depth: usize,
-    /// The program frame's base, the store's arena: a top-level or `share` place is an
+    /// The program frame's base, the store's arena: a top-level or `static` place is an
     /// offset from it.
     pub root: *mut u8,
     /// How many faults were parked in this run, never reset: compiled code leaves the moment
