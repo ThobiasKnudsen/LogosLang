@@ -265,10 +265,32 @@ fn act(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> D
     store.alloc_words(op, &v)
 }
 
+/// A plain number written as an index lands in `i64`, as a plain number lands in any number type
+/// (›The tape is a cheap view with a movable center, over a doubly linked list‹ [[R250]]); any
+/// other index stands as written.
+///
+/// # Safety
+/// `k` must be null or a reduced dyad from the store.
+unsafe fn index(store: &mut Store, types: &Core, k: DyadPtr) -> Result<DyadPtr, ParseError> {
+    if k.is_null() || !matches!(super::operand_of(types, k), super::Operand::Literal) {
+        return Ok(k);
+    }
+    super::land(store, types, k, types.numtypes[NumType::I64 as usize])
+}
+
 /// `t[k]`: read, the cell's pointer; as `=`'s target, the write (`build_write`).
-pub(crate) fn build_slot(store: &mut Store, types: &Core, recv: DyadPtr, k: DyadPtr) -> DyadPtr {
+///
+/// # Safety
+/// `recv` and `k` must be reduced dyads from the store.
+pub(crate) unsafe fn build_slot(
+    store: &mut Store,
+    types: &Core,
+    recv: DyadPtr,
+    k: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    let k = index(store, types, k)?;
     let output = at_dyad(store, types);
-    node(store, types.tape.slot, types.tape.slot_leaf, &[recv, k], output)
+    Ok(node(store, types.tape.slot, types.tape.slot_leaf, &[recv, k], output))
 }
 
 /// The cell takes the node placing makes of `cell` when the write runs.
@@ -394,12 +416,8 @@ pub(crate) unsafe fn cell_key(types: &Core, over: DyadPtr) -> Option<(DyadPtr, i
     if k.is_null() {
         return Some((recv, -1, line_of(types, i)?));
     }
-    let k = types.through(k);
-    if dyad::ty(k) != types.rational {
-        return None;
-    }
-    let line = line_of(types, i)?;
-    super::rational::mold(k).map(|k| (recv, k, line))
+    let k = constant_of(types, types.through(k), types.numtypes[NumType::I64 as usize])?;
+    Some((recv, i32::try_from(k).ok()?, line_of(types, i)?))
 }
 
 /// # Safety
@@ -409,10 +427,9 @@ unsafe fn line_of(types: &Core, i: DyadPtr) -> Option<Line> {
         return Some(Line::Cell);
     }
     let i = types.through(i);
-    Some(if dyad::ty(i) == types.rational {
-        Line::At(super::rational::mold(i)?)
-    } else {
-        Line::Named(i)
+    Some(match constant_of(types, i, types.numtypes[NumType::I64 as usize]) {
+        Some(at) => Line::At(i32::try_from(at).ok()?),
+        None => Line::Named(i),
     })
 }
 
@@ -424,15 +441,19 @@ pub(crate) fn build_bracket_dyads(store: &mut Store, types: &Core, held: DyadPtr
 }
 
 /// `b.dyads[i]` of a bracket `b` a call was handed.
-pub(crate) fn build_bracket_line(
+///
+/// # Safety
+/// `i` must be a reduced dyad from the store.
+pub(crate) unsafe fn build_bracket_line(
     store: &mut Store,
     types: &Core,
     held: DyadPtr,
     i: DyadPtr,
-) -> DyadPtr {
+) -> Result<DyadPtr, ParseError> {
+    let i = index(store, types, i)?;
     let output = at_dyad(store, types);
     let ops = [held, std::ptr::null_mut(), i];
-    node(store, types.tape.cell_dyad_at, types.tape.cell_dyad_at_leaf, &ops, output)
+    Ok(node(store, types.tape.cell_dyad_at, types.tape.cell_dyad_at_leaf, &ops, output))
 }
 
 /// # Safety
@@ -481,10 +502,11 @@ pub(crate) unsafe fn build_cell_dyad_at(
     types: &Core,
     slot: DyadPtr,
     i: DyadPtr,
-) -> DyadPtr {
+) -> Result<DyadPtr, ParseError> {
     let (recv, k) = slot_parts(slot);
+    let i = index(store, types, i)?;
     let output = at_dyad(store, types);
-    node(store, types.tape.cell_dyad_at, types.tape.cell_dyad_at_leaf, &[recv, k, i], output)
+    Ok(node(store, types.tape.cell_dyad_at, types.tape.cell_dyad_at_leaf, &[recv, k, i], output))
 }
 
 /// `flag` is a bool, checked by `=`.
@@ -519,6 +541,7 @@ pub(crate) unsafe fn build_member(
         let [k, cells] = args[..] else {
             return Err(ParseError::CtorArity);
         };
+        let k = index(store, types, k)?;
         let cells = if super::lex::is_fragment(types, cells) {
             cells
         } else {
@@ -530,6 +553,7 @@ pub(crate) unsafe fn build_member(
     let [k] = args[..] else {
         return Err(ParseError::CtorArity);
     };
+    let k = index(store, types, k)?;
     if op == ids.recenter {
         return Ok(act(store, op, leaf, &[recv, k]));
     }

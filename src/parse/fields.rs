@@ -90,7 +90,7 @@ impl<'a> Parser<'a> {
         use crate::identities::tape;
         let types = self.types;
         let ops = dyad::value(target) as *const DyadPtr;
-        let cell = tape::build_slot(self.rt.store, types, *ops, *ops.add(1));
+        let cell = tape::build_slot(self.rt.store, types, *ops, *ops.add(1))?;
         if !self.is_node_cell(cell) || !(*ops.add(2)).is_null() {
             return Err(ParseError::StampOutsideParse);
         }
@@ -468,7 +468,7 @@ impl<'a> Parser<'a> {
                     let Some(i) = key else {
                         return Ok((tape::build_cell_dyads(store, types, lhs), 0));
                     };
-                    let line = tape::build_cell_dyad_at(store, types, lhs, i);
+                    let line = tape::build_cell_dyad_at(store, types, lhs, i)?;
                     return Ok((self.narrowed_read(line), 1));
                 }
                 if dyad::ty(lhs) == types.tape.cell_dyads && name == "size" {
@@ -481,7 +481,7 @@ impl<'a> Parser<'a> {
                     let Some(i) = key else {
                         return Ok((tape::build_bracket_dyads(store, types, lhs), 0));
                     };
-                    let line = tape::build_bracket_line(store, types, lhs, i);
+                    let line = tape::build_bracket_line(store, types, lhs, i)?;
                     return Ok((self.narrowed_read(line), 1));
                 }
             }
@@ -843,7 +843,10 @@ impl<'a> Parser<'a> {
                 let recv =
                     unsafe { crate::identities::tape::receiver_addr(self.rt.store, types, lhs) };
                 if let Some(recv) = recv {
-                    let slot = crate::identities::tape::build_slot(self.rt.store, types, recv, key);
+                    // SAFETY: `recv` and `key` are reduced dyads from the store.
+                    let slot = unsafe {
+                        crate::identities::tape::build_slot(self.rt.store, types, recv, key)
+                    }?;
                     // SAFETY: `slot` is the slot node just built.
                     let node = unsafe { self.narrowed_read(slot) };
                     tape.remove(-1);

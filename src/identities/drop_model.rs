@@ -324,7 +324,8 @@ pub(crate) unsafe fn heap_free(ptr: *mut u8) {
 }
 
 /// The pointee is the value's own type (`alloc 2 of i32 5` allocates two `i32`), `u8` with
-/// no value; the count must be an integer. Each cell is the place the value is copied into, as
+/// no value; the count must be an integer, a plain number landing in `u64` (›Explicit heap:
+/// `alloc n` and `alloc n of T v`‹ [[R56]]). Each cell is the place the value is copied into, as
 /// a declaration's is; a value no place holds whole is rejected.
 pub(super) fn build_alloc(
     store: &mut Store,
@@ -334,13 +335,18 @@ pub(super) fn build_alloc(
 ) -> Result<DyadPtr, ParseError> {
     use crate::identities::Operand;
     // SAFETY: `count` and `init` are reduced dyads just parsed.
-    unsafe {
+    let count = unsafe {
         match crate::identities::operand_of(types, count) {
-            Operand::Literal => {}
-            Operand::Concrete(nt) if !nt.is_float() => {}
+            Operand::Literal => crate::identities::land(
+                store,
+                types,
+                count,
+                types.numtypes[numtype::NumType::U64 as usize],
+            )?,
+            Operand::Concrete(nt) if !nt.is_float() => count,
             _ => return Err(ParseError::UnsupportedOperands),
         }
-    }
+    };
     let pointee = match init {
         None => types.numtypes[numtype::NumType::U8 as usize],
         // SAFETY: as above.
@@ -1388,18 +1394,21 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an `alloc` node `[count, init]` from the store, under its mint.
     unsafe {
         let slots = dyad::value(node) as *const DyadPtr;
-        let Some(&[_, pointee]) = super::mint::key_of(dyad::ty(node)) else {
+        let Some(&[count_type, pointee]) = super::mint::key_of(dyad::ty(node)) else {
             unreachable!("an `alloc` is typed by its mint for its count's type and pointee");
         };
         let count = rt.run(*slots.add(ALLOC_COUNT))?;
-        if count < 0 {
+        // A `u64` count past `i64::MAX` comes back as a negative word.
+        if count < 0 && numtype::of_type_node(count_type).is_signed_int() {
             return Err(RunError::BadCount(count));
         }
         let init = *slots.add(ALLOC_INIT);
         let carry = super::read::carry_of(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
         let taken = if init.is_null() { None } else { Some(super::assign::take(rt, carry, init)?) };
         let width = carry.width();
-        let count = count as usize;
+        let Ok(count) = usize::try_from(count as u64) else {
+            return Err(RunError::OutOfMemory);
+        };
         let Some(total) = count.checked_mul(width) else {
             return Err(RunError::OutOfMemory);
         };
@@ -1855,6 +1864,17 @@ mod tests {
         assert!(matches!(
             try_run("n := i32 0 - 1,\na := alloc n of i32 1,\n1"),
             Err(RunError::BadCount(-1))
+        ));
+    }
+
+    #[test]
+    fn a_plain_number_count_lands_in_u64() {
+        assert_eq!(run("a := alloc 3000000000 of u8 0,\n7"), (7, 0));
+        assert_eq!(parse_err("a := alloc -1 of u8 0"), ParseError::UncomputableLiteral);
+        // A `u64` count past `i64::MAX` is too big a block, never a negative one.
+        assert!(matches!(
+            try_run("n := u64 lossy (i64 -1),\na := alloc n of u8 0,\n1"),
+            Err(RunError::OutOfMemory)
         ));
     }
 
