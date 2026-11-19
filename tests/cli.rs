@@ -2054,8 +2054,45 @@ fn a_declared_hashmap_is_empty_and_readable_at_once() {
 }
 
 #[test]
+fn a_hashmap_holds_maps_as_copies_of_their_own() {
+    let (echoes, stderr) = repl(
+        b"pm := hashmap type -> hashmap type -> type\n\
+          mut row := hashmap type -> type\n\
+          row[i64] = f32\n\
+          pm[i32] = row\n\
+          row[i64] = f64\n\
+          mut back := pm[i32]\n\
+          back[i64] == f32\n\
+          mut empty := hashmap type -> type\n\
+          pm[u8] = empty\n\
+          empty[i64] = f32\n\
+          mut none := pm[u8]\n\
+          none[i64] == ?\n\
+          keep := fn (l := type ?, r := type ?) -> i32 ( mut m := hashmap type -> type, m[r] = f64, pm[l] = m, 0 )\n\
+          keep(i16, i8)\n\
+          mut kept := pm[i16]\n\
+          kept[i8] == f64\n\
+          deep := hashmap type -> hashmap type -> hashmap type -> type\n\
+          mut b := hashmap type -> hashmap type -> type\n\
+          b[u16] = row\n\
+          deep[u32] = b\n\
+          mut b2 := deep[u32]\n\
+          mut a2 := b2[u16]\n\
+          a2[i64] == f64\n",
+    );
+    assert_eq!(echoes, ["true", "true", "0", "true", "true"], "stderr: {stderr}");
+}
+
+#[test]
 fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
-    for line in ["hashmap i32 i32", "hashmap f64 -> i32", "hashmap i32 -> bool", "hashmap i32"] {
+    for line in [
+        "hashmap i32 i32",
+        "hashmap f64 -> i32",
+        "hashmap i32 -> bool",
+        "hashmap i32",
+        "hashmap hashmap type -> type -> type",
+        "hashmap type -> hashmap type -> f64",
+    ] {
         let (_echoes, stderr) = repl(format!("{line}\n").as_bytes());
         assert!(stderr.contains("`hashmap` is followed by `K -> V`"), "{line}: {stderr}");
     }

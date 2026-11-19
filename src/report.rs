@@ -135,7 +135,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::HashmapShape => {
             "`hashmap` is followed by `K -> V`: a key type, `->`, a value type, each `type`, \
-             `dyad` or an integer type"
+             `dyad` or an integer type, and the value type also a map, `hashmap K2 -> V2`"
                 .into()
         }
         ParseError::InsertTakesTape => {
@@ -465,7 +465,9 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoTape => "there is no tape behind this receiver".into(),
         RunError::OffTape => "this index is off the tape".into(),
         RunError::MissingKey => {
-            "the map holds no value at this key, and a number cannot be the unknown `?`".into()
+            "the map holds no value at this key, and a value of its value type cannot be the \
+             unknown `?`"
+                .into()
         }
         RunError::NoName => "this cell holds no name".into(),
         RunError::CellNotAType => {
