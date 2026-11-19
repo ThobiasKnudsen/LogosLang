@@ -1007,11 +1007,13 @@ impl<'a> Parser<'a> {
             Some(cell) => {
                 // A fresh name to the left is not a type; leave it for the
                 // boundary's own report. An operator still waiting for its
-                // turn (`x != ?`) is no type either.
+                // turn (`x != ?`), or a word such as `lossy`, is no type either;
+                // which is which by its rank, stand-in for #286.
                 let left = self.cell_identity(&cell);
                 let waiting = !cell.constructed
                     && self.ctor_of(left).is_some()
-                    && self.precedence_of_cell(left) < crate::identities::meta::prec::CONVERT;
+                    && (self.precedence_of_cell(left) < crate::identities::meta::prec::CONVERT
+                        || self.is_delimiter(left));
                 if cell.is_fresh(types) || waiting {
                     None
                 } else {

@@ -344,6 +344,7 @@ mod tests {
             ("i32", prec::CONVERT, true),
             ("f64", prec::CONVERT, true),
             ("rational_number", prec::CONVERT, true),
+            ("lossy", prec::CONVERT, true),
             ("bool", prec::INERT, false),
             ("void", prec::INERT, false),
         ];
@@ -548,6 +549,10 @@ mod tests {
             assert_eq!(meta::parse_rank_of(core.times), prec::MULTIPLICATIVE);
             assert_eq!(meta::parse_rank_of(core.assign), prec::DECLARE);
             assert_eq!(meta::assoc_of(core.assign), Assoc::Right);
+            for id in [core.i32_, core.rational, core.lossy] {
+                assert_eq!(meta::parse_rank_of(id), prec::CONVERT);
+                assert_eq!(meta::assoc_of(id), Assoc::Right);
+            }
             assert_eq!(meta::parse_rank_of(core.lt), prec::COMPARE);
             assert_eq!(meta::parse_rank_of(core.eq), prec::EQUALITY);
 

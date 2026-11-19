@@ -100,8 +100,9 @@ pub(crate) mod prec {
     pub const APPLY: f64 = 91.0;
     /// `?`: above a type that takes a value, so `i32 ?` takes `i32` as the type it is a place of.
     pub const HOLE: f64 = 87.0;
-    /// A type taking the value to its right, `i64 m`: below `(` and `?`, above `&` and the prefix
-    /// words, `lossy` among them. ›A parse is ranked by what it takes from its right‹ [[R116]].
+    /// A type taking the value to its right, `i64 m`, and `lossy` between it and the value: below
+    /// `(` and `?`, above `&` and the prefix words. ›A parse is ranked by what it takes from its
+    /// right‹ [[R116]].
     pub const CONVERT: f64 = 86.0;
     /// `.`, `:`, `@`: the tight reads of the cell to their left, above the readers and
     /// below `:=`/`=`; the right cell is lexed lazily inside the constructor.

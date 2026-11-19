@@ -277,7 +277,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `Cell::identity` through `settled_type`: what the driver dispatches on.
-    pub(super) fn cell_identity(&self, cell: &Cell) -> DyadPtr {
+    pub(crate) fn cell_identity(&self, cell: &Cell) -> DyadPtr {
         self.settled_type(cell.identity(self.types))
     }
 

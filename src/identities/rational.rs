@@ -18,11 +18,16 @@ use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
 
-/// The type, ranked as a type taking a value, and the plain number, an identity of its own built
-/// as it is lexed, whose node is of the type (›Unknown spellings are two pattern identities‹
-/// [[R252]]).
+/// The type, ranked and associating as a number type does, and the plain number, an identity of
+/// its own built as it is lexed, whose node is of the type (›Unknown spellings are two pattern
+/// identities‹ [[R252]]).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, meta::FRACTION_TAG, meta::prec::CONVERT);
+    let record = meta::record_assoc(
+        cx.store,
+        meta::FRACTION_TAG,
+        meta::prec::CONVERT,
+        crate::parse::Assoc::Right,
+    );
     let id = cx.store.alloc_head(cx.type_, record);
     // `rational_number ?` is a place of the type, `rational_number 1` the literal as a runtime
     // value.

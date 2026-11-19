@@ -35,10 +35,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// An identity whose record is a parse-only token with no constructor
-    /// (`)`, `,`, `->`, `else`, `in`, `..`): read by the constructs that
-    /// spell them, never an operand.
-    fn is_delimiter(&self, id: DyadPtr) -> bool {
+    /// An identity whose record is a parse-only token, of which no value exists: `)`, `,`, `->`,
+    /// `else`, `in`, `..`, read by the constructs that spell them, and words such as `lossy`.
+    /// Never an operand, and never a type.
+    pub(super) fn is_delimiter(&self, id: DyadPtr) -> bool {
         // SAFETY: `id` is null or a resolved identity from the store.
         unsafe {
             !id.is_null()
@@ -74,14 +74,16 @@ impl<'a> Parser<'a> {
         if open && self.applied_to_bracket(last) {
             return false;
         }
+        // A type by its rank, stand-in for #286.
         let readers = cells
             .iter()
             .rev()
             .take_while(|c| {
+                let id = self.cell_identity(c);
                 !c.constructed
                     && !self.ends_value(c)
-                    && self.precedence_of_cell(self.cell_identity(c))
-                        >= crate::identities::meta::prec::CONVERT
+                    && self.precedence_of_cell(id) >= crate::identities::meta::prec::CONVERT
+                    && !self.is_delimiter(id)
             })
             .count();
         let Some(before) = cells.len().checked_sub(readers + 1).map(|k| cells[k]) else {

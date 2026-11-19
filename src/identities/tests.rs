@@ -4041,12 +4041,58 @@ fn a_written_conversion_is_checked_as_an_unwritten_one() {
 
 #[test]
 fn lossy_stands_only_between_a_number_type_and_its_value() {
-    for src in ["x := lossy (f64 2.5)", "lossy 1", "x := i32 lossy, 0"] {
+    for src in [
+        "x := lossy (f64 2.5)",
+        "lossy 1",
+        "x := i32 lossy, 0",
+        "i32 lossy lossy (f64 2.5)",
+        "rational_number lossy 2.5",
+        "m := f64 2.5, i32 lossy -m",
+        "pt := type (a := i32 ?, b := i32 ?), pt lossy (f64 2.5)",
+    ] {
         assert_eq!(script_parse_err(src), ParseError::LossyOutOfPlace, "{src}");
     }
     assert_eq!(script_parse_err("n := i32 lossy ?, 0"), ParseError::TypeMismatch);
     assert_eq!(parse_err("i32 lossy (true)"), ParseError::TypeMismatch);
     assert_eq!(parse_err("i32 lossy (1, 2)"), ParseError::BadCast);
+}
+
+#[test]
+fn number_types_take_the_value_to_their_right_rightmost_first_on_both_tiers() {
+    for (src, want) in [
+        ("fn () -> i64 ( i64 i32 5 )", 5),
+        ("fn () -> i64 ( i64 i32 -5 )", -5),
+        ("fn () -> i32 ( i32 lossy f64 2.5 )", 2),
+        ("fn () -> i32 ( i32 lossy i64 5000000000 )", 705032704),
+    ] {
+        diff_nullary_fn(src, want);
+    }
+    diff_nullary_fn("fn () -> f64 ( f64 i32 5 )", 5.0f64.to_bits() as i64);
+    diff_typed_call("fn (x := f64 ?) -> i32 ( i32 lossy f64 lossy (x) )", "f(2.5)", 2);
+    assert_eq!(run_script("i32 lossy rational_number 5"), 5);
+    assert_eq!(run_script("i32 lossy rational_number rational_number 5"), 5);
+    for src in ["i32 i64 5", "i32 f64 2.5", "f64 rational_number 5"] {
+        assert_eq!(script_parse_err(src), ParseError::TypeMismatch, "{src}");
+    }
+}
+
+#[test]
+fn a_lossy_value_converts_where_a_comparison_or_an_operation_reads_it() {
+    for (src, want) in [
+        ("x := f64 2.5, if i32 2 == i32 lossy (x) (1) else (0)", 1),
+        ("x := f64 2.5, if i32 2 == i32 lossy x (1) else (0)", 1),
+        ("x := f64 2.5, if i32 lossy (x) == i32 2 (1) else (0)", 1),
+        ("mut x := f64 0.5, mut n := i32 0, while i32 3 > i32 lossy (x) (x = x + 1, n = n + 1), n", 3),
+        ("x := f64 2.5, i32 1 + i32 lossy x", 3),
+        ("x := f64 2.5, y := i32 lossy x, y", 2),
+    ] {
+        assert_eq!(run_script(src), want, "{src}");
+    }
+    diff_typed_call(
+        "fn (x := f64 ?) -> i32 ( if i32 2 == i32 lossy (x) (1) else (0) )",
+        "f(2.5)",
+        1,
+    );
 }
 
 #[test]
@@ -4086,7 +4132,6 @@ fn a_type_takes_the_value_built_at_discovery_before_it() {
         assert_eq!(run_script(&src), want, "{src}");
     }
     assert_eq!(script_parse_err("x := i32 5, i32 (x).type"), ParseError::TypeMismatch);
-    assert_eq!(script_parse_err("i64 i32 5"), ParseError::Trailing);
 }
 
 #[test]
