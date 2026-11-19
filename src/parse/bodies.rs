@@ -112,6 +112,13 @@ pub(super) struct OpenScope {
     /// outermost node it runs as (›A value's teardown runs where its life ends; the ending
     /// identity reads the type's `free` slot‹ [[R57]]).
     made: Vec<DyadPtr>,
+    /// Where the line being parsed first builds something that runs only when the line runs:
+    /// a call the pass runs while it parses must stand before it (›The pass runs only as far
+    /// as it must, in order, and never twice‹ [[R288]]). An argument list's and a `[…]`'s
+    /// lines are parts of the call's line.
+    pub(super) runs_from: Option<usize>,
+    /// The same for the closed lines `unrun` holds, which a drain runs first.
+    unrun_runs_from: Option<usize>,
     /// The values the scope's closed lines made that nothing took: each line's end frees its
     /// own. The scope node's `held` slot once it closes.
     pub(super) held: Vec<DyadPtr>,
@@ -182,6 +189,10 @@ pub(super) struct WrittenResult<'s> {
     text: &'s str,
     /// Whether `own` stands in it.
     owned: bool,
+}
+
+fn earliest(a: Option<usize>, b: Option<usize>) -> Option<usize> {
+    a.into_iter().chain(b).min()
 }
 
 /// Refuses a value a function hands on, `made` as `handed_ends` reads it, that its `own` mark
@@ -1603,6 +1614,10 @@ impl<'a> Parser<'a> {
         // What the block parsed and did not run runs when the block runs;
         // what it did run stands in the body as its result.
         let mut closed = self.cx.open.pop().expect("pushed above");
+        if let Some(open) = self.cx.open.last_mut() {
+            let inner = earliest(closed.runs_from, closed.unrun_runs_from);
+            open.runs_from = earliest(open.runs_from, inner);
+        }
         self.close_returns(self.cx.open.len());
         if closed.arguments {
             self.hand_on_address_holds(&mut closed);
@@ -1804,6 +1819,7 @@ impl<'a> Parser<'a> {
             if let Some((.., plan)) = open.unrun.last_mut().filter(|(_, at, ..)| *at == line) {
                 plan.extend_from_slice(&made);
             }
+            open.unrun_runs_from = earliest(open.unrun_runs_from, open.runs_from.take());
         }
         open.held.extend(made);
         self.cx.open[depth].lines += 1;
@@ -1828,6 +1844,27 @@ impl<'a> Parser<'a> {
         let open = self.cx.open.last_mut().expect("a value is made in an open scope");
         open.made.retain(|m| !path.contains(m));
         open.made.push(path[0]);
+    }
+
+    /// `cell` was just built where the pass runs a line once it has parsed it: a node that runs,
+    /// a call or an operator, runs only then.
+    pub(super) fn note_runs(&mut self, cell: &Cell) {
+        use crate::identities::read::{read_kind, Read};
+        if !self.in_pass_order() {
+            return;
+        }
+        // SAFETY: a constructed cell holds null or a node from the store.
+        if !matches!(unsafe { read_kind(self.types, cell.dyad) }, Read::Executable(_)) {
+            return;
+        }
+        let open = self.cx.open.last_mut().expect("a node is built in an open scope");
+        open.runs_from = earliest(open.runs_from, Some(cell.start));
+    }
+
+    /// Where the pass runs each line once it has parsed it: the top level, or a held line
+    /// parsed when it runs, outside every deferred body.
+    pub(super) fn in_pass_order(&self) -> bool {
+        self.cx.feed.as_ref().is_none_or(|f| f.in_run_order) && self.cx.runtime_depth == 0
     }
 
     /// Something took `value`, a name, a parameter, `free`, `&`, a `return` or the scope it is
@@ -1888,8 +1925,15 @@ impl<'a> Parser<'a> {
     /// [`Self::drain`]; with `keep_tail`, the values the last line run made are left for
     /// [`Self::end_tail`], once its value is read.
     fn drain_lines(&mut self, keep_tail: bool) -> Result<Option<(DyadPtr, i64)>, ParseError> {
-        let lists: Vec<_> =
-            self.cx.open.iter_mut().map(|s| (s.scope, std::mem::take(&mut s.unrun))).collect();
+        let lists: Vec<_> = self
+            .cx
+            .open
+            .iter_mut()
+            .map(|s| {
+                s.unrun_runs_from = None;
+                (s.scope, std::mem::take(&mut s.unrun))
+            })
+            .collect();
         let mut items = Vec::new();
         for (depth, (scope, list)) in lists.into_iter().enumerate() {
             if list.is_empty() {

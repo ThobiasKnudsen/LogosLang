@@ -614,6 +614,7 @@ impl<'a> Parser<'a> {
                 tape.set_constructed(0, false);
             }
             self.note_made(cell.dyad);
+            self.note_runs(&cell);
             return Ok(());
         }
         if !same {

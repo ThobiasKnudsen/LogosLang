@@ -226,6 +226,9 @@ pub enum ParseError {
     /// A `while` condition reads the node a `dyad` name holds: the read is parsed once, over
     /// the node the name held then, while the condition runs on every pass.
     DyadReadEachPass,
+    /// A call that gives a `dyad`, which the pass runs as it parses the operator reading it,
+    /// stands after something its own line runs only when the line runs.
+    DyadCallAfterRun,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,

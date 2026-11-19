@@ -116,6 +116,17 @@ impl<'a> Parser<'a> {
         self.ctor_of(id).is_some() && self.reads_left(id) && prec::NOT < rank && rank < prec::RANGE
     }
 
+    /// An infix that reads a value on each side, `+` or `==`, whose operands `binary_operands`
+    /// reads through. By its rank, stand-in for #286.
+    pub(super) fn is_value_infix(&self, id: DyadPtr) -> bool {
+        use crate::identities::meta::prec;
+        let rank = self.precedence_of_cell(id);
+        self.ctor_of(id).is_some()
+            && self.reads_left(id)
+            && !self.is_delimiter(id)
+            && (prec::OR..=prec::MULTIPLICATIVE).contains(&rank)
+    }
+
     /// Whether a bracket reader takes the `(` at the cursor: only when woken
     /// at discovery, the one moment it may read source, and not where the `(`
     /// ends a complete `if` or `while` condition, being the body.
@@ -308,7 +319,64 @@ impl<'a> Parser<'a> {
                 return Err(self.fail_at(cell.start, e));
             }
         }
+        let lhs = self.read_through_value(l.start, lhs)?;
+        let rhs = self.read_through_value(r.start, rhs)?;
         Ok(Some((lhs, rhs)))
+    }
+
+    /// `operand` read through when it gives a `dyad` no name holds: the node it gives stands in
+    /// its place (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹
+    /// [[R293]]). Where that node's type is known where the operand is written, it is read at
+    /// that type each time the line runs. A call whose node's type is known only at run runs
+    /// now, after the lines before its own, where the pass has reached its line (the top level,
+    /// or a body's line parsed when it runs), and stands for the node it gave, as a `dyad` name
+    /// read there does; a body's line holding one waits for the run (`waiting_line_end`). It is
+    /// refused where its own line builds something that runs before it, which would run only
+    /// after it (›The pass runs only as far as it must, in order, and never twice‹ [[R288]]).
+    fn read_through_value(&mut self, at: usize, operand: DyadPtr) -> Result<DyadPtr, ParseError> {
+        use crate::identities::{dyad_place, read};
+        let types = self.types;
+        // SAFETY: `operand` is a reduced dyad from the store.
+        unsafe {
+            if read::output_type(types, operand) != types.dyad_ {
+                return Ok(operand);
+            }
+            if let Some(node) = dyad_place::build_read(self.rt.store, types, operand) {
+                return Ok(node);
+            }
+            let call = matches!(
+                read::read_kind(types, operand),
+                read::Read::Executable(read::Dispatch::Call(_))
+            );
+            if !call || !self.in_pass_order() {
+                return Ok(operand);
+            }
+            // Run once here, a condition would keep the node it gave: stand-in for #280.
+            if self.cx.each_pass {
+                return Err(self.fail_at(at, ParseError::DyadReadEachPass));
+            }
+            // Run here, before the line it stands in has run up to it: stand-in for #280.
+            if self.cx.open.iter().any(|o| o.runs_from.is_some_and(|from| from < at)) {
+                return Err(self.fail_at(at, ParseError::DyadCallAfterRun));
+            }
+            self.drain()?;
+            let held = self.run_on_pass(operand).map_err(ParseError::Run)? as usize as DyadPtr;
+            if held.is_null() {
+                return Err(self.fail_at(at, ParseError::Run(crate::run::RunError::NullPointer)));
+            }
+            self.take(operand);
+            if let Some(open) = self.cx.open.last_mut().filter(|o| o.runs_from == Some(at)) {
+                open.runs_from = None;
+            }
+            if crate::identities::type_identity_of(types, held).is_some() {
+                return Ok(held);
+            }
+            let node = dyad_place::stable(self.rt.store, types, held);
+            if node != held {
+                dyad_place::end(&mut self.rt, held as i64);
+            }
+            Ok(node)
+        }
     }
 
     /// `e` with its caret at `at`, for a constructor refusing an operand it read.
