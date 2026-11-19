@@ -469,6 +469,11 @@ pub fn run_message(e: &RunError) -> String {
              unknown `?`"
                 .into()
         }
+        RunError::UnknownMap => {
+            "this map is the unknown `?`, so no map stands here to read or write: write one \
+             first, `m = hashmap K -> V`"
+                .into()
+        }
         RunError::NoName => "this cell holds no name".into(),
         RunError::CellNotAType => {
             "this cell was checked to hold a type, but the tape changed since and it holds something else"

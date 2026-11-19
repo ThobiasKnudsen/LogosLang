@@ -2084,6 +2084,47 @@ fn a_hashmap_holds_maps_as_copies_of_their_own() {
 }
 
 #[test]
+fn a_maps_places_hold_the_unknown() {
+    let memo = "pm := hashmap type -> hashmap type -> type, mut row := pm[i32]";
+    for (src, want) in [
+        (format!("{memo}, print «{{row == ?}} {{row != ?}} {{? == pm[i8]}}»"), "true false true"),
+        ("mut r := hashmap type -> type, print «{r == ?} {r != ?}»".to_string(), "false true"),
+        (
+            format!(
+                "{memo}, if row == ? ( row = hashmap type -> type ), row[i64] = f32, pm[i32] = row, \
+                 mut back := pm[i32], print «{{back == ?}} {{back[i64] == f32}}»"
+            ),
+            "false true",
+        ),
+        (format!("{memo}, pm[u8] = row, mut kept := pm[u8], print «{{kept == ?}}»"), "true"),
+        (
+            "mut a := hashmap type -> type, a[i32] = f64, a = hashmap type -> type, \
+             print «{a[i32] == ?}»"
+                .to_string(),
+            "true",
+        ),
+        (
+            "mut n := i64 0, for 0..3 ( mut m := hashmap type -> type, if m[i8] == ? ( n = n + 1 ), \
+             m[i8] = i8 ), print «{n}»"
+                .to_string(),
+            "3",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+    for src in [format!("{memo}, row[i64] = f32"), format!("{memo}, row[i64] == ?")] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("this map is the unknown `?`"), "{src}: stderr: {stderr}");
+    }
+    for src in ["a := hashmap i64 -> i64, a[3]", "x := i32 5, x == ?"] {
+        let (code, _, _) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+    }
+}
+
+#[test]
 fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
     for line in [
         "hashmap i32 i32",

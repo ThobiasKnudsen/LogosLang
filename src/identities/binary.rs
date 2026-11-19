@@ -156,6 +156,14 @@ unsafe fn build_op(
             Ok(node(store, types, op, lhs, rhs, output, leaf))
         }
         Family::Cmp(c) => {
+            if matches!(c, CmpOp::Eq | CmpOp::Ne) {
+                let equal = matches!(c, CmpOp::Eq);
+                if let Some(node) =
+                    super::hashmap::build_unknown_compare(store, types, equal, lhs, rhs)
+                {
+                    return Ok(node);
+                }
+            }
             if let Some(v) = rational::compare_literals(types, c, lhs, rhs) {
                 return Ok(bool_mod::literal_node(store, types.bool_, v));
             }

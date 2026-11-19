@@ -42,6 +42,8 @@ pub enum RunError {
     OffTape,
     /// A map read at a key it does not hold, where the value type cannot hold `?`.
     MissingKey,
+    /// `m[k]` or `m[k] = v` where `m` holds `?`, no map.
+    UnknownMap,
     /// `t[k]:name` on a cell holding no named binding.
     NoName,
     /// A tape cell checked to hold a type holds something else by the time it is read.
