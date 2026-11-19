@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! A line whose value's type is known only when it runs, since it reads a `dyad` name, or a
-//! `-> dyad` call as an infix's operand: found before it is lexed, parsed where it is written up
-//! to that read, and from there each time it runs, over the nodes such values hold then
-//! (`identities::waiting`, ›A `dyad ?` place is transparent: a placeholder for a new node of any
-//! type‹ [[R293]]). A `while` condition that read a `dyad` name is held the same way, parsed again
-//! on each pass.
+//! `-> dyad` call as an infix's operand or through `.`: found before it is lexed, parsed where it
+//! is written up to that read, and from there each time it runs, over the nodes such values hold
+//! then (`identities::waiting`, ›A `dyad ?` place is transparent: a placeholder for a new node of
+//! any type‹ [[R293]]). A `while` condition that read a `dyad` name is held the same way, parsed
+//! again on each pass.
 
 use super::*;
 use crate::identities::meta::prec;
@@ -169,8 +169,8 @@ impl<'a> Parser<'a> {
             if self.ranked(id, prec::ADDRESS) {
                 found.address_at.get_or_insert(at);
             }
-            // A call that gives a `dyad`, read by an infix on either side.
-            if std::mem::take(&mut after_call) && self.is_value_infix(id) {
+            // A call that gives a `dyad`, read by an infix on either side or by a `.` after it.
+            if std::mem::take(&mut after_call) && (self.is_value_infix(id) || id == types.dot_) {
                 line_reads = true;
                 if top {
                     found.read_at.get_or_insert(call_chain);

@@ -3689,8 +3689,11 @@ fn a_dyad_no_name_holds_is_read_through_as_a_named_one_is() {
     let (code, _, stderr) = run_line(&format!("{g}, e := fn () -> dyad ( i64 5 ), g(e())"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
-    // A body's line does not wait for a call's node yet: stand-in for #280.
-    let (code, _, stderr) = run_line(&format!("{f}, h := fn () -> bool ( f().type == i32 ), h()"));
+    // A body's line that reads a call's node through `.` waits for the run.
+    assert_eq!(line(&format!("{f}, h := fn () -> bool ( f().type == i32 ), h()")), "true");
+    // One in a function written in a type's body does not wait: stand-in for #310.
+    let src = format!("{f}, t := type ( static k := fn () -> bool ( f().type == i32 ) ), t.k()");
+    let (code, _, stderr) = run_line(&src);
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
 }
