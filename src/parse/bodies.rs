@@ -122,7 +122,7 @@ pub(super) struct OpenScope {
     pub(super) list: bool,
     /// A call's argument list, which is never the scope its lines stand in: at its close, what
     /// it holds for `&` goes to the scope the call stands in.
-    arguments: bool,
+    pub(super) arguments: bool,
     /// The names `exit` holds for `&`: values `&` landed here, and those an argument list
     /// read here handed on.
     address_holds: Vec<DyadPtr>,
@@ -1144,7 +1144,9 @@ impl<'a> Parser<'a> {
     fn parse_while_parts(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
         let made_before = self.cx.open.last().map_or_else(Vec::new, |o| o.made.clone());
         self.cx.next_block = BlockValue::EachPass;
+        let was = std::mem::replace(&mut self.cx.each_pass, true);
         let items = self.drive_until_open(RightSide::Condition);
+        self.cx.each_pass = was;
         self.cx.next_block = BlockValue::Used;
         let items = items?;
         let cond = self.one_of(items)?.dyad;

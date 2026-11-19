@@ -26,6 +26,7 @@ mod quotes;
 mod scopes;
 mod tape;
 mod types;
+mod waiting;
 
 pub use bodies::*;
 pub use driver::*;
@@ -96,6 +97,8 @@ struct Context<'a> {
     /// order and run order do not coincide; comptime effects that rebind names
     /// at parse are rejected while non-zero. Comptime-taken `if` branches do not count.
     runtime_depth: u32,
+    /// A `while` condition is being parsed, which runs again on every pass.
+    each_pass: bool,
     /// The type definitions open around the position, innermost last; slot
     /// fills and fields write into the top.
     definitions: Vec<OpenType>,
@@ -180,6 +183,7 @@ impl<'a> Context<'a> {
             run_fields: None,
             frames: Vec::new(),
             runtime_depth: 0,
+            each_pass: false,
             definitions: Vec::new(),
             open: vec![OpenScope::default()],
             dir: PathBuf::from("."),

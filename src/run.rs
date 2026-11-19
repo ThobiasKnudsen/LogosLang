@@ -119,10 +119,13 @@ pub enum RunError {
     UnsettledInclusion,
     /// The parse a `tape[k]` read ran to lex on to its cell failed.
     Parse(Box<crate::parse::ParseError>),
-    /// A `type (…)` held in a body ran where no parser is running the pass.
+    /// A `type (…)` held in a body, or a line that waits for the run, ran where no parser is
+    /// running the pass.
     NoParser,
     /// A held `type (…)` failed to build at its call; the rendered parse error.
     MintFailed(Box<String>),
+    /// A line that waits for the run failed to parse when it ran; the rendered parse error.
+    WaitFailed(Box<String>),
 }
 
 /// What compiled code reaches the run through, its first argument. The fields
@@ -470,6 +473,10 @@ pub(crate) struct Host {
     /// Constructs the two cells `T v`, the type unbuilt and the value built, as the driver
     /// constructs a segment, yielding the one node they come to.
     pub(crate) construct: unsafe fn(*mut (), DyadPtr, DyadPtr) -> Result<i64, RunError>,
+    /// Parses what waits for the run (`identities::waiting`) over the nodes its `dyad` names
+    /// hold now, a held line's or, given one, the node a `dyad` place holds, yielding the node
+    /// to run.
+    pub(crate) parse_waiting: unsafe fn(*mut (), DyadPtr, DyadPtr) -> Result<i64, RunError>,
 }
 
 /// Puts back the lexer a [`Runtime::hosting`] call found, by return or by unwinding.
@@ -612,6 +619,23 @@ impl<'a> Runtime<'a> {
         // set by `hosting` for exactly this call; nothing reads the runtime through
         // `self` until the parser hands it back.
         (host.mint)(host.parser, node)
+    }
+
+    /// Parse `node`, which waits for the run, through the parser running the pass: a held
+    /// line, or with `held` the node a `dyad` place holds read into a result.
+    ///
+    /// # Safety
+    /// `node` must be a node `identities::waiting` built; `held` null or a live node.
+    pub(crate) unsafe fn parse_waiting(
+        &mut self,
+        node: DyadPtr,
+        held: DyadPtr,
+    ) -> Result<DyadPtr, RunError> {
+        let Some(host) = self.lexer.and_then(|l| l.host) else {
+            return Err(RunError::NoParser);
+        };
+        // SAFETY: as `mint_held`.
+        (host.parse_waiting)(host.parser, node, held).map(|p| p as usize as DyadPtr)
     }
 
     /// Until the matching [`Runtime::leave_constructor`], `caller.scope` answers and a

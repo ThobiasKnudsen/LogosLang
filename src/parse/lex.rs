@@ -183,6 +183,11 @@ impl<'a> Parser<'a> {
             };
             if dyad_box {
                 if let Some(held) = self.read_through(id) {
+                    // Read once here, a condition would keep the node it read: stand-in for #280.
+                    if self.cx.each_pass {
+                        self.cx.pos = cell.start;
+                        return Err(ParseError::DyadReadEachPass);
+                    }
                     cell.dyad = held;
                 }
             } else if self.is_live_call_slot(id) {
@@ -446,6 +451,10 @@ impl<'a> Parser<'a> {
 
     pub(super) fn is_closer(&self, id: DyadPtr) -> bool {
         self.brackets().into_iter().any(|(_, close)| close == id)
+    }
+
+    pub(super) fn is_opener(&self, id: DyadPtr) -> bool {
+        self.closer_of(id).is_some()
     }
 
     /// One spelling at the cursor, a declared name or a fresh run, never a

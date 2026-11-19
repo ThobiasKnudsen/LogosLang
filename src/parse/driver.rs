@@ -691,6 +691,19 @@ impl<'a> Parser<'a> {
             {
                 return None;
             }
+            let waits =
+                self.waiting_line_end().and_then(|end| end.map(|e| self.hold_line(e)).transpose());
+            match waits {
+                Ok(Some(held)) => {
+                    if !bare_branch {
+                        self.consume_separator();
+                    }
+                    self.cx.queued.push_back(held);
+                    continue;
+                }
+                Ok(None) => {}
+                Err(e) => return Some(Err(e)),
+            }
             let mut tape = ParsingTape::new();
             let boundary = match self.lex_segment(&mut tape) {
                 Ok(b) => b,
@@ -926,6 +939,7 @@ impl<'a> Parser<'a> {
             lex_on: Self::lex_on,
             mint: Self::mint_host,
             construct: Self::construct_host,
+            parse_waiting: Self::parse_waiting_host,
         };
         // SAFETY: `node` is a valid dyad in the store (the caller's contract).
         self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run(node) })
@@ -947,6 +961,7 @@ impl<'a> Parser<'a> {
             lex_on: Self::lex_on,
             mint: Self::mint_host,
             construct: Self::construct_host,
+            parse_waiting: Self::parse_waiting_host,
         };
         // SAFETY: the caller's contract.
         self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe {
@@ -963,6 +978,19 @@ impl<'a> Parser<'a> {
     unsafe fn mint_host(parser: *mut (), node: DyadPtr) -> Result<i64, crate::run::RunError> {
         let p = &mut *parser.cast::<Self>();
         p.construct_held_type(node).map(|ty| ty as i64)
+    }
+
+    /// The runtime's way back into the parser running it: parse what waits for the run.
+    ///
+    /// # Safety
+    /// As `mint_host`; `node` a node `identities::waiting` built, `held` null or a live node.
+    unsafe fn parse_waiting_host(
+        parser: *mut (),
+        node: DyadPtr,
+        held: DyadPtr,
+    ) -> Result<i64, crate::run::RunError> {
+        let p = &mut *parser.cast::<Self>();
+        p.parse_waiting(node, held).map(|d| d as i64)
     }
 
     /// The runtime's way back into the parser running it: construct `ty` applied to `value`

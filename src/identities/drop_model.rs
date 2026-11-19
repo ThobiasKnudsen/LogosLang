@@ -1576,6 +1576,22 @@ mod tests {
         try_run(src).expect("run")
     }
 
+    /// [`run`] with the parser running the pass, as the program's driver runs it: what a line
+    /// that waits for the run needs to be parsed then.
+    fn run_hosted(src: &str) -> (i64, usize) {
+        FREE_LOG.with(|l| l.borrow_mut().clear());
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+        let root = p.parse_sequence().expect("parse");
+        // SAFETY: `root` is the scope just parsed into the parser's store.
+        let bits = unsafe { p.value_of(root) }.expect("run");
+        (bits, p.into_runtime().live_allocs())
+    }
+
     fn try_run(src: &str) -> Result<(i64, usize), RunError> {
         FREE_LOG.with(|l| l.borrow_mut().clear());
         let mut store = Store::new();
@@ -1642,6 +1658,22 @@ mod tests {
             if src.starts_with("f := ") {
                 assert_eq!(run(&compiled), (1, 0), "{compiled}");
             }
+        }
+    }
+
+    #[test]
+    fn a_line_parsed_when_it_runs_frees_what_it_made() {
+        for src in [
+            "f := fn (a := dyad ?) -> i64 ( a ), f(i64 42), 1",
+            "f := fn (a := dyad ?) -> i64 ( a * 2 ), f(i64 21), 1",
+            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, d = d * 3, d ), f(i64 2), 1",
+            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() ), f(), 1",
+            "mut d := dyad ?, d = i64 5, for 0..3 ( d = d + 1 ), 1",
+            "f := fn (a := dyad ?) -> dyad ( a + 1 ), x := f(i64 1), 1",
+            "f := fn (a := dyad ?) -> i64 ( if a > 0 ( f(i64 (a - 1)) + 1 ) else ( 0 ) ), f(i64 4), 1",
+            "mut d := dyad ?, d = i64 1, g := fn (a := dyad ?) -> i64 ( a ), g(d), 1",
+        ] {
+            assert_eq!(run_hosted(src), (1, 0), "{src}");
         }
     }
 

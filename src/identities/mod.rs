@@ -75,6 +75,7 @@ pub(crate) mod string;
 mod subset;
 pub mod tape;
 pub mod this;
+pub(crate) mod waiting;
 #[path = "while.rs"]
 mod while_mod;
 
@@ -173,6 +174,7 @@ pub struct Core {
     pub by_copy: by_copy::ByCopyIds,
     pub here: here::HereIds,
     pub dyad_place: dyad_place::DyadPlaceIds,
+    pub waiting: waiting::WaitingIds,
     /// The identity of the cell a `[` lands, as `scope` is a `(`'s.
     pub square_brackets: DyadPtr,
     /// `array` of `dyad@`; a sequence's expression list lives behind one, never inline.
@@ -365,6 +367,7 @@ impl Core {
         let by_copy = by_copy::register(&mut cx, &callables);
         let here = here::register(&mut cx, &callables);
         let dyad_place = dyad_place::register(&mut cx, &callables);
+        let waiting = waiting::register(&mut cx, &callables);
         // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
         binding::register_type(
             &mut cx,
@@ -476,6 +479,7 @@ impl Core {
             by_copy,
             here,
             dyad_place,
+            waiting,
             square_brackets,
             callable_: callables.callable,
             convention_: callables.convention,
@@ -1252,6 +1256,15 @@ pub(crate) unsafe fn commit_fn_body(
         return Ok(body);
     };
     walk_tail(types, body, &mut |leaf| {
+        // A line held for the run, and a `dyad` place's node, land in the result when they run.
+        if dyad::ty(leaf) == types.waiting.line {
+            waiting::set_into(leaf, output);
+            return Ok(leaf);
+        }
+        if output != types.dyad_ && read::output_type(types, leaf) == types.dyad_ {
+            let moved = drop_model::teardown_of(types, leaf) == drop_model::Teardown::Dyad;
+            return Ok(waiting::build_tail(store, types, leaf, output, moved));
+        }
         refuse_statement(types, leaf)?;
         // An `out` already hands back its bytes.
         if dyad::ty(leaf) == types.by_copy.out {

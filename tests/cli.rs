@@ -2013,6 +2013,74 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
 }
 
 #[test]
+fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
+    for (src, want) in [
+        ("f := fn (a := dyad ?) -> i64 ( a ), f(i64 42)", "42"),
+        ("f := fn (a := dyad ?) -> i64 ( a * 2 ), f(i64 21)", "42"),
+        ("g := fn (a := dyad ?) -> bool ( a.type == i32 ), g(i32 5)", "true"),
+        ("g := fn (a := dyad ?) -> bool ( a.type == i32 ), g(i64 5)", "false"),
+        ("f := fn (a := dyad ?) -> i64 ( a ), f(42)", "42"),
+        ("x := i32 4, g := fn (a := dyad ?) -> bool ( a.type == i32 ), g(x + 1)", "true"),
+        (
+            "mut n := i32 0, h := fn () -> i64 ( n = n + 1, i64 7 ), \
+             f := fn (a := dyad ?) -> i64 ( a ), x := f(h()), n",
+            "1",
+        ),
+        ("mut d := dyad ?, d = i64 5, for 0..3 ( d = d + 1 ), d", "8"),
+        ("f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, d = d * 3, d ), f(i64 2)", "6"),
+        ("g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() ), f()", "6"),
+        (
+            "f := fn (a := dyad ?) -> i64 ( if a > 0 ( f(i64 (a - 1)) + 1 ) else ( 0 ) ), \
+             f(i64 4)",
+            "4",
+        ),
+        (
+            "f := fn (a := dyad ?) -> i64 ( mut s := i64 0, for 0..3 ( s = s + a ), s ), f(i64 5)",
+            "15",
+        ),
+        ("f := fn (a := dyad ?) -> dyad ( a + 1 ), f(i64 1)", "2"),
+        (
+            "mut d := dyad ?, d = i64 1, d = f64 2.5, f := fn (a := dyad ?) -> f64 ( a ), f(d)",
+            "2.5",
+        ),
+        // A compiled caller of a function whose lines wait.
+        (
+            "f := fn (a := dyad ?) -> i64 ( a ), g := fn () -> i64 ( f(i64 3) + f(42) ), \
+             g.compile(), g()",
+            "45",
+        ),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{src}: stderr: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
+    }
+    for (src, refusal) in [
+        ("f := fn (a := dyad ?) -> i64 ( a ), f(f64 2.5)", "these types do not match"),
+        ("f := fn (a := dyad ?) -> i64 ( a ), f(1/2)", "no exact value"),
+        ("f := fn (a := dyad ?) -> i64 ( a + «x» ), f(i64 1)", "cannot compute"),
+        ("f := fn (a := dyad ?) -> i64 ( x := a + 1, x ), f(i64 2)", "cannot hold `:=` yet"),
+        (
+            "f := fn (a := dyad ?) -> i64 ( if a > 0 ( return 1 ), 2 ), f(i64 2)",
+            "cannot hold `return` yet",
+        ),
+        ("mut d := dyad ?, d = i64 0, while d < 3 ( d = d + 1 ), d", "condition cannot read"),
+        (
+            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, while d < 3 ( d = d + 1 ), 1 ), \
+             f(i64 0)",
+            "condition cannot read",
+        ),
+        ("f := fn (a := dyad ?) -> i64 ( a ), f.compile(), f(i64 42)", "cannot be compiled yet"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(refusal), "{src}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl(b"f := fn (a := dyad ?) -> i64 ( a * 2 )\nf(i64 21)\nf(4)\n");
+    assert_eq!(echoes, ["42", "8"], "stderr: {stderr}");
+}
+
+#[test]
 fn inclusion_the_design_leaves_open_is_a_checked_error() {
     for src in ["i32 ⊆ type\n", "u8 ⊆ dyad\n", "bool ⊆ type\n"] {
         let (echoes, stderr) = repl(src.as_bytes());

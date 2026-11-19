@@ -545,7 +545,7 @@ impl<'a> Parser<'a> {
 
     /// A value made once (`static`, `immediate`) runs at parse, where a name of the
     /// loop or branch around it has no value yet.
-    fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
+    pub(super) fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
         // SAFETY: `binding` is the binding dyad the resolver returned for the name.
         if self.cx.once_at.is_some() && unsafe { Binding::read(binding) }.unmade {
             return Err(ParseError::OnceReadsUnmade);
