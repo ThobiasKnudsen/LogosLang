@@ -5281,6 +5281,7 @@ fn a_line_frees_what_it_made_where_it_ends() {
     let r = "r := fn (k := i32 ?) -> u64 ( if k > 0 ( return mk().size ), 0 )";
     let array = "import ./identities/array.logos, a := array u64 [1, 2]";
     let w = "mut i := u64 0, while (mk().size > i) ( i = i + 1 )";
+    let bare_w = "mut i := u64 0, while mk().size > i ( i = i + 1 )";
     for (tail, printed) in [
         // The last made first: R57's Open line, its choice (a), until Question 67 is answered.
         (
@@ -5299,11 +5300,25 @@ fn a_line_frees_what_it_made_where_it_ends() {
         // A `return` leaves the line, so it frees what the line made.
         (format!("{mk}, {r}, print «got {{r(5)}}»"), "free 2\ngot 2\n"),
         (format!("{mk}, {r}, r.compile(), print «got {{r(5)}}»"), "free 2\ngot 2\n"),
-        // A `while` condition in brackets is a scope of its own, which ends each pass.
+        // A `while` condition is a scope of its own, bracketed or not, which ends each pass.
         (format!("{mk}, {w}, print «end {{i}}»"), "free 2\nfree 2\nfree 2\nend 2\n"),
         (
             format!("{mk}, g := fn () -> u64 ( {w}, i ), g.compile(), g()"),
             "free 2\nfree 2\nfree 2\n2\n",
+        ),
+        (format!("{mk}, {bare_w}, print «end {{i}}»"), "free 2\nfree 2\nfree 2\nend 2\n"),
+        (
+            format!("{mk}, g := fn () -> u64 ( {bare_w}, i ), g.compile(), g()"),
+            "free 2\nfree 2\nfree 2\n2\n",
+        ),
+        // So is an `if` condition, which ends before an arm runs.
+        (format!("{mk}, if mk().size > 1 ( print «in» ), print «end»"), "free 2\nin\nend\n"),
+        (format!("{mk}, if (mk().size > 1) ( print «in» ), print «end»"), "free 2\nin\nend\n"),
+        (
+            format!(
+                "{mk}, g := fn () -> u64 ( if mk().size > 1 ( print «in» ), 7 ), g.compile(), g()"
+            ),
+            "free 2\nin\n7\n",
         ),
         // A one-line bracket stands as its line, so a `.` still reads the line's node.
         (format!("{mk}, (mk().size + 1).output_type == u64"), "true\n"),
@@ -5326,16 +5341,6 @@ fn a_line_frees_what_it_made_where_it_ends() {
         assert_eq!((code, stdout.as_str()), (Some(1), "free 2\n"), "{tail}: stderr: {stderr}");
         assert!(stderr.contains("index out of range"), "{tail}: stderr: {stderr}");
     }
-    // A bare `while` condition is no scope, so the value it makes each pass has no place to end.
-    let (code, stdout, stderr) =
-        run_line(&format!("{sized}, {mk}, mut i := u64 0, while mk().size > i ( i = i + 1 )"));
-    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
-    assert!(
-        stderr.contains(
-            "a value a `while` condition makes, taken by `&` or by nothing, is not in the seed yet"
-        ),
-        "stderr: {stderr}"
-    );
 }
 
 /// DESIGN ›Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of‹
@@ -5380,6 +5385,8 @@ fn the_address_of_a_value_in_a_call_s_arguments_holds_it_to_the_scope_the_call_s
     let r_if = "r := fn (n := i32 ?) -> i32 ( if f(&bag(n)) > 2 (return f(&bag(n + 10))), 0 )";
     let r_in = "r := fn (n := i32 ?) -> i32 ( f(&bag(n), ( if (n > 2) (return 9), 4 )) )";
     let w = "mut i := i32 0, while (f(&bag(i)) < 2) ( i = i + 1 )";
+    let bare_w = "mut i := i32 0, while f(&bag(i)) < 2 ( i = i + 1 )";
+    let bare_if = "g := fn () -> i32 ( if f(&bag(1)) < 2 ( print «in» ), print «end», 0 )";
     for (tail, printed) in [
         (format!("{f}, f(&bag(3))"), "freed 3\n3\n"),
         (format!("{f}, f.compile(), f(&bag(3))"), "freed 3\n3\n"),
@@ -5406,15 +5413,34 @@ fn the_address_of_a_value_in_a_call_s_arguments_holds_it_to_the_scope_the_call_s
             ),
             "freed 6\n7\n",
         ),
-        // A `while` condition in a bracket is the scope its call stands in, ended each pass.
+        // A `while` condition, bracketed or not, is the scope its call stands in, ended each pass.
         (format!("{f}, {w}, print «end {{i}}»"), "freed 0\nfreed 1\nfreed 2\nend 2\n"),
         (
             format!("{f}, g := fn () -> i32 ( {w}, i ), g.compile(), g()"),
             "freed 0\nfreed 1\nfreed 2\n2\n",
         ),
+        (format!("{f}, {bare_w}, print «end {{i}}»"), "freed 0\nfreed 1\nfreed 2\nend 2\n"),
+        (
+            format!("{f}, g := fn () -> i32 ( {bare_w}, i ), g.compile(), g()"),
+            "freed 0\nfreed 1\nfreed 2\n2\n",
+        ),
+        // So is an `if` condition, ended before an arm runs.
+        (format!("{f}, if f(&bag(1)) < 2 ( print «in» ), print «end»"), "freed 1\nin\nend\n"),
+        (format!("{f}, if (f(&bag(1)) < 2) ( print «in» ), print «end»"), "freed 1\nin\nend\n"),
+        (format!("{f}, {bare_if}, g()"), "freed 1\nin\nend\n0\n"),
+        (format!("{f}, {bare_if}, g.compile(), g()"), "freed 1\nin\nend\n0\n"),
+        (
+            format!("{f}, x := if f(&bag(1)) < 2 ( 10 ) else ( 20 ), print «x {{x}}»"),
+            "freed 1\nx 10\n",
+        ),
+        (
+            format!("{f}, c := 1, if c == 2 ( print «a» ) else if f(&bag(3)) < 5 ( print «b» )"),
+            "freed 3\nb\n",
+        ),
         // A `return` leaves before its line ends, so it frees what the line holds itself.
         (format!("{f}, {r}, print «got {{r(5)}}», print «end»"), "freed 5\ngot 5\nend\n"),
-        (format!("{f}, {r_if}, print «got {{r(5)}}»"), "freed 15\nfreed 5\ngot 15\n"),
+        (format!("{f}, {r_if}, print «got {{r(5)}}»"), "freed 5\nfreed 15\ngot 15\n"),
+        (format!("{f}, {r_if}, r.compile(), print «got {{r(5)}}»"), "freed 5\nfreed 15\ngot 15\n"),
         (format!("{f}, {r_if}, print «got {{r(1)}}»"), "freed 1\ngot 0\n"),
         (
             format!("{f2}, {r_in}, print «got {{r(5)}}», print «got {{r(1)}}»"),
@@ -5437,15 +5463,6 @@ fn the_address_of_a_value_in_a_call_s_arguments_holds_it_to_the_scope_the_call_s
         let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains("hands out the address of a name its scope holds"), "{tail}");
-    }
-    // A bare `while` condition makes a value each pass, and its scope has one place for them.
-    for tail in [
-        format!("{f}, mut i := i32 0, while f(&bag(i)) < 2 ( i = i + 1 ), print «end»"),
-        format!("{f}, g := fn () -> i32 ( mut i := i32 0, while f(&bag(i)) < 2 ( i = i + 1 ), i ), g.compile(), g()"),
-    ] {
-        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
-        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{tail}: stderr: {stderr}");
-        assert!(stderr.contains("a value a `while` condition makes, taken by `&` or by nothing, is not in the seed yet"), "{tail}");
     }
 }
 
