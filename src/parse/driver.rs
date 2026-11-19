@@ -291,14 +291,12 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Built, ParseError> {
-        let comment_ = self.types.comment_;
         let (mut before, mut after) = (Vec::new(), Vec::new());
         loop {
             let mut leads = true;
             let mut prose = Vec::new();
             for (n, c) in tape.iter() {
-                // SAFETY: a cell's dyad is null or a dyad from the store.
-                if c.constructed && !c.dyad.is_null() && unsafe { dyad::ty(c.dyad) } == comment_ {
+                if self.is_comment_cell(c) {
                     prose.push((n, c.dyad, leads));
                 } else {
                     leads = false;

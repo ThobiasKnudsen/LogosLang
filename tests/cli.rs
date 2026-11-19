@@ -4008,6 +4008,49 @@ fn a_comment_is_a_line_of_the_scope_its_text_is_in() {
 }
 
 #[test]
+fn a_comment_before_a_bare_condition_s_value_is_read_through() {
+    let mut rows = vec![
+        ("if # «a» true ( 1 ) else ( u64 0 )".to_owned(), "1\n"),
+        ("mut i := i32 0, while # «a» i < 2 ( i = i + 1 ), i".to_owned(), "2\n"),
+        ("if # «a» # «b» true ( 1 ) else ( u64 0 )".to_owned(), "1\n"),
+        ("if # «a» (true) ( 1 ) else ( u64 0 )".to_owned(), "1\n"),
+        ("if # «a» true ( 1, here.scope.dyads.size ) else ( u64 0 )".to_owned(), "1\n"),
+        ("x := i32 3, if x == # «a» i32 3 ( print «yes» ) else ( print «no» )".to_owned(), "yes\n"),
+        ("x := i32 3, if x.type == # «a» i32 ( 10 ) else ( 20 )".to_owned(), "10\n"),
+        (
+            "mut i := i32 0, mut n := u64 0, while # «c» i < 1 \
+             ( i = i + 1, n = here.scope.dyads.size ), n"
+                .to_owned(),
+            "1\n",
+        ),
+    ];
+    for compile in ["", "f.compile(), "] {
+        rows.push((
+            format!("f := fn () -> u64 ( if # «a» true ( 1 ) else ( u64 0 ) ), {compile}f()"),
+            "1\n",
+        ));
+        rows.push((
+            format!(
+                "f := fn () -> i32 ( mut i := i32 0, while # «a» i < 2 ( i = i + 1 ), i ), \
+                 {compile}f()"
+            ),
+            "2\n",
+        ));
+        rows.push((
+            format!(
+                "f := fn (n := i32 ?) -> u64 ( if # «c» n == 5 ( 1, here.scope.dyads.size ) \
+                 else ( u64 0 ) ), {compile}f(5)"
+            ),
+            "1\n",
+        ));
+    }
+    for (src, printed) in rows {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: {stderr}");
+    }
+}
+
+#[test]
 fn the_boundary_s_comment_lift_reads_a_built_cell_with_no_node_without_faulting() {
     // `h1` marks the unknown `zz` built, which leaves its cell with no node, and `h2`
     // removes it at the next step: the lift between the two reads that cell.
