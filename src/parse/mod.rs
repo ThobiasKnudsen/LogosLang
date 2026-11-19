@@ -37,6 +37,7 @@ pub use quotes::*;
 pub use scopes::*;
 pub use tape::*;
 pub use types::*;
+pub(crate) use waiting::HeldLine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assoc {
@@ -99,6 +100,8 @@ struct Context<'a> {
     runtime_depth: u32,
     /// A `while` condition is being parsed, which runs again on every pass.
     each_pass: bool,
+    /// That condition read a `dyad` name through to the node it holds now.
+    each_pass_read: bool,
     /// The type definitions open around the position, innermost last; slot
     /// fills and fields write into the top.
     definitions: Vec<OpenType>,
@@ -130,6 +133,9 @@ struct Context<'a> {
     else_ends: Option<usize>,
     /// The held run body whose cells the driver is reading now, if any.
     feed: Option<Feed>,
+    /// The part of the held line being parsed that was parsed where it is written, which its
+    /// first segment starts from.
+    kept: Option<waiting::Kept>,
     /// While a held `type (…)` is built at its run, the function frames open
     /// where it was written: a place declared at that depth is the type's, global.
     held_depth: usize,
@@ -180,6 +186,7 @@ impl<'a> Context<'a> {
             frames: Vec::new(),
             runtime_depth: 0,
             each_pass: false,
+            each_pass_read: false,
             definitions: Vec::new(),
             open: vec![OpenScope::default()],
             dir: PathBuf::from("."),
@@ -191,6 +198,7 @@ impl<'a> Context<'a> {
             lex_mode: None,
             else_ends: None,
             feed: None,
+            kept: None,
             held_depth: 0,
             narrow_next: None,
             member_fn_depth: None,

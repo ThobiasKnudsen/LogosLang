@@ -2073,11 +2073,9 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
             "f := fn (a := dyad ?) -> i64 ( if a > 0 ( return 1 ), 2 ), f(i64 2)",
             "cannot hold `return` yet",
         ),
-        ("mut d := dyad ?, d = i64 0, while d < 3 ( d = d + 1 ), d", "condition cannot read"),
         (
-            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, while d < 3 ( d = d + 1 ), 1 ), \
-             f(i64 0)",
-            "condition cannot read",
+            "g := fn () -> dyad ( i64 6 ), mut i := i64 0, while i < g() ( i = i + 1 ), i",
+            "cannot read what a call that gives a `dyad` gives",
         ),
         ("f := fn (a := dyad ?) -> i64 ( a ), f.compile(), f(i64 42)", "cannot be compiled yet"),
     ] {
@@ -2087,6 +2085,45 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
     }
     let (echoes, stderr) = repl(b"f := fn (a := dyad ?) -> i64 ( a * 2 )\nf(i64 21)\nf(4)\n");
     assert_eq!(echoes, ["42", "8"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_line_that_reads_a_dyad_name_is_parsed_where_it_is_written_up_to_the_name() {
+    for (src, want) in [
+        // `h()` is built where the line is written and runs once each time the line runs.
+        (
+            "mut n := i64 0, h := fn () -> i64 ( n = n + 1, n ), \
+             f := fn (a := dyad ?) -> i64 ( h() * 10 + a ), x := f(i64 2), y := f(i64 3), \
+             x + y + n",
+            "37",
+        ),
+        ("f := fn (a := dyad ?) -> i64 ( mut s := i64 0, s = (i64 3 + 1) * a, s ), f(i64 2)", "8"),
+        // A `while` condition that reads a `dyad` name reads the node it holds on each pass.
+        ("mut d := dyad ?, d = i64 0, while d < 3 ( d = d + 1 ), d", "3"),
+        ("mut d := dyad ?, d = i64 0, while # «a» d < 3 ( d = f64 9.5 ), d", "9.5"),
+        ("mut d := dyad ?, d = i64 0, while (d < 3) ( d = d + 1 ), d", "3"),
+        (
+            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, while d < 3 ( d = d + 1 ), d ), \
+             f(i64 0)",
+            "3",
+        ),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{src}: stderr: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
+    }
+    // A name nothing declares, before the read or on a loop body's other line, is reported
+    // where the function is written, though it is never called.
+    for src in [
+        "f := fn (a := dyad ?) -> i64 ( undefinedname + a ), 5",
+        "f := fn (a := dyad ?) -> i64 ( mut s := i64 0, for 0..3 ( s = s + a, nope ), s ), 5",
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains("unknown name"), "{src}: {stderr}");
+        assert!(!stderr.contains("held line"), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]
@@ -3561,10 +3598,11 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // A condition runs on every pass, the call only where it is parsed: stand-in for #280.
+    // A condition is parsed again on every pass, and its first parse would run the call too:
+    // stand-in for #307.
     let (code, _, stderr) = run_line(&format!("{g}, mut i := i32 0, while i < g() ( i = i + 1 )"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("cannot read a `dyad` value yet"), "stderr: {stderr}");
+    assert!(stderr.contains("cannot read what a call that gives a `dyad`"), "stderr: {stderr}");
     // What runs in the call's line runs in the order it is written, the lines before it first.
     let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 )";
     for (src, want) in [
@@ -3578,7 +3616,7 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // Something its line runs before it would run after it: stand-in for #280.
+    // Something its line runs before it would run after it: stand-in for #307.
     for src in [
         format!("{calls}, h() + g()"),
         format!("{calls}, h() + (g() * 2)"),
@@ -3652,8 +3690,11 @@ fn a_dyad_no_name_holds_is_read_through_as_a_named_one_is() {
     let (code, _, stderr) = run_line(&format!("{g}, e := fn () -> dyad ( i64 5 ), g(e())"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
-    // A body's line does not wait for a call's node yet: stand-in for #280.
-    let (code, _, stderr) = run_line(&format!("{f}, h := fn () -> bool ( f().type == i32 ), h()"));
+    // A body's line that reads a call's node through `.` waits for the run.
+    assert_eq!(line(&format!("{f}, h := fn () -> bool ( f().type == i32 ), h()")), "true");
+    // One in a function written in a type's body does not wait: stand-in for #310.
+    let src = format!("{f}, t := type ( static k := fn () -> bool ( f().type == i32 ) ), t.k()");
+    let (code, _, stderr) = run_line(&src);
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
 }
@@ -4529,8 +4570,8 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert!(!out.status.success() && out.stdout.is_empty(), "{tail}: {stderr}");
         assert!(stderr.contains("cannot compute"), "{tail}: {stderr}");
     }
-    // `&x` is typed `&`, not by the `@i32` it gives; `y mk` is typed `mk`, not by the record its
-    // `run` gives, which a copy carries.
+    // `&x` is typed by `&`'s mint, not by the `@i32` it gives; `y mk` is typed `mk`, not by the
+    // record its `run` gives, which a copy carries.
     for (src, want) in [
         ("x := i32 5, (&x).type == @i32".to_string(), "false"),
         ("f := fn () -> bool ( x := i32 5, (&x).type == @i32 ), f.compile(), f()".into(), "false"),
@@ -4574,6 +4615,81 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
     let out = logos().arg(format!("{mk}, y := i32 3, z := y mk, z.x")).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n");
+}
+
+/// ›An operation mints through a chooser, one mint per set of operand types, so each mint's `run`
+/// body is parsed once‹ [[R301]]: `&` mints per pointee type and negation per operand type, as
+/// `+` mints, and negation is its own identity (›`-` negates where a space stands before it and
+/// none after, or no value stands to its left; any other `-` subtracts‹ [[R157]]), on both tiers.
+#[test]
+fn every_operation_is_typed_by_its_mint() {
+    let mut cases = Vec::new();
+    for (body, want) in [
+        ("(&x).type == (&w).type", "false\n"),
+        ("(&x).type == (&y).type", "true\n"),
+        ("(x + x).type == (w + w).type", "false\n"),
+        ("(-x).type == (x - y).type", "false\n"),
+        ("(-x).type == (-y).type", "true\n"),
+        ("(-x).type == (-w).type", "false\n"),
+        ("(-x).output_type == i32", "true\n"),
+        ("(-x).operand == x", "true\n"),
+    ] {
+        cases.push((format!("x := i32 3, y := i32 4, w := i64 5, {body}"), want));
+        let f = format!("f := fn (x := i32 ?, y := i32 ?, w := i64 ?) -> bool ( {body} )");
+        cases.push((format!("{f}, f(3, 4, 5)"), want));
+        cases.push((format!("{f}, f.compile(), f(3, 4, 5)"), want));
+    }
+    // Negation over each kind of number: an integer wraps, a float flips its sign, a rational
+    // value is negated exactly.
+    for (ty, arg, want) in
+        [("u8", "3", "253\n"), ("i8", "i8 -128", "-128\n"), ("f64", "0.0", "-0.0\n")]
+    {
+        let f = format!("f := fn (m := {ty} ?) -> {ty} ( -m )");
+        cases.push((format!("{f}, f({arg})"), want));
+        cases.push((format!("{f}, f.compile(), f({arg})"), want));
+    }
+    cases.push(("m := rational_number 3, n := -m, n".into(), "-3\n"));
+    // `move` is typed by its mint for the type it hands on.
+    for (gives, body, want) in [
+        ("bool", "(move x).type == (move w).type", "false\n"),
+        ("bool", "(move x).type == (move y).type", "true\n"),
+        ("bool", "(move x).output_type == i32", "true\n"),
+        ("i32", "z := move x, z", "3\n"),
+    ] {
+        let f = format!("f := fn () -> {gives} ( x := i32 3, y := i32 4, w := i64 5, {body} )");
+        cases.push((format!("{f}, f()"), want));
+        cases.push((format!("{f}, f.compile(), f()"), want));
+    }
+    cases.push(("p := alloc 1 of i32 5, q := move p, q@".into(), "5\n"));
+    // `alloc` is typed by its mint for its count's type and the cells' type, interpreted only.
+    for (body, want) in [
+        ("(alloc 1 of i32 5).type == (alloc 1 of i32 6).type", "true\n"),
+        ("(alloc 1 of i32 5).type == (alloc 1 of i64 6).type", "false\n"),
+        ("(alloc 1 of i32 5).type == (alloc i64 1 of i32 6).type", "false\n"),
+        ("(alloc 2 of i32 5).count", "2\n"),
+        ("p := alloc 2 of i32 5, (p + 1)@", "5\n"),
+    ] {
+        cases.push((body.into(), want));
+    }
+    // A map's compare against `?` is a node of `==`'s or `!=`'s mint.
+    let map = "m := hashmap i64 -> i64, n := hashmap i64 -> hashmap i64 -> i64";
+    for (body, want) in [
+        ("print «{m == ?} {? != m} {n[1] == ?}»", "false true true\n"),
+        ("(m == ?).output_type == bool", "true\n"),
+        ("(m == ?).type == (m != ?).type", "false\n"),
+        ("(m == ?).type == (? == m).type", "false\n"),
+        ("(m == ?).rhs == ?", "true\n"),
+    ] {
+        cases.push((format!("{map}, {body}"), want));
+    }
+    assert_runs(&cases);
+    for src in
+        ["x := i32 3, (-x).lhs", "f := fn (x := i32 ?) -> i32 ( (-x).lhs ), f.compile(), f(3)"]
+    {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("does not fit the node's type"), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]

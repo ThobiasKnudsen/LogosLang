@@ -439,7 +439,7 @@ pub(crate) unsafe fn slotted(p: &mut Parser, node: DyadPtr) -> DyadPtr {
         return node;
     }
     let arith = match read_kind(types, node) {
-        Read::Executable(Dispatch::Leaf(leaf)) => types.ops.rational_arith_op_of(leaf).is_some(),
+        Read::Executable(Dispatch::Leaf(leaf)) => types.ops.gives_rational(leaf),
         _ => false,
     };
     if !arith {
@@ -482,7 +482,8 @@ pub(crate) unsafe fn value_of(rt: &mut Runtime, node: DyadPtr) -> Result<(i64, i
     Ok((num, den))
 }
 
-/// Run the arithmetic node `node`, `[lhs, rhs]` under its mint, its result written to `dest`.
+/// Run the arithmetic node `node`, `[lhs, rhs]` or a negation's `[operand]` under its mint, its
+/// result written to `dest`.
 ///
 /// # Safety
 /// `node` must be a rational arithmetic node from the store; `dest` sixteen writable bytes.
@@ -493,10 +494,15 @@ pub(crate) unsafe fn run_into(
 ) -> Result<(), RunError> {
     let ops = dyad::value(node) as *const DyadPtr;
     let leaf = super::mint::operation_of(dyad::ty(node)).ok_or(RunError::NoLeaf)?;
-    let op = rt.types().ops.rational_arith_op_of(leaf).ok_or(RunError::NoLeaf)?;
-    let l = value_of(rt, *ops)?;
-    let r = value_of(rt, *ops.add(1))?;
-    let (num, den) = fold_pair(op, l, r).ok_or(RunError::RationalArithmetic)?;
+    let (num, den) = if leaf == rt.types().ops.rational_neg {
+        let (num, den) = value_of(rt, *ops)?;
+        (num.checked_neg().ok_or(RunError::RationalArithmetic)?, den)
+    } else {
+        let op = rt.types().ops.rational_arith_op_of(leaf).ok_or(RunError::NoLeaf)?;
+        let l = value_of(rt, *ops)?;
+        let r = value_of(rt, *ops.add(1))?;
+        fold_pair(op, l, r).ok_or(RunError::RationalArithmetic)?
+    };
     write_at(dest, num, den);
     Ok(())
 }
@@ -532,6 +538,7 @@ rational_cmp!(run_ne, CmpOp::Ne);
 
 /// Indexed as `ArithOp`: one refusal each, the leaves distinct by node.
 pub(crate) const ARITH_RUNS: [crate::run::RunFn; 5] = [run_arith_unslotted; 5];
+pub(crate) const NEG_RUN: crate::run::RunFn = run_arith_unslotted;
 /// Indexed as `CmpOp`.
 pub(crate) const CMP_RUNS: [crate::run::RunFn; 6] =
     [run_lt, run_gt, run_le, run_ge, run_eq, run_ne];

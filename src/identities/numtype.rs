@@ -434,6 +434,16 @@ pub(crate) fn apply_arith(op: ArithOp, logos: NumType, l: i64, r: i64) -> i64 {
     }
 }
 
+/// Negation, matching the JIT's `ineg` and `fneg`: an integer wraps as `0 - v` does, and a float
+/// flips its sign, so the negation of `0.0` is `-0.0`.
+pub(crate) fn apply_negate(logos: NumType, v: i64) -> i64 {
+    match logos {
+        NumType::F32 => (-f32::from_bits(v as u32)).to_bits() as i64,
+        NumType::F64 => (-f64::from_bits(v as u64)).to_bits() as i64,
+        _ => apply_arith(ArithOp::Sub, logos, 0, v),
+    }
+}
+
 /// `None` where the sum does not fit: a `for` counter's step ends the loop there instead
 /// of wrapping. A float sum always fits.
 pub(crate) fn checked_add(logos: NumType, l: i64, r: i64) -> Option<i64> {
