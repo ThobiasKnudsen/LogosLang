@@ -436,6 +436,7 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
             if name == "type" {
+                let lhs = self.read_through_value(left.start, lhs)?;
                 return self.type_read(lhs).map(|t| (t, 0));
             }
             // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
@@ -1325,7 +1326,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `lhs` must be a reduced dyad from the store.
     unsafe fn type_read(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
-        use crate::identities::{tape, this};
+        use crate::identities::{read, tape, this};
         let types = self.types;
         if dyad::ty(lhs) == types.tape.cell_dyad_at || tape::is_cell_read(types, lhs) {
             return Ok(tape::build_cell_type(self.rt.store, types, lhs));
@@ -1352,8 +1353,15 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
-        if let Some(t) = crate::identities::dyad_place::made_type(types, lhs) {
-            return Ok(t);
+        // A call giving a `dyad` the pass does not run here: its line does not wait for the node
+        // yet, stand-in for #280.
+        if read::output_type(types, lhs) == types.dyad_
+            && matches!(
+                read::read_kind(types, lhs),
+                read::Read::Executable(read::Dispatch::Call(_))
+            )
+        {
+            return Err(ParseError::TypeKnownOnlyAtRun);
         }
         if let Some(node) = self.operator_node(lhs) {
             return Ok(dyad::ty(node));

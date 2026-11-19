@@ -923,6 +923,9 @@ unsafe fn land_leaf(
     place: read::Read,
     how: Landing,
 ) -> Result<DyadPtr, ParseError> {
+    if let Some(read) = dyad_place::read_through(store, types, value, ty, how.lossy) {
+        return land_leaf(store, types, read, ty, place, how);
+    }
     let lossy = how.lossy;
     // A comptime name used here is its binding; the literal folds through it.
     let plain = types.through(value);
@@ -1286,14 +1289,10 @@ pub(crate) unsafe fn commit_fn_body(
         return Ok(body);
     }
     walk_tail(types, body, &mut |leaf| {
-        // A line held for the run, and a `dyad` place's node, land in the result when they run.
+        // A line held for the run lands in the result when it runs.
         if dyad::ty(leaf) == types.waiting.line {
             waiting::set_into(leaf, output);
             return Ok(leaf);
-        }
-        if output != types.dyad_ && read::output_type(types, leaf) == types.dyad_ {
-            let moved = drop_model::teardown_of(types, leaf) == drop_model::Teardown::Dyad;
-            return Ok(waiting::build_tail(store, types, leaf, output, moved));
         }
         refuse_statement(types, leaf)?;
         // An `out` already hands back its bytes.

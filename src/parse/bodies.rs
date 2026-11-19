@@ -1355,7 +1355,6 @@ impl<'a> Parser<'a> {
                 return crate::identities::group::join(self.rt.store, self.types, connective, a, b);
             }
         }
-        let mut held = Vec::new();
         for (i, &arg) in args.iter().enumerate() {
             // An `if` whose arms give two types gives one where its parameter's type lands each
             // arm.
@@ -1365,20 +1364,17 @@ impl<'a> Parser<'a> {
                 Err(e) => return Err(e),
             }
             // A value made or moved here is held by the parameter it is passed to
-            // (›Holding is decided at the binding site, parameters included‹ [[R61]]).
+            // (›Holding is decided at the binding site, parameters included‹ [[R61]]); a `dyad`
+            // only where it lands as itself, being read through elsewhere.
             // SAFETY: as above; `callee` is a resolved dyad from the store.
             unsafe {
                 use crate::identities::drop_model::{param_holds, teardown_of, Teardown};
-                if teardown_of(self.types, arg) != Teardown::Nothing {
-                    if !param_holds(self.types, callee, i) {
-                        return Err(ParseError::UnboundOwningValue);
-                    }
-                    held.push(i);
+                if !matches!(teardown_of(self.types, arg), Teardown::Nothing | Teardown::Dyad)
+                    && !param_holds(self.types, callee, i)
+                {
+                    return Err(ParseError::UnboundOwningValue);
                 }
             }
-        }
-        for &i in &held {
-            self.take(args[i]);
         }
         // SAFETY: `callee` is a resolved dyad from the store; a record type carries the record `run_body_of` reads.
         let (is_numtype, is_record) = unsafe {
@@ -1422,13 +1418,15 @@ impl<'a> Parser<'a> {
                 };
                 crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
                 for (i, arg) in args.iter_mut().enumerate() {
-                    // A value a `dyad ?` parameter takes in a new node is made by the landing.
-                    if !held.contains(&i) && teardown_of(types, *arg) == Teardown::Nothing {
+                    // What the argument lands as, a new node a `dyad ?` parameter takes a value
+                    // in included.
+                    if teardown_of(types, *arg) == Teardown::Nothing {
                         continue;
                     }
                     if !param_holds(types, callee, i) {
                         return Err(ParseError::UnboundOwningValue);
                     }
+                    self.take(*arg);
                     *arg = build_hold(self.rt.store, types, *arg);
                 }
             }
