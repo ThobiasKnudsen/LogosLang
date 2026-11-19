@@ -132,6 +132,24 @@ pub(crate) fn made(store: &Store, held: DyadPtr) -> bool {
     !held.is_null() && !store.holds(held as *const u8)
 }
 
+/// What a line the parse builds over `held`, the node a `dyad ?` place holds now, stands on: a
+/// node the store holds as it is, and a copy the store holds of one the place made, so no line
+/// outlives the node it reads.
+///
+/// # Safety
+/// `held` must be a live node a `dyad ?` place holds.
+pub(crate) unsafe fn stable(store: &mut Store, types: &Core, held: DyadPtr) -> DyadPtr {
+    if !made(store, held) {
+        return held;
+    }
+    let ty = dyad::ty(held);
+    let Some(carry) = carry_of(types, ty) else {
+        return held;
+    };
+    let bytes = std::slice::from_raw_parts(dyad::value(held) as *const u8, carry.width());
+    store.alloc_blob(ty, bytes)
+}
+
 fn run_new_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a node from `build_new_node`; a `dyad` value is a node's address or 0.
     unsafe {

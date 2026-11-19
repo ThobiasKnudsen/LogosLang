@@ -1980,7 +1980,9 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
         for (src, want) in [
             ("mut d := dyad ?, d = 5, d".to_string(), "5"),
             ("mut d := dyad ?, d = i64 5, d = f64 2.5, d".to_string(), "2.5"),
-            ("mut d := dyad ?, d = 1/2, d".to_string(), "1/2"),
+            ("mut d := dyad ?, d = 1/2, d * 4".to_string(), "2"),
+            ("mut d := dyad ?, d = i64 5, d + 1".to_string(), "6"),
+            ("mut d := dyad ?, d = i64 5, d = d * 2, d".to_string(), "10"),
             ("mut d := dyad ?, d = true, d".to_string(), "true"),
             ("mut d := dyad ?, d = i64 5, e := d, d = i64 6, e".to_string(), "5"),
             (format!("f := fn (q := dyad ?) -> i32 ( 1 ), {c}f(5)"), "1"),
