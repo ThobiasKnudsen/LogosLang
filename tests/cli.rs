@@ -3535,6 +3535,64 @@ fn a_dyad_of_a_type_is_a_new_node_each_time_its_line_runs() {
     assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
 }
 
+#[test]
+fn an_operator_reads_through_a_dyad_no_name_holds() {
+    let g = "g := fn () -> dyad ( i32 5 )";
+    for (src, want) in [
+        ("dyad (i32, 7) + 1".to_string(), "8"),
+        ("1 + dyad (i32, 7)".to_string(), "8"),
+        ("dyad (i64, 7) * dyad (i64, 6)".to_string(), "42"),
+        ("dyad (rational_number, 1/2) * 4".to_string(), "2"),
+        ("x := dyad (i32, 7) == i32 7, x".to_string(), "true"),
+        (
+            "f := fn (m := i32 ?) -> i32 ( dyad (i32, m) + 1 ), f.compile(), f(i32 3)".to_string(),
+            "4",
+        ),
+        (format!("{g}, g() + 1"), "6"),
+        (format!("{g}, print «{{1 + g()}}»"), "6"),
+        (format!("{g}, f := fn () -> i32 ( g() + 1 ), f()"), "6"),
+        (
+            format!(
+                "{g}, f := fn () -> i32 ( g() + 1 ), h := fn () -> i32 ( f() ), h.compile(), h()"
+            ),
+            "6",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // A condition runs on every pass, the call only where it is parsed: stand-in for #280.
+    let (code, _, stderr) = run_line(&format!("{g}, mut i := i32 0, while i < g() ( i = i + 1 )"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("cannot read a `dyad` value yet"), "stderr: {stderr}");
+    // What runs in the call's line runs in the order it is written, the lines before it first.
+    let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 )";
+    for (src, want) in [
+        (format!("{calls}, g() + h()"), "g\nh\n3"),
+        (format!("{calls}, x := ( h(), g() + 1 ), x"), "h\ng\n3"),
+        (format!("{calls}, v := g(), h() + v"), "g\nh\n3"),
+        (
+            format!("{calls}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(1, g() + 1)"),
+            "g\n4",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // Something its line runs before it would run after it: stand-in for #280.
+    for src in [
+        format!("{calls}, h() + g()"),
+        format!("{calls}, h() + (g() * 2)"),
+        format!("{calls}, (h(), 1) + g()"),
+        format!("{calls}, print «{{h()}} {{g() + 1}}»"),
+        format!("{calls}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(h(), g() + 1)"),
+        format!("{calls}, k := fn () -> i32 ( h() + g() ), k()"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stdout.is_empty(), "{src}: stdout: {stdout}");
+        assert!(stderr.contains("cannot stand yet after something in its line"), "{src}: {stderr}");
+    }
+}
+
 /// Run one command line and return its stdout, asserting success.
 fn line(src: &str) -> String {
     let out = logos().arg(src).output().unwrap();
@@ -3933,6 +3991,121 @@ fn a_comment_built_in_the_boundary_s_build_loop_is_read_through_before_the_next_
     let out = logos().arg("import tests/fixtures/spliced_comment.logos, ten").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "10\n");
+}
+
+#[test]
+fn a_comment_is_a_line_of_the_scope_its_text_is_in() {
+    let q = "q := type ( v := i32 ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
+             tape[0].v = tape[1].dyads[0], tape.remove(1), tape.is_constructed[0] = true ) )";
+    let narrowed = "q := type ( v := i32 ?, static parse_rank = 61, static parse = ( \
+                    tape[0].type = q, if tape[1].dyads[1].type == i32 # «c» \
+                    ( tape[0].v = tape[1].dyads[1] * 2 ) else ( tape[0].v = i32 0 ), \
+                    tape.remove(1), tape.is_constructed[0] = true ) ), x := q [5, i32 7], x.v";
+    let mut rows = vec![
+        // In a condition: a line of the condition's own scope, read past for its value.
+        ("if 5 * 2 # «c» == 10 ( 1, here.scope.dyads.size ) else ( 0 )".to_owned(), "1\n"),
+        ("if (5 * 2 # «c» == 10) ( 1, here.scope.dyads.size ) else ( 0 )".to_owned(), "1\n"),
+        ("if 5 * 2 # «c» == 10 ( print «yes» ) else ( print «no» )".to_owned(), "yes\n"),
+        ("if false # «c» ( 1 ) else ( 2, here.scope.dyads.size )".to_owned(), "1\n"),
+        (
+            "x := i32 3, if x == 0 ( u64 0 ) else if x == 3 # «c» ( 1, here.scope.dyads.size ) \
+             else ( u64 9 )"
+                .to_owned(),
+            "1\n",
+        ),
+        (
+            "mut i := i32 0, mut n := u64 0, while i < 1 # «c» \
+             ( i = i + 1, n = here.scope.dyads.size ), n"
+                .to_owned(),
+            "1\n",
+        ),
+        ("if (print «side», true) # «c» ( 1 ) else ( 2 )".to_owned(), "side\n1\n"),
+        (narrowed.to_owned(), "14\n"),
+        // Inside a line: a line of the scope the line stands in, after it.
+        ("f := fn () -> u64 # «c» ( 1, here.scope.dyads.size ), f()".to_owned(), "1\n"),
+        ("f := fn (n := i32 ? # «c») -> u64 ( 1, here.scope.dyads.size ), f(1)".to_owned(), "1\n"),
+        (
+            "mut n := u64 0, for i in 0..1 # «c» ( 1, n = here.scope.dyads.size ), n".to_owned(),
+            "1\n",
+        ),
+        ("x := 5 # «c» * 2, here.scope.dyads.size".to_owned(), "2\n"),
+        ("x := immediate 5 # «c» * 2, here.scope.dyads.size".to_owned(), "2\n"),
+        ("mut y := i32 1, y = 5 # «c» * 2, here.scope.dyads.size".to_owned(), "3\n"),
+        ("defer print «a» # «c», here.scope.dyads.size".to_owned(), "a\n2\n"),
+        ("t := type ( v := i32 ? # «c» ), ( 1, here.scope.dyads.size )".to_owned(), "1\n"),
+        // Written in the source, the comment follows its expression in the bracket.
+        (format!("{q}, x := q [5 * 2 # «c», 7], x.v"), "10\n"),
+    ];
+    for compile in ["", "f.compile(), "] {
+        rows.push((
+            format!(
+                "f := fn (n := i32 ?) -> u64 ( if n == 5 # «c» ( 1, here.scope.dyads.size ) \
+                 else ( u64 0 ) ), {compile}f(5)"
+            ),
+            "1\n",
+        ));
+        rows.push((
+            format!(
+                "mut n := u64 0, f := fn () -> u64 ( for i in 0..1 # «c» \
+                 ( 1, n = here.scope.dyads.size ), n ), {compile}f()"
+            ),
+            "1\n",
+        ));
+    }
+    // Spliced, it follows its expression as the written one does, at discovery and at the boundary.
+    for rank in ["fn.parse_rank", "*.parse_rank + 1"] {
+        rows.push((format!("{}, {q}, x := q [5 h, 7], x.v", splicer(rank, "* 2 #")), "10\n"));
+    }
+    for (src, printed) in rows {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: {stderr}");
+    }
+    let line = "if 5 * 2 # «c» == 10 ( 1, here.scope.dyads.size ) else ( 0 )\n";
+    let (echoes, stderr) = repl(line.as_bytes());
+    assert_eq!(echoes, ["1"], "{stderr}");
+}
+
+#[test]
+fn a_comment_before_a_bare_condition_s_value_is_read_through() {
+    let mut rows = vec![
+        ("if # «a» true ( 1 ) else ( u64 0 )".to_owned(), "1\n"),
+        ("mut i := i32 0, while # «a» i < 2 ( i = i + 1 ), i".to_owned(), "2\n"),
+        ("if # «a» # «b» true ( 1 ) else ( u64 0 )".to_owned(), "1\n"),
+        ("if # «a» (true) ( 1 ) else ( u64 0 )".to_owned(), "1\n"),
+        ("if # «a» true ( 1, here.scope.dyads.size ) else ( u64 0 )".to_owned(), "1\n"),
+        ("x := i32 3, if x == # «a» i32 3 ( print «yes» ) else ( print «no» )".to_owned(), "yes\n"),
+        ("x := i32 3, if x.type == # «a» i32 ( 10 ) else ( 20 )".to_owned(), "10\n"),
+        (
+            "mut i := i32 0, mut n := u64 0, while # «c» i < 1 \
+             ( i = i + 1, n = here.scope.dyads.size ), n"
+                .to_owned(),
+            "1\n",
+        ),
+    ];
+    for compile in ["", "f.compile(), "] {
+        rows.push((
+            format!("f := fn () -> u64 ( if # «a» true ( 1 ) else ( u64 0 ) ), {compile}f()"),
+            "1\n",
+        ));
+        rows.push((
+            format!(
+                "f := fn () -> i32 ( mut i := i32 0, while # «a» i < 2 ( i = i + 1 ), i ), \
+                 {compile}f()"
+            ),
+            "2\n",
+        ));
+        rows.push((
+            format!(
+                "f := fn (n := i32 ?) -> u64 ( if # «c» n == 5 ( 1, here.scope.dyads.size ) \
+                 else ( u64 0 ) ), {compile}f(5)"
+            ),
+            "1\n",
+        ));
+    }
+    for (src, printed) in rows {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: {stderr}");
+    }
 }
 
 #[test]

@@ -291,6 +291,16 @@ impl<'a> Parser<'a> {
             let value = self.parse_expression_cell();
             self.cx.field_hole = outer;
             let cell = value?;
+            // A field line's comments are the body's, as a `static` line's are; a parameter's
+            // go to the line the `fn` stands in.
+            if relaxed {
+                let body = self.cx.definitions.last().expect("a relaxed field list is a type body");
+                let open = self.cx.open.last_mut().expect("the type body's scope is open");
+                for comment in std::mem::take(&mut open.prose) {
+                    // SAFETY: the pending bindings were minted by this parser's declares.
+                    unsafe { self.cx.scopes.settle_item(body.scope, comment) };
+                }
+            }
             let value = cell.dyad;
             let owns_node = cell.owning;
             if self.is_bare_unknown(&cell) {

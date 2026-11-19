@@ -3,12 +3,13 @@
 
 //! What a `dyad ?` place holds: a value that is no node is written into a new node `[T | bytes]`
 //! on the heap, which the place owns and frees when a write replaces it and when its life ends;
-//! a node the store holds is held as it is and never freed. ›A `dyad ?` place is transparent: a
-//! placeholder for a new node of any type‹ [[R293]].
+//! a node the store holds is held as it is and never freed; and the read of the node an unnamed
+//! `dyad` value gives, as an operator's operand. ›A `dyad ?` place is transparent: a placeholder
+//! for a new node of any type‹ [[R293]].
 
 use cranelift_codegen::ir::Value;
 
-use super::assign::{load, lower_take, put, take};
+use super::assign::{handed_type, load, lower_load, lower_take, put, take};
 use super::callable::{self, Callables};
 use super::drop_model::{heap_alloc, heap_free, teardown_of, Teardown};
 use super::read::{carry_of, place_layout, Carry, Read};
@@ -26,9 +27,13 @@ pub struct DyadPlaceIds {
     /// `dyad`, a copy of the node another `dyad ?` place holds, where that place owns it.
     pub new_node: DyadPtr,
     pub new_node_leaf: DyadPtr,
+    /// `[value, into, op, output_type]`: the value of type `into` the node `value` gives holds.
+    pub read: DyadPtr,
+    pub read_leaf: DyadPtr,
 }
 
-/// No spelling: the landing in a `dyad ?` place builds it.
+/// No spelling: the landing in a `dyad ?` place builds the new node, an operator over a `dyad`
+/// value the read.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DyadPlaceIds {
     let record = meta::operand_record(
         cx,
@@ -40,7 +45,17 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DyadPlaceIds {
     let new_node = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(new_node, lower_new_node);
     let new_node_leaf = callable::mint_native(cx.store, cs.callable, run_new_node, cs.seed_native);
-    DyadPlaceIds { new_node, new_node_leaf }
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        Assoc::Left,
+        &["value", "into", "op", "output_type"],
+    );
+    let read = cx.store.alloc_head(cx.type_, record);
+    cx.lower.insert(read, lower_read);
+    let read_leaf = callable::mint_native(cx.store, cs.callable, run_read, cs.seed_native);
+    DyadPlaceIds { new_node, new_node_leaf, read, read_leaf }
 }
 
 /// `value` landed in a `dyad ?` place: any node the store holds as it is; where the place's
@@ -156,6 +171,23 @@ pub(crate) unsafe fn made_type(types: &Core, value: DyadPtr) -> Option<DyadPtr> 
     (from != types.dyad_).then_some(from)
 }
 
+/// An operand that gives a `dyad` read through to the node it gives, where that node's type is
+/// known where the operand is written: a read of the node's value at that type each time the
+/// line runs, the node itself left to the line, whose end frees it. `None` where the type is
+/// known only at run.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn build_read(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+) -> Option<DyadPtr> {
+    let into = made_type(types, value)?;
+    let ids = types.dyad_place;
+    Some(store.alloc_words(ids.read, &[value, into, ids.read_leaf, into]))
+}
+
 /// # Safety
 /// `node` must be a node from [`build_new_node`].
 unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
@@ -197,6 +229,31 @@ fn run_new_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let carry = carry_of(rt.types(), from).ok_or(RunError::NoWholeRead)?;
         let taken = take(rt, carry, value)?;
         make(rt, from, carry, taken)
+    }
+}
+
+fn run_read(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a node from `build_read`; a `dyad` value is a node's address or 0.
+    unsafe {
+        let (value, into) = parts(node);
+        let carry = carry_of(rt.types(), into).ok_or(RunError::NoWholeRead)?;
+        let held = rt.run(value)? as usize as DyadPtr;
+        if held.is_null() {
+            return Err(RunError::NullPointer);
+        }
+        Ok(load(carry, dyad::value(held)))
+    }
+}
+
+fn lower_read(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: as `run_read`.
+    unsafe {
+        let (value, into) = parts(node);
+        let carry = carry_of(lw.types(), into).ok_or(CompileError::NotLowerable(node))?;
+        let held = lw.lower(value)?;
+        lw.guard_non_null(held, handed_type(carry), |lw| {
+            Ok(lower_load(lw, carry, held, PAYLOAD_OFFSET))
+        })
     }
 }
 
