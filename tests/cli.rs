@@ -3528,6 +3528,37 @@ fn a_dyad_of_a_type_is_a_new_node_each_time_its_line_runs() {
     assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
 }
 
+#[test]
+fn an_operator_reads_through_a_dyad_no_name_holds() {
+    let g = "g := fn () -> dyad ( i32 5 )";
+    for (src, want) in [
+        ("dyad (i32, 7) + 1".to_string(), "8"),
+        ("1 + dyad (i32, 7)".to_string(), "8"),
+        ("dyad (i64, 7) * dyad (i64, 6)".to_string(), "42"),
+        ("dyad (rational_number, 1/2) * 4".to_string(), "2"),
+        ("x := dyad (i32, 7) == i32 7, x".to_string(), "true"),
+        (
+            "f := fn (m := i32 ?) -> i32 ( dyad (i32, m) + 1 ), f.compile(), f(i32 3)".to_string(),
+            "4",
+        ),
+        (format!("{g}, g() + 1"), "6"),
+        (format!("{g}, print «{{1 + g()}}»"), "6"),
+        (format!("{g}, f := fn () -> i32 ( g() + 1 ), f()"), "6"),
+        (
+            format!(
+                "{g}, f := fn () -> i32 ( g() + 1 ), h := fn () -> i32 ( f() ), h.compile(), h()"
+            ),
+            "6",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // A condition runs on every pass, the call only where it is parsed: stand-in for #280.
+    let (code, _, stderr) = run_line(&format!("{g}, mut i := i32 0, while i < g() ( i = i + 1 )"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("cannot read a `dyad` value yet"), "stderr: {stderr}");
+}
+
 /// Run one command line and return its stdout, asserting success.
 fn line(src: &str) -> String {
     let out = logos().arg(src).output().unwrap();

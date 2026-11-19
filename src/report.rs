@@ -204,14 +204,15 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::WaitingLineHolds(word) => format!(
-            "this line reads a `dyad` name, so it is parsed only when it runs, and such a line \
-             cannot hold `{word}` yet: a `:=` there would declare a name whose type is known only \
-             then, and a `return`, `free` or `move` is checked where it is written"
+            "this line reads a `dyad` value, a name's or a call's, so it is parsed only when it \
+             runs, and such a line cannot hold `{word}` yet: a `:=` there would declare a name \
+             whose type is known only then, and a `return`, `free` or `move` is checked where it \
+             is written"
         ),
         ParseError::DyadReadEachPass => {
-            "a `while` condition cannot read a `dyad` name yet: the read is parsed over the node \
-             the name holds when the condition is parsed, and the condition runs again on every \
-             pass; test the name inside the loop's body"
+            "a `while` condition cannot read a `dyad` value yet, a name's or a call's: the read \
+             is parsed over the node the value holds when the condition is parsed, and the \
+             condition runs again on every pass; test the value inside the loop's body"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {
@@ -555,13 +556,13 @@ pub fn run_message(e: &RunError) -> String {
         RunError::Faulted(msg) => format!("the interpreter stopped inside compiled code: {msg}"),
         RunError::NoLexer => "`lex` can run only where the parser runs it".into(),
         RunError::NoParser => {
-            "a `type (…)` in a body, and a line that reads a `dyad` name, are parsed when they \
+            "a `type (…)` in a body, and a line that reads a `dyad` value, are parsed when they \
              run, which needs the parser running"
                 .into()
         }
         RunError::MintFailed(rendered) => format!("building this `type (…)` failed:\n{rendered}"),
         RunError::WaitFailed(rendered) => {
-            format!("a line that reads a `dyad` name is parsed when it runs, and here it failed:\n{rendered}")
+            format!("a line that reads a `dyad` value is parsed when it runs, and here it failed:\n{rendered}")
         }
         RunError::Lex(why) => format!("this text will not lex: {why}"),
         RunError::NoCaller => {

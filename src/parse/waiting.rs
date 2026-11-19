@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! A line of a body whose value's type is known only when it runs, since it reads a `dyad`
-//! name: found before it is lexed, held whole, and parsed each time it runs over the nodes such
-//! names hold then (`identities::waiting`, ›A `dyad ?` place is transparent: a placeholder for a
-//! new node of any type‹ [[R293]]). Held whole, not parsed up to the name: stand-in for #280.
+//! name, or a `-> dyad` call as an infix's operand: found before it is lexed, held whole, and
+//! parsed each time it runs over the nodes such values hold then (`identities::waiting`, ›A
+//! `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]). Held
+//! whole, not parsed up to the value: stand-in for #280.
 
 use super::*;
 use crate::identities::read::{read_kind, Read};
@@ -61,6 +62,9 @@ impl<'a> Parser<'a> {
         let (mut prev, mut before_prev): (Option<DyadPtr>, Option<DyadPtr>) = (None, None);
         // After a `fn` or `type`, the rest of the level is a body read where it is built.
         let mut skipping = false;
+        // A `-> dyad` function just scanned, with whether an infix stands before it; and whether
+        // the bracket just closed was its call's.
+        let (mut callee, mut after_call): (Option<bool>, bool) = (None, false);
         loop {
             self.skip_whitespace();
             let at = self.cx.pos;
@@ -87,6 +91,7 @@ impl<'a> Parser<'a> {
                 }
                 (line_reads, declares, prev, before_prev, skipping) =
                     (false, None, None, None, false);
+                (callee, after_call) = (None, false);
                 continue;
             }
             let (Some(r), Some(id)) = (r, id) else { unreachable!("a boundary at the end") };
@@ -97,8 +102,12 @@ impl<'a> Parser<'a> {
                 } else {
                     self.scan_level(depth + 1, found)?
                 };
-                line_reads |= inner;
-                any |= inner;
+                let call_operand = callee.take();
+                after_call = call_operand == Some(false);
+                let reads = inner || call_operand == Some(true);
+                line_reads |= reads;
+                any |= reads;
+                found.read |= reads;
                 (before_prev, prev) = (prev, Some(types.open_));
                 continue;
             }
@@ -109,6 +118,13 @@ impl<'a> Parser<'a> {
                 skipping = true;
                 continue;
             }
+            // A call that gives a `dyad`, read by an infix on either side.
+            if std::mem::take(&mut after_call) && self.is_value_infix(id) {
+                (line_reads, any, found.read) = (true, true, true);
+            }
+            // SAFETY: a resolved token's identity is a dyad from the store.
+            callee = (prev != Some(types.dot_) && unsafe { self.gives_dyad(id) })
+                .then(|| prev.is_some_and(|p| self.is_value_infix(p)));
             if id == types.return_ || id == types.free_ || id == types.move_ {
                 let word = self.cx.source[at..at + r.matched].to_string();
                 found.refused.get_or_insert((at, word));
@@ -164,6 +180,17 @@ impl<'a> Parser<'a> {
                         || (p == types.assign && target_holds_dyad)
                 }
             }
+    }
+
+    /// Whether `id` is a function whose result is a `dyad`, so the type of what its call gives
+    /// is known only at run.
+    ///
+    /// # Safety
+    /// `id` must be null or a dyad from the store.
+    unsafe fn gives_dyad(&self, id: DyadPtr) -> bool {
+        !id.is_null()
+            && crate::dyad::ty(id) == self.types.fn_type
+            && *(crate::dyad::value(id) as *const DyadPtr).add(FN_OUTPUT) == self.types.dyad_
     }
 
     /// The line at the cursor, ending at `end`, held as it is written: lexed against the scopes

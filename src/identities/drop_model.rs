@@ -1671,6 +1671,11 @@ mod tests {
             "d := dyad (i32, 7), e := d, 1",
             "mut d := dyad ?, d = dyad (i32, 7), d = dyad (i64, 8), 1",
             "for 0..3 ( d := dyad (i32, 2) ), 1",
+            "dyad (i32, 7) + 1, 1",
+            "x := dyad (i32, 7) + dyad (i32, 1), 1",
+            "for 0..3 ( x := dyad (i32, 2) + 1 ), 1",
+            "g := fn () -> dyad ( i32 5 ), g() + 1, 1",
+            "g := fn () -> dyad ( i32 5 ), x := g() + g(), 1",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
         }
@@ -1679,6 +1684,7 @@ mod tests {
             ("f := fn (m := i32 ?) -> dyad ( dyad (i32, m) )", "a := f(i32 3), b := f(i32 4), 1"),
             ("f := fn (m := i32 ?) -> dyad ( dyad (i32, m) )", "f(i32 3), 1"),
             ("f := fn (q := dyad ?) -> i32 ( 1 )", "f(dyad (i32, 7))"),
+            ("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) * 1 )", "f(i32 1)"),
         ] {
             for src in [format!("{body}, {call}"), format!("{body}, f.compile(), {call}")] {
                 assert_eq!(run(&src), (1, 0), "{src}");
@@ -1699,6 +1705,8 @@ mod tests {
             "f := fn (a := dyad ?) -> dyad ( a + 1 ), x := f(i64 1), 1",
             "f := fn (a := dyad ?) -> i64 ( if a > 0 ( f(i64 (a - 1)) + 1 ) else ( 0 ) ), f(i64 4), 1",
             "mut d := dyad ?, d = i64 1, g := fn (a := dyad ?) -> i64 ( a ), g(d), 1",
+            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() + 1 ), f(), 1",
+            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( 1 + g() * 2 ), for 0..3 ( f() ), 1",
         ] {
             assert_eq!(run_hosted(src), (1, 0), "{src}");
         }

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! What waits for the run to parse it, since its value's type is known only then: a line of a
-//! body that reads a `dyad` name, held where it is written and parsed each time it runs over the
-//! nodes such names hold then; and a body's last value read from a `dyad` place into the declared
+//! body that reads a `dyad` value, held where it is written and parsed each time it runs over the
+//! nodes such values hold then; and a body's last value read from a `dyad` place into the declared
 //! result (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]).
 //! A line waits whole: stand-in for #280.
 
