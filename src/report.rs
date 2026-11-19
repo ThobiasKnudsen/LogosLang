@@ -188,6 +188,14 @@ pub fn parse_message(e: &ParseError) -> String {
             "the declared or assigned type must be a type value"
                 .into()
         }
+        ParseError::NameNeedsType => {
+            "a name needs a type: write it, or `dyad ?` for one whose type changes".into()
+        }
+        ParseError::FieldNeedsType => {
+            "a field needs a type: write it, write `dyad ?` for one whose type changes, or write a \
+             function that builds the mints, as `array` does"
+                .into()
+        }
         ParseError::DyadTakesNode => {
             "a `dyad ?` place does not take this value yet: it takes a node, or a value of a type \
              whose value moves whole (a number, a pointer that owns nothing, a rational, a record \

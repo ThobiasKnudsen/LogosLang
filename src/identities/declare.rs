@@ -83,7 +83,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid declare node; its declared slot is a valid dyad.
     unsafe {
         let declared = declared_of(node);
-        // The storage a hole laid out, `x := ?` or `x := T ?`, has nothing to run: nothing
+        // The storage a hole laid out, `x := T ?`, has nothing to run: nothing
         // initializes it. Nor has a node with no run, which is data and was built whole at parse.
         if !rt.types().is_storage(declared)
             && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate

@@ -214,6 +214,10 @@ pub enum ParseError {
     /// A declaration's type position, or a type variable's fill, held
     /// something that does not evaluate to a type.
     BadDeclaredType,
+    /// A new name or parameter without its type: `x := ?`, `fn (a)`, `fn (a := ?)`.
+    NameNeedsType,
+    /// A field of a type without its type: `a := ?`, or `a` alone on its line.
+    FieldNeedsType,
     /// A value lands in a `dyad ?` place that it can neither be held as nor moved whole into a
     /// new node: text, an owning value, a record whose body fills `free`.
     DyadTakesNode,

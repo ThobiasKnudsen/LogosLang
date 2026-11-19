@@ -196,7 +196,7 @@ impl<'a> Parser<'a> {
                 owner,
             )
         };
-        // A `?` field a check narrowed reads as a number of the type it was checked against, as
+        // A `dyad` field a check narrowed reads as a number of the type it was checked against, as
         // a tape cell does (›A tape read checked against a number type reads as that number‹
         // [[R229]]).
         // SAFETY: `node` is the field read just built.
@@ -473,8 +473,8 @@ impl<'a> Parser<'a> {
                 if dyad::ty(lhs) == types.tape.cell_dyads && name == "size" {
                     return Ok((tape::build_cell_dyads_size(store, types, lhs), 0));
                 }
-                // A bare parameter holding a bracket a call was handed: its lines, read as a
-                // tape cell's are, when the body runs.
+                // A bracket parameter, holding the bracket a node's field holds: its lines, read
+                // as a tape cell's are, when the body runs.
                 let bare = self.types.storage_type(lhs) == Some(std::ptr::null_mut());
                 if bare && name == "dyads" {
                     let Some(i) = key else {
@@ -1319,8 +1319,9 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.tape.cell_dyad_at || tape::is_cell_read(types, lhs) {
             return Ok(tape::build_cell_type(self.rt.store, types, lhs));
         }
-        // An untyped field of the parse's own node has the type of the node it holds, read when
-        // the constructor runs.
+        // A `dyad` field of the parse's own node has the type of the node it holds, read when
+        // the constructor runs (›A `dyad ?` place is transparent: a placeholder for a new node
+        // of any type‹ [[R293]]).
         if this::is_field_read(types, lhs) {
             if !this::is_fill(types, lhs) {
                 return Err(ParseError::BadReflectRead);
@@ -1328,7 +1329,7 @@ impl<'a> Parser<'a> {
             let declared = crate::identities::hole::type_in(
                 Binding::read(this::field_binding_of(types, lhs)).dyad,
             );
-            return Ok(if declared.is_null() {
+            return Ok(if declared == types.dyad_ {
                 this::build_field_type(self.rt.store, types, lhs)
             } else {
                 declared

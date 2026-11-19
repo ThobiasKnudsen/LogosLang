@@ -48,7 +48,7 @@ pub struct ThisIds {
     /// `[type, places, op]`: a new value of `type` holding a run's field values, made per run.
     pub pack: DyadPtr,
     pub pack_leaf: DyadPtr,
-    /// `[read, op, output_type]`: `.type` of a `?` field of the parse's own node, the type of
+    /// `[read, op, output_type]`: `.type` of a `dyad` field of the parse's own node, the type of
     /// the node it holds, read as a tape cell's is.
     pub field_type: DyadPtr,
     pub field_type_leaf: DyadPtr,
@@ -277,7 +277,7 @@ pub(crate) unsafe fn owner_of(types: &Core, read: DyadPtr) -> DyadPtr {
     *ops.add(if dyad::ty(read) == types.this.slot { 4 } else { 5 })
 }
 
-/// `.type` of `read`, a `?` field of the parse's own node.
+/// `.type` of `read`, a `dyad` field of the parse's own node.
 ///
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.

@@ -446,31 +446,33 @@ fn parses_a_record_with_typed_fields() {
 }
 
 #[test]
-fn parses_a_bare_name_field() {
-    let (mut store, mut trie, core) = new_core();
-    let mut scopes = ScopeStack::new();
-    scopes.push(core.root_scope);
-
-    let node = {
-        let mut p = Parser::new("logos (t)", &mut store, &mut trie, &core, scopes);
-        p.parse_expression().unwrap()
-    };
-
-    // A bare name is carried as the 8-byte container.
-    let (scope, ft) = unsafe {
-        let fields = array::items(meta::record_fields_of(node));
-        assert_eq!(fields.len(), 1);
-        assert_eq!(meta::record_size_of(node), 8);
-        (meta::record_scope_of(node), fields[0])
-    };
-    unsafe {
-        assert!(hole::type_in(ft).is_null());
-        assert!(hole::default_in(ft).is_null());
+fn every_new_name_says_its_type() {
+    for src in [
+        "x := ?, 0",
+        "mut x := ?, x = i32 5, x",
+        "static x := ?, 0",
+        "f := fn (a) -> i32 ( 1 ), 0",
+        "f := fn (a := ?) -> i32 ( 1 ), 0",
+        "f := fn (b := i32 ?, mut a) -> i32 ( b ), 0",
+    ] {
+        assert_eq!(script_parse_err(src), ParseError::NameNeedsType, "{src}");
     }
-
-    let mut inner = ScopeStack::new();
-    inner.push(scope);
-    assert_eq!(inner.resolve(&trie, "t").unwrap().identity, ft);
+    for src in [
+        "pt := type ( a := ? ), 0",
+        "pt := type ( a ), 0",
+        "pt := type ( a := i32 ?, mut b := ? ), 0",
+        "logos (t)",
+    ] {
+        assert_eq!(script_parse_err(src), ParseError::FieldNeedsType, "{src}");
+    }
+    for src in [
+        "mut x := i32 ?, x = 5, x",
+        "mut d := dyad ?, d = i64 5, d = f64 2.5, 0",
+        "f := fn (a := dyad ?) -> i32 ( 1 ), f(i64 42)",
+        "pt := type ( a := dyad ? ), 0",
+    ] {
+        assert!(run_script_result(src).is_ok(), "{src}");
+    }
 }
 
 #[test]
@@ -2102,13 +2104,6 @@ fn a_type_read_agrees_across_tiers() {
 }
 
 #[test]
-fn a_bare_parameter_compares_by_address() {
-    assert_eq!(run_script("f := fn (a) -> bool ( a == i32 ), f(i32)"), 1);
-    assert_eq!(run_script("f := fn (a) -> bool ( a == i32 ), f(f64)"), 0);
-    assert_eq!(run_script("f := fn (a) -> bool ( a != i32 ), f(f64)"), 1);
-}
-
-#[test]
 fn a_type_is_a_value_a_place_can_hold() {
     for tail in ["", "f.compile(), "] {
         assert_eq!(
@@ -2181,11 +2176,8 @@ fn a_type_returning_body_must_hand_back_a_type() {
 
 #[test]
 fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
-    // A bare parameter may hold a number, which no reader could follow as a node, and an owning
-    // value would have two ends.
-    for src in ["fn (a) -> dyad ( a )", "fn () -> dyad ( alloc 1 of i32 5 )"] {
-        assert_eq!(parse_err(src), ParseError::DyadTakesNode, "{src}");
-    }
+    // An owning value would have two ends.
+    assert_eq!(parse_err("fn () -> dyad ( alloc 1 of i32 5 )"), ParseError::DyadTakesNode);
     // A value that is no node lands in a new one, as `=` writes it into a `dyad ?` name.
     for src in [
         "fn () -> dyad ( i32 5 )",
@@ -2241,7 +2233,7 @@ fn the_unknown_is_one_value_a_type_or_dyad_place_holds() {
     assert_eq!(run_script("mut a := type ?, a = i32, a == ?"), 0);
     assert_eq!(run_script("mut a := type ?, a = i32, a != ?"), 1);
     assert_eq!(run_script("mut d := dyad ?, d = ?, d == ?"), 1);
-    assert_eq!(run_script("x := ?, x == ?"), 1);
+    assert_eq!(run_script("? == ?"), 1);
     assert_eq!(run_script("f := fn (t := type ?) -> bool ( t != ? ),\nf(i32)"), 1);
     assert_eq!(run_script("f := fn (t := type ?) -> bool ( t != ? ),\nf(?)"), 0);
     assert_eq!(run_script("mut m := type ?, m = ?, if (m != ?) (1) else (2)"), 2);
@@ -2571,11 +2563,6 @@ fn nested_calls_in_argument_position_release_frames_lifo() {
 }
 
 #[test]
-fn a_bare_parameter_carries_the_container() {
-    assert_eq!(run_script("f := fn (a) -> i64 ( a ),\nf(42)"), 42);
-}
-
-#[test]
 fn compile_member_installs_code_the_next_call_jumps_to() {
     assert_eq!(
         run_script("double := fn (x := i64 ?) -> i64 ( x + x ),\ndouble.compile(),\ndouble(21)"),
@@ -2858,7 +2845,7 @@ fn an_argument_must_be_the_parameters_logos() {
     assert_eq!(run_script("f := fn (a := i32 ?) -> i32 ( a ), f(7)"), 7);
     assert_eq!(run_script("f := fn (a := i32 ?) -> i32 ( a ), f(3 + 4)"), 7);
     assert_eq!(run_script("y := i32 2, f := fn (a := i32 ?) -> i32 ( a ), f(y + 1)"), 3);
-    assert_eq!(run_script("h := fn (a) -> i32 ( 1 ), h(i32)"), 1);
+    assert_eq!(run_script("h := fn (a := dyad ?) -> i32 ( 1 ), h(i32)"), 1);
 }
 
 #[test]

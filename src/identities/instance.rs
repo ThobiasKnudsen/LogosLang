@@ -122,7 +122,7 @@ pub(crate) unsafe fn field_offsets<'a>(ty: DyadPtr) -> impl Iterator<Item = (Dya
 }
 
 /// Where each field of a value of `ty` lies and how a whole value of its type moves into it;
-/// `None` where a field's type moves none, as a `?` field's.
+/// `None` where a field's type moves none.
 ///
 /// # Safety
 /// `ty` must be a record type node from the store.

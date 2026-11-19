@@ -1885,7 +1885,6 @@ fn a_value_lands_unwritten_only_in_a_type_that_holds_every_value_of_it() {
             ("f := fn (b := i32 ?) -> i64 ( if (b < 1) (return i32 4), i64 2 ), {c}f(0)", "4"),
             ("f := fn () -> f64 ( mut a := f64 0.0, p := &a, p@ = i32 5, a ), {c}f()", "5.0"),
             ("f := fn () -> i64 ( x := i32 3, x pt ), {c}f()", "6"),
-            ("f := fn (a) -> i64 ( a ), {c}f(42)", "42"),
         ] {
             let src = format!("{pt}, {}", src.replace("{c}", compile));
             let out = logos().arg(&src).output().unwrap();
@@ -1914,9 +1913,9 @@ fn a_value_lands_unwritten_only_in_a_type_that_holds_every_value_of_it() {
         "rec := type ( a := i64 ?, b := f64 ? ), v := rec (i32 3, i64 4)",
         "m := hashmap i32 -> i32 ?, m[i64 3] = 4",
         "x := f64 3.5, x pt",
-        "g := fn (b) -> i32 ( mut x := i32 0, x = b, x ), g.compile(), g(f64 2.5)",
-        "g := fn (b) -> i32 ( h := fn (a := i32 ?) -> i32 ( a ), h(b) ), g(5)",
-        "g := fn (b) -> i64 ( b pt ), g(i64 3)",
+        "g := fn (b := dyad ?) -> i32 ( mut x := i32 0, x = b, x ), g(f64 2.5)",
+        "g := fn (b := dyad ?) -> i32 ( h := fn (a := i32 ?) -> i32 ( a ), h(b) ), g(i64 5)",
+        "g := fn (b := dyad ?) -> i64 ( b pt ), g(f64 3.0)",
         "mut d := dyad ?, d = i32, mut x := i32 0, x = d",
         "mut d := dyad ?, d = i32, f := fn () -> i32 ( d ), f()",
         "g := fn (q := dyad ?) -> i32 ( q ), g(i32)",
@@ -1997,11 +1996,10 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
             assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
         }
     }
-    // Text, an owning value, a bare parameter, and a number in a place no name holds.
+    // Text, an owning value, and a number in a place no name holds.
     for src in [
         "mut d := dyad ?, d = «a»",
         "mut d := dyad ?, d = alloc 1 of i32 5",
-        "fn (a) -> dyad ( a )",
         "f := fn (mut q := dyad ?) -> i32 ( 1 ), f(5)",
         "p := alloc 1 of dyad ?, p@ = 5",
         "r := type ( v := dyad ? ), x := r (5)",
@@ -2020,6 +2018,9 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
         ("g := fn (a := dyad ?) -> bool ( a.type == i32 ), g(i32 5)", "true"),
         ("g := fn (a := dyad ?) -> bool ( a.type == i32 ), g(i64 5)", "false"),
         ("f := fn (a := dyad ?) -> i64 ( a ), f(42)", "42"),
+        ("f := fn (a := dyad ?) -> bool ( a == i32 ), f(i32)", "true"),
+        ("f := fn (a := dyad ?) -> bool ( a == i32 ), f(f64)", "false"),
+        ("f := fn (a := dyad ?) -> bool ( a != i32 ), f(f64)", "true"),
         ("x := i32 4, g := fn (a := dyad ?) -> bool ( a.type == i32 ), g(x + 1)", "true"),
         (
             "mut n := i32 0, h := fn () -> i64 ( n = n + 1, i64 7 ), \
@@ -2385,15 +2386,6 @@ fn a_value_reads_its_type_with_a_dot_on_both_tiers() {
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: {stderr}");
-    }
-    // An untyped parameter's type is known only per call: a checked error, never a crash.
-    for param in ["a", "a := ?"] {
-        for tail in ["f(1)", "f.compile(), f(1)"] {
-            let src = format!("f := fn ({param}) -> bool ( a.type == i32 ), {tail}");
-            let (code, _, stderr) = run_line(&src);
-            assert_eq!(code, Some(1), "{src}: {stderr}");
-            assert!(stderr.contains("known only when the program runs"), "{src}: {stderr}");
-        }
     }
 }
 
@@ -4395,7 +4387,8 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
     let in_f = "f := fn (y := i32 ?) -> i32 ( y sq )";
     let counted = |body: &str| {
         format!(
-            "q := type ( n := ?, m := ?, static parse_rank = 60, static parse = ( tape[0].type = q, \
+            "q := type ( n := dyad ?, m := dyad ?, static parse_rank = 60, \
+             static parse = ( tape[0].type = q, \
              tape[0].n = tape[1].dyads.size, {body}, tape[0] = tape[0].m, tape.remove(1), \
              tape.is_constructed[0] = true ) )"
         )
@@ -4459,7 +4452,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
                 + ", mut x := i32 7, f := fn () -> i32 ( x sq ), x = 10, f()",
             "10",
         ),
-        // A `?` field is a number only inside a check of its type.
+        // A `dyad` field is a number only inside a check of its type.
         (format!("{checked_n}, q (1, 2, 3)"), "6"),
         (format!("{checked_n}, f := fn () -> u64 ( q (1, 2, 3) ), f()"), "6"),
         (format!("{checked_n}, f := fn () -> u64 ( q (1, 2, 3) ), f.compile(), f()"), "6"),
@@ -6490,8 +6483,8 @@ fn a_fields_type_reads_its_declared_type() {
          tape.is_constructed[0] = true ) ), q",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "u64\n"), "stderr: {stderr}");
-    // An untyped field has the type of the node it holds.
-    let q = "q := type ( size := ?, static parse_rank = 60, \
+    // A `dyad` field has the type of the node it holds.
+    let q = "q := type ( size := dyad ?, static parse_rank = 60, \
              static parse = ( tape[0].type = q, tape[0].size = 3, \
              if tape[0].size.type == rational_number ( tape[0] = u64 1 ) else ( tape[0] = u64 2 ), \
              tape.is_constructed[0] = true ) )";
@@ -6499,6 +6492,25 @@ fn a_fields_type_reads_its_declared_type() {
         let src = format!("{q}, {use_}");
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_new_name_without_its_type_is_refused_where_it_is_written() {
+    let name = "a name needs a type: write it, or `dyad ?` for one whose type changes";
+    let field = "a field needs a type: write it, write `dyad ?` for one whose type changes, or \
+                 write a function that builds the mints, as `array` does";
+    for (src, at, message) in [
+        ("mut x := ?, x = i32 5, x", "1:5", name),
+        ("f := fn () -> i32 ( mut x := ?, x = i32 5, x ), f.compile(), f()", "1:25", name),
+        ("show := fn (a) -> void ( print «{a}» ), show(i32 5)", "1:13", name),
+        ("f := fn (a := ?) -> i64 ( a ), f.compile(), f(i64 42)", "1:10", name),
+        ("pt := type ( a := ? ), p := pt(i32 1), 0", "1:14", field),
+        ("pt := type ( b := i32 ?, a ), 0", "1:26", field),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("{at}: error: {message}\n")), "{src}: stderr: {stderr}");
     }
 }
 
