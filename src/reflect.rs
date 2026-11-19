@@ -549,10 +549,11 @@ mod tests {
             assert_eq!(meta::parse_rank_of(core.times), prec::MULTIPLICATIVE);
             assert_eq!(meta::parse_rank_of(core.assign), prec::DECLARE);
             assert_eq!(meta::assoc_of(core.assign), Assoc::Right);
-            for id in [core.i32_, core.rational, core.lossy] {
+            for id in [core.i32_, core.rational, core.lossy, core.negate] {
                 assert_eq!(meta::parse_rank_of(id), prec::CONVERT);
                 assert_eq!(meta::assoc_of(id), Assoc::Right);
             }
+            assert_eq!(meta::kind_of(core.negate), Some(meta::TOKEN_TAG));
             assert_eq!(meta::parse_rank_of(core.lt), prec::COMPARE);
             assert_eq!(meta::parse_rank_of(core.eq), prec::EQUALITY);
 

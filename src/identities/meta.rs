@@ -545,3 +545,13 @@ pub(crate) unsafe fn role_of(id: DyadPtr, i: usize) -> DyadPtr {
     let p = dyad::head(id).add(ROLES_OFF + i * std::mem::size_of::<DyadPtr>());
     std::ptr::read_unaligned(p as *const DyadPtr)
 }
+
+/// Whether `id` is an operator whose first operand is `lhs`, the value to its left.
+///
+/// # Safety
+/// `id` must be a non-null dyad from the store; `kind_of` turns away a node with no record.
+pub(crate) unsafe fn takes_lhs(id: DyadPtr) -> bool {
+    matches!(kind_of(id), Some(TUPLE_TAG | LIST_TAG))
+        && arity_of(id) > 0
+        && crate::reflect::text_of(role_of(id, 0)) == b"lhs"
+}

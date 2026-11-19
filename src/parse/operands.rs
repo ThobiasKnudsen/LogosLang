@@ -144,10 +144,7 @@ impl<'a> Parser<'a> {
         self.is_delimiter(id)
             || unsafe {
                 self.identity_head(id).is_some_and(|h| match meta::kind_of(h) {
-                    Some(meta::TUPLE_TAG | meta::LIST_TAG) => {
-                        meta::arity_of(h) > 0
-                            && crate::reflect::text_of(meta::role_of(h, 0)) == b"lhs"
-                    }
+                    Some(meta::TUPLE_TAG | meta::LIST_TAG) => meta::takes_lhs(h),
                     Some(meta::RECORD_TAG) => {
                         let fields = meta::record_fields_of(h);
                         let first = if fields.is_null() {

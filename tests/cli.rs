@@ -271,6 +271,13 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
         ("2 ^ 0.5", "1.4142135623730954"),
         ("g := fn (x := f64 ?) -> f64 ( x ^ 1.5 ), g.compile(), g(f64 4.0)", "8.0"),
         ("f(2) + 2 ^ 3 ^ 2", "521"),
+        // Negation ranks with the number types, above `^` (›`-` negates where a space stands
+        // before it and none after, or no value stands to its left; any other `-` subtracts‹
+        // [[R157]]).
+        ("y := i32 3, -y ^ 2", "9"),
+        ("y := i32 3, 0 - y ^ 2", "-9"),
+        ("-3 ^ 2", "9"),
+        ("g := fn (y := i32 ?) -> i32 ( -y ^ 2 ), g.compile(), g(3)", "9"),
         ("x := f64 2.0, x ^ (f64 0.0 / 0.0)", "NaN"),
         ("x := f64 2.0, x ^ (f64 1.0 / 0.0)", "inf"),
         ("x := f64 2.0, x ^ (f64 -1.0 / 0.0)", "0.0"),
@@ -3070,7 +3077,7 @@ fn a_line_starting_with_a_dash_is_source_not_a_flag() {
     let out = logos().arg("--nope").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("<command line>:1:7: error:"), "stderr: {err}");
+    assert!(err.contains("<command line>:1:3: error: unknown name `nope`"), "stderr: {err}");
 
     for flag in ["--help", "-h"] {
         let out = logos().arg(flag).output().unwrap();
@@ -6955,10 +6962,10 @@ fn lossy_without_both_sides_is_refused_where_it_is_written() {
     }
 }
 
-/// What a number type's lower rank leaves refused: an `if` arm the type cannot hold, a sign
-/// before a name (›A type's `parse` decides what converts into it; unwritten, a value converts
-/// only into a type that holds it exactly‹ [[R155]] keeps `i32 -m` open), a bracket read through
-/// `.`, a type that cannot hold the type to its right, and a type left of `=` reading past it.
+/// What a number type's lower rank leaves refused: an `if` arm the type cannot hold, a type a
+/// `-` subtracts from (›`-` negates where a space stands before it and none after, or no value
+/// stands to its left; any other `-` subtracts‹ [[R157]]), a bracket read through `.`, a type
+/// that cannot hold the type to its right, and a type left of `=` reading past it.
 #[test]
 fn a_number_type_below_open_refuses_what_it_cannot_take() {
     let mismatch = "these types do not match";
@@ -6970,9 +6977,9 @@ fn a_number_type_below_open_refuses_what_it_cannot_take() {
             "f := fn (c := bool ?) -> i64 ( i64 if c (u64 1) else (i64 2) ), f.compile(), f(true)",
             mismatch,
         ),
-        ("m := i32 3, i64 -m", operator),
         ("m := i32 3, i64 - m", operator),
-        ("f := fn (m := i32 ?) -> i64 ( i64 -m ), f.compile(), f(3)", operator),
+        ("m := i32 3, i64-m", operator),
+        ("f := fn (m := i32 ?) -> i64 ( i64 - m ), f.compile(), f(3)", operator),
         ("x := i32 5, i32 (x).type", mismatch),
         ("i32 i64 5", mismatch),
         ("i32 = 4", "`i32` is not `mut`"),
@@ -6981,6 +6988,56 @@ fn a_number_type_below_open_refuses_what_it_cannot_take() {
         let (code, stdout, stderr) = run_line(src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains(want), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›`-` negates where a space stands before it and none after, or no value stands to its left;
+/// any other `-` subtracts‹ [[R157]]: negation and subtraction are two identities, told apart
+/// where the `-` stands, and negation is built before the number type to its left, on both tiers.
+#[test]
+fn a_minus_negates_or_subtracts_by_where_it_stands() {
+    let mut cases = vec![
+        ("-5".to_string(), "-5\n"),
+        ("i32 -5".to_string(), "-5\n"),
+        ("m := i32 3, i32 -m".to_string(), "-3\n"),
+        ("m := i32 3, (-m)".to_string(), "-3\n"),
+        ("m := i32 3, - -m".to_string(), "3\n"),
+        ("m := i32 3, 2 - -m".to_string(), "5\n"),
+        ("m := f64 2.5, i32 lossy -m".to_string(), "-2\n"),
+        ("mut x := i32 0, x=-1, x".to_string(), "-1\n"),
+        ("import ./identities/array.logos, a := array i32 [-1, 2], a[0]".to_string(), "-1\n"),
+    ];
+    for sub in ["1-m", "1 - m", "1- m"] {
+        cases.push((format!("m := i32 3, {sub}"), "-2\n"));
+    }
+    for (body, call, want) in [
+        ("( i32 -m )", "f(3)", "-3\n"),
+        ("( 1-m )", "f(3)", "-2\n"),
+        ("( 1 - m )", "f(3)", "-2\n"),
+        ("( 1- m )", "f(3)", "-2\n"),
+        ("( (-m) )", "f(3)", "-3\n"),
+        ("( - -m )", "f(3)", "3\n"),
+        ("( -m * 3 )", "f(3)", "-9\n"),
+        ("( -(m * 3) )", "f(3)", "-9\n"),
+        ("( -5 + m )", "f(3)", "-2\n"),
+        ("( mut x := i32 0, x=-m, x )", "f(3)", "-3\n"),
+    ] {
+        let f = format!("f := fn (m := i32 ?) -> i32 {body}");
+        cases.push((format!("{f}, {call}"), want));
+        cases.push((format!("{f}, f.compile(), {call}"), want));
+    }
+    let deref = "f := fn (q := @i32 ?) -> i32 ( q@-1 )";
+    cases.push((format!("{deref}, x := i32 5, f(&x)"), "4\n"));
+    cases.push((format!("{deref}, f.compile(), x := i32 5, f(&x)"), "4\n"));
+    assert_runs(&cases);
+    for (src, at) in [
+        ("m := i32 3, 1 -m", "1:15:"),
+        ("f := fn (m := i32 ?) -> i32 ( 1 -m ), f.compile(), f(3)", "1:33:"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        let found = format!("{at} error: expected one expression, found more");
+        assert!(stderr.contains(&found), "{src}: stderr: {stderr}");
     }
 }
 
