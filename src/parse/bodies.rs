@@ -147,6 +147,25 @@ pub(super) struct OpenScope {
     pub(super) narrowed: Vec<(CellKey, DyadPtr)>,
 }
 
+/// What the parse of a line notes on its scope as it goes: the values it made that nothing took,
+/// and the comments lifted out of it.
+#[derive(Default, Clone)]
+pub(super) struct LineNotes {
+    made: Vec<DyadPtr>,
+    prose: Vec<DyadPtr>,
+}
+
+impl OpenScope {
+    pub(super) fn take_line_notes(&mut self) -> LineNotes {
+        LineNotes { made: std::mem::take(&mut self.made), prose: std::mem::take(&mut self.prose) }
+    }
+
+    pub(super) fn add_line_notes(&mut self, notes: LineNotes) {
+        self.made.extend(notes.made);
+        self.prose.extend(notes.prose);
+    }
+}
+
 /// A function node's value record, in order: input `record`, return type,
 /// body, compiled `callable` (null until compiled), frame size, outer names
 /// (DESIGN ›Execution is function application‹).
@@ -1195,10 +1214,24 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_while_parts(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
+        self.skip_whitespace();
+        let start = self.cx.pos;
+        let made = self.cx.open.last().map(|o| o.made.clone());
         let was = std::mem::replace(&mut self.cx.each_pass, true);
+        let was_read = std::mem::replace(&mut self.cx.each_pass_read, false);
         let cond = self.parse_condition();
         self.cx.each_pass = was;
-        let cond = cond?;
+        let read = std::mem::replace(&mut self.cx.each_pass_read, was_read);
+        let mut cond = cond?;
+        // The condition stood for the nodes its `dyad` names held as it was parsed, and runs
+        // again each pass: it is parsed again each time (›A `dyad ?` place is transparent: a
+        // placeholder for a new node of any type‹ [[R293]]), and what this parse made never runs.
+        if read {
+            if let (Some(open), Some(made)) = (self.cx.open.last_mut(), made) {
+                open.made = made;
+            }
+            cond = self.hold_condition(start)?;
+        }
         // A repeated body: parse-time rebinding is off inside.
         self.cx.runtime_depth += 1;
         self.cx.next_block = BlockValue::Thrown;

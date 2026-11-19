@@ -736,6 +736,7 @@ impl<'a> Parser<'a> {
                 Err(e) => return Some(Err(e)),
             }
             let mut tape = ParsingTape::new();
+            self.start_from_kept(&mut tape);
             let boundary = match self.lex_segment(&mut tape) {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),

@@ -2072,11 +2072,9 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
             "f := fn (a := dyad ?) -> i64 ( if a > 0 ( return 1 ), 2 ), f(i64 2)",
             "cannot hold `return` yet",
         ),
-        ("mut d := dyad ?, d = i64 0, while d < 3 ( d = d + 1 ), d", "condition cannot read"),
         (
-            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, while d < 3 ( d = d + 1 ), 1 ), \
-             f(i64 0)",
-            "condition cannot read",
+            "g := fn () -> dyad ( i64 6 ), mut i := i64 0, while i < g() ( i = i + 1 ), i",
+            "cannot read what a call that gives a `dyad` gives",
         ),
         ("f := fn (a := dyad ?) -> i64 ( a ), f.compile(), f(i64 42)", "cannot be compiled yet"),
     ] {
@@ -2086,6 +2084,45 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
     }
     let (echoes, stderr) = repl(b"f := fn (a := dyad ?) -> i64 ( a * 2 )\nf(i64 21)\nf(4)\n");
     assert_eq!(echoes, ["42", "8"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_line_that_reads_a_dyad_name_is_parsed_where_it_is_written_up_to_the_name() {
+    for (src, want) in [
+        // `h()` is built where the line is written and runs once each time the line runs.
+        (
+            "mut n := i64 0, h := fn () -> i64 ( n = n + 1, n ), \
+             f := fn (a := dyad ?) -> i64 ( h() * 10 + a ), x := f(i64 2), y := f(i64 3), \
+             x + y + n",
+            "37",
+        ),
+        ("f := fn (a := dyad ?) -> i64 ( mut s := i64 0, s = (i64 3 + 1) * a, s ), f(i64 2)", "8"),
+        // A `while` condition that reads a `dyad` name reads the node it holds on each pass.
+        ("mut d := dyad ?, d = i64 0, while d < 3 ( d = d + 1 ), d", "3"),
+        ("mut d := dyad ?, d = i64 0, while # «a» d < 3 ( d = f64 9.5 ), d", "9.5"),
+        ("mut d := dyad ?, d = i64 0, while (d < 3) ( d = d + 1 ), d", "3"),
+        (
+            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, while d < 3 ( d = d + 1 ), d ), \
+             f(i64 0)",
+            "3",
+        ),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{src}: stderr: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
+    }
+    // A name nothing declares, before the read or on a loop body's other line, is reported
+    // where the function is written, though it is never called.
+    for src in [
+        "f := fn (a := dyad ?) -> i64 ( undefinedname + a ), 5",
+        "f := fn (a := dyad ?) -> i64 ( mut s := i64 0, for 0..3 ( s = s + a, nope ), s ), 5",
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains("unknown name"), "{src}: {stderr}");
+        assert!(!stderr.contains("held line"), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]
@@ -3560,10 +3597,11 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // A condition runs on every pass, the call only where it is parsed: stand-in for #280.
+    // A condition is parsed again on every pass, and its first parse would run the call too:
+    // stand-in for #307.
     let (code, _, stderr) = run_line(&format!("{g}, mut i := i32 0, while i < g() ( i = i + 1 )"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("cannot read a `dyad` value yet"), "stderr: {stderr}");
+    assert!(stderr.contains("cannot read what a call that gives a `dyad`"), "stderr: {stderr}");
     // What runs in the call's line runs in the order it is written, the lines before it first.
     let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 )";
     for (src, want) in [
@@ -3577,7 +3615,7 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // Something its line runs before it would run after it: stand-in for #280.
+    // Something its line runs before it would run after it: stand-in for #307.
     for src in [
         format!("{calls}, h() + g()"),
         format!("{calls}, h() + (g() * 2)"),

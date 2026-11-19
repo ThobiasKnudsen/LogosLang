@@ -223,8 +223,8 @@ pub enum ParseError {
     /// A line that waits for the run to parse it holds `:=`, `return`, `free` or `move`, whose
     /// checks the parse makes where they are written; carries the word.
     WaitingLineHolds(Box<String>),
-    /// A `while` condition reads the node a `dyad` name holds: the read is parsed once, over
-    /// the node the name held then, while the condition runs on every pass.
+    /// A `while` condition reads the node a call that gives a `dyad` gives: the call runs as the
+    /// condition is parsed, which is once more than the condition runs.
     DyadReadEachPass,
     /// A call that gives a `dyad`, which the pass runs as it parses the operator reading it,
     /// stands after something its own line runs only when the line runs.

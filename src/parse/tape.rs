@@ -114,6 +114,19 @@ impl Cell {
         }
     }
 
+    /// The cell over `text`, which holds its spelling `shift` bytes before the text it was lexed
+    /// from did; a cell nothing lexed stays as it is.
+    ///
+    /// # Safety
+    /// `text` must outlive every read of the cell's spelling and hold it there.
+    pub unsafe fn moved_to(mut self, text: &str, shift: usize) -> Self {
+        if self.text.is_some() {
+            self.text = Some(std::ptr::NonNull::from(text));
+            self.start -= shift;
+        }
+        self
+    }
+
     /// `tape.spelling[k]`: the empty text for a cell nothing lexed, so a
     /// constructor can test for a lexed cell with one read and no fault.
     pub fn spelling(&self) -> &str {

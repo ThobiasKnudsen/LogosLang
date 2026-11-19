@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! What waits for the run to parse it, since its value's type is known only then: a line of a
-//! body that reads a `dyad` value, held where it is written and parsed each time it runs over the
-//! nodes such values hold then; and a body's last value read from a `dyad` place into the declared
-//! result (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]).
-//! A line waits whole: stand-in for #280.
+//! body that reads a `dyad` value, or a `while` condition that reads a `dyad` name, parsed where
+//! it is written up to that read and from there each time it runs, over the nodes such values
+//! hold then; and a body's last value read from a `dyad` place into the declared result (›A
+//! `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]).
 
 use super::callable::{self, Callables};
 use super::{array, meta, Cx};
 use crate::dyad::{self, DyadPtr};
-use crate::parse::{Assoc, ParsingTape};
+use crate::parse::{Assoc, HeldLine};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
@@ -52,18 +52,18 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> WaitingIds {
 const INTO: usize = 4;
 const LINE_OUTPUT: usize = 6;
 
-/// `text` holds the line; `cells` must live for the run; `scope` is the scope open where it is
+/// `text` holds the line; `line` must live for the run; `scope` is the scope open where it is
 /// written, `frames` the `fn` nodes open there, outermost first.
 pub(crate) fn build_line(
     store: &mut Store,
     types: &Core,
     text: DyadPtr,
-    cells: *mut ParsingTape,
+    line: *mut HeldLine,
     scope: DyadPtr,
     frames: &[DyadPtr],
 ) -> DyadPtr {
     let u64_ty = types.numtypes[super::NumType::U64 as usize];
-    let cells = store.alloc_blob(u64_ty, &(cells as usize as u64).to_ne_bytes());
+    let cells = store.alloc_blob(u64_ty, &(line as usize as u64).to_ne_bytes());
     let frames = if frames.is_empty() {
         std::ptr::null_mut()
     } else {
@@ -96,18 +96,18 @@ pub(crate) unsafe fn set_into(node: DyadPtr, into: DyadPtr) {
     *ops.add(LINE_OUTPUT) = into;
 }
 
-/// The parts [`build_line`] stored: text, cells, scope, the open `fn` nodes, `into`.
+/// The parts [`build_line`] stored: text, line, scope, the open `fn` nodes, `into`.
 ///
 /// # Safety
 /// `node` must be a node from `build_line`; the store must outlive the returned slice.
 pub(crate) unsafe fn line_parts<'a>(
     node: DyadPtr,
-) -> (DyadPtr, *mut ParsingTape, DyadPtr, &'a [DyadPtr], DyadPtr) {
+) -> (DyadPtr, *mut HeldLine, DyadPtr, &'a [DyadPtr], DyadPtr) {
     let ops = dyad::value(node) as *const DyadPtr;
-    let cells = std::ptr::read_unaligned(dyad::value(*ops.add(1)) as *const u64);
+    let line = std::ptr::read_unaligned(dyad::value(*ops.add(1)) as *const u64);
     let frames = *ops.add(3);
     let frames = if frames.is_null() { &[][..] } else { array::items(frames) };
-    (*ops, cells as usize as *mut ParsingTape, *ops.add(2), frames, *ops.add(INTO))
+    (*ops, line as usize as *mut HeldLine, *ops.add(2), frames, *ops.add(INTO))
 }
 
 /// The type a node from [`build_tail`] reads its place's node into.
