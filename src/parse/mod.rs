@@ -108,12 +108,8 @@ struct Context<'a> {
     /// The folder relative import paths resolve against: the importing file's
     /// own folder during a nested import, else the working directory.
     dir: PathBuf,
-    /// Comment cells lifted out of a segment at its boundary, with the offset
-    /// each was lexed at, handed out as body items in source order beside the
-    /// segment's expression.
-    lifted: Vec<(usize, DyadPtr)>,
-    /// Body items a constructed segment yielded, in source order, not yet
-    /// handed out.
+    /// Body items a constructed segment yielded, in the order they are lines,
+    /// not yet handed out.
     queued: std::collections::VecDeque<Cell>,
     /// The last `=` built: what the sibling-write rule reads at the next item.
     last_write: LastWrite,
@@ -187,7 +183,6 @@ impl<'a> Context<'a> {
             definitions: Vec::new(),
             open: vec![OpenScope::default()],
             dir: PathBuf::from("."),
-            lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
             last_write: LastWrite::NONE,
             discovering: false,

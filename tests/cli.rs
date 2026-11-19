@@ -3936,6 +3936,78 @@ fn a_comment_built_in_the_boundary_s_build_loop_is_read_through_before_the_next_
 }
 
 #[test]
+fn a_comment_is_a_line_of_the_scope_its_text_is_in() {
+    let q = "q := type ( v := i32 ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
+             tape[0].v = tape[1].dyads[0], tape.remove(1), tape.is_constructed[0] = true ) )";
+    let narrowed = "q := type ( v := i32 ?, static parse_rank = 61, static parse = ( \
+                    tape[0].type = q, if tape[1].dyads[1].type == i32 # «c» \
+                    ( tape[0].v = tape[1].dyads[1] * 2 ) else ( tape[0].v = i32 0 ), \
+                    tape.remove(1), tape.is_constructed[0] = true ) ), x := q [5, i32 7], x.v";
+    let mut rows = vec![
+        // In a condition: a line of the condition's own scope, read past for its value.
+        ("if 5 * 2 # «c» == 10 ( 1, here.scope.dyads.size ) else ( 0 )".to_owned(), "1\n"),
+        ("if (5 * 2 # «c» == 10) ( 1, here.scope.dyads.size ) else ( 0 )".to_owned(), "1\n"),
+        ("if 5 * 2 # «c» == 10 ( print «yes» ) else ( print «no» )".to_owned(), "yes\n"),
+        ("if false # «c» ( 1 ) else ( 2, here.scope.dyads.size )".to_owned(), "1\n"),
+        (
+            "x := i32 3, if x == 0 ( u64 0 ) else if x == 3 # «c» ( 1, here.scope.dyads.size ) \
+             else ( u64 9 )"
+                .to_owned(),
+            "1\n",
+        ),
+        (
+            "mut i := i32 0, mut n := u64 0, while i < 1 # «c» \
+             ( i = i + 1, n = here.scope.dyads.size ), n"
+                .to_owned(),
+            "1\n",
+        ),
+        ("if (print «side», true) # «c» ( 1 ) else ( 2 )".to_owned(), "side\n1\n"),
+        (narrowed.to_owned(), "14\n"),
+        // Inside a line: a line of the scope the line stands in, after it.
+        ("f := fn () -> u64 # «c» ( 1, here.scope.dyads.size ), f()".to_owned(), "1\n"),
+        ("f := fn (n := i32 ? # «c») -> u64 ( 1, here.scope.dyads.size ), f(1)".to_owned(), "1\n"),
+        (
+            "mut n := u64 0, for i in 0..1 # «c» ( 1, n = here.scope.dyads.size ), n".to_owned(),
+            "1\n",
+        ),
+        ("x := 5 # «c» * 2, here.scope.dyads.size".to_owned(), "2\n"),
+        ("x := immediate 5 # «c» * 2, here.scope.dyads.size".to_owned(), "2\n"),
+        ("mut y := i32 1, y = 5 # «c» * 2, here.scope.dyads.size".to_owned(), "3\n"),
+        ("defer print «a» # «c», here.scope.dyads.size".to_owned(), "a\n2\n"),
+        ("t := type ( v := i32 ? # «c» ), ( 1, here.scope.dyads.size )".to_owned(), "1\n"),
+        // Written in the source, the comment follows its expression in the bracket.
+        (format!("{q}, x := q [5 * 2 # «c», 7], x.v"), "10\n"),
+    ];
+    for compile in ["", "f.compile(), "] {
+        rows.push((
+            format!(
+                "f := fn (n := i32 ?) -> u64 ( if n == 5 # «c» ( 1, here.scope.dyads.size ) \
+                 else ( u64 0 ) ), {compile}f(5)"
+            ),
+            "1\n",
+        ));
+        rows.push((
+            format!(
+                "mut n := u64 0, f := fn () -> u64 ( for i in 0..1 # «c» \
+                 ( 1, n = here.scope.dyads.size ), n ), {compile}f()"
+            ),
+            "1\n",
+        ));
+    }
+    // Spliced, it follows its expression as the written one does, at discovery and at the boundary.
+    for rank in ["fn.parse_rank", "*.parse_rank + 1"] {
+        rows.push((format!("{}, {q}, x := q [5 h, 7], x.v", splicer(rank, "* 2 #")), "10\n"));
+    }
+    for (src, printed) in rows {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: {stderr}");
+    }
+    let line = "if 5 * 2 # «c» == 10 ( 1, here.scope.dyads.size ) else ( 0 )\n";
+    let (echoes, stderr) = repl(line.as_bytes());
+    assert_eq!(echoes, ["1"], "{stderr}");
+}
+
+#[test]
 fn the_boundary_s_comment_lift_reads_a_built_cell_with_no_node_without_faulting() {
     // `h1` marks the unknown `zz` built, which leaves its cell with no node, and `h2`
     // removes it at the next step: the lift between the two reads that cell.

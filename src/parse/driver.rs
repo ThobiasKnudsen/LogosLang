@@ -39,6 +39,14 @@ pub enum Constructed {
     Decline,
 }
 
+/// A segment constructed: its items in order, and the comments lifted out of it, each list in
+/// the order lifted: `before` stood left of every cell, `after` the rest.
+pub(super) struct Built {
+    pub(super) items: Vec<(Cell, usize)>,
+    pub(super) before: Vec<DyadPtr>,
+    pub(super) after: Vec<DyadPtr>,
+}
+
 /// Every identity's parse-time constructor: it reads its span from the
 /// cursor cell, its context from `tape.at(-1)` and `tape.at(1)`, and edits
 /// the tape in place. The driver decides only *when* constructors run.
@@ -278,23 +286,30 @@ impl<'a> Parser<'a> {
     /// At the boundary: the unconstructed cells built highest parse_rank first,
     /// associativity breaking ties, no lookahead. Before each, the comment cells
     /// built so far are lifted out, one a constructor built here included; what
-    /// remains is read as operands. Returns the cells in order with their offsets.
+    /// remains is read as operands.
     pub(super) fn construct_segment(
         &mut self,
         tape: &mut ParsingTape,
-    ) -> Result<Vec<(Cell, usize)>, ParseError> {
+    ) -> Result<Built, ParseError> {
         let comment_ = self.types.comment_;
+        let (mut before, mut after) = (Vec::new(), Vec::new());
         loop {
-            let prose: Vec<(usize, usize, DyadPtr)> = tape
-                .iter()
-                .filter(|(_, c)| {
-                    // SAFETY: a cell's dyad is null or a dyad from the store.
-                    c.constructed && !c.dyad.is_null() && unsafe { dyad::ty(c.dyad) } == comment_
-                })
-                .map(|(n, c)| (n, c.start, c.dyad))
-                .collect();
-            for (n, start, d) in prose {
-                self.cx.lifted.push((start, d));
+            let mut leads = true;
+            let mut prose = Vec::new();
+            for (n, c) in tape.iter() {
+                // SAFETY: a cell's dyad is null or a dyad from the store.
+                if c.constructed && !c.dyad.is_null() && unsafe { dyad::ty(c.dyad) } == comment_ {
+                    prose.push((n, c.dyad, leads));
+                } else {
+                    leads = false;
+                }
+            }
+            for (n, d, leads) in prose {
+                if leads {
+                    before.push(d);
+                } else {
+                    after.push(d);
+                }
                 tape.center_on(n);
                 tape.remove(0);
             }
@@ -341,16 +356,32 @@ impl<'a> Parser<'a> {
             reduced.constructed = true;
             items.push((reduced, cell.start));
         }
-        Ok(items)
+        Ok(Built { items, before, after })
+    }
+
+    /// A segment built inside a line hands its comments to that line: lines of the scope the
+    /// line stands in, after it (›A scope's `dyads` fill as its lines complete, and hold
+    /// everything‹ [[R272]]).
+    pub(super) fn hand_to_line(&mut self, built: Built) -> Vec<(Cell, usize)> {
+        let open = self.cx.open.last_mut().expect("a line is read in an open scope");
+        open.prose.extend(built.before);
+        open.prose.extend(built.after);
+        built.items
     }
 
     /// The cells up to the next `(`, the right side an identity reads before
-    /// its bracket: a condition, a range, a return type (DESIGN ›The scope's
-    /// constructor is the driver‹). A `(` standing first is part of the read; a later one is the bracket.
+    /// its bracket: a range, a return type (DESIGN ›The scope's constructor is the driver‹).
+    /// A `(` standing first is part of the read; a later one is the bracket.
     pub(super) fn drive_until_open(
         &mut self,
         mode: RightSide,
     ) -> Result<Vec<(Cell, usize)>, ParseError> {
+        let built = self.drive_segment(mode)?;
+        Ok(self.hand_to_line(built))
+    }
+
+    /// [`Self::drive_until_open`] with the segment's comments, for the reader whose lines they are.
+    pub(super) fn drive_segment(&mut self, mode: RightSide) -> Result<Built, ParseError> {
         let mut tape = ParsingTape::new();
         self.lex_segment_until(&mut tape, Some(mode))?;
         self.construct_segment(&mut tape)
@@ -358,7 +389,7 @@ impl<'a> Parser<'a> {
 
     /// One segment, lexed to the next `,`, `)`, or end of input (left
     /// unconsumed) and constructed to exactly one cell: what a discovery-time
-    /// constructor drives, and the REPL's line.
+    /// constructor drives.
     pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
         self.parse_expression_cell().map(|c| c.dyad)
     }
@@ -367,7 +398,8 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse_expression_cell(&mut self) -> Result<Cell, ParseError> {
         let mut tape = ParsingTape::new();
         self.lex_segment(&mut tape)?;
-        let items = self.construct_segment(&mut tape)?;
+        let built = self.construct_segment(&mut tape)?;
+        let items = self.hand_to_line(built);
         self.one_of(items)
     }
 
@@ -709,12 +741,9 @@ impl<'a> Parser<'a> {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),
             };
-            let mut items = match self.construct_segment(&mut tape) {
-                Ok(items) => items,
-                Err(e) => {
-                    self.cx.lifted.clear();
-                    return Some(Err(e));
-                }
+            let Built { items, before, after } = match self.construct_segment(&mut tape) {
+                Ok(built) => built,
+                Err(e) => return Some(Err(e)),
             };
             // The `,` is consumed once the segment before it is constructed; a
             // `,` where nothing stands is purely for the reader.
@@ -723,23 +752,19 @@ impl<'a> Parser<'a> {
             }
             if items.len() > 1 {
                 self.cx.pos = items[1].1;
-                self.cx.lifted.clear();
                 return Some(Err(ParseError::Trailing));
             }
             if let Some(&(item, _)) = items.first() {
                 // SAFETY: `item` is a reduced dyad just constructed.
                 unsafe { self.fill_if_sibling_write(item.dyad) };
             }
-            let mut ordered: Vec<(usize, Cell)> = std::mem::take(&mut self.cx.lifted)
-                .into_iter()
-                // SAFETY: a lifted comment cell holds a node from the store.
-                .map(|(start, d)| (start, unsafe { Cell::built(d) }))
-                .collect();
-            if let Some((item, start)) = items.pop() {
-                ordered.push((start, item));
-            }
-            ordered.sort_by_key(|&(start, _)| start);
-            self.cx.queued.extend(ordered.into_iter().map(|(_, n)| n));
+            let open = self.cx.open.last_mut().expect("a line is read in an open scope");
+            let handed = std::mem::take(&mut open.prose);
+            // SAFETY: a lifted comment cell holds a node from the store.
+            let prose = |d: DyadPtr| unsafe { Cell::built(d) };
+            self.cx.queued.extend(before.into_iter().map(prose));
+            self.cx.queued.extend(items.into_iter().map(|(item, _)| item));
+            self.cx.queued.extend(handed.into_iter().chain(after).map(prose));
         }
     }
 
@@ -1029,7 +1054,9 @@ impl<'a> Parser<'a> {
         }
         tape.center = tape.head;
         tape.sealed = true;
-        self.construct_segment(&mut tape).and_then(|items| self.one_of(items)).map(|c| c.dyad)
+        let built = self.construct_segment(&mut tape)?;
+        let items = self.hand_to_line(built);
+        self.one_of(items).map(|c| c.dyad)
     }
 
     /// A square bracket taken into a place of a type of node values: the node of the run
