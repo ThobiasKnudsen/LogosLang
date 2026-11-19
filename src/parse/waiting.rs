@@ -20,8 +20,8 @@ struct Found {
 impl<'a> Parser<'a> {
     /// Where the line at the cursor ends when it waits for the run: a line of a body that reads
     /// a `dyad` name for its value, outside a `fn` or `type (…)` written in it. The cursor stays.
-    /// A line that waits and holds `:=`, `return`, `free` or `move` is refused here: stand-in for
-    /// #281.
+    /// A line that waits and holds `:=`, `return`, `free` or `move` is refused here:
+    /// stand-in for #281.
     pub(super) fn waiting_line_end(&mut self) -> Result<Option<usize>, ParseError> {
         let in_run_order = self.cx.feed.as_ref().is_none_or(|f| f.in_run_order);
         let open = self.cx.open.last();
