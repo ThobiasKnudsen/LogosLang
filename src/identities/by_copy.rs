@@ -65,6 +65,19 @@ pub(crate) fn build_result(
     store.alloc_words(types.by_copy.result, &[target, call, ty, types.by_copy.result_leaf, ty])
 }
 
+/// The node a `result` node runs, the expression it carries the record result of; `node` itself
+/// when it is no `result` node.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn carried(types: &Core, node: DyadPtr) -> DyadPtr {
+    if dyad::ty(node) == types.by_copy.result {
+        *(dyad::value(node) as *const DyadPtr).add(1)
+    } else {
+        node
+    }
+}
+
 /// Where a `construct` or `result` node puts its value: the name's storage, or scratch
 /// of the value's width taken now.
 ///

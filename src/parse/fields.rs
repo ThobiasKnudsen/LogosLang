@@ -501,13 +501,13 @@ impl<'a> Parser<'a> {
             }
             // An operator expression is read through its own type alone, never through what it
             // gives.
-            if self.is_operator_node(lhs) {
-                if let Some(field) = self.node_field(lhs, name)? {
+            if let Some(node) = self.operator_node(lhs) {
+                if let Some(field) = self.node_field(node, name)? {
                     return Ok((field, 0));
                 }
-                let ty = dyad::ty(lhs);
+                let ty = dyad::ty(node);
                 return self
-                    .static_member_access(lhs, &left, ty, name, call)?
+                    .static_member_access(node, &left, ty, name, call)?
                     .ok_or(ParseError::BadReflectRead);
             }
             // A field whose declared type gives a value is read when the code runs, even through a
@@ -990,7 +990,7 @@ impl<'a> Parser<'a> {
                         return Err(ParseError::BadAddressOf);
                     }
                     let pointee = crate::identities::read::output_type(types, place);
-                    self.place_address(place, node, pointee)?
+                    self.place_address(types.amp_, place, node, pointee)?
                 }
                 // A node's field, a map entry, a tape cell: a place with no address to hand out.
                 Some(_) => return Err(ParseError::BadAddressOf),
@@ -1007,23 +1007,26 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// The address of a place's bytes, a frame's or a dereference's cell, as `@pointee`: read when
-    /// the code runs, so a frame's place gives each activation's own.
+    /// The address of a place's bytes, a frame's or a dereference's cell, as `@pointee`, in a node
+    /// of `ty`, `&` or `addr`: read when the code runs, so a frame's place gives each activation's
+    /// own.
     ///
     /// # Safety
     /// `place` must be a frame's place or a deref node from the store, `node` the operand it was
     /// read from, and `pointee` a type node.
     unsafe fn place_address(
         &mut self,
+        ty: DyadPtr,
         place: DyadPtr,
         node: DyadPtr,
         pointee: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         self.check_capture(node)?;
         let types = self.types;
-        Ok(crate::identities::pointer::build_addr_as(
+        Ok(crate::identities::pointer::build_address(
             self.rt.store,
             types,
+            ty,
             place,
             std::ptr::null_mut(),
             pointee,
@@ -1061,7 +1064,15 @@ impl<'a> Parser<'a> {
         self.note_address_hold(binding);
         let held =
             crate::identities::declare::build(self.rt.store, types, binding, value, declared);
-        Ok(crate::identities::pointer::build_addr(self.rt.store, types, binding, held))
+        let pointee = crate::identities::read::output_type(types, binding);
+        Ok(crate::identities::pointer::build_address(
+            self.rt.store,
+            types,
+            types.amp_,
+            binding,
+            held,
+            pointee,
+        ))
     }
 
     /// Every further `@` cell to the right, then the base type cell, any type
@@ -1344,8 +1355,8 @@ impl<'a> Parser<'a> {
         if let Some(t) = crate::identities::dyad_place::made_type(types, lhs) {
             return Ok(t);
         }
-        if self.is_operator_node(lhs) {
-            return Ok(dyad::ty(lhs));
+        if let Some(node) = self.operator_node(lhs) {
+            return Ok(dyad::ty(node));
         }
         let t = crate::identities::read::value_type(types, lhs)?;
         if t.is_null() {
@@ -1354,22 +1365,23 @@ impl<'a> Parser<'a> {
         Ok(t)
     }
 
-    /// An operator expression, which `.` reads as its node (›`x.type` reads the type word of the
-    /// node a name or an expression stands for‹ [[R279]]): a node that runs, whose type word is
-    /// a type with a `run` body, the one a parse stamped (`x ^ 3`, its type minted by `^`'s
-    /// chooser), or an identity with a parse of its own, or a mint of one (`x + 2`). A call's
-    /// type word is a function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and the
-    /// call stands for what it returns.
+    /// The operator expression `node` is, which `.` reads as its node (›`x.type` reads the type
+    /// word of the node a name or an expression stands for‹ [[R279]]), reached through the copy
+    /// that carries its record result (`y mk`): a node that runs, whose type word is a type with a
+    /// `run` body, the one a parse stamped (`x ^ 3`, its type minted by `^`'s chooser), or an
+    /// identity with a parse of its own (`&x`), or a mint of one (`x + 2`). `None` for a call,
+    /// whose type word is a function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and
+    /// which stands for what it returns.
     ///
     /// # Safety
     /// `node` must be a reduced dyad from the store.
-    unsafe fn is_operator_node(&self, node: DyadPtr) -> bool {
-        use crate::identities::{meta, read};
-        let Some(ty) = self.identity_head(crate::identities::mint::origin(dyad::ty(node))) else {
-            return false;
-        };
-        matches!(read::read_kind(self.types, node), read::Read::Executable(_))
-            && (meta::kind_of(ty) == Some(meta::RECORD_TAG) || !meta::constructor_of(ty).is_null())
+    unsafe fn operator_node(&self, node: DyadPtr) -> Option<DyadPtr> {
+        use crate::identities::{by_copy, meta, mint, read};
+        let node = by_copy::carried(self.types, node);
+        let ty = self.identity_head(mint::origin(dyad::ty(node)))?;
+        let operator = matches!(read::read_kind(self.types, node), read::Read::Executable(_))
+            && (meta::kind_of(ty) == Some(meta::RECORD_TAG) || !meta::constructor_of(ty).is_null());
+        operator.then_some(node)
     }
 
     /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's read surface‹), the
@@ -1397,7 +1409,7 @@ impl<'a> Parser<'a> {
             }
             "type" => Ok(dyad::ty(viewed)),
             "value" if named && types.is_storage(viewed) => {
-                self.place_address(viewed, viewed, types.void_)
+                self.place_address(types.addr_, viewed, viewed, types.void_)
             }
             "value" => {
                 let node = if named { types.through(viewed) } else { viewed };

@@ -20,11 +20,18 @@ use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
+/// The identities this file registers.
+pub(super) struct PointerIds {
+    pub(super) deref: DyadPtr,
+    pub(super) amp: DyadPtr,
+    pub(super) addr: DyadPtr,
+    pub(super) deref_leaf: DyadPtr,
+    pub(super) addr_leaf: DyadPtr,
+    pub(super) at: DyadPtr,
+}
+
 /// `deref` has no spelling: the parser builds deref nodes from postfix `@`.
-pub(super) fn register(
-    cx: &mut Cx,
-    cs: &Callables,
-) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> PointerIds {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
     let at = cx.store.alloc_head(cx.type_, record);
     cx.declare("@", at);
@@ -42,15 +49,13 @@ pub(super) fn register(
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let record = meta::record_assoc(
-        cx.store,
-        meta::TOKEN_TAG,
-        meta::prec::ADDRESS,
-        crate::parse::Assoc::Right,
-    );
+    // `&x`'s node is typed `&`, the identity whose parse built it (›`x.type` reads the type word
+    // of the node a name or an expression stands for‹ [[R279]]).
+    let record = address_record(cx, meta::prec::ADDRESS, Assoc::Right);
     let amp = cx.store.alloc_head(cx.type_, record);
     cx.declare("&", amp);
     cx.metas.insert(amp, |p, _id, tape| p.construct_address_of(tape));
+    cx.lower.insert(amp, lower_addr);
 
     let record = meta::operand_record(
         cx,
@@ -63,25 +68,30 @@ pub(super) fn register(
     cx.lower.insert(deref, lower_deref);
     let deref_leaf = callable::mint_native(cx.store, cs.callable, run_deref, cs.seed_native);
 
-    // `addr` has no spelling beyond the `&` token.
-    let record = meta::operand_record(
-        cx,
-        meta::TUPLE_TAG,
-        meta::prec::INERT,
-        Assoc::Left,
-        &["place", "pointee", "held", "op", "output_type"],
-    );
+    // `addr` has no spelling: the address a node no `&` was written for hands out, a dyad view's
+    // `.value` or a receiver's.
+    let record = address_record(cx, meta::prec::INERT, Assoc::Left);
     let addr = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(addr, lower_addr);
     let addr_leaf = callable::mint_native(cx.store, cs.callable, run_addr, cs.seed_native);
 
-    (deref, addr, deref_leaf, addr_leaf, at)
+    PointerIds { deref, amp, addr, deref_leaf, addr_leaf, at }
 }
 
-/// `[place, pointee, held, op, output_type]`. The address resolves at run/lower time, so a
-/// frame-relative local yields a per-activation address. `held` is null for a place, and for a
-/// value nothing names the declaration that lands it in `place`, an unspelled name its scope
-/// holds, run before the address is handed out.
+fn address_record(cx: &mut Cx, parse_rank: f64, assoc: Assoc) -> *mut u8 {
+    meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        parse_rank,
+        assoc,
+        &["place", "pointee", "held", "op", "output_type"],
+    )
+}
+
+/// `[place, pointee, held, op, output_type]` under `addr`. The address resolves at run/lower
+/// time, so a frame-relative local yields a per-activation address. `held` is null for a place,
+/// and for a value nothing names the declaration that lands it in `place`, an unspelled name its
+/// scope holds, run before the address is handed out.
 ///
 /// # Safety
 /// `place` must be a frame's place or a deref node from the store; `held` null or a declare
@@ -92,34 +102,51 @@ pub(crate) unsafe fn build_addr(
     place: DyadPtr,
     held: DyadPtr,
 ) -> DyadPtr {
-    build_addr_as(store, types, place, held, super::read::output_type(types, place))
+    let pointee = super::read::output_type(types, place);
+    build_address(store, types, types.addr_, place, held, pointee)
 }
 
-/// [`build_addr`] handing the address out as `@pointee`, which need not be the type the place's
-/// bytes are read by: `void` erases it.
+/// An address node of `ty`, `&` or `addr`, handing the address out as `@pointee`, which need not
+/// be the type the place's bytes are read by: `void` erases it.
 ///
 /// # Safety
-/// As [`build_addr`]; `pointee` a type node from the store.
-pub(crate) unsafe fn build_addr_as(
+/// As [`build_addr`]; `ty` `&` or `addr`, `pointee` a type node from the store.
+pub(crate) unsafe fn build_address(
     store: &mut Store,
     types: &Core,
+    ty: DyadPtr,
     place: DyadPtr,
     held: DyadPtr,
     pointee: DyadPtr,
 ) -> DyadPtr {
     let output = make_pointer_type(store, types.type_, pointee);
-    store.alloc_words(types.addr_, &[place, pointee, held, types.ops.addr_, output])
+    store.alloc_words(ty, &[place, pointee, held, types.ops.addr_, output])
+}
+
+/// The place whose address `node` hands out when it runs the address operation, `&x`'s or an
+/// `addr` node's; `None` for any other node.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn address_place(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    use super::read::{read_kind, Dispatch, Read};
+    let node = types.through(node);
+    let addresses = matches!(
+        read_kind(types, node),
+        Read::Executable(Dispatch::Leaf(leaf)) if leaf == types.ops.addr_
+    );
+    addresses.then(|| types.through(addr_parts(node).0))
 }
 
 /// # Safety
-/// `node` must be an addr node from [`build_addr`].
+/// `node` must be an address node from [`build_address`].
 unsafe fn addr_parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     let p = dyad::value(node) as *const DyadPtr;
     (*p, *p.add(2))
 }
 
 fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an addr node from `build_addr`.
+    // SAFETY: `node` is an address node from `build_address`.
     unsafe {
         let (place, held) = addr_parts(node);
         if !held.is_null() {
@@ -130,7 +157,7 @@ fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is an addr node from `build_addr`.
+    // SAFETY: `node` is an address node from `build_address`.
     unsafe {
         let (place, held) = addr_parts(node);
         if !held.is_null() {

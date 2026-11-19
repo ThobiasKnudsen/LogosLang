@@ -136,6 +136,9 @@ pub struct Core {
     /// `p.x` over a record's storage: a place read through two bindings.
     pub field_: DyadPtr,
     pub deref_: DyadPtr,
+    /// `&`, the type of the node its parse builds.
+    pub amp_: DyadPtr,
+    /// The address node no `&` was written for.
     pub addr_: DyadPtr,
     pub alloc_: DyadPtr,
     /// The gate word in a type position, `own @T ?`.
@@ -343,7 +346,14 @@ impl Core {
             close_sq: close_sq_,
         } = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
-        let (deref_, addr_, deref_leaf, addr_leaf, at_) = pointer::register(&mut cx, &callables);
+        let pointer::PointerIds {
+            deref: deref_,
+            amp: amp_,
+            addr: addr_,
+            deref_leaf,
+            addr_leaf,
+            at: at_,
+        } = pointer::register(&mut cx, &callables);
         op_leaves.deref_ = deref_leaf;
         op_leaves.addr_ = addr_leaf;
         // After pointers: the owning pointer is an `@T`.
@@ -467,6 +477,7 @@ impl Core {
             construct_,
             field_,
             deref_,
+            amp_,
             addr_,
             alloc_,
             own_,
