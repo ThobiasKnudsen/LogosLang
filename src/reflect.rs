@@ -502,6 +502,7 @@ mod tests {
                 (core.addr_, 2),
                 (core.negate, 1),
                 (core.convert, 1),
+                (core.move_, 1),
             ] {
                 assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
                 assert_eq!(meta::arity_of(id), arity);

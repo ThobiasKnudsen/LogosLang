@@ -25,7 +25,7 @@ use crate::store::Store;
 const ALLOC_POINTEE: usize = 0;
 const ALLOC_COUNT: usize = 1;
 const ALLOC_INIT: usize = 2;
-/// `move` is `[place, pointee, op, output_type]`, `free` `[place, pointee, op]`.
+/// `move` is `[place]`, `free` `[place, pointee, op]`.
 const TEARDOWN_PLACE: usize = 0;
 const TEARDOWN_POINTEE: usize = 1;
 /// `defer` is `[inner, op]`.
@@ -125,8 +125,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let move_roles = ["place", "pointee", "op", "output_type"];
-    let move_ = keyword(cx, "move", meta::prec::PREFIX, &move_roles, |p, _id, tape| {
+    let move_ = keyword(cx, "move", meta::prec::PREFIX, &["place"], |p, _id, tape| {
         let (place, ended) = match p.place_operand_cell(tape)? {
             Taken::Place(place, ended) => (place, ended),
             Taken::Value(_, at) | Taken::Hole(at) => {
@@ -499,14 +498,14 @@ pub(crate) unsafe fn own_result(
     owning_pointer(store, types, ty)
 }
 
-/// `move` of a place: `[place, type, op]`, `type` the moved value's, from which the name
-/// that takes it learns whether it holds it.
+/// `move` of a place: `[place]` under `move`'s mint for the moved value's type, which it gives,
+/// so the name that takes it learns whether it holds it.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let ty = super::read::handed_on(types, place);
-    store.alloc_words(types.move_, &[place, ty, types.ops.move_, ty])
+    super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place])
 }
 
 /// What `free` of the place runs: a name that holds its value (`holder`) its teardown, an
@@ -878,7 +877,7 @@ unsafe fn require_frame_place(
 
 /// The move reads the place, NULL from here when it holds an address.
 fn lower_move(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a `move` node `[place, type, op]`.
+    // SAFETY: `node` is a `move` node `[place]`.
     let place = unsafe { *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE) };
     // SAFETY: `place` is a reduced dyad from the store.
     unsafe { require_frame_place(lw, node, place) }?;
@@ -1011,7 +1010,7 @@ pub(crate) unsafe fn lent_place(types: &Core, value: DyadPtr) -> Option<DyadPtr>
 /// # Safety
 /// `value` must be a reduced dyad from the store.
 pub(crate) unsafe fn moved_place(types: &Core, value: DyadPtr) -> Option<DyadPtr> {
-    (dyad::ty(value) == types.move_)
+    (super::mint::origin(dyad::ty(value)) == types.move_)
         .then(|| *(dyad::value(value) as *const DyadPtr).add(TEARDOWN_PLACE))
 }
 
@@ -1224,7 +1223,7 @@ unsafe fn moved_out_via(
     visit(node);
     let logos = dyad::ty(node);
     if logos == types.alloc_
-        || logos == types.move_
+        || super::mint::origin(logos) == types.move_
         || logos == types.this.copy
         || logos == types.construct_
         || logos == types.dyad_place.new_node
@@ -1536,7 +1535,7 @@ fn run_value_release(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// here when it holds an address, so a line that fails later finds nothing there (DESIGN
 /// ›`move` and `free` take a field path too‹).
 fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a `move` node `[place, type, op]` from the store; a field or cell it
+    // SAFETY: `node` is a `move` node `[place]` from the store; a field or cell it
     // reaches is an owning one, eight bytes wide, as is a name that holds an address.
     unsafe {
         let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
