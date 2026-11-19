@@ -177,7 +177,7 @@ pub(crate) unsafe fn empty_node(store: &mut Store, ty: DyadPtr) -> DyadPtr {
     store.alloc_words(ty, &slots)
 }
 
-/// Whether a field of `ty` holds a node itself, a `type` or a `dyad`, as its value.
+/// Whether a field of `ty` holds a node itself, a `type`, a `dyad` or text, as its value.
 ///
 /// # Safety
 /// `ty` must be null or a type node from the store.

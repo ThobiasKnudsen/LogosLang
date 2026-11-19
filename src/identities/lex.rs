@@ -62,20 +62,13 @@ pub(crate) unsafe fn quoted<'a>(types: &Core, node: DyadPtr) -> Option<&'a [u8]>
     (!text.is_null() && dyad::ty(text) == types.string_).then(|| super::string::text(text))
 }
 
-/// The text operand is the quote's string node, or a node that runs to one
-/// (`tape.spelling[k]`).
+/// The text operand runs to a string node's address.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `lex` node from the store; its text operand is a reduced dyad.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let string_ty = rt.types().string_;
-        let mut text = rt.through(*ops);
-        if text.is_null() {
-            return Err(RunError::NotText);
-        }
-        if dyad::ty(text) != string_ty {
-            text = rt.run(*ops)? as DyadPtr;
-        }
+        let text = rt.run(*ops)? as DyadPtr;
         if text.is_null() || dyad::ty(text) != string_ty {
             return Err(RunError::NotText);
         }

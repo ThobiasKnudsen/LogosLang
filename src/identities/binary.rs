@@ -349,7 +349,7 @@ fn build_identity_compare(
     };
     let (lhs, rhs) = (cell(lhs), cell(rhs));
     let addressed = |n: DyadPtr, k: Read| {
-        matches!(k, Read::Identity | Read::Container(_) | Read::Address)
+        matches!(k, Read::Identity | Read::Container(_) | Read::Address | Read::Node)
             // SAFETY: as above.
             || unsafe { super::read::output_type(types, n) == types.type_ }
     };

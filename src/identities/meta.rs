@@ -19,7 +19,8 @@
 //!                 extent, or 0
 //! [50..58]   u64  mints: this type's mints made so far, an array of `[key, mint]` pairs, or 0
 //! [58..66]   u64  mint of: the type this one is a mint of, or 0
-//! [66..]     payload, per kind:
+//! [66]       u8   1 where the type's definition says a value of it is its node's address
+//! [67..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
 //!                                 none), then arity × `dyad@` role-name strings
@@ -75,7 +76,8 @@ const POINTER_TYPE_OFF: usize = 34;
 const EXTENT_OFF: usize = 42;
 const MINTS_OFF: usize = 50;
 const MINT_OF_OFF: usize = 58;
-pub(crate) const PAYLOAD_OFF: usize = 66;
+const NODE_VALUE_OFF: usize = 66;
+pub(crate) const PAYLOAD_OFF: usize = 67;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -136,6 +138,13 @@ pub(crate) mod prec {
 /// A record with no payload.
 pub(crate) fn record(store: &mut Store, kind: u8, parse_rank: f64) -> *mut u8 {
     record_assoc(store, kind, parse_rank, Assoc::Left)
+}
+
+/// A record with no payload, for a type whose values are their nodes' addresses.
+pub(crate) fn record_of_nodes(store: &mut Store, kind: u8, parse_rank: f64) -> *mut u8 {
+    let mut blob = header(kind, Assoc::Left, parse_rank);
+    blob[NODE_VALUE_OFF] = 1;
+    store.alloc_bytes(&blob)
 }
 
 /// Right for a prefix word, so that in a chain the rightmost runs first and each finds
@@ -480,6 +489,19 @@ pub(crate) unsafe fn is_node_valued(id: DyadPtr, fn_type: DyadPtr) -> bool {
     }
     let ctor = constructor_of(id);
     !ctor.is_null() && dyad::ty(ctor) == fn_type
+}
+
+/// Whether a value of `id` is its node's address, eight bytes in a place: the type's definition
+/// says so, or its values are nodes a Logos `parse` builds (`is_node_valued`). Safe on any node,
+/// as `kind_of` is.
+///
+/// # Safety
+/// `id` must be null or a valid dyad from the store; `fn_type` the `fn` identity.
+pub(crate) unsafe fn value_is_node(id: DyadPtr, fn_type: DyadPtr) -> bool {
+    if id.is_null() || kind_of(id).is_none() {
+        return false;
+    }
+    *dyad::head(id).add(NODE_VALUE_OFF) != 0 || is_node_valued(id, fn_type)
 }
 
 const NO_SLOT: u8 = u8::MAX;

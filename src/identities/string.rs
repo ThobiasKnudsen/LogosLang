@@ -1,9 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `string`, the text type, and `«`, the quote that makes its values: a plain value, inert
-//! in the seed (nothing consumes one yet). Storage: `[len: u64][bytes]`, the native-endian
-//! length then the UTF-8 text; the type node self-describes via [`STRING_TAG`].
+//! `string`, the text type, and `«`, the quote that makes its values: a plain value, its
+//! node's address. Storage: `[len: u64][bytes]`, the native-endian length then the UTF-8 text;
+//! the type node self-describes via [`STRING_TAG`].
 //! DESIGN ›Strings nest by depth; only five escapes; `«…»` is the only spelling‹
 
 use std::ops::Range;
@@ -20,7 +20,7 @@ use crate::store::Store;
 /// mints `«`, the reader of a quote's own text, apart from the type, so no name of the type
 /// reaches it (›Unknown spellings are two pattern identities‹ [[R252]]). Returns `«`.
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, STRING_TAG, meta::prec::INERT);
+    let record = meta::record_of_nodes(cx.store, STRING_TAG, meta::prec::INERT);
     // SAFETY: `string_` is the string type node the build allocated, its value null until now.
     unsafe { dyad::set_head(cx.string_, record) };
     cx.declare("string", cx.string_);
