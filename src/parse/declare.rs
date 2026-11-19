@@ -228,13 +228,15 @@ impl<'a> Parser<'a> {
     }
 
     /// Whether the binding site made the name an owner: of a block, its place an owning
-    /// pointer's, or of a node, its binding carrying `own`.
+    /// pointer's, of a node, its binding carrying `own`, or of what its `dyad ?` place holds.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store.
     pub(crate) unsafe fn name_holds(&self, binding: DyadPtr) -> bool {
-        crate::identities::drop_model::is_owning_place(self.types, binding)
+        use crate::identities::drop_model::{holds_dyad, is_owning_place};
+        is_owning_place(self.types, binding)
             || self.owns_node(binding)
+            || holds_dyad(self.types, binding)
     }
 
     /// The binding site of a node whose type fills the instances' `free`: the name owns it
@@ -803,8 +805,11 @@ impl<'a> Parser<'a> {
                 if owning || record_free {
                     self.hold_node(binding);
                 }
-                // `a := own @T ?`: the owner of whatever block is written into it later.
-                if crate::identities::drop_model::is_owning_place(self.types, place) {
+                // `a := own @T ?`: the owner of whatever block is written into it later, and
+                // `d := dyad ?` of the node.
+                if crate::identities::drop_model::is_owning_place(self.types, place)
+                    || t == self.types.dyad_ && !owning
+                {
                     self.hold(binding);
                 }
                 if !crate::identities::hashmap::is_hashmap(self.types, t) {
@@ -885,9 +890,18 @@ impl<'a> Parser<'a> {
                 // or moved makes the name its owner, as above.
                 let place = self.place_for(binding, ty_node, width);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                if let Teardown::Node(_) = teardown_of(self.types, value) {
-                    self.hold_node(binding);
-                    self.take(value);
+                match teardown_of(self.types, value) {
+                    Teardown::Node(_) => {
+                        self.hold_node(binding);
+                        self.take(value);
+                    }
+                    Teardown::Dyad => {
+                        self.hold(binding);
+                        self.take(value);
+                    }
+                    // A `dyad` borrowed from another place lands as a copy of its own.
+                    _ if ty_node == self.types.dyad_ => self.hold(binding),
+                    _ => {}
                 }
                 init
             } else if self.types.frame_of(read).is_some() && dyad::ty(read) == self.types.binding_ {

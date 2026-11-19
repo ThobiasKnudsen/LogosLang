@@ -269,6 +269,12 @@ impl Store {
         self.arena.base
     }
 
+    /// Whether `p` lies in the arena: a node the store holds, which nothing frees.
+    pub fn holds(&self, p: *const u8) -> bool {
+        let base = self.arena.base as usize;
+        (base..base + self.arena.used).contains(&(p as usize))
+    }
+
     /// The address an arena offset denotes, stable for the store's life.
     pub fn arena_at(&self, offset: usize) -> *mut u8 {
         debug_assert!(offset <= self.arena.used, "an arena offset is one the arena handed out");

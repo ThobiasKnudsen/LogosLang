@@ -214,10 +214,15 @@ pub enum ParseError {
     /// A declaration's type position, or a type variable's fill, held
     /// something that does not evaluate to a type.
     BadDeclaredType,
-    /// A number lands in a `dyad ?` place, or a `-> dyad` function gives back a parameter, which
-    /// a call may fill with a number: every reader follows the place as a node's address.
-    /// stand-in for #216
+    /// A value lands in a `dyad ?` place that it can neither be held as nor moved whole into a
+    /// new node: text, an owning value, a record whose body fills `free`.
     DyadTakesNode,
+    /// A line that waits for the run to parse it holds `:=`, `return`, `free` or `move`, whose
+    /// checks the parse makes where they are written; carries the word.
+    WaitingLineHolds(Box<String>),
+    /// A `while` condition reads the node a `dyad` name holds: the read is parsed once, over
+    /// the node the name held then, while the condition runs on every pass.
+    DyadReadEachPass,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,

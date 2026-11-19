@@ -309,7 +309,7 @@ fn block_layout(total: usize) -> Option<std::alloc::Layout> {
 ///
 /// # Safety
 /// The block is freed exactly once by `heap_free` with the returned address.
-unsafe fn heap_alloc(total: usize) -> *mut u8 {
+pub(crate) unsafe fn heap_alloc(total: usize) -> *mut u8 {
     let Some(layout) = block_layout(total) else {
         return std::ptr::null_mut();
     };
@@ -323,7 +323,7 @@ unsafe fn heap_alloc(total: usize) -> *mut u8 {
 
 /// # Safety
 /// `ptr` must be a live address from `heap_alloc`.
-unsafe fn heap_free(ptr: *mut u8) {
+pub(crate) unsafe fn heap_free(ptr: *mut u8) {
     let base = ptr.sub(HEADER);
     let total = (base as *const u64).read() as usize;
     let layout = block_layout(total).expect("a live block was laid out once already");
@@ -660,8 +660,8 @@ pub(crate) unsafe fn end_held_args(
 }
 
 /// Ends the value `node` gave, which its holder lets go: `this` is its word, or its bytes'
-/// address for a record kept in them; an owning pointer's block is freed, anything else runs
-/// its type's `free` over it, and NULL ends nothing.
+/// address for a record kept in them; an owning pointer's block is freed, a `dyad` the node it
+/// made, anything else runs its type's `free` over it, and NULL ends nothing.
 ///
 /// # Safety
 /// `node` must be a node from the store whose value `this` is.
@@ -670,7 +670,10 @@ unsafe fn end_value(rt: &mut Runtime, node: DyadPtr, this: i64) -> Result<(), Ru
         return Ok(());
     }
     let ty = super::read::output_type(rt.types(), node);
-    if owning_pointee(ty).is_some() {
+    if ty == rt.types().dyad_ {
+        super::dyad_place::end(rt, this);
+        Ok(())
+    } else if owning_pointee(ty).is_some() {
         heap_free(this as u64 as *mut u8);
         rt.note_free();
         Ok(())
@@ -777,7 +780,7 @@ fn build_field_free(store: &mut Store, types: &Core, read: DyadPtr, pointee: Dya
 
 /// `free` of a value no name holds: `[value, free, op]` runs the value, then `free` over
 /// the node it makes, a null `free` nothing more; `[value, pointee, op]` frees the block
-/// an owning pointer value holds.
+/// an owning pointer value holds, and `[value, dyad, op]` the node a `dyad` made.
 fn build_value_free(
     store: &mut Store,
     types: &Core,
@@ -788,6 +791,7 @@ fn build_value_free(
         Teardown::Nothing => (std::ptr::null_mut(), types.ops.value_free_),
         Teardown::Node(free) => (free, types.ops.value_free_),
         Teardown::Block(pointee) => (pointee, types.ops.value_release_),
+        Teardown::Dyad => (types.dyad_, types.ops.value_release_),
     };
     free_node(store, types, [value, what, op])
 }
@@ -1047,8 +1051,34 @@ pub(crate) unsafe fn exit_item_of(node: DyadPtr) -> ExitItem {
 /// `ty` must be null or a type node from the store.
 pub(crate) unsafe fn holds_by_address(types: &Core, ty: DyadPtr) -> bool {
     !ty.is_null()
-        && (numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()
+        && (ty == types.dyad_
+            || numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()
             || meta::is_record_type(ty) && !super::this::is_plain(types, ty))
+}
+
+/// Whether the name holds the node its `dyad ?` place holds: every `dyad` name but a
+/// parameter, which the call holds (›Holding is decided at the binding site, parameters
+/// included‹ [[R61]]).
+///
+/// # Safety
+/// `binding` must be a binding dyad from the store.
+pub(crate) unsafe fn holds_dyad(types: &Core, binding: DyadPtr) -> bool {
+    types.type_of(binding) == types.dyad_ && !is_parameter(types, binding)
+}
+
+/// Whether `binding` names a parameter of the function whose call frame holds it.
+///
+/// # Safety
+/// `binding` must be a binding dyad from the store.
+unsafe fn is_parameter(types: &Core, binding: DyadPtr) -> bool {
+    let b = crate::binding::Binding::read(binding);
+    match b.storage(types) {
+        Some(crate::binding::Frame::Call(f)) => {
+            let input = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_INPUT);
+            !input.is_null() && b.scope == meta::record_scope_of(input)
+        }
+        _ => false,
+    }
 }
 
 /// Whether a held place has gone NULL: a `free` or `move` of it ran. One that cannot say, a
@@ -1080,7 +1110,9 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
         return entry(rt, place).map(|_| ());
     }
     let held = take_held(rt, place, ty)?;
-    if held != 0 {
+    if ty == rt.types().dyad_ {
+        super::dyad_place::end(rt, held);
+    } else if held != 0 {
         rt.apply_values(meta::instances_free_of(ty), &[held])?;
     }
     Ok(())
@@ -1122,6 +1154,10 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
         lw.write_place(place, types::I64, null)?;
         held
     };
+    if ty == lw.types().dyad_ {
+        lw.call_seed(super::dyad_place::compiled_end as *const () as usize, &[this])?;
+        return Ok(());
+    }
     let free = lw.node_addr(meta::instances_free_of(ty));
     lw.call_seed(compiled_instance_free as *const () as usize, &[this, free])?;
     Ok(())
@@ -1192,6 +1228,7 @@ unsafe fn moved_out_via(
         || logos == types.move_
         || logos == types.this.copy
         || logos == types.construct_
+        || logos == types.dyad_place.new_node
     {
         return Some(node);
     }
@@ -1229,8 +1266,11 @@ unsafe fn moved_out_via(
             let template = *(dyad::value(*args) as *const DyadPtr);
             return (*fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template)).then_some(node);
         }
+        // A `dyad` result is a node the callee made or copied for its caller.
         if dyad::ty(f) == types.fn_type {
-            return (!(*fields.add(crate::parse::FN_OUTPUT_GATE)).is_null()).then_some(node);
+            let owned = !(*fields.add(crate::parse::FN_OUTPUT_GATE)).is_null()
+                || *fields.add(crate::parse::FN_OUTPUT) == types.dyad_;
+            return owned.then_some(node);
         }
     }
     None
@@ -1246,6 +1286,8 @@ pub(crate) enum Teardown {
     Node(DyadPtr),
     /// An owning pointer to this pointee type: its block is freed.
     Block(DyadPtr),
+    /// A `dyad` just made or moved: the node it holds is freed where a `dyad ?` place made it.
+    Dyad,
 }
 
 /// # Safety
@@ -1259,7 +1301,11 @@ pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Teardown {
         return crate::parse::last_sequence_expr(node)
             .map_or(Teardown::Nothing, |tail| teardown_of(types, tail));
     }
-    let free = type_free(types, value, super::read::output_type(types, value));
+    let output = super::read::output_type(types, value);
+    if output == types.dyad_ && moves_out(types, value) {
+        return Teardown::Dyad;
+    }
+    let free = type_free(types, value, output);
     if !free.is_null() && moves_out(types, value) {
         Teardown::Node(free)
     } else {
@@ -1476,17 +1522,14 @@ fn run_value_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// A value no name holds that owns a block: it runs, and the block is freed.
+/// A value no name holds that owns a block or a `dyad`'s node: it runs, and that ends.
 fn run_value_release(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[value, pointee, op]` node from `build_value_free`; the value
-    // yields a block from `heap_alloc` or null.
+    // yields a block from `heap_alloc`, a node a `dyad` holds, or null.
     unsafe {
-        let ptr = rt.run(*(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE))?;
-        let ptr = ptr as u64 as *mut u8;
-        if !ptr.is_null() {
-            heap_free(ptr);
-            rt.note_free();
-        }
+        let value = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
+        let this = rt.run(value)?;
+        end_value(rt, value, this)?;
         Ok(0)
     }
 }
@@ -1533,6 +1576,22 @@ mod tests {
         try_run(src).expect("run")
     }
 
+    /// [`run`] with the parser running the pass, as the program's driver runs it: what a line
+    /// that waits for the run needs to be parsed then.
+    fn run_hosted(src: &str) -> (i64, usize) {
+        FREE_LOG.with(|l| l.borrow_mut().clear());
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+        let root = p.parse_sequence().expect("parse");
+        // SAFETY: `root` is the scope just parsed into the parser's store.
+        let bits = unsafe { p.value_of(root) }.expect("run");
+        (bits, p.into_runtime().live_allocs())
+    }
+
     fn try_run(src: &str) -> Result<(i64, usize), RunError> {
         FREE_LOG.with(|l| l.borrow_mut().clear());
         let mut store = Store::new();
@@ -1575,6 +1634,47 @@ mod tests {
             (7, 0)
         );
         assert_eq!(free_log(), vec![5, 7]);
+    }
+
+    #[test]
+    fn a_dyad_place_frees_the_node_a_write_made_for_it() {
+        for src in [
+            "mut d := dyad ?, d = i64 5, 1",
+            "mut d := dyad ?, d = i64 5, d = f64 2.5, d = 7, 1",
+            "mut d := dyad ?, d = i32, d = i64 5, d = i32, 1",
+            "mut d := dyad ?, d = i64 5, free d, 1",
+            "mut d := dyad ?, d = i64 5, e := d, 1",
+            "mut d := dyad ?, d = i64 5, e := move d, 1",
+            "( mut d := dyad ?, d = i64 5 ), 1",
+            "mut d := dyad ?, for 0..3 ( d = i64 5 ), 1",
+            "f := fn (a := dyad ?) -> i32 ( 1 ), f(i64 42)",
+            "f := fn (a := dyad ?) -> dyad ( a ), x := f(i64 42), 1",
+            "f := fn (a := dyad ?) -> dyad ( a ), f(i64 42), 1",
+            "f := fn () -> dyad ( i32 5 ), f(), 1",
+            "f := fn () -> i32 ( mut d := dyad ?, d = i64 5, d = 1/2, 1 ), f()",
+        ] {
+            assert_eq!(run(src), (1, 0), "{src}");
+            let compiled = src.replacen("), ", "), f.compile(), ", 1);
+            if src.starts_with("f := ") {
+                assert_eq!(run(&compiled), (1, 0), "{compiled}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_line_parsed_when_it_runs_frees_what_it_made() {
+        for src in [
+            "f := fn (a := dyad ?) -> i64 ( a ), f(i64 42), 1",
+            "f := fn (a := dyad ?) -> i64 ( a * 2 ), f(i64 21), 1",
+            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, d = d * 3, d ), f(i64 2), 1",
+            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() ), f(), 1",
+            "mut d := dyad ?, d = i64 5, for 0..3 ( d = d + 1 ), 1",
+            "f := fn (a := dyad ?) -> dyad ( a + 1 ), x := f(i64 1), 1",
+            "f := fn (a := dyad ?) -> i64 ( if a > 0 ( f(i64 (a - 1)) + 1 ) else ( 0 ) ), f(i64 4), 1",
+            "mut d := dyad ?, d = i64 1, g := fn (a := dyad ?) -> i64 ( a ), g(d), 1",
+        ] {
+            assert_eq!(run_hosted(src), (1, 0), "{src}");
+        }
     }
 
     fn free_log() -> Vec<i64> {

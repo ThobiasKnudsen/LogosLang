@@ -270,6 +270,12 @@ pub(super) fn build_store(
         };
         match into {
             Some(into) => into,
+            None if !through_pointer
+                && dyad::ty(lhs_d) == types.binding_
+                && super::drop_model::holds_dyad(types, lhs_d) =>
+            {
+                super::land_held(store, types, rhs, place_type)?
+            }
             None => super::land(store, types, rhs, place_type)?,
         }
     };

@@ -1,8 +1,8 @@
 proof := type (
     holes := array dyad []
     premises := array dyad []
-    pattern := dyad ?
-    replacement := dyad ?
+    pattern := @dyad ?
+    replacement := @dyad ?
     derivation := ?
     world := array @proof ()
     static parse = (

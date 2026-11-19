@@ -175,10 +175,24 @@ impl<'a> Parser<'a> {
             if is_box {
                 self.drain()?;
             }
-            // The running call's slot is that call's value (DESIGN ›A type is a
-            // comptime value‹): a use of it in the held body is the type it holds.
             let id = cell.identity(self.types);
-            if self.is_live_call_slot(id) {
+            // SAFETY: as above.
+            let dyad_box = unsafe {
+                crate::identities::read::read_kind(self.types, id)
+                    == crate::identities::read::Read::Container(self.types.dyad_)
+            };
+            if dyad_box {
+                if let Some(held) = self.read_through(id) {
+                    // Read once here, a condition would keep the node it read: stand-in for #280.
+                    if self.cx.each_pass {
+                        self.cx.pos = cell.start;
+                        return Err(ParseError::DyadReadEachPass);
+                    }
+                    cell.dyad = held;
+                }
+            } else if self.is_live_call_slot(id) {
+                // The running call's slot is that call's value (DESIGN ›A type is a
+                // comptime value‹): a use of it in the held body is the type it holds.
                 let held = self.settled_type(id);
                 if held != id {
                     cell.dyad = held;
@@ -186,6 +200,25 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(Some((cell, cell.start)))
+    }
+
+    /// What a read of `id`, a `dyad` name, stands for once the pass has run everything before
+    /// it: the value node it holds (›A `dyad ?` place is transparent: a placeholder for a new
+    /// node of any type‹ [[R293]]). A held identity is read by dispatching on it, the name
+    /// staying the box (›A block settles its boxes as the top level does‹ [[R295]]), and a name
+    /// `=` writes keeps its place.
+    fn read_through(&mut self, id: DyadPtr) -> Option<DyadPtr> {
+        let held = self.settled_type(id);
+        // SAFETY: `held` is `id` or the live node the place holds now.
+        if held == id || unsafe { crate::identities::type_identity_of(self.types, held) }.is_some()
+        {
+            return None;
+        }
+        if matches!(self.peek_token(), Some((t, _)) if t == self.types.assign) {
+            return None;
+        }
+        // SAFETY: `held` is the live node the place holds now.
+        Some(unsafe { crate::identities::dyad_place::stable(self.rt.store, self.types, held) })
     }
 
     /// A slot of the call a held `type (…)` is being built in, which is live: a name of the
@@ -418,6 +451,10 @@ impl<'a> Parser<'a> {
 
     pub(super) fn is_closer(&self, id: DyadPtr) -> bool {
         self.brackets().into_iter().any(|(_, close)| close == id)
+    }
+
+    pub(super) fn is_opener(&self, id: DyadPtr) -> bool {
+        self.closer_of(id).is_some()
     }
 
     /// One spelling at the cursor, a declared name or a fresh run, never a

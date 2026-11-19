@@ -2180,20 +2180,23 @@ fn a_type_returning_body_must_hand_back_a_type() {
 }
 
 #[test]
-fn a_dyad_returning_body_hands_back_what_equals_writes_into_a_dyad_box() {
-    // A number, or a parameter a call may fill with one, was followed as a node's address.
+fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
+    // A bare parameter may hold a number, which no reader could follow as a node, and an owning
+    // value would have two ends.
+    for src in ["fn (a) -> dyad ( a )", "fn () -> dyad ( alloc 1 of i32 5 )"] {
+        assert_eq!(parse_err(src), ParseError::DyadTakesNode, "{src}");
+    }
+    // A value that is no node lands in a new one, as `=` writes it into a `dyad ?` name.
     for src in [
         "fn () -> dyad ( i32 5 )",
         "fn () -> dyad ( 5 )",
-        "fn () -> dyad ( alloc 1 of i32 5 )",
-        "fn (a) -> dyad ( a )",
         "fn (q := dyad ?) -> dyad ( q )",
         "fn (b := i32 ?) -> dyad ( if (b < 1) (i32) else (5) )",
         "fn (b := i32 ?) -> dyad ( if (b < 1) (return i32 5), i32 )",
     ] {
-        assert_eq!(parse_err(src), ParseError::DyadTakesNode, "{src}");
+        assert_eq!(parses(src), Ok(()), "{src}");
     }
-
+    assert_eq!(run_script("f := fn () -> dyad ( i32 5 ), x := f(), x.type == i32"), 1);
     assert_eq!(run_script("f := fn () -> dyad ( i32 ), g := f(), x := g 5, x"), 5);
     assert_eq!(
         run_script("f := fn () -> dyad ( mut d := dyad ?, d = i64, d ),\nt := f(), x := t 9, x"),
