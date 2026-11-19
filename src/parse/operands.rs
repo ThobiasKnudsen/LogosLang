@@ -47,6 +47,15 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A comment `#` built: value rules read through it (›Text literals are plain values; `#`
+    /// is the one comment constructor‹ [[R160]]).
+    pub(super) fn is_comment_cell(&self, cell: &Cell) -> bool {
+        // SAFETY: a cell's dyad is null or a dyad from the store.
+        cell.constructed
+            && !cell.dyad.is_null()
+            && unsafe { dyad::ty(cell.dyad) } == self.types.comment_
+    }
+
     /// Whether an `if` or `while` condition ends before `next` (DESIGN
     /// ›Expressions are self-delimiting‹): it is the first complete expression,
     /// so it ends once complete at a token that does not read to its left. It is
@@ -56,6 +65,7 @@ impl<'a> Parser<'a> {
     /// the body. The identity left of a `(` decides whose it is (DESIGN ›`X (…)`
     /// is one spelling‹): a value with a constructor is applied to it, so
     /// `1 == f(x)` is complete only after the call, while a type is the compared value.
+    /// A comment on the tape is read through, so `# «a» true` is complete only at `true`.
     /// `next` is `None` for a `(` a bracket reader peeks at unlexed.
     pub(super) fn condition_ends(&self, tape: &ParsingTape, next: Option<&Cell>) -> bool {
         let id = next.map_or(self.types.open_, |c| self.cell_identity(c));
@@ -63,7 +73,8 @@ impl<'a> Parser<'a> {
         if !open && next.is_some_and(|c| !c.constructed) && self.reads_left(id) {
             return false;
         }
-        let cells: Vec<Cell> = tape.iter().map(|(_, c)| *c).collect();
+        let cells: Vec<Cell> =
+            tape.iter().map(|(_, c)| *c).filter(|c| !self.is_comment_cell(c)).collect();
         let Some(last) = cells.last() else { return false };
         // A member is its spelling, never the identity it spells: `x.type` ends a value;
         // stand-in for #236.
