@@ -430,6 +430,12 @@ pub struct Runtime<'a> {
     /// The fresh node a type's own `parse` is running over, whose placed calls take a copy
     /// of it made each time they run, and whether `tape[0].type = T` has stamped it yet.
     fresh_this: Option<(DyadPtr, bool)>,
+    /// The nodes whose values the line being run holds to its end, one list per scope or pass
+    /// line being run, innermost last: a scope's `held` slot, or the pass's line's.
+    plans: Vec<*const [DyadPtr]>,
+    /// What each line being run made that nothing took, each node with the value it gave,
+    /// innermost line's last; a line's end frees its own.
+    line_values: Vec<(DyadPtr, i64)>,
     /// Handed to every jump into machine code.
     pub(crate) ctx: Context,
 }
@@ -487,8 +493,30 @@ impl<'a> Runtime<'a> {
             constructing: 0,
             ctor_tape: None,
             fresh_this: None,
+            plans: Vec::new(),
+            line_values: Vec::new(),
             ctx: Context::new(),
         }
+    }
+
+    /// From here until [`Self::pop_plan`], a node of `plan` that runs gives a value the line
+    /// being run holds to its end.
+    pub(crate) fn push_plan(&mut self, plan: &[DyadPtr]) {
+        self.plans.push(plan);
+    }
+
+    pub(crate) fn pop_plan(&mut self) {
+        self.plans.pop();
+    }
+
+    /// Where the values the line about to run makes begin.
+    pub(crate) fn line_mark(&self) -> usize {
+        self.line_values.len()
+    }
+
+    /// The values made since `mark`, in the order they were made, which their line now ends.
+    pub(crate) fn take_line_values(&mut self, mark: usize) -> Vec<(DyadPtr, i64)> {
+        self.line_values.split_off(mark)
     }
 
     /// The innermost frame: the program's outside any call.
@@ -896,6 +924,20 @@ impl<'a> Runtime<'a> {
     /// installed code, the artifact owning that machine code must still be alive.
     pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
         let node = self.through(node);
+        let value = self.dispatch(node)?;
+        // SAFETY: a plan is a scope's `held` array in the store, or the pass's line's list,
+        // live until its pop.
+        if self.plans.last().is_some_and(|&plan| (*plan).contains(&node)) {
+            self.line_values.push((node, value));
+        }
+        Ok(value)
+    }
+
+    /// [`Runtime::run`]'s one thing, for `node` read through.
+    ///
+    /// # Safety
+    /// As [`Runtime::run`].
+    unsafe fn dispatch(&mut self, node: DyadPtr) -> Result<i64, RunError> {
         match read_kind(self.types, node) {
             Read::Executable(Dispatch::Call(f)) => self.apply(f, node),
             Read::Executable(Dispatch::Leaf(leaf)) => {

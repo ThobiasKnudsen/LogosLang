@@ -118,6 +118,10 @@ enum Unwind<'a> {
     /// An argument a call holds, passed as `this`; `first` marks the call's first, from which
     /// its arguments end as one.
     Held { arg: DyadPtr, this: Value, first: bool },
+    /// A line, holding the first `count` of the values its lowering `id` made that nothing
+    /// took, which its end frees last first (›A value's teardown runs where its life ends; the
+    /// ending identity reads the type's `free` slot‹ [[R57]]).
+    Line { id: usize, count: usize },
 }
 
 /// The lowering context: a Cranelift function under construction, the rule
@@ -160,6 +164,14 @@ pub struct Lowerer<'a, 'f> {
     unwind: Vec<Unwind<'a>>,
     /// The fault exit made for each state of what is open, every scope failed at its line.
     exits: HashMap<Vec<Unwind<'a>>, Block>,
+    /// The `held` slot of each scope being lowered, innermost last: the nodes whose values a
+    /// line holds to its end.
+    plans: Vec<&'a [DyadPtr]>,
+    /// The value of each planned node, 0 from its scope's start until the node gives one, so a
+    /// line's end reads 0 where a branch that makes it did not run.
+    planned: HashMap<DyadPtr, Variable>,
+    /// The nodes each line lowered so far made that nothing took, by its `Unwind::Line` id.
+    lines: Vec<Vec<DyadPtr>>,
 }
 
 impl<'a> Lowerer<'a, '_> {
@@ -170,6 +182,55 @@ impl<'a> Lowerer<'a, '_> {
     /// `node` must be a valid dyad from the store.
     pub unsafe fn lower(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
+        let value = self.lower_node(node)?;
+        // Any open scope's: a `return` from a scope inside lowers an outer scope's `defer` lines.
+        if self.plans.iter().any(|plan| plan.contains(&node)) {
+            self.hold_to_line_end(node, value)?;
+        }
+        Ok(value)
+    }
+
+    /// The value of planned `node`, given as `value`, joins the innermost line's, which its end
+    /// frees.
+    fn hold_to_line_end(&mut self, node: DyadPtr, value: Value) -> Result<(), CompileError> {
+        let Some(&var) = self.planned.get(&node) else {
+            return Err(CompileError::Internal("a planned value has no variable"));
+        };
+        if self.builder.func.dfg.value_type(value) != types::I64 {
+            return Err(CompileError::NotLowerable(node));
+        }
+        let line = self.unwind.iter_mut().rev().find_map(|u| match u {
+            Unwind::Line { id, count } => Some((*id, count)),
+            _ => None,
+        });
+        let Some((id, count)) = line else {
+            return Err(CompileError::Internal("a planned value is made outside every line"));
+        };
+        self.builder.def_var(var, value);
+        self.lines[id].push(node);
+        *count = self.lines[id].len();
+        Ok(())
+    }
+
+    /// Lower `node` as a line of its own: what it makes that nothing takes ends when it ends, or
+    /// when a `return` or fault leaves it.
+    ///
+    /// # Safety
+    /// As [`Self::lower`].
+    pub(crate) unsafe fn lower_line(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
+        let at = self.unwind.len();
+        self.unwind.push(Unwind::Line { id: self.lines.len(), count: 0 });
+        self.lines.push(Vec::new());
+        let value = self.lower(node)?;
+        self.end_to(at)?;
+        Ok(value)
+    }
+
+    /// [`Self::lower`]'s dispatch, for `node` read through.
+    ///
+    /// # Safety
+    /// As [`Self::lower`].
+    unsafe fn lower_node(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let op = dyad::ty(node);
         match read_kind(self.types, node) {
             Read::Executable(Dispatch::Call(f)) => self.lower_call_into(f, node, None),
@@ -360,6 +421,14 @@ impl<'a> Lowerer<'a, '_> {
         let items = crate::identities::scope::exit_items(node);
         let open = |line| Unwind::Scope { items, line, failed: false, rest: false };
         self.unwind.push(open(0));
+        let plan = crate::identities::scope::held_of(node);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        for &made in plan {
+            let var = self.builder.declare_var(types::I64);
+            self.builder.def_var(var, zero);
+            self.planned.insert(made, var);
+        }
+        self.plans.push(plan);
         let mut last = None;
         for (line, &expr) in lines.iter().enumerate() {
             let ty = dyad::ty(expr);
@@ -367,10 +436,12 @@ impl<'a> Lowerer<'a, '_> {
                 continue;
             }
             self.unwind[at] = open(line);
-            last = Some(self.lower(expr)?);
+            last = Some(self.lower_line(expr)?);
         }
         self.unwind[at] = open(lines.len());
-        self.end_to(at)?;
+        let ended = self.end_to(at);
+        self.plans.pop();
+        ended?;
         Ok(last)
     }
 
@@ -379,7 +450,8 @@ impl<'a> Lowerer<'a, '_> {
     /// unwinding do. Each is closed before its teardowns are lowered, so a `return` or fault
     /// among them leaves what lies outside it; a scope's items still to run stay open while one
     /// is lowered, so a `return` in a `defer` runs them too; a call's held arguments close
-    /// together, so a fault in one's `free` skips the rest, as `drop_model::end_held_args` does.
+    /// together, so a fault in one's `free` skips the rest, as `drop_model::end_held_args` does,
+    /// and a line's values together, as `drop_model::end_line` does.
     ///
     /// # Safety
     /// Every open scope's items must be exit item nodes and every end a held place.
@@ -416,8 +488,17 @@ impl<'a> Lowerer<'a, '_> {
                     let first = self.innermost(at);
                     for held in self.unwind.split_off(first).into_iter().rev() {
                         if let Unwind::Held { arg, this, .. } = held {
-                            drop_model::lower_end_held_arg(self, arg, this)?;
+                            drop_model::lower_end_value(self, arg, this)?;
                         }
+                    }
+                }
+                Unwind::Line { id, count } => {
+                    self.unwind.truncate(k);
+                    let made: Vec<_> = self.lines[id][..count].to_vec();
+                    for node in made.into_iter().rev() {
+                        let var = self.planned[&node];
+                        let this = self.builder.use_var(var);
+                        drop_model::lower_end_value(self, node, this)?;
                     }
                 }
             }
@@ -1651,6 +1732,9 @@ unsafe fn build_pass(
                 faults_seen,
                 unwind: Vec::new(),
                 exits: HashMap::new(),
+                plans: Vec::new(),
+                planned: HashMap::new(),
+                lines: Vec::new(),
             };
             lw.lower(root)?
         };

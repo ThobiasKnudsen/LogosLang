@@ -85,6 +85,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             } else {
                 None
             };
+            // The cells keep the value in their bytes, so the block holds it, not the line.
+            if let Some(init) = init {
+                p.take(init);
+            }
             let types = p.types();
             let node = build_alloc(p.store(), types, count, init)?;
             tape.place(node);
@@ -181,6 +185,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                         .map_err(|e| p.fail_at(at, e))?;
                     // SAFETY: as above.
                     let teardown = unsafe { teardown_of(types, value) };
+                    p.take(value);
                     let node = build_value_free(p.store(), types, value, teardown);
                     tape.place(node);
                     return Ok(crate::parse::Constructed::Placed);
@@ -649,37 +654,78 @@ pub(crate) unsafe fn end_held_args(
             Some(_) => values.as_mut_ptr().add(slot.word) as i64,
             None => values[slot.word],
         };
-        let ty = super::read::output_type(rt.types(), arg);
-        if this == 0 {
-            continue;
-        }
-        if owning_pointee(ty).is_some() {
-            heap_free(this as u64 as *mut u8);
-            rt.note_free();
-        } else {
-            rt.apply_values(meta::instances_free_of(ty), &[this])?;
-        }
+        end_value(rt, arg, this)?;
     }
     Ok(())
 }
 
-/// [`end_held_args`] compiled, for one argument the call passed as `this`: its type's `free` is
-/// called over it; a block's free keeps the function interpreted.
+/// Ends the value `node` gave, which its holder lets go: `this` is its word, or its bytes'
+/// address for a record kept in them; an owning pointer's block is freed, anything else runs
+/// its type's `free` over it, and NULL ends nothing.
 ///
 /// # Safety
-/// `arg` must be a hold node from `build_hold`.
-pub(crate) unsafe fn lower_end_held_arg(
+/// `node` must be a node from the store whose value `this` is.
+unsafe fn end_value(rt: &mut Runtime, node: DyadPtr, this: i64) -> Result<(), RunError> {
+    if this == 0 {
+        return Ok(());
+    }
+    let ty = super::read::output_type(rt.types(), node);
+    if owning_pointee(ty).is_some() {
+        heap_free(this as u64 as *mut u8);
+        rt.note_free();
+        Ok(())
+    } else {
+        rt.apply_values(meta::instances_free_of(ty), &[this]).map(|_| ())
+    }
+}
+
+/// A line's end once `value`, what the line gave, is known: each value the line made that
+/// nothing took, kept by `rt` above `mark`, ends there, last made first, after the line's own
+/// reads (›A value's teardown runs where its life ends; the ending identity reads the type's
+/// `free` slot‹ [[R57]]). A fault stays the error shown, and one in an end skips the rest.
+///
+/// # Safety
+/// The values `rt` keeps above `mark` must be ones its run gave, still live.
+pub(crate) unsafe fn end_line(
+    rt: &mut Runtime,
+    mark: usize,
+    value: Result<i64, RunError>,
+) -> Result<i64, RunError> {
+    let ended = rt.take_line_values(mark).into_iter().rev().try_for_each(|(node, this)| {
+        // SAFETY: the caller's contract.
+        unsafe { end_value(rt, node, this) }
+    });
+    match (value, ended) {
+        (Err(fault), _) if !matches!(fault, RunError::Return(_)) => Err(fault),
+        (_, Err(e)) => Err(e),
+        (value, Ok(())) => value,
+    }
+}
+
+/// [`end_value`] compiled, for a value given as `this`: a call's held argument, or one a line
+/// holds to its end.
+///
+/// # Safety
+/// `node` must be a node from the store whose value `this` is.
+pub(crate) unsafe fn lower_end_value(
     lw: &mut Lowerer,
-    arg: DyadPtr,
+    node: DyadPtr,
     this: Value,
 ) -> Result<(), CompileError> {
-    let ty = super::read::output_type(lw.types(), arg);
-    if owning_pointee(ty).is_some() {
-        return Err(CompileError::NotLowerable(arg));
-    }
-    let free = lw.node_addr(meta::instances_free_of(ty));
-    lw.call_seed(compiled_instance_free as *const () as usize, &[this, free])?;
+    let node = lw.node_addr(node);
+    lw.call_seed(compiled_end_value as *const () as usize, &[this, node])?;
     Ok(())
+}
+
+/// # Safety
+/// Called only by compiled code, with its context and `node` the node whose value `this` is.
+unsafe extern "C" fn compiled_end_value(
+    ctx: *mut crate::run::Context,
+    this: i64,
+    node: DyadPtr,
+) -> i64 {
+    // SAFETY: the caller's contract.
+    crate::run::interpret_step(ctx, |rt| unsafe { end_value(rt, node, this) }.map(|()| 0))
 }
 
 /// `free a` where the name `a` holds its value: `[place, null, op]`, the teardown the scope's
@@ -899,7 +945,10 @@ impl ExitItem {
     /// `what` must be a `defer` node or a place laid out in the frame `rt` runs.
     pub(crate) unsafe fn run(&self, rt: &mut Runtime) -> Result<(), RunError> {
         if dyad::ty(self.what) == rt.types().defer_ {
-            rt.run(deferred_inner_of(self.what)).map(|_| ())
+            // A `defer` line runs here, and ends what it made here.
+            let mark = rt.line_mark();
+            let ran = rt.run(deferred_inner_of(self.what));
+            end_line(rt, mark, ran).map(|_| ())
         } else {
             end_held(rt, self.what)
         }
@@ -911,7 +960,7 @@ impl ExitItem {
     /// As [`Self::run`].
     pub(crate) unsafe fn lower(&self, lw: &mut Lowerer) -> Result<(), CompileError> {
         if dyad::ty(self.what) == lw.types().defer_ {
-            lw.lower(deferred_inner_of(self.what)).map(|_| ())
+            lw.lower_line(deferred_inner_of(self.what)).map(|_| ())
         } else {
             lower_end_held(lw, self.what)
         }
@@ -1113,7 +1162,31 @@ unsafe fn moves_out(types: &Core, node: DyadPtr) -> bool {
 /// # Safety
 /// As `moves_out`.
 unsafe fn moved_out(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    moved_out_via(types, node, &mut |_| {})
+}
+
+/// The nodes `value`'s own value passes through on its way out, `value` first: the ones a
+/// taker of it takes (›Holding is decided at the binding site, parameters included‹ [[R61]]).
+///
+/// # Safety
+/// As `moves_out`.
+pub(crate) unsafe fn handed_through(types: &Core, value: DyadPtr) -> Vec<DyadPtr> {
+    let mut path = Vec::new();
+    moved_out_via(types, value, &mut |node| path.push(node));
+    path
+}
+
+/// [`moved_out`], `visit` given each node it reads on the way.
+///
+/// # Safety
+/// As `moves_out`.
+unsafe fn moved_out_via(
+    types: &Core,
+    node: DyadPtr,
+    visit: &mut dyn FnMut(DyadPtr),
+) -> Option<DyadPtr> {
     let node = types.through(node);
+    visit(node);
     let logos = dyad::ty(node);
     if logos == types.alloc_
         || logos == types.move_
@@ -1126,13 +1199,14 @@ unsafe fn moved_out(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     // its bytes' address, when what it copies does.
     if logos == types.by_copy.result {
         let call = *(dyad::value(node) as *const DyadPtr).add(1);
-        return moved_out(types, call);
+        return moved_out_via(types, call, visit);
     }
     if logos == types.by_copy.out {
-        return moved_out(types, *(dyad::value(node) as *const DyadPtr));
+        return moved_out_via(types, *(dyad::value(node) as *const DyadPtr), visit);
     }
     if logos == types.scope {
-        return crate::parse::last_sequence_expr(node).and_then(|tail| moved_out(types, tail));
+        return crate::parse::last_sequence_expr(node)
+            .and_then(|tail| moved_out_via(types, tail, visit));
     }
     // A used `if` ends its value alike in every arm (`handed_ends`), so the then arm's is it.
     if logos == types.if_ {
@@ -1140,8 +1214,10 @@ unsafe fn moved_out(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
         if els.is_null() {
             return None;
         }
-        let out = moved_out(types, then)?;
-        return moved_out(types, els).map(|_| out);
+        // Both arms are walked, so `visit` sees what either hands on, a `return` arm's beside.
+        let out = moved_out_via(types, then, visit);
+        let els = moved_out_via(types, els, visit);
+        return out.filter(|_| els.is_some());
     }
     if let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
         super::read::read_kind(types, node)
@@ -2142,7 +2218,16 @@ mod tests {
     #[test]
     fn free_of_a_value_runs_it_then_frees_what_it_owns() {
         assert_eq!(run("free (alloc 1 of i32 5),\n1"), (1, 0));
-        assert_eq!(run("alloc 1 of i32 5,\n1"), (1, 1), "the same value no word takes leaks");
+        assert_eq!(
+            run("alloc 1 of i32 5,\n1"),
+            (1, 0),
+            "the same value no word takes ends with its line"
+        );
+        assert_eq!(
+            run("import ./identities/array.logos, (array i32 [1, 2])[1]"),
+            (2, 0),
+            "an array no name takes ends after its line has read it"
+        );
         assert_eq!(run("mk := fn () -> own @i32 ( alloc 1 of i32 7 ),\nfree (mk()),\n1"), (1, 0));
         assert!(matches!(
             try_run("n := i32 0 - 1,\nfree (alloc n of i32 1),\n1"),
@@ -2429,8 +2514,8 @@ mod tests {
         // A block's last value moves to its binder the same way.
         assert_eq!(run("b := ( a := alloc 1 of i32 8, a ),\nb@"), (8, 0));
         assert_eq!(free_log(), vec![8]);
-        // A moved-out value no name takes is not freed yet; the leak is pinned as a number.
-        assert_eq!(run("mk := fn () -> own @i32 ( alloc 1 of i32 7 ),\nmk(),\n1"), (1, 1));
+        // A moved-out value no name takes is freed at its line's end.
+        assert_eq!(run("mk := fn () -> own @i32 ( alloc 1 of i32 7 ),\nmk(),\n1"), (1, 0));
         // A call's result is owned only through the callee's `-> own`.
         assert_eq!(
             run("id := fn (q := @i32 ?) -> @i32 ( q ),\np := alloc 1 of i32 3,\nr := id(p),\nr@"),

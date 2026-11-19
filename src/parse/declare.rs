@@ -829,6 +829,7 @@ impl<'a> Parser<'a> {
                 *(dyad::value(read) as *mut DyadPtr) = place;
                 if let Teardown::Node(_) = teardown_of(self.types, value) {
                     self.hold_node(binding);
+                    self.take(value);
                 }
                 value
             } else if crate::identities::read::read_kind(self.types, read)
@@ -852,6 +853,7 @@ impl<'a> Parser<'a> {
                         crate::identities::build_init(self.rt.store, self.types, place, value)?;
                     if let Teardown::Node(_) = teardown_of(self.types, value) {
                         self.hold_node(binding);
+                        self.take(value);
                     }
                     init
                 }
@@ -867,6 +869,7 @@ impl<'a> Parser<'a> {
                 let place = self.place_for(binding, owning_ty, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
                 self.hold(binding);
+                self.take(value);
                 init
             } else if let Some((ty_node, width)) =
                 crate::identities::copy_place(self.rt.store, self.types, value)
@@ -874,9 +877,15 @@ impl<'a> Parser<'a> {
                 // A run-time value is a copy (DESIGN ›`:=` decides nothing about copy or
                 // reference; the type's reading rule does‹): fresh per-call storage of its type,
                 // the name bound to it, the value kept as a re-runnable initializer, so a read is
-                // a plain load and a loop-body local re-initializes on entry.
+                // a plain load and a loop-body local re-initializes on entry. A value just made
+                // or moved makes the name its owner, as above.
                 let place = self.place_for(binding, ty_node, width);
-                crate::identities::build_init(self.rt.store, self.types, place, value)?
+                let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
+                if let Teardown::Node(_) = teardown_of(self.types, value) {
+                    self.hold_node(binding);
+                    self.take(value);
+                }
+                init
             } else if self.types.frame_of(read).is_some() && dyad::ty(read) == self.types.binding_ {
                 // `x := y` over storage no rule above copies: the name is a second name for
                 // the same bytes.

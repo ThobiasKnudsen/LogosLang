@@ -581,6 +581,7 @@ impl<'a> Parser<'a> {
             if !same && !reparsed && !cell.bracket && self.is_awake_instance(cell.dyad) {
                 tape.set_constructed(0, false);
             }
+            self.note_made(cell.dyad);
             return Ok(());
         }
         if !same {
@@ -677,7 +678,7 @@ impl<'a> Parser<'a> {
                 if self.cx.runtime_depth == 0 {
                     let open = self.cx.open.last_mut().expect("the root scope is open");
                     if !open.list {
-                        open.unrun.push((item.dyad, open.lines, Vec::new()));
+                        open.unrun.push((item.dyad, open.lines, Vec::new(), Vec::new()));
                     }
                 }
                 return Some(Ok(item));

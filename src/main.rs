@@ -175,15 +175,24 @@ fn run_program_line(
     // lives in that runtime's scratch.
     let message = |e: ParseError| format!("{path}: {}", report::parse_message(&e));
     let ran = p.finish().map_err(message)?;
-    let Some(node) = tail else { return Ok(None) };
+    let Some(node) = tail else {
+        p.end_tail().map_err(message)?;
+        return Ok(None);
+    };
     let bits = match ran {
         Some((last, bits)) if last == node => bits,
         // A tail the pass never ran, a `[…]` line, runs now.
-        // SAFETY: `node` is a line the parser built.
-        _ => unsafe { p.value_of(node) }.map_err(message)?,
+        _ => {
+            p.end_tail().map_err(message)?;
+            // SAFETY: `node` is a line the parser built.
+            unsafe { p.value_of(node) }.map_err(message)?
+        }
     };
     // SAFETY: `node` is the parsed dyad whose value `bits` is.
-    Ok(Some((node, unsafe { seed::identities::display_value(types, node, bits) })))
+    let shown = unsafe { seed::identities::display_value(types, node, bits) };
+    // The last line ends once its value is shown.
+    p.end_tail().map_err(message)?;
+    Ok(Some((node, shown)))
 }
 
 /// `LOGOS_STATS`: the store after the core, after the line, and their delta

@@ -155,6 +155,14 @@ struct Context<'a> {
     /// While a branch the pass drops is parsed only to find where it ends: it never runs, so
     /// it ends no name.
     dropping: usize,
+    /// What the construct around the block about to open does with its value.
+    next_block: bodies::BlockValue,
+    /// The block that closed last, with the values its last line made that it handed on as its
+    /// own value.
+    handed_tail: Option<(DyadPtr, Vec<DyadPtr>)>,
+    /// Where the runtime's values of the program's last line begin, kept to their line's end
+    /// until its echo has read them.
+    tail_values: Option<usize>,
 }
 
 impl<'a> Context<'a> {
@@ -192,6 +200,9 @@ impl<'a> Context<'a> {
             result_type: false,
             ended_log: Vec::new(),
             dropping: 0,
+            next_block: bodies::BlockValue::Used,
+            handed_tail: None,
+            tail_values: None,
         }
     }
 

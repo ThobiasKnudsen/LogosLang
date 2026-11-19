@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `scope`: the type of a scope node, the parser's membership marker and, for
-//! a block, the sequence node itself: `[exprs, op, parent, exit]`, the parent link
+//! a block, the sequence node itself: `[exprs, op, parent, exit, held]`, the parent link
 //! set at [`mint`], the expressions (the `dyads` field) pushed as each line
 //! completes, the op set at [`fill`] when the block closes, and the exit, what the
-//! scope's end runs, set when it closes.
+//! scope's end runs, and what its lines' ends free, set when it closes.
 //! DESIGN ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹
 
 use cranelift_codegen::ir::Value;
@@ -47,20 +47,24 @@ pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> Dya
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }
 
-/// The slots of a scope node's value, `[exprs, op, parent, exit]`.
+/// The slots of a scope node's value, `[exprs, op, parent, exit, held]`.
 const EXPRS: usize = 0;
 const OP: usize = 1;
 const PARENT: usize = 2;
 /// Null, or an `array` of exit items (`drop_model::exit_item`) in line order.
 const EXIT: usize = 3;
-pub(crate) const SLOTS: usize = EXIT + 1;
+/// Null, or an `array` of the nodes whose values the scope's lines made and nothing took: the
+/// end of the line a value was made in frees it (›A value's teardown runs where its life ends;
+/// the ending identity reads the type's `free` slot‹ [[R57]]).
+const HELD: usize = 4;
+pub(crate) const SLOTS: usize = HELD + 1;
 
 /// The block's membership key while it parses, and the sequence node once
 /// [`fill`] gives it its expressions; `parent` is null at the arche. A scope that
 /// holds names alone (the root, a type's member scope) is minted with no parent.
 pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> DyadPtr {
     let none = std::ptr::null_mut();
-    store.alloc_words(scope_ty, &[none, none, parent, none])
+    store.alloc_words(scope_ty, &[none, none, parent, none, none])
 }
 
 /// The block closed: it runs as a sequence over its `dyads`.
@@ -140,8 +144,58 @@ pub(crate) unsafe fn with_exprs(
 ) -> DyadPtr {
     let slots = dyad::value(node) as *const DyadPtr;
     let lines = array::build(store, types.array_, exprs);
-    store
-        .alloc_words(dyad::ty(node), &[lines, *slots.add(OP), *slots.add(PARENT), *slots.add(EXIT)])
+    let kept = [*slots.add(OP), *slots.add(PARENT), *slots.add(EXIT), *slots.add(HELD)];
+    store.alloc_words(dyad::ty(node), &[lines, kept[0], kept[1], kept[2], kept[3]])
+}
+
+/// The nodes whose values the scope's lines free at their ends.
+///
+/// # Safety
+/// `node` must be a scope node from the store; the store must outlive the returned slice.
+pub(crate) unsafe fn held_of<'a>(node: DyadPtr) -> &'a [DyadPtr] {
+    let held = *(dyad::value(node) as *const DyadPtr).add(HELD);
+    if held.is_null() {
+        &[]
+    } else {
+        array::items(held)
+    }
+}
+
+/// Appends `nodes` to what the scope's lines free at their ends, the array made on first use.
+///
+/// # Safety
+/// `node` must be a scope node from the store; `nodes` reduced dyads.
+pub(crate) unsafe fn extend_held(
+    store: &mut Store,
+    array_ty: DyadPtr,
+    node: DyadPtr,
+    nodes: &[DyadPtr],
+) {
+    extend_slot(store, array_ty, node, HELD, nodes);
+}
+
+/// Appends `items` to the array in the scope's slot `at`, made on first use.
+///
+/// # Safety
+/// `node` must be a scope node from the store and `at` one of its array slots.
+unsafe fn extend_slot(
+    store: &mut Store,
+    array_ty: DyadPtr,
+    node: DyadPtr,
+    at: usize,
+    items: &[DyadPtr],
+) {
+    if items.is_empty() {
+        return;
+    }
+    let slot = (dyad::value(node) as *mut DyadPtr).add(at);
+    // Empty, so `push` knows its capacity.
+    if (*slot).is_null() {
+        *slot = array::build(store, array_ty, &[]);
+    }
+    for &item in items {
+        array::push(store, *slot, item);
+    }
 }
 
 /// # Safety
@@ -165,17 +219,7 @@ pub(crate) unsafe fn extend_exit(
     node: DyadPtr,
     items: &[DyadPtr],
 ) {
-    if items.is_empty() {
-        return;
-    }
-    let slot = (dyad::value(node) as *mut DyadPtr).add(EXIT);
-    // Empty, so `push` knows its capacity.
-    if (*slot).is_null() {
-        *slot = array::build(store, array_ty, &[]);
-    }
-    for &item in items {
-        array::push(store, *slot, item);
-    }
+    extend_slot(store, array_ty, node, EXIT, items);
 }
 
 /// The scope's end, reached after `reached` of its lines completed: every exit item held
@@ -206,11 +250,27 @@ unsafe fn run_exit_after_fault(
     run_exit_items(rt, node, |types, item| item.held_at_fault(types, failed))
 }
 
-/// A `return` in a `defer` leaves once the rest of the end has run; a fault stops the end.
+/// A `return` in a `defer` leaves once the rest of the end has run; a fault stops the end. A
+/// `defer` line's values end with it, when the exit runs it.
 ///
 /// # Safety
 /// As [`run_exit`].
 unsafe fn run_exit_items(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    runs: impl Fn(&crate::Core, &ExitItem) -> bool,
+) -> Result<(), RunError> {
+    rt.push_plan(held_of(node));
+    let ran = run_held_exit_items(rt, node, runs);
+    rt.pop_plan();
+    ran
+}
+
+/// [`run_exit_items`] with the scope's plan in force.
+///
+/// # Safety
+/// As [`run_exit`].
+unsafe fn run_held_exit_items(
     rt: &mut Runtime,
     node: DyadPtr,
     runs: impl Fn(&crate::Core, &ExitItem) -> bool,
@@ -243,48 +303,61 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let Some(exprs) = exprs_of(node) else {
             return Err(RunError::EmptyScope);
         };
-        let defer_ty = rt.types().defer_;
-        let start = rt.take_cursor(node);
-        let mut last = 0i64;
-        let tail = exprs.iter().rposition(|&e| {
-            !super::numtype::is_comment_type(dyad::ty(e)) && dyad::ty(e) != defer_ty
-        });
-        for (i, &expr) in exprs.iter().enumerate() {
-            let logos = dyad::ty(expr);
-            // Prose never runs; a `defer` runs at the end, from the exit.
-            if super::numtype::is_comment_type(logos) || logos == defer_ty {
-                continue;
+        rt.push_plan(held_of(node));
+        let ran = run_lines(rt, node, exprs);
+        rt.pop_plan();
+        ran
+    }
+}
+
+/// The scope's lines from its cursor, each ended as it completes, then its end.
+///
+/// # Safety
+/// `node` must be a sequence node from the store and `exprs` its lines.
+unsafe fn run_lines(rt: &mut Runtime, node: DyadPtr, exprs: &[DyadPtr]) -> Result<i64, RunError> {
+    let defer_ty = rt.types().defer_;
+    let start = rt.take_cursor(node);
+    let mut last = 0i64;
+    let tail = exprs
+        .iter()
+        .rposition(|&e| !super::numtype::is_comment_type(dyad::ty(e)) && dyad::ty(e) != defer_ty);
+    for (i, &expr) in exprs.iter().enumerate() {
+        let logos = dyad::ty(expr);
+        // Prose never runs; a `defer` runs at the end, from the exit.
+        if super::numtype::is_comment_type(logos) || logos == defer_ty {
+            continue;
+        }
+        // Before the cursor: the pass ran it in this frame already.
+        if i < start {
+            continue;
+        }
+        // A line's scratch is freed with the line; the tail's is the value handed on.
+        let mark = rt.stack_mark();
+        let held = rt.line_mark();
+        let ran = rt.run(expr);
+        match super::drop_model::end_line(rt, held, ran) {
+            Ok(v) => {
+                last = v;
+                if tail != Some(i) {
+                    rt.stack_release(mark);
+                }
             }
-            // Before the cursor: the pass ran it in this frame already.
-            if i < start {
-                continue;
+            // A `return` leaves through this scope: what it holds at line `i` ends.
+            Err(RunError::Return(v)) => {
+                run_exit(rt, node, i)?;
+                return Err(RunError::Return(v));
             }
-            // A line's scratch is freed with the line; the tail's is the value handed on.
-            let mark = rt.stack_mark();
-            match rt.run(expr) {
-                Ok(v) => {
-                    last = v;
-                    if tail != Some(i) {
-                        rt.stack_release(mark);
-                    }
-                }
-                // A `return` leaves through this scope: what it holds at line `i` ends.
-                Err(RunError::Return(v)) => {
-                    run_exit(rt, node, i)?;
-                    return Err(RunError::Return(v));
-                }
-                // A fault ends the scope from line `i`; the fault is the error shown, whatever
-                // its cleanup meets (DESIGN ›A checked error is a fault: the task that hit it is
-                // cancelled‹).
-                Err(fault) => {
-                    let _ = run_exit_after_fault(rt, node, i);
-                    return Err(fault);
-                }
+            // A fault ends the scope from line `i`; the fault is the error shown, whatever
+            // its cleanup meets (DESIGN ›A checked error is a fault: the task that hit it is
+            // cancelled‹).
+            Err(fault) => {
+                let _ = run_exit_after_fault(rt, node, i);
+                return Err(fault);
             }
         }
-        run_exit(rt, node, exprs.len())?;
-        Ok(last)
     }
+    run_exit(rt, node, exprs.len())?;
+    Ok(last)
 }
 
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {

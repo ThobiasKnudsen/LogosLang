@@ -81,14 +81,22 @@ fn construct(
     }
     let value = p.parse_expression()?;
     // SAFETY: `target` is the reduced dyad of the cell to the left.
-    if unsafe { dyad::ty(target) } == types.tape.cell_type {
+    let into_cell = unsafe { dyad::ty(target) } == types.tape.cell_type;
+    let value = if into_cell {
+        value
+    } else {
+        // SAFETY: `target` and `value` are reduced dyads from the store.
+        unsafe { p.bracket_into(target, value) }?
+    };
+    // What `=` writes reaches a place, which holds it or not; the line's end never frees it
+    // (›Holding is decided at the binding site, parameters included‹ [[R61]]).
+    p.take(value);
+    if into_cell {
         // SAFETY: `target` is a cell type read, `value` a reduced dyad.
         let node = unsafe { p.stamp(target, value) }?;
         tape.place(node);
         return Ok(crate::parse::Constructed::Placed);
     }
-    // SAFETY: `target` and `value` are reduced dyads from the store.
-    let value = unsafe { p.bracket_into(target, value) }?;
     let node = if let Some(kind) = slot {
         // SAFETY: `value` is the reduced dyad of the right side.
         unsafe { p.slot_fill(kind, target, value) }?

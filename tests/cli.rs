@@ -4867,6 +4867,128 @@ fn a_plain_record_s_owner_runs_its_free_once() {
     assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
 }
 
+/// DESIGN ›A value's teardown runs where its life ends; the ending identity reads the type's
+/// `free` slot‹ [[R57]]: a line at its end frees what it made that nothing took, after its own
+/// reads, on both tiers.
+#[test]
+fn a_line_frees_at_its_end_what_it_made_that_nothing_took() {
+    let mk = "mk := fn (k := i32 ?) -> own bag ( bag(k) )";
+    for (tail, printed) in [
+        ("bag(1), print «after»".to_string(), "freed 1\nafter\n"),
+        ("f := fn () -> i32 ( bag(2), 1 ), print «before», f(), print «after»".into(), "before\nfreed 2\nafter\n"),
+        (
+            "f := fn () -> i32 ( bag(2), 1 ), f.compile(), print «before», f(), print «after»".into(),
+            "before\nfreed 2\nafter\n",
+        ),
+        (format!("{mk}, mk(3), print «after»"), "freed 3\nafter\n"),
+        (format!("{mk}, g := fn () -> i32 ( mk(3), 1 ), g.compile(), g(), print «after»"), "freed 3\nafter\n"),
+        // A loop body's value is thrown away, so each pass frees what it made.
+        ("for i in 0..2 ( bag(i) ), print «end»".into(), "freed 0\nfreed 1\nend\n"),
+        ("g := fn () -> i32 ( for i in 0..2 ( bag(i) ), 1 ), g.compile(), g()".into(), "freed 0\nfreed 1\n1\n"),
+        // So is an `if`'s without `else`, and a branch that does not run makes nothing to free.
+        ("c := true, if c ( bag(4) ), print «after»".into(), "freed 4\nafter\n"),
+        (
+            "g := fn (c := bool ?) -> i32 ( if c ( bag(4) ), 1 ), g.compile(), print «{g(false)}», g(true)"
+                .into(),
+            "1\nfreed 4\n1\n",
+        ),
+        (
+            "g := fn () -> i32 ( for i in 0..3 ( if (i == 1) ( bag(i) ) ), 1 ), g.compile(), g()".into(),
+            "freed 1\n1\n",
+        ),
+        // And a `-> void` function's.
+        ("f := fn () -> void ( bag(5) ), f(), print «after»".into(), "freed 5\nafter\n"),
+        ("f := fn () -> void ( bag(5) ), f.compile(), f(), print «after»".into(), "freed 5\nafter\n"),
+        // A block's last value is its own, which its binder takes; its other lines end theirs.
+        ("x := ( bag(6) ), print «after»".into(), "after\nfreed 6\n"),
+        ("c := true, x := if c ( bag(7) ) else ( bag(8) ), print «after»".into(), "after\nfreed 7\n"),
+        ("x := ( bag(9), i32 5 ), print «x {x}»".into(), "freed 9\nx 5\n"),
+        // A `defer` is a line of its own when its scope ends.
+        ("f := fn () -> i32 ( defer bag(1), 2 ), f(), print «after»".into(), "freed 1\nafter\n"),
+        ("f := fn () -> i32 ( defer bag(1), 2 ), f.compile(), f(), print «after»".into(), "freed 1\nafter\n"),
+        // A `.` reads the node and runs nothing, so nothing is made to free.
+        ("(bag(1)).type == bag".into(), "true\n"),
+        ("f := fn () -> bool ( (bag(1)).type == bag ), f.compile(), f()".into(), "true\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl(
+        format!("{RECORD}\nx := ( bag(9), i32 5 )\nprint «after»\nc := true\nif c ( bag(4) )\n")
+            .as_bytes(),
+    );
+    assert_eq!(echoes, ["freed 9", "after", "freed 4"], "stderr: {stderr}");
+}
+
+/// DESIGN ›A value's teardown runs where its life ends; the ending identity reads the type's
+/// `free` slot‹ [[R57]], with values whose fields are read: a line frees its values when it
+/// ends, a `return` or a fault leaving it included.
+#[test]
+fn a_line_frees_what_it_made_where_it_ends() {
+    let sized = BOX.replace("print «free»", "print «free {size}»");
+    let mk = "mk := fn () -> own boxed ( box (1, 2) )";
+    let two_three = "two := fn () -> own boxed ( box (1, 2) ), \
+                     three := fn () -> own boxed ( box (1, 2, 3) )";
+    let r = "r := fn (k := i32 ?) -> u64 ( if k > 0 ( return mk().size ), 0 )";
+    let array = "import ./identities/array.logos, a := array u64 [1, 2]";
+    let w = "mut i := u64 0, while (mk().size > i) ( i = i + 1 )";
+    for (tail, printed) in [
+        // The last made first: R57's Open line, its choice (a), until Question 67 is answered.
+        (
+            format!("{two_three}, x := two().size + three().size, print «x {{x}}»"),
+            "free 3\nfree 2\nx 5\n",
+        ),
+        (
+            format!(
+                "{two_three}, g := fn () -> u64 ( two().size + three().size ), g.compile(), \
+                 print «x {{g()}}»"
+            ),
+            "free 3\nfree 2\nx 5\n",
+        ),
+        // After the line's own reads.
+        (format!("{two_three}, print «{{two().size}} {{three().size}}»"), "2 3\nfree 3\nfree 2\n"),
+        // A `return` leaves the line, so it frees what the line made.
+        (format!("{mk}, {r}, print «got {{r(5)}}»"), "free 2\ngot 2\n"),
+        (format!("{mk}, {r}, r.compile(), print «got {{r(5)}}»"), "free 2\ngot 2\n"),
+        // A `while` condition in brackets is a scope of its own, which ends each pass.
+        (format!("{mk}, {w}, print «end {{i}}»"), "free 2\nfree 2\nfree 2\nend 2\n"),
+        (
+            format!("{mk}, g := fn () -> u64 ( {w}, i ), g.compile(), g()"),
+            "free 2\nfree 2\nfree 2\n2\n",
+        ),
+        // A one-line bracket stands as its line, so a `.` still reads the line's node.
+        (format!("{mk}, (mk().size + 1).output_type == u64"), "true\n"),
+        (
+            format!(
+                "{mk}, f := fn () -> bool ( (mk().size + 1).output_type == u64 ), f.compile(), f()"
+            ),
+            "true\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{sized}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    // A fault leaves the line: what it made ends before the error shows.
+    for tail in [
+        format!("{mk}, {array}, x := mk().size + a[5], print «after»"),
+        format!("{mk}, {array}, g := fn () -> u64 ( mk().size + a[5] ), g.compile(), g()"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{sized}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(1), "free 2\n"), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("index out of range"), "{tail}: stderr: {stderr}");
+    }
+    // A bare `while` condition is no scope, so the value it makes each pass has no place to end.
+    let (code, stdout, stderr) =
+        run_line(&format!("{sized}, {mk}, mut i := u64 0, while mk().size > i ( i = i + 1 )"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(
+        stderr.contains(
+            "a value a `while` condition makes, taken by `&` or by nothing, is not in the seed yet"
+        ),
+        "stderr: {stderr}"
+    );
+}
+
 /// DESIGN ›Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of‹
 /// [[R162]].
 #[test]
@@ -4974,7 +5096,7 @@ fn the_address_of_a_value_in_a_call_s_arguments_holds_it_to_the_scope_the_call_s
     ] {
         let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{tail}: stderr: {stderr}");
-        assert!(stderr.contains("`&` of a value in a `while` condition is not in the seed yet"), "{tail}");
+        assert!(stderr.contains("a value a `while` condition makes, taken by `&` or by nothing, is not in the seed yet"), "{tail}");
     }
 }
 

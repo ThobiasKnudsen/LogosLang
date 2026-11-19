@@ -330,6 +330,7 @@ impl<'a> Parser<'a> {
                 program.imported.insert(item.what);
                 program.exit.push(ExitItem { from, ..item });
             }
+            program.held.extend(file.held);
         }
         g.0.outer.last_mut().expect("pushed by enter").open = std::mem::take(&mut g.0.cx.open);
         drop(g);
