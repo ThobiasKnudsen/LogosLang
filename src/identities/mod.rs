@@ -119,8 +119,10 @@ pub struct Core {
     pub compile_: DyadPtr,
     /// `rational_number`, the numeric literal's type.
     pub rational: DyadPtr,
-    /// The `«…»` literal; inert in the seed.
+    /// The text type; inert in the seed.
     pub string_: DyadPtr,
+    /// `«`, the token that builds a string; it reads its own extent.
+    pub quote_: DyadPtr,
     /// The reader that turns a quote into the recognizer `:=` declares as a spelling.
     pub regex_: DyadPtr,
     /// The prose node a statement-level `#` builds; invisible to value flow.
@@ -253,7 +255,7 @@ impl Core {
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
         // Before the operators: their records name operands with string nodes.
-        string::register(&mut cx);
+        let quote_ = string::register(&mut cx);
         let (comment_, hash_) = comment::register(&mut cx);
         let regex_ = regex_mod::register(&mut cx);
         // After `string`, before anything executable.
@@ -442,6 +444,7 @@ impl Core {
             compile_,
             rational,
             string_,
+            quote_,
             regex_,
             comment_,
             hash_,
