@@ -1390,10 +1390,19 @@ impl<'a> Parser<'a> {
             let mut args = args;
             // SAFETY: `callee` and `args` are reduced dyads from the store.
             unsafe {
+                use crate::identities::drop_model::{
+                    build_hold, param_holds, teardown_of, Teardown,
+                };
                 crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
-                for &i in &held {
-                    args[i] =
-                        crate::identities::drop_model::build_hold(self.rt.store, types, args[i]);
+                for (i, arg) in args.iter_mut().enumerate() {
+                    // A value a `dyad ?` parameter takes in a new node is made by the landing.
+                    if !held.contains(&i) && teardown_of(types, *arg) == Teardown::Nothing {
+                        continue;
+                    }
+                    if !param_holds(types, callee, i) {
+                        return Err(ParseError::UnboundOwningValue);
+                    }
+                    *arg = build_hold(self.rt.store, types, *arg);
                 }
             }
             let call = build_call(self.rt.store, callee, &args);

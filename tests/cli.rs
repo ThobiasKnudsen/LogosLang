@@ -1967,7 +1967,7 @@ fn an_if_lands_each_arm_and_an_operation_meets_in_the_wider_type() {
 }
 
 #[test]
-fn a_dyad_place_takes_every_node_named_or_not_and_no_number() {
+fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
     let array = "import ./identities/array.logos";
     for tail in
         ["mut d := dyad ?, d = array i32 [1, 2]", "a := array i32 [1, 2], mut d := dyad ?, d = a"]
@@ -1976,16 +1976,37 @@ fn a_dyad_place_takes_every_node_named_or_not_and_no_number() {
         assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), "taken\n", "{tail}");
     }
+    for c in ["", "f.compile(), "] {
+        for (src, want) in [
+            ("mut d := dyad ?, d = 5, d".to_string(), "5"),
+            ("mut d := dyad ?, d = i64 5, d = f64 2.5, d".to_string(), "2.5"),
+            ("mut d := dyad ?, d = 1/2, d".to_string(), "1/2"),
+            ("mut d := dyad ?, d = true, d".to_string(), "true"),
+            ("mut d := dyad ?, d = i64 5, e := d, d = i64 6, e".to_string(), "5"),
+            (format!("f := fn (q := dyad ?) -> i32 ( 1 ), {c}f(5)"), "1"),
+            (format!("f := fn () -> dyad ( i32 5 ), {c}f()"), "5"),
+            (format!("f := fn (q := dyad ?) -> dyad ( q ), {c}f(i32 5)"), "5"),
+            (format!("f := fn (q := dyad ?) -> dyad ( q ), {c}x := f(i64 7), x"), "7"),
+            (format!("f := fn () -> i32 ( mut d := dyad ?, d = i64 5, d = 1/2, 1 ), {c}f()"), "1"),
+        ] {
+            let out = logos().arg(&src).output().unwrap();
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "{src}: stderr: {stderr}");
+            assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
+        }
+    }
+    // Text, an owning value, a bare parameter, and a number in a place no name holds.
     for src in [
-        "mut d := dyad ?, d = 5",
-        "mut d := dyad ?, d = i32 5",
-        "f := fn (q := dyad ?) -> i32 ( 1 ), f(5)",
-        "fn () -> dyad ( i32 5 )",
-        "fn (q := dyad ?) -> dyad ( q )",
+        "mut d := dyad ?, d = «a»",
+        "mut d := dyad ?, d = alloc 1 of i32 5",
+        "fn (a) -> dyad ( a )",
+        "f := fn (mut q := dyad ?) -> i32 ( 1 ), f(5)",
+        "p := alloc 1 of dyad ?, p@ = 5",
+        "r := type ( v := dyad ? ), x := r (5)",
     ] {
         let out = logos().arg(src).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("takes only a node, not a number"), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("does not take this value yet"), "{src}: stderr: {stderr}");
     }
 }
 
@@ -3319,8 +3340,8 @@ fn the_dyad_box_says_what_it_holds() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let (_e, stderr) = repl(b"mut a := dyad ?\na = 5\n");
-    assert!(stderr.contains("takes only a node, not a number"), "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"mut a := dyad ?\na = 5\na\na = i64 7\na.type == i64\na\n");
+    assert_eq!(echoes, ["5", "true", "7"], "stderr: {stderr}");
 }
 
 #[test]

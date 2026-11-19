@@ -34,6 +34,7 @@ mod comment;
 mod convert;
 pub(crate) mod declare;
 pub(crate) mod drop_model;
+pub(crate) mod dyad_place;
 pub mod error;
 #[path = "fn.rs"]
 mod fn_mod;
@@ -171,6 +172,7 @@ pub struct Core {
     pub run_body: run_body::RunBodyIds,
     pub by_copy: by_copy::ByCopyIds,
     pub here: here::HereIds,
+    pub dyad_place: dyad_place::DyadPlaceIds,
     /// The identity of the cell a `[` lands, as `scope` is a `(`'s.
     pub square_brackets: DyadPtr,
     /// `array` of `dyad@`; a sequence's expression list lives behind one, never inline.
@@ -362,6 +364,7 @@ impl Core {
         let run_body = run_body::register(&mut cx);
         let by_copy = by_copy::register(&mut cx, &callables);
         let here = here::register(&mut cx, &callables);
+        let dyad_place = dyad_place::register(&mut cx, &callables);
         // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
         binding::register_type(
             &mut cx,
@@ -472,6 +475,7 @@ impl Core {
             run_body,
             by_copy,
             here,
+            dyad_place,
             square_brackets,
             callable_: callables.callable,
             convention_: callables.convention,
@@ -809,7 +813,7 @@ pub(crate) unsafe fn land(
     value: DyadPtr,
     ty: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    land_as(store, types, value, ty, false)
+    land_with(store, types, value, ty, Landing::default())
 }
 
 /// As [`land`]; with `lossy`, what `ty lossy (value)` gives: a number of any number type, a plain
@@ -825,6 +829,39 @@ pub(crate) unsafe fn land_as(
     ty: DyadPtr,
     lossy: bool,
 ) -> Result<DyadPtr, ParseError> {
+    land_with(store, types, value, ty, Landing { lossy, held: false })
+}
+
+/// As [`land`], into a place whose holder ends what it takes: a `dyad ?` place takes a value
+/// that is no node in a new node of its own (›Holding is decided at the binding site,
+/// parameters included‹ [[R61]]).
+///
+/// # Safety
+/// As [`land`].
+pub(crate) unsafe fn land_held(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    ty: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    land_with(store, types, value, ty, Landing { lossy: false, held: true })
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Landing {
+    lossy: bool,
+    held: bool,
+}
+
+/// # Safety
+/// As [`land`].
+unsafe fn land_with(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    ty: DyadPtr,
+    how: Landing,
+) -> Result<DyadPtr, ParseError> {
     let Some((ty, (place, _))) =
         type_identity_of(types, ty).and_then(|t| Some((t, read::place_layout(types, t)?)))
     else {
@@ -835,7 +872,7 @@ pub(crate) unsafe fn land_as(
         Err(e) => return Err(e),
     }
     let landed =
-        walk_tail(types, value, &mut |leaf| land_leaf(store, types, leaf, ty, place, lossy))?;
+        walk_tail(types, value, &mut |leaf| land_leaf(store, types, leaf, ty, place, how))?;
     read::value_type(types, landed)?;
     Ok(landed)
 }
@@ -850,8 +887,9 @@ unsafe fn land_leaf(
     value: DyadPtr,
     ty: DyadPtr,
     place: read::Read,
-    lossy: bool,
+    how: Landing,
 ) -> Result<DyadPtr, ParseError> {
+    let lossy = how.lossy;
     // A comptime name used here is its binding; the literal folds through it.
     let plain = types.through(value);
     let plain_number = dyad::ty(plain) == types.rational;
@@ -885,12 +923,8 @@ unsafe fn land_leaf(
             }
             true
         }
-        // A number would be followed as a node's address: stand-in for #216.
         read::Read::Container(t) if t == types.dyad_ => {
-            if !assign::box_takes(types, t, value) {
-                return Err(ParseError::DyadTakesNode);
-            }
-            true
+            return dyad_place::land(store, types, value, how.held);
         }
         read::Read::Container(t) => node_output(types, value) == Some(t),
         read::Read::Rational => plain_number || rational::is_rational_value(types, value),
@@ -1053,25 +1087,13 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
             return rational::spell_at(p);
         }
     }
-    match read::read_kind(types, node) {
+    let kind = read::read_kind(types, node);
+    if matches!(kind, read::Read::Container(_)) || read::output_type(types, node) == types.dyad_ {
+        let ty = types.type_of(node);
+        return if ty.is_null() { bits.to_string() } else { display_held(types, ty, bits) };
+    }
+    match kind {
         read::Read::Identity => type_name(types, node),
-        // A box's bits are the held node's address. Rendering a held dyad would mean
-        // running it, and display has no runtime, so it shows as `dyad`.
-        read::Read::Container(_) => {
-            let held = bits as usize as DyadPtr;
-            let ty = types.type_of(node);
-            if ty.is_null() {
-                bits.to_string()
-            } else if held.is_null() || held == types.unknown {
-                if ty == types.type_ { "type ?" } else { "dyad ?" }.to_string()
-            } else if type_identity_of(types, held).is_some() {
-                type_name(types, held)
-            } else if dyad::ty(held) == types.string_ {
-                String::from_utf8_lossy(string::text(held)).into_owned()
-            } else {
-                "dyad".to_string()
-            }
-        }
         read::Read::Address | read::Read::Node => "dyad".to_string(),
         _ if node_output(types, node).is_some() => "dyad".to_string(),
         read::Read::Scalar(nt) => format_scalar(nt, bits),
@@ -1080,6 +1102,36 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
             Operand::Concrete(nt) => format_scalar(nt, bits),
             _ => bits.to_string(),
         },
+    }
+}
+
+/// What a box of type `ty` shows, its bits the held node's address: the node read through, a
+/// number or a rational by its value. Rendering any other node would mean running it, and
+/// display has no runtime, so it shows as `dyad`.
+///
+/// # Safety
+/// `ty` must be a type node and `bits` 0 or the address of a live node.
+unsafe fn display_held(types: &Core, ty: DyadPtr, bits: i64) -> String {
+    let held = bits as usize as DyadPtr;
+    if held.is_null() || held == types.unknown {
+        return if ty == types.type_ { "type ?" } else { "dyad ?" }.to_string();
+    }
+    if type_identity_of(types, held).is_some() {
+        return type_name(types, held);
+    }
+    let of = dyad::ty(held);
+    if of == types.string_ {
+        return String::from_utf8_lossy(string::text(held)).into_owned();
+    }
+    let at = dyad::value(held);
+    match read::place_layout(types, of) {
+        Some((read::Read::Scalar(_), _)) if of == types.bool_ => {
+            if numtype::read_scalar_nt(NumType::I32, at) != 0 { "true" } else { "false" }
+                .to_string()
+        }
+        Some((read::Read::Scalar(nt), _)) => format_scalar(nt, numtype::read_scalar_nt(nt, at)),
+        Some((read::Read::Rational, _)) => rational::spell_at(at),
+        _ => "dyad".to_string(),
     }
 }
 
@@ -1164,11 +1216,25 @@ pub(crate) unsafe fn commit_call_args(
         let pty = params.get(i).map_or(std::ptr::null_mut(), |&p| hole::type_in(p));
         if pty.is_null() {
             read::value_type(types, *arg)?;
+        } else if drop_model::param_holds(types, callee, i) && !is_receiver(callee, i) {
+            *arg = land_held(store, types, *arg, pty)?;
         } else {
             *arg = land(store, types, *arg, pty)?;
         }
     }
     Ok(())
+}
+
+/// Whether parameter `i` of the `fn` `callee` is the one no name declares: the value a `static`
+/// function is reached through, which the call reads and writes where it stands.
+///
+/// # Safety
+/// `callee` must be a `fn` node from the store.
+unsafe fn is_receiver(callee: DyadPtr, i: usize) -> bool {
+    let input = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_INPUT);
+    array::items(meta::record_field_bindings_of(input))
+        .get(i)
+        .is_some_and(|&b| !b.is_null() && binding::Binding::spelling(b).is_empty())
 }
 
 /// Land every value a body gives, its last line's and each `return`'s, in the declared output
@@ -1187,20 +1253,16 @@ pub(crate) unsafe fn commit_fn_body(
     };
     walk_tail(types, body, &mut |leaf| {
         refuse_statement(types, leaf)?;
-        // A call may fill a parameter with a number, which the result's reader would follow as
-        // a node's address.
-        if output == types.dyad_ && is_parameter(types, leaf) {
-            return Err(ParseError::DyadTakesNode);
-        }
         // An `out` already hands back its bytes.
         if dyad::ty(leaf) == types.by_copy.out {
             return Ok(leaf);
         }
-        // What a bare parameter holds is known only at the call: stand-in for #216.
+        // What a bare parameter holds is known only at the call: stand-in for #222.
         if matches!(place, read::Read::Scalar(_)) && read::output_type(types, leaf).is_null() {
             return Ok(leaf);
         }
-        let landed = land(store, types, leaf, output)?;
+        // The caller holds what the call gives.
+        let landed = land_held(store, types, leaf, output)?;
         // A record result is handed back as the address of its bytes, which the call copies.
         if read::carry_of(types, output).and_then(read::Carry::bytes).is_some() {
             return Ok(by_copy::build_out(store, types, landed));
@@ -1270,24 +1332,6 @@ unsafe fn refuse_statement(types: &Core, node: DyadPtr) -> Result<(), ParseError
         return Err(ParseError::StatementAsValue);
     }
     Ok(())
-}
-
-/// Whether `node` names a parameter of the function whose call frame holds it.
-///
-/// # Safety
-/// `node` is a valid dyad from the store.
-unsafe fn is_parameter(types: &Core, node: DyadPtr) -> bool {
-    if dyad::ty(node) != types.binding_ {
-        return false;
-    }
-    let b = crate::binding::Binding::read(node);
-    match b.storage(types) {
-        Some(crate::binding::Frame::Call(f)) => {
-            let input = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_INPUT);
-            b.scope == meta::record_scope_of(input)
-        }
-        _ => false,
-    }
 }
 
 /// The written `T(value)`, or `T lossy (value)` with `lossy`, checked as an unwritten value

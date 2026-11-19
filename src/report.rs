@@ -189,8 +189,10 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::DyadTakesNode => {
-            "a `dyad ?` place takes only a node, not a number yet, and a `-> dyad` function does \
-             not give back a parameter, which a call may fill with a number"
+            "a `dyad ?` place does not take this value yet: it takes a node, or a value of a type \
+             whose value moves whole (a number, a pointer that owns nothing, a rational, a record \
+             whose body fills no `free`), which it holds in a new node; a field, a cell and a \
+             `mut` parameter take only a node yet"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {

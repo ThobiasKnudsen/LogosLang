@@ -1481,6 +1481,7 @@ unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, Com
     if is_void_type(out) {
         Ok(None)
     } else if out == types.type_
+        || out == types.dyad_
         || crate::identities::meta::is_node_valued(out, types.fn_type)
         || crate::identities::read::carry_of(types, out)
             .and_then(crate::identities::read::Carry::bytes)
