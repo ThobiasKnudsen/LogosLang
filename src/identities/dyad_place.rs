@@ -83,6 +83,27 @@ pub(crate) unsafe fn land(
     Err(ParseError::DyadTakesNode)
 }
 
+/// `dyad (ty, value)`: `value` landed in `ty` where the line is written, held in a new node of
+/// `ty` each time the line runs (›`dyad (T, v)` makes a new node of `T` holding `v` each time its
+/// line runs‹ [[R371]]).
+///
+/// # Safety
+/// `ty` must be a type identity and `value` a reduced dyad, both from the store.
+pub(crate) unsafe fn build_of_type(
+    store: &mut Store,
+    types: &Core,
+    ty: DyadPtr,
+    value: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    // A value with an end of its own would need the new node to run it: stand-in for #279. A
+    // value that is a node itself: stand-in for #295.
+    if ty == types.dyad_ || !is_data(types, ty) || has_end(types, ty) {
+        return Err(ParseError::BadDyadType);
+    }
+    let landed = super::land(store, types, value, ty)?;
+    Ok(build_new_node(store, types, landed, ty))
+}
+
 /// A type whose value lies in its place's bytes, a number, a pointer, a rational or a record,
 /// and moves whole.
 ///
@@ -118,6 +139,21 @@ pub(crate) fn build_new_node(
         types.dyad_place.new_node,
         &[value, from, types.dyad_place.new_node_leaf, types.dyad_],
     )
+}
+
+/// The type of the node `value` makes, where that is known where it is written: `dyad (T, v)`'s
+/// `T`, which a `.type` on it reads through to (›A `dyad ?` place is transparent: a placeholder
+/// for a new node of any type‹ [[R293]]).
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn made_type(types: &Core, value: DyadPtr) -> Option<DyadPtr> {
+    let node = types.through(value);
+    if dyad::ty(node) != types.dyad_place.new_node {
+        return None;
+    }
+    let (_, from) = parts(node);
+    (from != types.dyad_).then_some(from)
 }
 
 /// # Safety

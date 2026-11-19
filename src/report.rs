@@ -247,7 +247,10 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::BadDyadType => {
-            "a dyad of this type cannot be built here: only a number or a bool".into()
+            "`dyad (T, v)` cannot make a node of this type yet: it takes a type whose value moves \
+             whole (a number, a bool, a pointer that owns nothing, a rational, a record whose body \
+             fills no `free`)"
+                .into()
         }
         ParseError::TooDeep => {
             format!("scopes nested deeper than {}", crate::parse::MAX_BRACKET_DEPTH)

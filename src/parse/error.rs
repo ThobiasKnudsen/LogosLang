@@ -53,8 +53,7 @@ pub enum ParseError {
     /// `=` into an owning place whose right side does not own: two teardowns
     /// over one block, or one over memory the store owns.
     NonOwningIntoOwning,
-    /// `dyad (T, v)` for a `T` whose values are bytes at a width the seed
-    /// cannot fill from a value node.
+    /// `dyad (T, v)` for a `T` whose value does not move whole into a new node.
     BadDyadType,
     /// `parse_rank = …` whose value is not a number known at the definition.
     NonComptimeRank,
