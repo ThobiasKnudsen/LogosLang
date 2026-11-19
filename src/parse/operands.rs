@@ -241,7 +241,8 @@ impl<'a> Parser<'a> {
         }
         // Lexed to the `=`: a read past it is no part of the place.
         left.sealed = true;
-        let items = self.construct_segment(&mut left)?;
+        let built = self.construct_segment(&mut left)?;
+        let items = self.hand_to_line(built);
         let target = match items.as_slice() {
             [(one, _)] => *one,
             [] => return Ok(None),
