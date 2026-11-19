@@ -21,10 +21,10 @@ use crate::parse::{Assoc, ParseError, Taken};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// `alloc` is `[pointee, count, init, op, output_type]`; `init` is null in the byte form.
-const ALLOC_POINTEE: usize = 0;
-const ALLOC_COUNT: usize = 1;
-const ALLOC_INIT: usize = 2;
+/// `alloc` is `[count, init]` under its mint for `[count's type, pointee]`; `init` is null in
+/// the byte form and for `T ?`.
+const ALLOC_COUNT: usize = 0;
+const ALLOC_INIT: usize = 1;
 /// `move` is `[place]`, `free` `[place, pointee, op]`.
 const TEARDOWN_PLACE: usize = 0;
 const TEARDOWN_POINTEE: usize = 1;
@@ -68,33 +68,27 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let of_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("of", of_);
 
-    let alloc_ = keyword(
-        cx,
-        "alloc",
-        meta::prec::PREFIX,
-        &["pointee", "count", "init", "op", "output_type"],
-        |p, _id, tape| {
-            let of_ = p.types().of_;
-            if p.marker_right(tape, of_) {
-                return Err(ParseError::MissingOperand);
-            }
-            let count = p.take_right(tape)?;
-            let init = if p.marker_right(tape, of_) {
-                tape.remove(1);
-                Some(p.take_right(tape)?)
-            } else {
-                None
-            };
-            // The cells keep the value in their bytes, so the block holds it, not the line.
-            if let Some(init) = init {
-                p.take(init);
-            }
-            let types = p.types();
-            let node = build_alloc(p.store(), types, count, init)?;
-            tape.place(node);
-            Ok(crate::parse::Constructed::Placed)
-        },
-    );
+    let alloc_ = keyword(cx, "alloc", meta::prec::PREFIX, &["count", "init"], |p, _id, tape| {
+        let of_ = p.types().of_;
+        if p.marker_right(tape, of_) {
+            return Err(ParseError::MissingOperand);
+        }
+        let count = p.take_right(tape)?;
+        let init = if p.marker_right(tape, of_) {
+            tape.remove(1);
+            Some(p.take_right(tape)?)
+        } else {
+            None
+        };
+        // The cells keep the value in their bytes, so the block holds it, not the line.
+        if let Some(init) = init {
+            p.take(init);
+        }
+        let types = p.types();
+        let node = build_alloc(p.store(), types, count, init)?;
+        tape.place(node);
+        Ok(crate::parse::Constructed::Placed)
+    });
     let alloc_leaf = callable::mint_native(cx.store, cs.callable, run_alloc, cs.seed_native);
 
     // `own` stands only in a type position, `own @T ?` or `-> own @T`: the word makes the hole,
@@ -361,11 +355,28 @@ pub(super) fn build_alloc(
     // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
     // SAFETY: `init` is a reduced dyad just parsed.
     let init = init.filter(|&i| unsafe { !types.is_hole(i) }).unwrap_or(std::ptr::null_mut());
-    // SAFETY: `pointee` is a type node from the store.
-    let output = unsafe {
-        super::pointer::make_owning_pointer_type(store, types.type_, pointee, types.ops.teardown_)
-    };
-    Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_, output]))
+    // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store; the
+    // owning `@pointee` is made with the mint, so its nodes give one type.
+    unsafe {
+        let key = [super::read::output_type(types, count), pointee];
+        let output = super::mint::output_for(types.alloc_, &key).unwrap_or_else(|| {
+            super::pointer::make_owning_pointer_type(
+                store,
+                types.type_,
+                pointee,
+                types.ops.teardown_,
+            )
+        });
+        Ok(super::mint::node(
+            store,
+            types,
+            types.alloc_,
+            &key,
+            output,
+            types.ops.alloc_,
+            &[count, init],
+        ))
+    }
 }
 
 fn free_node(store: &mut Store, types: &Core, slots: [DyadPtr; 3]) -> DyadPtr {
@@ -1222,7 +1233,7 @@ unsafe fn moved_out_via(
     let node = types.through(node);
     visit(node);
     let logos = dyad::ty(node);
-    if logos == types.alloc_
+    if super::mint::origin(logos) == types.alloc_
         || super::mint::origin(logos) == types.move_
         || logos == types.this.copy
         || logos == types.construct_
@@ -1374,10 +1385,12 @@ pub(crate) fn arms_end_alike(
 
 /// The runtime notes the live allocation so leaks and double frees are observable.
 fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an `alloc` node `[pointee, count, init, op]` from the store.
+    // SAFETY: `node` is an `alloc` node `[count, init]` from the store, under its mint.
     unsafe {
         let slots = dyad::value(node) as *const DyadPtr;
-        let pointee = *slots.add(ALLOC_POINTEE);
+        let Some(&[_, pointee]) = super::mint::key_of(dyad::ty(node)) else {
+            unreachable!("an `alloc` is typed by its mint for its count's type and pointee");
+        };
         let count = rt.run(*slots.add(ALLOC_COUNT))?;
         if count < 0 {
             return Err(RunError::BadCount(count));

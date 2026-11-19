@@ -209,7 +209,7 @@ pub(crate) fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
 
 /// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,
 /// so `free`/`move` recognize owning-ness by the slot while a borrow's pointer has none.
-/// Never interned.
+/// A new node at each call; `alloc` makes one per mint.
 ///
 /// # Safety
 /// `destructor` must be a callable leaf running the owning pointer's teardown.

@@ -137,6 +137,14 @@ pub(crate) unsafe fn operation_of(t: DyadPtr) -> Option<DyadPtr> {
     is_mint(t).then(|| meta::mint_op_of(t))
 }
 
+/// What the nodes of `origin`'s mint for the field types `key` give, once that mint is made.
+///
+/// # Safety
+/// `origin` must carry a record whose memo only [`node`] built and grew.
+pub(crate) unsafe fn output_for(origin: DyadPtr, key: &[DyadPtr]) -> Option<DyadPtr> {
+    find(origin, key).map(|mint| meta::mint_output_of(mint))
+}
+
 /// The field types the mint `t` was made for; `None` when `t` is no mint.
 ///
 /// # Safety

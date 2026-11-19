@@ -4514,6 +4514,16 @@ fn every_operation_is_typed_by_its_mint() {
         cases.push((format!("{f}, f.compile(), f()"), want));
     }
     cases.push(("p := alloc 1 of i32 5, q := move p, q@".into(), "5\n"));
+    // `alloc` is typed by its mint for its count's type and the cells' type, interpreted only.
+    for (body, want) in [
+        ("(alloc 1 of i32 5).type == (alloc 1 of i32 6).type", "true\n"),
+        ("(alloc 1 of i32 5).type == (alloc 1 of i64 6).type", "false\n"),
+        ("(alloc 1 of i32 5).type == (alloc i64 1 of i32 6).type", "false\n"),
+        ("(alloc 2 of i32 5).count", "2\n"),
+        ("p := alloc 2 of i32 5, (p + 1)@", "5\n"),
+    ] {
+        cases.push((body.into(), want));
+    }
     // A map's compare against `?` is a node of `==`'s or `!=`'s mint.
     let map = "m := hashmap i64 -> i64, n := hashmap i64 -> hashmap i64 -> i64";
     for (body, want) in [
