@@ -58,6 +58,14 @@ pub struct ThisIds {
     /// the node it holds, read as a tape cell's is.
     pub field_type: DyadPtr,
     pub field_type_leaf: DyadPtr,
+    /// A field of the node `tape[0]` holds once the parse stamped a type it got as it ran:
+    /// `[cell, name, op, output_type]`, the field looked up by its name then, yielding the node
+    /// it holds.
+    pub named: DyadPtr,
+    pub named_leaf: DyadPtr,
+    /// A write there: `[cell, name, v, op]`.
+    pub named_write: DyadPtr,
+    pub named_write_leaf: DyadPtr,
 }
 
 /// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
@@ -95,6 +103,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         op(cx, &["value", "v", "op"], run_mint_output_write);
     let (field_type, field_type_leaf) =
         op(cx, &["read", "op", "output_type"], super::tape::run_line_type);
+    let (named, named_leaf) = op(cx, &["cell", "name", "op", "output_type"], run_named);
+    let (named_write, named_write_leaf) = op(cx, &["cell", "name", "v", "op"], run_named_write);
     ThisIds {
         slot,
         slot_leaf,
@@ -115,6 +125,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         mint_output_write_leaf,
         field_type,
         field_type_leaf,
+        named,
+        named_leaf,
+        named_write,
+        named_write_leaf,
     }
 }
 
@@ -474,6 +488,111 @@ pub(crate) unsafe fn build_write(
     super::read::value_type(types, value)?;
     let value = super::place::build(store, types, value);
     Ok(act(store, types.this.write, types.this.write_leaf, &[this, k, value, owner]))
+}
+
+/// `tape[0].f` in a parse that stamps a type it gets as it runs: `f` is looked up among that
+/// type's fields when the read runs, and a type without it is the error that says so (›`x.type`
+/// reads the type word of the node a name or an expression stands for‹ [[R279]]).
+pub(crate) fn build_named(store: &mut Store, types: &Core, cell: DyadPtr, name: &str) -> DyadPtr {
+    let name = super::string::build_text(store, types.string_, name.as_bytes());
+    let output = super::pointer::at_dyad(store, types);
+    node(store, types.this.named, types.this.named_leaf, &[cell, name], output)
+}
+
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_named(types: &Core, node: DyadPtr) -> bool {
+    dyad::ty(node) == types.this.named
+}
+
+/// The right side is placed when the write runs and lands in the field's type there, as
+/// [`build_write`] lands it where the field is known (›A field is filled at run, per evaluation;
+/// its type decides how the operand is used‹ [[R193]]).
+///
+/// # Safety
+/// `read` must be a node [`is_named`] accepts; `value` a reduced dyad.
+pub(crate) unsafe fn build_named_write(
+    store: &mut Store,
+    types: &Core,
+    read: DyadPtr,
+    value: DyadPtr,
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    match super::read::value_type(types, value) {
+        Ok(_) | Err(crate::parse::ParseError::ArmsDiffer) => {}
+        Err(e) => return Err(e),
+    }
+    let ops = dyad::value(read) as *const DyadPtr;
+    let value = super::place::build(store, types, value);
+    Ok(act(store, types.this.named_write, types.this.named_write_leaf, &[*ops, *ops.add(1), value]))
+}
+
+/// The index among `ty`'s fields of the one spelled `name` and its binding, resolved in the
+/// type's own scope as a parse's field is resolved where the type is known.
+///
+/// # Safety
+/// `ty` must be a record type from the store.
+unsafe fn field_named(rt: &Runtime, ty: DyadPtr, name: &str) -> Option<(usize, DyadPtr)> {
+    let mut scope = crate::parse::ScopeStack::new();
+    scope.push(meta::record_scope_of(ty));
+    let found = scope.resolve(rt.index()?, name).ok().filter(|r| r.matched == name.len())?;
+    let fields = super::array::items(meta::record_fields_of(ty));
+    Some((fields.iter().position(|&f| f == found.identity)?, found.binding))
+}
+
+/// The slot of the field a named read or write reaches, with the field's declared type; only the
+/// node the parse is building has its fields reached so.
+///
+/// # Safety
+/// `ops` must be the operands of a node [`build_named`] or [`build_named_write`] built.
+unsafe fn named_slot(
+    rt: &mut Runtime,
+    ops: *const DyadPtr,
+) -> Result<(*mut DyadPtr, usize, DyadPtr), RunError> {
+    let this = rt.run(*ops)? as DyadPtr;
+    if this.is_null() || rt.fresh_this() != Some(this) || rt.unstamped(this) {
+        return Err(RunError::FieldBeforeStamp);
+    }
+    let ty = dyad::ty(this);
+    let name = std::str::from_utf8(super::string::text(*ops.add(1))).unwrap_or("");
+    let Some((k, binding)) = field_named(rt, ty, name) else {
+        return Err(RunError::NoFieldNamed(Box::new(name.to_string())));
+    };
+    if !binding.is_null() && crate::binding::Binding::has_gate(binding, rt.types().immut_) {
+        let e = crate::parse::ParseError::Immutable(Box::new(name.to_string()));
+        return Err(RunError::Parse(Box::new(e)));
+    }
+    let field = super::array::items(meta::record_fields_of(ty))[k];
+    Ok(((dyad::value(this) as *mut DyadPtr).add(k), k, super::hole::type_in(field)))
+}
+
+fn run_named(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a named read from `build_named`.
+    unsafe {
+        let (slot, k, _) = named_slot(rt, dyad::value(node) as *const DyadPtr)?;
+        let held = slot.read_unaligned();
+        if held.is_null() {
+            return Err(RunError::UnfilledField(k));
+        }
+        Ok(held as i64)
+    }
+}
+
+fn run_named_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a named write from `build_named_write`, its value operand a place node.
+    unsafe {
+        let ops = dyad::value(node) as *const DyadPtr;
+        let placed = rt.run(*ops.add(2))? as DyadPtr;
+        let (slot, _, declared) = named_slot(rt, ops)?;
+        let types: *const Core = rt.types();
+        let value = if reads_whole(&*types, declared) {
+            super::land(rt.store(), &*types, placed, declared)
+                .map_err(|e| RunError::Parse(Box::new(e)))?
+        } else {
+            placed
+        };
+        slot.write_unaligned(value);
+        Ok(0)
+    }
 }
 
 /// Where field `k` of the value lies: a node's slot, or the bytes of a plain record, the one a

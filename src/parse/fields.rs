@@ -75,9 +75,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `tape[0].type = T`: the fresh node placed in the parse's own cell, from where its
-    /// fields are written by name (DESIGN ›There is no `this`‹). The seed stamps only the
-    /// type being defined.
+    /// `tape[0].type = T`: a fresh node of `T` placed in the parse's own cell, from where its
+    /// fields are written by name (DESIGN ›There is no `this`‹). The type being defined has its
+    /// node made before the parse runs; any other `T`, such as a mint a function chooses
+    /// (›The v0.1.0 demo: a user-defined power operator `^`‹ [[R366]]), when the stamp runs.
     ///
     /// # Safety
     /// `target` must be a `tape.cell_type` node from the store; `value` a reduced dyad.
@@ -86,18 +87,22 @@ impl<'a> Parser<'a> {
         target: DyadPtr,
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
+        use crate::identities::tape;
         let types = self.types;
         let ops = dyad::value(target) as *const DyadPtr;
-        let cell = crate::identities::tape::build_slot(self.rt.store, types, *ops, *ops.add(1));
+        let cell = tape::build_slot(self.rt.store, types, *ops, *ops.add(1));
         if !self.is_node_cell(cell) || !(*ops.add(2)).is_null() {
             return Err(ParseError::StampOutsideParse);
         }
-        let def = self.cx.definitions.last().expect("is_node_cell found a parse body");
-        if self.types.through(value) != def.self_type {
-            return Err(ParseError::StampOtherType);
+        let def = self.cx.definitions.last_mut().expect("is_node_cell found a parse body");
+        if types.through(value) == def.self_type {
+            return Ok(tape::build_write(self.rt.store, types, cell, def.this_param));
         }
-        let node = def.this_param;
-        Ok(crate::identities::tape::build_write(self.rt.store, types, cell, node))
+        if crate::identities::read::output_type(types, value) != types.type_ {
+            return Err(ParseError::StampNeedsType);
+        }
+        def.stamps_at_run = true;
+        Ok(tape::build_stamp(self.rt.store, types, cell, value))
     }
 
     /// A bare call of a `share` function that works on a value takes the value the calling
@@ -451,6 +456,12 @@ impl<'a> Parser<'a> {
             // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
             // (DESIGN ›There is no `this`‹); `.dyads` is the cell's own.
             if name != "dyads" && self.is_node_cell(lhs) {
+                if self.cx.definitions.last().is_some_and(|d| d.stamps_at_run) {
+                    let types = self.types;
+                    let read =
+                        crate::identities::this::build_named(self.rt.store, types, lhs, name);
+                    return Ok((read, 0));
+                }
                 let node = self.cx.definitions.last().expect("a parse body is open").this_param;
                 let member = self.this_field(name, nstart)?;
                 // `tape[0].f(…)`, a `share` function: called on that node.

@@ -385,6 +385,7 @@ pub unsafe fn place_of(types: &Core, node: DyadPtr) -> Option<Place> {
     } else {
         ty == types.binding_
             || super::this::is_field_read(types, node)
+            || super::this::is_named(types, node)
             || super::this::is_mint_output(types, node)
             || is_owning_slot(node)
             || ty == types.deref_

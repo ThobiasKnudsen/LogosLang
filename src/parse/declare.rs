@@ -34,6 +34,10 @@ impl<'a> Parser<'a> {
                 }
                 return Ok(());
             }
+            // A fill of a field of a type stamped as the parse runs: its `immut` is read then.
+            if this::is_named(self.types, node) {
+                return Ok(());
+            }
         }
         self.check_gates(&self.path_of(target))
     }

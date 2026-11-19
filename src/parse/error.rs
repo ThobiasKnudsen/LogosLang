@@ -32,8 +32,8 @@ pub enum ParseError {
     BareFieldInParse(Box<String>),
     /// `tape[0].type = …` anywhere but on a parse's own cell.
     StampOutsideParse,
-    /// `tape[0].type = T` for a `T` other than the type being defined.
-    StampOtherType,
+    /// `tape[0].type = T` for a `T` that gives no type.
+    StampNeedsType,
     /// A `share` function that works on a value, called bare where no value is at hand.
     ShareFnNeedsValue(Box<String>),
     /// A slot word left of `=` where no type is being defined.

@@ -33,6 +33,9 @@ pub(super) struct OpenType {
     pub(super) in_free: bool,
     /// The parse body's `tape` parameter while `in_parse`.
     pub(super) tape_param: DyadPtr,
+    /// The parse body read so far stamps a type it gets as it runs, so its node's fields are
+    /// reached by name from here.
+    pub(super) stamps_at_run: bool,
     /// The `share` function being read has read a field of its value.
     pub(super) read_receiver: bool,
     /// The `share` function being read has written a field of its value, itself or through a
@@ -623,6 +626,7 @@ impl<'a> Parser<'a> {
             in_parse: false,
             in_free: false,
             tape_param: std::ptr::null_mut(),
+            stamps_at_run: false,
             read_receiver: false,
             wrote_receiver: false,
             block: (scope, Vec::new()),
@@ -1003,6 +1007,7 @@ impl<'a> Parser<'a> {
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = std::ptr::null_mut();
                 def.in_parse = false;
+                def.stamps_at_run = false;
                 def.ctor = f?;
                 let f = def.ctor;
                 Ok(self.slot_declare(SlotKind::Parse, target, f))

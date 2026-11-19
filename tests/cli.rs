@@ -357,6 +357,62 @@ fn a_types_share_output_type_is_what_its_nodes_give() {
     }
 }
 
+/// `q`'s parse stamps the type `get` builds for its operand's type and fills its field `v` by
+/// name, looked up in that type when the parse runs.
+fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
+    format!(
+        "q := type ( share get := fn (l := type ?) -> type ( type ( {field}, \
+         share output_type := {output}, share run = ( {run} ) ) ), share parse_rank = 60, \
+         share parse = ( tape[0].type = get(tape[1].type), {fill}, tape.is_constructed[0] = true, \
+         tape.remove(1) ) )"
+    )
+}
+
+#[test]
+fn a_parse_stamps_a_type_a_function_chooses_and_fills_its_fields_by_name() {
+    let q = chooser("v := l ?", "l", "v + v", "tape[0].v = tape[1]");
+    let wide = chooser(
+        "v := i64 ?",
+        "i64",
+        "v * 3",
+        "if tape[1].type ⊆ i64 ( tape[0].v = i64 (tape[1]) )",
+    );
+    for (src, want) in [
+        (format!("{q}, x := i32 4, print «{{q x}}»"), "8"),
+        (format!("{q}, print «{{q 4}}»"), "8"),
+        (format!("{q}, x := f64 1.5, print «{{q x}} {{(q x).output_type}}»"), "3.0 f64"),
+        (format!("{q}, f := fn (y := i32 ?) -> i32 ( q y + 1 ), f(5)"), "11"),
+        (format!("{q}, f := fn (y := i32 ?) -> i32 ( q y + 1 ), f.compile(), f(5)"), "11"),
+        (format!("{wide}, x := i32 4, print «{{q x}}»"), "12"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_parse_that_stamps_a_chosen_type_refuses_what_that_type_cannot_take() {
+    let missing = chooser("v := l ?", "l", "v", "tape[0].w = tape[1]");
+    let narrow = chooser("v := i32 ?", "i32", "v", "tape[0].v = tape[1]");
+    let immut = chooser("immut v := l ?", "l", "v", "tape[0].v = tape[1]");
+    let stamp = |ty: &str| {
+        format!(
+            "q := type ( share parse_rank = 60, share parse = ( tape[0].type = {ty}, \
+             tape.is_constructed[0] = true, tape.remove(1) ) )"
+        )
+    };
+    for (src, want) in [
+        (format!("{missing}, x := i32 4, q x"), "has no field `w`"),
+        (format!("{narrow}, x := i64 4, q x"), "these types do not match"),
+        (format!("{immut}, x := i32 4, q x"), "`v` is `immut`"),
+        (format!("{}, x := i32 4, q x", stamp("3")), "`tape[0].type = T` takes a type"),
+        (format!("{}, x := i32 4, q x", stamp("i32")), "with a `run` or a `parse` of its own"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert!(code != Some(0) && stderr.contains(want), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
     let q = |conversion: &str| {
@@ -5911,7 +5967,7 @@ fn a_parse_stamps_its_own_cell_before_it_writes_a_field() {
         (
             "r := type ( n := u64 ? ), q := type ( share parse_rank = 60, share parse = ( \
              tape[0].type = r, tape.is_constructed[0] = true ) ), q",
-            "not in the seed yet",
+            "with a `run` or a `parse` of its own",
         ),
         (
             "q := type ( share parse_rank = 60, share parse = ( \

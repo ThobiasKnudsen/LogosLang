@@ -256,9 +256,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::StampOutsideParse => {
             "`tape[0].type = T` starts a node only in a parse, on its own cell `tape[0]`".into()
         }
-        ParseError::StampOtherType => {
-            "`tape[0].type = T` for a type other than the one being defined is not in the seed yet"
-                .into()
+        ParseError::StampNeedsType => {
+            "`tape[0].type = T` takes a type: a type's name, or a call that gives one".into()
         }
         ParseError::ShareFnNeedsValue(name) => format!(
             "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `free` or `share` functions; a parse calls bare only a function that reads no field"
@@ -485,6 +484,12 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoThis => "no value holds this field here".into(),
         RunError::FieldBeforeStamp => {
             "`tape[0]` still holds the type: `tape[0].type = T` makes it a new node first".into()
+        }
+        RunError::StampNotANodeType => "`tape[0].type = T` makes a node of a type written \
+                                        `type (…)` with a `run` or a `parse` of its own"
+            .into(),
+        RunError::NoFieldNamed(name) => {
+            format!("the type `tape[0]` was made a node of has no field `{name}`")
         }
         RunError::MintUnchosen => {
             "the node's mint is chosen from its fields' types when the parse writes \

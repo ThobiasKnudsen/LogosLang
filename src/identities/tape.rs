@@ -30,6 +30,10 @@ pub struct TapeIds {
     pub slot_leaf: DyadPtr,
     pub write: DyadPtr,
     pub write_leaf: DyadPtr,
+    /// `tape[0].type = T` for a `T` the parse gets as it runs: `[tape, k, type, op]`, a new
+    /// node of that type placed in the cell, the node the parse builds from there.
+    pub stamp: DyadPtr,
+    pub stamp_leaf: DyadPtr,
     pub is_constructed: DyadPtr,
     pub is_constructed_leaf: DyadPtr,
     /// `t.is_constructed[k] = flag`: the write behind the flag read.
@@ -131,6 +135,7 @@ pub(super) fn register(
     };
     let (slot, slot_leaf) = read(cx, &["tape", "k"], run_slot);
     let (write, write_leaf) = op(cx, &["tape", "k", "cell", "op"], run_write);
+    let (stamp, stamp_leaf) = op(cx, &["tape", "k", "type", "op"], run_stamp);
     let (is_constructed, is_constructed_leaf) = read(cx, &["tape", "k"], run_is_constructed);
     let (flag_write, flag_write_leaf) = op(cx, &["tape", "k", "flag", "op"], run_flag_write);
     let (spelling, spelling_leaf) = read(cx, &["tape", "k"], run_spelling);
@@ -165,6 +170,8 @@ pub(super) fn register(
         slot_leaf,
         write,
         write_leaf,
+        stamp,
+        stamp_leaf,
         is_constructed,
         is_constructed_leaf,
         flag_write,
@@ -278,6 +285,20 @@ pub(crate) unsafe fn build_write(
     let (recv, k) = (*ops, *ops.add(1));
     let cell = super::place::build(store, types, cell);
     act(store, types.tape.write, types.tape.write_leaf, &[recv, k, cell])
+}
+
+/// The cell takes a new node of the type `ty` gives when the stamp runs.
+///
+/// # Safety
+/// `slot` must be a slot node from `build_slot`; `ty` a reduced dyad that gives a type.
+pub(crate) unsafe fn build_stamp(
+    store: &mut Store,
+    types: &Core,
+    slot: DyadPtr,
+    ty: DyadPtr,
+) -> DyadPtr {
+    let (recv, k) = slot_parts(slot);
+    act(store, types.tape.stamp, types.tape.stamp_leaf, &[recv, k, ty])
 }
 
 /// # Safety
@@ -568,6 +589,27 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Err(RunError::OffTape);
         }
         rt.stamp(dyad);
+        Ok(0)
+    }
+}
+
+/// Only a type whose values are nodes has slots for the parse to fill; a plain record's value
+/// is its bytes.
+fn run_stamp(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a stamp node from `build_stamp`; its type operand gives a type node or
+    // null, and `is_record_type` admits only a record type to `empty_node`.
+    unsafe {
+        let ops = dyad::value(node) as *const DyadPtr;
+        let (tape, k) = tape_at(rt, ops)?;
+        let ty = rt.run(*ops.add(2))? as DyadPtr;
+        if ty.is_null() || !meta::is_record_type(ty) || super::this::is_plain(rt.types(), ty) {
+            return Err(RunError::StampNotANodeType);
+        }
+        let fresh = super::this::empty_node(rt.store(), ty);
+        if !(*tape).set_dyad(k, fresh) {
+            return Err(RunError::OffTape);
+        }
+        rt.restamp(fresh);
         Ok(0)
     }
 }
