@@ -183,11 +183,20 @@ impl<'a> Lowerer<'a, '_> {
     pub unsafe fn lower(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
         let value = self.lower_node(node)?;
-        // Any open scope's: a `return` from a scope inside lowers an outer scope's `defer` lines.
-        if self.plans.iter().any(|plan| plan.contains(&node)) {
+        if self.planned(node) {
             self.hold_to_line_end(node, value)?;
         }
         Ok(value)
+    }
+
+    /// Whether a line holds the value `node` gives to its end, which ends it: any open scope's,
+    /// since a `return` from a scope inside lowers an outer scope's `defer` lines.
+    ///
+    /// # Safety
+    /// `node` must be a valid dyad from the store.
+    pub(crate) unsafe fn planned(&self, node: DyadPtr) -> bool {
+        let node = self.through(node);
+        self.plans.iter().any(|plan| plan.contains(&node))
     }
 
     /// The value of planned `node`, given as `value`, joins the innermost line's, which its end

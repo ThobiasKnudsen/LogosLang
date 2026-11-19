@@ -238,23 +238,16 @@ impl<'a> Parser<'a> {
 
     /// Parse `node`, which waits for the run, inside the run that reached it: a held line over
     /// the scopes open where it was written, its `dyad` names standing for the nodes they hold
-    /// now, or with `held` that node read into the result. What it gives lands in its `into`.
+    /// now. What it gives lands in its `into`.
     ///
     /// # Safety
     /// `node` must be a node `identities::waiting` built; the call it was written in must be the
-    /// innermost activation; `held` null or a live node.
+    /// innermost activation.
     pub(super) unsafe fn parse_waiting(
         &mut self,
         node: DyadPtr,
-        held: DyadPtr,
     ) -> Result<DyadPtr, crate::run::RunError> {
         let types = self.types;
-        if !held.is_null() {
-            let into = crate::identities::waiting::tail_into(node);
-            let value = crate::identities::dyad_place::stable(self.rt.store, types, held);
-            return crate::identities::commit_fn_body(self.rt.store, types, value, into)
-                .map_err(|e| crate::run::RunError::Parse(Box::new(e)));
-        }
         let (text, cells, scope, open_fns, into) = crate::identities::waiting::line_parts(node);
         let bytes = crate::identities::string::text(text);
         let text: &'a str = std::str::from_utf8(bytes).expect("copied from the source text");

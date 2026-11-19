@@ -473,10 +473,9 @@ pub(crate) struct Host {
     /// Constructs the two cells `T v`, the type unbuilt and the value built, as the driver
     /// constructs a segment, yielding the one node they come to.
     pub(crate) construct: unsafe fn(*mut (), DyadPtr, DyadPtr) -> Result<i64, RunError>,
-    /// Parses what waits for the run (`identities::waiting`) over the nodes its `dyad` names
-    /// hold now, a held line's or, given one, the node a `dyad` place holds, yielding the node
-    /// to run.
-    pub(crate) parse_waiting: unsafe fn(*mut (), DyadPtr, DyadPtr) -> Result<i64, RunError>,
+    /// Parses a line that waits for the run (`identities::waiting`) over the nodes its `dyad`
+    /// names hold now, yielding the node to run.
+    pub(crate) parse_waiting: unsafe fn(*mut (), DyadPtr) -> Result<i64, RunError>,
 }
 
 /// Puts back the lexer a [`Runtime::hosting`] call found, by return or by unwinding.
@@ -621,21 +620,16 @@ impl<'a> Runtime<'a> {
         (host.mint)(host.parser, node)
     }
 
-    /// Parse `node`, which waits for the run, through the parser running the pass: a held
-    /// line, or with `held` the node a `dyad` place holds read into a result.
+    /// Parse `node`, a line that waits for the run, through the parser running the pass.
     ///
     /// # Safety
-    /// `node` must be a node `identities::waiting` built; `held` null or a live node.
-    pub(crate) unsafe fn parse_waiting(
-        &mut self,
-        node: DyadPtr,
-        held: DyadPtr,
-    ) -> Result<DyadPtr, RunError> {
+    /// `node` must be a node `identities::waiting` built.
+    pub(crate) unsafe fn parse_waiting(&mut self, node: DyadPtr) -> Result<DyadPtr, RunError> {
         let Some(host) = self.lexer.and_then(|l| l.host) else {
             return Err(RunError::NoParser);
         };
         // SAFETY: as `mint_held`.
-        (host.parse_waiting)(host.parser, node, held).map(|p| p as usize as DyadPtr)
+        (host.parse_waiting)(host.parser, node).map(|p| p as usize as DyadPtr)
     }
 
     /// Until the matching [`Runtime::leave_constructor`], `caller.scope` answers and a
@@ -966,12 +960,21 @@ impl<'a> Runtime<'a> {
     pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
         let node = self.through(node);
         let value = self.dispatch(node)?;
-        // SAFETY: a plan is a scope's `held` array in the store, or the pass's line's list,
-        // live until its pop.
-        if self.plans.last().is_some_and(|&plan| (*plan).contains(&node)) {
+        if self.planned(node) {
             self.line_values.push((node, value));
         }
         Ok(value)
+    }
+
+    /// Whether the line being run holds the value `node` gives to its end, which ends it.
+    ///
+    /// # Safety
+    /// `node` must be a valid dyad from the store.
+    pub(crate) unsafe fn planned(&self, node: DyadPtr) -> bool {
+        let node = self.through(node);
+        // SAFETY: a plan is a scope's `held` array in the store, or the pass's line's list,
+        // live until its pop.
+        self.plans.last().is_some_and(|&plan| (*plan).contains(&node))
     }
 
     /// [`Runtime::run`]'s one thing, for `node` read through.
