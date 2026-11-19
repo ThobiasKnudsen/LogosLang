@@ -68,9 +68,9 @@ pub(super) enum BlockValue {
     Thrown,
     /// A function's body, whose value the call hands to the line the call stands in.
     Returned,
-    /// A `while` condition in brackets, used once each pass: a scope of its own even as one
-    /// line, so each pass ends what it made.
-    EachPass,
+    /// An `if` or `while` condition, read once each time it runs: a scope of its own even as
+    /// one line, so it ends what it made once it has been read.
+    Condition,
 }
 
 /// Where a scope's lines end.
@@ -80,6 +80,9 @@ pub enum LinesEnd {
     Closer,
     /// At the end of the text: a root scope or a quote's `{…}`, where a closer closes nothing.
     TextEnd,
+    /// Before the body of the `if` or `while` the scope is the condition of: its one line is
+    /// the first complete expression, bracketed or not.
+    Condition,
 }
 
 #[derive(Default)]
@@ -887,16 +890,11 @@ impl<'a> Parser<'a> {
     /// `if cond then` with an optional `else else`: the node is
     /// `[cond, then, else]`, else null when absent, so an else-less `if` is a
     /// statement. Each branch is a bracket or the next expression, and a bare
-    /// `else` binds to the nearest `if`; `if` opens no scope.
+    /// `else` binds to the nearest `if`.
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         let returns_start = self.returns_len();
-        let items = self.drive_until_open(RightSide::Condition)?;
-        let cond = self.one_of(items)?.dyad;
+        let cond = self.parse_condition()?;
         let types = self.types;
-        // SAFETY: `cond` is the reduced dyad just parsed.
-        if unsafe { crate::identities::read::output_type(types, cond) } != types.bool_ {
-            return Err(ParseError::NonBoolCondition);
-        }
 
         // A comptime condition resolves the conditional now, in the one pass:
         // an untaken bracket's tokens are dropped unlexed, so nothing inside
@@ -1004,6 +1002,21 @@ impl<'a> Parser<'a> {
         let body = self.parse_sequence()?;
         self.expect_close()?;
         Ok(body)
+    }
+
+    /// An `if` or `while` condition: a scope of its own whether or not it is bracketed, so what it
+    /// makes that nothing takes, and what `&` holds there, ends once it has been read (›A call
+    /// stays a call in a condition, and `while` reads as `if`‹ [[R266]]).
+    fn parse_condition(&mut self) -> Result<DyadPtr, ParseError> {
+        self.cx.next_block = BlockValue::Condition;
+        let cond = self.parse_block(false, LinesEnd::Condition);
+        self.cx.next_block = BlockValue::Used;
+        let cond = cond?.1.dyad;
+        // SAFETY: `cond` is the reduced dyad just parsed.
+        if unsafe { crate::identities::read::output_type(self.types, cond) } != self.types.bool_ {
+            return Err(ParseError::NonBoolCondition);
+        }
+        Ok(cond)
     }
 
     /// [`Self::bracketed_body`] for a body whose value the construct around it does `value` with.
@@ -1143,19 +1156,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_while_parts(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
-        let made_before = self.cx.open.last().map_or_else(Vec::new, |o| o.made.clone());
-        self.cx.next_block = BlockValue::EachPass;
         let was = std::mem::replace(&mut self.cx.each_pass, true);
-        let items = self.drive_until_open(RightSide::Condition);
+        let cond = self.parse_condition();
         self.cx.each_pass = was;
-        self.cx.next_block = BlockValue::Used;
-        let items = items?;
-        let cond = self.one_of(items)?.dyad;
-        // SAFETY: `cond` is the reduced dyad just parsed.
-        if unsafe { crate::identities::read::output_type(self.types, cond) } != self.types.bool_ {
-            return Err(ParseError::NonBoolCondition);
-        }
-        self.refuse_made_each_pass(made_before)?;
+        let cond = cond?;
         // A repeated body: parse-time rebinding is off inside.
         self.cx.runtime_depth += 1;
         self.cx.next_block = BlockValue::Thrown;
@@ -1163,25 +1167,6 @@ impl<'a> Parser<'a> {
         self.cx.next_block = BlockValue::Used;
         self.cx.runtime_depth -= 1;
         Ok((cond, body?))
-    }
-
-    /// A bare `while` condition is no scope of its own, so a value it makes that nothing takes
-    /// would be held by the line the `while` stands in, one place for every pass.
-    fn refuse_made_each_pass(&self, before: Vec<DyadPtr>) -> Result<(), ParseError> {
-        let open = self.cx.open.last().expect("a `while` stands in an open scope");
-        if open.made.iter().any(|m| !before.contains(m)) {
-            return self.refuse_held_each_pass();
-        }
-        Ok(())
-    }
-
-    /// A value held by the scope a part that runs again stands in, a `while` condition: one
-    /// place would hold every pass's value. stand-in for #264
-    fn refuse_held_each_pass(&self) -> Result<(), ParseError> {
-        if self.cx.scopes.current().is_some_and(|s| self.cx.scopes.crosses_barrier(s)) {
-            return Err(ParseError::HeldEachPassNotInSeed);
-        }
-        Ok(())
     }
 
     /// `for i in a..b ( body )`, with an optional `..step` and optionally no
@@ -1480,6 +1465,13 @@ impl<'a> Parser<'a> {
     /// (DESIGN ›The scope's constructor is the driver‹). Returns the scope's tail, its last line
     /// that is not prose, with where that line ended; none when there is no such line.
     pub fn read_lines(&mut self, end: LinesEnd) -> Result<Option<(Cell, usize)>, ParseError> {
+        if end == LinesEnd::Condition {
+            let items = self.drive_until_open(RightSide::Condition)?;
+            let line = self.one_of(items)?;
+            // SAFETY: `line` is the line just parsed.
+            unsafe { self.close_line(line.dyad) };
+            return Ok(Some((line, self.cx.pos)));
+        }
         let mut tail = None;
         while let Some(item) = self.next_cell() {
             let line = item?;
@@ -1580,10 +1572,7 @@ impl<'a> Parser<'a> {
         let mut closed = self.cx.open.pop().expect("pushed above");
         self.close_returns(self.cx.open.len());
         if closed.arguments {
-            if let Err(e) = self.hand_on_address_holds(&mut closed) {
-                self.end_after_fault(&closed);
-                return Err(e);
-            }
+            self.hand_on_address_holds(&mut closed);
         }
         // An argument list's values, and what a `[…]`'s items make beside the items themselves,
         // which go whole to the callee, are made in the line the call stands in.
@@ -1668,7 +1657,7 @@ impl<'a> Parser<'a> {
             }
         }
         let parts = !closed.list && !closed.arguments;
-        let used = matches!(value, BlockValue::Used | BlockValue::EachPass) && parts;
+        let used = matches!(value, BlockValue::Used | BlockValue::Condition) && parts;
         // One line, and nothing for the end to run: the line stands as itself, so a `.` reads
         // the line's node (›`x.type` reads the type word of the node a name or an expression
         // stands for‹ [[R279]]), and what it holds to its end the line the block stands in
@@ -1821,23 +1810,18 @@ impl<'a> Parser<'a> {
     /// A call's argument list closed: the names it holds for `&` are held from here by the scope
     /// the call stands in, whose end frees them (DESIGN ›Holding is decided at the binding site,
     /// parameters included‹ [[R61]]).
-    fn hand_on_address_holds(&mut self, list: &mut OpenScope) -> Result<(), ParseError> {
+    fn hand_on_address_holds(&mut self, list: &mut OpenScope) {
         let held: Vec<DyadPtr> = list
             .address_holds
             .iter()
             .copied()
             .filter(|&name| list.exit.iter().any(|h| h.what == name && h.end.is_none()))
             .collect();
-        if held.is_empty() {
-            return Ok(());
-        }
-        self.refuse_held_each_pass()?;
         list.exit.retain(|h| !held.contains(&h.what));
         for name in held {
             self.hold(name);
             self.note_address_hold(name);
         }
-        Ok(())
     }
 
     /// `name`, which `&` landed a value in, is held for `&` by the scope that holds it.
