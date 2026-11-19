@@ -330,6 +330,34 @@ fn the_power_demo_converts_a_whole_exponent_so_each_mint_has_one_result_type() {
 }
 
 #[test]
+fn a_types_share_output_type_is_what_its_nodes_give() {
+    let t = |output: &str| {
+        format!(
+            "t := type ( lhs := i32 ?, share output_type := {output}, \
+             share run = ( output_type lossy (lhs) * output_type 2 ), share parse_rank = 60, \
+             share parse = ( tape[0].type = t, tape[0].lhs = tape[1], tape.is_constructed[0] = true, \
+             tape.remove(1) ) )"
+        )
+    };
+    for (src, want) in [
+        (format!("{}, x := i32 5, print «{{t x}} {{(t x).output_type}}»", t("i32")), "10 i32"),
+        (
+            format!(
+                "{}, x := i32 5, print «{{t x}} {{(t x).output_type}}»",
+                t("if i32.size_bytes == 4 (i64) else (i32)")
+            ),
+            "10 i64",
+        ),
+        (format!("{}, f := fn (y := i32 ?) -> f64 ( t y ), f(6)", t("f64")), "12.0"),
+        (format!("{}, f := fn (y := i32 ?) -> f64 ( t y ), f.compile(), f(6)", t("f64")), "12.0"),
+        (format!("{}, f := fn (y := i32 ?) -> i64 ( t y + 1 ), f.compile(), f(6)", t("i64")), "13"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
     let q = |conversion: &str| {
         format!(
