@@ -70,7 +70,8 @@ pub(crate) fn build(
 
 /// What an `if` gives back: what its arms hand on where every arm gives a value of one type and
 /// every arm makes its value or every arm borrows one, else `void`. DESIGN ›`if` reads its own
-/// right side‹, ›A node's output type is per node, and its parse writes it‹.
+/// right side‹, ›A mint's output type is written in its `share output_type` declaration; a type
+/// that does not mint has its parse write it into each node‹ [[R194]].
 ///
 /// # Safety
 /// `node` must be an `if` node [`build`] made.

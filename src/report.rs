@@ -135,7 +135,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::HashmapShape => {
             "`hashmap` is followed by `K -> V`: a key type, `->`, a value type, each `type`, \
-             `dyad` or an integer type"
+             `dyad` or an integer type, and the value type also a map, `hashmap K2 -> V2`"
                 .into()
         }
         ParseError::InsertTakesTape => {
@@ -256,9 +256,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::StampOutsideParse => {
             "`tape[0].type = T` starts a node only in a parse, on its own cell `tape[0]`".into()
         }
-        ParseError::StampOtherType => {
-            "`tape[0].type = T` for a type other than the one being defined is not in the seed yet"
-                .into()
+        ParseError::StampNeedsType => {
+            "`tape[0].type = T` takes a type: a type's name, or a call that gives one".into()
         }
         ParseError::ShareFnNeedsValue(name) => format!(
             "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `free` or `share` functions; a parse calls bare only a function that reads no field"
@@ -389,11 +388,6 @@ pub fn parse_message(e: &ParseError) -> String {
              type body does not fill"
                 .into()
         }
-        ParseError::OutputTypeNotShared => {
-            "a type with a `?` field mints one type per set of field types, and each mint keeps \
-             its own `output_type`: declare it `share output_type := type ?`"
-                .into()
-        }
         ParseError::OwnParameterNotInSeed => {
             "an `own` parameter, which takes its argument's ownership, is not in the seed yet".into()
         }
@@ -468,7 +462,14 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoTape => "there is no tape behind this receiver".into(),
         RunError::OffTape => "this index is off the tape".into(),
         RunError::MissingKey => {
-            "the map holds no value at this key, and a number cannot be the unknown `?`".into()
+            "the map holds no value at this key, and a value of its value type cannot be the \
+             unknown `?`"
+                .into()
+        }
+        RunError::UnknownMap => {
+            "this map is the unknown `?`, so no map stands here to read or write: write one \
+             first, `m = hashmap K -> V`"
+                .into()
         }
         RunError::NoName => "this cell holds no name".into(),
         RunError::CellNotAType => {
@@ -488,10 +489,11 @@ pub fn run_message(e: &RunError) -> String {
         RunError::FieldBeforeStamp => {
             "`tape[0]` still holds the type: `tape[0].type = T` makes it a new node first".into()
         }
-        RunError::MintUnchosen => {
-            "the node's mint is chosen from its fields' types when the parse writes \
-             `tape[0].output_type`: write every field first, and read `output_type` after"
-                .into()
+        RunError::StampNotANodeType => "`tape[0].type = T` makes a node of a type written \
+                                        `type (…)` with a `run` or a `parse` of its own"
+            .into(),
+        RunError::NoFieldNamed(name) => {
+            format!("the type `tape[0]` was made a node of has no field `{name}`")
         }
         RunError::UnfilledField(i) => format!(
             "field {} of this node's type body was never written by its constructor",

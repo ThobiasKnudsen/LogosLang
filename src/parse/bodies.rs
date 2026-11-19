@@ -456,8 +456,7 @@ impl<'a> Parser<'a> {
             };
             params.push((name, ty));
         }
-        let shared =
-            crate::identities::mint::shared_field(ty, crate::identities::mint::SHARED_FIELD);
+        let shared = self.declared_output_type(ty);
         let mut scope = ScopeStack::new();
         scope.push(field_scope);
         let output = scope
@@ -475,7 +474,7 @@ impl<'a> Parser<'a> {
         let declared =
             type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
         let declared = declared.and_then(|()| match shared {
-            Some(t) => self.declare_mint_output(ty, t),
+            Some(t) => self.declare_output_type(ty, t),
             None => Ok(()),
         });
         self.cx.scopes.pop();
@@ -483,15 +482,42 @@ impl<'a> Parser<'a> {
         self.fn_over_body(types.fn_type, input, &places, output, None, spec, std::ptr::null_mut())
     }
 
-    /// The mint's own `output_type`, which its parse wrote, declared over its origin's as a
-    /// field of type `type` is, so `output_type 1` reads `f64 1` in the run built for `^`'s
-    /// mint for `f64`; each cell of the held body the definition bound to the origin's member
-    /// now names it (›A type without a `run` whose field is `?` mints one type per set of field
-    /// types, as `array` mints one per element type‹ [[R300]]).
+    /// The type `ty`'s own `share output_type` holds, what every node of it gives (›A mint's
+    /// output type is written in its `share output_type` declaration; a type that does not mint
+    /// has its parse write it into each node‹ [[R194]]); `None` when it declares none or the
+    /// member holds no type.
     ///
     /// # Safety
-    /// `mint` must be a mint of a type with a body; `output` a type node.
-    unsafe fn declare_mint_output(
+    /// `ty` must be a record type from the store.
+    unsafe fn declared_output_type(&self, ty: DyadPtr) -> Option<DyadPtr> {
+        use crate::identities::mint::SHARED_FIELD;
+        let body = crate::identities::meta::record_body_of(ty);
+        if body.is_null() {
+            return None;
+        }
+        let mut members = ScopeStack::new();
+        members.push(body);
+        let found = members.resolve(self.trie, SHARED_FIELD).ok()?;
+        let member = found.binding;
+        let own = !member.is_null()
+            && found.matched == SHARED_FIELD.len()
+            && Binding::read(member).scope == body
+            && Binding::has_gate(member, self.types.share_);
+        if !own {
+            return None;
+        }
+        let held = self.settled_type(self.types.through(member));
+        crate::identities::type_identity_of(self.types, held)
+    }
+
+    /// The type's `share output_type`, declared over the member as a field of type `type` is,
+    /// so `output_type lossy (lhs)` reads `f64 lossy (lhs)` in the run built for a type whose
+    /// line gave `f64`; each cell of the held body the definition bound to the member now names
+    /// it.
+    ///
+    /// # Safety
+    /// `mint` must be a type with a body; `output` a type node.
+    unsafe fn declare_output_type(
         &mut self,
         mint: DyadPtr,
         output: DyadPtr,

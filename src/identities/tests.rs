@@ -2596,17 +2596,23 @@ fn compile_member_before_and_after_agree() {
     );
 }
 
-/// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol.
+/// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol,
+/// minting through a function of its own by the base's type.
 const POW_TYPE: &str = "pw := type (\n\
-     a := ?, b := i32 ?, share output_type := type ?, share run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ),\n\
+     share pw_mints := hashmap type -> type,\n\
+     share get_mint := fn (l := type ?) -> type (\n\
+         mut mint := pw_mints[l],\n\
+         if mint != ? return mint,\n\
+         mint = type ( a := l ?, b := i32 ?, share output_type := l, share run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ) ),\n\
+         pw_mints[l] = mint,\n\
+         mint\n\
+     ),\n\
      share parse_rank = *.parse_rank + 1,\n\
      share associativity = right,\n\
      share parse = (\n\
          if tape[-1].type == void error «pw takes a left operand»,\n\
-         tape[0].type = pw, tape[0].a = tape[-1],\n\
+         tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1],\n\
          tape[0].b = tape[1],\n\
-         tape[0].output_type = tape[-1].type,\n\
-         ,\n\
          tape.is_constructed[0] = true,\n\
          tape.remove(1),\n\
          tape.remove(-1)\n\
@@ -2614,7 +2620,7 @@ const POW_TYPE: &str = "pw := type (\n\
     ),\n";
 
 #[test]
-fn a_run_type_with_a_question_field_mints_once_per_set_of_field_types() {
+fn a_run_type_mints_through_its_chooser_once_per_set_of_field_types() {
     let (mut store, mut trie, core) = new_core();
     let src = format!(
         "{POW_TYPE}x := i32 2,\ny := i32 3,\nz := f64 2.0,\nx pw 3,\ny pw 2,\nz pw 2,\nx pw 3 + y pw 2"
@@ -2631,42 +2637,20 @@ fn a_run_type_with_a_question_field_mints_once_per_set_of_field_types() {
         let lines = array::items(*(dyad::value(seq) as *const DyadPtr));
         let pw = declare::declared_of(lines[0]);
         let (two, three, real) = (lines[4], lines[5], lines[6]);
-        let (_, out, run) = minted(two);
-        assert_eq!(mint::origin(dyad::ty(two)), pw);
         assert_ne!(dyad::ty(two), pw);
         // `x pw 3` and `y pw 2` are nodes of `pw`'s mint for `i32`, `z pw 2` of its mint for `f64`.
         assert_eq!(dyad::ty(three), dyad::ty(two));
         assert_ne!(dyad::ty(real), dyad::ty(two));
-        assert_eq!(out, Some(core.i32_));
-        assert_eq!(minted(real).1, Some(f64_));
-        // The mint holds the function its nodes run; the node holds its fields and the terminator.
-        assert!(run.is_some_and(|f| !f.is_null() && f == run_body::spec_of(three)));
-        assert_ne!(run_body::spec_of(real), run_body::spec_of(two));
-        assert_eq!(run_body::tail_len(dyad::ty(two)), 1);
+        assert_eq!(read::output_type(&core, two), core.i32_);
         assert_eq!(read::output_type(&core, real), f64_);
+        // One function per mint, built for its first node and found for the next.
+        assert!(!run_body::spec_of(two).is_null());
+        assert_eq!(run_body::spec_of(three), run_body::spec_of(two));
+        assert_ne!(run_body::spec_of(real), run_body::spec_of(two));
     }
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `seq` is the sequence just parsed.
     assert_eq!(unsafe { rt.run(seq) }.unwrap(), 17);
-}
-
-#[test]
-fn a_type_with_a_question_field_keeps_output_type_on_each_mint() {
-    assert_eq!(
-        parse_err("t := type ( a := ?, output_type := type ? )"),
-        ParseError::OutputTypeNotShared
-    );
-    // Typed fields alone: one set of field types, and `output_type` stays in each node.
-    assert_eq!(run_script("t := type ( a := i32 ?, output_type := type ? ),\n0"), 0);
-    // The parse chooses the mint when it writes `output_type`, from the fields written so far.
-    let early = POW_TYPE.replace(
-        "tape[0].type = pw, tape[0].a = tape[-1],",
-        "tape[0].type = pw, tape[0].output_type = i32, tape[0].a = tape[-1],",
-    );
-    assert!(matches!(
-        parse_err_after(&[&early], "i32 2 pw 3"),
-        ParseError::ConstructorFailed(m) if m.contains("write every field first")
-    ));
 }
 
 #[test]

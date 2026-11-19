@@ -75,9 +75,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `tape[0].type = T`: the fresh node placed in the parse's own cell, from where its
-    /// fields are written by name (DESIGN ›There is no `this`‹). The seed stamps only the
-    /// type being defined.
+    /// `tape[0].type = T`: a fresh node of `T` placed in the parse's own cell, from where its
+    /// fields are written by name (DESIGN ›There is no `this`‹). The type being defined has its
+    /// node made before the parse runs; any other `T`, such as a mint a function chooses
+    /// (›The v0.1.0 demo: a user-defined power operator `^`‹ [[R366]]), when the stamp runs.
     ///
     /// # Safety
     /// `target` must be a `tape.cell_type` node from the store; `value` a reduced dyad.
@@ -86,18 +87,22 @@ impl<'a> Parser<'a> {
         target: DyadPtr,
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
+        use crate::identities::tape;
         let types = self.types;
         let ops = dyad::value(target) as *const DyadPtr;
-        let cell = crate::identities::tape::build_slot(self.rt.store, types, *ops, *ops.add(1));
+        let cell = tape::build_slot(self.rt.store, types, *ops, *ops.add(1));
         if !self.is_node_cell(cell) || !(*ops.add(2)).is_null() {
             return Err(ParseError::StampOutsideParse);
         }
-        let def = self.cx.definitions.last().expect("is_node_cell found a parse body");
-        if self.types.through(value) != def.self_type {
-            return Err(ParseError::StampOtherType);
+        let def = self.cx.definitions.last_mut().expect("is_node_cell found a parse body");
+        if types.through(value) == def.self_type {
+            return Ok(tape::build_write(self.rt.store, types, cell, def.this_param));
         }
-        let node = def.this_param;
-        Ok(crate::identities::tape::build_write(self.rt.store, types, cell, node))
+        if crate::identities::read::output_type(types, value) != types.type_ {
+            return Err(ParseError::StampNeedsType);
+        }
+        def.stamps_at_run = true;
+        Ok(tape::build_stamp(self.rt.store, types, cell, value))
     }
 
     /// A bare call of a `share` function that works on a value takes the value the calling
@@ -164,21 +169,6 @@ impl<'a> Parser<'a> {
             let mut members = ScopeStack::new();
             members.push(body);
             if let Ok(r) = members.resolve(self.trie, name) {
-                // A type with a `?` field keeps its `output_type` on each of its mints, one
-                // place per mint, which its parse writes (›A type without a `run` whose field
-                // is `?` mints one type per set of field types, as `array` mints one per
-                // element type‹ [[R300]]).
-                let in_parse = self.cx.definitions.last().is_some_and(|d| d.in_parse);
-                // SAFETY: the block's items are field declaration dyads from the store.
-                let mints = unsafe { crate::identities::mint::has_untyped_field(&items) };
-                if in_parse && mints && name == crate::identities::mint::SHARED_FIELD {
-                    let types = self.types;
-                    return Ok(crate::identities::this::build_mint_output(
-                        self.rt.store,
-                        types,
-                        this,
-                    ));
-                }
                 return Ok(r.identity);
             }
             self.cx.pos = at;
@@ -451,6 +441,12 @@ impl<'a> Parser<'a> {
             // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
             // (DESIGN ›There is no `this`‹); `.dyads` is the cell's own.
             if name != "dyads" && self.is_node_cell(lhs) {
+                if self.cx.definitions.last().is_some_and(|d| d.stamps_at_run) {
+                    let types = self.types;
+                    let read =
+                        crate::identities::this::build_named(self.rt.store, types, lhs, name);
+                    return Ok((read, 0));
+                }
                 let node = self.cx.definitions.last().expect("a parse body is open").this_param;
                 let member = self.this_field(name, nstart)?;
                 // `tape[0].f(…)`, a `share` function: called on that node.
@@ -1354,20 +1350,22 @@ impl<'a> Parser<'a> {
         Ok(t)
     }
 
-    /// An operator expression, which `.` reads as its node (DESIGN ›Reading a path runs
-    /// nothing‹): a node that runs, whose type word is an identity with a parse of its own, the
-    /// one that built it from its operands (`x + 2`, `x ^ 3`), or a mint of one. A call's type
-    /// word is a function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and the call
-    /// stands for what it returns.
+    /// An operator expression, which `.` reads as its node (›`x.type` reads the type word of the
+    /// node a name or an expression stands for‹ [[R279]]): a node that runs, whose type word is
+    /// a type with a `run` body, the one a parse stamped (`x ^ 3`, its type minted by `^`'s
+    /// chooser), or an identity with a parse of its own, or a mint of one (`x + 2`). A call's
+    /// type word is a function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and the
+    /// call stands for what it returns.
     ///
     /// # Safety
     /// `node` must be a reduced dyad from the store.
     unsafe fn is_operator_node(&self, node: DyadPtr) -> bool {
-        use crate::identities::read::{read_kind, Read};
-        let ty = crate::identities::mint::origin(dyad::ty(node));
-        matches!(read_kind(self.types, node), Read::Executable(_))
-            && self.identity_head(ty).is_some()
-            && !crate::identities::meta::constructor_of(ty).is_null()
+        use crate::identities::{meta, read};
+        let Some(ty) = self.identity_head(crate::identities::mint::origin(dyad::ty(node))) else {
+            return false;
+        };
+        matches!(read::read_kind(self.types, node), read::Read::Executable(_))
+            && (meta::kind_of(ty) == Some(meta::RECORD_TAG) || !meta::constructor_of(ty).is_null())
     }
 
     /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's read surface‹), the

@@ -42,6 +42,8 @@ pub enum RunError {
     OffTape,
     /// A map read at a key it does not hold, where the value type cannot hold `?`.
     MissingKey,
+    /// `m[k]` or `m[k] = v` where `m` holds `?`, no map.
+    UnknownMap,
     /// `t[k]:name` on a cell holding no named binding.
     NoName,
     /// A tape cell checked to hold a type holds something else by the time it is read.
@@ -57,9 +59,10 @@ pub enum RunError {
     NoThis,
     /// A parse read or wrote a field of `tape[0]` while the cell still held the type.
     FieldBeforeStamp,
-    /// A parse wrote its node's mint's `output_type` before the types of its fields were known,
-    /// or read it before writing it.
-    MintUnchosen,
+    /// `tape[0].type = T` with a `T` that gave no type whose values are nodes when the parse ran.
+    StampNotANodeType,
+    /// A parse read or wrote a field the type it stamped as it ran does not have.
+    NoFieldNamed(Box<String>),
     /// A field of a node its constructor never wrote, by its index among the fields.
     UnfilledField(usize),
     /// A negative index.
@@ -644,6 +647,20 @@ impl<'a> Runtime<'a> {
     /// `d` is the fresh node, not yet placed: its cell still holds the type.
     pub(crate) fn unstamped(&self, d: DyadPtr) -> bool {
         self.fresh_this == Some((d, false))
+    }
+
+    /// The parse placed `node`, a new node of a type it chose as it ran, in place of its fresh
+    /// node: from here its fields are this node's.
+    pub(crate) fn restamp(&mut self, node: DyadPtr) {
+        if let Some(fresh) = &mut self.fresh_this {
+            *fresh = (node, true);
+        }
+    }
+
+    /// The index the attached lexer resolves names against.
+    pub(crate) fn index(&self) -> Option<&crate::regex_trie::RegexTrie> {
+        // SAFETY: `lexer` is set only inside `hosting`, whose borrows outlive this call.
+        self.lexer.map(|lexer| unsafe { lexer.trie.as_ref() })
     }
 
     /// Takes the tape [`Runtime::enter_constructor`] handed back.

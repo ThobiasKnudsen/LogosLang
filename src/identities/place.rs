@@ -99,6 +99,9 @@ unsafe fn place(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunEr
             _ => held,
         }));
     }
+    if super::this::is_named(types, node) {
+        return Ok(Placed::New(rt.run(node)? as DyadPtr));
+    }
     // A `fn` value's body runs in a frame of its own, and a bracket's lines where it is run.
     if dyad::ty(node) == types.fn_type || super::tape::bracket_kind(types, node).is_some() {
         return Ok(Placed::Kept);

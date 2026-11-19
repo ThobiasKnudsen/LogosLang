@@ -385,7 +385,7 @@ pub unsafe fn place_of(types: &Core, node: DyadPtr) -> Option<Place> {
     } else {
         ty == types.binding_
             || super::this::is_field_read(types, node)
-            || super::this::is_mint_output(types, node)
+            || super::this::is_named(types, node)
             || is_owning_slot(node)
             || ty == types.deref_
             || ty == types.hashmap.get
@@ -619,14 +619,12 @@ mod tests {
     fn a_node_of_a_run_type_is_a_call_of_its_function_and_a_leafless_record_is_named() {
         let (mut store, _trie, core, exprs) = parse_seq(
             "pw := type (\n\
-                 a := ?, b := i32 ?, share output_type := type ?, share run = ( a ),\n\
+                 a := i32 ?, b := i32 ?, share output_type := i32, share run = ( a ),\n\
                  share parse_rank = *.parse_rank + 1,\n\
                  share associativity = right,\n\
                  share parse = (\n\
                      tape[0].type = pw, tape[0].a = tape[-1],\n\
                      tape[0].b = tape[1],\n\
-                     tape[0].output_type = tape[-1].type,\n\
-                     ,\n\
                      tape.is_constructed[0] = true,\n\
                      tape.remove(1),\n\
                      tape.remove(-1)\n\

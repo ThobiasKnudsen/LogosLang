@@ -225,9 +225,9 @@ pub(super) fn build_store(
         return Ok(unsafe { super::tape::build_flag_write(store, types, lhs_d, rhs) });
     }
     // SAFETY: `lhs_d` is a reduced dyad from the store.
-    if unsafe { super::this::is_mint_output(types, lhs_d) } {
-        // SAFETY: `lhs_d` is a read of a mint's `output_type`, `rhs` a reduced dyad.
-        return unsafe { super::this::build_mint_output_write(store, types, lhs_d, rhs) };
+    if unsafe { super::this::is_named(types, lhs_d) } {
+        // SAFETY: `lhs_d` is a named field read, `rhs` a reduced dyad.
+        return unsafe { super::this::build_named_write(store, types, lhs_d, rhs) };
     }
     // SAFETY: `lhs_d` is a reduced dyad from the store.
     if unsafe { super::this::is_field_read(types, lhs_d) } {
