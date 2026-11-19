@@ -963,9 +963,7 @@ unsafe fn land_leaf(
         read::Read::Container(t) if t == types.dyad_ => {
             return dyad_place::land(store, types, value, how.held);
         }
-        read::Read::Container(t) => {
-            from == t && !types.is_hole(plain) && meta::value_is_node(t, types.fn_type)
-        }
+        read::Read::Container(t) => node_value_output(types, value) == Some(t),
         read::Read::Rational => plain_number || rational::is_rational_value(types, value),
         read::Read::Aggregate => from == ty,
         _ => false,
@@ -1017,6 +1015,19 @@ pub(crate) unsafe fn node_output(types: &Core, node: DyadPtr) -> Option<DyadPtr>
     }
     let t = read::output_type(types, node);
     meta::is_node_valued(t, types.fn_type).then_some(t)
+}
+
+/// The type `node` gives back when a value of it is its node's address, text included, a hole's
+/// excepted.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn node_value_output(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    if types.is_hole(types.through(node)) {
+        return None;
+    }
+    let t = read::output_type(types, node);
+    meta::value_is_node(t, types.fn_type).then_some(t)
 }
 
 /// A `-> type` call's argument the pass can run now: a type, or a literal.
@@ -1127,11 +1138,10 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
         }
     }
     let kind = read::read_kind(types, node);
-    let out = read::output_type(types, node);
     // The bits are a node's address: what a box holds, or a value that is its node.
     if matches!(kind, read::Read::Container(_) | read::Read::Node)
-        || out == types.dyad_
-        || !types.is_hole(node) && meta::value_is_node(out, types.fn_type)
+        || read::output_type(types, node) == types.dyad_
+        || node_value_output(types, node).is_some()
     {
         let ty = types.type_of(node);
         return if ty.is_null() { bits.to_string() } else { display_held(types, ty, bits) };
