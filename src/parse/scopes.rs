@@ -475,7 +475,7 @@ impl ScopeStack {
     }
 
     /// The sibling check, run too across a type body's two scopes: its
-    /// `share` members live in the body's, its fields in the list's.
+    /// `static` members live in the body's, its fields in the list's.
     pub fn declared_in(
         &self,
         trie: &RegexTrie,

@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The shared-member record every identity carries in its value slot: parse rank
+//! The `static`-member record every identity carries in its value slot: parse rank
 //! and associativity, the constructor and destructor leaves, the run-body slot, the
 //! interned pointer type, and the layout its values are read by.
 //!
@@ -298,7 +298,7 @@ pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
 
 const INSTANCES_FREE_OFF: usize = PAYLOAD_OFF + 32;
 
-/// The `fn` a `share free = (…)` line filled, over the one unnamed value parameter; null where the type
+/// The `fn` a `static free = (…)` line filled, over the one unnamed value parameter; null where the type
 /// body fills none.
 ///
 /// # Safety
@@ -496,7 +496,7 @@ pub(crate) unsafe fn op_slot_of(id: DyadPtr) -> Option<usize> {
 }
 
 /// The slot named `output_type`, where the parse writes the type the node gives back.
-/// ›A mint's output type is written in its `share output_type` declaration; a type that does not
+/// ›A mint's output type is written in its `static output_type` declaration; a type that does not
 /// mint has its parse write it into each node‹ [[R194]].
 ///
 /// # Safety

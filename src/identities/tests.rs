@@ -956,9 +956,9 @@ fn logos_comparison(field: &str, rank: &str) -> String {
             lhs := {field} ?,\n\
             rhs := {field} ?,\n\
             output_type := type ?,\n\
-            share run = ( lhs == rhs ),\n\
-            share parse_rank = {rank},\n\
-            share parse = (\n\
+            static run = ( lhs == rhs ),\n\
+            static parse_rank = {rank},\n\
+            static parse = (\n\
                 tape[0].type = ≈, tape[0].lhs = tape[-1],\n\
                 tape[0].rhs = tape[1],\n\
                 tape[0].output_type = bool,\n\
@@ -2215,7 +2215,7 @@ fn runaway_depth_is_a_checked_error_not_an_abort() {
         let shut = ")".repeat(crate::parse::MAX_BRACKET_DEPTH + 1);
         let skipped = format!("if false ( {deep}1{shut} ) else ( 1 )");
         assert_eq!(parse_err(&skipped), ParseError::TooDeep);
-        let held = format!("t := type ( a := i32 ?, share run = ( {deep}1{shut} ) ), 5");
+        let held = format!("t := type ( a := i32 ?, static run = ( {deep}1{shut} ) ), 5");
         assert_eq!(parse_err(&held), ParseError::TooDeep);
         assert_eq!(run_script("(((((1)))))"), 1);
 
@@ -2599,17 +2599,17 @@ fn compile_member_before_and_after_agree() {
 /// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol,
 /// minting through a function of its own by the base's type.
 const POW_TYPE: &str = "pw := type (\n\
-     share pw_mints := hashmap type -> type,\n\
-     share get_mint := fn (l := type ?) -> type (\n\
+     static pw_mints := hashmap type -> type,\n\
+     static get_mint := fn (l := type ?) -> type (\n\
          mut mint := pw_mints[l],\n\
          if mint != ? return mint,\n\
-         mint = type ( a := l ?, b := i32 ?, share output_type := l, share run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ) ),\n\
+         mint = type ( a := l ?, b := i32 ?, static output_type := l, static run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ) ),\n\
          pw_mints[l] = mint,\n\
          mint\n\
      ),\n\
-     share parse_rank = *.parse_rank + 1,\n\
-     share associativity = right,\n\
-     share parse = (\n\
+     static parse_rank = *.parse_rank + 1,\n\
+     static associativity = right,\n\
+     static parse = (\n\
          if tape[-1].type == void error «pw takes a left operand»,\n\
          tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1],\n\
          tape[0].b = tape[1],\n\
@@ -2659,7 +2659,7 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
     assert_eq!(run_script(&format!("{POW_TYPE}2 pw 3 pw 2")), 512);
     // A type with a run and no parse of its own has no call form.
     assert_eq!(
-        parse_err_after(&["sq2 := type ( a := i32 ?, share run = ( a * a ) )"], "sq2(5)"),
+        parse_err_after(&["sq2 := type ( a := i32 ?, static run = ( a * a ) )"], "sq2(5)"),
         ParseError::RunTypeApplied
     );
 }
@@ -2668,8 +2668,8 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
 fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
     let (mut store, mut trie, core) = new_core();
     for def in [
-        "q := type ( share parse_rank = dyad.parse_rank, share parse = ( tape.is_constructed[0] = true ) )",
-        "chooser := type ( share parse_rank = fn.parse_rank, share parse = ( tape.is_constructed[0] = true ) )",
+        "q := type ( static parse_rank = dyad.parse_rank, static parse = ( tape.is_constructed[0] = true ) )",
+        "chooser := type ( static parse_rank = fn.parse_rank, static parse = ( tape.is_constructed[0] = true ) )",
     ] {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
@@ -2687,11 +2687,11 @@ fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
 }
 
 #[test]
-fn a_run_hands_a_bare_share_call_its_own_value_in_both_tiers() {
+fn a_run_hands_a_bare_static_call_its_own_value_in_both_tiers() {
     let (mut store, mut trie, core) = new_core();
     let src = "inc := type ( a := i32 ?, output_type := type ?, \
-        share twice := fn () -> i32 ( a * 2 ), share run = ( twice() + 1 ), \
-        share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = inc, \
+        static twice := fn () -> i32 ( a * 2 ), static run = ( twice() + 1 ), \
+        static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = inc, \
         tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
         tape.remove(-1) ) ),\nf := fn (y := i32 ?) -> i32 ( y inc ),\nf(5)";
     let seq = {
@@ -2743,14 +2743,14 @@ fn a_node_of_a_run_type_compiles_as_a_call_of_its_function() {
 
 #[test]
 fn a_body_slot_takes_a_bracket_and_a_run_type_has_no_place() {
-    assert_eq!(parse_err("t := type (share run = 5)"), ParseError::SlotNeedsBody(SlotKind::Run));
+    assert_eq!(parse_err("t := type (static run = 5)"), ParseError::SlotNeedsBody(SlotKind::Run));
     assert_eq!(
-        parse_err("t := type (share parse = 5)"),
+        parse_err("t := type (static parse = 5)"),
         ParseError::SlotNeedsBody(SlotKind::Parse)
     );
     assert_eq!(
         parse_err(
-            "t := type (share parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))"
+            "t := type (static parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))"
         ),
         ParseError::SlotNeedsBody(SlotKind::Parse)
     );
@@ -3240,12 +3240,12 @@ fn pub_gates_a_fn_declaration() {
 }
 
 #[test]
-fn shared_stands_first_on_the_members_binding() {
+fn static_stands_first_on_the_members_binding() {
     let (mut store, mut trie, core) = new_core();
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p = Parser::new(
-        "t := type (share y := i32 3, share mut z := i32 4, v := i32 ?)",
+        "t := type (static y := i32 3, static mut z := i32 4, v := i32 ?)",
         &mut store,
         &mut trie,
         &core,
@@ -3259,28 +3259,30 @@ fn shared_stands_first_on_the_members_binding() {
         body.push(crate::identities::meta::record_body_of(t));
         let y = body.resolve(&trie, "y").unwrap().binding;
         let z = body.resolve(&trie, "z").unwrap().binding;
-        assert!(Binding::has_gate(y, core.share_) && !Binding::has_gate(y, core.mut_));
+        assert!(Binding::has_gate(y, core.static_) && !Binding::has_gate(y, core.mut_));
         assert_eq!(
             crate::identities::array::items(Binding::read(z).gate),
-            &[core.share_, core.mut_]
+            &[core.static_, core.mut_]
         );
     }
-    assert_eq!(parse_err("f := fn (share x := i32 ?) -> i32 ( x )"), ParseError::ShareMisplaced);
+    assert_eq!(parse_err("f := fn (static x := i32 ?) -> i32 ( x )"), ParseError::StaticMisplaced);
 }
 
 #[test]
-fn a_shared_name_at_top_level_is_one_place_for_the_run() {
-    assert_eq!(run_script("share mut n := i32 0,\nn = n + 1,\nn = n + 1,\nn"), 2);
-    assert_eq!(run_script("share m := hashmap i32 -> i32,\nm[2] = 4,\nm[2]"), 4);
+fn a_static_name_at_top_level_is_one_place_for_the_run() {
+    assert_eq!(run_script("static mut n := i32 0,\nn = n + 1,\nn = n + 1,\nn"), 2);
+    assert_eq!(run_script("static m := hashmap i32 -> i32,\nm[2] = 4,\nm[2]"), 4);
     // In a loop the line names one place across the passes, made once.
     assert_eq!(
-        run_script("mut t := i32 0,\nfor i in 0..5 ( share mut k := i32 0, k = k + 1, t = k ),\nt"),
+        run_script(
+            "mut t := i32 0,\nfor i in 0..5 ( static mut k := i32 0, k = k + 1, t = k ),\nt"
+        ),
         5
     );
     assert_eq!(
         run_script(
             "mut j := i32 0, mut t := i32 0,\n\
-             while j < 4 ( share mut k := i32 0, k = k + 1, t = k, j = j + 1 ),\nt"
+             while j < 4 ( static mut k := i32 0, k = k + 1, t = k, j = j + 1 ),\nt"
         ),
         4
     );
@@ -3288,38 +3290,38 @@ fn a_shared_name_at_top_level_is_one_place_for_the_run() {
     assert_eq!(
         run_script(
             "mut t := i32 0,\n\
-             for i in 0..3 ( share mut k := i32 0, mut x := i32 0, k = k + 1, x = x + 1, t = t + k * 10 + x ),\nt"
+             for i in 0..3 ( static mut k := i32 0, mut x := i32 0, k = k + 1, x = x + 1, t = t + k * 10 + x ),\nt"
         ),
         63
     );
     // Its value is made at the definition, so it reads names made before it.
     assert_eq!(
         run_script(
-            "a := i32 7,\nmut t := i32 0,\nfor i in 0..3 ( share k := a + 1, t = t + k ),\nt"
+            "a := i32 7,\nmut t := i32 0,\nfor i in 0..3 ( static k := a + 1, t = t + k ),\nt"
         ),
         24
     );
-    assert_eq!(script_parse_err("for i in 0..3 ( share k := i, k )"), ParseError::OnceReadsUnmade);
+    assert_eq!(script_parse_err("for i in 0..3 ( static k := i, k )"), ParseError::OnceReadsUnmade);
     assert_eq!(
-        script_parse_err("for i in 0..3 ( x := i32 1, share k := x, k )"),
+        script_parse_err("for i in 0..3 ( x := i32 1, static k := x, k )"),
         ParseError::OnceReadsUnmade
     );
     assert_eq!(
-        script_parse_err("mut c := i32 1,\nif c == 1 ( x := i32 5, share k := x, k )"),
+        script_parse_err("mut c := i32 1,\nif c == 1 ( x := i32 5, static k := x, k )"),
         ParseError::OnceReadsUnmade
     );
 }
 
 #[test]
-fn a_shared_name_in_a_function_is_one_place_across_its_calls() {
-    let counter = "f := fn () -> i32 ( share mut n := i32 0, n = n + 1, n ),\n";
+fn a_static_name_in_a_function_is_one_place_across_its_calls() {
+    let counter = "f := fn () -> i32 ( static mut n := i32 0, n = n + 1, n ),\n";
     assert_eq!(run_script(&format!("{counter}f(), f(), f()")), 3);
     assert_eq!(run_script(&format!("{counter}f.compile(), f(), f(), f()")), 3);
     // Each function owns its own place, whatever the name.
     assert_eq!(
         run_script(
-            "f := fn () -> i32 ( share mut n := i32 0, n = n + 1, n ),\n\
-             g := fn () -> i32 ( share mut n := i32 100, n = n + 1, n ),\n\
+            "f := fn () -> i32 ( static mut n := i32 0, n = n + 1, n ),\n\
+             g := fn () -> i32 ( static mut n := i32 100, n = n + 1, n ),\n\
              f(), g(), f(), g() + f()"
         ),
         105
@@ -3327,7 +3329,7 @@ fn a_shared_name_in_a_function_is_one_place_across_its_calls() {
     // A loop body inside the function names the function's place too.
     assert_eq!(
         run_script(
-            "f := fn () -> i32 ( mut t := i32 0, for i in 0..3 ( share mut n := i32 0, n = n + 1, t = n ), t ),\n\
+            "f := fn () -> i32 ( mut t := i32 0, for i in 0..3 ( static mut n := i32 0, n = n + 1, t = n ), t ),\n\
              f(), f()"
         ),
         6
@@ -3335,21 +3337,21 @@ fn a_shared_name_in_a_function_is_one_place_across_its_calls() {
     // Without `mut` the name is not written, but a map behind it is.
     assert_eq!(
         run_script(
-            "f := fn (k := i32 ?, put := i32 ?) -> i32 ( share m := hashmap i32 -> i32, if put == 1 ( m[k] = k * k ), m[k] ),\n\
+            "f := fn (k := i32 ?, put := i32 ?) -> i32 ( static m := hashmap i32 -> i32, if put == 1 ( m[k] = k * k ), m[k] ),\n\
              f(3, 1), f(4, 1), f(3, 0)"
         ),
         9
     );
     assert!(matches!(
-        script_parse_err("f := fn () -> i32 ( share n := i32 0, n = 1, n )"),
+        script_parse_err("f := fn () -> i32 ( static n := i32 0, n = 1, n )"),
         ParseError::NotMutable(_)
     ));
     assert_eq!(
-        script_parse_err("f := fn (k := i32 ?) -> i32 ( share n := k, n )"),
+        script_parse_err("f := fn (k := i32 ?) -> i32 ( static n := k, n )"),
         ParseError::OnceReadsUnmade
     );
     assert_eq!(
-        script_parse_err("f := fn () -> i32 ( x := i32 1, share n := x, n )"),
+        script_parse_err("f := fn () -> i32 ( x := i32 1, static n := x, n )"),
         ParseError::OnceReadsUnmade
     );
 }
@@ -3381,14 +3383,14 @@ fn a_name_is_written_only_if_declared_mut() {
     );
     assert_eq!(
         parse_err(
-            "t := type (immut a := i32 ?, share parse = ( tape[0].type = t, tape[0].a = tape[-1] ))"
+            "t := type (immut a := i32 ?, static parse = ( tape[0].type = t, tape[0].a = tape[-1] ))"
         ),
         ParseError::Immutable(Box::new("a".into()))
     );
     // An `immut` sibling never written blocks nothing: the other fill parses.
     assert_eq!(
         run_script(
-            "t := type (a := i32 ?, immut b := i32 ?, share parse = ( tape[0].type = t, tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
+            "t := type (a := i32 ?, immut b := i32 ?, static parse = ( tape[0].type = t, tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
         ),
         1
     );
@@ -4283,7 +4285,7 @@ fn a_line_the_pass_ran_keeps_its_node_and_is_not_run_again() {
 fn tape_line_q(body: &str) -> String {
     format!(
         "pt := type ( mut a := u64 ?, mut b := u64 ? ), \
-         q := type ( v := u64 ?, share parse_rank = 61, share parse = ( tape[0].type = q, \
+         q := type ( v := u64 ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
          {body}, tape.remove(1), tape.is_constructed[0] = true ) )"
     )
 }
@@ -4335,7 +4337,7 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     // The message names the type the place has, a pointer as it is written.
     for (field, named) in [("@u64", "@u64"), ("@bool", "@bool")] {
         let src = format!(
-            "q := type ( p := {field} ?, share parse_rank = 61, share parse = ( tape[0].type = q, \
+            "q := type ( p := {field} ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
              tape[0].p = tape[1].dyads[0], r := tape[0].p, tape.remove(1), \
              tape.is_constructed[0] = true ) ), n := u64 3, x := q [&n]"
         );

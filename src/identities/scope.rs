@@ -76,7 +76,7 @@ pub(crate) unsafe fn fill(types: &Core, node: DyadPtr) {
 }
 
 /// What a block gives back, worked out from its last line when asked: what that line hands
-/// on, `void` for none. ›A mint's output type is written in its `share output_type`
+/// on, `void` for none. ›A mint's output type is written in its `static output_type`
 /// declaration; a type that does not mint has its parse write it into each node‹ [[R194]].
 ///
 /// # Safety

@@ -156,7 +156,7 @@ pub const FN_FRAME: usize = 4;
 pub const FN_OUTER: usize = 5;
 
 /// A `u64` leaf of [`RECEIVER_READS`] and [`RECEIVER_WRITES`] bits: whether a
-/// `share` function's body reads or writes a field of its value; null for neither.
+/// `static` function's body reads or writes a field of its value; null for neither.
 pub const FN_RECEIVER: usize = 6;
 
 /// The result's gate: the `own` gate word for `-> own T`, else null (DESIGN ›A last value
@@ -456,16 +456,16 @@ impl<'a> Parser<'a> {
             };
             params.push((name, ty));
         }
-        let shared = self.declared_output_type(ty);
+        let static_output = self.declared_output_type(ty);
         let mut scope = ScopeStack::new();
         scope.push(field_scope);
         let output = scope
-            .resolve(self.trie, crate::identities::mint::SHARED_FIELD)
+            .resolve(self.trie, crate::identities::mint::STATIC_FIELD)
             .ok()
             .and_then(|r| fields.iter().position(|&f| f == r.identity))
             .filter(|&i| crate::identities::hole::type_in(fields[i]) == types.type_)
             .map(|i| key[i])
-            .or(shared)
+            .or(static_output)
             .unwrap_or(types.void_);
         let (input, places) = self.hidden_param_record(&params, 0)?;
         self.cx.run_fields = Some((ty, places.clone()));
@@ -473,7 +473,7 @@ impl<'a> Parser<'a> {
         self.cx.scopes.push(param_scope);
         let declared =
             type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
-        let declared = declared.and_then(|()| match shared {
+        let declared = declared.and_then(|()| match static_output {
             Some(t) => self.declare_output_type(ty, t),
             None => Ok(()),
         });
@@ -482,27 +482,27 @@ impl<'a> Parser<'a> {
         self.fn_over_body(types.fn_type, input, &places, output, None, spec, std::ptr::null_mut())
     }
 
-    /// The type `ty`'s own `share output_type` holds, what every node of it gives (›A mint's
-    /// output type is written in its `share output_type` declaration; a type that does not mint
+    /// The type `ty`'s own `static output_type` holds, what every node of it gives (›A mint's
+    /// output type is written in its `static output_type` declaration; a type that does not mint
     /// has its parse write it into each node‹ [[R194]]); `None` when it declares none or the
     /// member holds no type.
     ///
     /// # Safety
     /// `ty` must be a record type from the store.
     unsafe fn declared_output_type(&self, ty: DyadPtr) -> Option<DyadPtr> {
-        use crate::identities::mint::SHARED_FIELD;
+        use crate::identities::mint::STATIC_FIELD;
         let body = crate::identities::meta::record_body_of(ty);
         if body.is_null() {
             return None;
         }
         let mut members = ScopeStack::new();
         members.push(body);
-        let found = members.resolve(self.trie, SHARED_FIELD).ok()?;
+        let found = members.resolve(self.trie, STATIC_FIELD).ok()?;
         let member = found.binding;
         let own = !member.is_null()
-            && found.matched == SHARED_FIELD.len()
+            && found.matched == STATIC_FIELD.len()
             && Binding::read(member).scope == body
-            && Binding::has_gate(member, self.types.share_);
+            && Binding::has_gate(member, self.types.static_);
         if !own {
             return None;
         }
@@ -510,7 +510,7 @@ impl<'a> Parser<'a> {
         crate::identities::type_identity_of(self.types, held)
     }
 
-    /// The type's `share output_type`, declared over the member as a field of type `type` is,
+    /// The type's `static output_type`, declared over the member as a field of type `type` is,
     /// so `output_type lossy (lhs)` reads `f64 lossy (lhs)` in the run built for a type whose
     /// line gave `f64`; each cell of the held body the definition bound to the member now names
     /// it.
@@ -522,12 +522,12 @@ impl<'a> Parser<'a> {
         mint: DyadPtr,
         output: DyadPtr,
     ) -> Result<(), ParseError> {
-        use crate::identities::mint::SHARED_FIELD;
-        let binding = self.declare_field_name(SHARED_FIELD, output, 0)?;
+        use crate::identities::mint::STATIC_FIELD;
+        let binding = self.declare_field_name(STATIC_FIELD, output, 0)?;
         let mut members = ScopeStack::new();
         members.push(crate::identities::meta::record_body_of(mint));
         if let (Ok(origin), Some(feed)) =
-            (members.resolve(self.trie, SHARED_FIELD), self.cx.feed.as_mut())
+            (members.resolve(self.trie, STATIC_FIELD), self.cx.feed.as_mut())
         {
             for cell in feed.cells.iter_mut().filter(|c| c.dyad == origin.binding) {
                 cell.dyad = binding;
@@ -557,7 +557,7 @@ impl<'a> Parser<'a> {
         fn_type: DyadPtr,
         binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        // A `share` function reached through a value takes that value
+        // A `static` function reached through a value takes that value
         // (DESIGN ›The constructor is a field‹): the `fn` takes it first.
         let member = !binding.is_null()
             && self.cx.member_fn_depth == Some(self.cx.frames.len())
@@ -1969,7 +1969,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `immediate x` (DESIGN ›`immediate x` runs the expression to its right as soon as
-    /// it is parsed, and stands as its value‹): the operand is read as a `share` value is,
+    /// it is parsed, and stands as its value‹): the operand is read as a `static` value is,
     /// once at the definition, runs after everything before it, and its value is the cell.
     pub(crate) fn construct_immediate(
         &mut self,

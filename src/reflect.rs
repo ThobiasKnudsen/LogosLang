@@ -90,7 +90,7 @@ pub enum Shape {
         fields: Vec<(DyadPtr, usize)>,
         size: usize,
     },
-    /// The node is itself a type carrying a shared-member record.
+    /// The node is itself a type carrying a `static`-member record.
     LogosNode {
         /// A tag from `numtype`/`meta`.
         kind: u8,

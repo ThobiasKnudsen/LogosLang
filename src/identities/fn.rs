@@ -45,7 +45,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // Installed now that the string logos exists for the role names. `bcode`
     // is null until compiled, `frame` null for a function with no locals,
     // `outer` null for one that reads no outer name, `receiver` null for one
-    // that neither reads nor writes a field of its `share` value, `output_gate`
+    // that neither reads nor writes a field of its `static` value, `output_gate`
     // null for a result written without `own`.
     let record = meta::operand_record(
         cx,
@@ -67,7 +67,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
 
 /// `f.compile()`: lower `f`'s body into the `code` leaf, minted at parse since
 /// minting needs the store. Resolves only after `.` on an fn-typed value, a
-/// stand-in for shared-member resolution through the type's scope.
+/// stand-in for `static` member resolution through the type's scope.
 pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,

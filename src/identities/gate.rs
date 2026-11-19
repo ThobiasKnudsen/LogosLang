@@ -1,12 +1,12 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `pub`, `mut`, `immut` and `share`: the gate words over a declaration, each
+//! `pub`, `mut`, `immut` and `static`: the gate words over a declaration, each
 //! a prefix word (`pub x := 5`, `mut x := i32 ?`, `pub mut x := 5`) that
 //! adds itself to the name's binding, first in the set, so the set reads in
 //! text order. Unmarked stays private and unwritable, so there is no
 //! `private` word to write; `immut` vetoes the one write a field gets by
-//! default, its constructor's fill. `share` is read by the type body's own reader,
+//! default, its constructor's fill. `static` is read by the type body's own reader,
 //! and anywhere else by the declaration's own constructor. `mut alloc …` is the
 //! allocation that may be written through.
 //! DESIGN ›Read and write are one mechanism across the system‹
@@ -16,7 +16,7 @@ use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError};
 
-/// Returns `pub`, `mut`, `immut`, `share`.
+/// Returns `pub`, `mut`, `immut`, `static`.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let pub_ = word(cx, "pub");
     cx.metas.insert(pub_, construct);
@@ -24,9 +24,9 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     cx.metas.insert(mut_, construct);
     let immut_ = word(cx, "immut");
     cx.metas.insert(immut_, construct);
-    let share_ = word(cx, "share");
-    cx.metas.insert(share_, outside_block);
-    (pub_, mut_, immut_, share_)
+    let static_ = word(cx, "static");
+    cx.metas.insert(static_, outside_block);
+    (pub_, mut_, immut_, static_)
 }
 
 /// No node is ever typed by a gate word; its identity exists to stand on a
@@ -51,7 +51,7 @@ fn outside_block(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<Constructed, ParseError> {
     if p.in_type_body_lines() {
-        return Err(ParseError::ShareMisplaced);
+        return Err(ParseError::StaticMisplaced);
     }
     construct(p, id, tape)
 }

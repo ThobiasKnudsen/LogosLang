@@ -5,15 +5,15 @@
 # declared it before its `:=`, and once declared it lexes glued to its
 # operands (`x^3`). The pinned demo itself is identities/power.logos.
 ^ := type (
-    share power_mints := hashmap type -> type,
-    share get_mint := fn (l := type ?) -> type (
+    static power_mints := hashmap type -> type,
+    static get_mint := fn (l := type ?) -> type (
         mut mint := power_mints[l],
         if mint != ? return mint,
         mint = type (
             lhs := l ?,
             rhs := i32 ?,
-            share output_type := l,
-            share run = (
+            static output_type := l,
+            static run = (
                 mut r := output_type 1,
                 for 0..rhs ( r = r * lhs ),
                 r
@@ -22,9 +22,9 @@
         power_mints[l] = mint,
         mint
     ),
-    share parse_rank = *.parse_rank + 1,
-    share associativity = right,
-    share parse = (
+    static parse_rank = *.parse_rank + 1,
+    static associativity = right,
+    static parse = (
         tape[0].type = get_mint(tape[-1].type),
         tape[0].lhs = tape[-1],
         tape[0].rhs = tape[1],

@@ -404,7 +404,7 @@ impl<'a> Parser<'a> {
     /// too‹); `None` for a place that is no field, and for a field of the value a type's `free`
     /// or `parse` body works on. A field the parse cannot follow back to a name that holds it
     /// is refused where `cell`, the operand's, stands: through a pointer, an element, a value
-    /// no name holds or a borrow, or of a `share` function's own value. A cell that holds a value
+    /// no name holds or a borrow, or of a `static` function's own value. A cell that holds a value
     /// with an end is refused where something it is reached through only borrows it.
     fn ended_path(&mut self, place: DyadPtr, cell: &Cell) -> Result<Option<Ended>, ParseError> {
         use crate::identities::drop_model::{
@@ -481,7 +481,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Whether the value the body being defined works on, when `name` is it, is borrowed there:
-    /// a `share` function's own value is, the one a type's own `free` or `parse` body ends or
+    /// a `static` function's own value is, the one a type's own `free` or `parse` body ends or
     /// builds is not. `None` for any other name.
     fn own_value_borrowed(&self, name: DyadPtr) -> Option<bool> {
         let def = self.cx.definitions.last().filter(|d| d.this_param == name)?;
@@ -523,7 +523,7 @@ impl<'a> Parser<'a> {
 
     /// Reject a capture: a name of an enclosing function's frame, not the innermost open
     /// one. v1 has no closures; reading one would resolve against the wrong activation
-    /// record at run time. A `share` initializer runs at the definition, where no call of
+    /// record at run time. A `static` initializer runs at the definition, where no call of
     /// the functions open around it is live.
     ///
     /// # Safety
@@ -543,7 +543,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A value made once (`share`, `immediate`) runs at parse, where a name of the
+    /// A value made once (`static`, `immediate`) runs at parse, where a name of the
     /// loop or branch around it has no value yet.
     fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
         // SAFETY: `binding` is the binding dyad the resolver returned for the name.
@@ -598,10 +598,10 @@ impl<'a> Parser<'a> {
                         .into_owned()
                 }
             };
-            // A `share` name is one place for the run, reachable wherever its function is.
+            // A `static` name is one place for the run, reachable wherever its function is.
             // SAFETY: as above.
-            let shared = unsafe { Binding::has_gate(binding, self.types.share_) };
-            if !shared
+            let is_static = unsafe { Binding::has_gate(binding, self.types.static_) };
+            if !is_static
                 && !self.cx.scopes.is_open(fields.scope)
                 && !self.outer.iter().any(|c| c.scopes.is_open(fields.scope))
                 && !self.imports.sections.contains(&fields.scope)

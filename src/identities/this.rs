@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The value a type's bodies work on: a parse's node, `tape[0]`, or a `free`'s or `share`
+//! The value a type's bodies work on: a parse's node, `tape[0]`, or a `free`'s or `static`
 //! function's value, bound as an unnamed parameter, a `dyad ?` place holding the value's
 //! address: a node's, or a plain record's bytes. A field read, `tape[0].f` or bare `f`,
 //! reaches field `f` of the value by its index: a node's slot holding the node the field
@@ -63,7 +63,7 @@ pub struct ThisIds {
 }
 
 /// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
-/// name in a `free` or `share` function builds it too, and `=` the write over it.
+/// name in a `free` or `static` function builds it too, and `=` the write over it.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
         let record = meta::operand_record(
@@ -509,7 +509,7 @@ fn run_named_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// Where field `k` of the value lies: a node's slot, or the bytes of a plain record, the one a
-/// `share` function called through it writes (DESIGN ›There is no `this`‹), with the field's
+/// `static` function called through it writes (DESIGN ›There is no `this`‹), with the field's
 /// declared type; each with the field's index.
 enum Field {
     Slot(*mut DyadPtr, usize),
@@ -763,7 +763,7 @@ unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
     store.alloc_words(ty, &slots)
 }
 
-/// The value a bare `share` call from a `run` hands on: a new value of `ty` whose fields are
+/// The value a bare `static` call from a `run` hands on: a new value of `ty` whose fields are
 /// the run's own, `places` its parameters in field order (DESIGN ›There is no `this`‹). The
 /// node itself would not do: its fields hold the operands as written, which the run evaluates.
 pub(crate) fn build_pack(

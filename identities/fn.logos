@@ -4,10 +4,10 @@ fn := type (
     output_type := ?
     bcode := callable ?
     frame := u64 ?
-    shared compile := fn () -> void ( ? )
+    static compile := fn () -> void ( ? )
 
-    share parse_rank = …
-    share associativity = left
+    static parse_rank = …
+    static associativity = left
     # Takes `(params)`, `->` and the body; the function it builds runs, and is never parsed again.
-    share parse = ( ? )
+    static parse = ( ? )
 )
