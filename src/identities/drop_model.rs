@@ -1003,8 +1003,7 @@ pub(crate) unsafe fn same_place(types: &Core, a: DyadPtr, b: DyadPtr) -> bool {
 /// # Safety
 /// `value` must be a reduced dyad from the store.
 pub(crate) unsafe fn lent_place(types: &Core, value: DyadPtr) -> Option<DyadPtr> {
-    let value = types.through(value);
-    (dyad::ty(value) == types.addr_).then(|| types.through(*(dyad::value(value) as *const DyadPtr)))
+    super::pointer::address_place(types, value)
 }
 
 /// The place a `move` empties when `value` is one.
@@ -1235,8 +1234,7 @@ unsafe fn moved_out_via(
     // A record call's result moves out when its callee's value does; a record handed on by
     // its bytes' address, when what it copies does.
     if logos == types.by_copy.result {
-        let call = *(dyad::value(node) as *const DyadPtr).add(1);
-        return moved_out_via(types, call, visit);
+        return moved_out_via(types, super::by_copy::carried(types, node), visit);
     }
     if logos == types.by_copy.out {
         return moved_out_via(types, *(dyad::value(node) as *const DyadPtr), visit);

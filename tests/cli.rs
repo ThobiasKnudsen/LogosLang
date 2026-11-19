@@ -4389,8 +4389,9 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
               static run = ( a * a ), static parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
               tape.is_constructed[0] = true, tape.remove(-1) ) )";
     let mk = "pt := type ( x := i32 ? ), mk := type ( a := i32 ?, output_type := type ?, \
-              static run = ( pt(a) ), static parse = ( tape[0].type = mk, tape[0].a = tape[-1], \
-              tape[0].output_type = pt, tape.is_constructed[0] = true, tape.remove(-1) ) )";
+              static tag := i32 7, static run = ( pt(a) ), static parse = ( tape[0].type = mk, \
+              tape[0].a = tape[-1], tape[0].output_type = pt, tape.is_constructed[0] = true, \
+              tape.remove(-1) ) )";
     for (tail, want) in [
         ("f := fn (x := i32 ?) -> i32 ( b := x ^ 3, b:start.rhs.lhs ), f(5)", "5"),
         ("f := fn (x := i32 ?) -> i32 ( b := x ^ 3, b:start.rhs.lhs ), f.compile(), f(5)", "5"),
@@ -4422,23 +4423,51 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert!(!out.status.success() && out.stdout.is_empty(), "{tail}: {stderr}");
         assert!(stderr.contains("cannot compute"), "{tail}: {stderr}");
     }
-    // A field the node's type does not have is the error that says so.
-    for src in ["x := i32 1, (x + 2).nope".to_string(), format!("{sq}, x := i32 3, (x sq).nope")] {
+    // `&x` is typed `&`, not by the `@i32` it gives; `y mk` is typed `mk`, not by the record its
+    // `run` gives, which a copy carries.
+    for (src, want) in [
+        ("x := i32 5, (&x).type == @i32".to_string(), "false"),
+        ("f := fn () -> bool ( x := i32 5, (&x).type == @i32 ), f.compile(), f()".into(), "false"),
+        ("x := i32 5, (&x).output_type == @i32".into(), "true"),
+        (
+            "f := fn () -> bool ( x := i32 5, (&x).output_type == @i32 ), f.compile(), f()".into(),
+            "true",
+        ),
+        (format!("{mk}, y := i32 3, (y mk).a"), "3"),
+        (format!("{mk}, f := fn (y := i32 ?) -> i32 ( (y mk).a ), f.compile(), f(3)"), "3"),
+        (format!("{mk}, y := i32 3, (y mk).type == pt"), "false"),
+        (
+            format!("{mk}, f := fn (y := i32 ?) -> bool ( (y mk).type == pt ), f.compile(), f(3)"),
+            "false",
+        ),
+        (format!("{mk}, y := i32 3, (y mk).type.tag"), "7"),
+        (format!("{mk}, y := i32 3, (y mk).output_type == pt"), "true"),
+    ] {
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
+    }
+    // A field the node's type does not have is the error that says so, never a read of the
+    // record the node gives when it runs.
+    for src in [
+        "x := i32 1, (x + 2).nope".to_string(),
+        format!("{sq}, x := i32 3, (x sq).nope"),
+        "x := i32 5, (&x).lhs".into(),
+        "x := i32 5, (&x).nope".into(),
+        "f := fn () -> i32 ( x := i32 5, (&x).lhs ), f.compile(), f()".into(),
+        format!("{mk}, y := i32 3, (y mk).nope"),
+        format!("{mk}, y := i32 3, (y mk).x"),
+        format!("{mk}, f := fn (y := i32 ?) -> i32 ( (y mk).x ), f.compile(), f(3)"),
+    ] {
         let out = logos().arg(&src).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success() && out.stdout.is_empty(), "{src}: {stderr}");
         assert!(stderr.contains("does not fit the node's type"), "{src}: {stderr}");
     }
-    // Nor is it read from the record the node gives when it runs, which a name holds.
+    // A name holds the record.
     let out = logos().arg(format!("{mk}, y := i32 3, z := y mk, z.x")).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n");
-    let out = logos().arg(format!("{mk}, y := i32 3, (y mk).x")).output().unwrap();
-    assert!(
-        !out.status.success() && out.stdout.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 #[test]
@@ -7551,7 +7580,7 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
         ("f := fn () -> bool ( true ), b := f(), if b ( i32 1 ) else ( i32 2 )", "1\n"),
         ("g := fn (a := i32 ?) -> bool ( a < 1 ), not g(0)", "false\n"),
         ("true == true", "true\n"),
-        ("x := i32 3, print «{(&x).type == @i32}», p := &x, p.type == @i32", "true\ntrue\n"),
+        ("x := i32 3, print «{(&x).output_type == @i32}», p := &x, p.type == @i32", "true\ntrue\n"),
         (
             "mut c := true, a := alloc 1 of i32 5, b := alloc 1 of i32 6, \
              x := if c (move a) else (move b), y := if c (alloc 1 of i32 7) else (alloc 1 of i32 8), \

@@ -390,11 +390,7 @@ pub(crate) enum Line {
 /// As `read_parts`.
 pub(crate) unsafe fn cell_key(types: &Core, over: DyadPtr) -> Option<(DyadPtr, i32, Line)> {
     let (recv, k, i) = read_parts(types, over);
-    let recv = if dyad::ty(recv) == types.addr_ {
-        types.through(*(dyad::value(recv) as *const DyadPtr))
-    } else {
-        types.through(recv)
-    };
+    let recv = super::pointer::address_place(types, recv).unwrap_or_else(|| types.through(recv));
     if k.is_null() {
         return Some((recv, -1, line_of(types, i)?));
     }
