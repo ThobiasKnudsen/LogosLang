@@ -3,7 +3,8 @@
 
 //! The built-in operations' chooser: one mint per set of field types their parse chooses, built
 //! once and kept on the type, and the one builder of their nodes. A node's type is its mint, and
-//! the mint holds what its nodes share: the type they give back and what they run. A
+//! the mint holds what its nodes share: the type they give back, what they run and the field
+//! types it was made for. A
 //! Logos-written type mints through a function of its own. ›An operation mints through a chooser,
 //! one mint per set of operand types, so each mint's `run` body is parsed once‹ [[R301]]
 

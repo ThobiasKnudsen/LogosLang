@@ -3,8 +3,8 @@
 
 //! The concrete machine operations, `add_i32`, `lt_f64`, `store_u8`, …: one
 //! spelling-less `callable` leaf per (operation, machine type), minted from one
-//! table-driven loop. A surface operator's mint holds its leaf, `=`'s mint its store leaf,
-//! and any other statement's node its own in its op slot, so run reads it and jumps.
+//! table-driven loop. A built-in operation's mint holds its leaf, `=`'s mint its store leaf,
+//! and a node of a type that does not mint its own in its op slot, so run reads it and jumps.
 
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, RunFn, Runtime};
