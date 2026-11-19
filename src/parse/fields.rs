@@ -1341,6 +1341,9 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
+        if let Some(t) = crate::identities::dyad_place::made_type(types, lhs) {
+            return Ok(t);
+        }
         if self.is_operator_node(lhs) {
             return Ok(dyad::ty(lhs));
         }

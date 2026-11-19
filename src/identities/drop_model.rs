@@ -1662,6 +1662,33 @@ mod tests {
     }
 
     #[test]
+    fn dyad_of_a_type_frees_the_node_each_run_made() {
+        for src in [
+            "d := dyad (i32, 7), 1",
+            "m := i32 3, d := dyad (i32, m), 1",
+            "dyad (i32, 7), 1",
+            "d := dyad (i32, 7), free d, 1",
+            "d := dyad (i32, 7), e := d, 1",
+            "mut d := dyad ?, d = dyad (i32, 7), d = dyad (i64, 8), 1",
+            "for 0..3 ( d := dyad (i32, 2) ), 1",
+        ] {
+            assert_eq!(run(src), (1, 0), "{src}");
+        }
+        for (body, call) in [
+            ("f := fn (m := i32 ?) -> i32 ( d := dyad (i32, m), 1 )", "f(i32 3)"),
+            ("f := fn (m := i32 ?) -> dyad ( dyad (i32, m) )", "a := f(i32 3), b := f(i32 4), 1"),
+            ("f := fn (m := i32 ?) -> dyad ( dyad (i32, m) )", "f(i32 3), 1"),
+            ("f := fn (q := dyad ?) -> i32 ( 1 )", "f(dyad (i32, 7))"),
+        ] {
+            for src in [format!("{body}, {call}"), format!("{body}, f.compile(), {call}")] {
+                assert_eq!(run(&src), (1, 0), "{src}");
+            }
+        }
+        let src = "f := fn (m := i32 ?) -> i32 ( d := dyad (i32, m), d + 1 ), f(i32 3), 1";
+        assert_eq!(run_hosted(src), (1, 0), "{src}");
+    }
+
+    #[test]
     fn a_line_parsed_when_it_runs_frees_what_it_made() {
         for src in [
             "f := fn (a := dyad ?) -> i64 ( a ), f(i64 42), 1",

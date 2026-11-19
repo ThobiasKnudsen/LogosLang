@@ -3487,6 +3487,8 @@ fn a_dyad_is_built_from_a_type_and_a_value() {
         b"p := dyad (@i32, 5)\n",
         b"dyad (void, 0)\n",
         b"g := type (x := i32 ?)\ndyad (g, 5)\n",
+        b"dyad (i32, f64 2.5)\n",
+        b"dyad (dyad, 5)\n",
     ] {
         let (echoes, stderr) = repl(src);
         assert!(
@@ -3495,6 +3497,33 @@ fn a_dyad_is_built_from_a_type_and_a_value() {
             String::from_utf8_lossy(src)
         );
     }
+}
+
+#[test]
+fn a_dyad_of_a_type_is_a_new_node_each_time_its_line_runs() {
+    let mk = "mk := fn (m := i32 ?) -> dyad ( dyad (i32, m) )";
+    let f = "f := fn (m := i32 ?) -> i32 ( d := dyad (i32, m), d + 1 )";
+    for c in ["", "mk.compile(), "] {
+        for (src, want) in [
+            ("m := i32 3, d := dyad (i32, m), d".to_string(), "3"),
+            ("d := dyad (i32, i32 4), d".to_string(), "4"),
+            ("d := dyad (i32, 7), d".to_string(), "7"),
+            ("d := dyad (i32, 7), d.type".to_string(), "i32"),
+            ("m := i32 3, (dyad (i64, m)).type".to_string(), "i64"),
+            ("mut t := type ?, t = i32, d := dyad (t, 7), d".to_string(), "7"),
+            (format!("{mk}, {c}a := mk(i32 3), b := mk(i32 4), print «{{a}} {{b}}»"), "3 4"),
+            (format!("{mk}, {c}x := mk(i32 9), x.type"), "i32"),
+            (format!("{f}, f(i32 3)"), "4"),
+        ] {
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let src = "g := fn (m := i32 ?) -> i32 ( d := dyad (i32, m), 0 ), g.compile(), g(i32 3)";
+    assert_eq!(line(src), "0", "{src}");
+    // A type a body's box holds only when the program runs: stand-in for #292.
+    let (code, _, stderr) = run_line("f := fn (t := type ?) -> dyad ( dyad (t, 7) ), f(i32)");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
 }
 
 /// Run one command line and return its stdout, asserting success.
