@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The eleven infix operators over two operands, `+ - * / %` and `< > <= >= == !=`, and
-//! negation, which `-` spells too and which builds `0 - x`. Their fields are `?`, so each
-//! node is `[mint, lhs, rhs]`: the parse chooses the mint from the operand types once they
-//! meet, and the mint holds the output type and the leaf; two comptime rationals fold at
-//! parse instead.
+//! negation, which `-` spells too. Each node is `[mint, lhs, rhs]`, or negation's `[mint,
+//! operand]`: the parse chooses the mint from the operand types once they meet, and the mint
+//! holds the output type and the leaf; comptime rationals fold at parse instead.
 
 use cranelift_codegen::ir::Value;
 
@@ -74,10 +73,12 @@ fn register(cx: &mut Cx, spelling: &str, rank: f64, family: Family) -> DyadPtr {
 /// number type does (›`-` negates where a space stands before it and none after, or no value
 /// stands to its left; any other `-` subtracts‹ [[R157]]).
 fn register_negate(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record_assoc(cx.store, meta::TOKEN_TAG, meta::prec::CONVERT, Assoc::Right);
+    let record =
+        meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::CONVERT, Assoc::Right, &["operand"]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("-", id);
     cx.metas.insert(id, construct_negate);
+    cx.lower.insert(id, lower_negate);
     id
 }
 
@@ -224,8 +225,7 @@ unsafe fn node(
     leaf: DyadPtr,
 ) -> DyadPtr {
     let key = [super::read::output_type(types, lhs), super::read::output_type(types, rhs)];
-    let mint = mint::of(store, types, op, &key, output_type, leaf);
-    store.alloc_words(mint, &[lhs, rhs])
+    mint::node(store, types, op, &key, output_type, leaf, &[lhs, rhs])
 }
 
 /// `p + k` and `p - k` on an `@T` step k whole cells: the node is `[p, k * width]` under the
@@ -364,21 +364,60 @@ fn build_identity_compare(
     None
 }
 
-/// The value to its right negated as `0 - x`, a subtraction's node, so it molds to the value's
-/// type and lowers as a subtraction; a literal to the right folded it at discovery.
+/// The value to its right negated; a literal to the right folded it at discovery.
 fn construct_negate(
     p: &mut crate::parse::Parser,
-    _id: DyadPtr,
+    id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     let types = p.types();
-    let rhs = p.take_right(tape)?;
-    let zero = rational::build(p.store(), types.rational, "0")?;
-    let node = group::apply(p.store(), types, types.minus, zero, rhs, build::<ARITH, SUB>)?;
-    // SAFETY: `node` was just built over reduced dyads.
+    let operand = p.take_right(tape)?;
+    // SAFETY: `operand` is the reduced dyad to the right.
+    let node = unsafe { build_negate(p.store(), types, id, operand) }?;
+    // SAFETY: `node` was just built over a reduced dyad.
     let node = unsafe { rational::slotted(p, node) };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
+}
+
+/// `[operand]` under negation's mint for the operand's type, which it gives back; a plain number
+/// folds, and over a group each member is negated.
+///
+/// # Safety
+/// `operand` must be a reduced dyad from the store.
+unsafe fn build_negate(
+    store: &mut Store,
+    types: &Core,
+    negate: DyadPtr,
+    operand: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    if let Some((connective, a, b)) = group::members(types, operand) {
+        let a = build_negate(store, types, negate, a)?;
+        let b = build_negate(store, types, negate, b)?;
+        return group::join(store, types, connective, a, b);
+    }
+    if rational::is_rational_value(types, operand) {
+        let (t, leaf) = (types.rational, types.ops.rational_neg);
+        return Ok(mint::node(store, types, negate, &[t], t, leaf, &[operand]));
+    }
+    match super::operand_of(types, operand) {
+        super::Operand::Literal => {
+            Ok(rational::negate(store, types.rational, types.through(operand)))
+        }
+        super::Operand::Concrete(nt) => {
+            let t = types.numtypes[nt as usize];
+            let operand = super::land(store, types, operand, t)?;
+            Ok(mint::node(store, types, negate, &[t], t, types.ops.neg[nt as usize], &[operand]))
+        }
+        super::Operand::Pointer(_) | super::Operand::NonNumeric => {
+            Err(ParseError::UnsupportedOperands)
+        }
+    }
+}
+
+fn lower_negate(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a node of one of negation's mints, `[operand]`.
+    unsafe { lw.lower_negate(node) }
 }
 
 fn lower<const FAMILY: u8, const OP: u8>(

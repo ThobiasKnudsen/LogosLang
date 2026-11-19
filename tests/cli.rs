@@ -4423,8 +4423,8 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert!(!out.status.success() && out.stdout.is_empty(), "{tail}: {stderr}");
         assert!(stderr.contains("cannot compute"), "{tail}: {stderr}");
     }
-    // `&x` is typed `&`, not by the `@i32` it gives; `y mk` is typed `mk`, not by the record its
-    // `run` gives, which a copy carries.
+    // `&x` is typed by `&`'s mint, not by the `@i32` it gives; `y mk` is typed `mk`, not by the
+    // record its `run` gives, which a copy carries.
     for (src, want) in [
         ("x := i32 5, (&x).type == @i32".to_string(), "false"),
         ("f := fn () -> bool ( x := i32 5, (&x).type == @i32 ), f.compile(), f()".into(), "false"),
@@ -4468,6 +4468,48 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
     let out = logos().arg(format!("{mk}, y := i32 3, z := y mk, z.x")).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n");
+}
+
+/// ›An operation mints through a chooser, one mint per set of operand types, so each mint's `run`
+/// body is parsed once‹ [[R301]]: `&` mints per pointee type and negation per operand type, as
+/// `+` mints, and negation is its own identity (›`-` negates where a space stands before it and
+/// none after, or no value stands to its left; any other `-` subtracts‹ [[R157]]), on both tiers.
+#[test]
+fn every_operation_is_typed_by_its_mint() {
+    let mut cases = Vec::new();
+    for (body, want) in [
+        ("(&x).type == (&w).type", "false\n"),
+        ("(&x).type == (&y).type", "true\n"),
+        ("(x + x).type == (w + w).type", "false\n"),
+        ("(-x).type == (x - y).type", "false\n"),
+        ("(-x).type == (-y).type", "true\n"),
+        ("(-x).type == (-w).type", "false\n"),
+        ("(-x).output_type == i32", "true\n"),
+        ("(-x).operand == x", "true\n"),
+    ] {
+        cases.push((format!("x := i32 3, y := i32 4, w := i64 5, {body}"), want));
+        let f = format!("f := fn (x := i32 ?, y := i32 ?, w := i64 ?) -> bool ( {body} )");
+        cases.push((format!("{f}, f(3, 4, 5)"), want));
+        cases.push((format!("{f}, f.compile(), f(3, 4, 5)"), want));
+    }
+    // Negation over each kind of number: an integer wraps, a float flips its sign, a rational
+    // value is negated exactly.
+    for (ty, arg, want) in
+        [("u8", "3", "253\n"), ("i8", "i8 -128", "-128\n"), ("f64", "0.0", "-0.0\n")]
+    {
+        let f = format!("f := fn (m := {ty} ?) -> {ty} ( -m )");
+        cases.push((format!("{f}, f({arg})"), want));
+        cases.push((format!("{f}, f.compile(), f({arg})"), want));
+    }
+    cases.push(("m := rational_number 3, n := -m, n".into(), "-3\n"));
+    assert_runs(&cases);
+    for src in
+        ["x := i32 3, (-x).lhs", "f := fn (x := i32 ?) -> i32 ( (-x).lhs ), f.compile(), f(3)"]
+    {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("does not fit the node's type"), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]

@@ -483,24 +483,27 @@ mod tests {
 
         // SAFETY: all handles are identities Core::build just allocated.
         unsafe {
-            // An operation whose fields are `?` keeps its output and its leaf on each mint, and so
-            // does `=`, one mint per place type.
-            for id in [
-                core.plus,
-                core.minus,
-                core.times,
-                core.div_,
-                core.rem_,
-                core.lt,
-                core.gt,
-                core.le,
-                core.ge,
-                core.eq,
-                core.ne,
-                core.assign,
+            // An operation keeps its output and its leaf on each mint, its nodes holding their
+            // fields alone: `=` one mint per place type, `&` one per pointee type.
+            for (id, arity) in [
+                (core.plus, 2),
+                (core.minus, 2),
+                (core.times, 2),
+                (core.div_, 2),
+                (core.rem_, 2),
+                (core.lt, 2),
+                (core.gt, 2),
+                (core.le, 2),
+                (core.ge, 2),
+                (core.eq, 2),
+                (core.ne, 2),
+                (core.assign, 2),
+                (core.amp_, 2),
+                (core.addr_, 2),
+                (core.negate, 1),
             ] {
                 assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
-                assert_eq!(meta::arity_of(id), 2);
+                assert_eq!(meta::arity_of(id), arity);
                 assert_eq!((meta::op_slot_of(id), meta::output_slot_of(id)), (None, None));
             }
             for (id, kind, arity) in [
@@ -553,7 +556,6 @@ mod tests {
                 assert_eq!(meta::parse_rank_of(id), prec::CONVERT);
                 assert_eq!(meta::assoc_of(id), Assoc::Right);
             }
-            assert_eq!(meta::kind_of(core.negate), Some(meta::TOKEN_TAG));
             assert_eq!(meta::parse_rank_of(core.lt), prec::COMPARE);
             assert_eq!(meta::parse_rank_of(core.eq), prec::EQUALITY);
 

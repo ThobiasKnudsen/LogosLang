@@ -11,7 +11,7 @@ use crate::run::{RunError, RunFn, Runtime};
 
 use super::assign::{put, take};
 use super::callable::{self, Callables};
-use super::numtype::{apply_arith, apply_compare, ArithOp, CmpOp, NumType};
+use super::numtype::{apply_arith, apply_compare, apply_negate, ArithOp, CmpOp, NumType};
 use super::read::{carry_of, Carry};
 use super::{operands, Cx};
 
@@ -23,9 +23,12 @@ pub struct OpLeaves {
     pub(crate) arith: [[DyadPtr; 10]; 5],
     /// `[CmpOp][NumType]`.
     pub(crate) cmp: [[DyadPtr; 10]; 6],
+    /// Negation, `[NumType]`.
+    pub(crate) neg: [DyadPtr; 10],
     /// The leaves over rational values, interpreted only.
     pub(crate) rational_arith: [DyadPtr; 5],
     pub(crate) rational_cmp: [DyadPtr; 6],
+    pub(crate) rational_neg: DyadPtr,
     /// `[NumType]`: the `=` of a word at that width.
     pub(crate) store: [DyadPtr; 10],
     /// The `=` of a value that is its bytes.
@@ -90,7 +93,14 @@ impl OpLeaves {
     /// What the compiler refuses: every step over rational values.
     pub(crate) fn is_rational_leaf(&self, leaf: DyadPtr) -> bool {
         !leaf.is_null()
-            && (self.rational_arith.contains(&leaf) || self.rational_cmp.contains(&leaf))
+            && (self.rational_arith.contains(&leaf)
+                || self.rational_cmp.contains(&leaf)
+                || leaf == self.rational_neg)
+    }
+
+    /// A step over rational values that gives one, sixteen bytes no node holds.
+    pub(crate) fn gives_rational(&self, leaf: DyadPtr) -> bool {
+        leaf == self.rational_neg || self.rational_arith_op_of(leaf).is_some()
     }
 
     /// The op an arithmetic leaf over rationals stands for; `None` for any other leaf.
@@ -139,6 +149,14 @@ fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Resul
         let l = rt.run(lhs)?;
         let r = rt.run(rhs)?;
         Ok(apply_compare(CmpOp::from_tag(OP), NumType::from_tag(NT), l, r))
+    }
+}
+
+fn neg_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a node of negation's mint, its one word its operand.
+    unsafe {
+        let v = rt.run(*(crate::dyad::value(node) as *const DyadPtr))?;
+        Ok(apply_negate(NumType::from_tag(NT), v))
     }
 }
 
@@ -212,6 +230,20 @@ const CMP_SHIMS: [[RunFn; 10]; 6] = [
     shim_row!(cmp_run, 5),
 ];
 
+/// The negation shims, `[NumType]`.
+const NEG_SHIMS: [RunFn; 10] = [
+    neg_run::<0>,
+    neg_run::<1>,
+    neg_run::<2>,
+    neg_run::<3>,
+    neg_run::<4>,
+    neg_run::<5>,
+    neg_run::<6>,
+    neg_run::<7>,
+    neg_run::<8>,
+    neg_run::<9>,
+];
+
 /// The store shims, `[NumType]`.
 const STORE_SHIMS: [RunFn; 10] = [
     store_run::<0>,
@@ -243,6 +275,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
             cmp[o][n] = callable::mint(cx.store, cs.callable, shim as usize, cs.seed_native);
         }
     }
+    let neg =
+        NEG_SHIMS.map(|shim| callable::mint(cx.store, cs.callable, shim as usize, cs.seed_native));
     let mut store = [std::ptr::null_mut(); 10];
     for (n, &shim) in STORE_SHIMS.iter().enumerate() {
         store[n] = callable::mint(cx.store, cs.callable, shim as usize, cs.seed_native);
@@ -255,13 +289,17 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
     for (o, &run) in super::rational::CMP_RUNS.iter().enumerate() {
         rational_cmp[o] = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     }
+    let rational_neg =
+        callable::mint_native(cx.store, cs.callable, super::rational::NEG_RUN, cs.seed_native);
     let store_bytes = callable::mint_native(cx.store, cs.callable, store_bytes_run, cs.seed_native);
     // The single-native leaves are minted by their own registrations.
     OpLeaves {
         arith,
         cmp,
+        neg,
         rational_arith,
         rational_cmp,
+        rational_neg,
         store,
         store_bytes,
         and_: std::ptr::null_mut(),
@@ -315,7 +353,8 @@ mod tests {
             .iter()
             .flatten()
             .chain(core.ops.cmp.iter().flatten())
-            .chain(core.ops.store.iter());
+            .chain(core.ops.store.iter())
+            .chain(core.ops.neg.iter());
         for (i, &leaf) in all.enumerate() {
             // The two float remainders are the only unminted slots.
             let is_float_rem = i == ArithOp::Rem as usize * 10 + NumType::F32 as usize
@@ -332,7 +371,7 @@ mod tests {
             }
             assert!(seen.insert(leaf), "leaves are distinct identities");
         }
-        assert_eq!(seen.len(), 5 * 10 - 2 + 6 * 10 + 10);
+        assert_eq!(seen.len(), 5 * 10 - 2 + 6 * 10 + 10 + 10);
     }
 
     /// `20 + 22` over `i32`, a node of `+`'s mint for `i32`.
@@ -341,11 +380,19 @@ mod tests {
         let rhs = store.alloc_blob(core.i32_, &22i32.to_ne_bytes());
         let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
         let key = [core.i32_, core.i32_];
-        // SAFETY: `+` carries an operand record; the key and output are type nodes and the
-        // leaf a minted callable, all from `store`.
-        let mint =
-            unsafe { crate::identities::mint::of(store, core, core.plus, &key, core.i32_, leaf) };
-        store.alloc_words(mint, &[lhs, rhs])
+        // SAFETY: `+` carries an operand record of two roles; the key and output are type nodes
+        // and the leaf a minted callable, all from `store`.
+        unsafe {
+            crate::identities::mint::node(
+                store,
+                core,
+                core.plus,
+                &key,
+                core.i32_,
+                leaf,
+                &[lhs, rhs],
+            )
+        }
     }
 
     #[test]

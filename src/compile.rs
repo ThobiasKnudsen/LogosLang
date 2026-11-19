@@ -788,6 +788,19 @@ impl<'a> Lowerer<'a, '_> {
         })
     }
 
+    /// `ineg` or `fneg` at the operand's width.
+    ///
+    /// # Safety
+    /// `node` must be a node of negation's mint over a number type, `[operand]`.
+    pub(crate) unsafe fn lower_negate(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
+        let operand = *(dyad::value(node) as *const DyadPtr);
+        let Operand::Concrete(nt) = operand_of(self.types, operand) else {
+            return Err(CompileError::Internal("a resolved negation has a numeric operand"));
+        };
+        let v = self.lower(operand)?;
+        Ok(if nt.is_float() { self.builder.ins().fneg(v) } else { self.builder.ins().ineg(v) })
+    }
+
     fn const_int(&mut self, nt: NumType, imm: i64) -> Value {
         self.builder.ins().iconst(nt.cranelift_type(), imm)
     }

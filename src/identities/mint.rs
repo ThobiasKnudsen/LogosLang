@@ -1,11 +1,11 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The built-in operators' chooser: one mint per set of field types their parse chooses, built
-//! once and kept on the type. A node's type is its mint, and the mint holds what its nodes share:
-//! the type they give back and what they run. A Logos-written type mints through a function of
-//! its own. ›An operation mints through a chooser, one mint per set of operand types, so each
-//! mint's `run` body is parsed once‹ [[R301]]
+//! The built-in operations' chooser: one mint per set of field types their parse chooses, built
+//! once and kept on the type, and the one builder of their nodes. A node's type is its mint, and
+//! the mint holds what its nodes share: the type they give back and what they run. A
+//! Logos-written type mints through a function of its own. ›An operation mints through a chooser,
+//! one mint per set of operand types, so each mint's `run` body is parsed once‹ [[R301]]
 
 use super::{array, meta};
 use crate::dyad::DyadPtr;
@@ -17,14 +17,33 @@ use crate::Core;
 /// node‹ [[R194]]).
 pub(crate) const STATIC_FIELD: &str = "output_type";
 
-/// A built-in's mint for the field types `key`, made the first time and kept on `origin`. The
-/// parse that chooses it gives the type its nodes give back and the operation they run; the
-/// parse choosing the operation is a stand-in for #69.
+/// A node of the built-in operation `origin`, its fields `words` in the order of `origin`'s roles,
+/// typed by `origin`'s mint for the field types `key`: the one way a built-in operation's node is
+/// built. The parse that chooses the mint gives the type its nodes give back and the operation
+/// they run; the parse choosing the operation is a stand-in for #69.
 ///
 /// # Safety
-/// `origin` must carry a `TUPLE_TAG` operand record; `key` and `output_type` null or type nodes,
-/// `op` a callable leaf, all from the store.
-pub(crate) unsafe fn of(
+/// `origin` must carry a `TUPLE_TAG` operand record of `words.len()` roles; `key` and
+/// `output_type` null or type nodes, `op` a callable leaf, `words` dyads, all from the store.
+pub(crate) unsafe fn node(
+    store: &mut Store,
+    types: &Core,
+    origin: DyadPtr,
+    key: &[DyadPtr],
+    output_type: DyadPtr,
+    op: DyadPtr,
+    words: &[DyadPtr],
+) -> DyadPtr {
+    debug_assert_eq!(meta::arity_of(origin), words.len(), "a mint's node holds its fields alone");
+    let mint = of(store, types, origin, key, output_type, op);
+    store.alloc_words(mint, words)
+}
+
+/// `origin`'s mint for the field types `key`, made the first time and kept on `origin`.
+///
+/// # Safety
+/// As [`node`].
+unsafe fn of(
     store: &mut Store,
     types: &Core,
     origin: DyadPtr,
@@ -43,7 +62,7 @@ pub(crate) unsafe fn of(
 }
 
 /// # Safety
-/// As `of`.
+/// As [`node`].
 unsafe fn make(
     store: &mut Store,
     types: &Core,
