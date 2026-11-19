@@ -7,7 +7,7 @@
 ^ := type (
     lhs := ?,
     rhs := i32 ?,
-    share output_type := lhs.type,
+    share output_type := type ?,
     share run = (
         mut r := output_type 1,
         for 0..rhs ( r = r * lhs ),
@@ -19,6 +19,7 @@
         tape[0].type = ^,
         tape[0].lhs = tape[-1],
         tape[0].rhs = tape[1],
+        tape[0].output_type = tape[-1].type,
         tape.is_constructed[0] = true,
         tape.remove(1),
         tape.remove(-1)

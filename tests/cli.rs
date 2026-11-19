@@ -329,154 +329,13 @@ fn the_power_demo_converts_a_whole_exponent_so_each_mint_has_one_result_type() {
     }
 }
 
-/// `p` mints one type per type of `v`; the `share` lines written below `v` are its mints'.
-fn per_mint(shares: &str, run: &str) -> String {
-    format!(
-        "p := type ( v := ?, share output_type := v.type, {shares}, share run = ( {run} ), \
-         share parse_rank = 60, share parse = ( tape[0].type = p, tape[0].v = tape[1], \
-         tape.remove(1), tape.is_constructed[0] = true ) )"
-    )
-}
-
-#[test]
-fn a_minting_types_share_lines_are_made_once_per_mint() {
-    let bump = "bump := fn () -> i32 ( print «bump», 1 )";
-    let g = per_mint("share g := bump()", "v");
-    let n = per_mint("share mut n := i32 0", "n = n + 1, v");
-    let counted =
-        "f := fn (x := i32 ?, y := f64 ?) -> i32 ( a := p x, b := p y, c := p x, (p x).n )";
-    for (src, want) in [
-        (
-            format!("{bump}, {g}, print «defined», x := i32 4, y := f64 2.0, print «{{p x}} {{p y}} {{p x}}»"),
-            "defined\nbump\nbump\n4 2.0 4",
-        ),
-        (
-            format!(
-                "{bump}, {g}, print «defined», \
-                 f := fn (x := i32 ?, y := f64 ?) -> i32 ( a := p x, b := p y, (p x).g ), \
-                 f.compile(), print «{{f(4, 2.0)}}»"
-            ),
-            "defined\nbump\nbump\n1",
-        ),
-        (
-            format!(
-                "{n}, x := i32 4, y := f64 2.0, a := p x, b := p y, c := p x, \
-                 print «{{(p x).n}} {{(p y).n}}»"
-            ),
-            "2 1",
-        ),
-        (format!("{n}, {counted}, print «{{f(4, 2.0)}} {{f(4, 2.0)}}»"), "2 4"),
-        (format!("{n}, {counted}, f.compile(), print «{{f(4, 2.0)}} {{f(4, 2.0)}}»"), "2 4"),
-        (
-            format!("{}, x := i32 4, print «{{p x}} {{(p x).k}}»", per_mint("share k := i32 7", "v + k")),
-            "11 7",
-        ),
-        (
-            format!(
-                "{}, x := i32 4, p x",
-                per_mint("share k := i32 7, share j := k + 1", "v + j")
-            ),
-            "12",
-        ),
-        (
-            format!(
-                "{}, x := i32 4, (p x).twice()",
-                per_mint("share twice := fn () -> i32 ( i32 2 )", "v")
-            ),
-            "2",
-        ),
-    ] {
-        let (code, stdout, stderr) = run_line(&src);
-        assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: stderr: {stderr}");
-    }
-}
-
-#[test]
-fn a_mints_output_type_is_what_its_declaration_line_gives_from_its_field_types() {
-    let pw = "pw := type ( lhs := ?, rhs := ?, share output_type := if lhs.type == f64 or \
-              rhs.type == f64 (f64) else if lhs.type == f32 or rhs.type == f32 (f32) \
-              else if rhs.type == rational_number (f64) else (lhs.type), \
-              share run = ( output_type 1 ), share parse_rank = *.parse_rank + 1, \
-              share parse = ( tape[0].type = pw, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], \
-              tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
-    for (tail, want) in [
-        ("x := i32 2, y := i32 3, print «{x pw y} {(x pw y).output_type}»", "1 i32"),
-        ("x := i32 2, y := f64 3.0, print «{x pw y} {(x pw y).output_type}»", "1.0 f64"),
-        ("x := f32 2.0, y := i32 3, print «{(x pw y).output_type}»", "f32"),
-        ("x := i64 2, print «{(x pw 0.5).output_type}»", "f64"),
-        ("f := fn (x := i64 ?, y := i64 ?) -> i64 ( x pw y ), f.compile(), print «{f(2, 3)}»", "1"),
-        (
-            "f := fn (x := i32 ?, y := f64 ?) -> f64 ( x pw y ), f.compile(), \
-             print «{f(i32 2, 3.0)}»",
-            "1.0",
-        ),
-    ] {
-        let src = format!("{pw}, {tail}");
-        let (code, stdout, stderr) = run_line(&src);
-        assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: stderr: {stderr}");
-    }
-}
-
-#[test]
-fn a_minting_types_output_type_line_gives_its_type_once() {
-    // A later write of the member would leave the built run and its callers on the old type.
-    let p = |line: &str| {
-        format!(
-            "p := type ( v := ?, {line}, share set := fn () -> i32 ( output_type = f64, i32 0 ), \
-             share run = ( v ), share parse_rank = 60, share parse = ( tape[0].type = p, \
-             tape[0].v = tape[1], tape.remove(1), tape.is_constructed[0] = true ) ), \
-             x := i32 4, s := (p x).set(), p x"
-        )
-    };
-    for line in [
-        "share output_type := type ?",
-        "share mut output_type := type ?",
-        "share mut output_type := v.type",
-        "share output_type := ?",
-    ] {
-        let src = p(line);
-        let (code, _, stderr) = run_line(&src);
-        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-        assert!(
-            stderr.contains("writes each mint's output type in its declaration line, once"),
-            "{src}: stderr: {stderr}"
-        );
-    }
-}
-
-#[test]
-fn a_minting_types_kept_share_line_is_refused_at_its_definition_or_its_mint() {
-    let shadowed = "`g` is already declared and still in scope";
-    for (src, expect) in [
-        ("g := i32 1, p := type ( v := ?, share g := i32 7 ), 0".to_string(), shadowed),
-        ("p := type ( v := ?, share g := i32 7, share g := i32 8 ), 0".to_string(), shadowed),
-        ("p := type ( v := ?, share g := i32 7, g := i32 ? ), 0".to_string(), shadowed),
-        (
-            format!("{}, x := i32 4, p x", per_mint("share k := nope", "v")),
-            "a `share` line of `p` could not be made for this mint",
-        ),
-        (
-            format!("{}, x := i32 4, p x", per_mint("share k := v", "v")),
-            "`v` is a field, and a `share` line of a type that mints is made once per mint",
-        ),
-        (
-            format!("{}, x := i32 4, p x", per_mint("share k := v.size_bytes", "v")),
-            "it reads only the field's type, `v.type`",
-        ),
-    ] {
-        let (code, _, stderr) = run_line(&src);
-        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
-    }
-}
-
 #[test]
 fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
     let q = |conversion: &str| {
         format!(
-            "q := type ( a := ?, share output_type := f64, share run = ( {conversion} * 2.0 ), \
+            "q := type ( a := ?, share output_type := type ?, share run = ( {conversion} * 2.0 ), \
              share parse_rank = 60, share parse = ( tape[0].type = q, tape[0].a = tape[1], \
-             tape.remove(1), tape.is_constructed[0] = true ) ), q 0.75"
+             tape[0].output_type = f64, tape.remove(1), tape.is_constructed[0] = true ) ), q 0.75"
         )
     };
     let (code, stdout, stderr) = run_line(&q("f64 lossy (a)"));
@@ -1058,10 +917,10 @@ fn a_shared_name_in_a_function_is_made_once_at_the_definition() {
 }
 
 /// The power operator with the bare run body, on one line for the REPL.
-const POWER: &str = "^ := type ( lhs := ?, rhs := i32 ?, share output_type := lhs.type, \
+const POWER: &str = "^ := type ( lhs := ?, rhs := i32 ?, share output_type := type ?, \
     share run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ), \
     share parse_rank = *.parse_rank + 1, share associativity = right, \
-    share parse = ( tape[0].type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], \
+    share parse = ( tape[0].type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = tape[-1].type, \
     tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
 
 #[test]
@@ -2211,9 +2070,9 @@ fn a_binding_has_no_field_type() {
 
 #[test]
 fn a_value_reads_its_type_with_a_dot_on_both_tiers() {
-    let sq = "sq := type ( a := ?, share output_type := a.type, share run = ( a * a ), \
+    let sq = "sq := type ( a := ?, share output_type := type ?, share run = ( a * a ), \
               share parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
-              tape.is_constructed[0] = true, tape.remove(-1) ) )";
+              tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, tape.remove(-1) ) )";
     let pt = "pt := type ( x := i32 ? ), g := fn (x := i32 ?) -> pt ( pt(x) )";
     for (src, want) in [
         ("x := i32 3, x.type == i32".to_string(), "true"),
@@ -3998,14 +3857,14 @@ fn a_declaration_on_the_command_line_is_its_names_start() {
 
 #[test]
 fn a_nodes_fields_are_read_by_name_without_running_it() {
-    let power = "^ := type ( lhs := ?, rhs := i32 ?, share output_type := lhs.type, \
+    let power = "^ := type ( lhs := ?, rhs := i32 ?, share output_type := type ?, \
                  share run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ), \
                  share parse_rank = *.parse_rank + 1, share associativity = right, \
-                 share parse = ( tape[0].type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], \
+                 share parse = ( tape[0].type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = tape[-1].type, \
                  tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
-    let sq = "sq := type ( a := ?, share output_type := a.type, share tag := i32 7, \
+    let sq = "sq := type ( a := ?, share output_type := type ?, share tag := i32 7, \
               share run = ( a * a ), share parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
-              tape.is_constructed[0] = true, tape.remove(-1) ) )";
+              tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, tape.remove(-1) ) )";
     let mk = "pt := type ( x := i32 ? ), mk := type ( a := i32 ?, output_type := type ?, \
               share run = ( pt(a) ), share parse = ( tape[0].type = mk, tape[0].a = tape[-1], \
               tape[0].output_type = pt, tape.is_constructed[0] = true, tape.remove(-1) ) )";
@@ -4258,9 +4117,9 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
     let local = |body: &str| cell(&format!("n := i32 40, {body}, tape.is_constructed[0] = true"));
     let any = |body: &str| {
         format!(
-            "sq := type ( v := ?, share output_type := i32, share run = ( v ), \
+            "sq := type ( v := ?, share output_type := type ?, share run = ( v ), \
              share parse_rank = *.parse_rank + 1, share parse = ( n := i32 40, tape[0].type = sq, \
-             {body}, tape.is_constructed[0] = true, tape.remove(-1) ) )"
+             {body}, tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )"
         )
     };
     let in_f = "f := fn (y := i32 ?) -> i32 ( y sq )";
@@ -4272,9 +4131,9 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         )
     };
     let checked_n = counted("if tape[0].n.type ⊆ u64 ( tape[0].m = tape[0].n * 2 )");
-    let wide = "p := type ( rhs := ?, share output_type := i64, share run = ( rhs ), \
+    let wide = "p := type ( rhs := ?, share output_type := type ?, share run = ( rhs ), \
                 share parse_rank = 60, share parse = ( tape[0].type = p, \
-                if tape[1].type ⊆ i64 ( tape[0].rhs = i64 (tape[1]) ), \
+                if tape[1].type ⊆ i64 ( tape[0].rhs = i64 (tape[1]) ), tape[0].output_type = i64, \
                 tape.remove(1), tape.is_constructed[0] = true ) )";
     for (src, want) in [
         // A narrowed line into a number field, at any depth.
@@ -4305,16 +4164,16 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         (any("tape[0].v = n") + ", x := i32 7, x sq", "40"),
         (any("tape[0].v = n + 1") + ", x := i32 7, x sq", "41"),
         (
-            "q := type ( n := ?, share output_type := u64, share run = ( n ), share parse_rank = 60, \
+            "q := type ( n := ?, share output_type := type ?, share run = ( n ), share parse_rank = 60, \
              share parse = ( tape[0].type = q, tape[0].n = tape[1].dyads.size, \
-             tape.remove(1), tape.is_constructed[0] = true ) ), q (1, 2, 3)"
+             tape[0].output_type = u64, tape.remove(1), tape.is_constructed[0] = true ) ), q (1, 2, 3)"
                 .to_string(),
             "3",
         ),
         (
-            "q := type ( v := ?, share output_type := u64, share run = ( v ), share parse_rank = 61, \
+            "q := type ( v := ?, share output_type := type ?, share run = ( v ), share parse_rank = 61, \
              share parse = ( tape[0].type = q, if not tape[1].dyads[0].type ⊆ u64 error «no», \
-             tape[0].v = tape[1].dyads[0] + 1, tape.remove(1), \
+             tape[0].v = tape[1].dyads[0] + 1, tape[0].output_type = u64, tape.remove(1), \
              tape.is_constructed[0] = true ) ), q [5]"
                 .to_string(),
             "6",
@@ -6847,15 +6706,16 @@ fn free_and_move_read_the_type_a_dereference_gives_back() {
 
 #[test]
 fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
-    let isbool = "isbool := type ( a := ?, share output_type := i32, \
+    let isbool = "isbool := type ( a := ?, share output_type := type ?, \
                   share run = ( if (a.type == bool) (i32 1) else (i32 2) ), \
                   share parse_rank = *.parse_rank + 1, share associativity = left, \
                   share parse = ( tape[0].type = isbool, tape[0].a = tape[-1], \
-                  tape.is_constructed[0] = true, tape.remove(-1) ) )";
-    let pass = "pass := type ( a := ?, share output_type := a.type, share run = ( a ), \
+                  tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )";
+    let pass = "pass := type ( a := ?, share output_type := type ?, share run = ( a ), \
                 share parse_rank = *.parse_rank + 1, share associativity = left, \
                 share parse = ( tape[0].type = pass, tape[0].a = tape[-1], \
-                tape.is_constructed[0] = true, tape.remove(-1) ) )";
+                tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, \
+                tape.remove(-1) ) )";
     let at = "at := fn (q := @i32 ?) -> @i32 ( q )";
     let pt = "pt := type (u := i32 ?, v := i32 ?)";
     for (src, want) in [

@@ -143,9 +143,6 @@ struct Context<'a> {
     /// it stands at. It runs once, at the definition, so its places are global
     /// and no call's slot is in reach (DESIGN ›Two muts, and the storage partition‹).
     once_at: Option<usize>,
-    /// While a mint's `share` lines are made: the scope naming each of its fields by the type it
-    /// has in that mint, with no value, so only `.type` reads it; null elsewhere.
-    mint_fields: DyadPtr,
     /// While a type body's field declaration reads its type: a hole there names the
     /// field's type and needs no place, so a type without one, `square_brackets ?`, may stand.
     field_hole: bool,
@@ -191,7 +188,6 @@ impl<'a> Context<'a> {
             narrow_next: None,
             member_fn_depth: None,
             once_at: None,
-            mint_fields: std::ptr::null_mut(),
             field_hole: false,
             result_type: false,
             ended_log: Vec::new(),

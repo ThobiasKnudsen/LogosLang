@@ -5,7 +5,6 @@
 //! tape fragment and constructed once per field-type set when a node supplies the types.
 //! Node shape `{type: run_body, value: [text, cells, specs, op]}`; `specs` is an array
 //! of `[key, fn]` pairs, `key` one type per instance field. DESIGN ›Deferral is authored‹.
-//! A `share` line a type that mints keeps for its mints is held the same way, its `specs` unused.
 
 use super::numtype::NumType;
 use super::{array, meta, Cx};

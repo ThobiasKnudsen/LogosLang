@@ -24,8 +24,8 @@
 //!              TUPLE/LIST         u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
 //!                                 none), then arity × `dyad@` role-name strings
 //!              RECORD            see `RECORD_TAG`
-//!            a mint's is its origin's, no op or output slot, then `[output_type, op, shares]`,
-//!            the words its nodes share
+//!            a mint's is its origin's, no op or output slot, then `[output_type, op]`, the
+//!            words its nodes share
 //! ```
 //!
 //! The kind byte continues `numtype`'s tag space (`NumType` 0–9, `VOID_TAG` 10,
@@ -57,9 +57,8 @@ pub(crate) const CONVENTION_TAG: u8 = 21;
 /// Values are `[len: u64][data: @dyad]`, 16 bytes; a list never lives inline in a node.
 pub(crate) const ARRAY_TAG: u8 = 22;
 /// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]
-/// [body: @dyad][free: @dyad][bracket builder: @dyad][field bindings: @dyad][kept shares: @dyad]`,
-/// 64 bytes, locked at definition; `body` is null where the type has none, `free` where its body
-/// fills none.
+/// [body: @dyad][free: @dyad][bracket builder: @dyad][field bindings: @dyad]`, 56 bytes, locked
+/// at definition; `body` is null where the type has none, `free` where its body fills none.
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Values are dyad views: the value IS the viewed node's address.
 pub(crate) const DYAD_TAG: u8 = 24;
@@ -197,7 +196,7 @@ pub(crate) unsafe fn mint_record(
             blob.extend_from_slice(&(role_of(origin, i) as usize).to_ne_bytes());
         }
     }
-    for word in [output_type, op, std::ptr::null_mut()] {
+    for word in [output_type, op] {
         blob.extend_from_slice(&(word as usize).to_ne_bytes());
     }
     store.alloc_bytes(&blob)
@@ -227,7 +226,6 @@ pub(crate) unsafe fn mint_of(id: DyadPtr) -> DyadPtr {
 
 const MINT_OUTPUT: usize = 0;
 const MINT_OP: usize = 1;
-const MINT_SHARES: usize = 2;
 
 /// Where the mint's `k`th shared word lies, after its payload.
 ///
@@ -270,21 +268,6 @@ pub(crate) unsafe fn install_mint_op(id: DyadPtr, run: DyadPtr) {
     mint_word_at(id, MINT_OP).write_unaligned(run);
 }
 
-/// The scope the mint's own `share` members are declared in, made from the lines its origin
-/// keeps; null until they are made, and on a built-in's mint.
-///
-/// # Safety
-/// As `mint_word_at`.
-pub(crate) unsafe fn mint_shares_of(id: DyadPtr) -> DyadPtr {
-    mint_word_at(id, MINT_SHARES).read_unaligned()
-}
-
-/// # Safety
-/// As `mint_word_at`; `scope` a scope node.
-pub(crate) unsafe fn install_mint_shares(id: DyadPtr, scope: DyadPtr) {
-    mint_word_at(id, MINT_SHARES).write_unaligned(scope);
-}
-
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
     let mut blob = header(ADDR_TAG, Assoc::Left, prec::INERT).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
@@ -311,7 +294,6 @@ pub(crate) fn record_layout(
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&(bindings as usize).to_ne_bytes());
-    blob.extend_from_slice(&0usize.to_ne_bytes());
     store.alloc_bytes(&blob)
 }
 
@@ -378,23 +360,7 @@ pub(crate) unsafe fn install_bracket_builder(id: DyadPtr, builder: DyadPtr) {
 }
 
 const FIELD_BINDINGS_OFF: usize = PAYLOAD_OFF + 48;
-const KEPT_SHARES_OFF: usize = PAYLOAD_OFF + 56;
-const RECORD_PAYLOAD: usize = 64;
-
-/// The `share` member lines a type that mints keeps for its mints, an array of
-/// `[name, line]` pairs, `line` a held body; null where it keeps none.
-///
-/// # Safety
-/// As `record_scope_of`.
-pub(crate) unsafe fn kept_shares_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned(dyad::head(id).add(KEPT_SHARES_OFF) as *const DyadPtr)
-}
-
-/// # Safety
-/// `id` must carry a `RECORD_TAG` record; `kept` an array node of `[name, line]` pairs.
-pub(crate) unsafe fn install_kept_shares(id: DyadPtr, kept: DyadPtr) {
-    std::ptr::write_unaligned(dyad::head(id).add(KEPT_SHARES_OFF) as *mut DyadPtr, kept);
-}
+const RECORD_PAYLOAD: usize = 56;
 
 /// The array of the fields' bindings, in the order of `record_fields_of`, each carrying its
 /// field's offset in a value (DESIGN ›A scope lays out its declarations; a use reaches the

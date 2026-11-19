@@ -47,35 +47,6 @@ pub(super) struct OpenType {
     owns_node_field: bool,
     /// The type node being defined, its record written at the close: what its name means in its parse.
     pub(super) self_type: DyadPtr,
-    /// The `share` member lines kept for the type's mints, each its name and its `[name, line]` pair.
-    pub(super) kept: Vec<(String, DyadPtr)>,
-}
-
-impl OpenType {
-    /// A definition whose body has read no line yet.
-    fn new(scope: DyadPtr, slots: [DyadPtr; 5], free_marker: DyadPtr, self_type: DyadPtr) -> Self {
-        OpenType {
-            scope,
-            slots,
-            free_marker,
-            parse_rank: crate::identities::meta::prec::APPLY,
-            lex_rank: None,
-            assoc: Assoc::Left,
-            ctor: std::ptr::null_mut(),
-            run_body: std::ptr::null_mut(),
-            this_param: std::ptr::null_mut(),
-            in_parse: false,
-            in_free: false,
-            tape_param: std::ptr::null_mut(),
-            read_receiver: false,
-            wrote_receiver: false,
-            block: (scope, Vec::new()),
-            instances_free: std::ptr::null_mut(),
-            owns_node_field: false,
-            self_type,
-            kept: Vec::new(),
-        }
-    }
 }
 
 /// The slot words a type body declares into its own scope, in `SlotKind`
@@ -366,15 +337,9 @@ impl<'a> Parser<'a> {
             let binding = if relaxed {
                 // One block, one no-shadowing rule: a field is checked against
                 // the `share` members too, which live in the type's own scope.
-                let def = self.cx.definitions.last().expect("a relaxed field list is a type body");
-                let kept = def.kept.iter().any(|(kept, _)| kept == name);
-                if kept
-                    || self
-                        .cx
-                        .scopes
-                        .declared_in(self.trie, name, def.scope)
-                        .map_err(ParseError::Resolve)?
-                {
+                let body =
+                    self.cx.definitions.last().expect("a relaxed field list is a type body").scope;
+                if self.cx.scopes.declared_in(self.trie, name, body).map_err(ParseError::Resolve)? {
                     self.cx.pos = start;
                     return Err(ParseError::Resolve(ResolveError::Shadowed(name.to_string())));
                 }
@@ -424,9 +389,6 @@ impl<'a> Parser<'a> {
             }
         }
         self.cx.pos = word_at;
-        if self.keep_share_line(at)? {
-            return Ok(());
-        }
         let field_scope = self.cx.scopes.pop().expect("the field list's scope is open");
         self.cx.last_declared = std::ptr::null_mut();
         let outer_member = self.cx.member_fn_depth.replace(self.cx.frames.len());
@@ -475,95 +437,6 @@ impl<'a> Parser<'a> {
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.cx.scopes.settle_item(body, item) };
         Ok(())
-    }
-
-    /// A `share` member line below a `?` field, its `share` at `at` and the rest at the cursor:
-    /// the rest read to the line's end and lexed here, against the names it sees here, and kept,
-    /// not built, for each mint of the type makes it for itself (›A type without a `run` whose
-    /// field is `?` mints one type per set of field types, as `array` mints one per element
-    /// type‹ [[R300]]). `false`, the cursor where it was, for a line built here: above every `?`
-    /// field, or a line that is no `name := …`, whose error the built path gives.
-    fn keep_share_line(&mut self, at: usize) -> Result<bool, ParseError> {
-        let types = self.types;
-        let def = self.cx.definitions.last().expect("a share line is in a type body");
-        // SAFETY: the block's items are field declaration dyads from the store.
-        if !unsafe { crate::identities::mint::has_untyped_field(&def.block.1) } {
-            return Ok(false);
-        }
-        let word_at = self.cx.pos;
-        let end = self.line_end()?;
-        let source = self.cx.source;
-        let text = crate::identities::string::build_text(
-            self.rt.store,
-            types.string_,
-            source[word_at..end].trim().as_bytes(),
-        );
-        // SAFETY: `text` is the string node just built; its bytes live for the store.
-        let held = unsafe { crate::identities::string::text(text) };
-        let held = std::str::from_utf8(held).expect("copied from the source text");
-        let field_scope = self.cx.scopes.pop().expect("the field list's scope is open");
-        let lexed = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held);
-        let fragment = match lexed {
-            Ok(fragment) => fragment,
-            Err(e) => {
-                self.cx.scopes.push(field_scope);
-                return Err(ParseError::Resolve(e));
-            }
-        };
-        let cells = fragment.cells();
-        let gates = [types.mut_, types.pub_, types.immut_];
-        let k = cells
-            .iter()
-            .take_while(|c| !c.is_fresh(types) && gates.contains(&c.identity(types)))
-            .count();
-        let name = match (cells.get(k), cells.get(k + 1)) {
-            (Some(name), Some(op)) if op.identity(types) == types.declare_tok => {
-                name.spelling().to_string()
-            }
-            _ => String::new(),
-        };
-        let shadows = !name.is_empty()
-            && self.cx.scopes.resolve(self.trie, &name).is_ok_and(|r| r.matched == name.len());
-        self.cx.scopes.push(field_scope);
-        if name.is_empty() {
-            self.cx.pos = word_at;
-            return Ok(false);
-        }
-        // The line gives the mint's output type once (›A mint's output type is written in its
-        // `share output_type` declaration; a type that does not mint has its parse write it
-        // into each node‹ [[R194]]).
-        if name == crate::identities::mint::SHARED_FIELD {
-            let mutable = cells[..k].iter().any(|c| c.identity(types) == types.mut_);
-            let unvalued = cells.last().is_some_and(|c| c.identity(types) == types.unknown);
-            if mutable || unvalued {
-                self.cx.pos = at;
-                return Err(ParseError::MintOutputNotGiven);
-            }
-        }
-        let def = self.cx.definitions.last().expect("checked above");
-        let shadows = shadows
-            || def.kept.iter().any(|(kept, _)| *kept == name)
-            || self
-                .cx
-                .scopes
-                .declared_in(self.trie, &name, field_scope)
-                .map_err(ParseError::Resolve)?;
-        if shadows {
-            self.cx.pos = at;
-            return Err(ParseError::Resolve(ResolveError::Shadowed(name)));
-        }
-        let store = &mut *self.rt.store;
-        let line = crate::identities::run_body::build(
-            store,
-            types,
-            text,
-            Box::into_raw(Box::new(fragment)),
-        );
-        let spelled = crate::identities::string::build_text(store, types.string_, name.as_bytes());
-        let pair = crate::identities::array::build(store, types.array_, &[spelled, line]);
-        self.cx.definitions.last_mut().expect("checked above").kept.push((name, pair));
-        self.consume_separator();
-        Ok(true)
     }
 
     /// The first `parse_next` lexes and constructs the segment and queues
@@ -737,7 +610,26 @@ impl<'a> Parser<'a> {
             unsafe { Binding::set_dyad(own_name, self_type) };
         }
         let scope = self.open_scope();
-        self.cx.definitions.push(OpenType::new(scope, slots, free_marker, self_type));
+        self.cx.definitions.push(OpenType {
+            scope,
+            slots,
+            free_marker,
+            parse_rank: crate::identities::meta::prec::APPLY,
+            lex_rank: None,
+            assoc: Assoc::Left,
+            ctor: std::ptr::null_mut(),
+            run_body: std::ptr::null_mut(),
+            this_param: std::ptr::null_mut(),
+            in_parse: false,
+            in_free: false,
+            tape_param: std::ptr::null_mut(),
+            read_receiver: false,
+            wrote_receiver: false,
+            block: (scope, Vec::new()),
+            instances_free: std::ptr::null_mut(),
+            owns_node_field: false,
+            self_type,
+        });
         // A `fn` literal on a slot's right side must not claim the enclosing
         // declaration's binding.
         let suppressed = self.take_pending_binding();
@@ -766,8 +658,8 @@ impl<'a> Parser<'a> {
         if !held.is_empty() {
             return Err(ParseError::DeferInTypeBody);
         }
-        // ›A mint's output type is written in its `share output_type` declaration; a type that
-        // does not mint has its parse write it into each node‹ [[R194]].
+        // ›A node's output type is written by its parse, on the mint for a type that mints‹
+        // [[R194]].
         // SAFETY: `fields` is the block's array node and `bindings` their bindings.
         let per_node_output = unsafe {
             crate::identities::mint::has_untyped_field(crate::identities::array::items(fields))
@@ -811,12 +703,6 @@ impl<'a> Parser<'a> {
         if !def.run_body.is_null() {
             // SAFETY: `node` was just built; `def.run_body` is the `lex` node the fill built.
             unsafe { crate::identities::meta::install_run_body(node, def.run_body) };
-        }
-        if !def.kept.is_empty() {
-            let pairs: Vec<DyadPtr> = def.kept.iter().map(|&(_, pair)| pair).collect();
-            let kept = crate::identities::array::build(self.rt.store, self.types.array_, &pairs);
-            // SAFETY: `node` was just built with a record layout; `kept` holds `[name, line]` pairs.
-            unsafe { crate::identities::meta::install_kept_shares(node, kept) };
         }
         // A type whose fields own what they point to writes the teardown that frees it
         // (DESIGN ›A type whose fields carry teardowns must write its own destructor‹).
@@ -1242,9 +1128,6 @@ impl<'a> Parser<'a> {
             }
         };
         let mint = mint::takes_mint(ty).then(|| mint::stamp(self.rt.store, self.types, node, &key));
-        if let Some(mint) = mint {
-            self.make_mint_shares(mint, &key, at, spelling)?;
-        }
         let mut spec = run_body::lookup(held, &key);
         if spec.is_null() {
             spec = self.construct_run_body(mint.unwrap_or(ty), held, &key, at, spelling)?;
@@ -1278,136 +1161,6 @@ impl<'a> Parser<'a> {
             node,
             out,
         )))
-    }
-
-    /// The `share` lines `mint`'s origin keeps, made once for `mint`, the mint for the field
-    /// types `key`, in a scope of its own under the origin's body, each read as a line of that
-    /// body over the names it saw there: a mint's members are places of its own (›A type without
-    /// a `run` whose field is `?` mints one type per set of field types, as `array` mints one
-    /// per element type‹ [[R300]]). A field there stands as its run's parameter does, with its
-    /// type in the mint and no value, and the mint's `output_type` is what its line gives
-    /// (›A mint's output type is written in its `share output_type` declaration; a type that
-    /// does not mint has its parse write it into each node‹ [[R194]]). A failure is reported at
-    /// `at`, the use of the type spelled `spelling`.
-    ///
-    /// # Safety
-    /// `mint` must be a mint of a Logos-written type, `key` one type per field.
-    unsafe fn make_mint_shares(
-        &mut self,
-        mint: DyadPtr,
-        key: &[DyadPtr],
-        at: usize,
-        spelling: &str,
-    ) -> Result<(), ParseError> {
-        use crate::identities::{array, hole, meta, run_body, scope};
-        let origin = crate::identities::mint::origin(mint);
-        let kept = meta::kept_shares_of(origin);
-        if kept.is_null() || !meta::mint_shares_of(mint).is_null() {
-            return Ok(());
-        }
-        let body = meta::record_body_of(origin);
-        let mut chain = Vec::new();
-        let mut open = body;
-        while !open.is_null() {
-            chain.push(open);
-            open = scope::parent_of(open);
-        }
-        let mut nested = ScopeStack::new();
-        for &open in chain.iter().rev() {
-            nested.push(open);
-        }
-        let base_depth = nested.depth();
-        let fields = scope::mint(self.rt.store, self.types.scope, body);
-        nested.push(fields);
-        let g = self.enter(Context::nested(&self.cx, "", nested));
-        let declared =
-            g.0.named_fields(origin).into_iter().zip(key).try_for_each(|((field, name), &t)| {
-                let Some(name) = name else { return Ok(()) };
-                let stands = if hole::type_in(field) == g.0.types.type_ {
-                    t
-                } else {
-                    hole::build(g.0.rt.store, g.0.types.unknown, t, std::ptr::null_mut())
-                };
-                g.0.declare_name(&name, stands, 0).map(|_| ())
-            });
-        nested = std::mem::take(&mut g.0.cx.scopes);
-        drop(g);
-        if let Err(e) = declared {
-            self.cx.pos = at;
-            return Err(e);
-        }
-        let own = scope::mint(self.rt.store, self.types.scope, body);
-        nested.push(own);
-        meta::install_mint_shares(mint, own);
-        let block =
-            (meta::record_scope_of(origin), array::items(meta::record_fields_of(origin)).to_vec());
-        for &pair in array::items(kept) {
-            let line = array::items(pair)[1];
-            let text = run_body::text_of(line);
-            let cells = (*run_body::cells_of(line)).held_cells();
-            // The closed body reopened for the line: a `share` function names its node's fields
-            // bare, and no slot word is there to fill.
-            let mut reopened =
-                OpenType::new(body, [std::ptr::null_mut(); 5], std::ptr::null_mut(), origin);
-            reopened.block = block.clone();
-            let cx = Context {
-                feed: Some(Feed { cells, next: 0, base_depth, in_run_order: true }),
-                definitions: vec![reopened],
-                member_fn_depth: Some(0),
-                mint_fields: fields,
-                ..Context::nested(&self.cx, text, nested)
-            };
-            let g = self.enter(cx);
-            let made = g.0.make_kept_line();
-            let made_pos = g.0.cx.pos;
-            nested = std::mem::take(&mut g.0.cx.scopes);
-            drop(g);
-            if let Err(e) = made {
-                meta::install_mint_shares(mint, std::ptr::null_mut());
-                self.cx.pos = at;
-                return Err(ParseError::MintShareFailed {
-                    name: spelling.to_string(),
-                    rendered: crate::report::render(
-                        &format!("`share` line of `{spelling}`"),
-                        text,
-                        made_pos,
-                        &crate::report::parse_message(&e),
-                    ),
-                });
-            }
-        }
-        let mut members = ScopeStack::new();
-        members.push(own);
-        if let Ok(r) = members.resolve(self.trie, crate::identities::mint::SHARED_FIELD) {
-            let made = self.settled_type(self.types.through(r.binding));
-            if let Some(output) = crate::identities::type_identity_of(self.types, made) {
-                meta::install_mint_output(mint, output);
-            }
-        }
-        Ok(())
-    }
-
-    /// A kept `share` line, its declaration read into the open scope and marked `share` as
-    /// `share_member` marks it, then run; like a type body's line, it holds nothing a scope's
-    /// end would free.
-    fn make_kept_line(&mut self) -> Result<(), ParseError> {
-        let scope = self.cx.scopes.current().expect("the mint's own scope is open");
-        self.cx.last_declared = std::ptr::null_mut();
-        while let Some(item) = self.parse_next() {
-            let item = item?;
-            // SAFETY: the pending bindings were minted by this parser's declares.
-            unsafe { self.cx.scopes.settle_item(scope, item) };
-        }
-        let binding = self.cx.last_declared;
-        if binding.is_null() {
-            return Err(ParseError::ShareNeedsDeclaration);
-        }
-        self.add_gate(binding, self.types.share_)?;
-        self.drain()?;
-        if self.cx.open.iter().any(|open| !open.exit.is_empty()) {
-            return Err(ParseError::DeferInTypeBody);
-        }
-        Ok(())
     }
 
     /// A node every value field of which is a literal is comptime, its

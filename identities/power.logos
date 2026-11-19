@@ -8,9 +8,8 @@
 # node with tape[0].type = ^ and fills it by name, tape[0].lhs; the node it built
 # runs and is never parsed again. The fields' types choose the node's mint, `^`
 # over i32 one and over f64 another. A whole exponent is converted to i64 first, so
-# x ^ 2 and x ^ n share a mint and x ^ 0.5 has its own. Each mint's output_type, a
-# `share` member, is one place per mint, written in its declaration line from the types
-# the fields have in that mint. The run names the fields bare. It is lexed once
+# x ^ 2 and x ^ n share a mint and x ^ 0.5 has its own. The parse writes the mint's
+# output_type, a `share` member: one place per mint. The run names the fields bare. It is lexed once
 # here and constructed once per mint, so both mints are this one definition. A
 # node's fields are read through the graph, b:start.rhs.lhs for b := a ^ c, and
 # that runs nothing.
@@ -25,10 +24,7 @@ import exp.logos,
 ^ := type (
     lhs := ?,
     rhs := ?,
-    share output_type := if lhs.type == f64 or rhs.type == f64 (f64)
-        else if lhs.type == f32 or rhs.type == f32 (f32)
-        else if rhs.type == rational_number (f64)
-        else (lhs.type),
+    share output_type := type ?,
 
     share parse_rank = *.parse_rank + 1,
     share associativity = right,
@@ -39,6 +35,15 @@ import exp.logos,
             tape[0].rhs = i64 (tape[1])
         ) else (
             tape[0].rhs = tape[1]
+        ),
+        if tape[-1].type == f64 or tape[1].type == f64 (
+            tape[0].output_type = f64
+        ) else if tape[-1].type == f32 or tape[1].type == f32 (
+            tape[0].output_type = f32
+        ) else if tape[0].rhs.type == rational_number (
+            tape[0].output_type = f64
+        ) else (
+            tape[0].output_type = tape[-1].type
         ),
         tape.is_constructed[0] = true,
         tape.remove(1),

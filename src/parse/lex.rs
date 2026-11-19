@@ -516,27 +516,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Where the line at the cursor ends, read past and built by nothing as `skip_bracket` reads:
-    /// at its `,` or at the closer of the bracket around it, where the cursor is left.
-    pub(super) fn line_end(&mut self) -> Result<usize, ParseError> {
-        loop {
-            self.skip_whitespace();
-            let at = self.cx.pos;
-            if at >= self.cx.source.len() {
-                return Err(ParseError::UnclosedBracket);
-            }
-            let r = self.token_at(at, true)?;
-            let id = r.identity;
-            if id == self.types.sep_ || self.is_closer(id) {
-                return Ok(at);
-            }
-            self.cx.pos += r.matched;
-            if self.closer_of(id).is_some() {
-                self.skip_bracket(id, 1)?;
-            }
-        }
-    }
-
     pub(super) fn consume_else(&mut self) -> bool {
         self.consume_token(self.types.else_)
     }

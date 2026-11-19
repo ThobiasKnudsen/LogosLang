@@ -275,23 +275,6 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::SlotOutsideDefinition => {
             "a slot is filled on a line of the type body itself: `share parse_rank = …`, `share run = (…)`".into()
         }
-        ParseError::MintShareFailed { name, rendered } => {
-            format!("a `share` line of `{name}` could not be made for this mint:\n{rendered}")
-        }
-        ParseError::PerMintMember(name) => format!(
-            "`{name}` is a `share` member of a type that mints, one place per mint: read it \
-             through a node of the mint"
-        ),
-        ParseError::MintFieldHasNoValue(name) => format!(
-            "`{name}` is a field, and a `share` line of a type that mints is made once per mint, \
-             with no node to read the field from: it reads only the field's type, `{name}.type`"
-        ),
-        ParseError::MintOutputNotGiven => {
-            "a type that mints writes each mint's output type in its declaration line, once, from \
-             the types its fields have in the mint, with no `mut` and no `?`: \
-             `share output_type := lhs.type`"
-                .into()
-        }
         ParseError::PerNodeThroughType(name) => format!(
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),
@@ -406,8 +389,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::OutputTypeNotShared => {
             "a type with a `?` field mints one type per set of field types, and each mint keeps \
-             its own `output_type`: declare it `share`, from the types its fields have in the \
-             mint, as `share output_type := lhs.type`"
+             its own `output_type`: declare it `share output_type := type ?`"
                 .into()
         }
         ParseError::OwnParameterNotInSeed => {
@@ -503,6 +485,11 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoThis => "no value holds this field here".into(),
         RunError::FieldBeforeStamp => {
             "`tape[0]` still holds the type: `tape[0].type = T` makes it a new node first".into()
+        }
+        RunError::MintUnchosen => {
+            "the node's mint is chosen from its fields' types when the parse writes \
+             `tape[0].output_type`: write every field first, and read `output_type` after"
+                .into()
         }
         RunError::UnfilledField(i) => format!(
             "field {} of this node's type body was never written by its constructor",

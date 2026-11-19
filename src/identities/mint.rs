@@ -3,7 +3,7 @@
 
 //! The one mint maker: a type whose field is `?` makes one mint per set of field types its parse
 //! chooses, built once and kept on the type. A node's type is its mint, and the mint holds what its
-//! nodes share: the type they give back, what they run, and its own `share` members.
+//! nodes share: the type they give back and what they run.
 //! ›A type with a `run` whose field is `?` mints too, so its `run` body is parsed once per mint‹
 //! [[R301]]
 
@@ -12,9 +12,8 @@ use crate::dyad::{self, DyadPtr};
 use crate::store::Store;
 use crate::Core;
 
-/// The `share` member whose value a Logos-written type's mint keeps as what its nodes give back
-/// (›A mint's output type is written in its `share output_type` declaration; a type that does
-/// not mint has its parse write it into each node‹ [[R194]]).
+/// The one member a mint keeps of a Logos-written type's: what its nodes give back
+/// (›A node's output type is written by its parse, on the mint for a type that mints‹ [[R194]]).
 pub(crate) const SHARED_FIELD: &str = "output_type";
 
 /// A built-in's mint for the field types `key`, made the first time and kept on `origin`. The
@@ -43,8 +42,8 @@ pub(crate) unsafe fn of(
 }
 
 /// `node` made a node of its type's mint for the field types `key`, the mint made the first
-/// time. A Logos-written type's mint begins with neither word: its `share output_type` line
-/// gives what its nodes give back, and its run is built for it after.
+/// time. A Logos-written type's mint begins with neither word: its parse writes what its nodes
+/// give back, and its run is built for it after.
 ///
 /// # Safety
 /// `node` must be a node of a type `takes_mint` accepts, or of one of its mints; `key` one type
@@ -150,38 +149,12 @@ pub(crate) unsafe fn output_type_of(t: DyadPtr) -> Option<DyadPtr> {
 
 /// The field `name` of a node of the mint `t` that lives on the mint: `output_type`, the one a
 /// program reads there (›`x.type` reads the type word of the node a name or an expression stands
-/// for‹ [[R279]]). `None` when `t` is no mint, keeps no such field, or its line gave no type.
+/// for‹ [[R279]]). `None` when `t` is no mint, keeps no such field, or its parse never wrote it.
 ///
 /// # Safety
 /// As `is_mint`.
 pub(crate) unsafe fn shared_field(t: DyadPtr, name: &str) -> Option<DyadPtr> {
     output_type_of(t).filter(|t| name == SHARED_FIELD && !t.is_null())
-}
-
-/// The scope the mint `t`'s own `share` members are declared in; `None` when `t` is no mint or
-/// its members are not made yet.
-///
-/// # Safety
-/// As `is_mint`.
-pub(crate) unsafe fn shares_of(t: DyadPtr) -> Option<DyadPtr> {
-    is_mint(t).then(|| meta::mint_shares_of(t)).filter(|s| !s.is_null())
-}
-
-/// Whether `t`, or the type it is a mint of, keeps a `share` member `name` for each mint to
-/// make for itself.
-///
-/// # Safety
-/// As `is_mint`.
-pub(crate) unsafe fn keeps_share(t: DyadPtr, name: &str) -> bool {
-    let origin = origin(t);
-    if t.is_null() || meta::kind_of(origin) != Some(meta::RECORD_TAG) {
-        return false;
-    }
-    let kept = meta::kept_shares_of(origin);
-    !kept.is_null()
-        && array::items(kept)
-            .iter()
-            .any(|&pair| super::string::text(array::items(pair)[0]) == name.as_bytes())
 }
 
 /// What every node of the mint `t` runs; `None` when `t` is no mint.

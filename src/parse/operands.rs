@@ -205,7 +205,7 @@ impl<'a> Parser<'a> {
                 };
                 // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
-                self.check_made(binding, c.start)?;
+                self.check_made(binding)?;
                 self.note_outer_read(binding);
                 Ok(if binding.is_null() { id } else { binding })
             }
@@ -385,7 +385,7 @@ impl<'a> Parser<'a> {
                 self.cx.pos = cell.start;
                 return Err(ParseError::MoveOfOuterName);
             }
-            self.check_made(binding, cell.start)?;
+            self.check_made(binding)?;
             self.note_outer_read(binding);
             Taken::Place(identity, Some(Ended::name(binding)))
         };
@@ -544,42 +544,13 @@ impl<'a> Parser<'a> {
     }
 
     /// A value made once (`share`, `immediate`) runs at parse, where a name of the
-    /// loop or branch around it has no value yet, nor a field of a mint whose `share` lines
-    /// are made; the name read at `at`.
-    fn check_made(&mut self, binding: DyadPtr, at: usize) -> Result<(), ParseError> {
-        let refused = if self.mint_field_type(binding).is_some() {
-            // SAFETY: a field of the mint is a binding dyad from the store.
-            let name = unsafe { Binding::spelling(binding) };
-            ParseError::MintFieldHasNoValue(Box::new(name))
-        } else if self.cx.once_at.is_some()
-            && !binding.is_null()
-            // SAFETY: a non-null `binding` is the binding dyad the resolver returned.
-            && unsafe { Binding::read(binding) }.unmade
-        {
-            ParseError::OnceReadsUnmade
-        } else {
-            return Ok(());
-        };
-        self.cx.pos = at;
-        Err(refused)
-    }
-
-    /// The type a field has in the mint whose `share` lines are made, where `binding` names
-    /// that field; `None` for any other name (›A mint's output type is written in its `share
-    /// output_type` declaration; a type that does not mint has its parse write it into each
-    /// node‹ [[R194]]).
-    pub(super) fn mint_field_type(&self, binding: DyadPtr) -> Option<DyadPtr> {
-        if binding.is_null() || self.cx.mint_fields.is_null() {
-            return None;
+    /// loop or branch around it has no value yet.
+    fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
+        // SAFETY: `binding` is the binding dyad the resolver returned for the name.
+        if self.cx.once_at.is_some() && unsafe { Binding::read(binding) }.unmade {
+            return Err(ParseError::OnceReadsUnmade);
         }
-        // SAFETY: a non-null binding is a binding dyad from the store; a field of the mint names
-        // the hole of its type.
-        unsafe {
-            let b = Binding::read(binding);
-            (b.scope == self.cx.mint_fields
-                && crate::identities::hole::is_hole(self.types.unknown, b.dyad))
-            .then(|| crate::identities::hole::type_in(b.dyad))
-        }
+        Ok(())
     }
 
     /// For every open function whose barrier the binding's scope lies below,

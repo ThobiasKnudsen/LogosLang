@@ -161,9 +161,8 @@ pub(crate) unsafe fn handed_on(types: &Core, node: DyadPtr) -> DyadPtr {
 /// mint shares, the `output_type` slot a built-in that does not mint wrote, what an `if`'s arms
 /// or a block's last line give, `void` for a node that runs and declares no `output_type`; a
 /// node of no other kind is a value and gives back its own type. Null where nothing knows it
-/// before the program runs. ›A mint's output type is written in its `share output_type`
-/// declaration; a type that does not mint has its parse write it into each node‹ [[R194]],
-/// ›`=` sits beside `:=`, and returns nothing‹ [[R277]].
+/// before the program runs. ›A node's output type is written by its parse, on the mint for a
+/// type that mints‹ [[R194]], ›`=` sits beside `:=`, and returns nothing‹ [[R277]].
 ///
 /// # Safety
 /// `node` must be null or a reduced dyad from the store.
@@ -386,6 +385,7 @@ pub unsafe fn place_of(types: &Core, node: DyadPtr) -> Option<Place> {
     } else {
         ty == types.binding_
             || super::this::is_field_read(types, node)
+            || super::this::is_mint_output(types, node)
             || is_owning_slot(node)
             || ty == types.deref_
             || ty == types.hashmap.get
@@ -619,12 +619,13 @@ mod tests {
     fn a_node_of_a_run_type_is_a_call_of_its_function_and_a_leafless_record_is_named() {
         let (mut store, _trie, core, exprs) = parse_seq(
             "pw := type (\n\
-                 a := ?, b := i32 ?, share output_type := a.type, share run = ( a ),\n\
+                 a := ?, b := i32 ?, share output_type := type ?, share run = ( a ),\n\
                  share parse_rank = *.parse_rank + 1,\n\
                  share associativity = right,\n\
                  share parse = (\n\
                      tape[0].type = pw, tape[0].a = tape[-1],\n\
                      tape[0].b = tape[1],\n\
+                     tape[0].output_type = tape[-1].type,\n\
                      ,\n\
                      tape.is_constructed[0] = true,\n\
                      tape.remove(1),\n\
