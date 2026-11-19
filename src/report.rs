@@ -361,13 +361,6 @@ pub fn parse_message(e: &ParseError) -> String {
                  `{holder}` whole"
             )
         }
-        ParseError::HeldEachPassNotInSeed => {
-            "a value a `while` condition makes, taken by `&` or by nothing, is not in the seed \
-             yet: the condition makes a new one each pass, and which scope it stands in, so where \
-             the value ends, is not settled; a condition in brackets is a scope of its own, which \
-             ends it each pass"
-                .into()
-        }
         ParseError::RecordMoveNotInSeed => {
             "moving a plain record is not in the seed yet: its bytes are not copied into a name"
                 .into()
