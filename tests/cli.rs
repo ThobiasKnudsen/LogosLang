@@ -1996,6 +1996,8 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
             (format!("f := fn (q := dyad ?) -> dyad ( q ), {c}f(i32 5)"), "5"),
             (format!("f := fn (q := dyad ?) -> dyad ( q ), {c}x := f(i64 7), x"), "7"),
             (format!("f := fn () -> i32 ( mut d := dyad ?, d = i64 5, d = 1/2, 1 ), {c}f()"), "1"),
+            ("mut d := dyad ?, d = «a», d".to_string(), "a"),
+            (format!("f := fn () -> i32 ( mut d := dyad ?, d = «a», 1 ), {c}f()"), "1"),
         ] {
             let out = logos().arg(&src).output().unwrap();
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -2003,9 +2005,8 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
             assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
         }
     }
-    // Text, an owning value, and a number in a place no name holds.
+    // An owning value, and a number in a place no name holds.
     for src in [
-        "mut d := dyad ?, d = «a»",
         "mut d := dyad ?, d = alloc 1 of i32 5",
         "f := fn (mut q := dyad ?) -> i32 ( 1 ), f(5)",
         "p := alloc 1 of dyad ?, p@ = 5",
@@ -4002,9 +4003,9 @@ fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
     assert!(stderr.contains("1:34: error: unknown name `\\`"), "{stderr}");
     let (_, _, stderr) = run_line("error «{«a»}»");
     assert!(stderr.contains("run error: a"), "{stderr}");
-    // The quote holds `a «b» c` whole; the text value's read is still missing.
-    let (_, _, stderr) = run_line("s := «a «b» c», print «{s}»");
-    assert!(stderr.contains("run error: a record, text or hole is not read"), "{stderr}");
+    // The quote holds `a «b» c` whole.
+    let (code, stdout, stderr) = run_line("s := «a «b» c», print «{s}»");
+    assert_eq!((code, stdout.as_str()), (Some(0), "a «b» c\n"), "{stderr}");
     let (_, _, stderr) = run_line("import «tests/fixtures/a«b».logos»");
     assert!(stderr.contains("cannot read ./tests/fixtures/a«b».logos"), "{stderr}");
 
@@ -4312,19 +4313,60 @@ fn a_name_of_the_text_type_stands_as_the_type() {
     ] {
         cases.push((src, want));
     }
+    cases.push(("s := string ?, 0".to_string(), "0\n"));
+    cases.push(("mut s := string ?, s = «a», s".to_string(), "a\n"));
     assert_runs(&cases);
-    let (code, _, stderr) = run_line("s := string ?, 0");
-    assert_eq!(code, Some(1), "{stderr}");
-    assert!(
-        stderr.contains("declarations of non-numeric types are not in the seed yet"),
-        "{stderr}"
-    );
     // A `»` after the name is no quote's end.
     let (code, _, stderr) = run_line(&format!("{t}, (t 1 + 2»), 7"));
     assert_eq!(code, Some(1), "{stderr}");
     assert!(stderr.contains("1:24: error: unknown name `»`"), "{stderr}");
     let (echoes, stderr) = repl(format!("{t}\n7\nt\n8\n").as_bytes());
     assert_eq!(echoes, ["7", "8"], "stderr: {stderr}");
+}
+
+/// ›Text literals are plain values; `#` is the one comment constructor‹ [[R160]]: a text node and
+/// a place of text read as the node's address, wherever they stand, on both tiers, and show the
+/// text they hold.
+#[test]
+fn a_text_node_and_a_place_of_text_read_as_the_node() {
+    let mut cases: Vec<(String, &str)> = [
+        ("s := «a», 0", "0\n"),
+        ("«a», 0", "0\n"),
+        ("( «a», 0 )", "0\n"),
+        ("for 0..2 ( «a» ), 0", "0\n"),
+        ("t := type ( static k := «a» ), 0", "0\n"),
+        ("regex «[0-9]+», 0", "0\n"),
+        ("f := fn (a := dyad ?) -> i32 ( 1 ), f(«a»)", "1\n"),
+        ("x := 5, x:name == «x»", "false\n"),
+        ("«a»", "a\n"),
+        ("s := «a», s", "a\n"),
+        ("if (true) ( «a» ) else ( «b» )", "a\n"),
+        ("immediate «a»", "a\n"),
+        ("import tests/fixtures/pub_text.logos, s", "a\n"),
+        (
+            "sq := type ( a := dyad ?, static parse = ( n := tape[-1]:name, \
+             print «{n} {tape.spelling[-1]}», tape[0].type = sq, tape[0].a = tape[-1], \
+             tape.is_constructed[0] = true, tape.remove(-1) ) ), x := i32 3, x sq, 0",
+            "x x\n0\n",
+        ),
+    ]
+    .into_iter()
+    .map(|(src, want)| (src.to_string(), want))
+    .collect();
+    for c in ["", "f.compile(), "] {
+        for (src, want) in [
+            (format!("f := fn () -> i32 ( «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( s := «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( defer «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn (a := string ?) -> i32 ( print «{{a}}», 1 ), {c}f(«hi»)"), "hi\n1\n"),
+            (format!("f := fn () -> string ( «a» ), {c}f()"), "a\n"),
+        ] {
+            cases.push((src, want));
+        }
+    }
+    assert_runs(&cases);
+    let (echoes, stderr) = repl("«a»\ns := «a»\ns\n".as_bytes());
+    assert_eq!(echoes, ["a", "a"], "stderr: {stderr}");
 }
 
 #[test]

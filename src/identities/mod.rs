@@ -963,7 +963,7 @@ unsafe fn land_leaf(
         read::Read::Container(t) if t == types.dyad_ => {
             return dyad_place::land(store, types, value, how.held);
         }
-        read::Read::Container(t) => node_output(types, value) == Some(t),
+        read::Read::Container(t) => node_value_output(types, value) == Some(t),
         read::Read::Rational => plain_number || rational::is_rational_value(types, value),
         read::Read::Aggregate => from == ty,
         _ => false,
@@ -1015,6 +1015,19 @@ pub(crate) unsafe fn node_output(types: &Core, node: DyadPtr) -> Option<DyadPtr>
     }
     let t = read::output_type(types, node);
     meta::is_node_valued(t, types.fn_type).then_some(t)
+}
+
+/// The type `node` gives back when a value of it is its node's address, text included, a hole's
+/// excepted.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn node_value_output(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    if types.is_hole(types.through(node)) {
+        return None;
+    }
+    let t = read::output_type(types, node);
+    meta::value_is_node(t, types.fn_type).then_some(t)
 }
 
 /// A `-> type` call's argument the pass can run now: a type, or a literal.
@@ -1125,14 +1138,17 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
         }
     }
     let kind = read::read_kind(types, node);
-    if matches!(kind, read::Read::Container(_)) || read::output_type(types, node) == types.dyad_ {
+    // The bits are a node's address: what a box holds, or a value that is its node.
+    if matches!(kind, read::Read::Container(_) | read::Read::Node)
+        || read::output_type(types, node) == types.dyad_
+        || node_value_output(types, node).is_some()
+    {
         let ty = types.type_of(node);
         return if ty.is_null() { bits.to_string() } else { display_held(types, ty, bits) };
     }
     match kind {
         read::Read::Identity => type_name(types, node),
-        read::Read::Address | read::Read::Node => "dyad".to_string(),
-        _ if node_output(types, node).is_some() => "dyad".to_string(),
+        read::Read::Address => "dyad".to_string(),
         read::Read::Scalar(nt) => format_scalar(nt, bits),
         read::Read::Pointer(_) => format_scalar(NumType::U64, bits),
         _ => match operand_of(types, node) {
@@ -1157,6 +1173,7 @@ unsafe fn display_held(types: &Core, ty: DyadPtr, bits: i64) -> String {
         return type_name(types, held);
     }
     let of = dyad::ty(held);
+    // stand-in for #174: text shows as the text it holds.
     if of == types.string_ {
         return String::from_utf8_lossy(string::text(held)).into_owned();
     }

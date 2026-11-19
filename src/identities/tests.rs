@@ -1826,7 +1826,7 @@ fn comptime_division_is_exact_fractions() {
 }
 
 #[test]
-fn string_literals_parse_and_are_inert() {
+fn a_string_literal_reads_as_its_node_address() {
     let (mut store, mut trie, core) = new_core();
     let node = {
         let mut s = ScopeStack::new();
@@ -1841,7 +1841,10 @@ fn string_literals_parse_and_are_inert() {
     }
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `node` is the string literal just parsed.
-    assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::NoWholeRead));
+    unsafe {
+        assert_eq!(read::read_kind(&core, node), read::Read::Node);
+        assert_eq!(rt.run(node), Ok(node as i64));
+    }
     assert_eq!(parse_err("«a» + 1"), ParseError::UnsupportedOperands);
 }
 

@@ -396,7 +396,7 @@ pub(crate) unsafe fn box_takes(types: &Core, t: DyadPtr, value: DyadPtr) -> bool
         }
         Read::Address => any_node,
         Read::Executable(_) if super::read::output_type(types, value) == t => true,
-        _ => any_node && super::node_output(types, value).is_some(),
+        _ => any_node && super::node_value_output(types, value).is_some(),
     }
 }
 
