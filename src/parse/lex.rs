@@ -242,11 +242,7 @@ impl<'a> Parser<'a> {
             };
             if dyad_box {
                 if let Some(held) = self.read_through(id) {
-                    // Read once here, a condition would keep the node it read: stand-in for #280.
-                    if self.cx.each_pass {
-                        self.cx.pos = cell.start;
-                        return Err(ParseError::DyadReadEachPass);
-                    }
+                    self.cx.each_pass_read |= self.cx.each_pass;
                     cell.dyad = held;
                 }
             } else if self.is_live_call_slot(id) {

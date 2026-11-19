@@ -370,11 +370,12 @@ impl<'a> Parser<'a> {
             if !call || !self.in_pass_order() {
                 return Ok(operand);
             }
-            // Run once here, a condition would keep the node it gave: stand-in for #280.
+            // A condition is parsed again on every pass, so this run would be one too many:
+            // stand-in for #307.
             if self.cx.each_pass {
                 return Err(self.fail_at(at, ParseError::DyadReadEachPass));
             }
-            // Run here, before the line it stands in has run up to it: stand-in for #280.
+            // Run here, before the line it stands in has run up to it: stand-in for #307.
             if self.cx.open.iter().any(|o| o.runs_from.is_some_and(|from| from < at)) {
                 return Err(self.fail_at(at, ParseError::DyadCallAfterRun));
             }

@@ -210,9 +210,10 @@ pub fn parse_message(e: &ParseError) -> String {
              is written"
         ),
         ParseError::DyadReadEachPass => {
-            "a `while` condition cannot read a `dyad` value yet, a name's or a call's: the read \
-             is parsed over the node the value holds when the condition is parsed, and the \
-             condition runs again on every pass; test the value inside the loop's body"
+            "a `while` condition cannot read what a call that gives a `dyad` gives yet: the call \
+             runs while the condition is parsed, and such a condition is parsed again on every \
+             pass, so the call would run once more than the condition does; give its value a \
+             name first, as `mut v := g(), while i < v ( …, v = g() )`"
                 .into()
         }
         ParseError::DyadCallAfterRun => {
