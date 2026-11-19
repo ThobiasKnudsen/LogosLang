@@ -17,15 +17,15 @@
 //! [34..42]   u64  pointer type: the interned `@T` of this type, or 0
 //! [42..50]   u64  extent: a `seed-extent` callable leaf for a token that reads its own
 //!                 extent, or 0
-//! [50..58]   u64  mints: this type's mints made so far, an array of `[key, mint]` pairs, or 0
+//! [50..58]   u64  mints: this type's mints made so far, an array, or 0
 //! [58..66]   u64  mint of: the type this one is a mint of, or 0
 //! [66..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
 //!                                 none), then arity × `dyad@` role-name strings
 //!              RECORD            see `RECORD_TAG`
-//!            a mint's is its origin's, no op or output slot, then `[output_type, op]`, the
-//!            words its nodes share
+//!            a mint's is its origin's, no op or output slot, then `[output_type, op, key]`,
+//!            the words its nodes share and the array of field types it was made for
 //! ```
 //!
 //! The kind byte continues `numtype`'s tag space (`NumType` 0–9, `VOID_TAG` 10,
@@ -165,15 +165,16 @@ pub(crate) fn operand_record(
 }
 
 /// A built-in's mint's record: its operand record's roles with no op slot and no output slot,
-/// then the words every node of the mint shares.
+/// then the words every node of the mint shares, the field types it was made for last.
 ///
 /// # Safety
-/// `origin` must carry a `TUPLE_TAG` operand record.
+/// `origin` must carry a `TUPLE_TAG` operand record; `key` must be an array node.
 pub(crate) unsafe fn mint_record(
     store: &mut Store,
     origin: DyadPtr,
     output_type: DyadPtr,
     op: DyadPtr,
+    key: DyadPtr,
 ) -> *mut u8 {
     let kind = kind_of(origin).expect("a mint's origin carries a record");
     debug_assert_eq!(kind, TUPLE_TAG, "a built-in's mint's nodes are fixed operand runs");
@@ -184,13 +185,13 @@ pub(crate) unsafe fn mint_record(
     for i in 0..arity {
         blob.extend_from_slice(&(role_of(origin, i) as usize).to_ne_bytes());
     }
-    for word in [output_type, op] {
+    for word in [output_type, op, key] {
         blob.extend_from_slice(&(word as usize).to_ne_bytes());
     }
     store.alloc_bytes(&blob)
 }
 
-/// This type's mints made so far, an array of `[key, mint]` pairs; null while it has none.
+/// This type's mints made so far, an array; null while it has none.
 ///
 /// # Safety
 /// As `parse_rank_of`.
@@ -199,7 +200,7 @@ pub(crate) unsafe fn mints_of(id: DyadPtr) -> DyadPtr {
 }
 
 /// # Safety
-/// `id` must carry a record and `mints` must be an array node of `[key, mint]` pairs.
+/// `id` must carry a record and `mints` must be an array node of its mints.
 pub(crate) unsafe fn install_mints(id: DyadPtr, mints: DyadPtr) {
     std::ptr::write_unaligned(dyad::head(id).add(MINTS_OFF) as *mut DyadPtr, mints);
 }
@@ -214,6 +215,7 @@ pub(crate) unsafe fn mint_of(id: DyadPtr) -> DyadPtr {
 
 const MINT_OUTPUT: usize = 0;
 const MINT_OP: usize = 1;
+const MINT_KEY: usize = 2;
 
 /// Where the mint's `k`th shared word lies, after its payload.
 ///
@@ -238,6 +240,14 @@ pub(crate) unsafe fn mint_output_of(id: DyadPtr) -> DyadPtr {
 /// As `mint_word_at`.
 pub(crate) unsafe fn mint_op_of(id: DyadPtr) -> DyadPtr {
     mint_word_at(id, MINT_OP).read_unaligned()
+}
+
+/// The array of field types the mint was made for.
+///
+/// # Safety
+/// As `mint_word_at`.
+pub(crate) unsafe fn mint_key_of(id: DyadPtr) -> DyadPtr {
+    mint_word_at(id, MINT_KEY).read_unaligned()
 }
 
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {

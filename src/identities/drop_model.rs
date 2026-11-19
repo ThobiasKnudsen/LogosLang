@@ -21,11 +21,11 @@ use crate::parse::{Assoc, ParseError, Taken};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// `alloc` is `[pointee, count, init, op, output_type]`; `init` is null in the byte form.
-const ALLOC_POINTEE: usize = 0;
-const ALLOC_COUNT: usize = 1;
-const ALLOC_INIT: usize = 2;
-/// `move` is `[place, pointee, op, output_type]`, `free` `[place, pointee, op]`.
+/// `alloc` is `[count, init]` under its mint for `[count's type, pointee]`; `init` is null in
+/// the byte form and for `T ?`.
+const ALLOC_COUNT: usize = 0;
+const ALLOC_INIT: usize = 1;
+/// `move` is `[place]`, `free` `[place, pointee, op]`.
 const TEARDOWN_PLACE: usize = 0;
 const TEARDOWN_POINTEE: usize = 1;
 /// `defer` is `[inner, op]`.
@@ -68,33 +68,27 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let of_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("of", of_);
 
-    let alloc_ = keyword(
-        cx,
-        "alloc",
-        meta::prec::PREFIX,
-        &["pointee", "count", "init", "op", "output_type"],
-        |p, _id, tape| {
-            let of_ = p.types().of_;
-            if p.marker_right(tape, of_) {
-                return Err(ParseError::MissingOperand);
-            }
-            let count = p.take_right(tape)?;
-            let init = if p.marker_right(tape, of_) {
-                tape.remove(1);
-                Some(p.take_right(tape)?)
-            } else {
-                None
-            };
-            // The cells keep the value in their bytes, so the block holds it, not the line.
-            if let Some(init) = init {
-                p.take(init);
-            }
-            let types = p.types();
-            let node = build_alloc(p.store(), types, count, init)?;
-            tape.place(node);
-            Ok(crate::parse::Constructed::Placed)
-        },
-    );
+    let alloc_ = keyword(cx, "alloc", meta::prec::PREFIX, &["count", "init"], |p, _id, tape| {
+        let of_ = p.types().of_;
+        if p.marker_right(tape, of_) {
+            return Err(ParseError::MissingOperand);
+        }
+        let count = p.take_right(tape)?;
+        let init = if p.marker_right(tape, of_) {
+            tape.remove(1);
+            Some(p.take_right(tape)?)
+        } else {
+            None
+        };
+        // The cells keep the value in their bytes, so the block holds it, not the line.
+        if let Some(init) = init {
+            p.take(init);
+        }
+        let types = p.types();
+        let node = build_alloc(p.store(), types, count, init)?;
+        tape.place(node);
+        Ok(crate::parse::Constructed::Placed)
+    });
     let alloc_leaf = callable::mint_native(cx.store, cs.callable, run_alloc, cs.seed_native);
 
     // `own` stands only in a type position, `own @T ?` or `-> own @T`: the word makes the hole,
@@ -125,8 +119,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let move_roles = ["place", "pointee", "op", "output_type"];
-    let move_ = keyword(cx, "move", meta::prec::PREFIX, &move_roles, |p, _id, tape| {
+    let move_ = keyword(cx, "move", meta::prec::PREFIX, &["place"], |p, _id, tape| {
         let (place, ended) = match p.place_operand_cell(tape)? {
             Taken::Place(place, ended) => (place, ended),
             Taken::Value(_, at) | Taken::Hole(at) => {
@@ -362,11 +355,28 @@ pub(super) fn build_alloc(
     // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
     // SAFETY: `init` is a reduced dyad just parsed.
     let init = init.filter(|&i| unsafe { !types.is_hole(i) }).unwrap_or(std::ptr::null_mut());
-    // SAFETY: `pointee` is a type node from the store.
-    let output = unsafe {
-        super::pointer::make_owning_pointer_type(store, types.type_, pointee, types.ops.teardown_)
-    };
-    Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_, output]))
+    // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store; the
+    // owning `@pointee` is made with the mint, so its nodes give one type.
+    unsafe {
+        let key = [super::read::output_type(types, count), pointee];
+        let output = super::mint::output_for(types.alloc_, &key).unwrap_or_else(|| {
+            super::pointer::make_owning_pointer_type(
+                store,
+                types.type_,
+                pointee,
+                types.ops.teardown_,
+            )
+        });
+        Ok(super::mint::node(
+            store,
+            types,
+            types.alloc_,
+            &key,
+            output,
+            types.ops.alloc_,
+            &[count, init],
+        ))
+    }
 }
 
 fn free_node(store: &mut Store, types: &Core, slots: [DyadPtr; 3]) -> DyadPtr {
@@ -499,14 +509,14 @@ pub(crate) unsafe fn own_result(
     owning_pointer(store, types, ty)
 }
 
-/// `move` of a place: `[place, type, op]`, `type` the moved value's, from which the name
-/// that takes it learns whether it holds it.
+/// `move` of a place: `[place]` under `move`'s mint for the moved value's type, which it gives,
+/// so the name that takes it learns whether it holds it.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let ty = super::read::handed_on(types, place);
-    store.alloc_words(types.move_, &[place, ty, types.ops.move_, ty])
+    super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place])
 }
 
 /// What `free` of the place runs: a name that holds its value (`holder`) its teardown, an
@@ -878,7 +888,7 @@ unsafe fn require_frame_place(
 
 /// The move reads the place, NULL from here when it holds an address.
 fn lower_move(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a `move` node `[place, type, op]`.
+    // SAFETY: `node` is a `move` node `[place]`.
     let place = unsafe { *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE) };
     // SAFETY: `place` is a reduced dyad from the store.
     unsafe { require_frame_place(lw, node, place) }?;
@@ -1011,7 +1021,7 @@ pub(crate) unsafe fn lent_place(types: &Core, value: DyadPtr) -> Option<DyadPtr>
 /// # Safety
 /// `value` must be a reduced dyad from the store.
 pub(crate) unsafe fn moved_place(types: &Core, value: DyadPtr) -> Option<DyadPtr> {
-    (dyad::ty(value) == types.move_)
+    (super::mint::origin(dyad::ty(value)) == types.move_)
         .then(|| *(dyad::value(value) as *const DyadPtr).add(TEARDOWN_PLACE))
 }
 
@@ -1223,8 +1233,8 @@ unsafe fn moved_out_via(
     let node = types.through(node);
     visit(node);
     let logos = dyad::ty(node);
-    if logos == types.alloc_
-        || logos == types.move_
+    if super::mint::origin(logos) == types.alloc_
+        || super::mint::origin(logos) == types.move_
         || logos == types.this.copy
         || logos == types.construct_
         || logos == types.dyad_place.new_node
@@ -1375,10 +1385,12 @@ pub(crate) fn arms_end_alike(
 
 /// The runtime notes the live allocation so leaks and double frees are observable.
 fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an `alloc` node `[pointee, count, init, op]` from the store.
+    // SAFETY: `node` is an `alloc` node `[count, init]` from the store, under its mint.
     unsafe {
         let slots = dyad::value(node) as *const DyadPtr;
-        let pointee = *slots.add(ALLOC_POINTEE);
+        let Some(&[_, pointee]) = super::mint::key_of(dyad::ty(node)) else {
+            unreachable!("an `alloc` is typed by its mint for its count's type and pointee");
+        };
         let count = rt.run(*slots.add(ALLOC_COUNT))?;
         if count < 0 {
             return Err(RunError::BadCount(count));
@@ -1536,7 +1548,7 @@ fn run_value_release(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// here when it holds an address, so a line that fails later finds nothing there (DESIGN
 /// ›`move` and `free` take a field path too‹).
 fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a `move` node `[place, type, op]` from the store; a field or cell it
+    // SAFETY: `node` is a `move` node `[place]` from the store; a field or cell it
     // reaches is an owning one, eight bytes wide, as is a name that holds an address.
     unsafe {
         let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);

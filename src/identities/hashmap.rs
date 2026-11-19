@@ -34,8 +34,7 @@ pub struct HashmapIds {
     /// `hashmap K -> V` as a value: `[op, map type]`, a new empty map.
     pub fresh: DyadPtr,
     pub fresh_leaf: DyadPtr,
-    /// `m == ?` and `m != ?`: `[map, op, bool]`.
-    pub unknown_compare: DyadPtr,
+    /// What `m == ?` and `m != ?` run, under `==`'s and `!=`'s mints.
     pub eq_unknown_leaf: DyadPtr,
     pub ne_unknown_leaf: DyadPtr,
     /// The eight bytes of the empty map and of the unknown one, which a value copies out.
@@ -64,7 +63,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
     let (get, get_leaf) = op(cx, &["map", "key", "op", "output_type"], run_get);
     let (put, put_leaf) = op(cx, &["map", "key", "value", "type", "op"], run_put);
     let (fresh, fresh_leaf) = op(cx, &["op", "output_type"], run_fresh);
-    let (unknown_compare, eq_unknown_leaf) = op(cx, &["map", "op", "output_type"], run_eq_unknown);
+    let eq_unknown_leaf =
+        callable::mint_native(cx.store, cs.callable, run_eq_unknown, cs.seed_native);
     let ne_unknown_leaf =
         callable::mint_native(cx.store, cs.callable, run_ne_unknown, cs.seed_native);
     let empty_bytes = cx.store.alloc_bytes(&0usize.to_ne_bytes());
@@ -78,7 +78,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
         put_leaf,
         fresh,
         fresh_leaf,
-        unknown_compare,
         eq_unknown_leaf,
         ne_unknown_leaf,
         empty_bytes,
@@ -240,27 +239,29 @@ pub(crate) unsafe fn build_put(
 }
 
 /// `m == ?` (`equal`) or `m != ?` when one side gives a map and the other is `?`, a map's
-/// places holding `?` (›A declared hashmap is the empty map: `m := hashmap K -> V`‹ [[R17]]);
-/// else `None`.
+/// places holding `?` (›A declared hashmap is the empty map: `m := hashmap K -> V`‹ [[R17]]):
+/// a node of `op`'s mint for the two sides' types; else `None`.
 ///
 /// # Safety
-/// `lhs` and `rhs` must be reduced dyads from the store.
+/// `op` must be `==` or `!=`; `lhs` and `rhs` reduced dyads from the store.
 pub(crate) unsafe fn build_unknown_compare(
     store: &mut Store,
     types: &Core,
+    op: DyadPtr,
     equal: bool,
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Option<DyadPtr> {
-    let gives_map = |n: DyadPtr| is_hashmap(types, super::read::output_type(types, n));
-    let map = match (gives_map(lhs), gives_map(rhs)) {
-        (true, false) if types.through(rhs) == types.unknown => lhs,
-        (false, true) if types.through(lhs) == types.unknown => rhs,
+    let output_type = |n: DyadPtr| super::read::output_type(types, n);
+    let key = [output_type(lhs), output_type(rhs)];
+    match key.map(|t| is_hashmap(types, t)) {
+        [true, false] if types.through(rhs) == types.unknown => {}
+        [false, true] if types.through(lhs) == types.unknown => {}
         _ => return None,
-    };
+    }
     let ids = &types.hashmap;
     let leaf = if equal { ids.eq_unknown_leaf } else { ids.ne_unknown_leaf };
-    Some(store.alloc_words(ids.unknown_compare, &[map, leaf, types.bool_]))
+    Some(super::mint::node(store, types, op, &key, types.bool_, leaf, &[lhs, rhs]))
 }
 
 /// The eight bytes a map kept as another map's value lives in, holding a copy of `table`, a
@@ -367,10 +368,13 @@ fn run_ne_unknown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 
 /// Whether the map a compare node reads holds `?`.
 fn is_unknown(rt: &mut Runtime, node: DyadPtr) -> Result<bool, RunError> {
-    // SAFETY: `node` is a compare node `build_unknown_compare` built over a map, whose value is
-    // the address of its eight bytes.
+    // SAFETY: `node` is a compare node `build_unknown_compare` built, `[lhs, rhs]` under a mint
+    // for the sides' types, one side a map whose value is the address of its eight bytes.
     unsafe {
-        let map = *(dyad::value(node) as *const DyadPtr);
+        let sides = dyad::value(node) as *const DyadPtr;
+        let lhs_is_map = super::mint::key_of(dyad::ty(node))
+            .is_some_and(|key| key.first().is_some_and(|&t| is_hashmap(rt.types(), t)));
+        let map = if lhs_is_map { *sides } else { *sides.add(1) };
         let addr = super::by_copy::record_addr(rt, map)?;
         Ok(holds_unknown(rt.types(), std::ptr::read_unaligned(addr as *const *mut Table)))
     }
