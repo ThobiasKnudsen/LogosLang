@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Numeric conversion, written (`i64 (a)`, `i32 lossy (x)`) or not: one shared `convert`
-//! identity for every conversion between number types, the node `[operand, from, to, op]`
-//! with the source and target as numtype nodes, or `rational_number` as the source for a
-//! rational value, read at run.
+//! identity for every conversion between number types, the node `[operand]` under its mint for
+//! the source and target types, number types or `rational_number` as the source for a rational
+//! value.
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::numtype::{apply_cast, of_type_node, NumType};
-use super::{meta, Cx};
+use super::{meta, mint, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -22,34 +22,36 @@ use crate::store::Store;
 /// No spelling: a conversion is built from the `logos(value)` surface.
 /// Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
-    let record = meta::operand_record(
-        cx,
-        meta::TUPLE_TAG,
-        meta::prec::INERT,
-        Assoc::Left,
-        &["operand", "from", "to", "op", "output_type"],
-    );
+    let record =
+        meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::INERT, Assoc::Left, &["operand"]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(id, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)
 }
 
-pub(crate) fn build_convert(
+/// # Safety
+/// `operand` must be a reduced dyad, `from` and `to` type nodes, all from the store.
+pub(crate) unsafe fn build_convert(
     store: &mut Store,
     types: &Core,
     operand: DyadPtr,
     from: DyadPtr,
     to: DyadPtr,
 ) -> DyadPtr {
-    store.alloc_words(types.convert, &[operand, from, to, types.ops.convert_, to])
+    mint::node(store, types, types.convert, &[from, to], to, types.ops.convert_, &[operand])
 }
 
+/// `(operand, from, to)`.
+///
 /// # Safety
-/// `node` must be a conversion node `[operand, from, to, op]`.
+/// `node` must be a conversion node [`build_convert`] built.
 unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, NumType) {
-    let p = dyad::value(node) as *const DyadPtr;
-    (*p, *p.add(1), of_type_node(*p.add(2)))
+    let operand = *(dyad::value(node) as *const DyadPtr);
+    match mint::key_of(dyad::ty(node)) {
+        Some(&[from, to]) => (operand, from, of_type_node(to)),
+        _ => unreachable!("a conversion is typed by its mint for its source and target"),
+    }
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

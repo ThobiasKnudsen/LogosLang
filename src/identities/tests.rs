@@ -1071,7 +1071,9 @@ fn an_operation_mints_once_per_set_of_field_types() {
         // `x` lies inside `i64`: the mint is `+`'s for `i64`, its `lhs` the conversion of `x`.
         let i64_ = core.numtypes[NumType::I64 as usize];
         assert_eq!(minted(wide), (core.plus, Some(i64_), Some(add(NumType::I64))));
-        assert_eq!(dyad::ty(operands(wide).0), core.convert);
+        let conversion = minted(operands(wide).0);
+        assert_eq!(conversion, (core.convert, Some(i64_), Some(core.ops.convert_)));
+        assert_eq!(mint::key_of(dyad::ty(operands(wide).0)), Some(&[core.i32_, i64_][..]));
         assert_ne!(dyad::ty(one), dyad::ty(times));
         // The node holds its operands and nothing else.
         let m = dyad::ty(one);

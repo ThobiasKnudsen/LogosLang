@@ -72,15 +72,14 @@ unsafe fn make(
     op: DyadPtr,
 ) -> DyadPtr {
     let key = array::build(store, types.array_, key);
-    let record = meta::mint_record(store, origin, output_type, op);
+    let record = meta::mint_record(store, origin, output_type, op, key);
     let mint = store.alloc_head(types.type_, record);
     let mut made = meta::mints_of(origin);
     if made.is_null() {
         made = array::build(store, types.array_, &[]);
         meta::install_mints(origin, made);
     }
-    let pair = array::build(store, types.array_, &[key, mint]);
-    array::push(store, made, pair);
+    array::push(store, made, mint);
     mint
 }
 
@@ -91,10 +90,7 @@ unsafe fn find(origin: DyadPtr, key: &[DyadPtr]) -> Option<DyadPtr> {
     if made.is_null() {
         return None;
     }
-    array::items(made).iter().find_map(|&pair| match array::items(pair) {
-        &[made_for, mint] if array::items(made_for) == key => Some(mint),
-        _ => None,
-    })
+    array::items(made).iter().copied().find(|&mint| array::items(meta::mint_key_of(mint)) == key)
 }
 
 /// # Safety
@@ -139,4 +135,12 @@ pub(crate) unsafe fn static_field(t: DyadPtr, name: &str) -> Option<DyadPtr> {
 /// As `is_mint`.
 pub(crate) unsafe fn operation_of(t: DyadPtr) -> Option<DyadPtr> {
     is_mint(t).then(|| meta::mint_op_of(t))
+}
+
+/// The field types the mint `t` was made for; `None` when `t` is no mint.
+///
+/// # Safety
+/// As `is_mint`.
+pub(crate) unsafe fn key_of<'a>(t: DyadPtr) -> Option<&'a [DyadPtr]> {
+    is_mint(t).then(|| array::items(meta::mint_key_of(t)))
 }

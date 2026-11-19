@@ -501,6 +501,7 @@ mod tests {
                 (core.amp_, 2),
                 (core.addr_, 2),
                 (core.negate, 1),
+                (core.convert, 1),
             ] {
                 assert_eq!(meta::kind_of(id), Some(meta::TUPLE_TAG));
                 assert_eq!(meta::arity_of(id), arity);
@@ -509,7 +510,6 @@ mod tests {
             for (id, kind, arity) in [
                 (core.and_, meta::TUPLE_TAG, 4),
                 (core.or_, meta::TUPLE_TAG, 4),
-                (core.convert, meta::TUPLE_TAG, 5),
                 (core.deref_, meta::TUPLE_TAG, 5),
                 (core.not_, meta::TUPLE_TAG, 3),
                 (core.construct_, meta::LIST_TAG, 4),
