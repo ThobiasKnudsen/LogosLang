@@ -868,18 +868,17 @@ impl<'a> Parser<'a> {
         self.cx.member_root = std::ptr::null_mut();
         let path = std::mem::take(&mut self.cx.member_path);
         let (node, consumed) = access?;
+        let end = tape.at(1 + consumed as isize).map_or(nstart + nlen, Cell::end);
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
         tape.remove(-1);
-        // A type identity a parse's `tape[0].f` folded to stands as its own
-        // unconstructed cell, so it reads its right side as anywhere else.
+        // A type identity a parse's `tape[0].f` folded to, or a member call for a type gave,
+        // stands as its own unconstructed cell, so it reads its right side as anywhere else.
+        let called = bracket.is_some() && consumed == 1;
         // SAFETY: `node` is a node from the store.
-        let folded_type = this_read
-            && unsafe {
-                dyad::ty(node) == self.types.type_
-                    && crate::identities::meta::kind_of(node).is_some()
-            };
+        let folded_type = (this_read && unsafe { self.identity_head(node) }.is_some())
+            || (called && self.stands_in_for_call(node));
         if folded_type {
             tape.set_dyad(0, node);
         } else {
@@ -889,6 +888,7 @@ impl<'a> Parser<'a> {
                 crate::identities::array::build(self.rt.store, self.types.array_, &path)
             };
             tape.place(node);
+            tape.span_center(left.start, end);
             let cell = tape.at_mut(0).expect("placed above");
             cell.path = path;
             if plain {

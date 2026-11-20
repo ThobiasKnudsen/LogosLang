@@ -815,12 +815,26 @@ impl<'a> Parser<'a> {
             // SAFETY: `id` is the resolved callee and `args` reduced dyads.
             let node = unsafe { self.build_call(id, &args) }?;
             tape.remove(1);
-            tape.place(node);
+            if self.stands_in_for_call(node) {
+                tape.set_dyad(0, node);
+            } else {
+                tape.place(node);
+            }
         } else {
             let value = self.stand_as_value(tape, id);
             tape.place(value);
         }
         Ok(Constructed::Placed)
+    }
+
+    /// Whether `node`, what a call built, is the type a call for a type gave where the pass runs
+    /// its line once parsed, which stands in for the call (›Inside a body, a `-> type` call may
+    /// take an argument known only at run‹ [[R296]]): handed on as its own unconstructed cell, it
+    /// reads what follows it as a name holding it does (›A name of a type with an instances'
+    /// `parse` wakes it, as the instance does, and so does any expression of the type‹ [[R230]]).
+    pub(super) fn stands_in_for_call(&self, node: DyadPtr) -> bool {
+        // SAFETY: `node` is a reduced dyad from the store.
+        self.in_pass_order() && unsafe { self.identity_head(node) }.is_some()
     }
 
     /// The scope's expressions in order (prose and teardown structure aside),
@@ -927,7 +941,7 @@ impl<'a> Parser<'a> {
         // A constructor runs now, by nature, so what stands before it runs first, but its left
         // operand, which it reads as written (›How a Logos constructor builds its node‹ [[R362]]).
         // Where a part before it cannot run first yet, only the lines before its own run:
-        // stand-in for #371, #372.
+        // stand-in for #371.
         let from = tape.at(-1).or(tape.at(0)).map_or(self.cx.pos, |c| c.start);
         if let Before::Waits(_) = self.ran_first(tape, from)? {
             self.drain()?;

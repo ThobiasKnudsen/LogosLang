@@ -231,7 +231,7 @@ Everything after `logos` is one line of Logos source. There are no subcommands a
 
 ### The REPL
 
-One expression per line. Values echo, declarations are silent, and a line that fails leaves no trace: its declarations are rolled back, so the name is free to use again. Ctrl-D exits and runs the session's pending teardowns.
+Each line is a line of the program, as the command line is: any number of items separated by `,`. A line that gives nothing, a declaration or a `print`, is silent and the session goes on. A line that gives a value shows it and ends the session, as a program ends with its value: `» x := i32 1, 5` shows `5` and exits. To look at a value and go on, write `print «{x + 1}»`. A line that fails leaves no trace: its declarations are rolled back, so the name is free to use again. Ctrl-D also ends the session; either end runs the session's pending teardowns.
 
 ### Build from source
 

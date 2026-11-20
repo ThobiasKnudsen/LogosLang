@@ -9,6 +9,7 @@
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
+use seed::identities::dyad::DyadPtr;
 use seed::identities::Core;
 use seed::parse::{Imports, LinesEnd, ParseError, Parser, ScopeStack};
 use seed::regex_trie::RegexTrie;
@@ -201,11 +202,13 @@ fn code_bytes(engine: &mut Engine, text: &str) -> usize {
     cells.iter().filter(|c| c.identity(&engine.core) != engine.core.hash_).map(|c| c.len).sum()
 }
 
-/// One persistent store, index and scope; each line a line of the program, its tail
-/// echoed; a line that fails reports, leaves no trace, and the loop continues.
+/// One persistent store, index and scope; each line a line of the program. A line that gives a
+/// value ends the session with it, as a program ends with its value; a line that fails reports,
+/// leaves no trace, and the loop continues.
 fn repl() -> ExitCode {
     println!(
-        "logos {} — each line is a line of the program, ctrl-d to exit",
+        "logos {} — each line is a line of the program, which ends at the first line that gives \
+         a value or at ctrl-d",
         env!("CARGO_PKG_VERSION")
     );
     let mut engine = Engine::new();
@@ -222,22 +225,14 @@ fn repl() -> ExitCode {
     loop {
         print!("» ");
         let _ = std::io::stdout().flush();
+        let session = scopes.current().expect("the session's scope is open");
         let line = match lines.next() {
             Some(Ok(line)) => line,
             _ => {
                 println!();
-                // The session is one scope, and its end runs what its kept lines hold and defer.
-                let session = scopes.current().expect("the session's scope is open");
-                let mut rt = Runtime::new(&engine.core, &mut engine.store);
-                // SAFETY: `session` is the session's scope node, its places in the program frame.
-                if let Err(e) = unsafe { seed::identities::run_scope_exit(&mut rt, session) } {
-                    eprintln!("<repl>: run error: {}", report::run_message(&e));
-                    return ExitCode::FAILURE;
-                }
-                return ExitCode::SUCCESS;
+                return end_session(&mut engine, session, None);
             }
         };
-        let session = scopes.current().expect("the session's scope is open");
         // SAFETY: `session` is the session's scope node.
         let kept = unsafe { seed::identities::scope_lines(session) };
         let types = &engine.core;
@@ -273,10 +268,12 @@ fn repl() -> ExitCode {
 
         match outcome {
             Ok(last) => {
-                if let Some(shown) = last {
-                    println!("{shown}");
-                }
                 scopes.commit();
+                // The session is one scope, and a line that gives a value ends it
+                // (›The command line is Logos source; the binary stays out of the way‹ [[R302]]).
+                if last.is_some() {
+                    return end_session(&mut engine, session, last);
+                }
             }
             // A failed line leaves no trace, or a typo would burn its name for the session
             // under the no-shadowing rule.
@@ -289,4 +286,19 @@ fn repl() -> ExitCode {
             }
         }
     }
+}
+
+/// The session's end, as `run_line`'s: what its kept lines hold and defer ends, last first,
+/// then the value that ended it shows.
+fn end_session(engine: &mut Engine, session: DyadPtr, shown: Option<String>) -> ExitCode {
+    let mut rt = Runtime::new(&engine.core, &mut engine.store);
+    // SAFETY: `session` is the session's scope node, its places in the program frame.
+    if let Err(e) = unsafe { seed::identities::run_scope_exit(&mut rt, session) } {
+        eprintln!("<repl>: run error: {}", report::run_message(&e));
+        return ExitCode::FAILURE;
+    }
+    if let Some(shown) = shown {
+        println!("{shown}");
+    }
+    ExitCode::SUCCESS
 }
