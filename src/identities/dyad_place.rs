@@ -431,7 +431,7 @@ unsafe fn make(rt: &mut Runtime, ty: DyadPtr, carry: Carry, taken: i64) -> Resul
 ///
 /// # Safety
 /// `held` must be null or a live node.
-unsafe fn copy(rt: &mut Runtime, held: DyadPtr) -> Result<i64, RunError> {
+pub(crate) unsafe fn copy(rt: &mut Runtime, held: DyadPtr) -> Result<i64, RunError> {
     if !made(rt.store, held) {
         return Ok(held as i64);
     }
