@@ -1283,7 +1283,8 @@ unsafe fn moved_out_via(
     if logos == types.by_copy.out {
         return moved_out_via(types, *(dyad::value(node) as *const DyadPtr), visit);
     }
-    // A line held for the run whose value lands in a `dyad` gives the node it lands in.
+    // A line held for the run whose value lands in a `dyad` gives the node it lands in: stand-in
+    // for #335.
     if logos == types.waiting.line {
         return (super::read::output_type(types, node) == types.dyad_).then_some(node);
     }
