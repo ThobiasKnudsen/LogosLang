@@ -257,7 +257,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TooDeep => {
-            format!("scopes nested deeper than {}", crate::parse::MAX_BRACKET_DEPTH)
+            format!("scopes nested too deep: the parse used up its {} stack", work_stack())
         }
         ParseError::TypeBodyFailed(msg) => {
             format!("a type body's own declaration failed at the definition: {msg}")
@@ -583,13 +583,17 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NullPointer => "this pointer holds nothing yet".into(),
         RunError::Parse(e) => parse_message(e),
         RunError::Return(_) => "`return` found no function to leave".into(),
-        RunError::CallDepth => {
+        RunError::TooDeep => {
             format!(
-                "calls nested deeper than {}: is this recursion ending?",
-                crate::run::MAX_CALL_DEPTH
+                "nested too deep: the run used up its {} stack; is this recursion ending?",
+                work_stack()
             )
         }
     }
+}
+
+fn work_stack() -> String {
+    format!("{} MiB", crate::stack::WORK_STACK_BYTES / (1024 * 1024))
 }
 
 /// Message-only, as [`run_message`].
@@ -604,6 +608,12 @@ pub fn compile_message(e: &CompileError) -> String {
         CompileError::Internal(what) => format!("the seed broke its own rule: {what}"),
         CompileError::ArityMismatch => "a call's argument count does not match its function".into(),
         CompileError::Cranelift(msg) => format!("the backend rejected this: {msg}"),
+        CompileError::TooDeep => {
+            format!(
+                "this body nests too deep to compile here: the compile used up its {} stack",
+                work_stack()
+            )
+        }
     }
 }
 

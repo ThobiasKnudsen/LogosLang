@@ -101,6 +101,8 @@ pub enum CompileError {
     ArityMismatch,
     /// Cranelift rejected the setup, function, or finalization.
     Cranelift(String),
+    /// A body nested deeper than the compiling thread's stack holds.
+    TooDeep,
 }
 
 /// One thing being lowered that ends values when a `return` or a fault leaves through it, read
@@ -154,8 +156,6 @@ pub struct Lowerer<'a, 'f> {
     ret_dest: Option<(Value, usize)>,
     /// The run's context, this call's first argument, handed on to every call.
     ctx: Value,
-    /// The call-depth counter the epilogue counts this call out of.
-    depth_addr: Value,
     /// The run's fault count as this code last read it, at entry or at the fault it is leaving.
     faults_seen: Value,
     /// What a `return` or a fault lowered now leaves through, outermost first.
@@ -179,6 +179,9 @@ impl<'a> Lowerer<'a, '_> {
     /// # Safety
     /// `node` must be a valid dyad from the store.
     pub unsafe fn lower(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
+        if crate::stack::exhausted(crate::stack::limit()) {
+            return Err(CompileError::TooDeep);
+        }
         let node = self.through(node);
         let value = self.lower_node(node)?;
         if self.planned(node) {
@@ -570,7 +573,6 @@ impl<'a> Lowerer<'a, '_> {
         branch(self.builder, exit);
         self.builder.switch_to_block(exit);
         if open.is_empty() {
-            count_out(self.builder, self.depth_addr);
             let zero = self.builder.ins().iconst(types::I64, 0);
             self.builder.ins().return_(&[zero]);
             return Ok(());
@@ -1257,7 +1259,6 @@ impl<'a> Lowerer<'a, '_> {
             (None, Some(nt)) => widen_to_i64(self.builder, v, nt),
             (None, None) => self.builder.ins().iconst(types::I64, 0),
         };
-        count_out(self.builder, self.depth_addr);
         self.builder.ins().return_(&[ret64]);
         let after = self.builder.create_block();
         self.builder.switch_to_block(after);
@@ -1616,31 +1617,24 @@ unsafe fn build_pass(
         builder.switch_to_block(entry);
         builder.seal_block(entry);
 
-        // The depth guard's compiled half: count this call in, park the fault
-        // past the limit instead of claiming a frame, and count out in the epilogue.
+        // The stack guard's compiled half: the prologue has claimed this call's frame, and
+        // under the run's limit the call parks the fault and leaves before its body runs.
         let run_ctx = builder.block_params(entry)[0];
-        let depth_off = std::mem::offset_of!(crate::run::Context, depth) as i64;
-        let depth_addr = builder.ins().iadd_imm(run_ctx, depth_off);
-        let depth = builder.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
-        let deeper = builder.ins().iadd_imm(depth, 1);
-        builder.ins().store(MemFlagsData::new(), deeper, depth_addr, 0);
-        let over = builder.ins().icmp_imm(
-            IntCC::UnsignedGreaterThan,
-            deeper,
-            crate::run::MAX_CALL_DEPTH as i64,
-        );
+        let limit_at = std::mem::offset_of!(crate::run::Context, stack_limit) as i32;
+        let limit = builder.ins().load(ptr_ty, MemFlagsData::new(), run_ctx, limit_at);
+        let sp = builder.ins().get_stack_pointer(ptr_ty);
+        let over = builder.ins().icmp(IntCC::UnsignedLessThan, sp, limit);
         let fault = builder.create_block();
         let body_b = builder.create_block();
         builder.ins().brif(over, fault, &[], body_b, &[]);
         builder.switch_to_block(fault);
         builder.seal_block(fault);
-        builder.ins().store(MemFlagsData::new(), depth, depth_addr, 0);
         let mut park_sig = module.make_signature();
         park_sig.params.push(AbiParam::new(ptr_ty));
         park_sig.returns.push(AbiParam::new(types::I64));
         let park_sigref = builder.import_signature(park_sig);
         let park =
-            builder.ins().iconst(ptr_ty, crate::run::park_call_depth as *const () as usize as i64);
+            builder.ins().iconst(ptr_ty, crate::run::park_too_deep as *const () as usize as i64);
         builder.ins().call_indirect(park_sigref, park, &[run_ctx]);
         let zero = builder.ins().iconst(types::I64, 0);
         builder.ins().return_(&[zero]);
@@ -1744,7 +1738,6 @@ unsafe fn build_pass(
                 ret,
                 ret_dest,
                 ctx: run_ctx,
-                depth_addr,
                 faults_seen,
                 unwind: Vec::new(),
                 exits: HashMap::new(),
@@ -1764,7 +1757,6 @@ unsafe fn build_pass(
             (None, Some(nt)) => widen_to_i64(&mut builder, value, nt),
             (None, None) => builder.ins().iconst(types::I64, 0),
         };
-        count_out(&mut builder, depth_addr);
         builder.ins().return_(&[ret64]);
         // A fault exit gains a jump from every step lowered after it, so it is sealed last.
         builder.seal_all_blocks();
@@ -1814,13 +1806,6 @@ fn emit_copy(b: &mut FunctionBuilder, flags: MemFlagsData, dst: Value, src: Valu
             at += size;
         }
     }
-}
-
-/// The call leaves: the prologue counted it in.
-fn count_out(b: &mut FunctionBuilder, depth_addr: Value) {
-    let depth = b.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
-    let shallower = b.ins().iadd_imm(depth, -1);
-    b.ins().store(MemFlagsData::new(), shallower, depth_addr, 0);
 }
 
 /// Sign-extend signed integers, zero-extend unsigned, reinterpret float bits,

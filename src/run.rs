@@ -98,8 +98,8 @@ pub enum RunError {
     /// The interpreter panicked under compiled code; the panic's message,
     /// carried back across the machine-code boundary as a checked error.
     Faulted(Box<String>),
-    /// Calls nested deeper than [`MAX_CALL_DEPTH`].
-    CallDepth,
+    /// The run nested deeper than its stack holds: calls, or nodes inside one call.
+    TooDeep,
     /// Not an error: `return X` on its way out to the call it leaves, which
     /// takes the value.
     Return(i64),
@@ -133,9 +133,9 @@ pub enum RunError {
 /// DESIGN ›The calling convention is not part of `@exec`‹.
 #[repr(C)]
 pub struct Context {
-    /// The calls in flight across both tiers: the interpreter and each compiled
-    /// prologue count in and out, and both refuse the frame past [`MAX_CALL_DEPTH`].
-    pub depth: usize,
+    /// The lowest address the run's stack may reach ([`crate::stack::limit`]): the
+    /// interpreter and each compiled prologue fault rather than go under it.
+    pub stack_limit: usize,
     /// The program frame's base, the store's arena: a top-level or `static` place is an
     /// offset from it.
     pub root: *mut u8,
@@ -154,7 +154,7 @@ pub struct Context {
 impl Context {
     fn new() -> Self {
         Context {
-            depth: 0,
+            stack_limit: crate::stack::limit(),
             root: std::ptr::null_mut(),
             faults: 0,
             pending: None,
@@ -219,8 +219,6 @@ pub(crate) unsafe fn interpret_step(
     // SAFETY: `rt` is the runtime that made this very jump, live for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
     // SAFETY: as above.
-    let depth = unsafe { (*rt).ctx.depth };
-    // SAFETY: as above.
     let outcome =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| step(unsafe { &mut *rt })));
     // The machine code's way out calls back in to end what it holds before the park
@@ -231,7 +229,6 @@ pub(crate) unsafe fn interpret_step(
             (*rt).activations.truncate(saved.0);
             (*rt).stack.release(saved.1);
             (*rt).constructing = saved.2;
-            (*rt).ctx.depth = depth;
         }
     };
     match outcome {
@@ -300,20 +297,15 @@ unsafe fn park(ctx: *mut Context, e: RunError) {
     (*ctx).pending.get_or_insert(e);
 }
 
-/// The fault a compiled prologue raises past [`MAX_CALL_DEPTH`], parked as
+/// The fault a compiled prologue raises under the stack limit, parked as
 /// [`park_null_pointer`]'s is.
 ///
 /// # Safety
 /// As [`park_null_pointer`], on the over-limit arm of a prologue.
-pub unsafe extern "C" fn park_call_depth(ctx: *mut Context) -> i64 {
-    park(ctx, RunError::CallDepth);
+pub unsafe extern "C" fn park_too_deep(ctx: *mut Context) -> i64 {
+    park(ctx, RunError::TooDeep);
     0
 }
-
-/// How deep interpreted calls may nest before the run faults instead of the
-/// Rust stack overflowing. Sized against [`crate::WORK_STACK_BYTES`]: a debug
-/// build overflowed near 5,500 frames on 8 MiB, so 10,000 on 64 MiB has room to spare.
-pub const MAX_CALL_DEPTH: usize = 10_000;
 
 /// A frame larger than this gets a dedicated chunk of its own size.
 const STACK_CHUNK: usize = 64 * 1024;
@@ -914,17 +906,12 @@ impl<'a> Runtime<'a> {
         if body.is_null() {
             return Err(RunError::NotRunnable(f));
         }
-        // Past the limit the run faults rather than the Rust stack overflowing.
-        if self.ctx.depth >= MAX_CALL_DEPTH {
-            return Err(RunError::CallDepth);
-        }
         let mark = self.stack.mark();
         let base = self.stack.alloc(fn_frame_size(f));
         if let Err(e) = self.bind_values(f, base, values) {
             self.stack.release(mark);
             return Err(e);
         }
-        self.ctx.depth += 1;
         self.activations.push(Activation::new(base, frame_record(f)));
         let mut result = match self.run(body) {
             Err(RunError::Return(v)) => Ok(v),
@@ -937,7 +924,6 @@ impl<'a> Runtime<'a> {
             result = Ok(dest);
         }
         self.activations.pop();
-        self.ctx.depth -= 1;
         self.stack.release(mark);
         // A `-> void` body yields unit, matching the compiled tier's `return 0`.
         if crate::identities::numtype::is_void_type(*fields.add(FN_OUTPUT)) {
@@ -984,6 +970,10 @@ impl<'a> Runtime<'a> {
     /// `node` must be a valid dyad from the store. If its operation has
     /// installed code, the artifact owning that machine code must still be alive.
     pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
+        // Every recursion of the run passes here, a call's body and an `if`'s arm alike.
+        if crate::stack::exhausted(self.ctx.stack_limit) {
+            return Err(RunError::TooDeep);
+        }
         let node = self.through(node);
         let value = self.dispatch(node)?;
         if self.planned(node) {

@@ -313,11 +313,6 @@ pub(crate) unsafe fn fn_receiver(types: &Core, f: DyadPtr) -> u64 {
     }
 }
 
-/// Each open bracket recurses through `parse_sequence` and `(`'s constructor,
-/// so a wall of `(` costs Rust stack like a runaway recursion: sized well
-/// under `crate::WORK_STACK_BYTES` and far past anything a person writes.
-pub const MAX_BRACKET_DEPTH: usize = 2_000;
-
 /// Deliberately no scope unwrapping: a sequence-valued condition may carry
 /// effectful non-tail expressions a fold would silently drop.
 ///
@@ -636,7 +631,7 @@ impl<'a> Parser<'a> {
     pub(super) fn body_text_extent(&mut self) -> Result<(usize, usize), ParseError> {
         self.expect_open()?;
         let start = self.cx.pos;
-        let close = self.skip_bracket(self.types.open_, 0)?;
+        let close = self.skip_bracket(self.types.open_)?;
         Ok((start, close - start))
     }
 
@@ -1612,11 +1607,10 @@ impl<'a> Parser<'a> {
         Ok(tail)
     }
 
-    /// `open` has one entry per open scope, and `unopened` counts the skipped brackets it
-    /// does not hold, so together they are the nesting depth; past the limit the parse is
-    /// the checked error, not a Rust stack overflow.
-    pub(super) fn check_depth(&self, unopened: usize) -> Result<(), ParseError> {
-        if self.cx.open.len() + unopened >= MAX_BRACKET_DEPTH {
+    /// Each bracket the parse opens, skips or scans recurses, so a wall of `(` costs stack
+    /// like a runaway recursion; once the stack is spent the parse is the checked error.
+    pub(super) fn check_stack(&self) -> Result<(), ParseError> {
+        if crate::stack::exhausted(self.rt.ctx.stack_limit) {
             return Err(ParseError::TooDeep);
         }
         Ok(())
@@ -1664,7 +1658,7 @@ impl<'a> Parser<'a> {
         arguments: bool,
         end: LinesEnd,
     ) -> Result<(DyadPtr, Cell), ParseError> {
-        self.check_depth(0)?;
+        self.check_stack()?;
         let value = std::mem::take(&mut self.cx.next_block);
         let scope = self.open_scope();
         let narrowed = self.cx.narrow_next.take().into_iter().collect();

@@ -33,13 +33,7 @@ impl Engine {
 }
 
 fn main() -> ExitCode {
-    // A thread of the seed's stack size, so the depth guards decide, not the build profile.
-    std::thread::Builder::new()
-        .stack_size(seed::WORK_STACK_BYTES)
-        .spawn(work)
-        .expect("the work thread must start")
-        .join()
-        .unwrap_or(ExitCode::FAILURE)
+    seed::stack::on_work_stack(std::thread::Builder::new(), work).unwrap_or(ExitCode::FAILURE)
 }
 
 fn work() -> ExitCode {
