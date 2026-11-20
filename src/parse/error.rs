@@ -286,8 +286,9 @@ pub enum ParseError {
     RunReturnBorrows,
     /// `static w = …` in a type body where `w` is no slot and nothing declared.
     NoSuchSlot(String),
-    /// A type body with an `own` field and no `free = (…)` to free it.
-    OwningFieldNeedsFree,
+    /// A type body whose fields, named here, own what they hold, and no `static free = (…)` to
+    /// free it.
+    FieldsNeedFree(Vec<String>),
     /// `own @T ?` on a parameter, which would consume the caller's argument.
     OwnParameterNotInSeed,
     /// A `move` or `free` inside a loop or `fn` body names a place declared
