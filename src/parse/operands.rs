@@ -502,10 +502,10 @@ impl<'a> Parser<'a> {
     /// Everything parsed before `at` that has not run, run first, in order (›The pass runs only
     /// as far as it must, in order, and never twice‹ [[R288]]): the lines before the one being
     /// parsed, then the part of it before `at`: the earlier lines of each argument list or `[…]`
-    /// still open, and what stands on `tape`, each of which then stands for the value its run
-    /// gave. Nothing runs where that line holds something before `at` that runs and cannot run
-    /// first: a part of a quote still being built, what stands before a branch a construct
-    /// reads, or a node whose operation is not built yet.
+    /// still open, the earlier parts of each quote still open, and what stands on `tape`, each
+    /// of which then stands for the value its run gave. Nothing runs where that line holds
+    /// something before `at` that runs and cannot run first: what stands before a branch a
+    /// construct reads, or a node whose operation is not built yet.
     pub(super) fn run_before(
         &mut self,
         tape: &mut ParsingTape,
@@ -578,27 +578,26 @@ impl<'a> Parser<'a> {
         !part.runs.is_empty() || self.runs_standing(&unsafe { Cell::built(part.node) })
     }
 
-    /// Line `line` of the bracket `scope` open at `depth`, a part of the line being parsed, runs
+    /// Line `line` of the bracket or quote open at `depth`, a part of the line being parsed, runs
     /// before what the pass needs at the cursor ([`Self::run_early`]), and the value it gave
-    /// stands in its place, which the call that takes the bracket reads. The value lives on in its
-    /// place, so the call holds it or the line's end ends it (›Holding is decided at the binding
-    /// site, parameters included‹ [[R61]]).
+    /// stands in its place, which the call that takes the bracket, or the word that reads the
+    /// quote, reads. The value lives on in its place, so the call holds it or the line's end ends
+    /// it (›Holding is decided at the binding site, parameters included‹ [[R61]]).
     ///
     /// # Safety
-    /// `node` must be line `line` of `scope`, and `plan` the nodes whose values the line holds to
-    /// its end.
+    /// `node` must be line `line` of the scope open at `depth`, and `plan` the nodes whose values
+    /// the line holds to its end.
     pub(super) unsafe fn run_part(
         &mut self,
         depth: usize,
-        scope: DyadPtr,
         line: usize,
         node: DyadPtr,
         plan: &[DyadPtr],
     ) -> Result<(), ParseError> {
         use crate::identities::drop_model::{teardown_of, Teardown};
         let value = self.run_early(depth, self.cx.pos, node, plan)?;
-        crate::identities::scope::set_item(scope, line, value);
         let open = &mut self.cx.open[depth];
+        open.stand(line, value);
         open.held.retain(|m| !plan.contains(m));
         if teardown_of(self.types, value) != Teardown::Nothing {
             open.held.push(value);

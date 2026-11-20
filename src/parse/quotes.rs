@@ -184,19 +184,45 @@ impl<'a> Parser<'a> {
     }
 
     /// The `«…»` to the right of `print` or `error`, read into its parts: text runs, and
-    /// each `{…}` read here as a scope inside the one the word appears in.
+    /// each `{…}` read here as a scope inside the one the word appears in. The parts are parts of
+    /// the line the word stands in, as an argument list's lines are of the call's line: a point
+    /// in a later part where the pass needs a value runs the earlier ones first, and each then
+    /// stands for the value it gave (›The pass runs only as far as it must, in order, and never
+    /// twice‹ [[R288]]).
     fn interpolated_quote(&mut self, word: &'static str) -> Result<Vec<DyadPtr>, ParseError> {
         let (start, len) = self.quote_span_after(word)?;
         let quote = crate::identities::string::read(self.cx.source, start)
             .map_err(|e| self.lex_error(0, e))?;
-        let mut parts = Vec::new();
-        for piece in quote.pieces {
-            match piece {
-                Piece::Text(text) => parts.push(crate::identities::string::build_text(
-                    self.rt.store,
-                    self.types.string_,
-                    &text,
-                )),
+        self.cx.open.push(OpenScope::quote());
+        let read = self.read_parts(quote.pieces);
+        let mut closed = self.cx.open.pop().expect("pushed above");
+        if let Err(e) = read {
+            self.end_after_fault(&closed);
+            return Err(e);
+        }
+        self.hand_on_notes(&mut closed);
+        self.hand_on_held(&mut closed);
+        let mut parts = closed.quote.take().expect("a quote's scope holds its parts");
+        if parts.is_empty() {
+            parts.push(crate::identities::string::build_text(
+                self.rt.store,
+                self.types.string_,
+                b"",
+            ));
+        }
+        self.cx.pos = start + len;
+        Ok(parts)
+    }
+
+    /// The pieces of a quote, read into the open quote's scope, each a line of it: a text run as
+    /// itself, and a `{…}` as the scope it opens, which the pass runs first where a later part
+    /// needs it to, as it does a line of its own.
+    fn read_parts(&mut self, pieces: Vec<Piece>) -> Result<(), ParseError> {
+        for piece in pieces {
+            let part = match piece {
+                Piece::Text(text) => {
+                    crate::identities::string::build_text(self.rt.store, self.types.string_, &text)
+                }
                 Piece::Scope(inner) => {
                     let Some(part) = self.parse_within(inner.start, inner.end)? else {
                         continue;
@@ -214,23 +240,23 @@ impl<'a> Parser<'a> {
                     {
                         return Err(self.fail_at(inner.start, e));
                     }
-                    parts.push(part);
+                    if self.cx.runtime_depth == 0 && !self.cx.each_pass {
+                        let open = self.cx.open.last_mut().expect("the quote's scope is open");
+                        open.unrun.push(UnrunLine::new(part, open.lines));
+                    }
+                    part
                 }
                 Piece::StrayClose(at) => {
                     self.cx.pos = at;
                     return Err(ParseError::StrayInterpolationClose);
                 }
-            }
+            };
+            let open = self.cx.open.last_mut().expect("the quote's scope is open");
+            open.quote.as_mut().expect("the quote's scope holds its parts").push(part);
+            // SAFETY: `part` is the part just read.
+            unsafe { self.settle_line(part) };
         }
-        if parts.is_empty() {
-            parts.push(crate::identities::string::build_text(
-                self.rt.store,
-                self.types.string_,
-                b"",
-            ));
-        }
-        self.cx.pos = start + len;
-        Ok(parts)
+        Ok(())
     }
 
     /// A quote's `{…}`, a scope over its interior `from..to` (DESIGN ›`{ }` is text

@@ -263,8 +263,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::RunsBeforeUnbuilt => {
             "the parse needs a value here (a box's, a call's for a type, the node a call that gives \
              a `dyad` gives, or what an import runs), so what its line runs before it runs first; \
-             here something before it that runs cannot run first yet, such as a part of a quote \
-             or what stands \
+             here something before it that runs cannot run first yet, such as what stands \
              before a branch; give the value a name on a line of its own first, as \
              `v := g(), k(h(), v + 1)`"
                 .into()
