@@ -2189,6 +2189,72 @@ fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
 }
 
 #[test]
+fn a_parameter_moves_nothing_whose_type_ends_its_value_a_dyad_as_a_record() {
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), ";
+    // A type whose values a Logos `parse` builds, with or without a `free` of its own.
+    let node = |free: &str| {
+        format!(
+            "nd := type ( mut s := u64 0, static parse_rank = dyad.parse_rank, \
+             static parse = ( tape.is_constructed[0] = true ){free} ), \
+             f := fn (q := nd ?) -> u64 ( c := move q, c.s ), "
+        )
+    };
+    let lend = "mut b := nd ?, b.s = u64 4, f(b)";
+    for c in ["", "f.compile(), "] {
+        // The call holds what its parameter takes, or borrows it, so the parameter has nothing to
+        // move: a `dyad ?` one as a `bag ?` one, whatever the argument.
+        for tail in [
+            format!("f := fn (a := dyad ?) -> void ( x := move a ), {c}f(i64 5), print «end»"),
+            format!(
+                "f := fn (a := dyad ?) -> void ( b := move a ), {c}mut d := dyad ?, d = i64 5, \
+                 f(d), d"
+            ),
+            format!("f := fn (a := dyad ?) -> void ( x := move a ), {c}f(bag (3)), print «end»"),
+            format!(
+                "f := fn (a := dyad ?) -> void ( x := move a ), {c}b := bag (4), f(b), print «end»"
+            ),
+            format!("f := fn (mut a := dyad ?) -> void ( x := move a ), {c}f(i64 5), print «end»"),
+            format!("f := fn (a := bag ?) -> void ( x := move a ), {c}f(bag (3)), print «end»"),
+            format!("{}{c}{lend}", node(", static free = ( print «freed» )")),
+        ] {
+            let src = format!("{bag}{tail}");
+            let out = logos().arg(&src).output().unwrap();
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                !out.status.success() && stderr.contains("only its owner can"),
+                "{src}: stderr: {stderr}"
+            );
+        }
+        // A value its type ends with its bytes moves as a copy; a name that holds its node moves
+        // it.
+        for (tail, want) in [
+            (format!("f := fn (a := i32 ?) -> i32 ( x := move a, x ), {c}f(i32 5)"), "5\n"),
+            (
+                format!("f := fn (a := @i32 ?) -> i32 ( x := move a, x@ ), {c}y := i32 6, f(&y)"),
+                "6\n",
+            ),
+            (format!("{}{c}{lend}", node("")), "4\n"),
+            (
+                format!(
+                    "f := fn () -> i32 ( mut d := dyad ?, d = bag (7), e := move d, 1 ), {c}f()"
+                ),
+                "freed 7\n1\n",
+            ),
+            (
+                "mut d := dyad ?, d = bag (7), e := move d, print «end»".to_string(),
+                "end\nfreed 7\n",
+            ),
+        ] {
+            let src = format!("{bag}{tail}");
+            let out = logos().arg(&src).output().unwrap();
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "{src}: stderr: {stderr}");
+            assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{src}");
+        }
+    }
+}
+
+#[test]
 fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
     let q = |ty: &str| {
         format!(
