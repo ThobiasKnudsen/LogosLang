@@ -124,6 +124,8 @@ pub enum RunError {
     MintFailed(Box<String>),
     /// A line that waits for the run failed to parse when it ran; the rendered parse error.
     WaitFailed(Box<String>),
+    /// A value the pass ran early, with an end of its own, read again after something took it.
+    StoodTaken,
 }
 
 /// What compiled code reaches the run through, its first argument. The fields
@@ -440,6 +442,9 @@ pub struct Runtime<'a> {
     /// What each line being run made that nothing took, each node with the value it gave,
     /// innermost line's last; a line's end frees its own.
     line_values: Vec<(DyadPtr, i64)>,
+    /// The values with an end of their own the pass ran early that nothing has taken yet, each
+    /// as the node standing in its place (`identities::ran`).
+    stood: Vec<DyadPtr>,
     /// Handed to every jump into machine code.
     pub(crate) ctx: Context,
 }
@@ -502,6 +507,7 @@ impl<'a> Runtime<'a> {
             fresh_this: None,
             plans: Vec::new(),
             line_values: Vec::new(),
+            stood: Vec::new(),
             ctx: Context::new(),
         }
     }
@@ -524,6 +530,23 @@ impl<'a> Runtime<'a> {
     /// The values made since `mark`, in the order they were made, which their line now ends.
     pub(crate) fn take_line_values(&mut self, mark: usize) -> Vec<(DyadPtr, i64)> {
         self.line_values.split_off(mark)
+    }
+
+    /// `node` stands for a value with an end of its own the pass ran early, which nothing has
+    /// taken yet.
+    pub(crate) fn stand(&mut self, node: DyadPtr) {
+        self.stood.push(node);
+    }
+
+    /// Something takes the value `node` stands for: `false` where something took it already.
+    pub(crate) fn take_stood(&mut self, node: DyadPtr) -> bool {
+        match self.stood.iter().rposition(|&n| n == node) {
+            Some(at) => {
+                self.stood.remove(at);
+                true
+            }
+            None => false,
+        }
     }
 
     /// The innermost frame: the program's outside any call.

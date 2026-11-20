@@ -3896,6 +3896,20 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
             format!("{arrays}, {calls}, c := array i32 [h(), g() + 1], print «{{c[0]}} {{c[1]}}»"),
             "h\ng\n1 3",
         ),
+        (
+            format!(
+                "{arrays}, {calls}, ka := fn (a := array i32 ?, b := i32 ?) -> i32 ( a[0] + b ), \
+                 ka(array i32 [h(), 2], g() + 1)"
+            ),
+            "h\ng\n4",
+        ),
+        (
+            format!(
+                "{calls}, t := fn () -> string ( print «t», «x» ), \
+                 kt := fn (a := string ?, b := i32 ?) -> i32 ( print «{{a}}», b ), kt(t(), g() + 1)"
+            ),
+            "t\ng\nx\n3",
+        ),
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
@@ -3910,16 +3924,11 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // What stands before the call cannot run first yet: a part of a quote, an earlier argument
-    // whose value cannot stand in its place, a node with no operation built yet; or it gives text.
+    // What stands before the call cannot run first yet: a part of a quote, a node with no
+    // operation built yet.
     for (src, refusal) in [
         (format!("{calls}, print «{{h()}} {{g() + 1}}»"), "cannot run first yet"),
-        (format!("{calls}, {k2}, k([h(), 2], g() + 1)"), "cannot run first yet"),
         (format!("{calls}, x := [h(), 2], x[0] + (g() + 1)"), "cannot run first yet"),
-        (
-            format!("{calls}, t := fn () -> string ( «x» ), t() == «x» and (g() == i32 2)"),
-            "cannot stand in its place yet",
-        ),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
@@ -3986,13 +3995,33 @@ fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // An earlier argument whose value cannot stand in its place is left for the call, with every
-    // argument after it, which runs each once.
+    // An earlier argument with an end of its own stands in its place too, and the call that holds
+    // it, or the line's end, ends it once.
     let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), \
                mb := fn () -> own bag ( print «mb», bag(4) ), \
                kb := fn (a := bag ?, b := i32 ?, c := i32 ?) -> i32 ( b + c )";
-    let src = format!("{defs}, {bag}, d := dyad (i32, 7), kb(mb(), h(), d + 1)");
-    assert_eq!(line(&src), "mb\nh\nfreed 4\n9", "{src}");
+    let gd = "gd := fn () -> dyad ( print «g», i32 2 )";
+    let k2 = "k2 := fn (a := bag ?, b := i32 ?) -> i32 ( b )";
+    for (src, want) in [
+        (format!("{defs}, {bag}, d := dyad (i32, 7), kb(mb(), h(), d + 1)"), "mb\nh\nfreed 4\n9"),
+        (format!("{defs}, {g}, {bag}, kb(mb(), h(), immediate g())"), "mb\nh\ng\nfreed 4\n3"),
+        (format!("{bag}, {gd}, {k2}, k2(mb(), gd() + 1)"), "mb\ng\nfreed 4\n3"),
+        (
+            format!("{bag}, {gd}, {k2}, f := fn () -> i32 ( k2(mb(), gd() + 1) ), f()"),
+            "mb\ng\nfreed 4\n3",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // A fault after it ran ends it too.
+    let src = format!("{bag}, {gd}, {k2}, k2(mb(), gd() + «x»)");
+    let (code, stdout, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert_eq!(stdout, "mb\ng\nfreed 4\n", "{src}");
+    // A loop's condition runs on every pass, its arguments with it.
+    let src =
+        format!("{defs}, {g}, mut i := i32 0, while i < k(h(), immediate g()) ( i = i + 1 ), i");
+    assert_eq!(line(&src), "g\nh\nh\nh\nh\n3", "{src}");
 }
 
 #[test]

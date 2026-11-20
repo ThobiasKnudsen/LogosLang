@@ -399,9 +399,8 @@ impl<'a> Parser<'a> {
     /// parsed, then the part of it before `at`: the earlier lines of each argument list or `[…]`
     /// still open, and what stands on `tape`, each of which then stands for the value its run
     /// gave. `false`, with nothing run, where that line holds something before `at` that runs
-    /// and cannot run first: a part whose value cannot stand in its place, a part of a quote
-    /// still being built, what stands before a branch a construct reads, or a node whose
-    /// operation is not built yet.
+    /// and cannot run first: a part of a quote still being built, what stands before a branch a
+    /// construct reads, or a node whose operation is not built yet.
     pub(super) fn run_before(
         &mut self,
         tape: &mut ParsingTape,
@@ -412,18 +411,13 @@ impl<'a> Parser<'a> {
         if self.cx.open.iter().flat_map(|o| &o.runs).any(|&s| s < at && !covered(s)) {
             return Ok(false);
         }
-        // A part whose value cannot stand in its place would run after the call: stand-in for #328.
-        let mut parts = self.cx.open.iter().filter(|o| !o.own_lines()).flat_map(|o| &o.unrun);
-        // SAFETY: a part is a reduced dyad this parser built into its store.
-        if !parts.all(|part| !self.runs_first(part) || unsafe { self.stands_as_ran(part.node) }) {
-            return Ok(false);
-        }
         self.drain()?;
         for (handle, from, _) in standing {
             let node = self.as_operand(*tape.cell_of(handle))?;
             // SAFETY: a standing cell holds a node this parser built into its store, or names a
             // binding the resolver found.
             let value = unsafe { self.ran_value(from, node)? };
+            self.note_made(value);
             tape.stand_as_ran(handle, value);
             self.ran_through(tape, handle);
         }
@@ -475,29 +469,40 @@ impl<'a> Parser<'a> {
         !part.runs.is_empty() || self.runs_standing(&unsafe { Cell::built(part.node) })
     }
 
-    /// Line `line` of the open bracket `scope`, a part of the line being parsed, runs before what
-    /// the pass needs at the cursor, and the value it gave stands in its place, which the call
-    /// that takes the bracket reads; what the part made and nothing took ends with it.
+    /// Line `line` of the bracket `scope` open at `depth`, a part of the line being parsed, runs
+    /// before what the pass needs at the cursor, and the value it gave stands in its place, which
+    /// the call that takes the bracket reads; what else the part made and nothing took ends with
+    /// it. The value itself lives on in its place, so the call holds it or the line's end ends it
+    /// (›Holding is decided at the binding site, parameters included‹ [[R61]]).
     ///
     /// # Safety
-    /// `node` must be line `line` of `scope`, a bracket still open, and `plan` the nodes whose
-    /// values the line holds to its end.
+    /// `node` must be line `line` of `scope`, and `plan` the nodes whose values the line holds to
+    /// its end.
     pub(super) unsafe fn run_part(
         &mut self,
+        depth: usize,
         scope: DyadPtr,
         line: usize,
         node: DyadPtr,
         plan: &[DyadPtr],
     ) -> Result<(), ParseError> {
+        use crate::identities::drop_model::{end_line, handed_through, teardown_of, Teardown};
+        let own = handed_through(self.types, node);
+        let ends: Vec<DyadPtr> = plan.iter().copied().filter(|m| !own.contains(m)).collect();
         let held = self.rt.line_mark();
-        self.rt.push_plan(plan);
+        self.rt.push_plan(&ends);
         let value = self.ran_value(self.cx.pos, node);
         self.rt.pop_plan();
         // SAFETY: what the part made since `held` its run gave, still live.
-        let ended = crate::identities::drop_model::end_line(&mut self.rt, held, Ok(0));
+        let ended = end_line(&mut self.rt, held, Ok(0));
         let value = value?;
         ended.map_err(ParseError::Run)?;
         crate::identities::scope::set_item(scope, line, value);
+        let open = &mut self.cx.open[depth];
+        open.held.retain(|m| !plan.contains(m));
+        if teardown_of(self.types, value) != Teardown::Nothing {
+            open.held.push(value);
+        }
         Ok(())
     }
 
@@ -510,56 +515,106 @@ impl<'a> Parser<'a> {
         open.runs.retain(|&s| !(from <= s && s < to));
     }
 
-    /// What stands for `node` once the pass has run it here: the node or the type a `-> dyad`
-    /// or `-> type` call gave, as itself, a node the run made copied into the store and freed;
-    /// any other value in a new node of its type the store holds. Refused at `at` where it cannot
-    /// stand ([`Self::stands_as_ran`]).
+    /// What stands for `node` once the pass has run it here, holding what its run gave: the node
+    /// or the type a `-> dyad` or `-> type` call gave, as itself, a node the run made copied into
+    /// the store and freed; a `[…]` as itself, each of its items that runs standing for the
+    /// value it gave; a value whose type keeps it in its bytes, in a new node of its type the
+    /// store holds. Any other value, text among them, and one with an end of its own, stands as
+    /// a `ran` node of its type, which gives what the run gave, so what reads it reads what read
+    /// the node it ran; what takes it, or the line's end, ends it (›Holding is decided at the
+    /// binding site, parameters included‹ [[R61]]). A statement is refused at `at`, with nothing
+    /// run.
     ///
     /// # Safety
     /// `node` must be a reduced dyad this parser built into its store.
     unsafe fn ran_value(&mut self, at: usize, node: DyadPtr) -> Result<DyadPtr, ParseError> {
-        use crate::identities::{dyad_place, read};
+        use crate::identities::drop_model::{teardown_of, Teardown};
+        use crate::identities::read::{self, place_layout, Read};
+        use crate::identities::{dyad_place, ran};
         let types = self.types;
-        if !self.stands_as_ran(node) {
-            return Err(self.fail_at(at, ParseError::RanValueNotHeld));
+        if dyad::ty(node) == types.square_brackets {
+            self.ran_items(at, node)?;
+            return Ok(node);
         }
-        let out = read::output_type(types, node);
-        let gives_node = out == types.dyad_ || out == types.type_;
-        let run = if gives_node {
-            node
-        } else {
-            dyad_place::build_new_node(self.rt.store, types, node, out)
+        let out = read::value_type(types, node).map_err(|e| self.fail_at(at, e))?;
+        if out == types.dyad_ || out == types.type_ {
+            let held = self.run_on_pass(node).map_err(ParseError::Run)? as usize as DyadPtr;
+            if held.is_null() {
+                return Err(self.fail_at(at, ParseError::Run(crate::run::RunError::NullPointer)));
+            }
+            self.take(node);
+            if crate::identities::type_identity_of(types, held).is_some() {
+                return Ok(held);
+            }
+            let stood = dyad_place::stable(self.rt.store, types, held);
+            if stood != held {
+                dyad_place::end(&mut self.rt, held as i64);
+            }
+            return Ok(stood);
+        }
+        let ends = teardown_of(types, node) != Teardown::Nothing;
+        let layout = place_layout(types, out).map(|(r, _)| r);
+        let carry = read::carry_of(types, out);
+        let (stood, word) = match (layout, carry) {
+            (Some(Read::Container(_)), _) | (_, None) => {
+                (None, self.run_on_pass(node).map_err(ParseError::Run)?)
+            }
+            (_, Some(carry)) => {
+                let run = dyad_place::build_new_node(self.rt.store, types, node, out);
+                let held = self.run_on_pass(run).map_err(ParseError::Run)? as usize as DyadPtr;
+                let stood = dyad_place::stable(self.rt.store, types, held);
+                if stood != held {
+                    dyad_place::end(&mut self.rt, held as i64);
+                }
+                (Some(stood), ran::word_in(carry, stood))
+            }
         };
-        let held = self.run_on_pass(run).map_err(ParseError::Run)? as usize as DyadPtr;
-        if held.is_null() {
-            return Err(self.fail_at(at, ParseError::Run(crate::run::RunError::NullPointer)));
-        }
         self.take(node);
-        if crate::identities::type_identity_of(types, held).is_some() {
-            return Ok(held);
+        match stood {
+            Some(stood) if !ends => Ok(stood),
+            _ => {
+                let ran = ran::build(self.rt.store, types, word, ends, out);
+                if ends {
+                    self.rt.stand(ran);
+                    self.cx
+                        .open
+                        .last_mut()
+                        .expect("a line is read in an open scope")
+                        .stood
+                        .push(ran);
+                }
+                Ok(ran)
+            }
         }
-        let stood = dyad_place::stable(self.rt.store, types, held);
-        if stood != held {
-            dyad_place::end(&mut self.rt, held as i64);
-        }
-        Ok(stood)
     }
 
-    /// Whether what `node` gives can stand in its place once the pass has run it: a node or a
-    /// type, or a value that moves whole and ends by no more than its bytes, which the line's end
-    /// would run.
+    /// Each item of the `[…]` `list` that runs runs, in order, and stands in its place for the
+    /// value it gave, which the call that takes the list reads.
     ///
     /// # Safety
-    /// `node` must be a reduced dyad this parser built into its store.
-    pub(super) unsafe fn stands_as_ran(&self, node: DyadPtr) -> bool {
-        use crate::identities::drop_model::{teardown_of, Teardown};
-        use crate::identities::{dyad_place, read};
-        let types = self.types;
-        let out = read::output_type(types, node);
-        out == types.dyad_
-            || out == types.type_
-            || (dyad_place::moves_whole(types, out)
-                && teardown_of(types, node) == Teardown::Nothing)
+    /// `list` must be a closed `[…]` this parser built into its store.
+    unsafe fn ran_items(&mut self, at: usize, list: DyadPtr) -> Result<(), ParseError> {
+        use crate::identities::scope;
+        let items = scope::exprs_of(list).map_or_else(Vec::new, <[_]>::to_vec);
+        for (i, item) in items.into_iter().enumerate() {
+            if self.item_runs(item) {
+                let value = self.ran_value(at, item)?;
+                scope::set_item(list, i, value);
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether `item`, a line of a closed `[…]`, holds something that runs.
+    ///
+    /// # Safety
+    /// `item` must be a reduced dyad this parser built into its store.
+    unsafe fn item_runs(&self, item: DyadPtr) -> bool {
+        if dyad::ty(item) != self.types.square_brackets {
+            return self.runs_standing(&Cell::built(item));
+        }
+        let items = crate::identities::scope::exprs_of(item).unwrap_or(&[]);
+        items.iter().any(|&i| self.item_runs(i))
     }
 
     /// `e` with its caret at `at`, for a constructor refusing an operand it read.
