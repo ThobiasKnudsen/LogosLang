@@ -2152,6 +2152,32 @@ fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
                 ),
                 "f\ng\nfreed 4\n3\n",
             ),
+            // A parameter borrows a value a name holds: the call frees the node it lands in, and
+            // the name ends the value.
+            (
+                format!("b := bag (4), f := fn (a := dyad ?) -> i32 ( 1 ), {c}f(b), print «end»"),
+                "end\nfreed 4\n",
+            ),
+            (
+                format!(
+                    "mut d := dyad ?, d = bag (5), f := fn (a := dyad ?) -> i32 ( 1 ), {c}f(d), \
+                     print «end»"
+                ),
+                "end\nfreed 5\n",
+            ),
+            (
+                format!(
+                    "f := fn (a := dyad ?) -> i32 ( 1 ), {c}g := fn (a := dyad ?) -> i32 ( f(a) ), \
+                     g(bag (5)), print «end»"
+                ),
+                "freed 5\nend\n",
+            ),
+            (
+                format!(
+                    "b := bag (4), f := fn (a := dyad ?) -> dyad ( a ), {c}x := f(b), print «end»"
+                ),
+                "end\nfreed 4\nfreed 4\n",
+            ),
         ] {
             let src = format!("{bag}{tail}");
             let out = logos().arg(&src).output().unwrap();
@@ -2159,16 +2185,6 @@ fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
             assert!(out.status.success(), "{src}: stderr: {stderr}");
             assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{src}");
         }
-    }
-    // A parameter borrows a named value, and the new node would end it: stand-in for #348.
-    for tail in [
-        "b := bag (4), f := fn (a := dyad ?) -> i32 ( 1 ), f(b)",
-        "f := fn (a := dyad ?) -> i32 ( 1 ), g := fn (a := dyad ?) -> i32 ( f(a) ), g(bag (5))",
-    ] {
-        let src = format!("{bag}{tail}");
-        let out = logos().arg(&src).output().unwrap();
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("does not take this value yet"), "{src}: stderr: {stderr}");
     }
 }
 

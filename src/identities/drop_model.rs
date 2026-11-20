@@ -714,12 +714,20 @@ pub(crate) unsafe fn end_held_args(
 
 /// Ends the value `node` gave, which its holder lets go: `this` is its word, or its bytes'
 /// address for a record kept in them; an owning pointer's block is freed, a `dyad` the node it
-/// made, anything else runs its type's `free` over it, and NULL ends nothing.
+/// made, with the value it holds unless it borrows that value, anything else runs its type's
+/// `free` over it, and NULL ends nothing.
 ///
 /// # Safety
 /// `node` must be a node from the store whose value `this` is.
 unsafe fn end_value(rt: &mut Runtime, node: DyadPtr, this: i64) -> Result<(), RunError> {
-    let ty = super::read::output_type(rt.types(), node);
+    let types = rt.types();
+    let ty = super::read::output_type(types, node);
+    let given =
+        if dyad::ty(node) == types.hold_ { *(dyad::value(node) as *const DyadPtr) } else { node };
+    if ty == types.dyad_ && super::dyad_place::borrows(types, given) {
+        super::dyad_place::release(rt, this);
+        return Ok(());
+    }
     end_of_type(rt, ty, this)
 }
 
@@ -1803,6 +1811,30 @@ mod tests {
         let read = "g := fn (q := @i32 ?) -> i32 ( q@ ), f := fn () -> dyad ( alloc 1 of i32 5 ), \
                     g(f())";
         assert_eq!(run(read), (5, 0), "{read}");
+    }
+
+    #[test]
+    fn a_dyad_parameter_borrows_a_value_a_name_holds() {
+        let f = "f := fn (a := dyad ?) -> i32 ( 1 )";
+        for (src, want) in [
+            (format!("p := alloc 1 of i32 5, {f}, f(p)"), 1),
+            (format!("p := alloc 1 of i32 5, {f}, f.compile(), f(p)"), 1),
+            (
+                format!("p := alloc 1 of i32 5, {f}, g := fn () -> i32 ( f(p) ), g.compile(), g()"),
+                1,
+            ),
+            (format!("p := alloc 1 of i32 5, {f}, for 0..3 ( f(p) ), p@"), 5),
+            ("p := alloc 1 of i32 5, f := fn (a := dyad ?) -> i32 ( a@ ), f(p), p@".into(), 5),
+            (format!("mut d := dyad ?, d = alloc 1 of i32 5, {f}, f(d)"), 1),
+            ("p := alloc 1 of i32 5, f := fn (a := dyad ?) -> dyad ( a ), x := f(p), p@".into(), 5),
+        ] {
+            assert_eq!(run_hosted(&src), (want, 0), "{src}");
+            if src.starts_with("p :=") {
+                assert_eq!(free_log(), vec![5], "{src}");
+            }
+        }
+        let held = format!("{f}, g := fn (a := dyad ?) -> i32 ( f(a) ), g(alloc 1 of i32 5)");
+        assert_eq!(run_hosted(&held), (1, 0), "{held}");
     }
 
     #[test]
