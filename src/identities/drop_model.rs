@@ -131,22 +131,21 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         // SAFETY: `place` is a resolved dyad from the store.
         let ty = unsafe { super::read::output_type(types, place) };
         // SAFETY: `ty` is null or a type node from the store.
-        if unsafe { super::this::is_plain(types, ty) } {
-            return Err(ParseError::RecordMoveNotInSeed);
-        }
-        // A name moves whatever it holds, a borrowed node's name excepted: it holds none.
-        // A field or cell moves only what it owns: stand-in for #66.
+        let ends = unsafe {
+            meta::is_node_valued(ty, types.fn_type)
+                || super::this::is_plain(types, ty) && !meta::instances_free_of(ty).is_null()
+        };
+        // A name moves whatever it holds, but a name that only borrows a value with an end, a
+        // parameter's included, holds none. A field or cell moves only what it owns: stand-in
+        // for #66.
         let name = ended.as_ref().filter(|e| e.is_name());
         // SAFETY: as above, and `name` holds the binding the resolver returned for it.
-        let (owner, node_valued) = unsafe {
-            (
-                name.is_some_and(|e| p.owns_node(e.binding))
-                    || p.is_owning_read(place)
-                    || is_owning_place(types, place),
-                meta::is_node_valued(ty, types.fn_type),
-            )
+        let owner = unsafe {
+            name.is_some_and(|e| p.owns_node(e.binding))
+                || p.is_owning_read(place)
+                || is_owning_place(types, place)
         };
-        if !owner && node_valued && name.is_some() {
+        if !owner && ends && name.is_some() {
             return Err(ParseError::MoveOfBorrow);
         }
         if !owner && name.is_none() {
@@ -537,13 +536,19 @@ pub(crate) unsafe fn own_result(
 }
 
 /// `move` of a place: `[place]` under `move`'s mint for the moved value's type, which it gives,
-/// so the name that takes it learns whether it holds it.
+/// so the name that takes it learns whether it holds it. A plain record moves as its bytes'
+/// address, which the taker copies.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let ty = super::read::output_type(types, place);
-    super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place])
+    let moved = super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place]);
+    if super::this::is_plain(types, ty) {
+        super::by_copy::build_out(store, types, moved)
+    } else {
+        moved
+    }
 }
 
 /// What `free` of the place runs: a name that holds its value (`holder`) its teardown, an

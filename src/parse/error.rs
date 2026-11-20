@@ -252,10 +252,8 @@ pub enum ParseError {
     /// A scope's value or a `return` is `&x` of a name a scope it leaves holds: that
     /// scope's end frees the value under the address.
     AddressOfHeld,
-    /// `move b` where `b` borrows the node it names: only the owner can move it.
+    /// `move b` where `b` borrows the value with an end it names: only the owner can move it.
     MoveOfBorrow,
-    /// `move a` of a plain record: its bytes are not copied into a name yet. stand-in for #193
-    RecordMoveNotInSeed,
     /// `p@ = v` of a plain record whose type fills `free`. stand-in for #240
     HeldRecordThroughPointerNotInSeed,
     /// `move p.f` or `move p@` of a field or cell that owns nothing. stand-in for #66

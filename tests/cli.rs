@@ -6515,7 +6515,7 @@ fn a_plain_record_s_owner_runs_its_free_once() {
     for (tail, expect) in [
         ("a := bag(1), free a, a", "`a` is dead here"),
         ("a := bag(1), b := a, free b, b", "`b` is dead here"),
-        ("a := bag(1), b := move a, 1", "moving a plain record is not in the seed yet"),
+        ("a := bag(1), b := move a, a.n", "`a` is dead here"),
     ] {
         let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -6524,6 +6524,79 @@ fn a_plain_record_s_owner_runs_its_free_once() {
     // A later REPL line frees what an earlier one holds, and the session's end frees it no more.
     let (echoes, stderr) = repl(format!("{RECORD}\na := bag(13)\nfree a\n").as_bytes());
     assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
+}
+
+/// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹ [[R58]]: `move a` of a plain
+/// record copies its bytes into the name or parameter that takes it, which frees it once, and
+/// `a` is dead from that line, on both tiers.
+#[test]
+fn a_plain_record_moves_by_its_bytes() {
+    let g = "g := fn (q := bag ?) -> i32 ( print «in g», q.n )";
+    let pick = "f := fn (c := bool ?) -> i32 ( a := bag(1), x := if c (bag(3)) else (move a), \
+                print «end», x.n )";
+    for (tail, printed) in [
+        ("a := bag(1), b := move a, print «end»".to_string(), "end\nfreed 1\n"),
+        ("a := bag(1), b := move a, c := move b, print «end»".into(), "end\nfreed 1\n"),
+        (
+            "f := fn () -> i32 ( a := bag(2), b := move a, print «in», 1 ), f.compile(), f(), \
+             print «after»"
+                .into(),
+            "in\nfreed 2\nafter\n",
+        ),
+        (format!("{g}, a := bag(3), g(move a), print «end»"), "in g\nfreed 3\nend\n"),
+        (
+            format!(
+                "{g}, h := fn () -> i32 ( a := bag(3), g(move a), print «end», 1 ), h.compile(), \
+                 h(), print «after»"
+            ),
+            "in g\nfreed 3\nend\nafter\n",
+        ),
+        // The arm that does not move `a` frees it at the `if`'s close.
+        (
+            format!("{pick}, f(false), f(true), print «after»"),
+            "end\nfreed 1\nfreed 1\nend\nfreed 3\nafter\n",
+        ),
+        (
+            format!("{pick}, f.compile(), f(false), f(true), print «after»"),
+            "end\nfreed 1\nfreed 1\nend\nfreed 3\nafter\n",
+        ),
+        (
+            "mk := fn () -> own bag ( a := bag(5), move a ), m := mk(), print «got»".into(),
+            "got\nfreed 5\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    let pt = "pt := type ( x := i32 ?, y := i32 ? )";
+    for tail in [
+        "a := pt(1, 2), b := move a, b.y",
+        "f := fn () -> i32 ( a := pt(1, 2), b := move a, b.y ), f.compile(), f()",
+        "g := fn (q := pt ?) -> i32 ( b := move q, b.y ), g(pt(1, 2))",
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{pt}, {tail}"));
+        assert_eq!((code, stdout.trim()), (Some(0), "2"), "{tail}: stderr: {stderr}");
+    }
+    for (tail, expect) in [
+        ("a := bag(1), b := move a, a.n", "`a` is dead here"),
+        (
+            "f := fn () -> i32 ( a := bag(1), b := move a, a.n ), f.compile(), f()",
+            "`a` is dead here",
+        ),
+        // A parameter only borrows what the caller holds, so the caller's end frees it.
+        (
+            "g := fn (q := bag ?) -> i32 ( b := move q, b.n ), a := bag(3), g(a)",
+            "this name borrows what it holds",
+        ),
+        ("a := bag(1), for i in 0..2 ( b := move a ), 1", "declared outside this loop"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+    let (echoes, stderr) =
+        repl(format!("{RECORD}\na := bag(1)\nb := move a\nprint «mid»\n").as_bytes());
+    assert_eq!(echoes, ["mid", "freed 1"], "stderr: {stderr}");
 }
 
 /// DESIGN ›A value's teardown runs where its life ends; the ending identity reads the type's
