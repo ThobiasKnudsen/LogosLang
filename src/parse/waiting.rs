@@ -43,11 +43,15 @@ pub(super) struct Kept {
 }
 
 /// A line held for the run, as [`Parser::hold_line`] left it: every cell of its text, lexed
-/// against the scopes open where it is written, and the part before `cut` parsed there.
+/// against the scopes open where it is written, the part before `cut` parsed there, and what a
+/// bare field or a bare call there reaches the value its body is about through: the type
+/// definitions open there, and a `run` body's own fields.
 pub(crate) struct HeldLine {
     cells: ParsingTape,
     cut: usize,
     kept: Kept,
+    definitions: Vec<OpenType>,
+    run_fields: Option<(DyadPtr, Vec<DyadPtr>)>,
 }
 
 impl<'a> Parser<'a> {
@@ -56,13 +60,8 @@ impl<'a> Parser<'a> {
     /// bracket that waits on its own. The cursor stays. A line that waits and holds `:=`,
     /// `return`, `free` or `move` is refused here: stand-in for #281.
     pub(super) fn waiting_line_end(&mut self) -> Result<Option<Waits>, ParseError> {
-        let in_run_order = self.cx.feed.as_ref().is_none_or(|f| f.in_run_order);
         let open = self.cx.open.last();
-        if self.cx.runtime_depth == 0
-            || !in_run_order
-            || open.is_none_or(|o| o.list || o.arguments)
-            || !self.cx.definitions.is_empty()
-        {
+        if self.cx.runtime_depth == 0 || open.is_none_or(|o| o.list || o.arguments) {
             return Ok(None);
         }
         let start = self.cx.pos;
@@ -409,9 +408,10 @@ impl<'a> Parser<'a> {
         let held = std::str::from_utf8(held).expect("copied from the source text");
         let fragment = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held)
             .map_err(|e| self.lex_error(start, e))?;
-        for cell in fragment.held_cells() {
+        let held_cells = fragment.held_cells();
+        for (k, cell) in held_cells.iter().enumerate() {
             let binding = cell.binding(types);
-            if binding.is_null() {
+            if self.note_receiver_use(&held_cells, k) || binding.is_null() {
                 continue;
             }
             self.cx.pos = start + cell.start;
@@ -425,7 +425,13 @@ impl<'a> Parser<'a> {
         // `start` bytes before the source did.
         let cells = kept.cells.into_iter().map(|c| unsafe { c.moved_to(held, start) }).collect();
         let kept = Kept { cells, ..kept };
-        let line = HeldLine { cells: fragment, cut: waits.cut - start, kept };
+        let line = HeldLine {
+            cells: fragment,
+            cut: waits.cut - start,
+            kept,
+            definitions: self.cx.definitions.clone(),
+            run_fields: self.cx.run_fields.clone(),
+        };
         let line = Box::into_raw(Box::new(line));
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
         let frames: Vec<DyadPtr> = self.cx.frames.iter().map(|f| f.frame).collect();
@@ -439,6 +445,40 @@ impl<'a> Parser<'a> {
         );
         // SAFETY: `node` was just built in the store.
         Ok(unsafe { Cell::built(node) })
+    }
+
+    /// Whether `cells[k]`, a cell of a held line, names a field of the value the `static`
+    /// function it stands in is about: no outer name. Such a field, read or written where `=`
+    /// follows it, and a bare call of a `static` function that writes that value, mark the
+    /// function's receiver as the line's parse does, since its callers read the mark before the
+    /// line first runs (›A `static` function writes the value it is called on, and respects
+    /// `mut`‹ [[R239]]).
+    fn note_receiver_use(&mut self, cells: &[Cell], k: usize) -> bool {
+        let types = self.types;
+        let cell = &cells[k];
+        if cell.constructed
+            || k.checked_sub(1).is_some_and(|j| self.is_unbuilt_tight_read(&cells[j]))
+        {
+            return false;
+        }
+        let next = cells.get(k + 1).map(|c| self.cell_identity(c));
+        let field = self.names_own_field(cell);
+        let writes = if field {
+            next == Some(types.assign)
+        } else {
+            // SAFETY: a resolved cell's identity is null or a dyad from the store.
+            next == Some(types.open_)
+                && unsafe {
+                    let f = types.through(self.cell_identity(cell));
+                    self.takes_this(f) && fn_receiver(types, f) & RECEIVER_WRITES != 0
+                }
+        };
+        let receiver = self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null());
+        if let Some(def) = receiver.filter(|d| !d.in_parse) {
+            def.read_receiver |= field;
+            def.wrote_receiver |= writes;
+        }
+        field
     }
 
     /// The line at the cursor parsed up to `cut`, the read the run supplies: lexed, and built as
@@ -544,6 +584,8 @@ impl<'a> Parser<'a> {
             held_depth: depth,
             feed: Some(Feed { cells, next: 0, base_depth, in_run_order: true }),
             kept: Some(line.kept.clone()),
+            definitions: line.definitions.clone(),
+            run_fields: line.run_fields.clone(),
             next_block: if into.is_null() { BlockValue::Thrown } else { BlockValue::Returned },
             ..Context::nested(&self.cx, text, nested)
         };
