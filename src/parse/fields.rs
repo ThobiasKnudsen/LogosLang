@@ -1366,8 +1366,7 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
-        // A call giving a `dyad` the pass does not run here, in a line that does not wait for the
-        // run: stand-in for #310.
+        // A call giving a `dyad` that the pass has not run: the node it gives is known only at run.
         if read::output_type(types, lhs) == types.dyad_
             && matches!(
                 read::read_kind(types, lhs),
