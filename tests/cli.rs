@@ -3754,6 +3754,10 @@ fn an_imported_name_one_importer_ended_is_dead_for_every_importer() {
     );
     assert_eq!(echoes, ["freed 9"], "stderr: {stderr}");
     assert!(stderr.contains("`h` is dead here"), "stderr: {stderr}");
+    // A body that runs later or again cannot end it: `import` stands only where it runs once.
+    let (code, _, stderr) = run_line(&format!("{lib}, f := fn () -> void ( free p ), 1"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("declared outside this loop or function body"), "stderr: {stderr}");
     // A line that fails at parse takes its `free` back, on every copy of the name.
     let (echoes, stderr) = repl(format!("{lib}\nfree p, zz\n{lib}\np@\n").as_bytes());
     assert_eq!(echoes, ["7"], "stderr: {stderr}");

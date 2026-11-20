@@ -51,7 +51,8 @@ pub struct Binding {
     /// The record this one copies, an imported `pub` name's in the file; null on a name's
     /// own record. A copy differs from it in `scope` and `start` alone.
     pub origin: DyadPtr,
-    /// The copies of this record, an `array` of bindings; null while none.
+    /// The copies made of this record, an `array` of bindings, one that a failed line or a
+    /// refused import left in no scope included; null while none.
     pub copies: DyadPtr,
     /// Declared outside any function in a body the pass does not run in parse order, a loop
     /// or a branch: at parse the name holds no value yet.
