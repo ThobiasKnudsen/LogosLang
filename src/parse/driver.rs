@@ -32,11 +32,13 @@ pub(super) enum RightSide {
     Condition,
 }
 
-/// A constructor edits the tape in place; `Placed` reports only that it did.
-/// `Decline` is "not mine": nothing consumed, nothing touched, and the driver
-/// leaves the identity standing as its own value.
+/// A constructor edits the tape in place; `Placed` reports only that it did, and `Gave` that its
+/// cell holds the value an expression gives, a call's result or what a member holds, which the
+/// driver may hand on as a name holding it. `Decline` is "not mine": nothing consumed, nothing
+/// touched, and the driver leaves the identity standing as its own value.
 pub enum Constructed {
     Placed,
+    Gave,
     Decline,
 }
 
@@ -334,10 +336,11 @@ impl<'a> Parser<'a> {
             }
             let Some((n, _, construct, id)) = best else {
                 // A bracket no identity claimed, standing before another cell, is an
-                // expression like any other: its value wakes its type's `parse`.
+                // expression like any other: its value wakes its type's `parse`. One holding a
+                // type stands: stand-in for #377.
                 let last = tape.iter().last().map(|(n, _)| n);
                 let woken = tape.iter().find(|&(n, c)| {
-                    Some(n) != last && c.bracket && self.is_awake_instance(self.cell_identity(c))
+                    Some(n) != last && c.bracket && self.wakes(self.cell_identity(c), false)
                 });
                 let Some((n, _)) = woken else { break };
                 tape.center_on(n);
@@ -463,6 +466,18 @@ impl<'a> Parser<'a> {
         } else {
             Some(id)
         }
+    }
+
+    /// Whether `value`, placed on the tape, stands unconstructed for the driver's next turn, as a
+    /// name holding it does (›A name of a type with an instances' `parse` wakes it, as the
+    /// instance does, and so does any expression of the type‹ [[R230]]): an instance whose type
+    /// fills `parse`, or a type with a constructor that an expression `gave`.
+    fn wakes(&self, value: DyadPtr, gave: bool) -> bool {
+        // SAFETY: `value` is null or a reduced dyad from the store.
+        self.is_awake_instance(value)
+            || (gave
+                && unsafe { self.identity_head(value) }.is_some()
+                && self.ctor_of(value).is_some())
     }
 
     /// A node its type's `parse` built, standing on the tape, or any expression known at
@@ -595,13 +610,13 @@ impl<'a> Parser<'a> {
                     return Err(e);
                 }
             }
-            // A call that yields a node whose type has a `parse` wakes it as a name does,
-            // in the driver's next turn; a node a parse built runs, and is never parsed again,
-            // though the value its run yields is read by its own type's parse.
+            // A node a parse built runs, and is never parsed again, though the value its run
+            // yields is read by its own type's parse; a bracket waits for the segment's end.
             // SAFETY: `built` saw a node from the store.
             let reparsed =
                 built && self.awake_type(cell.dyad) == Some(unsafe { dyad::ty(cell.dyad) });
-            if !same && !reparsed && !cell.bracket && self.is_awake_instance(cell.dyad) {
+            let gave = matches!(outcome, Constructed::Gave);
+            if !same && !reparsed && !cell.bracket && self.wakes(cell.dyad, gave) {
                 tape.set_constructed(0, false);
             }
             self.note_made(cell.dyad);
@@ -815,26 +830,12 @@ impl<'a> Parser<'a> {
             // SAFETY: `id` is the resolved callee and `args` reduced dyads.
             let node = unsafe { self.build_call(id, &args) }?;
             tape.remove(1);
-            if self.stands_in_for_call(node) {
-                tape.set_dyad(0, node);
-            } else {
-                tape.place(node);
-            }
-        } else {
-            let value = self.stand_as_value(tape, id);
-            tape.place(value);
+            tape.place(node);
+            return Ok(Constructed::Gave);
         }
+        let value = self.stand_as_value(tape, id);
+        tape.place(value);
         Ok(Constructed::Placed)
-    }
-
-    /// Whether `node`, what a call built, is the type a call for a type gave in the pass, which
-    /// stands in for the call, in a body too (›Inside a body, a `-> type` call may take an
-    /// argument known only at run‹ [[R296]]): handed on as its own unconstructed cell, it reads
-    /// what follows it as a name holding it does (›A name of a type with an instances' `parse`
-    /// wakes it, as the instance does, and so does any expression of the type‹ [[R230]]).
-    pub(super) fn stands_in_for_call(&self, node: DyadPtr) -> bool {
-        // SAFETY: `node` is a reduced dyad from the store.
-        unsafe { self.identity_head(node) }.is_some()
     }
 
     /// The scope's expressions in order (prose and teardown structure aside),
@@ -877,7 +878,9 @@ impl<'a> Parser<'a> {
         // SAFETY: `self.cx.source` outlives the parse; `id` came from the index.
         tape.push(unsafe { Cell::lexed(id, self.cx.source, start, len) });
         match construct(self, id, &mut tape)? {
-            Constructed::Placed => Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad)),
+            Constructed::Placed | Constructed::Gave => {
+                Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad))
+            }
             Constructed::Decline => Ok(None),
         }
     }
