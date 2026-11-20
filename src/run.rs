@@ -538,6 +538,11 @@ impl<'a> Runtime<'a> {
         self.stood.push(node);
     }
 
+    /// Whether nothing has taken the value `node` stands for yet.
+    pub(crate) fn stands(&self, node: DyadPtr) -> bool {
+        self.stood.contains(&node)
+    }
+
     /// Something takes the value `node` stands for: `false` where something took it already.
     pub(crate) fn take_stood(&mut self, node: DyadPtr) -> bool {
         match self.stood.iter().rposition(|&n| n == node) {

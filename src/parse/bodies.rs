@@ -63,11 +63,20 @@ pub(super) struct UnrunLine {
     plan: Vec<DyadPtr>,
     /// Where each node in it that runs starts.
     pub(super) runs: Vec<usize>,
+    /// The values with an end of their own the pass ran early that stand in it.
+    stood: Vec<DyadPtr>,
 }
 
 impl UnrunLine {
     pub(super) fn new(node: DyadPtr, line: usize) -> Self {
-        UnrunLine { node, line, ends: Vec::new(), plan: Vec::new(), runs: Vec::new() }
+        UnrunLine {
+            node,
+            line,
+            ends: Vec::new(),
+            plan: Vec::new(),
+            runs: Vec::new(),
+            stood: Vec::new(),
+        }
     }
 }
 
@@ -137,8 +146,9 @@ pub(super) struct OpenScope {
     /// The values the scope's closed lines made that nothing took: each line's end frees its
     /// own. The scope node's `held` slot once it closes.
     pub(super) held: Vec<DyadPtr>,
-    /// The nodes standing for values with an end of their own that the pass ran early in this
-    /// scope or one closed inside it: what nothing took when the line ends or faults ends then.
+    /// The nodes standing for values with an end of their own that the pass ran early in the
+    /// line being parsed, or in a scope closed inside it: the line takes them when it closes,
+    /// and what nothing took ends where it ends or faults.
     pub(super) stood: Vec<DyadPtr>,
     /// The lines the pass has run, up to which a fault's end ends what they hold.
     ran: usize,
@@ -179,6 +189,14 @@ impl OpenScope {
     /// (›A bracket goes to the call whole‹ [[R228]]).
     pub(super) fn own_lines(&self) -> bool {
         !self.list && !self.arguments
+    }
+
+    /// The values the pass ran early that stand in the scope's lines, closed or not, taken out.
+    pub(super) fn take_stood(&mut self) -> Vec<DyadPtr> {
+        let mut stood: Vec<DyadPtr> =
+            self.unrun.iter_mut().flat_map(|u| std::mem::take(&mut u.stood)).collect();
+        stood.append(&mut self.stood);
+        stood
     }
 
     pub(super) fn take_line_notes(&mut self) -> LineNotes {
@@ -1686,7 +1704,7 @@ impl<'a> Parser<'a> {
             open.runs.append(&mut closed.runs);
             open.runs.append(&mut closed.closed_runs);
             open.runs.extend(closed.unrun.iter().flat_map(|u| &u.runs));
-            open.stood.append(&mut closed.stood);
+            open.stood.append(&mut closed.take_stood());
         }
         self.close_returns(self.cx.open.len());
         if closed.arguments {
@@ -1897,6 +1915,7 @@ impl<'a> Parser<'a> {
             Some(unrun) => {
                 unrun.plan.extend_from_slice(&made);
                 unrun.runs = runs;
+                unrun.stood = std::mem::take(&mut open.stood);
             }
             None => open.closed_runs.extend(runs),
         }
@@ -2048,7 +2067,11 @@ impl<'a> Parser<'a> {
         let mut last = None;
         let mut left = items.iter().filter(|&&(_, runs, _, part)| runs && part.is_none()).count();
         for (unrun, runs, depth, part) in items {
-            let UnrunLine { node, line, ends, plan, .. } = unrun;
+            let UnrunLine { node, line, ends, plan, stood, .. } = unrun;
+            if part.is_some() || !runs {
+                // A part stands in the line its call stands in, which has not ended.
+                self.cx.open[depth].stood.extend(stood.iter().copied());
+            }
             if runs {
                 // The holder frees the names the line ends no more, even when the line
                 // faults, as a scope's run counts its ending line (`ExitItem::held_at`).
@@ -2071,10 +2094,16 @@ impl<'a> Parser<'a> {
                 left -= 1;
                 let bits = if keep_tail && left == 0 && ran.is_ok() {
                     self.cx.tail_values = Some(held);
+                    self.cx.open[depth].stood.extend(stood);
                     ran
                 } else {
-                    // SAFETY: what the line made since `held` its run gave, still live.
-                    unsafe { crate::identities::drop_model::end_line(&mut self.rt, held, ran) }
+                    use crate::identities::drop_model::{end_line, end_stood};
+                    // SAFETY: what the line made since `held` its run gave, still live; each
+                    // stood node is one `ran_value` built, live until something takes it.
+                    let (ended, left_over) = unsafe {
+                        (end_line(&mut self.rt, held, ran), end_stood(&mut self.rt, &stood))
+                    };
+                    ended.and_then(|bits| left_over.map(|()| bits))
                 };
                 let bits = bits.map_err(ParseError::Run)?;
                 if left > 0 {
@@ -2096,8 +2125,7 @@ impl<'a> Parser<'a> {
             Some(held) => unsafe { end_line(&mut self.rt, held, Ok(0)) }.map(|_| ()),
             None => Ok(()),
         };
-        let stood: Vec<DyadPtr> =
-            self.cx.open.iter_mut().flat_map(|o| std::mem::take(&mut o.stood)).collect();
+        let stood: Vec<DyadPtr> = self.cx.open.iter_mut().flat_map(OpenScope::take_stood).collect();
         // SAFETY: each stood node is one `ran_value` built, its value live until something
         // takes it.
         let left = unsafe { end_stood(&mut self.rt, &stood) };
@@ -2110,9 +2138,11 @@ impl<'a> Parser<'a> {
     /// holds a name alone decides: a name held from the scope's start is an enclosing
     /// scope's, and one a nested line the pass ran ended is not held.
     pub(super) fn end_after_fault(&mut self, open: &OpenScope) {
+        let stood: Vec<DyadPtr> =
+            open.unrun.iter().flat_map(|u| &u.stood).chain(&open.stood).copied().collect();
         // SAFETY: each stood node is one `ran_value` built, its value live until something
         // takes it. The fault stays the error shown.
-        let _ = unsafe { crate::identities::drop_model::end_stood(&mut self.rt, &open.stood) };
+        let _ = unsafe { crate::identities::drop_model::end_stood(&mut self.rt, &stood) };
         let ends: Vec<ExitItem> = open
             .exit
             .iter()
