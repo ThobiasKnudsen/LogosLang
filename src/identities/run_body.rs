@@ -160,16 +160,19 @@ pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
 }
 
 /// One type per field of `node`, a node of the Logos-written type `ty`, in order: a field's
-/// declared type, a `type` field's held type, a field typed as a bracket the bracket it holds
-/// (›A function is built once; a `fn` or `run` body is built as far as it can be where it is
-/// written‹ [[R299]]). `None` while one is unknown.
+/// declared type, `type` included, but the type the field `output` holds, the type the node's run
+/// gives, and the bracket a field typed as a bracket holds (›A function is built once; a `fn` or
+/// `run` body is built as far as it can be where it is written‹ [[R299]]). `None` while one is
+/// unknown.
 ///
 /// # Safety
-/// `ty` must carry a `RECORD_TAG` record and `node` be `[field…]` of it.
+/// `ty` must carry a `RECORD_TAG` record and `node` be `[field…]` of it; `output` one of its
+/// `type` fields.
 pub(crate) unsafe fn field_types(
     types: &Core,
     ty: DyadPtr,
     node: DyadPtr,
+    output: Option<usize>,
 ) -> Result<Option<Vec<DyadPtr>>, crate::parse::ParseError> {
     let fields = array::items(meta::record_fields_of(ty));
     let slots = dyad::value(node) as *const DyadPtr;
@@ -180,7 +183,7 @@ pub(crate) unsafe fn field_types(
         if slot.is_null() {
             return Ok(None);
         }
-        let entry = if declared == types.type_ {
+        let entry = if output == Some(i) {
             types.through(slot)
         } else if declared != types.square_brackets && declared != types.scope {
             declared
@@ -189,11 +192,8 @@ pub(crate) unsafe fn field_types(
         } else {
             super::read::value_type(types, slot)?
         };
-        let known = if declared == types.type_ {
-            super::is_type_value(types, entry)
-        } else {
-            !entry.is_null()
-        };
+        let known =
+            if output == Some(i) { super::is_type_value(types, entry) } else { !entry.is_null() };
         if !known {
             return Ok(None);
         }

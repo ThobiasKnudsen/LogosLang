@@ -9050,8 +9050,10 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
             ),
             "4\n",
         ),
+        (format!("{pass}, mut t := type ?, t = i32, q := t pass, q"), "i32\n"),
         (format!("{pass}, ty := fn () -> type ( i32 ), (ty() pass) == i32"), "true\n"),
         (format!("{pass}, (i32 pass) == i32"), "true\n"),
+        (format!("{pass}, g := fn (u := type ?) -> type ( u pass ), g.compile(), g(i32)"), "i32\n"),
         (
             format!("{pass}, g := fn (b := bool ?) -> bool ( b pass ), g.compile(), g(true)"),
             "true\n",
@@ -9066,6 +9068,52 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
     let (code, _, stderr) = run_line(&src);
     assert_eq!(code, Some(1), "{src}: {stderr}");
     assert!(stderr.contains("this gives nothing"), "{src}: {stderr}");
+}
+
+#[test]
+fn a_type_field_is_a_box_its_run_reads_when_it_runs() {
+    let parse = |name: &str, fill: &str| {
+        format!(
+            "static parse_rank = 60, static parse = ( tape[0].type = {name}, {fill}, \
+             tape.is_constructed[0] = true, tape.remove(1) )"
+        )
+    };
+    let pass = format!(
+        "pass := type ( a := type ?, static output_type := type, static run = ( a ), {} )",
+        parse("pass", "tape[0].a = tape[1]")
+    );
+    let mk = format!(
+        "mk := type ( a := type ?, static output_type := i64, \
+         static run = ( x := a 7, i64 (x) ), {} )",
+        parse("mk", "tape[0].a = tape[1]")
+    );
+    let sq = format!(
+        "sq := type ( a := i32 ?, output_type := type ?, static run = ( a * a ), {} )",
+        parse("sq", "tape[0].a = i32 4, tape[0].output_type = tape[1]")
+    );
+    for (src, want) in [
+        (format!("{pass}, (pass i32) == i32"), "true\n"),
+        (format!("{pass}, mut t := type ?, t = i32, (pass t) == i32"), "true\n"),
+        (format!("{pass}, f := fn (u := type ?) -> type ( pass u ), f(i32)"), "i32\n"),
+        (format!("{pass}, f := fn (u := type ?) -> type ( pass u ), f.compile(), f(i32)"), "i32\n"),
+        (format!("{pass}, mut d := dyad ?, d = i32, (pass d) == i32"), "true\n"),
+        (format!("{pass}, f := fn (d := dyad ?) -> bool ( (pass d) == f64 ), f(f64)"), "true\n"),
+        (format!("{sq}, mut t := type ?, t = i64, sq t"), "16\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, want, "{src}");
+    }
+    let at_run = "which type this is is known only when the program runs, and this needs it now";
+    for (src, error) in [
+        (format!("{pass}, pass (i32 5)"), "the declared or assigned type must be a type value"),
+        (format!("{mk}, mk i32"), at_run),
+        (format!("{sq}, f := fn (u := type ?) -> i32 ( sq u ), f(i32)"), at_run),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains(error) && !stderr.contains("run error"), "{src}: {stderr}");
+    }
 }
 
 #[test]
