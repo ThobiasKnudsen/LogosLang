@@ -3716,6 +3716,53 @@ fn an_imported_pub_name_keeps_its_gates() {
     assert!(stderr.contains("`s` is not `mut`"), "stderr: {stderr}");
 }
 
+/// Each line fails at parse, the name it reads dead.
+fn assert_dead(lines: &[String], name: &str) {
+    for src in lines {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("`{name}` is dead here")), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_pub_name_the_file_ended_is_dead_for_the_importer() {
+    let lib = "import ./tests/fixtures/pub_ended.logos";
+    let tails = ["a@", "free a", "b := move a", "f := fn () -> i32 ( a@ )", &format!("{lib}, a@")];
+    assert_dead(&tails.map(|tail| format!("{lib}, {tail}")), "a");
+    assert_dead(&[format!("{lib}, q")], "q");
+    assert_eq!(line(&format!("{lib}, a := i32 3, a")), "3");
+    assert_eq!(line(&format!("{lib}, c")), "7");
+    assert_eq!(line(&format!("{lib}, q.y")), "6");
+}
+
+#[test]
+fn an_imported_name_one_importer_ended_is_dead_for_every_importer() {
+    let lib = "import ./tests/fixtures/owning_pub.logos";
+    let frees = "import ./tests/fixtures/frees_imported.logos";
+    assert_dead(
+        &[
+            format!("{lib}, free p, {lib}, p@"),
+            format!("{lib}, free p, {lib}, free p"),
+            format!("{lib}, {frees}, p@"),
+            format!("{frees}, {lib}, p@"),
+        ],
+        "p",
+    );
+    let (echoes, stderr) = repl(
+        b"import ./tests/fixtures/held.logos\nfree h\nimport ./tests/fixtures/held.logos\nh.n\n",
+    );
+    assert_eq!(echoes, ["freed 9"], "stderr: {stderr}");
+    assert!(stderr.contains("`h` is dead here"), "stderr: {stderr}");
+    // A body that runs later or again cannot end it: `import` stands only where it runs once.
+    let (code, _, stderr) = run_line(&format!("{lib}, f := fn () -> void ( free p ), 1"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("declared outside this loop or function body"), "stderr: {stderr}");
+    // A line that fails at parse takes its `free` back, on every copy of the name.
+    let (echoes, stderr) = repl(format!("{lib}\nfree p, zz\n{lib}\np@\n").as_bytes());
+    assert_eq!(echoes, ["7"], "stderr: {stderr}");
+}
+
 #[test]
 fn an_imported_pub_spelling_is_keyed_and_ranked_as_the_file_declared_it() {
     let lib = "import ./tests/fixtures/pub_spellings.logos";

@@ -379,34 +379,43 @@ impl<'a> Parser<'a> {
     }
 
     /// Pub-only exposure, the ordinary visibility rule: a collision with a
-    /// live name is the ordinary shadowing error. Idempotent where the name
-    /// is already live for the same identity. The importer's name is the file's
-    /// binding record again, in the importer's scope: its storage, gates, rank and key
-    /// (DESIGN ›Importing is dropping the text there, wrapped in its own scope‹).
+    /// live name is the ordinary shadowing error. Idempotent where an open scope already
+    /// holds the name, or a live name for the same identity. The importer's name is a copy of
+    /// the file's binding record in the importer's scope, kept in step with it, so an end
+    /// anywhere ends the name everywhere
+    /// (›Importing is dropping the text there, wrapped in its own scope‹ [[R306]]).
     fn publish(&mut self, pubs: &[(String, DyadPtr)]) -> Result<(), ParseError> {
         // A collision is the import's: reported where the import stands.
         let at = self.cx.pos;
         for (name, exported) in pubs {
-            // SAFETY: `exported` is a binding dyad the file's pass built, and a live binding
-            // the scopes hand back one from the store; a storage name is the same name when it
-            // is laid out over the same bytes.
+            // SAFETY: `exported` is a binding dyad the file's pass built, and every binding the
+            // trie or the scopes hand back is one from the store.
             let same = unsafe {
+                let origin = Binding::origin_of(*exported);
+                let key = Binding::read(*exported).key(name);
+                let held = self.trie.bindings_for_key(&key).is_some_and(|bindings| {
+                    bindings.iter().any(|&r| {
+                        self.cx.scopes.is_open(Binding::read(r).scope)
+                            && Binding::origin_of(r) == origin
+                    })
+                });
                 let names = |r: DyadPtr| Binding::read(r).names(r);
                 let identity = names(*exported);
-                self.cx.scopes.live(self.trie, name, *exported).ok().flatten().is_some_and(|r| {
-                    names(r) == identity
-                        || (self.types.frame_of(names(r)).is_some()
-                            && self.types.frame_of(names(r)) == self.types.frame_of(identity))
-                })
+                held || self
+                    .cx
+                    .scopes
+                    .live(self.trie, name, *exported)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|r| names(r) == identity)
             };
             if same {
                 continue;
             }
-            // The gate array is shared: every gate edit builds a new one.
             // SAFETY: as above.
-            let rec = unsafe { Binding::read(*exported) };
-            let rec = Binding { start: std::ptr::null_mut(), end: std::ptr::null_mut(), ..rec };
-            let binding = Binding::alloc(self.rt.store, self.types.binding_, rec);
+            let binding = unsafe {
+                Binding::copy_of(self.rt.store, self.types.binding_, self.types.array_, *exported)
+            };
             self.enter_binding(name, binding, at)?;
         }
         Ok(())
