@@ -4,6 +4,7 @@
 //! The segment driver: lex a segment whole, construct it highest parse_rank first, and
 //! hand out the items; which constructor a cell wakes and how a Logos constructor runs.
 
+use super::operands::Before;
 use super::*;
 use crate::dyad;
 
@@ -743,6 +744,10 @@ impl<'a> Parser<'a> {
             if matches!(boundary, Boundary::Comma) && !bare_branch {
                 self.consume_separator();
             }
+            if items.is_empty() {
+                // A line its constructors took whole runs nothing.
+                self.cx.open.last_mut().expect("a line is read in an open scope").runs.clear();
+            }
             if items.len() > 1 {
                 self.cx.pos = items[1].1;
                 return Some(Err(self.leftover_error(items[0].0.dyad)));
@@ -907,8 +912,14 @@ impl<'a> Parser<'a> {
         this: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        // A constructor runs now, by nature; what stands before it runs first.
-        self.drain()?;
+        // A constructor runs now, by nature, so what stands before it runs first, but its left
+        // operand, which it reads as written (›How a Logos constructor builds its node‹ [[R362]]).
+        // Where a part before it cannot run first yet, only the lines before its own run:
+        // stand-in for #371, #372.
+        let from = tape.at(-1).or(tape.at(0)).map_or(self.cx.pos, |c| c.start);
+        if let Before::Waits(_) = self.ran_first(tape, from)? {
+            self.drain()?;
+        }
         // Its run is a call: a use of every outer name its body reads.
         if let Err(e) = self.check_call_reads(f) {
             if let Some(c) = tape.at(0) {
@@ -1052,8 +1063,14 @@ impl<'a> Parser<'a> {
         }
         tape.center = tape.head;
         tape.sealed = true;
-        let built = self.construct_segment(&mut tape)?;
-        let items = self.hand_to_line(built);
+        // These cells stand on no line: what they run, the node that asked for them runs.
+        let depth = self.cx.open.len() - 1;
+        let runs = std::mem::take(&mut self.cx.open[depth].runs);
+        let built = self.construct_segment(&mut tape);
+        if let Some(open) = self.cx.open.get_mut(depth) {
+            open.runs = runs;
+        }
+        let items = self.hand_to_line(built?);
         self.one_of(items).map(|c| c.dyad)
     }
 

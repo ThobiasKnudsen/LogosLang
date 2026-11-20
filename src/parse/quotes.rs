@@ -57,28 +57,29 @@ impl<'a> Parser<'a> {
         self.skip_whitespace();
         let source = self.cx.source;
         let start = self.cx.pos;
-        let path_text: String = if source[self.cx.pos..].starts_with('«') {
-            let r = self.token_at(start, false)?;
-            let s = self.cx.pos;
-            self.cx.pos += r.matched;
-            let node =
-                self.construct_leaf(r.identity, s, r.matched)?.ok_or(ParseError::ExpectedPath)?;
-            // SAFETY: the leaf just built is a string node.
-            String::from_utf8_lossy(unsafe { crate::identities::string::text(node) }).into_owned()
-        } else {
-            let bytes = source.as_bytes();
-            while self.cx.pos < bytes.len()
-                && !bytes[self.cx.pos].is_ascii_whitespace()
-                && bytes[self.cx.pos] != b','
-            {
-                self.cx.pos += 1;
+        let path_text: String = match self.raw_path_end(start) {
+            Some(end) => {
+                self.cx.pos = end;
+                source[start..end].to_string()
             }
-            source[start..self.cx.pos].to_string()
+            None => {
+                let r = self.token_at(start, false)?;
+                self.cx.pos += r.matched;
+                let node = self
+                    .construct_leaf(r.identity, start, r.matched)?
+                    .ok_or(ParseError::ExpectedPath)?;
+                // SAFETY: the leaf just built is a string node.
+                let text = unsafe { crate::identities::string::text(node) };
+                String::from_utf8_lossy(text).into_owned()
+            }
         };
         if path_text.is_empty() {
             self.cx.pos = start;
             return Err(ParseError::ExpectedPath);
         }
+        // The load runs the file now, so what stands before the `import` runs first.
+        let at = tape.at(0).map_or(start, |c| c.start);
+        self.run_first(tape, at)?;
         self.import_file(&path_text)?;
         let types = self.types;
         let path_node = crate::identities::string::build_text(
@@ -90,6 +91,17 @@ impl<'a> Parser<'a> {
         let node = self.rt.store.alloc_words(types.import_, &ops);
         tape.place(node);
         Ok(Constructed::Placed)
+    }
+
+    /// Where the path an `import` reads from `start` ends, where it is written raw: at whitespace,
+    /// a `,` or the text's end. `None` for a `«…»` string, which is one token.
+    pub(super) fn raw_path_end(&self, start: usize) -> Option<usize> {
+        let rest = &self.cx.source[start..];
+        if rest.starts_with('«') {
+            return None;
+        }
+        let len = rest.find(|c: char| c.is_ascii_whitespace() || c == ',').unwrap_or(rest.len());
+        Some(start + len)
     }
 
     /// Read the `«…»` to the right at discovery and place a `regex` node
