@@ -1056,13 +1056,14 @@ fn an_operation_mints_once_per_set_of_field_types() {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let src = "x := i32 3, x + i32 1, x + 2, x + i64 2, x * i32 1";
+    let src = "x := i32 3, a := x + i32 1, b := x + 2, c := x + i64 2, x * i32 1";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
     let root = p.parse_sequence().unwrap();
     // SAFETY: `root` is the sequence just parsed into `store`, which is alive.
     unsafe {
         let lines = scope::exprs_of(root).unwrap();
-        let (one, two, wide, times) = (lines[1], lines[2], lines[3], lines[4]);
+        let [one, two, wide] = [lines[1], lines[2], lines[3]].map(|l| declare::rhs_of(l));
+        let times = lines[4];
         let add = |nt| core.ops.arith_leaf(numtype::ArithOp::Add, nt);
         // `2` converts to `i32` where it lands, so both lines are nodes of one mint.
         assert_eq!(dyad::ty(one), dyad::ty(two));
@@ -1323,15 +1324,68 @@ fn else_less_if_is_a_unit_statement_both_tiers() {
 
 #[test]
 fn else_less_if_in_a_void_fn_yields_unit_both_tiers() {
-    diff_typed_call("fn (c := i32 ?) -> void ( if (c < 1) (42) )", "f(0)", 0);
-    diff_typed_call("fn (c := i32 ?) -> void ( if (c < 1) (42) )", "f(5)", 0);
+    diff_typed_call("fn (c := i32 ?) -> void ( if (c < 1) (free (42)) )", "f(0)", 0);
+    diff_typed_call("fn (c := i32 ?) -> void ( if (c < 1) (free (42)) )", "f(5)", 0);
+    assert_eq!(parse_err("fn (c := i32 ?) -> void ( if (c < 1) (42) )"), ParseError::VoidBodyGives);
+}
+
+#[test]
+fn a_scope_gives_the_value_of_the_first_line_that_gives_one_both_tiers() {
+    diff_nullary_fn("fn () -> i32 ( ((9)) )", 9);
+    diff_nullary_fn("fn () -> i32 ( x := i32 3, ( x + 1, # «done» ) )", 4);
+    // An `if`, a loop and a block pass out a value given inside them.
+    let pick = "fn (c := i32 ?) -> i32 ( x := (if (c == 1) (i32 1), i32 2), x )";
+    diff_typed_call(pick, "f(1)", 1);
+    diff_typed_call(pick, "f(0)", 2);
+    diff_nullary_fn("fn () -> i32 ( for i in 0..10 ( if i * i > 20 (i) ), 0 )", 5);
+    diff_nullary_fn("fn () -> i32 ( for i in 0..3 ( if i > 5 (i) ), 7 )", 7);
+    diff_nullary_fn(
+        "fn () -> i32 ( mut k := i32 0, while (k < 10) ( k = k + 1, if (k * k > 10) (k) ), 0 )",
+        4,
+    );
+    diff_nullary_fn(
+        "fn () -> i32 ( for i in 0..5 ( for j in 0..5 ( if i * j == 6 (i * 10 + j) ) ), 0 )",
+        23,
+    );
+    diff_nullary_fn("fn () -> i32 ( ( k := i32 2, ( if (k > 1) (k * 3) ) ), 0 )", 6);
+    // A body every way out of which is a `return` closes on the function's result type.
+    let both = "fn (c := i32 ?) -> i64 ( if (c > 0) (return i64 5) else (return i64 6) )";
+    diff_typed_call(both, "f(1)", 5);
+    diff_typed_call(both, "f(0)", 6);
+    // The lines of an array are data its reader takes, each kept.
+    assert_eq!(run_script("import identities/array.logos, a := array i32 [1, 2, 3], a[2]"), 3);
+}
+
+#[test]
+fn a_line_after_one_that_always_gives_or_leaves_is_refused() {
+    for src in ["x := (4, 5), x", "5, y := i32 1", "x := ( y := i32 1, (2), 3 ), x"] {
+        assert_eq!(script_parse_err(src), ParseError::LineAfterValue, "{src}");
+    }
+    assert_eq!(parse_err("fn () -> i32 ( i32 4, i32 5 )"), ParseError::LineAfterValue);
+    assert_eq!(
+        parse_err("fn (c := i32 ?) -> i32 ( if (c > 0) (1) else (2), 3 )"),
+        ParseError::LineAfterValue
+    );
+    assert_eq!(parse_err("fn () -> i32 ( return 1, 2 )"), ParseError::LineAfterLeave);
+    assert_eq!(
+        parse_err("fn () -> i32 ( g := fn () -> i32 ( 7 ), f := fn () -> void ( g() ), 1 )"),
+        ParseError::VoidBodyGives
+    );
+    assert_eq!(parse_err("x := for i in 0..3 (i)"), ParseError::StatementAsValue);
+    // A `{ … }` gives the scope itself, so a line in it has nowhere to give a value.
+    assert_eq!(parse_err("m := { a := i32 1, 5 }"), ParseError::KeptScopeGives);
+    assert_eq!(run_script("m := { a := i32 1, free (5), b := i32 2 }, m.b"), 2);
+    // A value nobody wants is thrown away, and the next line runs.
+    assert_eq!(run_script("free (5), y := i32 1, y"), 1);
 }
 
 #[test]
 fn an_else_less_if_is_rejected_in_value_positions() {
-    assert_eq!(parse_err("fn () -> i32 ( if (1 < 2) (1) )"), ParseError::MissingElse);
-    assert_eq!(parse_err("( if (1 < 2) (1) ) + 1"), ParseError::MissingElse);
     assert_eq!(parse_err("y := if (1 < 2) (1)"), ParseError::MissingElse);
+    assert_eq!(parse_err("( if (1 < 2) (1) ) + 1"), ParseError::MissingElse);
+    // A block whose one line gives on some paths only can end without a value.
+    assert_eq!(parse_err("fn () -> i32 ( if (1 < 2) (1) )"), ParseError::EndsWithoutValue);
+    assert_eq!(parse_err("( k := i32 1, if (1 < 2) (1) ) + 1"), ParseError::EndsWithoutValue);
 }
 
 #[test]
@@ -1350,13 +1404,14 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         // An arm that gives nothing decides before a sibling whose arms differ, either order.
         ("x := if c (if c (i32 1) else (i64 2)) else (print «b»)", ParseError::ArmGivesNothing),
         ("x := if c (print «b») else (if c (i32 1) else (i64 2))", ParseError::ArmGivesNothing),
-        // An arm is refused for its own reason, as a block's last line is.
-        ("x := if c (y := i32 1, if c (5)) else (i32 2)", ParseError::MissingElse),
+        // An arm is refused for its own reason, as a block's line that gives is.
+        ("x := if c (y := i32 1, if c (5)) else (i32 2)", ParseError::EndsWithoutValue),
         ("mut x := i32 1, x = if c (2)", ParseError::MissingElse),
         ("x := if c (i32 1) else if c (i32 2)", ParseError::MissingElse),
-        // A block's value is its last line's, refused for that line's reason.
+        // A block's value is what its lines that give one give, refused for their reason.
         ("x := ( y := i32 1, if c (i32 1) else (i64 2) )", ParseError::ArmsDiffer),
-        ("x := ( y := i32 1, if c (5) )", ParseError::MissingElse),
+        ("x := ( y := i32 1, if c (5) )", ParseError::EndsWithoutValue),
+        ("x := ( if c (i32 1), i64 2 )", ParseError::ArmsDiffer),
     ] {
         assert_eq!(parse_err(&f(body)), error, "{body}");
     }
@@ -1713,11 +1768,11 @@ fn for_loop_without_an_index_both_tiers() {
 fn for_loop_shapes_are_checked() {
     assert_eq!(parse_err("for i in 0..10..0 ( 1 )"), ParseError::BadStep);
     assert_eq!(parse_err("for i in 10..0..-1 ( 1 )"), ParseError::BadStep);
-    assert_eq!(parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"), ParseError::StatementAsValue);
+    assert_eq!(parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"), ParseError::EndsWithoutValue);
     assert_eq!(parse_err("for i in 0..3 ( return 1 )"), ParseError::ReturnOutsideFunction);
     assert_eq!(parse_err("for i 0..3 ( 1 )"), ParseError::ExpectedIn);
     assert_eq!(parse_err("for i in 0 ( 1 )"), ParseError::ExpectedRange);
-    assert_eq!(parse_err("fn () -> i32 ( for 0..3 ( 1 ) )"), ParseError::StatementAsValue);
+    assert_eq!(parse_err("fn () -> i32 ( for 0..3 ( 1 ) )"), ParseError::EndsWithoutValue);
     assert_eq!(parse_err("for in 0..3 ( 1 )"), ParseError::ExpectedRange);
     assert_eq!(parse_err_after(&["x := i32 0"], "for x 0..3 ( 1 )"), ParseError::ExpectedRange);
     assert_eq!(parse_err("for (1)"), ParseError::ExpectedRange);
@@ -1730,7 +1785,8 @@ fn while_condition_must_be_bool() {
 
 #[test]
 fn a_while_loop_is_not_a_value() {
-    assert_eq!(parse_err("fn () -> i32 ( while (1 < 2) (3) )"), ParseError::StatementAsValue);
+    // Its body's value passes out on some paths only.
+    assert_eq!(parse_err("fn () -> i32 ( while (1 < 2) (3) )"), ParseError::EndsWithoutValue);
     assert_eq!(parse_err("( while (1 < 2) (3) ) + 1"), ParseError::StatementAsValue);
     assert_eq!(parse_err("y := while (1 < 2) (3)"), ParseError::StatementAsValue);
 }
@@ -2114,14 +2170,14 @@ fn a_compiled_store_into_a_node_box_takes_its_width_from_the_leaf() {
     for tail in ["", "f.compile(), "] {
         assert_eq!(
             run_script(&format!(
-                "mut a := type ?, a = f64, f := fn () -> i32 ( a = i32, 5 ),\n{tail}f(), a == i32"
+                "mut a := type ?, a = f64, f := fn () -> i32 ( a = i32, 5 ),\n{tail}free (f()), a == i32"
             )),
             1,
             "type box, {tail:?}"
         );
         assert_eq!(
             run_script(&format!(
-                "mut a := dyad ?, a = i32, f := fn () -> i32 ( a = f64, 5 ),\n{tail}f(), a == f64"
+                "mut a := dyad ?, a = i32, f := fn () -> i32 ( a = f64, 5 ),\n{tail}free (f()), a == f64"
             )),
             1,
             "dyad box, {tail:?}"
@@ -2750,7 +2806,7 @@ const POW_TYPE: &str = "pw := type (\n\
 fn a_run_type_mints_through_its_chooser_once_per_set_of_field_types() {
     let (mut store, mut trie, core) = new_core();
     let src = format!(
-        "{POW_TYPE}x := i32 2,\ny := i32 3,\nz := f64 2.0,\nx pw 3,\ny pw 2,\nz pw 2,\nx pw 3 + y pw 2"
+        "{POW_TYPE}x := i32 2,\ny := i32 3,\nz := f64 2.0,\np3 := x pw 3,\nq2 := y pw 2,\nz2 := z pw 2,\nx pw 3 + y pw 2"
     );
     let seq = {
         let mut scopes = ScopeStack::new();
@@ -2763,7 +2819,7 @@ fn a_run_type_mints_through_its_chooser_once_per_set_of_field_types() {
     unsafe {
         let lines = array::items(*(dyad::value(seq) as *const DyadPtr));
         let pw = declare::declared_of(lines[0]);
-        let (two, three, real) = (lines[4], lines[5], lines[6]);
+        let [two, three, real] = [lines[4], lines[5], lines[6]].map(|l| declare::rhs_of(l));
         assert_ne!(dyad::ty(two), pw);
         // `x pw 3` and `y pw 2` are nodes of `pw`'s mint for `i32`, `z pw 2` of its mint for `f64`.
         assert_eq!(dyad::ty(three), dyad::ty(two));
@@ -2906,7 +2962,7 @@ fn a_compiled_caller_reaches_an_uncompiled_callee_through_the_interpreter() {
     );
     assert_eq!(
         run_script(
-            "v := fn (x := i32 ?) -> void ( x + 1 ),\nf := fn (x := i32 ?) -> i32 ( v(x), x * 2 ),\nf.compile(),\nf(4)"
+            "v := fn (x := i32 ?) -> void ( free (x + 1) ),\nf := fn (x := i32 ?) -> i32 ( v(x), x * 2 ),\nf.compile(),\nf(4)"
         ),
         8
     );
@@ -3162,7 +3218,7 @@ fn block_local_declarations_do_not_leak() {
 #[test]
 fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
     assert_eq!(parse_err("( return 1, 2 )"), ParseError::ReturnOutsideFunction);
-    diff_nullary_fn("fn () -> i32 ( if (true) (return 1) else (0), 2 )", 1);
+    diff_nullary_fn("fn () -> i32 ( k := i32 1, if (k == 1) (return 1), 2 )", 1);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(5)", 7);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(1)", 2);
     // The literal commits to the declared result, as the tail's does.
@@ -3204,7 +3260,7 @@ fn an_early_return_hands_on_a_held_or_made_value_only_under_own() {
 
 #[test]
 fn a_tail_return_in_a_sequence_still_yields() {
-    diff_nullary_fn("fn () -> i32 ( 1 + 1, return 40 + 2 )", 42);
+    diff_nullary_fn("fn () -> i32 ( free (1 + 1), return 40 + 2 )", 42);
 }
 
 #[test]
@@ -3442,14 +3498,14 @@ fn a_static_name_at_top_level_is_one_place_for_the_run() {
 #[test]
 fn a_static_name_in_a_function_is_one_place_across_its_calls() {
     let counter = "f := fn () -> i32 ( static mut n := i32 0, n = n + 1, n ),\n";
-    assert_eq!(run_script(&format!("{counter}f(), f(), f()")), 3);
-    assert_eq!(run_script(&format!("{counter}f.compile(), f(), f(), f()")), 3);
+    assert_eq!(run_script(&format!("{counter}free (f()), free (f()), f()")), 3);
+    assert_eq!(run_script(&format!("{counter}f.compile(), free (f()), free (f()), f()")), 3);
     // Each function owns its own place, whatever the name.
     assert_eq!(
         run_script(
             "f := fn () -> i32 ( static mut n := i32 0, n = n + 1, n ),\n\
              g := fn () -> i32 ( static mut n := i32 100, n = n + 1, n ),\n\
-             f(), g(), f(), g() + f()"
+             free (f()), free (g()), free (f()), g() + f()"
         ),
         105
     );
@@ -3457,7 +3513,7 @@ fn a_static_name_in_a_function_is_one_place_across_its_calls() {
     assert_eq!(
         run_script(
             "f := fn () -> i32 ( mut t := i32 0, for i in 0..3 ( static mut n := i32 0, n = n + 1, t = n ), t ),\n\
-             f(), f()"
+             free (f()), f()"
         ),
         6
     );
@@ -3465,7 +3521,7 @@ fn a_static_name_in_a_function_is_one_place_across_its_calls() {
     assert_eq!(
         run_script(
             "f := fn (k := i32 ?, put := i32 ?) -> i32 ( static m := hashmap i32 -> i32, if put == 1 ( m[k] = k * k ), m[k] ),\n\
-             f(3, 1), f(4, 1), f(3, 0)"
+             free (f(3, 1)), free (f(4, 1)), f(3, 0)"
         ),
         9
     );
@@ -3703,7 +3759,7 @@ fn recursion_with_a_local_is_per_activation_both_tiers() {
     // SAFETY: a self-contained recursive definition and literal calls.
     unsafe {
         assert_recursion_both_tiers(
-            &["f := fn (n := i32 ?) -> i32 ( x := n, if (n < 1) (0) else (f(n - 1), x) )"],
+            &["f := fn (n := i32 ?) -> i32 ( x := n, if (n < 1) (0) else (free (f(n - 1)), x) )"],
             "f",
             &[(0, 0), (1, 1), (3, 3), (5, 5)],
         );
@@ -3716,7 +3772,7 @@ fn recursion_takes_the_address_of_a_per_activation_local_both_tiers() {
     // SAFETY: as above; `&x`/`p@` over a per-call local.
     unsafe {
         assert_recursion_both_tiers(
-            &["g := fn (n := i32 ?) -> i32 ( x := n, p := &x, if (n < 1) (0) else (g(n - 1), p@) )"],
+            &["g := fn (n := i32 ?) -> i32 ( x := n, p := &x, if (n < 1) (0) else (free (g(n - 1)), p@) )"],
             "g",
             &[(0, 0), (1, 1), (4, 4)],
         );
@@ -3730,7 +3786,7 @@ fn recursion_with_a_record_local_is_per_activation_both_tiers() {
         assert_recursion_both_tiers(
             &[
                 "point := logos ( x := i32 ?, y := i32 ? )",
-                "h := fn (n := i32 ?) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (h(n - 1), pt.x) )",
+                "h := fn (n := i32 ?) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (free (h(n - 1)), pt.x) )",
             ],
             "h",
             &[(0, 0), (2, 2), (5, 5)],
@@ -3755,7 +3811,7 @@ fn recursion_with_a_typed_declaration_local_both_tiers() {
     // SAFETY: a self-contained recursive definition and literal calls.
     unsafe {
         assert_recursion_both_tiers(
-            &["f := fn (n := i32 ?) -> i32 ( mut a := i32 ?, a = n, if (n < 1) (a) else (f(n - 1), a) )"],
+            &["f := fn (n := i32 ?) -> i32 ( mut a := i32 ?, a = n, if (n < 1) (a) else (free (f(n - 1)), a) )"],
             "f",
             &[(0, 0), (1, 1), (5, 5)],
         );
@@ -4293,7 +4349,7 @@ fn malformed_casts_are_rejected() {
 
 #[test]
 fn void_function_yields_unit_both_tiers() {
-    diff_typed_call("fn () -> void ( 42 )", "f()", 0);
+    diff_typed_call("fn () -> void ( free (42) )", "f()", 0);
 }
 
 #[test]
@@ -4433,7 +4489,7 @@ fn a_line_the_pass_ran_keeps_its_node_and_is_not_run_again() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     // The box read at `t 5` runs the block's first three lines while it is still being parsed.
-    let src = "mut x := i32 0, bump := fn () -> i32 ( x = x + 1, x ), \
+    let src = "mut x := i32 0, bump := fn () -> void ( x = x + 1 ), \
                y := ( mut t := type ?, t = i32, bump(), z := t 5, z + x ), y + x";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
     let root = p.parse_sequence().unwrap();

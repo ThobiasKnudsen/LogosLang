@@ -222,7 +222,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A quote's `{…}`, a scope over its interior `from..to` (DESIGN ›`{ }` is text
-    /// interpolation‹): its value, or none when it has no tail and so adds no text. In a body
+    /// interpolation‹): its value, or none when it holds only prose and so adds no text. In a body
     /// lexed once its cells are the ones lexed with the quote; where the quote is read from the
     /// source they are lexed now. The source is cut at `to` so the scope ends there, and offsets
     /// stay those of the whole line.
@@ -234,8 +234,12 @@ impl<'a> Parser<'a> {
         let cuts = std::mem::take(&mut self.cx.cuts);
         let cuts_end = std::mem::replace(&mut self.cx.cuts_end, from);
         let parsed = self.parse_block(false, LinesEnd::TextEnd).map(|(scope, value)| {
-            // SAFETY: `scope` is the scope node just built.
-            unsafe { super::bodies::last_sequence_expr(scope) }.map(|_| value.dyad)
+            // SAFETY: `scope` is the scope node just built; its lines are reduced dyads.
+            let lines = unsafe { crate::identities::scope::exprs_of(scope) }.unwrap_or_default();
+            // SAFETY: as above.
+            let prose =
+                |&e: &DyadPtr| unsafe { crate::identities::numtype::is_comment_type(dyad::ty(e)) };
+            (!lines.iter().all(prose)).then_some(value.dyad)
         });
         (self.cx.cuts, self.cx.cuts_end) = (cuts, cuts_end);
         self.cx.source = whole;
@@ -329,7 +333,7 @@ impl<'a> Parser<'a> {
         // Its top level is a scope of its own, which lives as long as the program: what it
         // still holds at its end, and its `defer`s, join the program's exit.
         g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect("pushed by enter").open);
-        g.0.cx.open.push(OpenScope::default());
+        g.0.cx.open.push(OpenScope::top_level());
         let inner = g.0.run_imported(section);
         let inner_pos = g.0.cx.pos;
         let file = g.0.cx.open.pop().expect("pushed above");
@@ -338,7 +342,9 @@ impl<'a> Parser<'a> {
         } else {
             let program = g.0.cx.open.first_mut().expect("the program's scope is open");
             let from = program.lines + 1;
-            for item in file.exit.into_iter().filter(|h| h.end.is_none()) {
+            // A line that gave the file a value ended it: what its later lines hold never was.
+            let ran = file.reached_lines();
+            for item in file.exit.into_iter().filter(|h| h.end.is_none() && h.held_at(ran)) {
                 program.imported.insert(item.what);
                 program.exit.push(ExitItem { from, ..item });
             }

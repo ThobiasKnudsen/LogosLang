@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `scope`: the type of a scope node, the parser's membership marker and, for
-//! a block, the sequence node itself: `[exprs, op, parent, exit, held]`, the parent link
+//! a block, the sequence node itself: `[exprs, op, parent, exit, held, flow]`, the parent link
 //! set at [`mint`], the expressions (the `dyads` field) pushed as each line
 //! completes, the op set at [`fill`] when the block closes, and the exit, what the
 //! scope's end runs, and what its lines' ends free, set when it closes.
@@ -12,6 +12,7 @@ use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::drop_model::ExitItem;
+use super::flow::Flow;
 use super::{array, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -47,7 +48,7 @@ pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> Dya
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }
 
-/// The slots of a scope node's value, `[exprs, op, parent, exit, held]`.
+/// The slots of a scope node's value, `[exprs, op, parent, exit, held, flow]`.
 const EXPRS: usize = 0;
 const OP: usize = 1;
 const PARENT: usize = 2;
@@ -57,14 +58,40 @@ const EXIT: usize = 3;
 /// end of the line a value was made in frees it (›A value's teardown runs where its life ends;
 /// the ending identity reads the type's `free` slot‹ [[R57]]).
 const HELD: usize = 4;
-pub(crate) const SLOTS: usize = HELD + 1;
+/// How a closed block's lines end, once a walk has read it: null before, else a word,
+/// `1 + gives + 2 * falls`, never an address.
+const FLOW: usize = 5;
+pub(crate) const SLOTS: usize = FLOW + 1;
 
 /// The block's membership key while it parses, and the sequence node once
 /// [`fill`] gives it its expressions; `parent` is null at the arche. A scope that
 /// holds names alone (the root, a type's member scope) is minted with no parent.
 pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> DyadPtr {
     let none = std::ptr::null_mut();
-    store.alloc_words(scope_ty, &[none, none, parent, none, none])
+    store.alloc_words(scope_ty, &[none, none, parent, none, none, none])
+}
+
+/// How the closed block `node`'s lines end, if a walk has read it.
+///
+/// # Safety
+/// `node` must be a scope node from the store.
+pub(crate) unsafe fn kept_flow(node: DyadPtr) -> Option<Flow> {
+    let word = *(dyad::value(node) as *const DyadPtr).add(FLOW) as usize;
+    (word != 0).then(|| Flow { gives: (word - 1) & 1 != 0, falls: (word - 1) & 2 != 0 })
+}
+
+/// Keeps how `node`'s lines end, once it is closed, so no walk reads them again (›Reading a
+/// program takes time in step with its size; no walk runs once per path‹ [[R170]]).
+///
+/// # Safety
+/// `node` must be a scope node from the store, and `flow` how its lines end.
+pub(crate) unsafe fn keep_flow(node: DyadPtr, flow: Flow) {
+    let slots = dyad::value(node) as *mut DyadPtr;
+    if (*slots.add(OP)).is_null() {
+        return;
+    }
+    let word = 1 + usize::from(flow.gives) + 2 * usize::from(flow.falls);
+    *slots.add(FLOW) = std::ptr::without_provenance_mut(word);
 }
 
 /// The block closed: it runs as a sequence over its `dyads`.
@@ -75,17 +102,14 @@ pub(crate) unsafe fn fill(types: &Core, node: DyadPtr) {
     *(dyad::value(node) as *mut DyadPtr).add(OP) = types.ops.scope_;
 }
 
-/// What a block gives back, worked out from its last line when asked: what that line hands
-/// on, `void` for none. ›A mint's output type is written in its `static output_type`
-/// declaration; a type that does not mint has its parse write it into each node‹ [[R194]].
+/// What a block gives back, worked out from the lines that give it when asked, `void` for none.
+/// ›A mint's output type is written in its `static output_type` declaration; a type that does
+/// not mint has its parse write it into each node‹ [[R194]].
 ///
 /// # Safety
 /// `node` must be a scope node from the store.
 pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
-    match crate::parse::last_sequence_expr(node) {
-        Some(last) => super::read::output_type(types, last),
-        None => types.void_,
-    }
+    super::flow::value_type(types, node).unwrap_or(types.void_)
 }
 
 /// The scope's `dyads`, made empty on first read.
@@ -144,22 +168,6 @@ pub(crate) unsafe fn exprs_of<'a>(node: DyadPtr) -> Option<&'a [DyadPtr]> {
     }
 }
 
-/// The line a sequence's `lines` give their value from: the last that is no comment; `None` for
-/// none, null `lines` among them.
-///
-/// # Safety
-/// `lines` must be null or an `array` node of reduced dyads from the store.
-pub(crate) unsafe fn last_line(lines: DyadPtr) -> Option<DyadPtr> {
-    if lines.is_null() {
-        return None;
-    }
-    array::items(lines)
-        .iter()
-        .rev()
-        .find(|&&line| !super::numtype::is_comment_type(dyad::ty(line)))
-        .copied()
-}
-
 /// A closed sequence with `node`'s op and parent running `exprs` instead.
 ///
 /// # Safety
@@ -173,7 +181,8 @@ pub(crate) unsafe fn with_exprs(
     let slots = dyad::value(node) as *const DyadPtr;
     let lines = array::build(store, types.array_, exprs);
     let kept = [*slots.add(OP), *slots.add(PARENT), *slots.add(EXIT), *slots.add(HELD)];
-    store.alloc_words(dyad::ty(node), &[lines, kept[0], kept[1], kept[2], kept[3]])
+    let none = std::ptr::null_mut();
+    store.alloc_words(dyad::ty(node), &[lines, kept[0], kept[1], kept[2], kept[3], none])
 }
 
 /// The nodes whose values the scope's lines free at their ends.
@@ -327,48 +336,51 @@ pub(crate) unsafe fn parent_of(node: DyadPtr) -> DyadPtr {
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a sequence node; its first slot is its expression array.
-    unsafe {
-        let Some(exprs) = exprs_of(node) else {
-            return Err(RunError::EmptyScope);
-        };
-        rt.push_plan(held_of(node));
-        let ran = run_lines(rt, node, exprs);
-        rt.pop_plan();
-        ran
-    }
+    unsafe { run_given(rt, node).map(|given| given.unwrap_or(0)) }
+}
+
+/// The scope run as a line: the value its first line that gives one gave, its lines after that
+/// never run, or `None` where every line went on without one (›A scope's value is what it
+/// evaluates to, and `return` is an optional early exit from the enclosing function‹ [[R207]]).
+///
+/// # Safety
+/// `node` must be a sequence node from the store.
+pub(super) unsafe fn run_given(rt: &mut Runtime, node: DyadPtr) -> Result<Option<i64>, RunError> {
+    let Some(exprs) = exprs_of(node) else {
+        return Err(RunError::EmptyScope);
+    };
+    rt.push_plan(held_of(node));
+    let ran = run_lines(rt, node, exprs);
+    rt.pop_plan();
+    ran
 }
 
 /// The scope's lines from its cursor, each ended as it completes, then its end.
 ///
 /// # Safety
 /// `node` must be a sequence node from the store and `exprs` its lines.
-unsafe fn run_lines(rt: &mut Runtime, node: DyadPtr, exprs: &[DyadPtr]) -> Result<i64, RunError> {
-    let defer_ty = rt.types().defer_;
+unsafe fn run_lines(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    exprs: &[DyadPtr],
+) -> Result<Option<i64>, RunError> {
     let start = rt.take_cursor(node);
-    let mut last = 0i64;
-    let tail = exprs
-        .iter()
-        .rposition(|&e| !super::numtype::is_comment_type(dyad::ty(e)) && dyad::ty(e) != defer_ty);
-    for (i, &expr) in exprs.iter().enumerate() {
-        let logos = dyad::ty(expr);
-        // Prose never runs; a `defer` runs at the end, from the exit.
-        if super::numtype::is_comment_type(logos) || logos == defer_ty {
-            continue;
-        }
-        // Before the cursor: the pass ran it in this frame already.
-        if i < start {
-            continue;
-        }
-        // A line's scratch is freed with the line; the tail's is the value handed on.
+    // The pass ran the line that gave the value in this frame already.
+    if let Some(value) = start.given {
+        run_exit(rt, node, start.at + 1)?;
+        return Ok(Some(value));
+    }
+    for (i, &expr) in exprs.iter().enumerate().skip(start.at) {
+        // A line's scratch is freed with the line; a value given is handed on with its own.
         let mark = rt.stack_mark();
         let held = rt.line_mark();
-        let ran = rt.run(expr);
+        let ran = rt.run_line(expr);
         match super::drop_model::end_line(rt, held, ran) {
-            Ok(v) => {
-                last = v;
-                if tail != Some(i) {
-                    rt.stack_release(mark);
-                }
+            Ok(None) => rt.stack_release(mark),
+            // The line that gave the value completed and ends the scope.
+            Ok(Some(value)) => {
+                run_exit(rt, node, i + 1)?;
+                return Ok(Some(value));
             }
             // A `return` leaves through this scope: what it holds at line `i` ends.
             Err(RunError::Return(v)) => {
@@ -385,7 +397,7 @@ unsafe fn run_lines(rt: &mut Runtime, node: DyadPtr, exprs: &[DyadPtr]) -> Resul
         }
     }
     run_exit(rt, node, exprs.len())?;
-    Ok(last)
+    Ok(None)
 }
 
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
@@ -396,4 +408,15 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         };
         lw.lower_scope(node, exprs)?.ok_or(CompileError::EmptyScope)
     }
+}
+
+/// [`run_given`]'s lowering: the value a line gives passes out.
+///
+/// # Safety
+/// As [`run`].
+pub(super) unsafe fn lower_given(lw: &mut Lowerer, node: DyadPtr) -> Result<(), CompileError> {
+    let Some(exprs) = exprs_of(node) else {
+        return Err(CompileError::EmptyScope);
+    };
+    lw.lower_scope_given(node, exprs).map(|_| ())
 }

@@ -149,15 +149,14 @@ pub(crate) unsafe fn kept_names(types: &Core, scope: DyadPtr) -> Vec<DyadPtr> {
 /// # Safety
 /// `node` must be a node from the store.
 pub(crate) unsafe fn kept_scope(types: &Core, node: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
-    let line =
-        if dyad::ty(node) == types.scope { crate::parse::last_sequence_expr(node)? } else { node };
+    // The parse adds the line that makes a `{ … }`'s value after every line written in it.
+    let made_line = |scope: DyadPtr| super::scope::exprs_of(scope)?.last().copied();
+    let line = if dyad::ty(node) == types.scope { made_line(node)? } else { node };
     if dyad::ty(line) != types.construct_ {
         return None;
     }
     let body = meta::record_body_of(*(dyad::value(line) as *const DyadPtr).add(1));
-    let kept = !body.is_null()
-        && dyad::ty(body) == types.scope
-        && crate::parse::last_sequence_expr(body) == Some(line);
+    let kept = !body.is_null() && dyad::ty(body) == types.scope && made_line(body) == Some(line);
     kept.then_some((body, line))
 }
 

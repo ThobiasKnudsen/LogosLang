@@ -756,20 +756,42 @@ pub(crate) unsafe fn end_of_type(rt: &mut Runtime, ty: DyadPtr, this: i64) -> Re
 ///
 /// # Safety
 /// The values `rt` keeps above `mark` must be ones its run gave, still live.
-pub(crate) unsafe fn end_line(
+pub(crate) unsafe fn end_line<T>(
     rt: &mut Runtime,
     mark: usize,
-    value: Result<i64, RunError>,
-) -> Result<i64, RunError> {
-    let ended = rt.take_line_values(mark).into_iter().rev().try_for_each(|(node, this)| {
-        // SAFETY: the caller's contract.
-        unsafe { end_value(rt, node, this) }
-    });
+    value: Result<T, RunError>,
+) -> Result<T, RunError> {
+    let ended = end_line_values(rt, mark, &[]);
     match (value, ended) {
         (Err(fault), _) if !matches!(fault, RunError::Return(_)) => Err(fault),
         (_, Err(e)) => Err(e),
         (value, Ok(())) => value,
     }
+}
+
+/// [`end_line`] for a line that gave its scope a value: the values of the nodes on `given`, the
+/// way that value passed out, are the scope's to hand on, and end with it.
+///
+/// # Safety
+/// As [`end_line`].
+pub(crate) unsafe fn end_line_giving(
+    rt: &mut Runtime,
+    mark: usize,
+    given: &[DyadPtr],
+) -> Result<(), RunError> {
+    end_line_values(rt, mark, given)
+}
+
+/// # Safety
+/// As [`end_line`].
+unsafe fn end_line_values(rt: &mut Runtime, mark: usize, kept: &[DyadPtr]) -> Result<(), RunError> {
+    let values = rt.take_line_values(mark);
+    values.into_iter().rev().filter(|(node, _)| !kept.contains(node)).try_for_each(
+        |(node, this)| {
+            // SAFETY: the caller's contract.
+            unsafe { end_value(rt, node, this) }
+        },
+    )
 }
 
 /// The values the pass ran early that `nodes` stand for and nothing took end, last first: a
@@ -1303,7 +1325,7 @@ unsafe fn moved_out_via(
     if marked_own(node) {
         return Some(node);
     }
-    if let Some(operands) = handed_operands(node) {
+    if let Some(operands) = handed_operands(types, node) {
         // A used `if` ends its value alike in every arm (`handed_ends`), so the first operand's
         // is it. Each is walked, so `visit` sees what each hands on, a `return` arm's too.
         let mut first = None;
@@ -1350,35 +1372,27 @@ unsafe fn marked_own(node: DyadPtr) -> bool {
     }
 }
 
-/// The operands `node` hands on as its value, every one alike, as its type's record names them;
-/// `None` where it gives its own value, or where one is missing: an `else`-less `if`'s arm, a
-/// block with no lines.
+/// The operands `node` hands on as its value, every one alike, as its type's record names them,
+/// of a slot of lines those that give it; `None` where it gives its own value. A missing one,
+/// as an `else` an `if` does not have, hands on nothing.
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
-unsafe fn handed_operands(node: DyadPtr) -> Option<Vec<DyadPtr>> {
+unsafe fn handed_operands(types: &Core, node: DyadPtr) -> Option<Vec<DyadPtr>> {
     let (nodes, lines) = meta::hands_on_of(dyad::ty(node));
     if nodes | lines == 0 {
         return None;
     }
-    (0..u8::BITS as usize)
-        .filter(|&k| (nodes | lines) & 1 << k != 0)
-        .map(|k| handed_operand(node, k, lines))
-        .collect()
-}
-
-/// The operand in slot `k` that `node` hands on, or, where `k` is among `lines`, the last of the
-/// lines it holds; `None` where there is none.
-///
-/// # Safety
-/// `node` must be a reduced dyad from the store whose type's record hands on slot `k`.
-unsafe fn handed_operand(node: DyadPtr, k: usize, lines: u8) -> Option<DyadPtr> {
-    let operand = *(dyad::value(node) as *const DyadPtr).add(k);
-    if lines & 1 << k != 0 {
-        super::scope::last_line(operand)
-    } else {
-        (!operand.is_null()).then_some(operand)
+    let mut operands = Vec::new();
+    for k in (0..u8::BITS as usize).filter(|&k| (nodes | lines) & 1 << k != 0) {
+        let operand = *(dyad::value(node) as *const DyadPtr).add(k);
+        if lines & 1 << k != 0 {
+            operands.extend(super::flow::giving_lines(types, operand));
+        } else if !operand.is_null() {
+            operands.push(operand);
+        }
     }
+    Some(operands)
 }
 
 /// What ends a value beyond its bytes: a type's answer, [`teardown_of_type`], and a value's, which
@@ -1446,7 +1460,7 @@ pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<b
     if dyad::ty(d) == types.return_ {
         return handed_ends(types, *(dyad::value(d) as *const DyadPtr));
     }
-    if let Some(operands) = handed_operands(d) {
+    if let Some(operands) = handed_operands(types, d) {
         let mut ends = None;
         for operand in operands {
             ends = arms_end_alike(ends, handed_ends(types, operand)?)?;
@@ -1776,8 +1790,8 @@ mod tests {
             "mut d := dyad ?, for 0..3 ( d = i64 5 ), 1",
             "f := fn (a := dyad ?) -> i32 ( 1 ), f(i64 42)",
             "f := fn (a := dyad ?) -> dyad ( a ), x := f(i64 42), 1",
-            "f := fn (a := dyad ?) -> dyad ( a ), f(i64 42), 1",
-            "f := fn () -> dyad ( i32 5 ), f(), 1",
+            "f := fn (a := dyad ?) -> dyad ( a ), free (f(i64 42)), 1",
+            "f := fn () -> dyad ( i32 5 ), free (f()), 1",
             "f := fn () -> i32 ( mut d := dyad ?, d = i64 5, d = 1/2, 1 ), f()",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
@@ -1802,7 +1816,7 @@ mod tests {
             "f := fn (a := dyad ?) -> i32 ( 1 ), f(alloc 1 of i32 5)",
             "f := fn (a := dyad ?) -> dyad ( a ), x := f(alloc 1 of i32 5), 1",
             "f := fn () -> dyad ( alloc 1 of i32 5 ), x := f(), 1",
-            "f := fn () -> dyad ( alloc 1 of i32 5 ), f(), 1",
+            "f := fn () -> dyad ( alloc 1 of i32 5 ), free (f()), 1",
             "f := fn () -> dyad ( p := alloc 1 of i32 5, p ), x := f(), 1",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
@@ -1830,8 +1844,12 @@ mod tests {
                 format!("p := alloc 1 of i32 5, {f}, g := fn () -> i32 ( f(p) ), g.compile(), g()"),
                 1,
             ),
-            (format!("p := alloc 1 of i32 5, {f}, for 0..3 ( f(p) ), p@"), 5),
-            ("p := alloc 1 of i32 5, f := fn (a := dyad ?) -> i32 ( a@ ), f(p), p@".into(), 5),
+            (format!("p := alloc 1 of i32 5, {f}, for 0..3 ( free (f(p)) ), p@"), 5),
+            (
+                "p := alloc 1 of i32 5, f := fn (a := dyad ?) -> i32 ( a@ ), free (f(p)), p@"
+                    .into(),
+                5,
+            ),
             (format!("mut d := dyad ?, d = alloc 1 of i32 5, {f}, f(d)"), 1),
             ("p := alloc 1 of i32 5, f := fn (a := dyad ?) -> dyad ( a ), x := f(p), p@".into(), 5),
         ] {
@@ -1849,35 +1867,35 @@ mod tests {
         for src in [
             "d := dyad (i32, 7), 1",
             "m := i32 3, d := dyad (i32, m), 1",
-            "dyad (i32, 7), 1",
+            "free (dyad (i32, 7)), 1",
             "d := dyad (i32, 7), free d, 1",
             "d := dyad (i32, 7), e := d, 1",
             "mut d := dyad ?, d = dyad (i32, 7), d = dyad (i64, 8), 1",
             "for 0..3 ( d := dyad (i32, 2) ), 1",
-            "dyad (i32, 7) + 1, 1",
+            "free (dyad (i32, 7) + 1), 1",
             "x := dyad (i32, 7) + dyad (i32, 1), 1",
             "for 0..3 ( x := dyad (i32, 2) + 1 ), 1",
-            "g := fn () -> dyad ( i32 5 ), g() + 1, 1",
+            "g := fn () -> dyad ( i32 5 ), free (g() + 1), 1",
             "g := fn () -> dyad ( i32 5 ), x := g() + g(), 1",
-            "g := fn () -> dyad ( i32 5 ), x := ( 1, g() + 1 ), 1",
-            "g := fn () -> dyad ( i32 5 ), k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(1, g() + 1), 1",
-            "q := fn (a := i32 ?) -> i32 ( a ), q(dyad (i32, 7)), 1",
+            "g := fn () -> dyad ( i32 5 ), x := ( free (g()), g() + 1 ), 1",
+            "g := fn () -> dyad ( i32 5 ), k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), free (k(1, g() + 1)), 1",
+            "q := fn (a := i32 ?) -> i32 ( a ), free (q(dyad (i32, 7))), 1",
             "mut x := i32 ?, x = dyad (i32, 7), 1",
             "x := i32 dyad (i32, 7), 1",
             "x := i32 lossy (dyad (f64, 5.5)), 1",
             "for 0..3 ( mut x := i64 ?, x = dyad (i32, 2) ), 1",
-            "g := fn () -> dyad ( i32 5 ), q := fn (a := i32 ?) -> i32 ( a ), q(g()), 1",
+            "g := fn () -> dyad ( i32 5 ), q := fn (a := i32 ?) -> i32 ( a ), free (q(g())), 1",
             "g := fn () -> dyad ( i32 5 ), mut x := i32 ?, x = g(), 1",
             "g := fn () -> dyad ( i32 5 ), x := i64 (g()), 1",
             "g := fn () -> dyad ( rational_number 1/2 ), mut x := rational_number ?, x = g(), 1",
-            "g := fn () -> dyad ( i32 5 ), f := fn () -> i32 ( g() ), for 0..3 ( f() ), 1",
+            "g := fn () -> dyad ( i32 5 ), f := fn () -> i32 ( g() ), for 0..3 ( free (f()) ), 1",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
         }
         for (body, call) in [
             ("f := fn (m := i32 ?) -> i32 ( d := dyad (i32, m), 1 )", "f(i32 3)"),
             ("f := fn (m := i32 ?) -> dyad ( dyad (i32, m) )", "a := f(i32 3), b := f(i32 4), 1"),
-            ("f := fn (m := i32 ?) -> dyad ( dyad (i32, m) )", "f(i32 3), 1"),
+            ("f := fn (m := i32 ?) -> dyad ( dyad (i32, m) )", "free (f(i32 3)), 1"),
             ("f := fn (q := dyad ?) -> i32 ( 1 )", "f(dyad (i32, 7))"),
             ("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) * 1 )", "f(i32 1)"),
             ("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) )", "f(i32 1)"),
@@ -1892,23 +1910,23 @@ mod tests {
                 assert_eq!(run(&src), (1, 0), "{src}");
             }
         }
-        let src = "f := fn (m := i32 ?) -> i32 ( d := dyad (i32, m), d + 1 ), f(i32 3), 1";
+        let src = "f := fn (m := i32 ?) -> i32 ( d := dyad (i32, m), d + 1 ), free (f(i32 3)), 1";
         assert_eq!(run_hosted(src), (1, 0), "{src}");
     }
 
     #[test]
     fn a_line_parsed_when_it_runs_frees_what_it_made() {
         for src in [
-            "f := fn (a := dyad ?) -> i64 ( a ), f(i64 42), 1",
-            "f := fn (a := dyad ?) -> i64 ( a * 2 ), f(i64 21), 1",
-            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, d = d * 3, d ), f(i64 2), 1",
-            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() ), f(), 1",
+            "f := fn (a := dyad ?) -> i64 ( a ), free (f(i64 42)), 1",
+            "f := fn (a := dyad ?) -> i64 ( a * 2 ), free (f(i64 21)), 1",
+            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, d = d * 3, d ), free (f(i64 2)), 1",
+            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() ), free (f()), 1",
             "mut d := dyad ?, d = i64 5, for 0..3 ( d = d + 1 ), 1",
             "f := fn (a := dyad ?) -> dyad ( a + 1 ), x := f(i64 1), 1",
-            "f := fn (a := dyad ?) -> i64 ( if a > 0 ( f(i64 (a - 1)) + 1 ) else ( 0 ) ), f(i64 4), 1",
-            "mut d := dyad ?, d = i64 1, g := fn (a := dyad ?) -> i64 ( a ), g(d), 1",
-            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() + 1 ), f(), 1",
-            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( 1 + g() * 2 ), for 0..3 ( f() ), 1",
+            "f := fn (a := dyad ?) -> i64 ( if a > 0 ( f(i64 (a - 1)) + 1 ) else ( 0 ) ), free (f(i64 4)), 1",
+            "mut d := dyad ?, d = i64 1, g := fn (a := dyad ?) -> i64 ( a ), free (g(d)), 1",
+            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() + 1 ), free (f()), 1",
+            "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( 1 + g() * 2 ), for 0..3 ( free (f()) ), 1",
             "f := fn (a := dyad ?) -> void ( print «{a + 1}» ), f(i64 5), f(f64 2.5), 1",
             "f := fn (a := dyad ?) -> void ( print «{a + 1/2}» ), f(1/3), 1",
             "f := fn (a := dyad ?) -> void ( for 0..3 ( print «{a * 2}» ) ), f(i64 5), 1",
@@ -1935,7 +1953,7 @@ mod tests {
             unsafe {
                 let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);
                 let line = if dyad::ty(body) == core.scope {
-                    crate::parse::last_sequence_expr(body).expect("one line")
+                    crate::identities::flow::first_given(&core, body)
                 } else {
                     body
                 };
@@ -1968,14 +1986,16 @@ mod tests {
 
     #[test]
     fn a_fault_ends_what_every_scope_it_leaves_holds() {
-        let f = "f := fn () -> i32 ( p := alloc 1 of i32 7, \
-                 ( q := alloc 1 of i32 8, error «stop» ), 0 ),\n";
-        let (e, live) = fault(&format!("{f}f()"));
+        let f = "f := fn (k := i32 ?) -> i32 ( p := alloc 1 of i32 7, \
+                 ( q := alloc 1 of i32 8, if (k == 1) (error «stop») ), 0 ),\n";
+        let (e, live) = fault(&format!("{f}f(1)"));
         assert!(matches!(e, RunError::Raised(_)), "{e:?}");
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![8, 7], "the inner scope's first");
         // Only what was declared before the fault ends.
-        let (_, live) = fault("p := alloc 1 of i32 7,\nerror «stop»,\nq := alloc 1 of i32 8,\n1");
+        let (_, live) = fault(
+            "k := i32 1,\np := alloc 1 of i32 7,\nif (k == 1) (error «stop»),\nq := alloc 1 of i32 8,\n1",
+        );
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![7]);
     }
@@ -2114,12 +2134,12 @@ mod tests {
             ("(if (c == 1) (return 5), i32 2)", "(if (c == 1) (return 5) else (free a), i32 2)");
         let bodies = [
             format!("x := {ret} + (free a, i32 1)"),
-            format!("x := ( {ret}, i32 7 ) + (free a, i32 1)"),
-            format!("x := ( {ret} + (free a, i32 1), i32 7 )"),
+            format!("x := ( free ({ret}), i32 7 ) + (free a, i32 1)"),
+            format!("x := ( free ({ret} + (free a, i32 1)), i32 7 )"),
             format!("x := (free a, i32 1) + {ret}"),
-            format!("x := ( {ret}, free a, i32 1 )"),
+            format!("x := ( free ({ret}), free a, i32 1 )"),
             format!("x := {other} + 1"),
-            format!("x := (if (c > 0) ( {ret}, free a, i32 2 ) else (i32 3)) + 1"),
+            format!("x := (if (c > 0) ( free ({ret}), free a, i32 2 ) else (i32 3)) + 1"),
             format!("x := if ({ret} == 2) (free a, i32 1) else (i32 3)"),
         ];
         for body in bodies {
@@ -2136,7 +2156,7 @@ mod tests {
         // A name the block holds; the return's frees run where the names' lives end, before
         // the end of the block it leaves.
         let block = format!(
-            "( b := alloc 1 of i32 8, {ret} + (free a, free b, i32 1), d := alloc 1 of i32 9, d@ )"
+            "( b := alloc 1 of i32 8, free ({ret} + (free a, free b, i32 1)), d := alloc 1 of i32 9, d@ )"
         );
         let f =
             format!("f := fn (c := i32 ?) -> i32 ( a := alloc 1 of i32 7, x := {block}, x ),\n");
@@ -2265,14 +2285,16 @@ mod tests {
     #[test]
     fn a_move_inside_a_nested_block_ends_the_outer_name_after_the_block() {
         assert_eq!(
-            parse_err("a := alloc 1 of i32 7,\nc := i32 1,\nif (c == 1) ( b := move a, b@ ),\na@"),
+            parse_err(
+                "a := alloc 1 of i32 7,\nc := i32 1,\nif (c == 1) ( b := move a, x := b@ ),\na@"
+            ),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
         // On both paths the old `a` ends at the `if`: moved into `b`, freed at the arm's end,
         // or freed in the arm the else-less `if` gains.
         for c in [0, 1] {
             let (v, live) = run(&format!(
-                "a := alloc 1 of i32 7,\nc := i32 {c},\nif (c == 1) ( b := move a, b@ ),\n\
+                "a := alloc 1 of i32 7,\nc := i32 {c},\nif (c == 1) ( b := move a, x := b@ ),\n\
                  a := alloc 1 of i32 9,\na@"
             ));
             assert_eq!((v, live), (9, 0), "c = {c}");
@@ -2284,11 +2306,11 @@ mod tests {
     fn an_if_frees_what_one_arm_ended_at_the_end_of_the_other() {
         for c in [0, 1] {
             for body in [
-                "if (c == 1) ( b := move a, b@ )",
-                "if (c == 1) ( free a ) else ( 2 )",
-                "if (c == 1) ( 2 ) else ( free a )",
-                "if (c == 1) ( 2 ) else if (c == 3) ( 4 ) else ( b := move a, b@ )",
-                "( if (c == 1) ( free a ), 5 )",
+                "if (c == 1) ( b := move a, x := b@ )",
+                "if (c == 1) ( free a ) else ( x := 2 )",
+                "if (c == 1) ( x := 2 ) else ( free a )",
+                "if (c == 1) ( x := 2 ) else if (c == 3) ( x := 4 ) else ( b := move a, x := b@ )",
+                "( if (c == 1) ( free a ), x := 5 )",
             ] {
                 let src = format!("a := alloc 1 of i32 7,\nc := i32 {c},\n{body},\n1");
                 assert_eq!(run(&src), (1, 0), "c = {c}: {body}");
@@ -2301,7 +2323,7 @@ mod tests {
     fn a_branch_the_pass_drops_ends_no_name() {
         // A bare untaken branch is parsed only to find where it ends; it never runs.
         for src in [
-            "a := alloc 1 of i32 7,\nif true (1) else move a,\na@",
+            "a := alloc 1 of i32 7,\nif true (free (1)) else move a,\na@",
             "a := alloc 1 of i32 7,\nif false free a,\na@",
         ] {
             assert_eq!(run(src), (7, 0), "{src}");
@@ -2314,8 +2336,8 @@ mod tests {
         // The arm that does not move frees on its way out; the moving arm holds the name up to
         // the line that moves it.
         let f = "f := fn (c := i32 ?) -> i32 ( a := alloc 1 of i32 7, \
-                 if (c > 0) ( if (c == 2) (return 9), b := move a, b@ ) else ( return 2 ), 3 ),\n";
-        assert_eq!(run(&format!("{f}f(0) + f(1) + f(2)")), (14, 0));
+                 if (c > 0) ( if (c == 2) (return 9), b := move a, b@ ) else ( return 2 ) ),\n";
+        assert_eq!(run(&format!("{f}f(0) + f(1) + f(2)")), (18, 0));
         assert_eq!(free_log(), vec![7, 7, 7]);
     }
 
@@ -2415,7 +2437,7 @@ mod tests {
             ("free q.x,\nh := fn (v := r ?) -> i32 ( 1 ),\nh(q)", dead("q")),
             ("g := fn () -> i32 ( q.y ),\nfree q.x,\ng()", dead("q")),
             ("free q.x,\nq := r (1, 2)", dead("q")),
-            ("k := i32 1,\nif (k == 1) ( free q.x, 1 ),\nq.x", dead("q.x")),
+            ("k := i32 1,\nif (k == 1) ( free q.x ),\nq.x", dead("q.x")),
             ("for i in 0..2 ( free q.x )", ParseError::MoveOfOuterName),
             ("f := fn () -> i32 ( free q.x, 1 )", ParseError::MoveOfOuterName),
             // A field that owns nothing moves nowhere yet.
@@ -2425,8 +2447,8 @@ mod tests {
         }
         for (tail, want) in [
             ("free q.x,\nq.y", 6),
-            ("k := i32 1,\nif (k == 1) ( free q.x, 1 ),\nq.y", 6),
-            ("k := i32 0,\nif (k == 1) ( free q.x, 1 ),\nq.y", 6),
+            ("k := i32 1,\nif (k == 1) ( free q.x ),\nq.y", 6),
+            ("k := i32 0,\nif (k == 1) ( free q.x ),\nq.y", 6),
             ("f := fn () -> i32 ( p := r (1, 2), free p.x, p.y ),\nf.compile(),\nf()", 2),
         ] {
             assert_eq!(run(&format!("{PLAIN}{tail}")), (want, 0), "{tail}");
@@ -2463,7 +2485,7 @@ mod tests {
             ("k(p(), g() + 1)", 8),
             ("k3(p(), h(), immediate h())", 7),
             ("x := k(p(), g() + 1), x", 8),
-            ("x := ( h(), k(p(), g() + 1) ), x", 8),
+            ("x := ( free (h()), k(p(), g() + 1) ), x", 8),
             ("q := fn () -> i32 ( k(p(), g() + 1) ), q() + q()", 16),
             ("q := fn () -> i32 ( k(p(), g() + 1) ), mut s := i32 0, for 0..20 ( s = s + q() ), s", 160),
         ] {
@@ -2494,7 +2516,7 @@ mod tests {
             assert_eq!(run(&format!("{BAG}{tail}")), (1, 0), "{tail}");
         }
         // The count sees the array: a free that leaves the field alone leaks its one block.
-        let forgetful = BAG.replace("static free = ( free items )", "static free = ( 0 )");
+        let forgetful = BAG.replace("static free = ( free items )", "static free = ( free (0) )");
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
@@ -2620,9 +2642,9 @@ mod tests {
     fn free_of_a_value_runs_it_then_frees_what_it_owns() {
         assert_eq!(run("free (alloc 1 of i32 5),\n1"), (1, 0));
         assert_eq!(
-            run("alloc 1 of i32 5,\n1"),
-            (1, 0),
-            "the same value no word takes ends with its line"
+            parse_err("alloc 1 of i32 5,\n1"),
+            ParseError::LineAfterValue,
+            "the same value no word takes ends its scope, and the line after never runs"
         );
         assert_eq!(
             run("import ./identities/array.logos, (array i32 [1, 2])[1]"),
@@ -2639,8 +2661,8 @@ mod tests {
             "free (f()),\nn",
             "free f(),\nn",
             "free (if (1 == 1) (f()) else (2)),\nn",
-            "( defer free (f()), 2 ),\nn",
-            "g := fn () -> i32 ( free (f()), 1 ),\ng.compile(),\ng(),\nn",
+            "x := ( defer free (f()), 2 ),\nn",
+            "g := fn () -> i32 ( free (f()), 1 ),\ng.compile(),\nfree (g()),\nn",
         ] {
             assert_eq!(run(&format!("{counted}{tail}")), (1, 0), "{tail}");
         }
@@ -2918,8 +2940,8 @@ mod tests {
         // A block's last value moves to its binder the same way.
         assert_eq!(run("b := ( a := alloc 1 of i32 8, a ),\nb@"), (8, 0));
         assert_eq!(free_log(), vec![8]);
-        // A moved-out value no name takes is freed at its line's end.
-        assert_eq!(run("mk := fn () -> own @i32 ( alloc 1 of i32 7 ),\nmk(),\n1"), (1, 0));
+        // A moved-out value thrown away is freed at its line.
+        assert_eq!(run("mk := fn () -> own @i32 ( alloc 1 of i32 7 ),\nfree (mk()),\n1"), (1, 0));
         // A call's result is owned only through the callee's `-> own`.
         assert_eq!(
             run("id := fn (q := @i32 ?) -> @i32 ( q ),\np := alloc 1 of i32 3,\nr := id(p),\nr@"),
@@ -2933,7 +2955,7 @@ mod tests {
         // Calling a function is a use of each outer name its body reads, at the call.
         assert_eq!(
             parse_err(
-                "mut n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nclimb(),\nfree n,\nclimb()"
+                "mut n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nfree (climb()),\nfree n,\nclimb()"
             ),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
@@ -2943,9 +2965,10 @@ mod tests {
             ),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
-        let (v, live) =
-            run("mut n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nclimb(),\nfree n,\n\
-             mut n := i32 10,\nclimb2 := fn () -> i32 ( n = n + 1, n ),\nclimb2()");
+        let (v, live) = run(
+            "mut n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nfree (climb()),\nfree n,\n\
+             mut n := i32 10,\nclimb2 := fn () -> i32 ( n = n + 1, n ),\nclimb2()",
+        );
         assert_eq!(v, 11);
         assert_eq!(live, 0);
     }
@@ -3009,7 +3032,7 @@ mod tests {
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
         assert_eq!(
-            parse_err(&format!("{POW}2 ^ 3,\nfree n,\n2 ^ 3")),
+            parse_err(&format!("{POW}free (2 ^ 3),\nfree n,\n2 ^ 3")),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
     }

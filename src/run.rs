@@ -376,7 +376,15 @@ struct Activation {
     base: *mut u8,
     /// The [`frame_record`] of the `fn` this frame is a call of; null for the program's.
     record: DyadPtr,
-    cursors: Vec<(DyadPtr, usize)>,
+    cursors: Vec<(DyadPtr, Cursor)>,
+}
+
+/// How far the pass ran a scope's lines in a frame: its run starts at line `at`, or, where line
+/// `at` gave the scope its value, ends there with that value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Cursor {
+    pub at: usize,
+    pub given: Option<i64>,
 }
 
 impl Activation {
@@ -437,6 +445,8 @@ pub struct Runtime<'a> {
     /// The values with an end of their own the pass ran early that nothing has taken yet, each
     /// as the node standing in its place (`identities::ran`).
     stood: Vec<DyadPtr>,
+    /// The brackets whose lines a refusal waits on, until a reader takes them as data.
+    unread_lines: Vec<DyadPtr>,
     /// Handed to every jump into machine code.
     pub(crate) ctx: Context,
 }
@@ -500,8 +510,29 @@ impl<'a> Runtime<'a> {
             plans: Vec::new(),
             line_values: Vec::new(),
             stood: Vec::new(),
+            unread_lines: Vec::new(),
             ctx: Context::new(),
         }
+    }
+
+    /// The lines of `bracket` are refused as a scope's unless a reader takes them as data
+    /// before the line holding it ends (›A scope's value is what it evaluates to, and `return`
+    /// is an optional early exit from the enclosing function‹ [[R207]]).
+    pub(crate) fn hold_back_lines(&mut self, bracket: DyadPtr) {
+        self.unread_lines.push(bracket);
+    }
+
+    /// A reader took the lines of `bracket` as data.
+    pub(crate) fn note_lines_read(&mut self, bracket: DyadPtr) {
+        self.unread_lines.retain(|&b| b != bracket);
+    }
+
+    /// Whether no reader took the lines of `bracket`, held back by [`Self::hold_back_lines`];
+    /// nothing waits on them after.
+    pub(crate) fn take_unread_lines(&mut self, bracket: DyadPtr) -> bool {
+        let before = self.unread_lines.len();
+        self.unread_lines.retain(|&b| b != bracket);
+        self.unread_lines.len() != before
     }
 
     /// From here until [`Self::pop_plan`], a node of `plan` that runs gives a value the line
@@ -551,22 +582,22 @@ impl<'a> Runtime<'a> {
         self.activations.last_mut().expect("the program frame is never popped")
     }
 
-    /// The pass ran the scope's lines up to `k`; the scope's own run starts there.
-    pub(crate) fn set_cursor(&mut self, scope: DyadPtr, k: usize) {
+    /// The pass ran the scope's lines up to `cursor`; the scope's own run starts there.
+    pub(crate) fn set_cursor(&mut self, scope: DyadPtr, cursor: Cursor) {
         let cursors = &mut self.frame().cursors;
         match cursors.iter_mut().find(|(s, _)| *s == scope) {
-            Some(entry) => entry.1 = k,
-            None => cursors.push((scope, k)),
+            Some(entry) => entry.1 = cursor,
+            None => cursors.push((scope, cursor)),
         }
     }
 
-    /// Where the scope's run starts in this frame: 0 for a scope the pass never touched.
+    /// Where the scope's run starts in this frame: line 0 for a scope the pass never touched.
     /// Taken, since a scope the pass started runs once.
-    pub(crate) fn take_cursor(&mut self, scope: DyadPtr) -> usize {
+    pub(crate) fn take_cursor(&mut self, scope: DyadPtr) -> Cursor {
         let cursors = &mut self.frame().cursors;
         match cursors.iter().position(|(s, _)| *s == scope) {
             Some(i) => cursors.swap_remove(i).1,
-            None => 0,
+            None => Cursor::default(),
         }
     }
 
@@ -980,6 +1011,34 @@ impl<'a> Runtime<'a> {
             self.line_values.push((node, value));
         }
         Ok(value)
+    }
+
+    /// Run `node` as a line of a scope: the value it gives the scope, `None` where it goes on
+    /// without one ([`crate::identities::flow::run_line`]).
+    ///
+    /// # Safety
+    /// As [`Runtime::run`].
+    pub(crate) unsafe fn run_line(&mut self, node: DyadPtr) -> Result<Option<i64>, RunError> {
+        crate::identities::flow::run_line(self, node)
+    }
+
+    /// [`Runtime::run`] for a block, `if` or loop run as a line by `run`.
+    ///
+    /// # Safety
+    /// As [`Runtime::run`]; `run` must be the line run of `node`'s type.
+    pub(crate) unsafe fn run_given(
+        &mut self,
+        node: DyadPtr,
+        run: unsafe fn(&mut Runtime, DyadPtr) -> Result<Option<i64>, RunError>,
+    ) -> Result<Option<i64>, RunError> {
+        if crate::stack::exhausted(self.ctx.stack_limit) {
+            return Err(RunError::TooDeep);
+        }
+        let given = run(self, node)?;
+        if let Some(value) = given.filter(|_| self.planned(node)) {
+            self.line_values.push((node, value));
+        }
+        Ok(given)
     }
 
     /// Whether the line being run holds the value `node` gives to its end, which ends it.

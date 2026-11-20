@@ -171,12 +171,23 @@ struct Context<'a> {
     dropping: usize,
     /// What the construct around the block about to open does with its value.
     next_block: bodies::BlockValue,
+    /// The construct around the block about to open starts its line, so the block's value is
+    /// the line's, unless a reader to its right takes it.
+    next_passes_out: bool,
+    /// The tape the innermost scope's line being read is built on, compared by address only: a
+    /// reader's right side is built on a tape of its own.
+    line_tape: *const tape::ParsingTape,
     /// The block that closed last, with the values its last line made that it handed on as its
     /// own value.
     handed_tail: Option<(DyadPtr, Vec<DyadPtr>)>,
-    /// Where the runtime's values of the program's last line begin, kept to their line's end
-    /// until its echo has read them.
+    /// Where the runtime's values of the line that gave the program its value begin, kept to
+    /// their line's end until its echo has read them.
     tail_values: Option<usize>,
+    /// The line that gave the program its value, with the value.
+    program_value: Option<(DyadPtr, i64)>,
+    /// Each `( … )` cell closed with a line refused as a line of a scope, where that line starts
+    /// and why: the line the cell stands in decides once it closes.
+    held_back: Vec<(DyadPtr, usize, ParseError)>,
 }
 
 impl<'a> Context<'a> {
@@ -197,7 +208,7 @@ impl<'a> Context<'a> {
             each_pass: false,
             each_pass_read: false,
             definitions: Vec::new(),
-            open: vec![OpenScope::default()],
+            open: vec![OpenScope::top_level()],
             dir: PathBuf::from("."),
             queued: std::collections::VecDeque::new(),
             last_write: LastWrite::NONE,
@@ -220,8 +231,12 @@ impl<'a> Context<'a> {
             ended_log: Vec::new(),
             dropping: 0,
             next_block: bodies::BlockValue::Used,
+            next_passes_out: false,
+            line_tape: std::ptr::null(),
             handed_tail: None,
             tail_values: None,
+            program_value: None,
+            held_back: Vec::new(),
         }
     }
 

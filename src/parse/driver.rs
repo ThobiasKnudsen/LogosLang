@@ -689,6 +689,16 @@ impl<'a> Parser<'a> {
         self.next_cell().map(|item| item.map(|c| c.dyad))
     }
 
+    /// Whether the cell at `tape`'s center starts the line being read: it stands on the line's own
+    /// tape, with nothing but comments to its left.
+    pub(crate) fn starts_line(&self, tape: &ParsingTape) -> bool {
+        std::ptr::eq(tape, self.cx.line_tape)
+            && (1..)
+                .map_while(|k| tape.at(-k))
+                // SAFETY: a cell on the tape holds a dyad from the store.
+                .all(|c| unsafe { crate::identities::numtype::is_comment_type(dyad::ty(c.dyad)) })
+    }
+
     /// [`Self::parse_next`] as the cell, its facts with it.
     pub(super) fn next_cell(&mut self) -> Option<Result<Cell, ParseError>> {
         loop {
@@ -734,6 +744,7 @@ impl<'a> Parser<'a> {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),
             };
+            self.cx.line_tape = &tape;
             let Built { items, before, after } = match self.construct_segment(&mut tape) {
                 Ok(built) => built,
                 Err(e) => return Some(Err(e)),
@@ -813,13 +824,14 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `scope` must be a node from the store.
-    pub(crate) unsafe fn args_of(&self, scope: DyadPtr) -> Vec<DyadPtr> {
+    pub(crate) unsafe fn args_of(&mut self, scope: DyadPtr) -> Vec<DyadPtr> {
         if dyad::ty(scope) != self.types.scope {
             return vec![scope];
         }
         let Some(items) = crate::identities::scope::exprs_of(scope) else {
             return vec![scope];
         };
+        self.rt.note_lines_read(scope);
         let defer_ = self.types.defer_;
         items
             .iter()
@@ -967,6 +979,26 @@ impl<'a> Parser<'a> {
         };
         // SAFETY: `node` is a valid dyad in the store (the caller's contract).
         self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run(node) })
+    }
+
+    /// [`Parser::run_on_pass`] for a line of a scope: the value it gives the scope, `None`
+    /// where it goes on without one.
+    ///
+    /// # Safety
+    /// As [`Parser::run_on_pass`].
+    pub(super) unsafe fn run_line_on_pass(
+        &mut self,
+        node: DyadPtr,
+    ) -> Result<Option<i64>, crate::run::RunError> {
+        let host = crate::run::Host {
+            parser: (self as *mut Self).cast(),
+            lex_on: Self::lex_on,
+            mint: Self::mint_host,
+            construct: Self::construct_host,
+            parse_waiting: Self::parse_waiting_host,
+        };
+        // SAFETY: `node` is a valid dyad in the store (the caller's contract).
+        self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run_line(node) })
     }
 
     /// [`Parser::run_on_pass`] for a call whose record result is copied into `dest`.

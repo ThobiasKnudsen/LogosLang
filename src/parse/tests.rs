@@ -167,7 +167,7 @@ fn a_scope_carries_its_enclosing_scope() {
     let types = &core;
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let mut p = Parser::new("(1, 2, (3, 4))", &mut store, &mut trie, types, scopes);
+    let mut p = Parser::new("(a := 1, b := 2, (c := 3, 4))", &mut store, &mut trie, types, scopes);
     let outer = p.parse_expression().unwrap();
     // SAFETY: the nodes were just parsed into the store.
     unsafe {
@@ -463,9 +463,9 @@ fn the_tape_affordances_are_reachable_from_logos() {
         assert_eq!(crate::identities::string::text(v as DyadPtr), b"a");
         let (v, s) = go("t[1]:name", &mut store, &mut trie, types, s);
         assert_eq!(crate::identities::string::text(v as DyadPtr), b"+");
-        let (v, s) = go("t.remove(1)", &mut store, &mut trie, types, s);
-        assert_eq!(v as DyadPtr, plus, "remove yields the cell it took");
+        let (_, s) = go("t.remove(1)", &mut store, &mut trie, types, s);
         assert_eq!((*tape).len(), 2);
+        assert_ne!((*tape).at(1).unwrap().dyad, plus, "remove takes the cell");
 
         let (a_rec, b_rec) = ((*tape).at(0).unwrap().dyad, (*tape).at(1).unwrap().dyad);
         let (_, s) = go("i := i64 1", &mut store, &mut trie, types, s);

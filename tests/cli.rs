@@ -673,7 +673,7 @@ fn an_array_travels_as_its_address() {
         // through a parameter is.
         ("b := a, b.ptr@ = i32 9, a[0]", "1"),
         ("b := a, b.ptr@ = i32 9, b[0]", "9"),
-        ("f := fn (p := array i32 ?) -> i32 ( p[0] = i32 9, 0 ), f(a), a[0]", "9"),
+        ("f := fn (p := array i32 ?) -> i32 ( p[0] = i32 9, 0 ), free (f(a)), a[0]", "9"),
         (
             "t := array i32, mk := fn (v := i32 ?) -> own t ( c := array i32 [v, 1], c ), \
              m := mk(3), n := mk(4), m[0] + n[0]",
@@ -761,15 +761,19 @@ fn a_static_function_called_through_a_record_built_by_application_reads_its_fiel
 #[test]
 fn a_static_function_writes_the_value_it_is_called_on() {
     let p = "p := type ( mut x := i32 ?, y := i32 ?, static get := fn () -> i32 ( x + y ), \
-             static bump := fn () -> i32 ( x = x + 10, x ), static twice := fn () -> i32 ( bump(), bump() ) )";
+             static bump := fn () -> i32 ( x = x + 10, x ), \
+             static twice := fn () -> i32 ( free (bump()), bump() ) )";
     for (tail, want) in [
-        ("mut m := p (1, 2), m.bump(), m.x", "11\n"),
-        ("mut m := p (1, 2), m.twice(), m.x", "21\n"),
-        ("mut m := p (1, 2), f := fn () -> i32 ( m.bump() ), f.compile(), f(), m.x", "11\n"),
-        ("f := fn () -> i32 ( mut r := p (3, 4), r.bump(), r.x ), f()", "13\n"),
-        ("f := fn () -> i32 ( mut r := p (3, 4), r.bump(), r.x ), f.compile(), f()", "13\n"),
-        ("f := fn (mut r := p ?) -> i32 ( r.twice(), r.x ), f(p (1, 2))", "21\n"),
-        ("f := fn (mut r := p ?) -> i32 ( r.twice(), r.x ), f.compile(), f(p (1, 2))", "21\n"),
+        ("mut m := p (1, 2), free (m.bump()), m.x", "11\n"),
+        ("mut m := p (1, 2), free (m.twice()), m.x", "21\n"),
+        ("mut m := p (1, 2), f := fn () -> i32 ( m.bump() ), f.compile(), free (f()), m.x", "11\n"),
+        ("f := fn () -> i32 ( mut r := p (3, 4), free (r.bump()), r.x ), f()", "13\n"),
+        ("f := fn () -> i32 ( mut r := p (3, 4), free (r.bump()), r.x ), f.compile(), f()", "13\n"),
+        ("f := fn (mut r := p ?) -> i32 ( free (r.twice()), r.x ), f(p (1, 2))", "21\n"),
+        (
+            "f := fn (mut r := p ?) -> i32 ( free (r.twice()), r.x ), f.compile(), f(p (1, 2))",
+            "21\n",
+        ),
         // A function that only reads is called on any value.
         ("m := p (1, 2), m.get()", "3\n"),
         ("f := fn (r := p ?) -> i32 ( r.get() ), f.compile(), f(p (1, 2))", "3\n"),
@@ -802,7 +806,7 @@ fn a_static_function_writes_the_value_it_is_called_on() {
              if tape[0].type == type ( tape[0].type = q, tape[0].n = tape[1], tape.remove(1) ), \
              tape.is_constructed[0] = true ) )";
     for (tail, want) in
-        [("mut m := q u64 1, m.bump(), m.get()", "11\n"), ("m := q u64 1, m.get()", "1\n")]
+        [("mut m := q u64 1, free (m.bump()), m.get()", "11\n"), ("m := q u64 1, m.get()", "1\n")]
     {
         let (code, stdout, stderr) = run_line(&format!("{q}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
@@ -817,7 +821,7 @@ fn a_static_function_writes_only_a_mut_field() {
     let p = |gate: &str| {
         format!(
             "p := type ( {gate}x := i32 ?, static bump := fn () -> i32 ( x = x + 10, x ) ), \
-             mut m := p (1), m.bump(), m.x"
+             mut m := p (1), free (m.bump()), m.x"
         )
     };
     let (code, stdout, stderr) = run_line(&p("mut "));
@@ -1008,7 +1012,7 @@ fn an_array_element_is_written_where_the_read_finds_it() {
 #[test]
 fn a_static_name_in_a_function_is_made_once_at_the_definition() {
     let src = "f := fn () -> i32 ( static n := (print «made», i32 5), n ), \
-               print «defined», f(), f(), f()";
+               print «defined», free (f()), free (f()), f()";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "made\ndefined\n5\n");
@@ -1160,8 +1164,8 @@ fn a_static_function_is_called_on_the_record_behind_a_pointer() {
         ("p@.inner.s()", "7\n"),
         ("g := fn (q := @t ?) -> i64 ( q@.get() + q@.inner.s() ), g.compile(), g(p)", "10\n"),
         // The write reaches the record behind the pointer.
-        ("p@.bump(), p@.n", "13\n"),
-        ("g := fn (q := @t ?) -> i64 ( q@.bump(), q@.n ), g.compile(), g(p)", "13\n"),
+        ("free (p@.bump()), p@.n", "13\n"),
+        ("g := fn (q := @t ?) -> i64 ( free (q@.bump()), q@.n ), g.compile(), g(p)", "13\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{t}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
@@ -2059,7 +2063,10 @@ fn an_if_lands_each_arm_and_an_operation_meets_in_the_wider_type() {
         }
     }
     for (src, expect) in [
-        ("c := true, x := if c (i32 1) else (i64 2)", "the arms of this `if` give different types"),
+        (
+            "c := true, x := if c (i32 1) else (i64 2)",
+            "the arms of this `if`, or the lines that give this block its value, give different types",
+        ),
         ("c := true, mut x := i64 0, x = if c (i32 1) else (f64 2.0)", "these types do not match"),
         ("f32 1.5 + i32 1", "these types do not match"),
         ("x := u64 1, y := i64 1, x + y", "these types do not match"),
@@ -2155,12 +2162,14 @@ fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
             // A parameter borrows a value a name holds: the call frees the node it lands in, and
             // the name ends the value.
             (
-                format!("b := bag (4), f := fn (a := dyad ?) -> i32 ( 1 ), {c}f(b), print «end»"),
+                format!(
+                    "b := bag (4), f := fn (a := dyad ?) -> i32 ( 1 ), {c}free (f(b)), print «end»"
+                ),
                 "end\nfreed 4\n",
             ),
             (
                 format!(
-                    "mut d := dyad ?, d = bag (5), f := fn (a := dyad ?) -> i32 ( 1 ), {c}f(d), \
+                    "mut d := dyad ?, d = bag (5), f := fn (a := dyad ?) -> i32 ( 1 ), {c}free (f(d)), \
                      print «end»"
                 ),
                 "end\nfreed 5\n",
@@ -2168,7 +2177,7 @@ fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
             (
                 format!(
                     "f := fn (a := dyad ?) -> i32 ( 1 ), {c}g := fn (a := dyad ?) -> i32 ( f(a) ), \
-                     g(bag (5)), print «end»"
+                     free (g(bag (5))), print «end»"
                 ),
                 "freed 5\nend\n",
             ),
@@ -2249,9 +2258,12 @@ fn an_if_that_makes_a_dyad_in_one_arm_and_borrows_one_in_another_is_refused() {
     // number, and into `-> bag` the bag its node held, which only `-> own bag` may.
     for c in ["", "f.compile(), "] {
         for (tail, want) in [
-            (format!("{}{c}f(i32 5), print «end»", gives_dyad("bag (lhs)")), "freed 5\nend\n"),
             (
-                format!("{}{c}f(i32 5), print «end»", gives_dyad("dyad (bag, bag (lhs))")),
+                format!("{}{c}free (f(i32 5)), print «end»", gives_dyad("bag (lhs)")),
+                "freed 5\nend\n",
+            ),
+            (
+                format!("{}{c}free (f(i32 5)), print «end»", gives_dyad("dyad (bag, bag (lhs))")),
                 "freed 5\nend\n",
             ),
             (format!("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) ), {c}f(i32 3)"), "3\n"),
@@ -2397,9 +2409,12 @@ fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
     }
     // A block's plain number is a `rational_number` too, which no `i32` holds whole.
     for (src, expect) in [
-        ("x := ( 1, 7 ) + i32 1".to_string(), "do not match"),
+        ("x := ( free (1), 7 ) + i32 1".to_string(), "do not match"),
         (format!("{}, x := q [1/2, 7], x.v", q("i32")), "only a constant is read as its number"),
-        (format!("{}, x := q [(1, 7), 7], x.v", q("i32")), "only a constant is read as its number"),
+        (
+            format!("{}, x := q [(free (1), 7), 7], x.v", q("i32")),
+            "only a constant is read as its number",
+        ),
     ] {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}");
@@ -2535,7 +2550,7 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
         ("v := t (3), v.is_i32(f64 2.5)", "false"),
         ("v := t (3), v.last(i64 42)", "42"),
         ("mut v := t (3), v.add(i64 5), v.n", "8"),
-        ("mut v := t (3), v.add_bump(i64 5), v.n", "4"),
+        ("mut v := t (3), free (v.add_bump(i64 5)), v.n", "4"),
         ("v := t (3), g := fn () -> i64 ( v.k(i64 5) ), g.compile(), g()", "8"),
     ] {
         let src = format!("{t}, {tail}");
@@ -3123,7 +3138,7 @@ fn a_dot_on_an_if_or_a_statement_reads_its_node_and_uses_no_value_on_both_tiers(
         format!("not ({two}.type == (x + 1).type)"),
         format!("not ({two}.type == i32)"),
         format!("not ({two}.type == (while c (c = false)).type)"),
-        format!("(c, {two}).type == scope"),
+        format!("(c = true, {two}).type == scope"),
         "(x = 4).type == (x = 5).type and x == 3".into(),
         "(for i in 0..2 (i)).type == (for i in 0..3 (i)).type and x == 3".into(),
     ] {
@@ -3315,7 +3330,8 @@ fn a_repl_line_that_faults_keeps_the_end_of_what_it_ended() {
     assert!(stderr.contains("`a` is dead here"), "stderr: {stderr}");
     let lines = BOX.replacen("), box := ", ")\nbox := ", 1);
     let g = "g := fn () -> i32 ( error «x» )\nc := i32 1";
-    for tail in ["( free a, error «x» )", "if (c == 1) ( g(), free a )", "if (g() == 1) ( free a )"]
+    for tail in
+        ["( free a, error «x» )", "if (c == 1) ( free (g()), free a )", "if (g() == 1) ( free a )"]
     {
         let (echoes, stderr) =
             repl(format!("{lines}\n{g}\na := box (1, 2)\n{tail}\na.size\n").as_bytes());
@@ -3324,7 +3340,7 @@ fn a_repl_line_that_faults_keeps_the_end_of_what_it_ended() {
     }
     // A fault the pass meets before the parse reaches the `free` ends nothing.
     let (echoes, stderr) =
-        repl(format!("{lines}\n{g}\na := box (1, 2)\n( g(), free a )\na.size\n").as_bytes());
+        repl(format!("{lines}\n{g}\na := box (1, 2)\n( free (g()), free a )\na.size\n").as_bytes());
     assert_eq!(echoes, ["2", "free"], "stderr: {stderr}");
 }
 
@@ -3979,10 +3995,15 @@ fn a_return_hands_the_call_its_operand_as_the_last_line_does() {
 
 #[test]
 fn the_echo_reads_the_tail_value_as_any_use_does() {
-    // Refused before the tail runs, so `ran` never prints.
-    for tail in
-        ["if c (i32 1) else (i64 2)", "( y := i32 1, if c (print «ran», i32 1) else (i64 2) )"]
-    {
+    // Refused before the tail runs, so `ran` never prints; an arm's value passes out through the
+    // `if` around it, whatever its sibling gives.
+    for tail in [
+        "if c (i32 1) else (i64 2)",
+        "( y := i32 1, if c (print «ran», i32 1) else (i64 2) )",
+        "if c (i32 1) else (i64 2), 3",
+        "if c (if c (i32 1) else (i64 2)) else (print «b»)",
+        "if c (print «b») else (if c (i32 1) else (i64 2))",
+    ] {
         let (code, stdout, stderr) = run_line(&format!("mut c := true, {tail}"));
         assert_eq!(code, Some(1), "{tail}");
         assert_eq!(stdout, "", "{tail}");
@@ -3993,14 +4014,11 @@ fn the_echo_reads_the_tail_value_as_any_use_does() {
     assert!(stderr.starts_with("<command line>:2:"), "stderr: {stderr}");
     for (tail, want) in [
         ("if c (i32 1) else (i32 2)", "1\n"),
-        ("if c (5)", ""),
-        ("if c (i32 1) else (print «b»)", ""),
-        ("if c (i32 1) else (i64 2), 3", "3\n"),
+        // The arm that runs gives the value, even where another arm gives nothing.
+        ("if c (5)", "5\n"),
+        ("if c (i32 1) else (print «b»)", "1\n"),
         ("if c (1) else if c (2) else (3)", "1\n"),
         ("x := if c (1) else (if c (2) else (3)), x", "1\n"),
-        // An arm that gives nothing leaves its sibling's value unused, whichever arm it is.
-        ("if c (if c (i32 1) else (i64 2)) else (print «b»)", ""),
-        ("if c (print «b») else (if c (i32 1) else (i64 2))", "b\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("mut c := true, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
@@ -4104,7 +4122,7 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
 #[test]
 fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
     let (echoes, stderr) = repl(
-        b"x := i32 5\n(x:end, 3)\np := type (a := i32 ?)\nq := p(1)\n(q.a, 2)\nq.a\n\
+        b"x := i32 5\n(y := x:end, 3)\np := type (a := i32 ?)\nq := p(1)\n(y := q.a, 2)\nq.a\n\
           r := &q\nr@.a\npp := &r\npp@@.a\nx.type == i32\n",
     );
     assert_eq!(echoes, ["3", "2", "1", "1", "1", "true"], "stderr: {stderr}");
@@ -4429,7 +4447,7 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     let k1 = "k := fn (a := i32 ?) -> i32 ( print «k», a )";
     for (src, want) in [
         (format!("{calls}, g() + h()"), "g\nh\n3"),
-        (format!("{calls}, x := ( h(), g() + 1 ), x"), "h\ng\n3"),
+        (format!("{calls}, x := ( free (h()), g() + 1 ), x"), "h\ng\n3"),
         (format!("{calls}, v := g(), h() + v"), "g\nh\n3"),
         (
             format!("{calls}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(1, g() + 1)"),
@@ -4438,7 +4456,7 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
         (format!("{calls}, h() + g()"), "h\ng\n3"),
         (format!("{calls}, h() * 2 + g()"), "h\ng\n4"),
         (format!("{calls}, h() + (g() * 2)"), "h\ng\n5"),
-        (format!("{calls}, (h(), 1) + g()"), "h\ng\n3"),
+        (format!("{calls}, (free (h()), 1) + g()"), "h\ng\n3"),
         (format!("{calls}, g() + h() + g()"), "g\nh\ng\n5"),
         (format!("{calls}, h() + (h() * (g() + 1))"), "h\nh\ng\n4"),
         (format!("{calls}, x := h() + (g() + 1), x"), "h\ng\n4"),
@@ -4594,7 +4612,7 @@ fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_
         (format!("{defs}, mut t := type ?, t = i32, k(h(), t 5)"), "h\n6"),
         (format!("{defs}, d := dyad (i32, 7), k(h(), k(h(), d + 1))"), "h\nh\n10"),
         (format!("{defs}, d := dyad (i32, 7), x := k(h(), d + 1), x"), "h\n9"),
-        (format!("{defs}, d := dyad (i32, 7), x := ( h(), k(h(), d + 1) ), x"), "h\nh\n9"),
+        (format!("{defs}, d := dyad (i32, 7), x := ( free (h()), k(h(), d + 1) ), x"), "h\nh\n9"),
         (format!("{defs}, d := dyad (i32, 7), f := fn () -> i32 ( k(h(), d + 1) ), f()"), "h\n9"),
         (format!("{defs}, {g}, k(h(), immediate g())"), "h\ng\n3"),
         (format!("{defs}, {mk}, kt(h(), mk())"), "h\nmk\n1"),
@@ -4646,7 +4664,7 @@ fn a_comment_leading_a_line_leaves_that_line_what_it_made_and_runs() {
     for (src, want) in [
         (format!("{calls}, k(# «a» h(), g() + 1)"), "h\ng\n4"),
         (format!("{calls}, d := dyad (i32, 7), k(# «a» h(), d + 1)"), "h\n9"),
-        (format!("{bag}, # «a» bag(3), print «x»"), "freed 3\nx"),
+        (format!("{bag}, # «a» free (bag(3)), print «x»"), "freed 3\nx"),
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
@@ -4834,7 +4852,7 @@ fn the_pass_runs_only_as_far_as_it_must_in_order_and_never_twice() {
     assert_eq!(line(&format!("{bump}, {add}, f(bump(), bump()) * 10 + x")), "32");
     assert_eq!(line("mut x := i32 0, while (x < 3) ( x = x + 1 ), x"), "3");
     // `bump()` once gives 7; twice would give 9.
-    let block = "y := ( mut a := type ?, a = i32, bump(), z := a 5, z + x ), y + x";
+    let block = "y := ( mut a := type ?, a = i32, free (bump()), z := a 5, z + x ), y + x";
     assert_eq!(line(&format!("{bump}, {block}")), "7");
     assert_eq!(line("y := ( mut a := type ?, a = i32, mut x := a 5, x ) + 1, y"), "6");
     let (echoes, stderr) = repl(
@@ -4909,11 +4927,11 @@ fn lex_splices_text_built_fragments() {
 #[test]
 fn print_writes_its_quote_each_time_it_runs_and_is_a_statement() {
     let out = logos()
-        .arg("print «a», f := fn () -> i32 ( print «in f», 7 ), f(), f(), print «»")
+        .arg("print «a», f := fn () -> i32 ( print «in f», 7 ), free (f()), free (f()), print «»")
         .output()
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    // The program's tail is its last line, a statement, so nothing echoes after the prints.
+    // No line of the program gives a value, so nothing echoes after the prints.
     assert_eq!(String::from_utf8_lossy(&out.stdout), "a\nin f\nin f\n\n");
 
     let (echoes, stderr) = repl("print «hi»\n1 + 1\n".as_bytes());
@@ -4929,7 +4947,7 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
         .arg(
             "sum := i32 20, double := fn (n := i32 ?) -> i32 ( return n * 2 ), \
              print «answer {double(sum) + 2}», print «{1 < 2} {f64 5.5} \\{x\\} a\\b», \
-             f := fn (n := i32 ?) -> i32 ( print «n={n}», n ), f(3), f(4)",
+             f := fn (n := i32 ?) -> i32 ( print «n={n}», n ), free (f(3)), f(4)",
         )
         .output()
         .unwrap();
@@ -5016,7 +5034,7 @@ fn a_print_in_a_compiled_body_writes_what_the_interpreted_one_writes() {
             ),
             (
                 "g := fn (k := i32 ?) -> i32 ( if (k > 2) ( print «big {k}» ) else \
-                 ( print «small {k}» ), k ), {compile}g(4), g(1)"
+                 ( print «small {k}» ), k ), {compile}free (g(4)), g(1)"
                     .to_string(),
                 "big 4\nsmall 1\n1\n",
             ),
@@ -5174,12 +5192,12 @@ fn a_comment_is_a_line_of_the_scope_its_text_is_in() {
                     tape.remove(1), tape.is_constructed[0] = true ) ), x := q [5, i32 7], x.v";
     let mut rows = vec![
         // In a condition: a line of the condition's own scope, read past for its value.
-        ("if 5 * 2 # «c» == 10 ( 1, here.scope.dyads.size ) else ( 0 )".to_owned(), "1\n"),
-        ("if (5 * 2 # «c» == 10) ( 1, here.scope.dyads.size ) else ( 0 )".to_owned(), "1\n"),
+        ("if 5 * 2 # «c» == 10 ( free (1), here.scope.dyads.size ) else ( 0 )".to_owned(), "1\n"),
+        ("if (5 * 2 # «c» == 10) ( free (1), here.scope.dyads.size ) else ( 0 )".to_owned(), "1\n"),
         ("if 5 * 2 # «c» == 10 ( print «yes» ) else ( print «no» )".to_owned(), "yes\n"),
-        ("if false # «c» ( 1 ) else ( 2, here.scope.dyads.size )".to_owned(), "1\n"),
+        ("if false # «c» ( 1 ) else ( free (2), here.scope.dyads.size )".to_owned(), "1\n"),
         (
-            "x := i32 3, if x == 0 ( u64 0 ) else if x == 3 # «c» ( 1, here.scope.dyads.size ) \
+            "x := i32 3, if x == 0 ( u64 0 ) else if x == 3 # «c» ( free (1), here.scope.dyads.size ) \
              else ( u64 9 )"
                 .to_owned(),
             "1\n",
@@ -5193,24 +5211,24 @@ fn a_comment_is_a_line_of_the_scope_its_text_is_in() {
         ("if (print «side», true) # «c» ( 1 ) else ( 2 )".to_owned(), "side\n1\n"),
         (narrowed.to_owned(), "14\n"),
         // Inside a line: a line of the scope the line stands in, after it.
-        ("f := fn () -> u64 # «c» ( 1, here.scope.dyads.size ), f()".to_owned(), "1\n"),
-        ("f := fn (n := i32 ? # «c») -> u64 ( 1, here.scope.dyads.size ), f(1)".to_owned(), "1\n"),
+        ("f := fn () -> u64 # «c» ( free (1), here.scope.dyads.size ), f()".to_owned(), "1\n"),
+        ("f := fn (n := i32 ? # «c») -> u64 ( free (1), here.scope.dyads.size ), f(1)".to_owned(), "1\n"),
         (
-            "mut n := u64 0, for i in 0..1 # «c» ( 1, n = here.scope.dyads.size ), n".to_owned(),
+            "mut n := u64 0, for i in 0..1 # «c» ( free (1), n = here.scope.dyads.size ), n".to_owned(),
             "1\n",
         ),
         ("x := 5 # «c» * 2, here.scope.dyads.size".to_owned(), "2\n"),
         ("x := immediate 5 # «c» * 2, here.scope.dyads.size".to_owned(), "2\n"),
         ("mut y := i32 1, y = 5 # «c» * 2, here.scope.dyads.size".to_owned(), "3\n"),
         ("defer print «a» # «c», here.scope.dyads.size".to_owned(), "a\n2\n"),
-        ("t := type ( v := i32 ? # «c» ), ( 1, here.scope.dyads.size )".to_owned(), "1\n"),
+        ("t := type ( v := i32 ? # «c» ), ( free (1), here.scope.dyads.size )".to_owned(), "1\n"),
         // Written in the source, the comment follows its expression in the bracket.
         (format!("{q}, x := q [5 * 2 # «c», 7], x.v"), "10\n"),
     ];
     for compile in ["", "f.compile(), "] {
         rows.push((
             format!(
-                "f := fn (n := i32 ?) -> u64 ( if n == 5 # «c» ( 1, here.scope.dyads.size ) \
+                "f := fn (n := i32 ?) -> u64 ( if n == 5 # «c» ( free (1), here.scope.dyads.size ) \
                  else ( u64 0 ) ), {compile}f(5)"
             ),
             "1\n",
@@ -5218,7 +5236,7 @@ fn a_comment_is_a_line_of_the_scope_its_text_is_in() {
         rows.push((
             format!(
                 "mut n := u64 0, f := fn () -> u64 ( for i in 0..1 # «c» \
-                 ( 1, n = here.scope.dyads.size ), n ), {compile}f()"
+                 ( free (1), n = here.scope.dyads.size ), n ), {compile}f()"
             ),
             "1\n",
         ));
@@ -5231,7 +5249,7 @@ fn a_comment_is_a_line_of_the_scope_its_text_is_in() {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: {stderr}");
     }
-    let line = "if 5 * 2 # «c» == 10 ( 1, here.scope.dyads.size ) else ( 0 )\n";
+    let line = "if 5 * 2 # «c» == 10 ( free (1), here.scope.dyads.size ) else ( 0 )\n";
     let (echoes, stderr) = repl(line.as_bytes());
     assert_eq!(echoes, ["1"], "{stderr}");
 }
@@ -5243,7 +5261,7 @@ fn a_comment_before_a_bare_condition_s_value_is_read_through() {
         ("mut i := i32 0, while # «a» i < 2 ( i = i + 1 ), i".to_owned(), "2\n"),
         ("if # «a» # «b» true ( 1 ) else ( u64 0 )".to_owned(), "1\n"),
         ("if # «a» (true) ( 1 ) else ( u64 0 )".to_owned(), "1\n"),
-        ("if # «a» true ( 1, here.scope.dyads.size ) else ( u64 0 )".to_owned(), "1\n"),
+        ("if # «a» true ( free (1), here.scope.dyads.size ) else ( u64 0 )".to_owned(), "1\n"),
         ("x := i32 3, if x == # «a» i32 3 ( print «yes» ) else ( print «no» )".to_owned(), "yes\n"),
         ("x := i32 3, if x.type == # «a» i32 ( 10 ) else ( 20 )".to_owned(), "10\n"),
         (
@@ -5267,7 +5285,7 @@ fn a_comment_before_a_bare_condition_s_value_is_read_through() {
         ));
         rows.push((
             format!(
-                "f := fn (n := i32 ?) -> u64 ( if # «c» n == 5 ( 1, here.scope.dyads.size ) \
+                "f := fn (n := i32 ?) -> u64 ( if # «c» n == 5 ( free (1), here.scope.dyads.size ) \
                  else ( u64 0 ) ), {compile}f(5)"
             ),
             "1\n",
@@ -5295,7 +5313,7 @@ fn a_bare_condition_ends_before_a_quote() {
     .collect();
     for c in ["", "f.compile(), "] {
         for (src, want) in [
-            (format!("f := fn () -> i32 ( if (true) «a» else «b», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( free (if (true) «a» else «b»), 1 ), {c}f()"), "1\n"),
             (format!("f := fn () -> string ( if (true) «a» else «b» ), {c}f()"), "a\n"),
             (format!("f := fn (c := bool ?) -> string ( if c «a» else «b» ), {c}f(false)"), "b\n"),
         ] {
@@ -5376,23 +5394,23 @@ fn an_unclosed_quote_or_brace_is_reported_at_its_opener() {
 fn a_name_of_the_text_type_stands_as_the_type() {
     let t = "t := «a».type";
     let mut cases: Vec<(String, &str)> = [
-        "t, 7",
-        "5, t, 7",
+        "free (t), 7",
+        "free (5), free (t), 7",
         "x := lex «t», 7",
         "if false ( t ), 7",
         "p := type ( x := t ? ), 7",
         "p := @t ?, 7",
         "r := t:lex_rank, 7",
         "w := type ( n := i32 ?, static run = ( t, n ) ), 7",
-        "f := fn () -> i32 ( t, 7 ), f()",
-        "f := fn () -> i32 ( t, 7 ), f.compile(), f()",
+        "f := fn () -> i32 ( x := t, 7 ), f()",
+        "f := fn () -> i32 ( x := t, 7 ), f.compile(), f()",
     ]
     .into_iter()
     .map(|tail| (format!("{t}, {tail}"), "7\n"))
     .collect();
     cases.push((format!("{t}, t == «b».type"), "true\n"));
     cases.push((format!("{t}, print «{{t == «b».type}}», 7"), "true\n7\n"));
-    cases.push(("g := fn () -> type ( «a».type ), t := g(), t, 7".to_string(), "7\n"));
+    cases.push(("g := fn () -> type ( «a».type ), t := g(), free (t), 7".to_string(), "7\n"));
     for (src, want) in [
         (format!("{t}, t == string"), "true\n"),
         (format!("{t}, t == bool"), "false\n"),
@@ -5423,11 +5441,11 @@ fn a_name_of_the_text_type_stands_as_the_type() {
 fn a_text_node_and_a_place_of_text_read_as_the_node() {
     let mut cases: Vec<(String, &str)> = [
         ("s := «a», 0", "0\n"),
-        ("«a», 0", "0\n"),
-        ("( «a», 0 )", "0\n"),
-        ("for 0..2 ( «a» ), 0", "0\n"),
+        ("free («a»), 0", "0\n"),
+        ("( free («a»), 0 )", "0\n"),
+        ("for 0..2 ( free («a») ), 0", "0\n"),
         ("t := type ( static k := «a» ), 0", "0\n"),
-        ("regex «[0-9]+», 0", "0\n"),
+        ("free (regex «[0-9]+»), 0", "0\n"),
         ("f := fn (a := dyad ?) -> i32 ( 1 ), f(«a»)", "1\n"),
         ("x := 5, x:name == «x»", "false\n"),
         ("«a»", "a\n"),
@@ -5438,7 +5456,7 @@ fn a_text_node_and_a_place_of_text_read_as_the_node() {
         (
             "sq := type ( a := dyad ?, static parse = ( n := tape[-1]:name, \
              print «{n} {tape.spelling[-1]}», tape[0].type = sq, tape[0].a = tape[-1], \
-             tape.is_constructed[0] = true, tape.remove(-1) ) ), x := i32 3, x sq, 0",
+             tape.is_constructed[0] = true, tape.remove(-1) ) ), x := i32 3, free (x sq), 0",
             "x x\n0\n",
         ),
     ]
@@ -5447,7 +5465,7 @@ fn a_text_node_and_a_place_of_text_read_as_the_node() {
     .collect();
     for c in ["", "f.compile(), "] {
         for (src, want) in [
-            (format!("f := fn () -> i32 ( «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( free («a»), 1 ), {c}f()"), "1\n"),
             (format!("f := fn () -> i32 ( s := «a», 1 ), {c}f()"), "1\n"),
             (format!("f := fn () -> i32 ( defer «a», 1 ), {c}f()"), "1\n"),
             (format!("f := fn (a := string ?) -> i32 ( print «{{a}}», 1 ), {c}f(«hi»)"), "hi\n1\n"),
@@ -5466,7 +5484,7 @@ fn error_aborts_the_run_with_its_message() {
     let out = logos()
         .arg(
             "f := fn (x := i32 ?) -> i32 ( if (x > 2) (error «too big: {x}») else (x) ), \
-             print «{f(1)}», f(5), print «never»",
+             print «{f(1)}», free (f(5)), print «never»",
         )
         .output()
         .unwrap();
@@ -5491,7 +5509,7 @@ fn error_interpolates_braces_exactly_as_print_does() {
     let out = logos()
         .arg(
             "n := 3, f := fn (i := i32 ?) -> i32 ( if (i >= n) (error «index {i} is past {n - 1}») else (i) ), \
-             f(1), f(4)",
+             free (f(1)), f(4)",
         )
         .output()
         .unwrap();
@@ -5578,7 +5596,7 @@ fn a_scope_is_read_by_path_and_reading_runs_nothing() {
 fn a_constructor_reads_the_scope_cell_to_its_right_line_by_line() {
     let lib = "import tests/fixtures/scope_cell_lines.logos";
     for (line, want) in
-        [("first (7, 8, 9) + last (7, 8, 9)", "16"), ("first (scope (1, 2), 3)", "2")]
+        [("first (7, 8, 9) + last (7, 8, 9)", "16"), ("first (scope (free (1), 2), 3)", "2")]
     {
         let out = logos().arg(format!("{lib}, {line}")).output().unwrap();
         assert!(out.status.success(), "{line}: {}", String::from_utf8_lossy(&out.stderr));
@@ -5599,7 +5617,7 @@ fn a_constructor_reads_the_scope_cell_to_its_right_line_by_line() {
 #[test]
 fn scope_by_name_is_the_bracket_and_alone_is_the_type() {
     for (line, want) in [
-        ("scope (1, 2, 3)", "3"),
+        ("scope (free (1), 2)", "2"),
         ("g := scope ( a := i32 1, a ), g:start.rhs.dyads.size", "2"),
         ("g := scope ( a := i32 1, a ), g:start.rhs.dyads[0].lhs:name", "a"),
         ("f := fn () -> i32 ( scope ( 4 ) ), f.compile(), f()", "4"),
@@ -5887,12 +5905,12 @@ fn run_line(src: &str) -> (Option<i32>, String, String) {
 
 #[test]
 fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
-    let (code, _, stderr) = run_line(
-        "probe := type ( v := i32 ?, static run = ( v ), \
+    let (code, stdout, stderr) = run_line(
+        "probe := type ( v := i32 ?, static run = ( print «{v}» ), \
          static parse_rank = *.parse_rank + 1, \
          static parse = ( tape[0].type = probe, tape[0].v = 7, tape.is_constructed[0] = true ) ), probe",
     );
-    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert_eq!((code, stdout.as_str()), (Some(0), "7\n"), "stderr: {stderr}");
     for (tail, want) in [("probe", "7\n"), ("probe + 1", "8\n")] {
         let (code, stdout, stderr) = run_line(&format!(
             "probe := type ( v := i32 ?, output_type := type ?, static run = ( v ), \
@@ -6190,17 +6208,19 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
     for (tail, printed) in [
         // Made in a function and not returned: freed as the call ends, each call its own.
         (
-            "f := fn () -> i32 ( a := box (6, 1), 3 ), print «before», f(), f(), print «after»",
+            "f := fn () -> i32 ( a := box (6, 1), 3 ), print «before», free (f()), free (f()), \
+             print «after»",
             "before\nfree\nfree\nafter\n",
         ),
         (
-            "f := fn () -> i32 ( a := box (6, 1), 3 ), f.compile(), print «before», f(), print «after»",
+            "f := fn () -> i32 ( a := box (6, 1), 3 ), f.compile(), print «before», free (f()), \
+             print «after»",
             "before\nfree\nafter\n",
         ),
-        // The last value moves out: the caller's name is the owner.
+        // The value given moves out: the caller's name is the owner.
         (
             "mk := fn () -> own box ( a := box (9, 1), a ), \
-             g := fn () -> i32 ( m := mk(), print «got», (m.p + 0)@ ), g(), print «after»",
+             g := fn () -> i32 ( m := mk(), print «got», (m.p + 0)@ ), free (g()), print «after»",
             "got\nfree\nafter\n",
         ),
         ("mk := fn () -> own box ( box (9, 1) ), m := mk(), print «got»", "got\nfree\n"),
@@ -6208,7 +6228,7 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
         // nothing: one free, by the owner.
         ("a := box (5, 1), b := a, print «copied»", "copied\nfree\nfree\n"),
         (
-            "a := box (5, 1), f := fn (q := box ?) -> i32 ( (q.p + 0)@ ), f(a), print «after»",
+            "a := box (5, 1), f := fn (q := box ?) -> i32 ( (q.p + 0)@ ), free (f(a)), print «after»",
             "after\nfree\n",
         ),
         ("a := box (7, 1), b := move a, print «moved»", "moved\nfree\n"),
@@ -6260,34 +6280,34 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
                static get := fn () -> i32 ( n ) )";
     for (src, printed) in [
         // Made or moved in the argument: the parameter holds it, on either tier.
-        (format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), f(box (1, 2)), print «after»"), "free\nafter\n"),
+        (format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), free (f(box (1, 2))), print «after»"), "free\nafter\n"),
         (
-            format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), f.compile(), f(box (1, 2)), print «after»"),
+            format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), f.compile(), free (f(box (1, 2))), print «after»"),
             "free\nafter\n",
         ),
         (
             format!(
                 "{BOX}, f := fn (q := box ?) -> i32 ( 1 ), g := fn () -> i32 ( f(box (1, 2)) ), \
-                 g.compile(), g(), print «after»"
+                 g.compile(), free (g()), print «after»"
             ),
             "free\nafter\n",
         ),
         (
-            format!("{BOX}, b := box (1, 2), f := fn (q := box ?) -> i32 ( 1 ), f(move b), print «after»"),
+            format!("{BOX}, b := box (1, 2), f := fn (q := box ?) -> i32 ( 1 ), free (f(move b)), print «after»"),
             "free\nafter\n",
         ),
         (
             format!(
                 "{BOX}, mk := fn () -> own box ( box (1, 2) ), f := fn (q := box ?) -> i32 ( 1 ), \
-                 f(mk()), print «after»"
+                 free (f(mk())), print «after»"
             ),
             "free\nafter\n",
         ),
-        (format!("{BOX}, f := fn (q := dyad ?) -> i32 ( 1 ), f(box (1, 2)), print «after»"), "free\nafter\n"),
+        (format!("{BOX}, f := fn (q := dyad ?) -> i32 ( 1 ), free (f(box (1, 2))), print «after»"), "free\nafter\n"),
         (
             format!(
                 "{BOX}, c := true, f := fn (q := box ?) -> i32 ( 1 ), \
-                 f(if c (box (1, 2)) else (box (3, 4))), print «after»"
+                 free (f(if c (box (1, 2)) else (box (3, 4)))), print «after»"
             ),
             "free\nafter\n",
         ),
@@ -6299,16 +6319,16 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
         (
             format!(
                 "{bag}, f := fn (q := bag ?) -> i32 ( q.n ), g := fn () -> i32 ( f(bag(1)) ), \
-                 g.compile(), g(), print «after»"
+                 g.compile(), free (g()), print «after»"
             ),
             "freed 1\nafter\n",
         ),
         // A name passed, or a receiver, is a borrow: its owner's end frees it, once.
         (
-            format!("{BOX}, b := box (1, 2), f := fn (q := box ?) -> i32 ( 1 ), f(b), print «after»"),
+            format!("{BOX}, b := box (1, 2), f := fn (q := box ?) -> i32 ( 1 ), free (f(b)), print «after»"),
             "after\nfree\n",
         ),
-        (format!("{bag}, x := bag(1), x.get(), print «after»"), "after\nfreed 1\n"),
+        (format!("{bag}, x := bag(1), free (x.get()), print «after»"), "after\nfreed 1\n"),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
@@ -6405,7 +6425,7 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
             "free\n",
             "stop",
         ),
-        ("f := fn () -> i32 ( ( a := box (1, 2), error «in» ), 1 ), f()", "free\n", "in"),
+        ("f := fn () -> i32 ( ( a := box (1, 2), error «in» ) ), f()", "free\n", "in"),
         // Lines the pass ran early, in a block the fault unwinds.
         (
             "g := fn () -> i32 ( error «stop» ), x := ( a := box (1, 2), n := immediate g(), 1 ), 1",
@@ -6437,7 +6457,7 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
     let (echoes, stderr) = repl(
         "p := alloc 1 of i32 5\n\
          g := fn () -> i32 ( error «stop» )\n\
-         f := fn () -> i32 ( defer (p@ = p@ + 100), g(), p@ = 9, 1 )\n\
+         f := fn () -> i32 ( defer (p@ = p@ + 100), free (g()), p@ = 9, 1 )\n\
          f()\n\
          p@\n"
             .as_bytes(),
@@ -6677,7 +6697,7 @@ fn assignment_frees_the_value_it_displaces() {
     for (tail, printed) in [
         ("mut x := box (1, 2), x = box (3, 4), print «after»", "free\nafter\nfree\n"),
         (
-            "f := fn () -> i32 ( mut x := box (1, 2), x = box (3, 4), 1 ), f.compile(), f(), \
+            "f := fn () -> i32 ( mut x := box (1, 2), x = box (3, 4), 1 ), f.compile(), free (f()), \
              print «after»",
             "free\nfree\nafter\n",
         ),
@@ -6698,16 +6718,16 @@ fn a_plain_record_s_owner_runs_its_free_once() {
         ("a := bag(1), 1", "freed 1\n1\n"),
         ("f := fn () -> i32 ( a := bag(2), 1 ), f()", "freed 2\n1\n"),
         (
-            "f := fn () -> i32 ( a := bag(3), 1 ), print «before», f(), f(), print «after»",
+            "f := fn () -> i32 ( a := bag(3), 1 ), print «before», free (f()), free (f()), print «after»",
             "before\nfreed 3\nfreed 3\nafter\n",
         ),
         (
-            "f := fn () -> i32 ( a := bag(4), 1 ), f.compile(), print «before», f(), print «after»",
+            "f := fn () -> i32 ( a := bag(4), 1 ), f.compile(), print «before», free (f()), print «after»",
             "before\nfreed 4\nafter\n",
         ),
         // `bag ?` owns too: the end runs its free over whatever was written.
         (
-            "f := fn () -> i32 ( mut a := bag ?, a.n = 5, 1 ), f(), print «after»",
+            "f := fn () -> i32 ( mut a := bag ?, a.n = 5, 1 ), free (f()), print «after»",
             "freed 5\nafter\n",
         ),
         // An early `free` tears down now, and the end finds nothing held.
@@ -6719,7 +6739,7 @@ fn a_plain_record_s_owner_runs_its_free_once() {
         ("a := bag(8), b := a, print «copied»", "copied\nfreed 8\nfreed 8\n"),
         ("a := bag(14), b := a, free b, print «after»", "freed 14\nafter\nfreed 14\n"),
         (
-            "a := bag(9), f := fn (q := bag ?) -> i32 ( q.n ), f(a), print «after»",
+            "a := bag(9), f := fn (q := bag ?) -> i32 ( q.n ), free (f(a)), print «after»",
             "after\nfreed 9\n",
         ),
         // The last value moves out: the caller's name is the owner.
@@ -6749,6 +6769,52 @@ fn a_plain_record_s_owner_runs_its_free_once() {
     assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
 }
 
+/// ›A last value moves out‹ [[R66]]: a line that gives its block a name the block holds moves
+/// it out on the paths where it gives it, with no `move` written, and the paths that go on free
+/// it where the `if` ends.
+#[test]
+fn a_block_moves_out_a_name_it_holds_on_the_paths_that_give_it() {
+    let block = "x := ( a := bag(1), if c (a), bag(2) ), print «end»";
+    let f = "f := fn (c := bool ?) -> own bag ( a := bag(1), if c (a), bag(2) )";
+    for (tail, printed) in [
+        (format!("c := true, {block}"), "end\nfreed 1\n"),
+        (format!("c := false, {block}"), "freed 1\nend\nfreed 2\n"),
+        (format!("{f}, x := f(true), print «end»"), "end\nfreed 1\n"),
+        (format!("{f}, x := f(false), print «end»"), "freed 1\nend\nfreed 2\n"),
+        (format!("{f}, f.compile(), x := f(true), print «end»"), "end\nfreed 1\n"),
+        (format!("{f}, f.compile(), x := f(false), print «end»"), "freed 1\nend\nfreed 2\n"),
+        (
+            "c := true, x := ( a := bag(1), if c (a) else (bag(2)) ), print «end»".into(),
+            "end\nfreed 1\n",
+        ),
+        ("x := ( a := bag(1), ( k := i32 1, a ) ), print «end»".into(), "end\nfreed 1\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+    // A reader to the left takes the value, so the arm borrows; one to the right is refused.
+    let (code, stdout, stderr) = run_line(
+        "c := true, a := alloc 1 of i32 7, b := alloc 1 of i32 8, y := if c (a) else (b), y@",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "7\n"), "stderr: {stderr}");
+    for (src, expect) in [
+        (
+            "c := true, x := ( a := alloc 1 of i32 7, b := alloc 1 of i32 8, if c (a) else (b) + 1 ), 0",
+            "this line takes the value on the way",
+        ),
+        ("x := ( a := alloc 1 of i32 7, &a ), 0", "hands out the address of a name its scope holds"),
+        (
+            "x := ( a := alloc 1 of i32 7, for i in 0..3 ( if (i == 1) (a) ), alloc 1 of i32 9 ), 0",
+            "give it with `move`",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
 /// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹ [[R58]]: `move a` of a plain
 /// record copies its bytes into the name or parameter that takes it, which frees it once, and
 /// `a` is dead from that line, on both tiers.
@@ -6761,26 +6827,26 @@ fn a_plain_record_moves_by_its_bytes() {
         ("a := bag(1), b := move a, print «end»".to_string(), "end\nfreed 1\n"),
         ("a := bag(1), b := move a, c := move b, print «end»".into(), "end\nfreed 1\n"),
         (
-            "f := fn () -> i32 ( a := bag(2), b := move a, print «in», 1 ), f.compile(), f(), \
-             print «after»"
+            "f := fn () -> i32 ( a := bag(2), b := move a, print «in», 1 ), f.compile(), \
+             free (f()), print «after»"
                 .into(),
             "in\nfreed 2\nafter\n",
         ),
-        (format!("{g}, a := bag(3), g(move a), print «end»"), "in g\nfreed 3\nend\n"),
+        (format!("{g}, a := bag(3), free (g(move a)), print «end»"), "in g\nfreed 3\nend\n"),
         (
             format!(
-                "{g}, h := fn () -> i32 ( a := bag(3), g(move a), print «end», 1 ), h.compile(), \
-                 h(), print «after»"
+                "{g}, h := fn () -> i32 ( a := bag(3), free (g(move a)), print «end», 1 ), \
+                 h.compile(), free (h()), print «after»"
             ),
             "in g\nfreed 3\nend\nafter\n",
         ),
         // The arm that does not move `a` frees it at the `if`'s close.
         (
-            format!("{pick}, f(false), f(true), print «after»"),
+            format!("{pick}, free (f(false)), free (f(true)), print «after»"),
             "end\nfreed 1\nfreed 1\nend\nfreed 3\nafter\n",
         ),
         (
-            format!("{pick}, f.compile(), f(false), f(true), print «after»"),
+            format!("{pick}, f.compile(), free (f(false)), free (f(true)), print «after»"),
             "end\nfreed 1\nfreed 1\nend\nfreed 3\nafter\n",
         ),
         (
@@ -6849,38 +6915,52 @@ fn a_plain_record_moves_by_its_bytes() {
 fn a_line_frees_at_its_end_what_it_made_that_nothing_took() {
     let mk = "mk := fn (k := i32 ?) -> own bag ( bag(k) )";
     for (tail, printed) in [
-        ("bag(1), print «after»".to_string(), "freed 1\nafter\n"),
-        ("f := fn () -> i32 ( bag(2), 1 ), print «before», f(), print «after»".into(), "before\nfreed 2\nafter\n"),
+        ("free (bag(1)), print «after»".to_string(), "freed 1\nafter\n"),
         (
-            "f := fn () -> i32 ( bag(2), 1 ), f.compile(), print «before», f(), print «after»".into(),
+            "f := fn () -> i32 ( free (bag(2)), 1 ), print «before», free (f()), print «after»".into(),
             "before\nfreed 2\nafter\n",
         ),
-        (format!("{mk}, mk(3), print «after»"), "freed 3\nafter\n"),
-        (format!("{mk}, g := fn () -> i32 ( mk(3), 1 ), g.compile(), g(), print «after»"), "freed 3\nafter\n"),
-        // A loop body's value is thrown away, so each pass frees what it made.
-        ("for i in 0..2 ( bag(i) ), print «end»".into(), "freed 0\nfreed 1\nend\n"),
-        ("g := fn () -> i32 ( for i in 0..2 ( bag(i) ), 1 ), g.compile(), g()".into(), "freed 0\nfreed 1\n1\n"),
-        // So is an `if`'s without `else`, and a branch that does not run makes nothing to free.
-        ("c := true, if c ( bag(4) ), print «after»".into(), "freed 4\nafter\n"),
         (
-            "g := fn (c := bool ?) -> i32 ( if c ( bag(4) ), 1 ), g.compile(), print «{g(false)}», g(true)"
+            "f := fn () -> i32 ( free (bag(2)), 1 ), f.compile(), print «before», free (f()), print «after»"
+                .into(),
+            "before\nfreed 2\nafter\n",
+        ),
+        (format!("{mk}, free (mk(3)), print «after»"), "freed 3\nafter\n"),
+        (
+            format!("{mk}, g := fn () -> i32 ( free (mk(3)), 1 ), g.compile(), free (g()), print «after»"),
+            "freed 3\nafter\n",
+        ),
+        // A loop body's value passes out, so a pass throws away what it made with `free`.
+        ("for i in 0..2 ( free (bag(i)) ), print «end»".into(), "freed 0\nfreed 1\nend\n"),
+        (
+            "g := fn () -> i32 ( for i in 0..2 ( free (bag(i)) ), 1 ), g.compile(), g()".into(),
+            "freed 0\nfreed 1\n1\n",
+        ),
+        // So does an `if`'s without `else`, and a branch that does not run makes nothing to free.
+        ("c := true, if c ( free (bag(4)) ), print «after»".into(), "freed 4\nafter\n"),
+        (
+            "g := fn (c := bool ?) -> i32 ( if c ( free (bag(4)) ), 1 ), g.compile(), print «{g(false)}», g(true)"
                 .into(),
             "1\nfreed 4\n1\n",
         ),
         (
-            "g := fn () -> i32 ( for i in 0..3 ( if (i == 1) ( bag(i) ) ), 1 ), g.compile(), g()".into(),
+            "g := fn () -> i32 ( for i in 0..3 ( if (i == 1) ( free (bag(i)) ) ), 1 ), g.compile(), g()"
+                .into(),
             "freed 1\n1\n",
         ),
-        // And a `-> void` function's.
-        ("f := fn () -> void ( bag(5) ), f(), print «after»".into(), "freed 5\nafter\n"),
-        ("f := fn () -> void ( bag(5) ), f.compile(), f(), print «after»".into(), "freed 5\nafter\n"),
-        // A block's last value is its own, which its binder takes; its other lines end theirs.
+        // And a `-> void` function.
+        ("f := fn () -> void ( free (bag(5)) ), f(), print «after»".into(), "freed 5\nafter\n"),
+        ("f := fn () -> void ( free (bag(5)) ), f.compile(), f(), print «after»".into(), "freed 5\nafter\n"),
+        // A block's value is its own, which its binder takes; its other lines end theirs.
         ("x := ( bag(6) ), print «after»".into(), "after\nfreed 6\n"),
         ("c := true, x := if c ( bag(7) ) else ( bag(8) ), print «after»".into(), "after\nfreed 7\n"),
-        ("x := ( bag(9), i32 5 ), print «x {x}»".into(), "freed 9\nx 5\n"),
+        ("x := ( free (bag(9)), i32 5 ), print «x {x}»".into(), "freed 9\nx 5\n"),
         // A `defer` is a line of its own when its scope ends.
-        ("f := fn () -> i32 ( defer bag(1), 2 ), f(), print «after»".into(), "freed 1\nafter\n"),
-        ("f := fn () -> i32 ( defer bag(1), 2 ), f.compile(), f(), print «after»".into(), "freed 1\nafter\n"),
+        ("f := fn () -> i32 ( defer bag(1), 2 ), free (f()), print «after»".into(), "freed 1\nafter\n"),
+        (
+            "f := fn () -> i32 ( defer bag(1), 2 ), f.compile(), free (f()), print «after»".into(),
+            "freed 1\nafter\n",
+        ),
         // A `.` reads the node and runs nothing, so nothing is made to free.
         ("(bag(1)).type == bag".into(), "true\n"),
         ("f := fn () -> bool ( (bag(1)).type == bag ), f.compile(), f()".into(), "true\n"),
@@ -6889,7 +6969,7 @@ fn a_line_frees_at_its_end_what_it_made_that_nothing_took() {
         assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
     }
     let (echoes, stderr) = repl(
-        format!("{RECORD}\nx := ( bag(9), i32 5 )\nprint «after»\nc := true\nif c ( bag(4) )\n")
+        format!("{RECORD}\nx := ( free (bag(9)), i32 5 )\nprint «after»\nc := true\nif c ( free (bag(4)) )\n")
             .as_bytes(),
     );
     assert_eq!(echoes, ["freed 9", "after", "freed 4"], "stderr: {stderr}");
@@ -6976,9 +7056,9 @@ fn the_address_of_a_value_nothing_names_holds_it_to_the_scope_s_end() {
     let g = "g := fn () -> i32 ( p := &bag(4), p@.n )";
     for (tail, printed) in [
         ("p := &bag(1), print «after», p@.n", "after\nfreed 1\n1\n"),
-        (&format!("{g}, print «before», g(), print «after»"), "before\nfreed 4\nafter\n"),
+        (&format!("{g}, print «before», free (g()), print «after»"), "before\nfreed 4\nafter\n"),
         (
-            &format!("{g}, g.compile(), print «before», g(), print «after»"),
+            &format!("{g}, g.compile(), print «before», free (g()), print «after»"),
             "before\nfreed 4\nafter\n",
         ),
         (
@@ -7017,9 +7097,14 @@ fn the_address_of_a_value_in_a_call_s_arguments_holds_it_to_the_scope_the_call_s
         (format!("{f}, f(&bag(3))"), "freed 3\n3\n"),
         (format!("{f}, f.compile(), f(&bag(3))"), "freed 3\n3\n"),
         (format!("{f}, x := f(&bag(3)), print «after {{x}}»"), "after 3\nfreed 3\n"),
-        (format!("{f}, {g}, print «before», g(), print «after»"), "before\nfreed 4\nafter\n"),
         (
-            format!("{f}, f.compile(), {g}, g.compile(), print «before», g(), print «after»"),
+            format!("{f}, {g}, print «before», free (g()), print «after»"),
+            "before\nfreed 4\nafter\n",
+        ),
+        (
+            format!(
+                "{f}, f.compile(), {g}, g.compile(), print «before», free (g()), print «after»"
+            ),
             "before\nfreed 4\nafter\n",
         ),
         (
@@ -7279,7 +7364,7 @@ fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
     let r = "r := type ( mut p := own @i32 ?, static free = ( free p ), \
              static set := fn () -> i32 ( a := alloc 1 of i32 5, p = move a, 1 ) ), mut x := r ?";
     for (tail, printed) in [
-        ("x.set(), 2", "2"),
+        ("free (x.set()), 2", "2"),
         ("a := alloc 1 of i32 5, x.p = move a, b := alloc 1 of i32 6, x.p = move b, x.p@", "6"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{r}, {tail}"));
@@ -7302,12 +7387,12 @@ fn an_if_frees_what_one_arm_moved_at_the_end_of_the_other() {
     for (tail, printed) in [
         (
             "f := fn (c := i32 ?) -> i32 ( a := box (1, 2), if (c == 1) ( b := move a, 1 ), 3 ), \
-             f.compile(), f(0), f(1), print «after»",
+             f.compile(), free (f(0)), free (f(1)), print «after»",
             "free\nfree\nafter\n",
         ),
         (
             "f := fn (c := i32 ?) -> i32 ( a := box (1, 2), \
-             if (c == 1) ( b := move a, 1 ) else ( return 2 ), 3 ), f(0), f(1), print «after»",
+             if (c == 1) ( b := move a, 1 ) else ( return 2 ) ), free (f(0)), free (f(1)), print «after»",
             "free\nfree\nafter\n",
         ),
         (
@@ -7365,8 +7450,8 @@ fn a_return_frees_what_its_line_ends_after_it_compiled_or_not() {
     let ret = "(if (c == 1) (return 5), i32 2)";
     for (body, other) in [
         (format!("x := {ret} + (free a, i32 1)"), 3),
-        (format!("x := ( {ret}, i32 7 ) + (free a, i32 1)"), 8),
-        (format!("x := ( {ret} + (free a, i32 1), i32 7 )"), 7),
+        (format!("x := ( free ({ret}), i32 7 ) + (free a, i32 1)"), 8),
+        (format!("x := ( free ({ret} + (free a, i32 1)), i32 7 )"), 7),
     ] {
         for compile in ["", "f.compile(), "] {
             let (code, stdout, stderr) = run_line(&format!(
@@ -7775,7 +7860,10 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
     for (tail, printed) in [
         ("g := bag (), print «made»", "made\nbag\nfree\n"),
         ("g := bag (), free g, print «after»", "bag\nfree\nafter\n"),
-        ("f := fn () -> i32 ( g := bag (), g.items[2] ), f(), print «after»", "bag\nfree\nafter\n"),
+        (
+            "f := fn () -> i32 ( g := bag (), g.items[2] ), free (f()), print «after»",
+            "bag\nfree\nafter\n",
+        ),
         ("g := bag (), h := g, print «copied»", "copied\nbag\nfree\nbag\nfree\n"),
         // `=` frees the box it displaces before the write.
         ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "free\nset\nbag\nfree\n"),
@@ -7883,7 +7971,7 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
     }
     for (tail, expect) in [
         ("a := array array i32 [[1, 2], 3]", "an element does not fit the element type"),
-        ("a := array array i32 [(1, 2)]", "the list is written in square brackets"),
+        ("a := array array i32 [(free (1), 2)]", "the list is written in square brackets"),
         ("x := i64 5, a := array array i32 [[1], [x]]", "an element does not fit the element type"),
         (
             "p := type ( static parse = ( tape.construct(i32, tape[1]), tape.is_constructed[0] = true ) )",
@@ -7903,12 +7991,12 @@ fn the_outer_array_s_free_frees_each_element_once() {
         ("a := array boxed [box (1, 2), box (3, 4)], print «made»", "made\nfree\nfree\n"),
         (
             "f := fn () -> i32 ( a := array boxed [box (1, 2), box (3, 4)], 7 ), \
-             print «before», f(), print «after»",
+             print «before», free (f()), print «after»",
             "before\nfree\nfree\nafter\n",
         ),
         (
             "f := fn () -> i32 ( a := array boxed [box (1, 2)], 7 ), f.compile(), \
-             print «before», f(), print «after»",
+             print «before», free (f()), print «after»",
             "before\nfree\nafter\n",
         ),
         ("x := box (1, 2), a := array boxed [move x], print «made»", "made\nfree\n"),
@@ -7919,7 +8007,7 @@ fn the_outer_array_s_free_frees_each_element_once() {
         ),
         (
             "f := fn () -> i32 ( a := array array boxed [[box (1, 2)], [box (3, 4)]], 1 ), \
-             f(), f(), print «after»",
+             free (f()), free (f()), print «after»",
             "free\nfree\nfree\nfree\nafter\n",
         ),
     ] {
@@ -7984,7 +8072,7 @@ fn free_of_a_value_runs_it_and_frees_what_it_made() {
         ("free box (1, 2), print «after»", "free\nafter\n"),
         ("mk := fn () -> own boxed ( box (1, 2) ), free (mk()), print «after»", "free\nafter\n"),
         (
-            "g := fn () -> i32 ( free (box (1, 2)), 7 ), g.compile(), print «before», g(), \
+            "g := fn () -> i32 ( free (box (1, 2)), 7 ), g.compile(), print «before», free (g()), \
              print «after»",
             "before\nfree\nafter\n",
         ),
@@ -8566,13 +8654,13 @@ fn a_cell_through_a_pointer_moves_any_type_with_a_layout() {
         ("p := alloc 2 of rational_number (1/3), (p + 1)@".to_string(), "1/3\n"),
         (
             "f := fn (p := @rational_number ?) -> i32 ( p@ = rational_number 1/2, 1 ), \
-             q := alloc 1 of rational_number ?, f(q), q@"
+             q := alloc 1 of rational_number ?, free (f(q)), q@"
                 .to_string(),
             "1/2\n",
         ),
         (
             "f := fn (p := @rational_number ?, r := rational_number ?) -> i32 ( p@ = r, 1 ), \
-             f.compile(), q := alloc 1 of rational_number ?, f(q, 1/2), q@"
+             f.compile(), q := alloc 1 of rational_number ?, free (f(q, 1/2)), q@"
                 .to_string(),
             "1/2\n",
         ),
@@ -9363,7 +9451,7 @@ fn a_repl_line_is_a_line_of_the_program() {
           z\n\
           import tests/fixtures/only_prose.logos, 7\n\
           w := i32 1, 5\n\
-          6, v := i32 1\n\
+          free (6), v := i32 1\n\
           v\n",
     );
     assert_eq!(echoes, ["3", "1", "1", "7", "5", "1"], "stderr: {stderr}");
@@ -9445,7 +9533,7 @@ fn a_quote_s_braces_are_a_scope_whose_text_is_its_tail() {
         ("print «a{ # c\n}b»", "ab\n"),
         ("print «a{ # «c» }b»", "ab\n"),
         ("print «a{}b»", "ab\n"),
-        ("print «{1, 2}»", "2\n"),
+        ("print «{free (1), 2}»", "2\n"),
         ("print «{}»", "\n"),
         ("f := fn () -> void ( print «a{ y := i32 2, y + 1 }b» ), f()", "a3b\n"),
         ("f := fn () -> void ( print «a{ # c\n}b» ), f()", "ab\n"),
