@@ -4638,6 +4638,10 @@ fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
+    // A hole the box's type makes, after an earlier part ran, is the run's error a hole alone is.
+    let (code, stdout, stderr) = run_line(&format!("{h}, print «{{h()}} {{t ?}}»"));
+    assert_eq!((code, stdout.as_str()), (Some(1), "h\n"), "stderr: {stderr}");
+    assert!(stderr.contains("a record or hole is not read as one value"), "stderr: {stderr}");
 }
 
 #[test]
