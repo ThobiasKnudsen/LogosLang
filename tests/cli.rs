@@ -4667,6 +4667,42 @@ fn a_constructor_a_member_call_for_a_type_and_an_import_run_after_the_part_of_th
 }
 
 #[test]
+fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_does() {
+    let mk = "mk := fn () -> type ( i32 )";
+    let mk_of = "mk := fn (u := type ?) -> type ( u )";
+    let boxed = "mut t := type ?, t = i32, mk := fn () -> type ( t )";
+    let o = "o := type ( static m := fn () -> type ( i32 ) )";
+    let pt = "pt := type ( mut a := i32 ? ), mk := fn () -> type ( pt )";
+    let h = "h := fn () -> i32 ( print «h», 1 ), mk := fn () -> type ( print «mk», i32 )";
+    for (named, unnamed, want) in [
+        (format!("{mk}, u := mk(), u 3"), format!("{mk}, mk() 3"), "3"),
+        (format!("{boxed}, u := mk(), u 3"), format!("{boxed}, mk() 3"), "3"),
+        (format!("{mk}, u := mk(), x := u 3, x.type"), format!("{mk}, x := mk() 3, x.type"), "i32"),
+        (
+            format!("{mk_of}, u := mk(i64), x := u 3, x.type"),
+            format!("{mk_of}, x := mk(i64) 3, x.type"),
+            "i64",
+        ),
+        (format!("{o}, u := o.m(), u 3"), format!("{o}, o.m() 3"), "3"),
+        (format!("{mk}, u := mk(), u(7)"), format!("{mk}, mk()(7)"), "7"),
+        (format!("{pt}, u := mk(), v := u(4), v.a"), format!("{pt}, v := mk()(4), v.a"), "4"),
+        (format!("{mk}, u := mk(), u"), format!("{mk}, mk()"), "i32"),
+        (format!("{mk}, u := mk(), u == i32"), format!("{mk}, mk() == i32"), "true"),
+        (format!("{mk}, u := mk(), print «{{u}}»"), format!("{mk}, print «{{mk()}}»"), "i32"),
+        (
+            format!("{mk}, u := mk(), mut x := u ?, x = 4, x"),
+            format!("{mk}, mut x := mk() ?, x = 4, x"),
+            "4",
+        ),
+    ] {
+        assert_eq!(line(&named), want, "{named}");
+        assert_eq!(line(&unnamed), want, "{unnamed}");
+    }
+    // The call runs where the parse reads it, after the part of its line before it.
+    assert_eq!(line(&format!("{h}, x := h() + mk() 5, x")), "h\nmk\n6");
+}
+
+#[test]
 fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_once() {
     // Each point where the parse needs a value runs the earlier arguments first, each then
     // standing for the value it gave, and the call runs them no more.
