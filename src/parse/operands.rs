@@ -1011,12 +1011,12 @@ impl<'a> Parser<'a> {
     /// A value made once (`static`, `immediate`) runs at parse, where a name of the
     /// loop or branch around it has no value yet.
     pub(super) fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
-        // SAFETY: a non-null `binding` is the binding dyad the resolver returned for the name; a
-        // field named bare has none.
-        if self.cx.once_at.is_some()
-            && !binding.is_null()
-            && unsafe { Binding::read(binding) }.unmade
-        {
+        // A field named bare has no binding.
+        if self.cx.once_at.is_none() || binding.is_null() {
+            return Ok(());
+        }
+        // SAFETY: a non-null `binding` is the binding dyad the resolver returned for the name.
+        if unsafe { Binding::read(binding) }.unmade {
             return Err(ParseError::OnceReadsUnmade);
         }
         Ok(())
