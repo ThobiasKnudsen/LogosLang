@@ -4596,6 +4596,42 @@ fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them
 }
 
 #[test]
+fn a_constructor_a_member_call_for_a_type_and_an_import_run_after_the_part_of_their_line_before_them(
+) {
+    let h = "h := fn () -> i32 ( print «h», 1 )";
+    let q = "q := type ( v := i32 ?, static parse_rank = 61, static parse = ( print «q», \
+             tape[0].type = q, tape[0].v = tape[1].dyads[0], tape.remove(1), \
+             tape.is_constructed[0] = true ) )";
+    let o = "o := type ( static m := fn () -> type ( print «m», i32 ) )";
+    let imp = "import ./tests/fixtures/prints.logos";
+    let array = "import ./identities/array.logos";
+    let boxed = "mut t := type ?, t = i64, h := fn () -> i32 ( print «h», t = i32, 1 )";
+    let count = "count := type ( static parse_rank = *.parse_rank + 1, \
+                 static parse = ( tape.remove(1), tape.remove(0) ) )";
+    for (src, want) in [
+        (format!("{h}, {q}, h() + (q [5, i32 7]).v"), "h\nq\n6"),
+        (format!("{h}, {q}, x := h() + (q [5, i32 7]).v, x"), "h\nq\n6"),
+        (format!("{h}, {o}, h() == 1 and o.m() == i32"), "h\nm\ntrue"),
+        (format!("{h}, {o}, h() == 1 and (o.m() == i32)"), "h\nm\ntrue"),
+        (format!("{h}, h() + ({imp} , i32 1)"), "h\nimp\n2"),
+        (format!("{array}, {h}, l := array i32 [4, 5], h() + l[1]"), "h\n6"),
+        (format!("{array}, l := array i32 [4, 5], print «{{l[0]}} {{l[1]}}»"), "4 5"),
+        // A line a constructor took whole leaves nothing of it to run.
+        (format!("{count}, {boxed}, count [1, 2], x := h() + t 5, x.type"), "h\ni32"),
+        // What a run builds on a tape of its own, the line does not run.
+        (
+            format!(
+                "{array}, {boxed}, a := array (array i32) [[1, 2], [3]], \
+                 x := h() + a[0][1] + t 5, x.type"
+            ),
+            "h\ni32",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+}
+
+#[test]
 fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_once() {
     // Each point where the parse needs a value runs the earlier arguments first, each then
     // standing for the value it gave, and the call runs them no more.

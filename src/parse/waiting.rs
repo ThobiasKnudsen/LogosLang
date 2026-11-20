@@ -26,10 +26,10 @@ struct Found {
     refused: Option<(usize, String)>,
     /// How many reads of what a call that gives a `dyad` gives the scan has met, at any depth.
     call_reads: usize,
-    /// How many box reads and calls for a type the scan has met, at any depth.
+    /// How many other points where the parse needs a value the scan has met, at any depth
+    /// ([`Parser::needs_value`]).
     needs: usize,
-    /// Where each bracket that holds such a read, a box read or a call for a type opens, at any
-    /// depth.
+    /// Where each bracket that holds such a read or another point opens, at any depth.
     cuts: Vec<usize>,
 }
 
@@ -93,10 +93,11 @@ impl<'a> Parser<'a> {
         Ok(Some(Waits { cut, writes, end }))
     }
 
-    /// Where the line at the cursor reads what a call that gives a `dyad` gives, or a box, or calls
-    /// for a type, inside a bracket, where the pass does so as it parses it: each bracket that
-    /// holds such a point, at any depth, before whose parse what stands before it in its line runs
-    /// ([`Self::cut_at`]). A line a scan already covered keeps its cuts. The cursor stays.
+    /// Where the line at the cursor reads what a call that gives a `dyad` gives, or holds another
+    /// point where the parse needs a value ([`Self::needs_value`]), inside a bracket, where the
+    /// pass does so as it parses it: each bracket that holds such a point, at any depth, before
+    /// whose parse what stands before it in its line runs ([`Self::cut_at`]). A line a scan
+    /// already covered keeps its cuts. The cursor stays.
     pub(super) fn note_cuts(&mut self) {
         if !self.in_pass_order() || self.cx.pos < self.cx.cuts_end {
             return;
@@ -208,6 +209,8 @@ impl<'a> Parser<'a> {
         // A `-> dyad` function just scanned, with whether an infix stands before it; and whether
         // the bracket just closed was its call's.
         let (mut callee, mut after_call): (Option<bool>, bool) = (None, false);
+        // A member just scanned whose call is a call for a type.
+        let mut type_member = false;
         // At the top: where the cells built together with the token just scanned start, and
         // where those of the last call that gives a `dyad` start.
         let (mut chain, mut call_chain) = (0, 0);
@@ -238,11 +241,12 @@ impl<'a> Parser<'a> {
                 }
                 (line_reads, assigns, declares, prev, before_prev, skipping) =
                     (false, false, None, None, None, false);
-                (callee, after_call) = (None, false);
+                (callee, after_call, type_member) = (None, false, false);
                 continue;
             }
             let (Some(r), Some(id)) = (r, id) else { unreachable!("a boundary at the end") };
             self.cx.pos = at + r.matched;
+            let member_call = std::mem::take(&mut type_member);
             if top {
                 if !self.joins_chain(prev, id) {
                     chain = at;
@@ -252,6 +256,9 @@ impl<'a> Parser<'a> {
                 }
             }
             if self.is_opener(id) {
+                if member_call && id == types.open_ {
+                    found.needs += 1;
+                }
                 let reads_before = found.call_reads + found.needs;
                 let inner = if skipping {
                     self.skip_bracket(id).map(|_| false)?
@@ -306,9 +313,23 @@ impl<'a> Parser<'a> {
             if id == types.declare_tok {
                 declares.get_or_insert(at);
             }
-            // SAFETY: a resolved token's identity is a dyad from the store.
-            if prev != Some(types.dot_) && (self.is_box(id) || unsafe { self.returns_type(id) }) {
-                found.needs += 1;
+            // SAFETY: a resolved token's identity is a dyad from the store, and so is the one
+            // before the `.`.
+            unsafe {
+                if prev != Some(types.dot_) && self.needs_value(id) {
+                    found.needs += 1;
+                }
+                type_member = prev == Some(types.dot_)
+                    && before_prev.is_some_and(|owner| {
+                        self.member_gives_type(owner, &self.cx.source[at..at + r.matched])
+                    });
+            }
+            // An import's path is text the import reads itself, not tokens.
+            if id == types.import_ && prev != Some(types.dot_) {
+                self.skip_whitespace();
+                if let Some(end) = self.raw_path_end(self.cx.pos) {
+                    self.cx.pos = end;
+                }
             }
             assigns |= id == types.assign;
             // SAFETY: a resolved token's identity is a dyad from the store.
@@ -325,6 +346,19 @@ impl<'a> Parser<'a> {
             }
             (before_prev, prev) = (prev, Some(id));
         }
+    }
+
+    /// Whether the parse needs a value where `id` stands, outside a member read: a box read, a
+    /// call for a type, a constructor written in Logos and an import (›The pass runs only as far
+    /// as it must, in order, and never twice‹ [[R288]]).
+    ///
+    /// # Safety
+    /// `id` must be null or a resolved dyad from the store.
+    unsafe fn needs_value(&self, id: DyadPtr) -> bool {
+        self.is_box(id)
+            || self.returns_type(id)
+            || self.is_logos_ctor(id)
+            || id == self.types.import_
     }
 
     /// Whether `id` has a constructor at parse_rank `rank`.
