@@ -632,7 +632,7 @@ impl<'a> Parser<'a> {
                     let n = self.logos_member(t, name, index)?;
                     return Ok((n, usize::from(name == "roles")));
                 }
-                Err(ParseError::TypeKnownOnlyAtRun) => return Err(ParseError::TypeKnownOnlyAtRun),
+                Err(e) if e.type_given_by_running() => return Err(e),
                 Err(_) => {}
             }
             // A node that is the value has its type's fields; a call stands for what it returns,

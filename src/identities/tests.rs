@@ -1372,6 +1372,9 @@ fn a_line_after_one_that_always_gives_or_leaves_is_refused() {
         ParseError::VoidBodyGives
     );
     assert_eq!(parse_err("x := for i in 0..3 (i)"), ParseError::StatementAsValue);
+    // A `{ … }` gives the scope itself, so a line in it has nowhere to give a value.
+    assert_eq!(parse_err("m := { a := i32 1, 5 }"), ParseError::KeptScopeGives);
+    assert_eq!(run_script("m := { a := i32 1, free (5), b := i32 2 }, m.b"), 2);
     // A value nobody wants is thrown away, and the next line runs.
     assert_eq!(run_script("free (5), y := i32 1, y"), 1);
 }

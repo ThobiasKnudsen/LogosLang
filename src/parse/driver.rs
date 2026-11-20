@@ -417,11 +417,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Usually `Trailing`; where the first leftover gives a type known only at run, the real
+    /// Usually `Trailing`; where the first leftover names a type only running gives, the real
     /// reason is that it could not say which type it is, so `a 5` never juxtaposed.
     pub(super) fn leftover_error(&mut self, first: DyadPtr) -> ParseError {
         match self.type_known_now(first) {
-            Err(ParseError::TypeKnownOnlyAtRun) => ParseError::TypeKnownOnlyAtRun,
+            Err(e) if e.type_given_by_running() => e,
             _ => ParseError::Trailing,
         }
     }

@@ -104,6 +104,21 @@ pub(super) enum BlockValue {
     Condition,
 }
 
+/// What a bracket's lines are to whatever reads the bracket.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lines {
+    /// Lines of their own, the scope valued by its last one.
+    Own,
+    /// A `[…]`'s items, which go whole to the call that takes them.
+    List,
+    /// A call's argument list.
+    Arguments,
+    /// A `{…}`'s lines, the scope itself the value: its last line, which the parse adds, makes
+    /// the value of the record its names lay out (›`{ … }` outside text is a scope kept as a
+    /// value, read with `.`‹ [[R374]]).
+    Kept,
+}
+
 /// Where a scope's lines end.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LinesEnd {
@@ -150,6 +165,10 @@ pub(super) struct OpenScope {
     pub(super) runs: Vec<usize>,
     /// The same for the closed lines `unrun` does not hold, such as a condition's.
     closed_runs: Vec<usize>,
+    /// The `type ?` boxes read after a part of the line being parsed that runs and cannot run
+    /// first, each with where it was read: until the line closes, each stands for itself
+    /// (`Parser::unsettled_at`).
+    pub(super) unsettled: Vec<(DyadPtr, usize)>,
     /// The values the scope's closed lines made that nothing took: each line's end frees its
     /// own. The scope node's `held` slot once it closes.
     pub(super) held: Vec<DyadPtr>,
@@ -180,8 +199,9 @@ pub(super) struct OpenScope {
     /// The tape cells and lines a check in this scope has narrowed, each with the type
     /// its read yields.
     pub(super) narrowed: Vec<(CellKey, DyadPtr)>,
-    /// A `-> void` function's body: a line that gives a value is refused.
-    gives_none: bool,
+    /// A `-> void` function's body, or a `{ … }`, which gives the scope itself: a line that
+    /// gives a value is refused, with this.
+    gives_none: Option<ParseError>,
     /// How the line that ended the scope ends, once one did: every line after it is refused.
     ended_by: Option<Flow>,
     /// A program's or an imported file's top level, which a line that gives a value ends.
@@ -1656,8 +1676,8 @@ impl<'a> Parser<'a> {
         let open = self.cx.open.last().expect("checked above");
         // SAFETY: a line is a reduced dyad from the store.
         let flow = unsafe { flow::of(self.types, line.dyad) };
-        if flow.gives && open.gives_none {
-            return Err(self.fail_at(line.start, ParseError::VoidBodyGives));
+        if let Some(e) = open.gives_none.clone().filter(|_| flow.gives) {
+            return Err(self.fail_at(line.start, e));
         }
         if flow.gives && open.top {
             // SAFETY: as above.
@@ -1687,7 +1707,7 @@ impl<'a> Parser<'a> {
         list: bool,
         end: LinesEnd,
     ) -> Result<(DyadPtr, Cell), ParseError> {
-        self.parse_block_as(list, false, false, end)
+        self.parse_block_as(if list { Lines::List } else { Lines::Own }, false, end)
     }
 
     /// The lines of a `(` just lexed, `tape`'s center: a call's argument list when the call
@@ -1697,7 +1717,13 @@ impl<'a> Parser<'a> {
         let left = tape.at(-1).map(|c| c.start);
         let arguments =
             left.is_some() && self.cx.open.last().is_some_and(|o| o.arguments_after == left);
-        self.parse_block_as(false, arguments, true, LinesEnd::Closer).map(|(_, value)| value)
+        let lines = if arguments { Lines::Arguments } else { Lines::Own };
+        self.parse_block_as(lines, true, LinesEnd::Closer).map(|(_, value)| value)
+    }
+
+    /// The lines of a `{` just lexed, the scope kept as a value.
+    pub(super) fn parse_kept_block(&mut self) -> Result<(DyadPtr, Cell), ParseError> {
+        self.parse_block_as(Lines::Kept, false, LinesEnd::Closer)
     }
 
     /// The cell `offset` right of the center, read by a call whose callee stands just left of
@@ -1719,8 +1745,7 @@ impl<'a> Parser<'a> {
 
     fn parse_block_as(
         &mut self,
-        list: bool,
-        arguments: bool,
+        lines: Lines,
         cell: bool,
         end: LinesEnd,
     ) -> Result<(DyadPtr, Cell), ParseError> {
@@ -1728,7 +1753,12 @@ impl<'a> Parser<'a> {
         let value = std::mem::take(&mut self.cx.next_block);
         let scope = self.open_scope();
         let narrowed = self.cx.narrow_next.take().into_iter().collect();
-        let gives_none = value == BlockValue::Void;
+        let gives_none = match (value, lines) {
+            (_, Lines::Kept) => Some(ParseError::KeptScopeGives),
+            (BlockValue::Void, _) => Some(ParseError::VoidBodyGives),
+            _ => None,
+        };
+        let (list, arguments) = (lines == Lines::List, lines == Lines::Arguments);
         let open = OpenScope {
             narrowed,
             scope: Some(scope),
@@ -1740,7 +1770,12 @@ impl<'a> Parser<'a> {
         };
         self.cx.open.push(open);
         let array_ = self.types.array_;
-        let tail = match self.read_lines(end) {
+        let read = self.read_lines(end).and_then(|tail| match lines {
+            // SAFETY: `scope` is the block just read, still open.
+            Lines::Kept => unsafe { self.close_kept(scope) }.map(Some),
+            _ => Ok(tail),
+        });
+        let tail = match read {
             Ok(tail) => tail,
             Err(e) => {
                 self.cx.scopes.pop();
@@ -1927,6 +1962,24 @@ impl<'a> Parser<'a> {
         refused
     }
 
+    /// `{ … }`'s last line: the value of the record its names lay out, made from them; its tail.
+    ///
+    /// # Safety
+    /// `scope` must be the innermost open scope, the block whose lines were just read.
+    unsafe fn close_kept(&mut self, scope: DyadPtr) -> Result<(Cell, usize), ParseError> {
+        let (record, names) = self.kept_record(scope)?;
+        let types = self.types;
+        let value = crate::identities::instance::build_ctor(
+            self.rt.store,
+            types,
+            types.construct_,
+            record,
+            &names,
+        )?;
+        self.close_line(value);
+        Ok((Cell::built(value), self.cx.pos))
+    }
+
     /// A block closed whose value is `value`, its last line's or itself: the line it stands in
     /// holds the value to its end unless something takes it, and `handed` are the values its
     /// last line made that it handed on as its own.
@@ -1989,6 +2042,7 @@ impl<'a> Parser<'a> {
         }
         // What the line made and nothing took is the line's to free at its end.
         let open = &mut self.cx.open[depth];
+        open.unsettled.clear();
         let made = std::mem::take(&mut open.made);
         let runs = std::mem::take(&mut open.runs);
         match open.unrun.last_mut().filter(|u| u.line == line) {

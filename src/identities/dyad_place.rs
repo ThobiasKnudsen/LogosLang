@@ -12,9 +12,11 @@ use cranelift_codegen::ir::Value;
 
 use super::assign::{handed_type, load, lower_load, lower_take, put, take};
 use super::callable::{self, Callables};
-use super::drop_model::{end_of_type, heap_alloc, heap_free, teardown_of, Teardown};
+use super::drop_model::{
+    end_of_type, heap_alloc, heap_free, teardown_of, teardown_of_type, Teardown,
+};
 use super::read::{carry_of, place_layout, Carry, Read};
-use super::{meta, numtype, Cx};
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::{self, DyadPtr, PAYLOAD_OFFSET};
 use crate::parse::{Assoc, ParseError};
@@ -112,7 +114,9 @@ pub(crate) unsafe fn land(
     }
     if holder != Holder::Nobody && is_data(types, from) {
         return Ok(match holder {
-            _ if made || !has_end(types, from) => build_new_node(store, types, value, from),
+            _ if made || teardown_of_type(types, from) == Teardown::Nothing => {
+                build_new_node(store, types, value, from)
+            }
             Holder::Owner => {
                 let copy = super::copy::taken(store, types, value);
                 build_new_node(store, types, copy, from)
@@ -158,19 +162,6 @@ unsafe fn is_data(types: &Core, t: DyadPtr) -> bool {
         place_layout(types, t),
         Some((Read::Scalar(_) | Read::Pointer(_) | Read::Rational | Read::Aggregate, _))
     ) && carry_of(types, t).is_some()
-}
-
-/// Whether a value of `t` ends by more than its bytes: an owning pointer, or a record whose
-/// body fills `free`.
-///
-/// # Safety
-/// `t` must be a type whose `place_layout` is a data read.
-pub(crate) unsafe fn has_end(types: &Core, t: DyadPtr) -> bool {
-    let t = super::type_identity_of(types, t).unwrap_or(t);
-    if numtype::is_pointer_type(t) {
-        return !meta::destructor_of(t).is_null();
-    }
-    meta::is_record_type(t) && !meta::instances_free_of(t).is_null()
 }
 
 pub(crate) fn build_new_node(
@@ -469,8 +460,7 @@ pub(crate) unsafe fn end(rt: &mut Runtime, word: i64) -> Result<(), RunError> {
         return Ok(());
     }
     let ty = dyad::ty(held);
-    let carry = carry_of(rt.types(), ty).filter(|_| has_end(rt.types(), ty));
-    let ended = match carry {
+    let ended = match carry_of(rt.types(), ty) {
         Some(carry) => end_of_type(rt, ty, load(carry, dyad::value(held))),
         None => Ok(()),
     };
