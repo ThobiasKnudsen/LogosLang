@@ -88,15 +88,18 @@ fn construct(
         // SAFETY: `target` and `value` are reduced dyads from the store.
         unsafe { p.bracket_into(target, value) }?
     };
-    // A place that holds its value takes a copy of one it would only borrow (›`:=` decides
-    // nothing about copy or reference; the type's reading rule does‹ [[R107]]).
+    // A place takes a copy of a value it would only borrow, one an owner must free only where
+    // the place holds its value (›`:=` decides nothing about copy or reference; the type's
+    // reading rule does‹ [[R107]]).
     // SAFETY: `target` and `value` are reduced dyads from the store.
     let value = unsafe {
-        if !into_cell
-            && slot.is_none()
-            && super::drop_model::holds_place(p, target)
-            && super::read::value_type(types, value).is_ok()
-        {
+        let copies = || match super::read::value_type(types, value) {
+            Ok(ty) => {
+                !super::copy::needs_owner(types, ty) || super::drop_model::holds_place(p, target)
+            }
+            Err(_) => false,
+        };
+        if !into_cell && slot.is_none() && copies() {
             super::copy::taken(p.store(), types, value)
         } else {
             value

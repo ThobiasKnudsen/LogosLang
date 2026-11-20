@@ -40,6 +40,8 @@ enum Owned {
     Node(DyadPtr),
     /// A record kept in its bytes, of a type that fills `free`: its fields, in place.
     Record(DyadPtr),
+    /// A map: its table, each map among its values copied too. The store keeps every table.
+    Map(DyadPtr),
 }
 
 /// Whether a value of `ty` owns memory, so its bytes alone are not its copy.
@@ -50,6 +52,15 @@ pub(crate) unsafe fn owns(types: &Core, ty: DyadPtr) -> bool {
     owned(types, ty).is_some()
 }
 
+/// Whether a copy of a value of `ty` must be freed by an owner, so only a place that holds its
+/// value takes one; a map's tables the store keeps, so any place takes a copy of a map.
+///
+/// # Safety
+/// `ty` must be null or a type node from the store.
+pub(crate) unsafe fn needs_owner(types: &Core, ty: DyadPtr) -> bool {
+    !matches!(owned(types, ty), None | Some(Owned::Map(_)))
+}
+
 /// `None` where a value of `ty` owns no memory, so its bytes are its copy.
 ///
 /// # Safety
@@ -57,6 +68,9 @@ pub(crate) unsafe fn owns(types: &Core, ty: DyadPtr) -> bool {
 unsafe fn owned(types: &Core, ty: DyadPtr) -> Option<Owned> {
     if numtype::is_pointer_type(ty) {
         return (!meta::destructor_of(ty).is_null()).then(|| Owned::Block(numtype::pointee_of(ty)));
+    }
+    if super::hashmap::is_hashmap(types, ty) {
+        return Some(Owned::Map(ty));
     }
     if !meta::is_record_type(ty) || meta::instances_free_of(ty).is_null() {
         return None;
@@ -138,6 +152,10 @@ pub(crate) unsafe fn deepen(rt: &mut Runtime, ty: DyadPtr, at: *mut u8) -> Resul
                 }
             }
         }
+        Some(Owned::Map(t)) => {
+            let types: *const Core = rt.types();
+            super::hashmap::deepen(rt.store(), &*types, t, at);
+        }
     }
     Ok(())
 }
@@ -188,8 +206,8 @@ unsafe fn copy_node(rt: &mut Runtime, ty: DyadPtr, node: DyadPtr) -> Result<Dyad
                 deepen(rt, field_ty, (&mut word as *mut u64).cast())?;
                 *slots.add(k) = rt.store().alloc_blob(field_ty, &word.to_ne_bytes());
             }
-            // A record field of a node keeps the node it was written from, run at each read.
-            Some(Owned::Record(_)) | None => {}
+            // A field kept in bytes keeps the node it was written from, run at each read.
+            Some(Owned::Record(_) | Owned::Map(_)) | None => {}
         }
     }
     Ok(copy)

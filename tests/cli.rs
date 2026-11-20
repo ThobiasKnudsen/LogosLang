@@ -2300,6 +2300,25 @@ fn a_hashmap_holds_maps_as_copies_of_their_own() {
     assert_eq!(echoes, ["true", "true", "0", "true", "true"], "stderr: {stderr}");
 }
 
+/// ›`:=` decides nothing about copy or reference; the type's reading rule does‹: a map named
+/// by `:=` or written by `=` is a copy of its own, its maps copied too.
+#[test]
+fn a_map_is_copied_by_declaration_and_assignment() {
+    let m = "m := hashmap i32 -> i32, m[1] = i32 5";
+    let pm = "pm := hashmap i32 -> hashmap i32 -> i32, r := hashmap i32 -> i32, r[2] = i32 5, \
+              pm[1] = r";
+    assert_runs(&[
+        (format!("{m}, mut n := m, n[1] = i32 6, m[1]"), "5\n"),
+        (format!("{m}, mut n := m, n[1] = i32 6, n[1]"), "6\n"),
+        (format!("{m}, mut n := hashmap i32 -> i32, n = m, n[1] = i32 6, m[1]"), "5\n"),
+        (format!("{m}, mut n := hashmap i32 -> i32, n = m, n[1] = i32 6, n[1]"), "6\n"),
+        (
+            format!("{pm}, mut n := pm, mut x := n[1], x[2] = i32 7, n[1] = x, y := pm[1], y[2]"),
+            "5\n",
+        ),
+    ]);
+}
+
 #[test]
 fn a_maps_places_hold_the_unknown() {
     let memo = "pm := hashmap type -> hashmap type -> type, mut row := pm[i32]";
