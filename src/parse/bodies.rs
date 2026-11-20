@@ -240,6 +240,10 @@ pub(super) struct KeptValue {
     /// Each `fn` written here that reads the value, with the names it read them among, in
     /// field order: the record's first fields must still be those names when it is laid out.
     pub(super) readers: Vec<(DyadPtr, Vec<DyadPtr>)>,
+    /// How many function frames and definitions are open around its own lines.
+    pub(super) depth: (usize, usize),
+    /// Its names lie in the program frame, which every call reaches.
+    pub(super) in_program_frame: bool,
 }
 
 /// What the parse of a line notes on its scope as it goes: the values it made that nothing took,
@@ -825,6 +829,11 @@ impl<'a> Parser<'a> {
         // SAFETY: a kept name is a binding dyad from the store.
         let fields = names.into_iter().filter(|&name| unsafe { self.types.is_storage(name) });
         Some(OpenType::kept(scope, fields.collect(), kept.ty))
+    }
+
+    /// The `{ … }` whose block is `scope`, while its lines are read.
+    pub(super) fn open_kept(&self, scope: DyadPtr) -> Option<&KeptValue> {
+        self.cx.open.iter().rev().find(|o| o.scope == Some(scope))?.kept.as_ref()
     }
 
     /// The half of `parse_fn` after the signature, shared with a slot body read bare: the
@@ -1958,6 +1967,8 @@ impl<'a> Parser<'a> {
         let kept = (lines == Lines::Kept).then(|| KeptValue {
             ty: self.rt.store.alloc_leaf(self.types.type_),
             readers: Vec::new(),
+            depth: (self.cx.frames.len(), self.cx.definitions.len()),
+            in_program_frame: self.in_program_frame(),
         });
         let open = OpenScope {
             narrowed,
