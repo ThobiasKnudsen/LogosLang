@@ -269,14 +269,15 @@ impl<'a> Parser<'a> {
         let in_parse = self.cx.definitions.last().is_some_and(|d| d.in_parse);
         let fill = if in_parse { self.types.this.fill } else { std::ptr::null_mut() };
         let owner = self.cx.definitions.last().expect("read inside a definition").self_type;
-        // SAFETY: the field is a declaration dyad, its type null or a type node.
+        // SAFETY: the field is a type's field declaration or a `{ … }`'s name, its type null or a
+        // type node.
         let node = unsafe {
             crate::identities::this::build_field_read(
                 self.rt.store,
                 self.types,
                 this,
                 k,
-                crate::identities::hole::type_in(items[index]),
+                self.types.type_of(items[index]),
                 binding,
                 fill,
                 owner,

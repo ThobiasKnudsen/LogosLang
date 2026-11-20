@@ -1063,9 +1063,16 @@ impl<'a> Parser<'a> {
                         .into_owned()
                 }
             };
-            // A `static` name is one place for the run, reachable wherever its function is.
-            // SAFETY: as above.
-            let is_static = unsafe { Binding::has_gate(binding, self.types.static_) };
+            // A `static` name is one place for the run, reachable wherever its function is, and so
+            // is a name of a `{ … }` that holds no bytes, which reads through its value.
+            // SAFETY: as above; a binding's scope is a scope node from the store.
+            let is_static = unsafe {
+                Binding::has_gate(binding, self.types.static_)
+                    || !fields.is_storage()
+                        && !fields.scope.is_null()
+                        && crate::identities::instance::kept_scope(self.types, fields.scope)
+                            .is_some()
+            };
             if !is_static
                 && !self.cx.scopes.is_open(fields.scope)
                 && !self.outer.iter().any(|c| c.scopes.is_open(fields.scope))

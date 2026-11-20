@@ -8,7 +8,8 @@ use super::*;
 use crate::dyad;
 
 /// What a `type (…)` body's lines have filled so far: the head the type node
-/// takes at the close, its one set of slots, and its values' fields.
+/// takes at the close, its one set of slots, and its values' fields. Also the `{ … }` a `fn`
+/// written in it is read in, whose value the `fn` works on as a `static` function does.
 #[derive(Clone)]
 pub(super) struct OpenType {
     pub(super) scope: DyadPtr,
@@ -52,6 +53,41 @@ pub(super) struct OpenType {
 }
 
 impl OpenType {
+    /// The `{ … }` of `scope`, its value of the record `ty`, read where a `fn` written in it is:
+    /// `fields` its names written above the `fn` that hold bytes, the value's first fields in
+    /// order. It fills no slot.
+    pub(super) fn kept(scope: DyadPtr, fields: Vec<DyadPtr>, ty: DyadPtr) -> Self {
+        let none = std::ptr::null_mut();
+        OpenType {
+            scope,
+            slots: [none; 5],
+            free_marker: none,
+            parse_rank: crate::identities::meta::prec::APPLY,
+            lex_rank: None,
+            assoc: Assoc::Left,
+            ctor: none,
+            run_body: none,
+            this_param: none,
+            in_parse: false,
+            in_free: false,
+            tape_param: none,
+            stamps_at_run: false,
+            read_receiver: false,
+            wrote_receiver: false,
+            block: (scope, fields),
+            instances_free: none,
+            self_type: ty,
+        }
+    }
+
+    /// Which of this definition's slot words `id` is, by `SLOT_NAMES` position.
+    fn slot_index(&self, id: DyadPtr) -> Option<usize> {
+        if id.is_null() {
+            return None;
+        }
+        self.slots.iter().position(|&m| m == id)
+    }
+
     /// The `static`, `run` or `free` body being read uses its value as [`RECEIVER_READS`] and
     /// [`RECEIVER_WRITES`] in `bits` say: by a bare field, or by a bare call of a function that
     /// uses its own (›A bare call of a `static` function works on the value the calling body is
@@ -126,20 +162,21 @@ impl<'a> Parser<'a> {
         leading: Option<DyadPtr>,
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         let (scope, fields_arr, bindings) = self.parse_field_list(false, leading)?;
-        Ok((self.record_node(scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
+        let input = self.rt.store.alloc_leaf(self.types.type_);
+        Ok((self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
     }
 
-    /// The record node over a field list: its fields laid out onto their bindings, then the
-    /// record holding the scope, the fields, their bindings, their total and `body`, the scope
-    /// its `static` members are read in, null for none.
+    /// `input`, a type node with no record yet, made the record node over a field list: its
+    /// fields laid out onto their bindings, then the record holding the scope, the fields, their
+    /// bindings, their total and `body`, the scope its `static` members are read in, null for none.
     fn record_node(
         &mut self,
+        input: DyadPtr,
         scope: DyadPtr,
         fields: DyadPtr,
         bindings: &[DyadPtr],
         body: DyadPtr,
     ) -> DyadPtr {
-        let input = self.rt.store.alloc_leaf(self.types.type_);
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         let size_bytes = unsafe { lay_out_fields(self.types, input, fields, bindings) };
         let bindings = crate::identities::array::build(self.rt.store, self.types.array_, bindings);
@@ -158,17 +195,21 @@ impl<'a> Parser<'a> {
         input
     }
 
-    /// The record a `{ … }` lays out: each live name of `scope` that holds bytes a field of its
-    /// spelling, type and `mut` in written order, and `scope` itself the record's body, so a name
-    /// that holds none, a `fn` or a type, reads through the value as a `static` member does
-    /// (›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]). Returns the
-    /// record with the names its fields are made from.
+    /// The record a `{ … }` lays out on `kept.ty`: each live name of `scope` that holds bytes a
+    /// field of its spelling, type and `mut` in written order, and `scope` itself the record's
+    /// body, so a name that holds none, a `fn` or a type, reads through the value as a `static`
+    /// member does (›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]).
+    /// A `fn` that read the value read its fields by their place among the names then, so those
+    /// names must still be the first fields. Returns the record with the names its fields are made
+    /// from.
     ///
     /// # Safety
-    /// `scope` must be the innermost open scope, the block whose lines were just read.
+    /// `scope` must be the innermost open scope, the block whose lines were just read, and `kept`
+    /// what its lines noted.
     pub(super) unsafe fn kept_record(
         &mut self,
         scope: DyadPtr,
+        kept: KeptValue,
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         use crate::identities::{hole, read::carry_of};
         let types = self.types;
@@ -181,6 +222,14 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::KeptEntry(Box::new(Binding::spelling(name))));
             }
             names.push(name);
+        }
+        for (reader, read) in &kept.readers {
+            if let Some(i) = (0..read.len()).find(|&i| names.get(i) != Some(&read[i])) {
+                return Err(ParseError::KeptReadEnded {
+                    name: Box::new(Binding::spelling(read[i])),
+                    reader: Box::new(Binding::spelling(*reader)),
+                });
+            }
         }
         let field_scope = self.open_scope();
         let mut fields = Vec::with_capacity(names.len());
@@ -205,7 +254,7 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         declared?;
         let fields = crate::identities::array::build(self.rt.store, types.array_, &fields);
-        Ok((self.record_node(field_scope, fields, &bindings, scope), names))
+        Ok((self.record_node(kept.ty, field_scope, fields, &bindings, scope), names))
     }
 
     /// `{`'s constructor: the lines up to its `}`, the scope kept as a value.
@@ -341,7 +390,7 @@ impl<'a> Parser<'a> {
                 let declares =
                     matches!(self.peek_token(), Some((id, _)) if id == self.types.declare_tok);
                 let def = self.cx.definitions.last().expect("a relaxed field list is a type body");
-                if word.is_some_and(|id| id == self.types.free_ || def.slots.contains(&id)) {
+                if word.is_some_and(|id| id == self.types.free_ || def.slot_index(id).is_some()) {
                     self.cx.pos = start;
                     return Err(if declares {
                         ParseError::Resolve(ResolveError::Shadowed(name.to_string()))
@@ -633,17 +682,17 @@ impl<'a> Parser<'a> {
         });
         self.cx.pos = at;
         let def = self.cx.definitions.last().expect("read inside a type body");
-        word.is_some_and(|id| id == self.types.free_ || def.slots.contains(&id))
+        word.is_some_and(|id| id == self.types.free_ || def.slot_index(id).is_some())
     }
 
     /// A slot fill's item declares the definition's own marker.
     fn is_slot_fill(&self, item: DyadPtr) -> bool {
         // SAFETY: `item` is a declare node from the store.
         let declared = unsafe { crate::identities::declare::declared_of(item) };
-        self.cx
-            .definitions
-            .last()
-            .is_some_and(|def| def.slots.contains(&declared) || def.free_marker == declared)
+        self.cx.definitions.last().is_some_and(|def| {
+            def.slot_index(declared).is_some()
+                || (!declared.is_null() && def.free_marker == declared)
+        })
     }
 
     /// One body for one level (DESIGN ›A type body describes one level‹): its
@@ -820,7 +869,7 @@ impl<'a> Parser<'a> {
         // own are declared when it is built, so its cells wait fresh to be resolved then.
         let outer_slot = |cell: &Cell| {
             let id = cell.identity(types);
-            !cell.is_fresh(types) && self.cx.definitions.iter().any(|d| d.slots.contains(&id))
+            !cell.is_fresh(types) && self.cx.definitions.iter().any(|d| d.slot_index(id).is_some())
         };
         for (i, cell) in fragment.cells().iter().enumerate() {
             if outer_slot(cell) {
@@ -932,12 +981,7 @@ impl<'a> Parser<'a> {
             if id == self.types.free_ {
                 return Some(SlotKind::Free);
             }
-            self.cx
-                .definitions
-                .iter()
-                .rev()
-                .find_map(|def| def.slots.iter().position(|&m| m == id))
-                .map(SlotKind::of)
+            self.cx.definitions.iter().rev().find_map(|def| def.slot_index(id)).map(SlotKind::of)
         }
     }
 
@@ -1171,7 +1215,8 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         declared?;
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
-        Ok((self.record_node(scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
+        let input = self.rt.store.alloc_leaf(self.types.type_);
+        Ok((self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
     }
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN
