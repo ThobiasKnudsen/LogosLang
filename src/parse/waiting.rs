@@ -408,6 +408,7 @@ impl<'a> Parser<'a> {
         let start = self.cx.pos;
         let end = start + self.cx.source[start..waits.end].trim_end().len();
         let kept = self.parse_up_to(&waits)?;
+        let place = if waits.writes { kept.cells.last().copied() } else { None };
         let text = crate::identities::string::build_text(
             self.rt.store,
             types.string_,
@@ -428,6 +429,8 @@ impl<'a> Parser<'a> {
             // SAFETY: a resolved cell's identity is a dyad from the store.
             unsafe { self.check_capture(cell.identity(types))? };
             self.check_made(binding)?;
+            self.cx.pos = start + cell.end();
+            self.check_held_read(binding, start + cell.start)?;
             self.note_outer_read(binding);
         }
         self.cx.pos = end;
@@ -453,6 +456,9 @@ impl<'a> Parser<'a> {
             scope,
             &frames,
         );
+        if let Some(place) = place {
+            self.note_write(node, &place);
+        }
         // SAFETY: `node` was just built in the store.
         Ok(unsafe { Cell::built(node) })
     }
@@ -521,6 +527,7 @@ impl<'a> Parser<'a> {
         let before = open.take_line_notes();
         let source = self.cx.source;
         self.cx.source = &source[..cut];
+        let was = std::mem::replace(&mut self.cx.cut_before_assign, waits.writes);
         let mut tape = ParsingTape::new();
         let parsed = self.lex_segment(&mut tape).and_then(|boundary| {
             debug_assert!(
@@ -535,6 +542,7 @@ impl<'a> Parser<'a> {
             Ok(())
         });
         self.cx.source = source;
+        self.cx.cut_before_assign = was;
         let open = self.cx.open.last_mut().expect("a line is read in an open scope");
         let notes = open.take_line_notes();
         open.add_line_notes(before);

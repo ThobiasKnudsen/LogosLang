@@ -805,10 +805,12 @@ impl<'a> Parser<'a> {
         let call = bracket.map(|d| unsafe { self.args_of(d) });
         let key = self.index_node_at(tape, 2);
         let plain = index.is_none() && key.is_none() && bracket.is_none();
-        let next_is =
-            |id: DyadPtr| tape.at(2).is_some_and(|c| !c.constructed && self.cell_identity(c) == id);
+        let next = match tape.at(2) {
+            Some(c) => (!c.constructed).then(|| self.cell_identity(c)),
+            None => self.next_identity(),
+        };
         let (writes, dotted) =
-            (plain && next_is(self.types.assign), plain && next_is(self.types.dot_));
+            (plain && next == Some(self.types.assign), plain && next == Some(self.types.dot_));
         let source = self.cx.source;
         // A name its value's parse woke stands constructed and still holds its binding.
         let woke = tape.at(-1).filter(|c| c.constructed && !c.dyad.is_null()).map(|c| c.dyad);

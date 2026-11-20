@@ -461,6 +461,18 @@ impl<'a> Parser<'a> {
         Some((r.identity, r.matched))
     }
 
+    /// The identity of the token after the cursor, `None` at the end or where nothing resolves;
+    /// at the end of a held line cut before its `=`, that `=`.
+    pub(super) fn next_identity(&mut self) -> Option<DyadPtr> {
+        match self.peek_token() {
+            Some((id, _)) => Some(id),
+            None if self.cx.cut_before_assign && self.cx.pos >= self.cx.source.len() => {
+                Some(self.types.assign)
+            }
+            None => None,
+        }
+    }
+
     pub(super) fn consume_token(&mut self, id: DyadPtr) -> bool {
         match self.peek_token() {
             Some((t, matched)) if t == id => {

@@ -76,9 +76,8 @@ fn construct(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     let types = p.types();
-    let (target, slot) = read_target(p, tape)?;
-    let fill = target.target;
-    let target = target.dyad;
+    let (place, slot) = read_target(p, tape)?;
+    let target = place.dyad;
     // Anything but a bracket right of a body slot is `slot_fill`'s checked error.
     if matches!(
         slot,
@@ -153,7 +152,7 @@ fn construct(
             }
             p.note_receiver_write(target);
         }
-        p.note_write(node, fill);
+        p.note_write(node, &place);
         node
     };
     tape.place(node);

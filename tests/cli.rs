@@ -2408,6 +2408,74 @@ fn a_held_line_checks_the_gates_of_what_it_writes_where_it_is_written() {
 }
 
 #[test]
+fn a_held_line_is_the_first_write_of_a_valueless_place_and_meets_its_read_veto_where_written() {
+    let pt = "pt := type ( mut x := i32 ?, mut y := i32 ? ), ";
+    for (src, want) in [
+        ("f := fn (a := dyad ?) -> i32 ( mut u := i32 ?, u = a, u ), f(i32 5)".to_string(), "5"),
+        ("f := fn (a := dyad ?) -> i32 ( mut u := i32 ?, u = a + 1, u ), f(i32 5)".into(), "6"),
+        ("f := fn (d := dyad ?) -> i32 ( mut u := type ?, u = d, 1 ), f(i32)".into(), "1"),
+        (
+            "f := fn (a := dyad ?) -> i32 ( mut u := i32 ?, mut w := i32 ?, u = a + i32 1, w = u, \
+             w ), f(i32 5)"
+                .into(),
+            "6",
+        ),
+        (
+            "f := fn (a := dyad ?) -> i32 ( mut u := i32 ?, u = a, u ), \
+             g := fn () -> i32 ( f(i32 5) ), g.compile(), g()"
+                .into(),
+            "5",
+        ),
+        (
+            format!(
+                "{pt}f := fn (a := dyad ?) -> i32 ( mut v := pt ?, v.x = a, v.y = i32 2, v.x + v.y \
+                 ), f(i32 5)"
+            ),
+            "7",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // A read in a held line, the part left to the run included, meets the veto where the line is
+    // written: a write after it in text order is no write before it, and a write nested in a
+    // group or an `if` arm fills nothing after it.
+    for (src, at, name) in [
+        ("f := fn (a := dyad ?) -> i32 ( mut u := i32 ?, u = a + u, u ), f(i32 5)".to_string(), "1:56", "u"),
+        ("f := fn (a := dyad ?) -> i32 ( mut u := i32 ?, a + u, u = i32 1, u ), f(i32 5)".into(), "1:52", "u"),
+        (
+            "f := fn (a := dyad ?) -> void ( mut u := i32 ?, print «{a + u}», u = i32 1 ), f(i32 5)"
+                .into(),
+            "1:61",
+            "u",
+        ),
+        ("f := fn (a := dyad ?) -> i32 ( mut u := i32 ?, if a > 0 ( u = a ), u ), f(i32 5)".into(), "1:68", "u"),
+        ("f := fn (a := dyad ?) -> i32 ( mut u := i32 ?, (u = a), u ), f(i32 5)".into(), "1:57", "u"),
+        (
+            format!(
+                "{pt}f := fn (a := dyad ?) -> i32 ( mut v := pt ?, v.x = a + v.x, v.y = i32 2, v.x \
+                 ), f(i32 5)"
+            ),
+            "1:106",
+            "v.x",
+        ),
+        (
+            format!(
+                "{pt}f := fn (a := dyad ?) -> i32 ( mut v := pt ?, print «{{a + v.x}}», v.x = i32 \
+                 1, v.y = i32 2, v.x ), f(i32 5)"
+            ),
+            "1:108",
+            "v.x",
+        ),
+        (format!("{pt}f := fn (a := dyad ?) -> i32 ( mut v := pt ?, v.x = a, v ), f(i32 5)"), "1:103", "v"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        let want = format!("{at}: error: `{name}` is read before it is written");
+        assert!(stderr.contains(&want), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_quote_part_of_a_body_that_reads_a_dyad_value_gives_it_when_it_runs() {
     for (src, want) in [
         ("f := fn (a := dyad ?) -> void ( print «{a + 1}» ), f(i64 5)", "6"),
