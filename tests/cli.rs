@@ -9318,6 +9318,52 @@ fn an_array_element_lands_by_the_element_type() {
 }
 
 #[test]
+fn a_curly_bracket_keeps_its_scope_as_a_value_whose_names_are_read_with_a_dot() {
+    for compile in ["", "f.compile(), "] {
+        for (body, printed) in [
+            ("m := { a := i32 1, b := i32 2 }, m.a + m.b", "3"),
+            ("m := {a := i32 1}, m.a", "1"),
+            ("m := { a := i32 1, b := a + 1 }, m.b", "2"),
+            ("mut m := { mut a := i32 1, b := i32 2 }, m.a = 9, m.a * m.b", "18"),
+            ("m := { inner := { x := i32 7 } }, m.inner.x", "7"),
+            ("m := { a := i32 3, s := «hi» }, m.a", "3"),
+            ("m := { a := k, b := k * 2 }, m.a + m.b", "15"),
+            ("m := { a := i32 1 }, n := m, n.a", "1"),
+            ("m := { }, k", "5"),
+        ] {
+            let src = format!("f := fn (k := i32 ?) -> i32 ( {body} ), {compile}f(5)");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    for (src, printed) in [
+        ("m := { s := «hi», n := 3 }, print «{m.s} {m.n}»", "hi 3"),
+        ("m := { a := 1/3 }, m.a + 1/6", "1/2"),
+        ("m := { f := fn (x := i32 ?) -> i32 ( x + 1 ) }, m.f(3)", "4"),
+        ("m := { x := i32 1, free x, x := i32 2 }, m.x", "2"),
+        ("mut m := { mut a := i32 1 }, n := m, m.a = 7, n.a", "1"),
+        ("print «a {1 + 2} b»", "a 3 b"),
+    ] {
+        assert_eq!(run_line(src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    let (echoes, stderr) = repl(b"m := { a := i32 1, b := i32 2 }\nm.a + m.b\n");
+    assert_eq!(echoes, ["3"], "stderr: {stderr}");
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), \
+               m := { b := bag(1) }";
+    for (src, expect) in [
+        ("mut m := { a := i32 1 }, m.a = 5", "`a` is not `mut`"),
+        ("m := { mut a := i32 1 }, m.a = 5", "`m` is not `mut`"),
+        ("m := { a := i32 1 }, a", "`a` is not in scope here"),
+        ("m := { a := i32 1 ), m.a", "1:19: error: this bracket is never closed"),
+        ("x := i32 1 }", "1:12: error: this `}` closes nothing"),
+        (bag, "`b` cannot be kept in this `{ … }`'s value"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_tape_line_no_check_narrowed_is_checked_through_a_record_pointer() {
     let q = "pt := type ( mut a := u64 ?, mut b := u64 ? ), \
              q := type ( v := u64 ?, static parse_rank = 61, static parse = ( tape[0].type = q, \

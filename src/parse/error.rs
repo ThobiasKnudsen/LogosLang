@@ -288,6 +288,9 @@ pub enum ParseError {
     NoSuchSlot(String),
     /// A type body with an `own` field and no `free = (…)` to free it.
     OwningFieldNeedsFree,
+    /// A name of a `{ … }` whose value its scope's end runs a teardown for, or that does not
+    /// move whole into a field; carries the name.
+    KeptEntry(Box<String>),
     /// `own @T ?` on a parameter, which would consume the caller's argument.
     OwnParameterNotInSeed,
     /// A `move` or `free` inside a loop or `fn` body names a place declared

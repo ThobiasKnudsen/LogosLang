@@ -128,12 +128,19 @@ impl<'a> Parser<'a> {
         leading: Option<DyadPtr>,
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         let (scope, fields_arr, bindings) = self.parse_field_list(false, leading)?;
-        Ok((self.record_node(scope, fields_arr, &bindings), bindings))
+        Ok((self.record_node(scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
     }
 
     /// The record node over a field list: its fields laid out onto their bindings, then the
-    /// record holding the scope, the fields, their bindings and their total.
-    fn record_node(&mut self, scope: DyadPtr, fields: DyadPtr, bindings: &[DyadPtr]) -> DyadPtr {
+    /// record holding the scope, the fields, their bindings, their total and `body`, the scope
+    /// its `static` members are read in, null for none.
+    fn record_node(
+        &mut self,
+        scope: DyadPtr,
+        fields: DyadPtr,
+        bindings: &[DyadPtr],
+        body: DyadPtr,
+    ) -> DyadPtr {
         let input = self.rt.store.alloc_leaf(self.types.type_);
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         let size_bytes = unsafe { lay_out_fields(self.types, input, fields, bindings) };
@@ -144,13 +151,79 @@ impl<'a> Parser<'a> {
             fields,
             bindings,
             size_bytes,
-            std::ptr::null_mut(),
+            body,
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
         );
         // SAFETY: `input` was minted above with no record; nothing reads one until now.
         unsafe { dyad::set_head(input, record.cast()) };
         input
+    }
+
+    /// The record a `{ … }` lays out: each live name of `scope` that holds bytes a field of its
+    /// spelling, type and `mut` in written order, and `scope` itself the record's body, so a name
+    /// that holds none, a `fn` or a type, reads through the value as a `static` member does
+    /// (›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]). Returns the
+    /// record with the names its fields are made from.
+    ///
+    /// # Safety
+    /// `scope` must be the innermost open scope, the block whose lines were just read.
+    pub(super) unsafe fn kept_record(
+        &mut self,
+        scope: DyadPtr,
+    ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
+        use crate::identities::{declare, hole, read::carry_of};
+        let types = self.types;
+        let lines = crate::identities::scope::exprs_of(scope).unwrap_or_default();
+        let mut names = Vec::new();
+        for &line in lines.iter().filter(|&&l| dyad::ty(l) == types.declare_) {
+            let name = declare::binding_of(line);
+            let b = Binding::read(name);
+            if b.scope != scope || b.is_dead() || !types.is_storage(name) {
+                continue;
+            }
+            let ends =
+                self.cx.open.last().is_some_and(|o| o.exit.iter().any(|h| self.holds(h, name)));
+            if ends || carry_of(types, types.type_of(name)).is_none() {
+                return Err(ParseError::KeptEntry(Box::new(Binding::spelling(name))));
+            }
+            names.push(name);
+        }
+        let field_scope = self.open_scope();
+        let mut fields = Vec::with_capacity(names.len());
+        let mut bindings = Vec::with_capacity(names.len());
+        let declared = names.iter().try_for_each(|&name| {
+            let field = hole::build(
+                self.rt.store,
+                types.unknown,
+                types.type_of(name),
+                std::ptr::null_mut(),
+            );
+            let binding = self.declare_field_name(&Binding::spelling(name), field, self.cx.pos)?;
+            for gate in [types.mut_, types.immut_] {
+                if Binding::has_gate(name, gate) {
+                    self.add_gate(binding, gate)?;
+                }
+            }
+            fields.push(field);
+            bindings.push(binding);
+            Ok(())
+        });
+        self.cx.scopes.pop();
+        declared?;
+        let fields = crate::identities::array::build(self.rt.store, types.array_, &fields);
+        Ok((self.record_node(field_scope, fields, &bindings, scope), names))
+    }
+
+    /// `{`'s constructor: the lines up to its `}`, the scope kept as a value.
+    pub(crate) fn construct_curly(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let (_, value) = self.parse_kept_block()?;
+        self.take_closer(self.types.open_curly_)?;
+        tape.place(value.dyad);
+        Ok(Constructed::Placed)
     }
 
     /// A `fn`'s parameter list checks each name against every open scope, since
@@ -1112,7 +1185,7 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         declared?;
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
-        Ok((self.record_node(scope, fields_arr, &bindings), bindings))
+        Ok((self.record_node(scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
     }
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN

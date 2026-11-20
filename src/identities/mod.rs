@@ -204,6 +204,8 @@ pub struct Core {
     pub close_: DyadPtr,
     pub open_sq_: DyadPtr,
     pub close_sq_: DyadPtr,
+    pub open_curly_: DyadPtr,
+    pub close_curly_: DyadPtr,
     pub sep_: DyadPtr,
     /// Associativity's two values.
     pub left_: DyadPtr,
@@ -351,6 +353,8 @@ impl Core {
             square_brackets,
             open_sq: open_sq_,
             close_sq: close_sq_,
+            open_curly: open_curly_,
+            close_curly: close_curly_,
         } = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
         let pointer::PointerIds {
@@ -532,6 +536,8 @@ impl Core {
             close_,
             open_sq_,
             close_sq_,
+            open_curly_,
+            close_curly_,
             sep_,
             left_,
             right_,
@@ -546,6 +552,16 @@ impl Core {
             ops: op_leaves,
             lower,
         }
+    }
+
+    /// Each opener with the closer that ends its bracket: `( )`, `[ ]` and `{ }`, one mechanism
+    /// under three names (›Brackets divide by role‹ [[R204]]).
+    pub fn brackets(&self) -> [(DyadPtr, DyadPtr); 3] {
+        [
+            (self.open_, self.close_),
+            (self.open_sq_, self.close_sq_),
+            (self.open_curly_, self.close_curly_),
+        ]
     }
 
     /// A binding yields the dyad it names; anything else passes through.

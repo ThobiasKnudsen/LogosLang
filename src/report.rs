@@ -406,6 +406,11 @@ pub fn parse_message(e: &ParseError) -> String {
             "`{name}` names no slot: a type body fills `static parse = (…)`, `static run = (…)`, \
              `static free = (…)` and its ranks, and declares a member of its own, `static {name} := …`"
         ),
+        ParseError::KeptEntry(name) => format!(
+            "`{name}` cannot be kept in this `{{ … }}`'s value: the seed keeps a name whose value \
+             moves whole into a field and has no `free` to run, as a number, a string, a map or a \
+             record does"
+        ),
         ParseError::OwningFieldNeedsFree => {
             "a field declared `own` must be freed by the type's `static free = (…)`, which this \
              type body does not fill"
