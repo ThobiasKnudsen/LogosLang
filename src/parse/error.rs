@@ -223,12 +223,18 @@ pub enum ParseError {
     /// A line that waits for the run to parse it holds `:=`, `return`, `free` or `move`, whose
     /// checks the parse makes where they are written; carries the word.
     WaitingLineHolds(Box<String>),
-    /// A `while` condition reads the node a call that gives a `dyad` gives: the call runs as the
-    /// condition is parsed, which is once more than the condition runs.
+    /// A `while` condition reads the node a call that gives a `dyad` gives where the scan that
+    /// holds such a condition before it is parsed does not see it: through a bracket or a
+    /// member's call.
     DyadReadEachPass,
     /// A call that gives a `dyad`, which the pass runs as it parses the operator reading it,
-    /// stands after something its own line runs only when the line runs.
-    DyadCallAfterRun,
+    /// stands after something its own line runs that the pass cannot run first: an earlier line
+    /// of an open argument list or `[…]`, a part of a quote, what stands before a branch, or a
+    /// node whose operation is not built yet.
+    DyadCallAfterUnbuilt,
+    /// What stands before a call that gives a `dyad` in its line runs first, and its value
+    /// cannot stand where it stood: it does not move whole, or it ends by more than its bytes.
+    RanValueNotHeld,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,

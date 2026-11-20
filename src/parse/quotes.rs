@@ -222,10 +222,14 @@ impl<'a> Parser<'a> {
         let whole = self.cx.source;
         self.cx.source = &whole[..to];
         self.cx.pos = from;
+        // The line's scan read the quote as one token, so its interior is scanned on its own.
+        let cuts = std::mem::take(&mut self.cx.cuts);
+        let cuts_end = std::mem::replace(&mut self.cx.cuts_end, from);
         let parsed = self.parse_block(false, LinesEnd::TextEnd).map(|(scope, value)| {
             // SAFETY: `scope` is the scope node just built.
             unsafe { super::bodies::last_sequence_expr(scope) }.map(|_| value.dyad)
         });
+        (self.cx.cuts, self.cx.cuts_end) = (cuts, cuts_end);
         self.cx.source = whole;
         parsed
     }

@@ -304,6 +304,21 @@ impl ParsingTape {
         self.node_at(offset).map(move |n| &mut self.nodes[n].cell)
     }
 
+    /// The handle of the cell at `offset`, as `iter` hands them out.
+    pub(crate) fn handle_at(&self, offset: isize) -> Option<usize> {
+        self.node_at(offset)
+    }
+
+    /// `handle` is one `iter` handed out; the cell may have left the tape since.
+    pub(crate) fn cell_of(&self, handle: usize) -> &Cell {
+        &self.nodes[handle].cell
+    }
+
+    /// Where the cell after the one `handle` names starts, if one stands after it.
+    pub(crate) fn next_start(&self, handle: usize) -> Option<usize> {
+        self.nodes[handle].next.map(|n| self.nodes[n].cell.start)
+    }
+
     /// Walks from the head: a loop over the tape uses `iter` instead.
     pub fn cell(&self, i: usize) -> Option<&Cell> {
         self.node_abs(i).map(|n| &self.nodes[n].cell)
@@ -515,6 +530,16 @@ impl ParsingTape {
     pub fn place_bracket_cell(&mut self, cell: Cell) {
         self.place_bracket(cell.dyad);
         self.at_mut(0).expect("placed above").facts_from(&cell);
+    }
+
+    /// The cell `handle` names, which the pass ran, stands for the value its run gave: its span
+    /// and its bracket stay, and no constructor's edit is counted.
+    pub(crate) fn stand_as_ran(&mut self, handle: usize, value: DyadPtr) {
+        debug_assert!(self.nodes[handle].linked, "a handle names a cell on the tape");
+        let cell = &mut self.nodes[handle].cell;
+        let bracket = cell.bracket;
+        cell.over(value);
+        cell.bracket = bracket;
     }
 
     /// An infix constructor's splice: `tape[-1]`, the center and `tape[+1]`

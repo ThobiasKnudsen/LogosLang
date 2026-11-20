@@ -23,6 +23,10 @@ struct Found {
     /// The first `&`, at any depth: the scope the line stands in holds what it lands.
     address_at: Option<usize>,
     refused: Option<(usize, String)>,
+    /// How many reads of what a call that gives a `dyad` gives the scan has met, at any depth.
+    call_reads: usize,
+    /// Where each bracket that holds such a read opens, at any depth.
+    cuts: Vec<usize>,
 }
 
 /// A line that waits: where it ends, and where the part left to the run starts.
@@ -76,6 +80,102 @@ impl<'a> Parser<'a> {
         let sooner = |at: Option<usize>| at.is_some_and(|at| at < read_at);
         let whole = sooner(found.reader_at) || sooner(found.address_at);
         Ok(Some(Waits { cut: if whole { start } else { read_at }, end }))
+    }
+
+    /// Where the line at the cursor reads what a call that gives a `dyad` gives inside a bracket,
+    /// where the pass runs that call as it parses it: each bracket that holds such a read, at any
+    /// depth, before whose parse what stands before it in its line runs ([`Self::cut_at`]). A line
+    /// a scan already covered keeps its cuts. The cursor stays.
+    pub(super) fn note_cuts(&mut self) {
+        if !self.in_pass_order() || self.cx.pos < self.cx.cuts_end {
+            return;
+        }
+        let start = self.cx.pos;
+        let mut found = Found::default();
+        let scanned = self.scan_level(0, &mut found);
+        self.cx.cuts_end = self.cx.pos.max(start + 1);
+        self.cx.pos = start;
+        // A line that does not scan is left to the parse to report where it fails.
+        self.cx.cuts = if scanned.is_ok() { found.cuts } else { Vec::new() };
+    }
+
+    /// Before the bracket at `at` is parsed into `tape`, where the line's scan found it holds a
+    /// read of what a call that gives a `dyad` gives: what stands before it runs, in order (›The
+    /// pass runs only as far as it must, in order, and never twice‹ [[R288]]). Where something
+    /// before it cannot run first, nothing does, and the read refuses.
+    pub(super) fn cut_at(&mut self, tape: &mut ParsingTape, at: usize) -> Result<(), ParseError> {
+        if self.cx.each_pass || !self.in_pass_order() {
+            return Ok(());
+        }
+        let Some(k) = self.cx.cuts.iter().position(|&c| c == at) else { return Ok(()) };
+        self.cx.cuts.swap_remove(k);
+        self.run_before(tape, at).map(|_| ())
+    }
+
+    /// The `while` condition at the cursor, where it reads what a call that gives a `dyad` gives:
+    /// where it ends, before its body's `(`. Such a condition is held before it is parsed, so the
+    /// call runs only when the condition does (›The pass runs only as far as it must, in order,
+    /// and never twice‹ [[R288]]). The scan sees a call written bare, inside a bracket too, not
+    /// one read through a bracket around it or a member. The cursor stays.
+    pub(super) fn condition_reads_call(&mut self) -> Option<usize> {
+        let start = self.cx.pos;
+        let end = self.scan_condition();
+        self.cx.pos = start;
+        end.ok().flatten()
+    }
+
+    /// [`Self::condition_reads_call`], the cursor left where the scan stopped.
+    fn scan_condition(&mut self) -> Result<Option<usize>, ParseError> {
+        let types = self.types;
+        let mut found = Found::default();
+        let mut prev: Option<DyadPtr> = None;
+        let (mut callee, mut after_call): (Option<bool>, bool) = (None, false);
+        loop {
+            self.skip_whitespace();
+            let at = self.cx.pos;
+            if at >= self.cx.source.len() {
+                return Ok(None);
+            }
+            let r = self.token_at(at, true)?;
+            let id = r.identity;
+            if id == types.sep_ || self.is_closer(id) || id == types.else_ {
+                return Ok(None);
+            }
+            self.cx.pos = at + r.matched;
+            if self.is_opener(id) {
+                if self.opens_body(prev) {
+                    return Ok((found.call_reads > 0).then_some(at));
+                }
+                self.scan_level(1, &mut found)?;
+                let call_operand = callee.take();
+                after_call = call_operand == Some(false);
+                if call_operand == Some(true) {
+                    found.call_reads += 1;
+                }
+                prev = Some(types.open_);
+                continue;
+            }
+            if std::mem::take(&mut after_call) && (self.is_value_infix(id) || id == types.dot_) {
+                found.call_reads += 1;
+            }
+            // SAFETY: a resolved token's identity is a dyad from the store.
+            callee = (prev != Some(types.dot_) && unsafe { self.gives_dyad(id) })
+                .then(|| prev.is_some_and(|p| self.is_value_infix(p)));
+            prev = Some(id);
+        }
+    }
+
+    /// Whether a `(` after `prev` in a condition opens its body: not where the condition is still
+    /// owed a value, after an operator or at its start, nor after a function, whose call it is.
+    fn opens_body(&self, prev: Option<DyadPtr>) -> bool {
+        let Some(prev) = prev else { return false };
+        if prev == self.types.open_ {
+            return true;
+        }
+        // SAFETY: a resolved token's identity is a dyad from the store.
+        let function = unsafe { !prev.is_null() && crate::dyad::ty(prev) == self.types.fn_type };
+        let operator = self.ctor_of(prev).is_some() && self.precedence_of_cell(prev) < prec::OPEN;
+        !function && !operator
     }
 
     /// One level of the line: at the top the line itself, up to its boundary, left unconsumed;
@@ -140,15 +240,22 @@ impl<'a> Parser<'a> {
                 }
             }
             if self.is_opener(id) {
+                let calls_before = found.call_reads;
                 let inner = if skipping {
                     self.skip_bracket(id, depth + 1).map(|_| false)?
                 } else {
                     self.scan_level(depth + 1, found)?
                 };
+                if found.call_reads > calls_before {
+                    found.cuts.push(at);
+                }
                 let call_operand = callee.take();
                 after_call = call_operand == Some(false);
                 if after_call {
                     call_chain = chain;
+                }
+                if call_operand == Some(true) {
+                    found.call_reads += 1;
                 }
                 if inner || call_operand == Some(true) {
                     line_reads = true;
@@ -172,6 +279,7 @@ impl<'a> Parser<'a> {
             // A call that gives a `dyad`, read by an infix on either side or by a `.` after it.
             if std::mem::take(&mut after_call) && (self.is_value_infix(id) || id == types.dot_) {
                 line_reads = true;
+                found.call_reads += 1;
                 if top {
                     found.read_at.get_or_insert(call_chain);
                 }
