@@ -46,7 +46,7 @@ pub enum ParseError {
     /// A type body's own declaration failed while running at the definition;
     /// carries the rendered run error.
     TypeBodyFailed(Box<String>),
-    /// Scopes nested deeper than `MAX_BRACKET_DEPTH`.
+    /// Scopes nested deeper than the parse's stack holds.
     TooDeep,
     /// The pass needed a type identity and found a place that will only hold
     /// one when the program runs (DESIGN ›A type is a comptime value‹).

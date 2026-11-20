@@ -3085,7 +3085,7 @@ fn runaway_compiled_recursion_is_a_clean_error() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("calls nested deeper than 10000"), "stderr: {err}");
+    assert!(err.contains("nested too deep: the run used up its 64 MiB stack"), "stderr: {err}");
     assert!(out.stdout.is_empty());
 }
 
@@ -6092,7 +6092,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
             "freed 2\nfreed 1\n",
             nan,
         ),
-        // A null pointer, and the call-depth limit.
+        // A null pointer, and the stack's limit.
         (
             "g := fn (q := @@i32 ?) -> i32 ( n := q@@, print «n {n}», n )".to_string(),
             "p := alloc 1 of @i32 ?, g(p)",
@@ -6103,7 +6103,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
             "g := fn (n := i32 ?) -> i32 ( k := g(n + 1), print «back», k )".to_string(),
             "g(0)",
             "",
-            "calls nested deeper than 10000",
+            "nested too deep: the run used up its 64 MiB stack",
         ),
         // A `free` that faults in the cleanup stops its scope's cleanup, and a call's.
         (

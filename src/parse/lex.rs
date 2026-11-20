@@ -586,13 +586,8 @@ impl<'a> Parser<'a> {
     /// The bracket `opener` opened just behind the cursor, read past its closer and built
     /// by nothing: token by token through the one door, a quote or a `#` comment being one
     /// token and an inner bracket read the same way. Gives where the closer stood.
-    /// `depth` skipped brackets are open around this one.
-    pub(super) fn skip_bracket(
-        &mut self,
-        opener: DyadPtr,
-        depth: usize,
-    ) -> Result<usize, ParseError> {
-        self.check_depth(depth)?;
+    pub(super) fn skip_bracket(&mut self, opener: DyadPtr) -> Result<usize, ParseError> {
+        self.check_stack()?;
         loop {
             self.skip_whitespace();
             let at = self.cx.pos;
@@ -606,7 +601,7 @@ impl<'a> Parser<'a> {
             }
             self.cx.pos += r.matched;
             if self.closer_of(id).is_some() {
-                self.skip_bracket(id, depth + 1)?;
+                self.skip_bracket(id)?;
             }
         }
     }

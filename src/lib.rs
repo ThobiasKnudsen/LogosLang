@@ -13,11 +13,7 @@ pub mod regex_splitting;
 pub mod regex_trie;
 pub mod report;
 pub mod run;
+pub mod stack;
 pub mod store;
 
 pub use identities::{binding, dyad, Core};
-
-/// The stack every thread that runs Logos must have. The parser recurses per
-/// bracket and the interpreter per call, so the depth guards mean one thing only
-/// when the stack under them is always this size (8 MiB overflowed near 5,500 frames).
-pub const WORK_STACK_BYTES: usize = 64 * 1024 * 1024;

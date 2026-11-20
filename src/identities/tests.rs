@@ -2292,9 +2292,10 @@ fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
 #[test]
 fn runaway_depth_is_a_checked_error_not_an_abort() {
     on_work_stack(|| {
-        let deep = "(".repeat(crate::parse::MAX_BRACKET_DEPTH + 1);
+        // A skipped bracket costs the least stack; this wall outlasts the work stack even so.
+        let deep = "(".repeat(1_000_000);
         assert_eq!(parse_err(&format!("{deep}1")), ParseError::TooDeep);
-        let shut = ")".repeat(crate::parse::MAX_BRACKET_DEPTH + 1);
+        let shut = ")".repeat(1_000_000);
         let skipped = format!("if false ( {deep}1{shut} ) else ( 1 )");
         assert_eq!(parse_err(&skipped), ParseError::TooDeep);
         let held = format!("t := type ( a := i32 ?, static run = ( {deep}1{shut} ) ), 5");
@@ -2302,14 +2303,22 @@ fn runaway_depth_is_a_checked_error_not_an_abort() {
         assert_eq!(run_script("(((((1)))))"), 1);
 
         let runaway = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f(1)";
-        assert_eq!(run_script_depth(runaway), (Err(crate::run::RunError::CallDepth), 0));
+        assert_eq!(run_script_result(runaway), Err(crate::run::RunError::TooDeep));
+        // Each `if` around the call is one more level of the run inside the same call.
+        let nested = "f := fn (n := i64 ?) -> i64 ( if (n == -1) (1) else (if (n == -2) (2) \
+                      else (if (n == -3) (3) else (n + f(n + 1)))) ), f(0)";
+        assert_eq!(run_script_result(nested), Err(crate::run::RunError::TooDeep));
         let ending = "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f(9000)";
         assert_eq!(run_script(ending), 0);
         let runaway_compiled = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f.compile(), f(1)";
-        assert_eq!(run_script_depth(runaway_compiled), (Err(crate::run::RunError::CallDepth), 0));
+        assert_eq!(run_script_result(runaway_compiled), Err(crate::run::RunError::TooDeep));
         let ending_compiled =
             "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f.compile(), f(9000)";
         assert_eq!(run_script(ending_compiled), 0);
+        // A compiled frame is small: no count of calls stops it, only the stack.
+        let deep_compiled = "f := fn (n := i64 ?) -> i64 ( if (n == 0) (0) else (n + f(n - 1)) ), \
+                             f.compile(), f(100000)";
+        assert_eq!(run_script(deep_compiled), 5_000_050_000);
     });
 }
 
@@ -2545,29 +2554,11 @@ fn run_script(src: &str) -> i64 {
     run_script_result(src).unwrap()
 }
 
-/// [`run_script_result`] and the call depth the runtime is left at.
-fn run_script_depth(src: &str) -> (Result<i64, crate::run::RunError>, usize) {
-    let (mut store, mut trie, core) = new_core();
-    let mut scopes = ScopeStack::new();
-    scopes.push(core.root_scope);
-    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
-    let root = p.parse_sequence().unwrap();
-    let mut rt = p.into_runtime();
-    // SAFETY: `root` is the sequence just parsed; its exprs are valid.
-    let r = unsafe { rt.run(root).map(|bits| rational::as_number(&core, root, bits)) };
-    (r, rt.ctx.depth)
-}
-
-/// Runs `f` on a thread of the seed's stack size, as `main` runs every program: a deep
-/// recursion then meets the depth guard, not the harness's 2 MiB thread.
+/// Runs `f` on the work stack, as `main` runs every program: a deep recursion then meets
+/// the stack guard, not the harness's 2 MiB thread.
 fn on_work_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     let test = std::thread::current().name().unwrap_or("work").to_owned();
-    std::thread::Builder::new()
-        .name(test)
-        .stack_size(crate::WORK_STACK_BYTES)
-        .spawn(f)
-        .expect("the work thread must start")
-        .join()
+    crate::stack::on_work_stack(std::thread::Builder::new().name(test), f)
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 

@@ -192,7 +192,7 @@ impl<'a> Parser<'a> {
     /// `:=`, and returns nothing‹ [[R277]]), so one in a bracket waits on its own, when the parse
     /// reaches it. A `:=` on a line that reads is refused, and at the top a `:=` at all.
     fn scan_level(&mut self, depth: usize, found: &mut Found) -> Result<bool, ParseError> {
-        self.check_depth(depth)?;
+        self.check_stack()?;
         let types = self.types;
         let top = depth == 0;
         let bare_branch = top && self.cx.else_ends == Some(self.cx.open.len());
@@ -251,7 +251,7 @@ impl<'a> Parser<'a> {
             if self.is_opener(id) {
                 let calls_before = found.call_reads;
                 let inner = if skipping {
-                    self.skip_bracket(id, depth + 1).map(|_| false)?
+                    self.skip_bracket(id).map(|_| false)?
                 } else {
                     self.scan_level(depth + 1, found)?
                 };
