@@ -38,11 +38,14 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-fn construct(
+/// The place an `=` at the center of `tape` writes, read before its right side: the cells before
+/// it built to one and removed, with the slot it fills where it names one. A write into any other
+/// place is checked against the gates that grant it here, since whether a place may be written
+/// needs nothing from the right side.
+pub(crate) fn read_target(
     p: &mut crate::parse::Parser,
-    id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
-) -> Result<crate::parse::Constructed, ParseError> {
+) -> Result<(crate::parse::Cell, Option<crate::parse::SlotKind>), ParseError> {
     let types = p.types();
     // A lone `free` constructed on its own would read an operand to its
     // right, so `=` takes the keyword's use as the slot's name unconstructed.
@@ -57,14 +60,25 @@ fn construct(
             None => return Err(ParseError::MissingOperand),
         },
     };
-    p.check_path_write(&target)?;
+    // SAFETY: `target` holds the reduced dyad of the cell to the left.
+    let slot = unsafe { p.slot_of(target.dyad) };
+    match slot {
+        Some(_) if !p.filling_definition() => return Err(ParseError::SlotOutsideDefinition),
+        Some(_) => {}
+        None => p.check_write(&target)?,
+    }
+    Ok((target, slot))
+}
+
+fn construct(
+    p: &mut crate::parse::Parser,
+    id: DyadPtr,
+    tape: &mut crate::parse::ParsingTape,
+) -> Result<crate::parse::Constructed, ParseError> {
+    let types = p.types();
+    let (target, slot) = read_target(p, tape)?;
     let fill = target.target;
     let target = target.dyad;
-    // SAFETY: `target` is the reduced dyad of the cell to the left.
-    let slot = unsafe { p.slot_of(target) };
-    if slot.is_some() && !p.filling_definition() {
-        return Err(ParseError::SlotOutsideDefinition);
-    }
     // Anything but a bracket right of a body slot is `slot_fill`'s checked error.
     if matches!(
         slot,
@@ -129,7 +143,7 @@ fn construct(
         } {
             return Err(ParseError::NonOwningIntoOwning);
         }
-        let node = build(p.store(), types, id, target, value)?;
+        let node = build_store(p.store(), types, id, target, value)?;
         // SAFETY: `target` is the reduced dyad of the cell to the left; `node` the write just
         // built over it.
         unsafe {
@@ -159,34 +173,8 @@ unsafe fn displace(store: &mut Store, types: &Core, node: DyadPtr, free: DyadPtr
 
 /// A literal right side commits to the target's type; a non-literal one must
 /// already be it. Shared with the declaration's first write, so a name's first write and
-/// every later one over a place of one type are nodes of one mint.
-pub(super) fn build(
-    store: &mut Store,
-    types: &Core,
-    op: DyadPtr,
-    lhs: DyadPtr,
-    rhs: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    // A name is written only if its binding carries `mut` and no `immut`.
-    // SAFETY: `lhs` is a reduced dyad from the store; one of the `binding` type is a binding.
-    unsafe {
-        if dyad::ty(lhs) == types.binding_ {
-            if crate::binding::Binding::has_gate(lhs, types.immut_) {
-                return Err(ParseError::Immutable(Box::new(crate::binding::Binding::spelling(
-                    lhs,
-                ))));
-            }
-            if !crate::binding::Binding::has_gate(lhs, types.mut_) {
-                return Err(ParseError::NotMutable(Box::new(crate::binding::Binding::spelling(
-                    lhs,
-                ))));
-            }
-        }
-    }
-    build_store(store, types, op, lhs, rhs)
-}
-
-/// [`build`] past the gates: the declaration's own first write into the storage it laid out.
+/// every later one over a place of one type are nodes of one mint. The gates were checked
+/// where `=` read its place ([`read_target`]); a declaration's first write has none to meet.
 pub(super) fn build_store(
     store: &mut Store,
     types: &Core,

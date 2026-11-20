@@ -2219,6 +2219,49 @@ fn a_type_returning_body_must_hand_back_a_type() {
 }
 
 #[test]
+fn a_result_type_is_written_as_a_type_place_is() {
+    for written in ["i32 ?", "@i32 ?", "f64 ?", "type ?", "dyad ?", "5", "1 + 2", "(5)"] {
+        assert_eq!(
+            parse_err(&format!("fn () -> {written} ( 7 )")),
+            ParseError::BadDeclaredType,
+            "-> {written}"
+        );
+        assert_eq!(
+            parse_err_after(&["mut u := type ?"], &format!("u = {written}")),
+            ParseError::BadDeclaredType,
+            "u = {written}"
+        );
+    }
+    assert_eq!(parse_err("fn () -> own @i32 ? ( alloc 1 of i32 7 )"), ParseError::BadDeclaredType);
+    assert_eq!(
+        parse_err_after(&["pt := type ( a := i32 ?, b := i32 ? )"], "fn () -> pt ? ( pt(1, 2) )"),
+        ParseError::BadDeclaredType
+    );
+    assert_eq!(parse_err_after(&["x := i32 5"], "fn () -> x ( 7 )"), ParseError::BadDeclaredType);
+
+    // A function is built where it is written, and a box there holds its type only at run.
+    assert_eq!(
+        parse_err("fn (t := type ?) -> i32 ( mk := fn () -> t ( 7 ), 1 )"),
+        ParseError::TypeKnownOnlyAtRun
+    );
+    assert_eq!(
+        parse_err("fn () -> i32 ( mut t := type ?, t = i32, mk := fn () -> t ( 7 ), 1 )"),
+        ParseError::TypeKnownOnlyAtRun
+    );
+
+    for tail in ["", "mk.compile(), "] {
+        for written in ["i32", "(i32)", "t"] {
+            assert_eq!(
+                run_script(&format!("t := i32, mk := fn () -> {written} ( 7 ),\n{tail}mk() + 1")),
+                8,
+                "-> {written}, {tail}"
+            );
+        }
+    }
+    assert_eq!(run_script("mk := fn () -> own @i32 ( alloc 1 of i32 7 ), m := mk(), m@ + 1"), 8);
+}
+
+#[test]
 fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
     // An owning value would have two ends.
     assert_eq!(parse_err("fn () -> dyad ( alloc 1 of i32 5 )"), ParseError::DyadTakesNode);
@@ -2359,7 +2402,7 @@ fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers(
     for (f, args, expect) in [
         ("f := fn (a := @i32 ?) -> i32 ( a@ = 4, a@ )", "mut x := i32 1, f(&x)", 4),
         (
-            "point := type ( x := i32 ?, y := i32 ? ), \
+            "point := type ( x := i32 ?, mut y := i32 ? ), \
              f := fn (p := @point ?) -> i32 ( p@.y = 9, p@ = point(5, p@.y), p@.x + p@.y )",
             "mut v := point (1, 2), f(&v)",
             14,
@@ -3400,6 +3443,11 @@ fn a_name_is_written_only_if_declared_mut() {
     );
     assert_eq!(
         parse_err_after(&["x := i32 ?"], "x = 6"),
+        ParseError::NotMutable(Box::new("x".into()))
+    );
+    // The gates are met where `=` reads its place, before its right side is read.
+    assert_eq!(
+        parse_err_after(&["x := i32 5"], "x = nope"),
         ParseError::NotMutable(Box::new("x".into()))
     );
     assert_eq!(parse_err("mut mut x := 5"), ParseError::DoubleGate);

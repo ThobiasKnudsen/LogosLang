@@ -336,11 +336,12 @@ impl<'a> Parser<'a> {
         self.settled_type(cell.identity(self.types))
     }
 
-    /// The held cell whose spelling starts at the cursor, if any; the running
-    /// index is corrected either way, since a boundary rewinds the cursor.
+    /// The held cell whose spelling starts at the cursor, if any, and ends within the source, which
+    /// a parse cut short ends early as it does for the lexer; the running index is corrected
+    /// either way, since a boundary rewinds the cursor.
     pub(super) fn feed_index(&mut self) -> Option<usize> {
         self.skip_whitespace();
-        let pos = self.cx.pos;
+        let (pos, end) = (self.cx.pos, self.cx.source.len());
         let feed = self.cx.feed.as_mut()?;
         while feed.next > 0 && feed.cells[feed.next - 1].start >= pos {
             feed.next -= 1;
@@ -348,7 +349,8 @@ impl<'a> Parser<'a> {
         while feed.next < feed.cells.len() && feed.cells[feed.next].start < pos {
             feed.next += 1;
         }
-        (feed.next < feed.cells.len() && feed.cells[feed.next].start == pos).then_some(feed.next)
+        let cell = feed.cells.get(feed.next)?;
+        (cell.start == pos && cell.end() <= end).then_some(feed.next)
     }
 
     /// Under a held body's construction only the body's own names count, at

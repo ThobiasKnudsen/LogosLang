@@ -17,8 +17,9 @@ use crate::Core;
 
 #[derive(Debug, Clone, Copy)]
 pub struct WaitingIds {
-    /// `[text, cells, scope, frames, into, op, output_type]`: `into` is the type the line's
-    /// value lands in, null for a line whose value nothing takes.
+    /// `[text, cells, scope, frames, into, op, output_type, own]`: `into` is the type the line's
+    /// value lands in, null for a line whose value nothing takes; `own` the `own` word where it
+    /// lands in a new node, a `dyad`.
     pub line: DyadPtr,
     pub line_leaf: DyadPtr,
 }
@@ -29,7 +30,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> WaitingIds {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["text", "cells", "scope", "frames", "into", "op", "output_type"],
+        &["text", "cells", "scope", "frames", "into", "op", "output_type", "own"],
     );
     let line = cx.store.alloc_head(cx.type_, record);
     let line_leaf = callable::mint_native(cx.store, cs.callable, run_line, cs.seed_native);
@@ -38,6 +39,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> WaitingIds {
 
 const INTO: usize = 4;
 const LINE_OUTPUT: usize = 6;
+const OWN: usize = 7;
 
 /// `text` holds the line; `line` must live for the run; `scope` is the scope open where it is
 /// written, `frames` the `fn` nodes open there, outermost first.
@@ -56,19 +58,21 @@ pub(crate) fn build_line(
     } else {
         array::build(store, types.array_, frames)
     };
-    let ops =
-        [text, cells, scope, frames, std::ptr::null_mut(), types.waiting.line_leaf, types.void_];
+    let none = std::ptr::null_mut();
+    let ops = [text, cells, scope, frames, none, types.waiting.line_leaf, types.void_, none];
     store.alloc_words(types.waiting.line, &ops)
 }
 
-/// The line `node` gives a value of `into`, which its parse at run lands there.
+/// The line `node` gives a value of `into`, which its parse at run lands there: in a new node
+/// for a `dyad`, which is made for whoever takes it.
 ///
 /// # Safety
 /// `node` must be a node from [`build_line`] that has not run.
-pub(crate) unsafe fn set_into(node: DyadPtr, into: DyadPtr) {
+pub(crate) unsafe fn set_into(types: &Core, node: DyadPtr, into: DyadPtr) {
     let ops = dyad::value(node) as *mut DyadPtr;
     *ops.add(INTO) = into;
     *ops.add(LINE_OUTPUT) = into;
+    *ops.add(OWN) = if into == types.dyad_ { types.own_ } else { std::ptr::null_mut() };
 }
 
 /// The parts [`build_line`] stored: text, line, scope, the open `fn` nodes, `into`.

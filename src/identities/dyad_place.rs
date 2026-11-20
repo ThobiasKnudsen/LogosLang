@@ -46,6 +46,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DyadPlaceIds {
         &["value", "from", "op", "output_type"],
     );
     let new_node = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `new_node` carries the record built above.
+    unsafe { meta::mark_own(new_node) };
     cx.lower.insert(new_node, lower_new_node);
     let new_node_leaf = callable::mint_native(cx.store, cs.callable, run_new_node, cs.seed_native);
     let record = meta::operand_record(

@@ -23,7 +23,7 @@ pub mod read;
 
 mod and;
 pub(crate) mod array;
-mod assign;
+pub(crate) mod assign;
 pub(crate) mod binary;
 #[path = "bool.rs"]
 pub(crate) mod bool_mod;
@@ -287,9 +287,11 @@ impl Core {
             Assoc::Left,
             &["exprs", "op"],
         );
-        // SAFETY: `scope_` was minted above and nothing has read its value yet.
+        // SAFETY: `scope_` was minted above and nothing has read its value yet; the record names
+        // `exprs`.
         unsafe {
             dyad::set_head(scope_, record);
+            meta::install_hands_on(scope_, &[], &["exprs"]);
         }
         let assign = assign::register(&mut cx);
         // No spelling: the parser builds conversions from the `T(value)` call surface.
@@ -1337,7 +1339,7 @@ pub(crate) unsafe fn commit_fn_body(
     walk_tail(types, body, &mut |leaf| {
         // A line held for the run lands in the result when it runs.
         if dyad::ty(leaf) == types.waiting.line {
-            waiting::set_into(leaf, output);
+            waiting::set_into(types, leaf, output);
             return Ok(leaf);
         }
         refuse_statement(types, leaf)?;

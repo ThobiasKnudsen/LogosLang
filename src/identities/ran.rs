@@ -17,8 +17,8 @@ use crate::Core;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RanIds {
-    /// `[word, ends, op, output_type]`: `word` holds, as a `u64`, what the value's run gave;
-    /// `ends` is non-null where the value has an end of its own, made where it ran.
+    /// `[word, op, output_type, own]`: `word` holds, as a `u64`, what the value's run gave; `own`
+    /// the `own` word where the value has an end of its own, made where it ran.
     pub node: DyadPtr,
     pub leaf: DyadPtr,
 }
@@ -30,7 +30,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> RanIds {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["word", "ends", "op", "output_type"],
+        &["word", "op", "output_type", "own"],
     );
     let node = cx.store.alloc_head(cx.type_, record);
     let leaf = callable::mint_native(cx.store, cs.callable, run_ran, cs.seed_native);
@@ -48,9 +48,11 @@ pub(crate) fn build(
 ) -> DyadPtr {
     let u64_ty = types.numtypes[super::NumType::U64 as usize];
     let word = store.alloc_blob(u64_ty, &word.to_ne_bytes());
-    let ends = if ends { out } else { std::ptr::null_mut() };
-    store.alloc_words(types.ran.node, &[word, ends, types.ran.leaf, out])
+    let own = if ends { types.own_ } else { std::ptr::null_mut() };
+    store.alloc_words(types.ran.node, &[word, types.ran.leaf, out, own])
 }
+
+const OWN: usize = 3;
 
 /// What a run of a value that moves as `carry` gives, read out of `node`, a node holding it.
 ///
@@ -74,7 +76,7 @@ pub(crate) unsafe fn word(node: DyadPtr) -> i64 {
 /// # Safety
 /// `node` must be a node from [`build`].
 pub(crate) unsafe fn ends(node: DyadPtr) -> bool {
-    !(*(dyad::value(node) as *const DyadPtr).add(1)).is_null()
+    !(*(dyad::value(node) as *const DyadPtr).add(OWN)).is_null()
 }
 
 fn run_ran(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

@@ -46,6 +46,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
         &["target", "type", "op", "output_type"],
     );
     let construct = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `construct` carries the record built above.
+    unsafe { meta::mark_own(construct) };
     cx.lower.insert(construct, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
