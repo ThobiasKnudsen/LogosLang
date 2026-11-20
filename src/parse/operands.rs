@@ -412,6 +412,7 @@ impl<'a> Parser<'a> {
         if self.cx.open.iter().flat_map(|o| &o.runs).any(|&s| s < at && !covered(s)) {
             return Ok(false);
         }
+        // A part whose value cannot stand in its place would run after the call: stand-in for #328.
         let mut parts = self.cx.open.iter().filter(|o| !o.own_lines()).flat_map(|o| &o.unrun);
         // SAFETY: a part is a reduced dyad this parser built into its store.
         if !parts.all(|part| !self.runs_first(part) || unsafe { self.stands_as_ran(part.node) }) {

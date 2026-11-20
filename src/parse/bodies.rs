@@ -1988,7 +1988,8 @@ impl<'a> Parser<'a> {
     /// they go, prose, `defer` and `[…]` lines included. The closed lines of an open argument
     /// list or `[…]` are parts of the line being parsed: each that runs runs too, then standing
     /// in its place for the value it gave, which the call that takes the bracket reads. One
-    /// whose value cannot stand in its place is left for that call, with every part after it.
+    /// whose value cannot stand in its place is left for that call, with every part after it:
+    /// stand-in for #328.
     pub fn drain(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {
         self.drain_lines(false)
     }
