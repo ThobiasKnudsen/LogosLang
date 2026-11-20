@@ -44,8 +44,8 @@ pub(super) struct Kept {
 
 /// A line held for the run, as [`Parser::hold_line`] left it: every cell of its text, lexed
 /// against the scopes open where it is written, the part before `cut` parsed there, and what a
-/// bare field or a bare call there reaches the value its body is about through: the type
-/// definitions open there, and a `run` body's own fields.
+/// bare field or a bare call there needs to reach the value its body is about: the type
+/// definitions open there and a `run` body's fields.
 pub(crate) struct HeldLine {
     cells: ParsingTape,
     cut: usize,
@@ -410,11 +410,11 @@ impl<'a> Parser<'a> {
             .map_err(|e| self.lex_error(start, e))?;
         let held_cells = fragment.held_cells();
         for (k, cell) in held_cells.iter().enumerate() {
+            self.cx.pos = start + cell.start;
             let binding = cell.binding(types);
-            if self.note_receiver_use(&held_cells, k) || binding.is_null() {
+            if self.note_held_use(&held_cells, k)? || binding.is_null() {
                 continue;
             }
-            self.cx.pos = start + cell.start;
             // SAFETY: a resolved cell's identity is a dyad from the store.
             unsafe { self.check_capture(cell.identity(types))? };
             self.check_made(binding)?;
@@ -447,22 +447,32 @@ impl<'a> Parser<'a> {
         Ok(unsafe { Cell::built(node) })
     }
 
-    /// Whether `cells[k]`, a cell of a held line, names a field of the value the `static`
-    /// function it stands in is about: no outer name. Such a field, read or written where `=`
-    /// follows it, and a bare call of a `static` function that writes that value, mark the
-    /// function's receiver as the line's parse does, since its callers read the mark before the
-    /// line first runs (›A `static` function writes the value it is called on, and respects
-    /// `mut`‹ [[R239]]).
-    fn note_receiver_use(&mut self, cells: &[Cell], k: usize) -> bool {
+    /// Whether `cells[k]`, a cell of a held line, names a field of the value its body is about,
+    /// so it is no outer name. What the line's parse notes on the open definition is noted here,
+    /// since the body's callers and its later lines read it before the line first runs: a bare
+    /// field read, or written where `=` follows it, and a bare call of a `static` function that
+    /// writes mark a `static` function's receiver (›A `static` function writes the value it is
+    /// called on, and respects `mut`‹ [[R239]]); in a parse, a stamp, `.type =`, has the node's
+    /// later fields read by name, since the type it stamps is known only at run, and a bare field
+    /// is refused, as on any line of a parse.
+    fn note_held_use(&mut self, cells: &[Cell], k: usize) -> Result<bool, ParseError> {
         let types = self.types;
         let cell = &cells[k];
-        if cell.constructed
-            || k.checked_sub(1).is_some_and(|j| self.is_unbuilt_tight_read(&cells[j]))
-        {
-            return false;
+        if cell.constructed {
+            return Ok(false);
         }
         let next = cells.get(k + 1).map(|c| self.cell_identity(c));
+        let in_parse = self.cx.definitions.last().is_some_and(|d| d.in_parse);
+        if k.checked_sub(1).is_some_and(|j| self.is_unbuilt_tight_read(&cells[j])) {
+            if in_parse && cell.spelling() == "type" && next == Some(types.assign) {
+                self.cx.definitions.last_mut().expect("a parse is open").stamps_at_run = true;
+            }
+            return Ok(false);
+        }
         let field = self.names_own_field(cell);
+        if field && in_parse {
+            return Err(ParseError::BareFieldInParse(Box::new(cell.spelling().to_string())));
+        }
         let writes = if field {
             next == Some(types.assign)
         } else {
@@ -474,11 +484,11 @@ impl<'a> Parser<'a> {
                 }
         };
         let receiver = self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null());
-        if let Some(def) = receiver.filter(|d| !d.in_parse) {
+        if let Some(def) = receiver.filter(|_| !in_parse) {
             def.read_receiver |= field;
             def.wrote_receiver |= writes;
         }
-        field
+        Ok(field)
     }
 
     /// The line at the cursor parsed up to `cut`, the read the run supplies: lexed, and built as

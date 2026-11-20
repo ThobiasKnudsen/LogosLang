@@ -2222,6 +2222,30 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
     let src =
         format!("g := fn () -> dyad ( i32 1 ), {inc}, f := fn (y := i32 ?) -> i32 ( y inc ), f(5)");
     assert_eq!(line(&src), "16", "{src}");
+    // A type's `parse` body: a held line runs when the parse does, and a bare field in one is
+    // refused where it is written, as on any line of a parse.
+    let parse = |line: &str| {
+        format!(
+            "mut d := dyad ?, d = i32 1, inc := type ( a := i32 ?, output_type := type ?, \
+             static run = ( a ), static parse_rank = *.parse_rank + 1, static parse = ( \
+             tape[0].type = inc, tape[0].a = tape[-1], {line}, tape.is_constructed[0] = true, \
+             tape.remove(-1) ) )"
+        )
+    };
+    let src = format!(
+        "{}, f := fn (y := i32 ?) -> i32 ( y inc ), f(5)",
+        parse("tape[0].output_type = d.type")
+    );
+    assert_eq!(line(&src), "5", "{src}");
+    let src = format!("{}, i32 5 inc", parse("tape[0].output_type = i32, d + a"));
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("never bare") && !stderr.contains("held line"), "stderr: {stderr}");
+    // A type's `free` body reads its value's fields bare, as a `static` function does.
+    let src = "mut total := i64 0, g := fn () -> dyad ( i64 1 ), \
+               t := type ( n := i64 ?, static free = ( total = total + g() + n ) ), \
+               h := fn () -> void ( x := t (3) ), h(), total";
+    assert_eq!(line(src), "4", "{src}");
 }
 
 #[test]
