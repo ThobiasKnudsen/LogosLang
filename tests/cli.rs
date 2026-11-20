@@ -9966,6 +9966,15 @@ fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
     }
 }
 
+/// ›A type body describes one level‹ [[R222]]: a field named bare is read as the field inside a
+/// `static` initializer too, which checks only names for a value made once.
+#[test]
+fn a_field_named_bare_inside_a_static_initializer_is_read() {
+    let src = "static w := ( t := type ( x := i32 ?, static f := fn () -> i32 ( x + 1 ) ), \
+               u := t (4), u.f() ), w";
+    assert_eq!(run_line(src), (Some(0), "5\n".to_string(), String::new()), "{src}");
+}
+
 /// ›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]: a `fn` written in it
 /// reads its sibling names through the value it is reached by, as a `static` function reads its
 /// value's fields.
