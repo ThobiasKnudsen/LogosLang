@@ -52,7 +52,6 @@ impl<'a> Parser<'a> {
         // SAFETY: `id` is null or a resolved identity from the store.
         unsafe {
             !id.is_null()
-                && dyad::ty(id) == self.types.type_
                 && crate::identities::meta::kind_of(id) == Some(crate::identities::meta::TOKEN_TAG)
         }
     }

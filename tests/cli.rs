@@ -197,6 +197,18 @@ fn logos_file_and_import_read_one_loaded_scope() {
 }
 
 #[test]
+fn logos_with_a_bracket_is_the_plain_group_and_type_reads_no_file() {
+    assert_eq!(line("x := logos (1 + 2), x"), "3");
+    assert_eq!(line("f := fn () -> i32 ( logos (1 + 2) ), f.compile(), f()"), "3");
+    // The bracket gives the file unread: its top level would print `imp`.
+    let prints = "tests/fixtures/prints_pub.logos";
+    assert_eq!(line(&format!("f := logos (file «{prints}»), print «{{f.path}}»")), prints);
+    let (code, _, stderr) = run_line(&format!("type file «{prints}»"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("1:6: error: expected one expression, found more"), "{stderr}");
+}
+
+#[test]
 fn a_file_address_is_text_so_any_file_name_is_reached() {
     let (hidden, dashed) = ("tests/fixtures/.hidden.logos", "tests/fixtures/my-file.logos");
     assert_eq!(line(&format!("(logos file «{hidden}»).h + (logos file «{dashed}»).k")), "11");
@@ -3551,16 +3563,20 @@ fn the_repl_binds_a_name_to_a_type() {
 }
 
 #[test]
-fn logos_is_a_value_reflected_by_dot_logos_and_compared_by_identity() {
+fn type_is_a_value_reflected_by_dot_type_and_compared_by_identity() {
     let (echoes, stderr) = repl(
         "print «{i32 == i32}»\nprint «{i32 == f64}»\nprint «{i32 != f64}»\n\
-          print «{i32.type == logos}»\nprint «{i32.type == i32}»\n\
-          x := i32 5\nprint «{x.type == i32}»\nprint «{x.type == f64}»\nt := logos\n\
-          print «{i32.type == t}»\nlogos.type == logos\n",
+          print «{i32.type == type}»\nprint «{i32.type == i32}»\n\
+          x := i32 5\nprint «{x.type == i32}»\nprint «{x.type == f64}»\nt := type\n\
+          print «{i32.type == t}»\nprint «{type.type == type}»\n\
+          print «{logos.type == language}»\nprint «{logos == type}»\nlanguage.type == type\n",
     );
     assert_eq!(
         echoes,
-        ["true", "false", "true", "true", "false", "true", "false", "true", "true"],
+        [
+            "true", "false", "true", "true", "false", "true", "false", "true", "true", "true",
+            "false", "true"
+        ],
         "stderr: {stderr}"
     );
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -3583,7 +3599,7 @@ fn a_logos_value_prints_its_spelling() {
 #[test]
 fn a_type_returning_function_resolves_at_comptime() {
     let (echoes, stderr) = repl(
-        "pick := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
+        "pick := fn (i := i32 ?) -> type (if (i==0)(i32) else (f64))\n\
           print «{pick(0) == i32}»\nprint «{pick(1) == f64}»\nprint «{pick(0) == f64}»\n\
           t := pick(0)\nt == i32\n",
     );
@@ -3708,7 +3724,7 @@ fn file_mode_runs_each_expression_as_it_parses() {
 #[test]
 fn a_type_call_with_a_runtime_argument_yields_a_type_at_run() {
     let (echoes, stderr) = repl(
-        "pick := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
+        "pick := fn (i := i32 ?) -> type (if (i==0)(i32) else (f64))\n\
           g := fn (n := i32 ?) -> i32 ( a := pick(n), if (a == f64) (7) else (3) )\n\
           print «{g(1)}»\nprint «{g(0)}»\n\
           h := fn (n := i32 ?) -> i32 ( x := pick(n) 5, 1 )\n",
@@ -3727,7 +3743,7 @@ fn a_logos_declaration_declares_a_place_of_that_type() {
 #[test]
 fn a_dependent_typed_declaration_takes_a_computed_type() {
     let (echoes, stderr) = repl(
-        "metalogos := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
+        "metalogos := fn (i := i32 ?) -> type (if (i==0)(i32) else (f64))\n\
           mut b := metalogos(1) ?\nb = 7\nprint «{b.type == f64}»\nb\n",
     );
     assert_eq!(echoes, ["true", "7.0"], "stderr: {stderr}");
@@ -3762,11 +3778,11 @@ fn a_logos_declaration_names_the_non_numeric_gap() {
 #[test]
 fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
     let (echoes, stderr) = repl(
-        "mut a := logos ?\na = i32\nprint «{a.type == logos}»\nprint «{a == i32}»\ny := a 5\ny\n",
+        "mut a := type ?\na = i32\nprint «{a.type == type}»\nprint «{a == i32}»\ny := a 5\ny\n",
     );
     assert_eq!(echoes, ["true", "true", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
-    let (echoes, stderr) = repl(b"mut a := logos ?\na == i32\n");
+    let (echoes, stderr) = repl(b"mut a := type ?\na == i32\n");
     assert!(
         echoes.is_empty() && stderr.contains("`a` is read before it is written"),
         "stderr: {stderr}"
@@ -3775,14 +3791,14 @@ fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
 
 #[test]
 fn a_logos_box_is_written_as_often_as_you_like() {
-    let (echoes, stderr) = repl(b"mut a := logos ?\na = i32\na = f64\na\n");
+    let (echoes, stderr) = repl(b"mut a := type ?\na = i32\na = f64\na\n");
     assert_eq!(echoes, ["f64"], "stderr: {stderr}");
 
     let (echoes, stderr) =
-        repl("mut a := logos ?\na = f64\ng := fn () -> i32 ( a = i32, 1 )\nprint «{g()}»\na\n");
+        repl("mut a := type ?\na = f64\ng := fn () -> i32 ( a = i32, 1 )\nprint «{g()}»\na\n");
     assert_eq!(echoes, ["1", "i32"], "stderr: {stderr}");
 
-    let (_e, stderr) = repl(b"mut a := logos ?\na = 5\n");
+    let (_e, stderr) = repl(b"mut a := type ?\na = 5\n");
     assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
 }
 
@@ -3790,7 +3806,7 @@ fn a_logos_box_is_written_as_often_as_you_like() {
 fn logical_operators_fold_over_bool_literals() {
     let (echoes, stderr) = repl(
         "print «{true or false}»\nprint «{true and true}»\nprint «{not (true)}»\n\
-          mut a := logos ?\na = i32\nif (a.type == f32 or a.type == logos) (a = f64) else (a = i32)\na == f64\n",
+          mut a := type ?\na = i32\nif (a.type == f32 or a.type == type) (a = f64) else (a = i32)\na == f64\n",
     );
     assert_eq!(echoes, ["true", "true", "false", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");

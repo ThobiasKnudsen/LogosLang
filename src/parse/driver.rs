@@ -457,10 +457,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `id` must be null or a dyad from the store.
     pub(super) unsafe fn identity_head(&self, id: DyadPtr) -> Option<DyadPtr> {
-        if id.is_null()
-            || dyad::ty(id) != self.types.type_
-            || crate::identities::meta::kind_of(id).is_none()
-        {
+        if id.is_null() || crate::identities::meta::kind_of(id).is_none() {
             None
         } else {
             Some(id)
@@ -674,14 +671,10 @@ impl<'a> Parser<'a> {
         // SAFETY: `id` is a resolved dyad from the store; the slot is read only where a record head exists.
         self.is_awake_instance(id)
             || unsafe {
-                !id.is_null()
-                    && dyad::ty(id) == self.types.type_
-                    && crate::identities::meta::kind_of(id).is_some()
-                    && crate::identities::meta::is_record_type(id)
-                    && {
-                        let leaf = crate::identities::meta::constructor_of(id);
-                        !leaf.is_null() && dyad::ty(leaf) == self.types.fn_type
-                    }
+                !id.is_null() && crate::identities::meta::is_record_type(id) && {
+                    let leaf = crate::identities::meta::constructor_of(id);
+                    !leaf.is_null() && dyad::ty(leaf) == self.types.fn_type
+                }
             }
     }
 
@@ -692,8 +685,7 @@ impl<'a> Parser<'a> {
         unsafe {
             !d.is_null()
                 && (dyad::ty(d) == self.types.fn_type
-                    || (dyad::ty(d) == self.types.type_
-                        && crate::identities::meta::kind_of(d).is_some()))
+                    || crate::identities::meta::kind_of(d).is_some())
         }
     }
 
