@@ -287,14 +287,13 @@ pub(super) fn build_store(
     {
         return Err(ParseError::NonOwningIntoOwning);
     }
-    // SAFETY: `op` is `=`, an operand record; `place_type` is the type node `carry` was read from.
-    let mint = unsafe {
-        mint::of(store, types, op, &[place_type], types.void_, types.ops.put_leaf(carry))
-    };
     // A frame's place stays the name, which lifting a `?`'s read veto reads; a cell is held as
     // its dereference, which both tiers write through.
     let written = if through_pointer { lhs_d } else { lhs };
-    Ok(store.alloc_words(mint, &[written, rhs]))
+    let leaf = types.ops.put_leaf(carry);
+    // SAFETY: `op` is `=`, an operand record of two roles; `place_type` is the type node `carry`
+    // was read from.
+    Ok(unsafe { mint::node(store, types, op, &[place_type], types.void_, leaf, &[written, rhs]) })
 }
 
 /// What `value` hands a place of `carry`: the word it runs to, or the address of its bytes.
@@ -397,7 +396,7 @@ pub(crate) unsafe fn box_takes(types: &Core, t: DyadPtr, value: DyadPtr) -> bool
         }
         Read::Address => any_node,
         Read::Executable(_) if super::read::output_type(types, value) == t => true,
-        _ => any_node && super::node_output(types, value).is_some(),
+        _ => any_node && super::node_value_output(types, value).is_some(),
     }
 }
 

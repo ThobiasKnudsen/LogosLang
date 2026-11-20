@@ -1996,6 +1996,8 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
             (format!("f := fn (q := dyad ?) -> dyad ( q ), {c}f(i32 5)"), "5"),
             (format!("f := fn (q := dyad ?) -> dyad ( q ), {c}x := f(i64 7), x"), "7"),
             (format!("f := fn () -> i32 ( mut d := dyad ?, d = i64 5, d = 1/2, 1 ), {c}f()"), "1"),
+            ("mut d := dyad ?, d = «a», d".to_string(), "a"),
+            (format!("f := fn () -> i32 ( mut d := dyad ?, d = «a», 1 ), {c}f()"), "1"),
         ] {
             let out = logos().arg(&src).output().unwrap();
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -2003,9 +2005,8 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
             assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
         }
     }
-    // Text, an owning value, and a number in a place no name holds.
+    // An owning value, and a number in a place no name holds.
     for src in [
-        "mut d := dyad ?, d = «a»",
         "mut d := dyad ?, d = alloc 1 of i32 5",
         "f := fn (mut q := dyad ?) -> i32 ( 1 ), f(5)",
         "p := alloc 1 of dyad ?, p@ = 5",
@@ -4036,9 +4037,9 @@ fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
     assert!(stderr.contains("1:34: error: unknown name `\\`"), "{stderr}");
     let (_, _, stderr) = run_line("error «{«a»}»");
     assert!(stderr.contains("run error: a"), "{stderr}");
-    // The quote holds `a «b» c` whole; the text value's read is still missing.
-    let (_, _, stderr) = run_line("s := «a «b» c», print «{s}»");
-    assert!(stderr.contains("run error: a record, text or hole is not read"), "{stderr}");
+    // The quote holds `a «b» c` whole.
+    let (code, stdout, stderr) = run_line("s := «a «b» c», print «{s}»");
+    assert_eq!((code, stdout.as_str()), (Some(0), "a «b» c\n"), "{stderr}");
     let (_, _, stderr) = run_line("import «tests/fixtures/a«b».logos»");
     assert!(stderr.contains("cannot read ./tests/fixtures/a«b».logos"), "{stderr}");
 
@@ -4346,19 +4347,60 @@ fn a_name_of_the_text_type_stands_as_the_type() {
     ] {
         cases.push((src, want));
     }
+    cases.push(("s := string ?, 0".to_string(), "0\n"));
+    cases.push(("mut s := string ?, s = «a», s".to_string(), "a\n"));
     assert_runs(&cases);
-    let (code, _, stderr) = run_line("s := string ?, 0");
-    assert_eq!(code, Some(1), "{stderr}");
-    assert!(
-        stderr.contains("declarations of non-numeric types are not in the seed yet"),
-        "{stderr}"
-    );
     // A `»` after the name is no quote's end.
     let (code, _, stderr) = run_line(&format!("{t}, (t 1 + 2»), 7"));
     assert_eq!(code, Some(1), "{stderr}");
     assert!(stderr.contains("1:24: error: unknown name `»`"), "{stderr}");
     let (echoes, stderr) = repl(format!("{t}\n7\nt\n8\n").as_bytes());
     assert_eq!(echoes, ["7", "8"], "stderr: {stderr}");
+}
+
+/// ›Text literals are plain values; `#` is the one comment constructor‹ [[R160]]: a text node and
+/// a place of text read as the node's address, wherever they stand, on both tiers, and show the
+/// text they hold.
+#[test]
+fn a_text_node_and_a_place_of_text_read_as_the_node() {
+    let mut cases: Vec<(String, &str)> = [
+        ("s := «a», 0", "0\n"),
+        ("«a», 0", "0\n"),
+        ("( «a», 0 )", "0\n"),
+        ("for 0..2 ( «a» ), 0", "0\n"),
+        ("t := type ( static k := «a» ), 0", "0\n"),
+        ("regex «[0-9]+», 0", "0\n"),
+        ("f := fn (a := dyad ?) -> i32 ( 1 ), f(«a»)", "1\n"),
+        ("x := 5, x:name == «x»", "false\n"),
+        ("«a»", "a\n"),
+        ("s := «a», s", "a\n"),
+        ("if (true) ( «a» ) else ( «b» )", "a\n"),
+        ("immediate «a»", "a\n"),
+        ("import tests/fixtures/pub_text.logos, s", "a\n"),
+        (
+            "sq := type ( a := dyad ?, static parse = ( n := tape[-1]:name, \
+             print «{n} {tape.spelling[-1]}», tape[0].type = sq, tape[0].a = tape[-1], \
+             tape.is_constructed[0] = true, tape.remove(-1) ) ), x := i32 3, x sq, 0",
+            "x x\n0\n",
+        ),
+    ]
+    .into_iter()
+    .map(|(src, want)| (src.to_string(), want))
+    .collect();
+    for c in ["", "f.compile(), "] {
+        for (src, want) in [
+            (format!("f := fn () -> i32 ( «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( s := «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( defer «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn (a := string ?) -> i32 ( print «{{a}}», 1 ), {c}f(«hi»)"), "hi\n1\n"),
+            (format!("f := fn () -> string ( «a» ), {c}f()"), "a\n"),
+        ] {
+            cases.push((src, want));
+        }
+    }
+    assert_runs(&cases);
+    let (echoes, stderr) = repl("«a»\ns := «a»\ns\n".as_bytes());
+    assert_eq!(echoes, ["a", "a"], "stderr: {stderr}");
 }
 
 #[test]
@@ -4562,8 +4604,8 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert!(!out.status.success() && out.stdout.is_empty(), "{tail}: {stderr}");
         assert!(stderr.contains("cannot compute"), "{tail}: {stderr}");
     }
-    // `&x` is typed `&`, not by the `@i32` it gives; `y mk` is typed `mk`, not by the record its
-    // `run` gives, which a copy carries.
+    // `&x` is typed by `&`'s mint, not by the `@i32` it gives; `y mk` is typed `mk`, not by the
+    // record its `run` gives, which a copy carries.
     for (src, want) in [
         ("x := i32 5, (&x).type == @i32".to_string(), "false"),
         ("f := fn () -> bool ( x := i32 5, (&x).type == @i32 ), f.compile(), f()".into(), "false"),
@@ -4607,6 +4649,81 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
     let out = logos().arg(format!("{mk}, y := i32 3, z := y mk, z.x")).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n");
+}
+
+/// ›An operation mints through a chooser, one mint per set of operand types, so each mint's `run`
+/// body is parsed once‹ [[R301]]: `&` mints per pointee type and negation per operand type, as
+/// `+` mints, and negation is its own identity (›`-` negates where a space stands before it and
+/// none after, or no value stands to its left; any other `-` subtracts‹ [[R157]]), on both tiers.
+#[test]
+fn every_operation_is_typed_by_its_mint() {
+    let mut cases = Vec::new();
+    for (body, want) in [
+        ("(&x).type == (&w).type", "false\n"),
+        ("(&x).type == (&y).type", "true\n"),
+        ("(x + x).type == (w + w).type", "false\n"),
+        ("(-x).type == (x - y).type", "false\n"),
+        ("(-x).type == (-y).type", "true\n"),
+        ("(-x).type == (-w).type", "false\n"),
+        ("(-x).output_type == i32", "true\n"),
+        ("(-x).operand == x", "true\n"),
+    ] {
+        cases.push((format!("x := i32 3, y := i32 4, w := i64 5, {body}"), want));
+        let f = format!("f := fn (x := i32 ?, y := i32 ?, w := i64 ?) -> bool ( {body} )");
+        cases.push((format!("{f}, f(3, 4, 5)"), want));
+        cases.push((format!("{f}, f.compile(), f(3, 4, 5)"), want));
+    }
+    // Negation over each kind of number: an integer wraps, a float flips its sign, a rational
+    // value is negated exactly.
+    for (ty, arg, want) in
+        [("u8", "3", "253\n"), ("i8", "i8 -128", "-128\n"), ("f64", "0.0", "-0.0\n")]
+    {
+        let f = format!("f := fn (m := {ty} ?) -> {ty} ( -m )");
+        cases.push((format!("{f}, f({arg})"), want));
+        cases.push((format!("{f}, f.compile(), f({arg})"), want));
+    }
+    cases.push(("m := rational_number 3, n := -m, n".into(), "-3\n"));
+    // `move` is typed by its mint for the type it hands on.
+    for (gives, body, want) in [
+        ("bool", "(move x).type == (move w).type", "false\n"),
+        ("bool", "(move x).type == (move y).type", "true\n"),
+        ("bool", "(move x).output_type == i32", "true\n"),
+        ("i32", "z := move x, z", "3\n"),
+    ] {
+        let f = format!("f := fn () -> {gives} ( x := i32 3, y := i32 4, w := i64 5, {body} )");
+        cases.push((format!("{f}, f()"), want));
+        cases.push((format!("{f}, f.compile(), f()"), want));
+    }
+    cases.push(("p := alloc 1 of i32 5, q := move p, q@".into(), "5\n"));
+    // `alloc` is typed by its mint for its count's type and the cells' type, interpreted only.
+    for (body, want) in [
+        ("(alloc 1 of i32 5).type == (alloc 1 of i32 6).type", "true\n"),
+        ("(alloc 1 of i32 5).type == (alloc 1 of i64 6).type", "false\n"),
+        ("(alloc 1 of i32 5).type == (alloc i64 1 of i32 6).type", "false\n"),
+        ("(alloc 2 of i32 5).count", "2\n"),
+        ("p := alloc 2 of i32 5, (p + 1)@", "5\n"),
+    ] {
+        cases.push((body.into(), want));
+    }
+    // A map's compare against `?` is a node of `==`'s or `!=`'s mint.
+    let map = "m := hashmap i64 -> i64, n := hashmap i64 -> hashmap i64 -> i64";
+    for (body, want) in [
+        ("print «{m == ?} {? != m} {n[1] == ?}»", "false true true\n"),
+        ("(m == ?).output_type == bool", "true\n"),
+        ("(m == ?).type == (m != ?).type", "false\n"),
+        ("(m == ?).type == (? == m).type", "false\n"),
+        ("(m == ?).rhs == ?", "true\n"),
+    ] {
+        cases.push((format!("{map}, {body}"), want));
+    }
+    assert_runs(&cases);
+    for src in
+        ["x := i32 3, (-x).lhs", "f := fn (x := i32 ?) -> i32 ( (-x).lhs ), f.compile(), f(3)"]
+    {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("does not fit the node's type"), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]

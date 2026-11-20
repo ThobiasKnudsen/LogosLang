@@ -28,7 +28,7 @@ pub enum RunError {
     NoActivation,
     /// A place declared and never filled.
     Uninitialized,
-    /// A record instance, text or hole read as one value.
+    /// A record instance or hole read as one value.
     NoWholeRead,
     /// `lex` handed something other than a string.
     NotText,

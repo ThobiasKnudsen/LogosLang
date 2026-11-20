@@ -31,7 +31,7 @@ pub(crate) fn is_fresh_key(key: &str) -> bool {
 /// `unknown_name` holds text as `string` and `regex` do, `[len][bytes]`, and has no
 /// constructor, so the name standing alone is the type.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, STRING_TAG, meta::prec::INERT);
+    let record = meta::record_of_nodes(cx.store, STRING_TAG, meta::prec::INERT);
     let unknown_name = cx.store.alloc_head(cx.type_, record);
     cx.declare("unknown_name", unknown_name);
     let mut mint = |pattern: &str| {

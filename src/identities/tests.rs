@@ -1071,7 +1071,9 @@ fn an_operation_mints_once_per_set_of_field_types() {
         // `x` lies inside `i64`: the mint is `+`'s for `i64`, its `lhs` the conversion of `x`.
         let i64_ = core.numtypes[NumType::I64 as usize];
         assert_eq!(minted(wide), (core.plus, Some(i64_), Some(add(NumType::I64))));
-        assert_eq!(dyad::ty(operands(wide).0), core.convert);
+        let conversion = minted(operands(wide).0);
+        assert_eq!(conversion, (core.convert, Some(i64_), Some(core.ops.convert_)));
+        assert_eq!(mint::key_of(dyad::ty(operands(wide).0)), Some(&[core.i32_, i64_][..]));
         assert_ne!(dyad::ty(one), dyad::ty(times));
         // The node holds its operands and nothing else.
         let m = dyad::ty(one);
@@ -1824,7 +1826,7 @@ fn comptime_division_is_exact_fractions() {
 }
 
 #[test]
-fn string_literals_parse_and_are_inert() {
+fn a_string_literal_reads_as_its_node_address() {
     let (mut store, mut trie, core) = new_core();
     let node = {
         let mut s = ScopeStack::new();
@@ -1839,7 +1841,10 @@ fn string_literals_parse_and_are_inert() {
     }
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `node` is the string literal just parsed.
-    assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::NoWholeRead));
+    unsafe {
+        assert_eq!(read::read_kind(&core, node), read::Read::Node);
+        assert_eq!(rt.run(node), Ok(node as i64));
+    }
     assert_eq!(parse_err("«a» + 1"), ParseError::UnsupportedOperands);
 }
 

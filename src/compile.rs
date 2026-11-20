@@ -797,6 +797,19 @@ impl<'a> Lowerer<'a, '_> {
         })
     }
 
+    /// `ineg` or `fneg` at the operand's width.
+    ///
+    /// # Safety
+    /// `node` must be a node of negation's mint over a number type, `[operand]`.
+    pub(crate) unsafe fn lower_negate(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
+        let operand = *(dyad::value(node) as *const DyadPtr);
+        let Operand::Concrete(nt) = operand_of(self.types, operand) else {
+            return Err(CompileError::Internal("a resolved negation has a numeric operand"));
+        };
+        let v = self.lower(operand)?;
+        Ok(if nt.is_float() { self.builder.ins().fneg(v) } else { self.builder.ins().ineg(v) })
+    }
+
     fn const_int(&mut self, nt: NumType, imm: i64) -> Value {
         self.builder.ins().iconst(nt.cranelift_type(), imm)
     }
@@ -866,10 +879,9 @@ impl<'a> Lowerer<'a, '_> {
         // The width is in the mint: the parse chose its leaf for the resolved operand
         // types, so they are not classified a second time here.
         let leaf = mint::operation_of(dyad::ty(node)).unwrap_or(std::ptr::null_mut());
+        // A map's compare against `?` is interpreted only.
         let Some(logos) = self.types.ops.cmp_nt_of(leaf) else {
-            return Err(CompileError::Internal(
-                "a resolved comparison node holds a comparison leaf",
-            ));
+            return Err(CompileError::NotLowerable(node));
         };
         let l = self.lower(lhs)?;
         let r = self.lower(rhs)?;
@@ -1481,7 +1493,7 @@ unsafe fn compile_fn_body(
 }
 
 /// How the declared output travels in the container: not at all for `void`,
-/// as an address for a type value, a node a Logos `parse` builds, or a record's
+/// as an address for a type value, a value that is its node's address, or a record's
 /// result slot, at its width for a scalar.
 ///
 /// # Safety
@@ -1491,7 +1503,7 @@ unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, Com
         Ok(None)
     } else if out == types.type_
         || out == types.dyad_
-        || crate::identities::meta::is_node_valued(out, types.fn_type)
+        || crate::identities::meta::value_is_node(out, types.fn_type)
         || crate::identities::read::carry_of(types, out)
             .and_then(crate::identities::read::Carry::bytes)
             .is_some()

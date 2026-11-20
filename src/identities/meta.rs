@@ -17,15 +17,16 @@
 //! [34..42]   u64  pointer type: the interned `@T` of this type, or 0
 //! [42..50]   u64  extent: a `seed-extent` callable leaf for a token that reads its own
 //!                 extent, or 0
-//! [50..58]   u64  mints: this type's mints made so far, an array of `[key, mint]` pairs, or 0
+//! [50..58]   u64  mints: this type's mints made so far, an array, or 0
 //! [58..66]   u64  mint of: the type this one is a mint of, or 0
-//! [66..]     payload, per kind:
+//! [66]       u8   1 where the type's definition says a value of it is its node's address
+//! [67..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
 //!                                 none), then arity × `dyad@` role-name strings
 //!              RECORD            see `RECORD_TAG`
-//!            a mint's is its origin's, no op or output slot, then `[output_type, op]`, the
-//!            words its nodes share
+//!            a mint's is its origin's, no op or output slot, then `[output_type, op, key]`,
+//!            the words its nodes share and the array of field types it was made for
 //! ```
 //!
 //! The kind byte continues `numtype`'s tag space (`NumType` 0–9, `VOID_TAG` 10,
@@ -75,7 +76,8 @@ const POINTER_TYPE_OFF: usize = 34;
 const EXTENT_OFF: usize = 42;
 const MINTS_OFF: usize = 50;
 const MINT_OF_OFF: usize = 58;
-pub(crate) const PAYLOAD_OFF: usize = 66;
+const NODE_VALUE_OFF: usize = 66;
+pub(crate) const PAYLOAD_OFF: usize = 67;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -138,6 +140,13 @@ pub(crate) fn record(store: &mut Store, kind: u8, parse_rank: f64) -> *mut u8 {
     record_assoc(store, kind, parse_rank, Assoc::Left)
 }
 
+/// A record with no payload, for a type whose values are their nodes' addresses.
+pub(crate) fn record_of_nodes(store: &mut Store, kind: u8, parse_rank: f64) -> *mut u8 {
+    let mut blob = header(kind, Assoc::Left, parse_rank);
+    blob[NODE_VALUE_OFF] = 1;
+    store.alloc_bytes(&blob)
+}
+
 /// Right for a prefix word, so that in a chain the rightmost runs first and each finds
 /// its operand constructed.
 pub(crate) fn record_assoc(store: &mut Store, kind: u8, parse_rank: f64, assoc: Assoc) -> *mut u8 {
@@ -165,15 +174,16 @@ pub(crate) fn operand_record(
 }
 
 /// A built-in's mint's record: its operand record's roles with no op slot and no output slot,
-/// then the words every node of the mint shares.
+/// then the words every node of the mint shares, the field types it was made for last.
 ///
 /// # Safety
-/// `origin` must carry a `TUPLE_TAG` operand record.
+/// `origin` must carry a `TUPLE_TAG` operand record; `key` must be an array node.
 pub(crate) unsafe fn mint_record(
     store: &mut Store,
     origin: DyadPtr,
     output_type: DyadPtr,
     op: DyadPtr,
+    key: DyadPtr,
 ) -> *mut u8 {
     let kind = kind_of(origin).expect("a mint's origin carries a record");
     debug_assert_eq!(kind, TUPLE_TAG, "a built-in's mint's nodes are fixed operand runs");
@@ -184,13 +194,13 @@ pub(crate) unsafe fn mint_record(
     for i in 0..arity {
         blob.extend_from_slice(&(role_of(origin, i) as usize).to_ne_bytes());
     }
-    for word in [output_type, op] {
+    for word in [output_type, op, key] {
         blob.extend_from_slice(&(word as usize).to_ne_bytes());
     }
     store.alloc_bytes(&blob)
 }
 
-/// This type's mints made so far, an array of `[key, mint]` pairs; null while it has none.
+/// This type's mints made so far, an array; null while it has none.
 ///
 /// # Safety
 /// As `parse_rank_of`.
@@ -199,7 +209,7 @@ pub(crate) unsafe fn mints_of(id: DyadPtr) -> DyadPtr {
 }
 
 /// # Safety
-/// `id` must carry a record and `mints` must be an array node of `[key, mint]` pairs.
+/// `id` must carry a record and `mints` must be an array node of its mints.
 pub(crate) unsafe fn install_mints(id: DyadPtr, mints: DyadPtr) {
     std::ptr::write_unaligned(dyad::head(id).add(MINTS_OFF) as *mut DyadPtr, mints);
 }
@@ -214,6 +224,7 @@ pub(crate) unsafe fn mint_of(id: DyadPtr) -> DyadPtr {
 
 const MINT_OUTPUT: usize = 0;
 const MINT_OP: usize = 1;
+const MINT_KEY: usize = 2;
 
 /// Where the mint's `k`th shared word lies, after its payload.
 ///
@@ -238,6 +249,14 @@ pub(crate) unsafe fn mint_output_of(id: DyadPtr) -> DyadPtr {
 /// As `mint_word_at`.
 pub(crate) unsafe fn mint_op_of(id: DyadPtr) -> DyadPtr {
     mint_word_at(id, MINT_OP).read_unaligned()
+}
+
+/// The array of field types the mint was made for.
+///
+/// # Safety
+/// As `mint_word_at`.
+pub(crate) unsafe fn mint_key_of(id: DyadPtr) -> DyadPtr {
+    mint_word_at(id, MINT_KEY).read_unaligned()
 }
 
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
@@ -480,6 +499,19 @@ pub(crate) unsafe fn is_node_valued(id: DyadPtr, fn_type: DyadPtr) -> bool {
     }
     let ctor = constructor_of(id);
     !ctor.is_null() && dyad::ty(ctor) == fn_type
+}
+
+/// Whether a value of `id` is its node's address, eight bytes in a place: the type's definition
+/// says so, or its values are nodes a Logos `parse` builds (`is_node_valued`). Safe on any node,
+/// as `kind_of` is.
+///
+/// # Safety
+/// `id` must be null or a valid dyad from the store; `fn_type` the `fn` identity.
+pub(crate) unsafe fn value_is_node(id: DyadPtr, fn_type: DyadPtr) -> bool {
+    if id.is_null() || kind_of(id).is_none() {
+        return false;
+    }
+    *dyad::head(id).add(NODE_VALUE_OFF) != 0 || is_node_valued(id, fn_type)
 }
 
 const NO_SLOT: u8 = u8::MAX;

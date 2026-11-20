@@ -141,7 +141,9 @@ unsafe fn place(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunEr
     // A conversion into the type its placed operand already gives converts nothing: the node is
     // what the written conversion makes (›A tape read checked against a number type reads as that
     // number‹ [[R229]]).
-    if dyad::ty(node) == types.convert && output_type(types, words[0]) == output_type(types, node) {
+    if super::mint::origin(dyad::ty(node)) == types.convert
+        && output_type(types, words[0]) == output_type(types, node)
+    {
         return Ok(Placed::New(words[0]));
     }
     let copy = rebuild(rt.store(), node, layout, &words);

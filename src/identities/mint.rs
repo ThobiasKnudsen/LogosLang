@@ -1,11 +1,12 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The built-in operators' chooser: one mint per set of field types their parse chooses, built
-//! once and kept on the type. A node's type is its mint, and the mint holds what its nodes share:
-//! the type they give back and what they run. A Logos-written type mints through a function of
-//! its own. ›An operation mints through a chooser, one mint per set of operand types, so each
-//! mint's `run` body is parsed once‹ [[R301]]
+//! The built-in operations' chooser: one mint per set of field types their parse chooses, built
+//! once and kept on the type, and the one builder of their nodes. A node's type is its mint, and
+//! the mint holds what its nodes share: the type they give back, what they run and the field
+//! types it was made for. A
+//! Logos-written type mints through a function of its own. ›An operation mints through a chooser,
+//! one mint per set of operand types, so each mint's `run` body is parsed once‹ [[R301]]
 
 use super::{array, meta};
 use crate::dyad::DyadPtr;
@@ -17,14 +18,33 @@ use crate::Core;
 /// node‹ [[R194]]).
 pub(crate) const STATIC_FIELD: &str = "output_type";
 
-/// A built-in's mint for the field types `key`, made the first time and kept on `origin`. The
-/// parse that chooses it gives the type its nodes give back and the operation they run; the
-/// parse choosing the operation is a stand-in for #69.
+/// A node of the built-in operation `origin`, its fields `words` in the order of `origin`'s roles,
+/// typed by `origin`'s mint for the field types `key`: the one way a built-in operation's node is
+/// built. The parse that chooses the mint gives the type its nodes give back and the operation
+/// they run; the parse choosing the operation is a stand-in for #69.
 ///
 /// # Safety
-/// `origin` must carry a `TUPLE_TAG` operand record; `key` and `output_type` null or type nodes,
-/// `op` a callable leaf, all from the store.
-pub(crate) unsafe fn of(
+/// `origin` must carry a `TUPLE_TAG` operand record of `words.len()` roles; `key` and
+/// `output_type` null or type nodes, `op` a callable leaf, `words` dyads, all from the store.
+pub(crate) unsafe fn node(
+    store: &mut Store,
+    types: &Core,
+    origin: DyadPtr,
+    key: &[DyadPtr],
+    output_type: DyadPtr,
+    op: DyadPtr,
+    words: &[DyadPtr],
+) -> DyadPtr {
+    debug_assert_eq!(meta::arity_of(origin), words.len(), "a mint's node holds its fields alone");
+    let mint = of(store, types, origin, key, output_type, op);
+    store.alloc_words(mint, words)
+}
+
+/// `origin`'s mint for the field types `key`, made the first time and kept on `origin`.
+///
+/// # Safety
+/// As [`node`].
+unsafe fn of(
     store: &mut Store,
     types: &Core,
     origin: DyadPtr,
@@ -43,7 +63,7 @@ pub(crate) unsafe fn of(
 }
 
 /// # Safety
-/// As `of`.
+/// As [`node`].
 unsafe fn make(
     store: &mut Store,
     types: &Core,
@@ -53,15 +73,14 @@ unsafe fn make(
     op: DyadPtr,
 ) -> DyadPtr {
     let key = array::build(store, types.array_, key);
-    let record = meta::mint_record(store, origin, output_type, op);
+    let record = meta::mint_record(store, origin, output_type, op, key);
     let mint = store.alloc_head(types.type_, record);
     let mut made = meta::mints_of(origin);
     if made.is_null() {
         made = array::build(store, types.array_, &[]);
         meta::install_mints(origin, made);
     }
-    let pair = array::build(store, types.array_, &[key, mint]);
-    array::push(store, made, pair);
+    array::push(store, made, mint);
     mint
 }
 
@@ -72,10 +91,7 @@ unsafe fn find(origin: DyadPtr, key: &[DyadPtr]) -> Option<DyadPtr> {
     if made.is_null() {
         return None;
     }
-    array::items(made).iter().find_map(|&pair| match array::items(pair) {
-        &[made_for, mint] if array::items(made_for) == key => Some(mint),
-        _ => None,
-    })
+    array::items(made).iter().copied().find(|&mint| array::items(meta::mint_key_of(mint)) == key)
 }
 
 /// # Safety
@@ -120,4 +136,20 @@ pub(crate) unsafe fn static_field(t: DyadPtr, name: &str) -> Option<DyadPtr> {
 /// As `is_mint`.
 pub(crate) unsafe fn operation_of(t: DyadPtr) -> Option<DyadPtr> {
     is_mint(t).then(|| meta::mint_op_of(t))
+}
+
+/// What the nodes of `origin`'s mint for the field types `key` give, once that mint is made.
+///
+/// # Safety
+/// `origin` must carry a record whose memo only [`node`] built and grew.
+pub(crate) unsafe fn output_for(origin: DyadPtr, key: &[DyadPtr]) -> Option<DyadPtr> {
+    find(origin, key).map(|mint| meta::mint_output_of(mint))
+}
+
+/// The field types the mint `t` was made for; `None` when `t` is no mint.
+///
+/// # Safety
+/// As `is_mint`.
+pub(crate) unsafe fn key_of<'a>(t: DyadPtr) -> Option<&'a [DyadPtr]> {
+    is_mint(t).then(|| array::items(meta::mint_key_of(t)))
 }

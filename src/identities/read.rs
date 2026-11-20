@@ -3,13 +3,14 @@
 
 //! The reading rule: how a node's value is read, decided once in `read_kind`, which
 //! every reader asks. What decides it: the binding hop, storage by its declared type,
-//! then `fn` (the one identity no record can carry), then the type's record kind byte.
+//! then `fn` (the one identity no record can carry), then the type's record: whether a value
+//! of it is its node's address, else its kind byte.
 //! DESIGN ›The dyad's read surface‹, ›A scope lays out its declarations…‹. Beside it,
 //! `place_of`: whether a node is a place at all.
 
 use super::callable;
 use super::meta;
-use super::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG};
+use super::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, VOID_TAG};
 use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::store::Store;
@@ -27,7 +28,8 @@ pub enum Read {
     Container(DyadPtr),
     /// A type standing as a value: its own address is the value.
     Identity,
-    /// A node a Logos `parse` built: its own address is the value.
+    /// A node whose type's record says its own address is the value: text, a node a Logos
+    /// `parse` built.
     Node,
     /// A dyad view: the stored address is the value.
     Address,
@@ -38,8 +40,7 @@ pub enum Read {
     Rational,
     /// A record instance place: read by field or by address, never whole.
     Aggregate,
-    /// No whole-value read: text, unit, a regex, an array, a callable, a convention, a
-    /// parse-only identity.
+    /// No whole-value read: an array, a callable, a convention, a parse-only identity.
     Opaque,
     /// Prose, or a `fn` literal standing as a statement: yields 0.
     Unit,
@@ -91,15 +92,15 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
         debug_assert!(!dyad::head(op).is_null(), "a type with no record stands in a type slot");
         return Read::Undefined;
     };
+    if meta::value_is_node(op, types.fn_type) {
+        return Read::Node;
+    }
     match kind {
         k if k < VOID_TAG => Read::Scalar(numtype::of_type_node(op)),
         ADDR_TAG => Read::Pointer(numtype::pointee_of(op)),
         meta::TYPEREC_TAG => Read::Identity,
         meta::DYAD_TAG => Read::Address,
         meta::RECORD_TAG => {
-            if meta::is_node_valued(op, types.fn_type) {
-                return Read::Node;
-            }
             if !meta::run_body_of(op).is_null() {
                 // The node runs as the function built for its field-type set,
                 // and not at all until one exists.
@@ -133,11 +134,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
         _ => {
             debug_assert!(matches!(
                 kind,
-                STRING_TAG
-                    | meta::ARRAY_TAG
-                    | meta::CALLABLE_TAG
-                    | meta::CONVENTION_TAG
-                    | meta::TOKEN_TAG
+                meta::ARRAY_TAG | meta::CALLABLE_TAG | meta::CONVENTION_TAG | meta::TOKEN_TAG
             ));
             Read::Opaque
         }
@@ -274,6 +271,9 @@ pub unsafe fn place_kind(types: &Core, t: DyadPtr) -> Read {
 pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     let t = super::type_identity_of(types, t)?;
     let kind = meta::kind_of(t)?;
+    if meta::value_is_node(t, types.fn_type) {
+        return Some((Read::Container(t), 8));
+    }
     match kind {
         meta::FRACTION_TAG => Some((Read::Rational, 16)),
         k if k < VOID_TAG => {
@@ -283,9 +283,6 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
         ADDR_TAG => Some((Read::Pointer(numtype::pointee_of(t)), 8)),
         meta::TYPEREC_TAG | meta::DYAD_TAG => Some((Read::Container(t), 8)),
         meta::RECORD_TAG => {
-            if meta::is_node_valued(t, types.fn_type) {
-                return Some((Read::Container(t), 8));
-            }
             // A node of a type with a run is a call, so the type has no place.
             if !meta::run_body_of(t).is_null() {
                 return None;
@@ -603,7 +600,7 @@ mod tests {
             assert_eq!(read_kind(types, exprs[7]), Read::Scalar(NumType::I32));
             assert!(!types.is_storage(exprs[7]), "a literal is no storage");
             assert_eq!(read_kind(types, exprs[8]), Read::Literal);
-            assert_eq!(read_kind(types, exprs[9]), Read::Opaque);
+            assert_eq!(read_kind(types, exprs[9]), Read::Node);
             assert_eq!(read_kind(types, exprs[10]), Read::Unit);
             assert_eq!(read_kind(types, exprs[11]), Read::Address);
             match read_kind(types, exprs[12]) {
@@ -805,7 +802,8 @@ mod tests {
             assert_eq!(place_layout(types, core.type_), Some((Read::Container(core.type_), 8)));
             assert_eq!(place_layout(types, core.dyad_), Some((Read::Container(core.dyad_), 8)));
             assert_eq!(place_layout(types, core.rational), Some((Read::Rational, 16)));
-            for t in [core.string_, core.void_, core.comment_, core.plus, core.fn_type] {
+            assert_eq!(place_layout(types, core.string_), Some((Read::Container(core.string_), 8)));
+            for t in [core.void_, core.comment_, core.plus, core.fn_type] {
                 assert_eq!(place_layout(types, t), None, "{t:p}");
             }
             assert_eq!(place_layout(types, std::ptr::null_mut()), None);

@@ -68,7 +68,7 @@ pub(crate) fn render(rt: &mut Runtime, node: DyadPtr) -> Result<Vec<u8>, RunErro
     unsafe { compose(&*types, node, |part| rt.run(part)) }
 }
 
-/// The text of a `print` or `error` node on either tier: its text runs as written, each `{…}`
+/// The text of a `print` or `error` node on either tier: each part, a text run or a `{…}`,
 /// shown as the echo shows the container `value` gives for it, in order.
 ///
 /// # Safety
@@ -80,12 +80,8 @@ unsafe fn compose(
 ) -> Result<Vec<u8>, RunError> {
     let mut line = Vec::new();
     for &part in parts_of(node) {
-        if is_text(types, part) {
-            line.extend_from_slice(super::string::text(part));
-        } else {
-            let bits = value(part)?;
-            line.extend_from_slice(super::display_value(types, part, bits).as_bytes());
-        }
+        let bits = value(part)?;
+        line.extend_from_slice(super::display_value(types, part, bits).as_bytes());
     }
     Ok(line)
 }
@@ -98,27 +94,15 @@ unsafe fn parts_of<'a>(node: DyadPtr) -> &'a [DyadPtr] {
     super::array::items(*(dyad::value(node) as *const DyadPtr))
 }
 
-/// A part written as text; every other part is a `{…}` to run. A `{…}` that yields a string,
-/// `{a:name}`, is a read, not a text run.
-///
-/// # Safety
-/// `part` must be a part of a `print` or `error` node.
-unsafe fn is_text(types: &Core, part: DyadPtr) -> bool {
-    dyad::ty(part) == types.string_
-        && super::read::read_kind(types, part) == super::read::Read::Opaque
-}
-
-/// Each `{…}` runs in the compiled frame, its value in a block; the text is made and written
+/// Each part runs in the compiled frame, its value in a block; the text is made and written
 /// by calling back into the seed.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a `print` node `build` made; its `{…}` parts are reduced dyads.
+    // SAFETY: `node` is a `print` node `build` made; its parts are reduced dyads.
     unsafe {
         let mut values = Vec::new();
         for &part in parts_of(node) {
-            if !is_text(lw.types(), part) {
-                let v = lw.lower(part)?;
-                values.push(lw.container(part, v));
-            }
+            let v = lw.lower(part)?;
+            values.push(lw.container(part, v));
         }
         let values = lw.spill(&values);
         let node = lw.node_addr(node);
@@ -129,7 +113,7 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 
 /// # Safety
 /// Called only by compiled code, with its context, a `print` node from the store and a block
-/// holding one container per `{…}`, in order.
+/// holding one container per part, in order.
 unsafe extern "C" fn compiled_print(
     ctx: *mut crate::run::Context,
     node: DyadPtr,
@@ -137,7 +121,7 @@ unsafe extern "C" fn compiled_print(
 ) -> i64 {
     crate::run::interpret_step(ctx, |rt| {
         let mut next = values;
-        // SAFETY: as above; `compose` asks for one container per `{…}`.
+        // SAFETY: as above; `compose` asks for one container per part.
         let line = unsafe {
             compose(rt.types(), node, |_| {
                 let bits = *next;

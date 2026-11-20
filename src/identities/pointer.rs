@@ -12,7 +12,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::numtype::NumType;
 use super::read::carry_of;
-use super::{assign, meta, Cx};
+use super::{assign, meta, mint, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -49,8 +49,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> PointerIds {
         Ok(crate::parse::Constructed::Placed)
     });
 
-    // `&x`'s node is typed `&`, the identity whose parse built it (›`x.type` reads the type word
-    // of the node a name or an expression stands for‹ [[R279]]).
+    // `&x`'s node is typed by `&`'s mint for the pointee's type (›An operation mints through a
+    // chooser, one mint per set of operand types, so each mint's `run` body is parsed once‹
+    // [[R301]]).
     let record = address_record(cx, meta::prec::ADDRESS, Assoc::Right);
     let amp = cx.store.alloc_head(cx.type_, record);
     cx.declare("&", amp);
@@ -79,19 +80,13 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> PointerIds {
 }
 
 fn address_record(cx: &mut Cx, parse_rank: f64, assoc: Assoc) -> *mut u8 {
-    meta::operand_record(
-        cx,
-        meta::TUPLE_TAG,
-        parse_rank,
-        assoc,
-        &["place", "pointee", "held", "op", "output_type"],
-    )
+    meta::operand_record(cx, meta::TUPLE_TAG, parse_rank, assoc, &["place", "held"])
 }
 
-/// `[place, pointee, held, op, output_type]` under `addr`. The address resolves at run/lower
-/// time, so a frame-relative local yields a per-activation address. `held` is null for a place,
-/// and for a value nothing names the declaration that lands it in `place`, an unspelled name its
-/// scope holds, run before the address is handed out.
+/// `[place, held]` under `addr`'s mint. The address resolves at run/lower time, so a
+/// frame-relative local yields a per-activation address. `held` is null for a place, and for a
+/// value nothing names the declaration that lands it in `place`, an unspelled name its scope
+/// holds, run before the address is handed out.
 ///
 /// # Safety
 /// `place` must be a frame's place or a deref node from the store; `held` null or a declare
@@ -106,8 +101,8 @@ pub(crate) unsafe fn build_addr(
     build_address(store, types, types.addr_, place, held, pointee)
 }
 
-/// An address node of `ty`, `&` or `addr`, handing the address out as `@pointee`, which need not
-/// be the type the place's bytes are read by: `void` erases it.
+/// An address node of `ty`, `&` or `addr`, under its mint for `pointee`, handing the address out
+/// as `@pointee`, which need not be the type the place's bytes are read by: `void` erases it.
 ///
 /// # Safety
 /// As [`build_addr`]; `ty` `&` or `addr`, `pointee` a type node from the store.
@@ -120,7 +115,7 @@ pub(crate) unsafe fn build_address(
     pointee: DyadPtr,
 ) -> DyadPtr {
     let output = make_pointer_type(store, types.type_, pointee);
-    store.alloc_words(ty, &[place, pointee, held, types.ops.addr_, output])
+    mint::node(store, types, ty, &[pointee], output, types.ops.addr_, &[place, held])
 }
 
 /// The place whose address `node` hands out when it runs the address operation, `&x`'s or an
@@ -142,7 +137,7 @@ pub(crate) unsafe fn address_place(types: &Core, node: DyadPtr) -> Option<DyadPt
 /// `node` must be an address node from [`build_address`].
 unsafe fn addr_parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     let p = dyad::value(node) as *const DyadPtr;
-    (*p, *p.add(2))
+    (*p, *p.add(1))
 }
 
 fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -214,7 +209,7 @@ pub(crate) fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
 
 /// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,
 /// so `free`/`move` recognize owning-ness by the slot while a borrow's pointer has none.
-/// Never interned.
+/// A new node at each call; `alloc` makes one per mint.
 ///
 /// # Safety
 /// `destructor` must be a callable leaf running the owning pointer's teardown.
