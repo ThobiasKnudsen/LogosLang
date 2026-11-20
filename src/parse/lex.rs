@@ -230,12 +230,18 @@ impl<'a> Parser<'a> {
             // SAFETY: the binding the trie resolved, or the fresh spelling's node, is a dyad
             // from the store.
             let kind = unsafe { read_kind(self.types, id) };
-            if self.is_box(id) {
+            let dyad_box = kind == Read::Container(self.types.dyad_);
+            if dyad_box {
                 self.run_first(tape, cell.start)?;
+            } else if self.is_box(id) {
+                // A `type ?` box read as a value reads its place when it runs, so only a use of
+                // the type it holds needs what stands before it: stand-in for #350.
+                if !self.ran_first(tape, cell.start)? {
+                    self.drain()?;
+                }
             } else if matches!(kind, Read::Container(t) if !t.is_null()) {
                 self.drain()?;
             }
-            let dyad_box = kind == Read::Container(self.types.dyad_);
             if dyad_box {
                 if let Some(held) = self.read_through(id) {
                     self.cx.each_pass_read |= self.cx.each_pass;

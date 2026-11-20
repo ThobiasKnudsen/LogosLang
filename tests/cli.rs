@@ -4303,6 +4303,7 @@ fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them
     let h = "mut t := type ?, t = i64, h := fn () -> i32 ( print «h», t = i32, 1 )";
     let mk = "mk := fn () -> type ( print «mk», t )";
     let mk_of = "mk := fn (u := type ?) -> type ( print «mk», u )";
+    let d = "mut d := dyad ?, d = i64 5, h := fn () -> i32 ( print «h», d = i32 7, 1 )";
     for (src, want) in [
         (format!("{h}, x := h() + t 5, x.type"), "h\ni32"),
         (format!("{h}, x := h() + (t 5), x.type"), "h\ni32"),
@@ -4312,14 +4313,22 @@ fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them
         (format!("{h}, {mk}, h() == 1 and mk() == i32"), "h\nmk\ntrue"),
         (format!("{h}, {mk}, h() == 1 and (mk() == i32)"), "h\nmk\ntrue"),
         (format!("{h}, {mk_of}, h() == 1 and mk(t) == i32"), "h\nmk\ntrue"),
+        (format!("{h}, h() == 1 and t == i32"), "h\ntrue"),
+        (format!("{h}, print «{{h()}} {{t}}»"), "h\n1 i32"),
+        (format!("{d}, x := h() + d, x"), "h\n8"),
+        (format!("{d}, x := h() + (1 + d), x"), "h\n9"),
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // A part of a quote cannot run first yet.
-    let (code, stdout, stderr) = run_line(&format!("{h}, print «{{h()}} {{t 5}}»"));
-    assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stdout.is_empty(), "stdout: {stdout}");
-    assert!(stderr.contains("cannot run first yet"), "stderr: {stderr}");
+    // A part of a quote cannot run first yet, where the parse reads the value itself.
+    for src in
+        [format!("{d}, print «{{h()}} {{d}}»"), format!("{h}, {mk}, print «{{h()}} {{mk()}}»")]
+    {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stdout.is_empty(), "{src}: stdout: {stdout}");
+        assert!(stderr.contains("cannot run first yet"), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]
