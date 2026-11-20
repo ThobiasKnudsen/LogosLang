@@ -560,8 +560,20 @@ pub(crate) unsafe fn build_place_free(
     })
 }
 
-/// `=` over a place that holds its value, a name or an owning field: the free of the value it
-/// displaces, `None` over any other place.
+/// Whether `=` over `target` writes a place that holds its value, a name or an owning field:
+/// the place frees the value it displaces and takes a copy of one it would only borrow.
+///
+/// # Safety
+/// `target` must be the reduced dyad `=` writes.
+pub(crate) unsafe fn holds_place(p: &crate::parse::Parser, target: DyadPtr) -> bool {
+    let types = p.types();
+    dyad::ty(target) == types.binding_ && p.name_holds(target)
+        || owning_field_pointee(types, target).is_some()
+        || p.is_owning_read(target)
+}
+
+/// `=` over a place that [`holds_place`]: the free of the value it displaces, `None` over any
+/// other place.
 ///
 /// # Safety
 /// `target` must be the reduced dyad `=` writes.
@@ -569,11 +581,10 @@ pub(crate) unsafe fn displaced_free(
     p: &mut crate::parse::Parser,
     target: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
-    let types = p.types();
-    let named = dyad::ty(target) == types.binding_ && p.name_holds(target);
-    if !named && owning_field_pointee(types, target).is_none() && !p.is_owning_read(target) {
+    if !holds_place(p, target) {
         return Ok(None);
     }
+    let named = dyad::ty(target) == p.types().binding_ && p.name_holds(target);
     build_place_free(p, target, named).map(Some)
 }
 
@@ -1647,10 +1658,12 @@ mod tests {
             parse_err("x := i32 1, mut a := alloc 1 of i32 5, a = &x"),
             ParseError::NonOwningIntoOwning
         );
+        // A named owner is copied in: each name frees its own block.
         assert_eq!(
-            parse_err("mut a := alloc 1 of i32 5, b := alloc 1 of i32 6, a = b"),
-            ParseError::NonOwningIntoOwning
+            run("mut a := alloc 1 of i32 5, b := alloc 1 of i32 6, a = b, a@ = 9, b@"),
+            (6, 0)
         );
+        assert_eq!(free_log(), vec![5, 6, 9]);
         assert_eq!(run("x := i32 1, mut p := &x, p = &x, p@").0, 1);
         assert_eq!(run("mut a := alloc 1 of i32 5, a@ = 9, a@"), (9, 0));
 
@@ -2386,10 +2399,8 @@ mod tests {
         assert_eq!(run("mut a := own @i32 ?,\na = alloc 1 of i32 5,\na@"), (5, 0));
         assert_eq!(free_log(), vec![5]);
         assert_eq!(run("mut a := own @i32 ?,\n1"), (1, 0), "an unwritten owner frees nothing");
-        assert_eq!(
-            parse_err("mut a := own @i32 ?,\nb := alloc 1 of i32 6,\na = b"),
-            ParseError::NonOwningIntoOwning
-        );
+        assert_eq!(run("mut a := own @i32 ?,\nb := alloc 1 of i32 6,\na = b,\na@"), (6, 0));
+        assert_eq!(free_log(), vec![6, 6]);
         assert_eq!(parse_err("a := own i32 ?"), ParseError::OwnNeedsPointer);
         assert_eq!(
             parse_err("f := fn (p := own @i32 ?) -> i32 ( p@ )"),

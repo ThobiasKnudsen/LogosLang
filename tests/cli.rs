@@ -5275,6 +5275,8 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
             "after\nfree\n",
         ),
         ("a := box (7, 1), b := move a, print «moved»", "moved\nfree\n"),
+        // `=` frees the value it displaces and takes a copy of its own.
+        ("mut a := box (7, 1), b := box (8, 1), a = b, print «set»", "free\nset\nfree\nfree\n"),
         // An early `free` tears down now, and the scope end finds nothing left.
         ("a := box (7, 1), free a, print «after»", "free\nafter\n"),
         // A copy moves out as its name's last value: the callee frees its own as it returns.
@@ -5308,7 +5310,6 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
             "only its owner can",
         ),
         ("mk := fn () -> box ( a := box (9, 1), b := a, b ), m := mk()", "write `-> own box`"),
-        ("mut a := box (7, 1), b := box (8, 1), a = b", "what is assigned must own too"),
     ] {
         let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -6762,6 +6763,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("f := fn (p := t ?) -> u64 ( p.size ), g := bag (), f(g.items)", "3"),
         ("g := bag (), x := array i32 [1, 2], g.items = move x, g.items[1]", "2"),
         ("g := bag (), x := array i32 [1], y := x, g.items = move y, g.items[0]", "1"),
+        ("g := bag (), x := array i32 [1], g.items = x, g.items[0] = i32 9, x[0]", "1"),
         ("l := array bagged [bag (), bag ()], l[1].items[0] = i32 8, l[1].items[0]", "8"),
     ] {
         let (code, stdout, stderr) = run_line(&bag_line(tail));
@@ -6769,7 +6771,6 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         assert_eq!(stdout.lines().last(), Some(printed), "{tail}: {stdout}");
     }
     for (tail, expect) in [
-        ("g := bag (), x := array i32 [1], g.items = x", "what is assigned must own too"),
         ("f := fn (p := t ?) -> i32 ( g := bag (), g.items = move p, 1 )", "only its owner can"),
         ("nd := type ( mut items := own t ? )", "must be freed by the type's `static free = (…)`"),
         ("g := bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
@@ -7445,6 +7446,37 @@ fn a_declaration_copies_a_plain_record() {
         "freed 2\nfreed 2\n0\n",
     ));
     assert_runs(&cases);
+}
+
+/// ›`:=` decides nothing about copy or reference; the type's reading rule does‹: `=` into a
+/// place that holds its value frees the value it displaces and takes a copy of a named owner.
+#[test]
+fn an_assignment_copies_a_value_that_owns_memory() {
+    let r = "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
+    let body = "mut v := r(1), w := r(2), v = w, v.n = 3, 0";
+    let freed = "freed 1\nfreed 2\nfreed 3\n0\n";
+    let array = "import ./identities/array.logos";
+    assert_runs(&[
+        (format!("{r}, {body}"), freed),
+        (format!("{r}, f := fn () -> i32 ( {body} ), f()"), freed),
+        (format!("{r}, f := fn () -> i32 ( {body} ), f.compile(), f()"), freed),
+        (
+            format!(
+                "{array}, a := array i32 [1, 2], mut b := array i32 [3], b = a, b[0] = i32 9, a[0]"
+            ),
+            "1\n",
+        ),
+        (
+            format!(
+                "{array}, a := array i32 [1, 2], mut b := array i32 [3], b = a, b[0] = i32 9, b[0]"
+            ),
+            "9\n",
+        ),
+        (
+            "p := alloc 1 of i32 5, mut q := alloc 1 of i32 6, q = p, q@ = i32 9, p@".to_string(),
+            "5\n",
+        ),
+    ]);
 }
 
 /// DESIGN ›Explicit heap: `alloc n` and `alloc n of T v`‹: a cell through a pointer is read and
