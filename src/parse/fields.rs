@@ -23,9 +23,9 @@ struct Member {
 enum Receiver {
     /// The node the read reached, handed on as it stands.
     Node(DyadPtr),
-    /// A value read through its type: a record laid out in bytes, in a frame or behind a
-    /// pointer, by the address of its bytes, any other value by a `dyad` view, as a `dyad ?`
-    /// parameter takes a node.
+    /// A value read through its type: a record laid out in bytes, in a frame, behind a pointer
+    /// or given by an expression, by the address of its bytes, any other value by a `dyad` view,
+    /// as a `dyad ?` parameter takes a node.
     Value(DyadPtr),
     /// No value: the call is through the type itself.
     Nothing,
@@ -265,7 +265,11 @@ impl<'a> Parser<'a> {
                 }
                 Receiver::Value(value) => {
                     self.check_receiver_write(left, member)?;
-                    if types.is_storage(value) || dyad::ty(value) == types.deref_ {
+                    let output = crate::identities::read::output_type(types, value);
+                    if types.is_storage(value)
+                        || dyad::ty(value) == types.deref_
+                        || crate::identities::this::is_plain(types, output)
+                    {
                         crate::identities::by_copy::build_out(self.rt.store, types, value)
                     } else {
                         self.rt.store.alloc_head(types.dyad_, value.cast())
@@ -452,12 +456,14 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `lhs.f` where `lhs` yields a node of `t` only when the program runs, a place of the
-    /// type or a call returning it: the field read through the node's address when it runs,
-    /// or a `static` member, a type body's `fn` called with `lhs` as its value.
+    /// `lhs.f` where `lhs` yields a value of `t` only when the program runs, a place of the
+    /// type or a call returning it: the field read through the address of the node or the
+    /// record's bytes when it runs, or a `static` member, a type body's `fn` called with `lhs` as
+    /// its value.
     ///
     /// # Safety
-    /// `lhs` must be a reduced dyad from the store and `t` a type `is_node_valued` accepts.
+    /// `lhs` must be a reduced dyad from the store and `t` a type `is_node_valued` accepts or a
+    /// record laid out in bytes.
     unsafe fn run_node_member(
         &mut self,
         tape: &mut ParsingTape,
@@ -495,7 +501,8 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         if let Some(args) = call {
-            let receiver = Receiver::Node(lhs);
+            let receiver =
+                if this::is_plain(types, t) { Receiver::Value(lhs) } else { Receiver::Node(lhs) };
             if let Some(call) = self.call_member(tape, member, name, &left, receiver, args)? {
                 return Ok(Some((call, 1)));
             }
@@ -803,8 +810,24 @@ impl<'a> Parser<'a> {
             ));
         }
         // A `static` member of the record's type, or a field: the field's offset inside the
-        // record's storage, read through the record's binding and the field's.
+        // record's storage, read through the record's binding and the field's. A record value no
+        // name lays out, a field named bare or what a call returns, has the field read off what it
+        // gives when it runs (›Reading a path runs nothing‹ [[R273]]).
         let storage = self.types.is_storage(lhs);
+        if !storage && !self.types.is_hole(lhs) {
+            let t = crate::identities::read::output_type(self.types, lhs);
+            if crate::identities::this::is_plain(self.types, t)
+                && crate::identities::read::carry_of(self.types, t).is_some()
+            {
+                let name = &self.cx.source[nstart..nstart + nlen];
+                if let Some(read) = self.run_node_member(tape, lhs, left, t, name, call)? {
+                    return Ok(read);
+                }
+                // The error the same name gives through a name of the type.
+                self.resolve_field(t, nstart, nlen)?;
+                return Err(ParseError::ExpectedField);
+            }
+        }
         let record_logos = self.types.type_of(lhs);
         if record_logos.is_null()
             || !crate::identities::meta::is_record_type(record_logos)
