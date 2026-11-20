@@ -1319,7 +1319,7 @@ unsafe fn is_receiver(callee: DyadPtr, i: usize) -> bool {
     let input = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_INPUT);
     array::items(meta::record_field_bindings_of(input))
         .get(i)
-        .is_some_and(|&b| !b.is_null() && binding::Binding::spelling(b).is_empty())
+        .is_some_and(|&b| !b.is_null() && !binding::Binding::is_named(b))
 }
 
 /// Land every value a body gives, its last line's and each `return`'s, in the declared output

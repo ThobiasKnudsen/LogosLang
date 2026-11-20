@@ -386,6 +386,16 @@ impl Binding {
             String::from_utf8_lossy(super::string::text(name)).into_owned()
         }
     }
+
+    /// Whether a name declares the binding: a receiver and a run body's field of type `type` are
+    /// places no name declares.
+    ///
+    /// # Safety
+    /// As [`Binding::spelling`].
+    pub unsafe fn is_named(dyad: DyadPtr) -> bool {
+        let name = (*Self::fields(dyad)).name;
+        !name.is_null() && !super::string::text(name).is_empty()
+    }
 }
 
 /// A binding read as a value yields what the dyad it names yields, and a binding laid out

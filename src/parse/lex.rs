@@ -280,11 +280,17 @@ impl<'a> Parser<'a> {
     /// innermost function open where the body was written, with no function opened since.
     fn is_live_call_slot(&self, id: DyadPtr) -> bool {
         // SAFETY: `id` is null or a resolved dyad from the store.
-        matches!(unsafe { self.types.frame_of(id) },
-            Some((crate::binding::Frame::Call(f), _))
-                if self.cx.held_depth > 0
-                    && self.cx.frames.len() == self.cx.held_depth
-                    && self.cx.frames.last().is_some_and(|open| open.frame == f))
+        let Some((crate::binding::Frame::Call(f), _)) = (unsafe { self.types.frame_of(id) }) else {
+            return false;
+        };
+        self.cx.held_depth > 0
+            && self.cx.frames.len() == self.cx.held_depth
+            && self.cx.frames.last().is_some_and(|open| open.frame == f)
+            // A field read is reached through its record's name.
+            // SAFETY: a dyad with a frame is a binding or a field read.
+            && unsafe {
+                crate::dyad::ty(id) != self.types.binding_ || crate::binding::Binding::is_named(id)
+            }
     }
 
     /// A place holding a type denotes the type it holds, since lexing a box's
