@@ -1401,7 +1401,7 @@ impl<'a> Parser<'a> {
         args: &[DyadPtr],
         lossy: bool,
     ) -> Result<DyadPtr, ParseError> {
-        let mut args = args.to_vec();
+        let mut args: Vec<DyadPtr> = args.iter().map(|&a| self.held_type_or(a)).collect();
         for i in 0..args.len() {
             // SAFETY: `args` are reduced dyads from the store.
             if let Some((connective, a, b)) = crate::identities::group::members(self.types, args[i])

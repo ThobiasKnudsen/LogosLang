@@ -297,10 +297,10 @@ impl<'a> Parser<'a> {
         Ok(self.settled_type(d))
     }
 
-    /// `value` where `=` lands it: a box the pass has filled with a type stands for that type, as
-    /// `?` reads it (›A `type ?` place is a box, written any number of times‹ [[R291]]); a box
-    /// holding any other node was read through where it was lexed, and any other value stands
-    /// as it is.
+    /// `value` where `=` or a call lands it: a box the pass has filled with a type stands for that
+    /// type, as `?` reads it (›A `type ?` place is a box, written any number of times‹ [[R291]]);
+    /// a box holding any other node was read through where it was lexed, and any other value
+    /// stands as it is.
     pub(crate) fn held_type_or(&self, value: DyadPtr) -> DyadPtr {
         // SAFETY: `value` is a reduced dyad from the store.
         let place = unsafe { self.types.through(value) };

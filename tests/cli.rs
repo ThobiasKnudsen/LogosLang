@@ -3921,6 +3921,30 @@ fn a_filled_box_names_the_type_it_holds_wherever_one_is_needed() {
 }
 
 #[test]
+fn a_call_lands_a_filled_box_as_the_type_it_holds() {
+    let g = "g := fn (t := type ?) -> bool ( t == i32 )";
+    for tail in [
+        "mut d := dyad ?, d = i32, g(d)",
+        "g.compile(), mut d := dyad ?, d = i32, g(d)",
+        "mut d := type ?, d = i32, g(d)",
+        "mut d := dyad ?, d = i32, h := fn () -> bool ( g(d) ), h()",
+        "h := fn (d := dyad ?) -> bool ( g(d) ), h(i32)",
+        "pt := type ( t := type ? ), mut d := dyad ?, d = i32, p := pt (d), p.t == i32",
+    ] {
+        let src = format!("{g}, {tail}");
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n", "{src}");
+    }
+
+    let src = "mut d := dyad ?, d = i32, i32 (d)";
+    let out = logos().arg(src).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{src}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("1:34: error: these types do not match"), "{stderr}");
+}
+
+#[test]
 fn only_a_marked_place_is_written_or_addressed() {
     let pw = "pw := type ( mut a := i32 ?, mut b := i32 ?, output_type := type ?, static run = ( a * b ), \
               static parse_rank = *.parse_rank + 1, static associativity = right, \
