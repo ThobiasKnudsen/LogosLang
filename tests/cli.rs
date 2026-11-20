@@ -3648,6 +3648,50 @@ fn a_write_along_a_path_needs_mut_on_every_step() {
 }
 
 #[test]
+fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
+    let t = |gate: &str| format!("t := type ( {gate}n := i64 ? )");
+    let u = |a: &str, b: &str| {
+        format!(
+            "u := type ( {a}a := i64 ?, static bump := fn () -> void ( a = a + 1 ) ), \
+             t := type ( {b}b := u ? ), p := alloc 1 of t (u (5))"
+        )
+    };
+    for (src, expect) in [
+        (format!("{}, p := alloc 1 of t (5), p@.n = 7", t("")), "`n` is not `mut`"),
+        (format!("{}, p := alloc 1 of t (5), p@.n = 7", t("immut ")), "`n` is `immut`"),
+        (format!("{}, mut v := t (5), q := &v, q@.n = 7", t("")), "`n` is not `mut`"),
+        (
+            format!("{}, f := fn (p := @t ?) -> i64 ( p@.n = 7, p@.n ), f.compile()", t("")),
+            "`n` is not `mut`",
+        ),
+        (format!("{}, p@.b.a = 7", u("mut ", "")), "`b` is not `mut`"),
+        (format!("{}, p@.b.a = 7", u("", "mut ")), "`a` is not `mut`"),
+        (format!("{}, p@.b.bump()", u("mut ", "")), "`b` is not `mut`"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+    // The name holding the pointer grants nothing: the path starts at the `@`.
+    for (src, want) in [
+        (format!("{}, p := alloc 1 of t (5), p@.n = 7, p@.n", t("mut ")), "7\n"),
+        (format!("{}, p@.b.a = 7, p@.b.a", u("mut ", "mut ")), "7\n"),
+        (format!("{}, p@.b.bump(), p@.b.a", u("mut ", "mut ")), "6\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+    for compile in ["", "f.compile(), "] {
+        let src = format!(
+            "{}, f := fn (p := @t ?) -> i64 ( p@.n = 7, p@.n ), {compile}p := alloc 1 of t (5), f(p)",
+            t("mut ")
+        );
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), "7\n"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
     let (echoes, stderr) = repl(
         b"x := i32 5\n(x:end, 3)\np := type (a := i32 ?)\nq := p(1)\n(q.a, 2)\nq.a\n\
