@@ -70,10 +70,10 @@ pub(crate) fn build(
     store.alloc_words(types.if_, &[cond, then, els, none, none, none, types.ops.if_])
 }
 
-/// What an `if` gives back: what its arms hand on where every arm gives a value of one type and
-/// every arm makes its value or every arm borrows one, else `void`. DESIGN ›`if` reads its own
-/// right side‹, ›A mint's output type is written in its `static output_type` declaration; a type
-/// that does not mint has its parse write it into each node‹ [[R194]].
+/// What an `if` gives back where it is used as a value: what its arms hand on where every arm
+/// gives a value of one type, else `void`. DESIGN ›`if` reads its own right side‹, ›A mint's
+/// output type is written in its `static output_type` declaration; a type that does not mint has
+/// its parse write it into each node‹ [[R194]].
 ///
 /// # Safety
 /// `node` must be an `if` node [`build`] made.
@@ -88,65 +88,7 @@ pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
 /// # Safety
 /// `node` must be an `if` node [`build`] made.
 pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, ParseError> {
-    read(types, node).map(|v| v.ty)
-}
-
-/// An `if`'s value as one walk over its arms reads it, each nested `if` read once, so a chain
-/// of `else if` arms reads in time in step with its length (DESIGN ›Reading a program takes
-/// time in step with its size; no walk runs once per path‹).
-#[derive(Clone, Copy)]
-struct ArmsRead {
-    /// The arms' one type.
-    ty: DyadPtr,
-    /// Whether every arm makes its value (`Some(true)`) or borrows it, as
-    /// [`super::drop_model::handed_ends`] reads it.
-    made: Option<bool>,
-}
-
-/// # Safety
-/// `node` must be an `if` node [`build`] made.
-unsafe fn read(types: &Core, node: DyadPtr) -> Result<ArmsRead, ParseError> {
-    let (_, then, els) = branches(node);
-    if els.is_null() {
-        return Err(ParseError::MissingElse);
-    }
-    // An arm that gives nothing makes the `if` give nothing, whichever arm it is, so a sibling
-    // arm's two types are no use of a value.
-    let mut values = Vec::with_capacity(2);
-    for arm in [then, els] {
-        match arm_value(types, arm) {
-            Ok(v) => values.push(v),
-            Err(ParseError::StatementAsValue) => return Err(ParseError::ArmGivesNothing),
-            Err(ParseError::ArmsDiffer) => {}
-            Err(e) => return Err(e),
-        }
-    }
-    match values[..] {
-        [a, b] if super::same_type(a.ty, b.ty) => {
-            let made = super::drop_model::arms_end_alike(a.made, b.made)?;
-            Ok(ArmsRead { made, ..a })
-        }
-        _ => Err(ParseError::ArmsDiffer),
-    }
-}
-
-/// An arm read through a block to its last line and through a nested `if` to its arms.
-///
-/// # Safety
-/// `arm` must be a reduced dyad from the store.
-unsafe fn arm_value(types: &Core, arm: DyadPtr) -> Result<ArmsRead, ParseError> {
-    if dyad::ty(arm) == types.scope {
-        return match crate::parse::last_sequence_expr(arm) {
-            Some(last) => arm_value(types, last),
-            None => Err(ParseError::StatementAsValue),
-        };
-    }
-    if dyad::ty(arm) == types.if_ {
-        return read(types, arm);
-    }
-    let ty = super::read::value_type(types, arm)?;
-    let made = super::drop_model::handed_ends(types, arm)?;
-    Ok(ArmsRead { ty, made })
+    super::flow::value_type(types, node)
 }
 
 /// # Safety
@@ -154,6 +96,15 @@ unsafe fn arm_value(types: &Core, arm: DyadPtr) -> Result<ArmsRead, ParseError> 
 pub(crate) unsafe fn branches(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr) {
     let p = dyad::value(node) as *const DyadPtr;
     (*p.add(IF_COND), *p.add(IF_THEN), *p.add(IF_ELSE))
+}
+
+/// The slots of the arms, the then arm's first; the else slot holds null for an else-less `if`.
+///
+/// # Safety
+/// `node` must be an `if` node [`build`] made.
+pub(crate) unsafe fn arm_slots(node: DyadPtr) -> (*mut DyadPtr, *mut DyadPtr) {
+    let p = dyad::value(node) as *mut DyadPtr;
+    (p.add(IF_THEN), p.add(IF_ELSE))
 }
 
 /// # Safety
@@ -194,23 +145,29 @@ pub(crate) unsafe fn set_ends(
     }
 }
 
-/// An else-less `if` yields unit either way, matching the compiled merge. The arm that ran
-/// frees, at its end or on a `return` or fault through it, what the other arm moved or freed,
-/// and a condition that leaves frees what either arm would have.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an `if` node [`build`] made; its ends are held places.
-    unsafe {
-        let (cond, then, els) = branches(node);
-        let (then_ends, else_ends) = arm_ends(node);
-        let truth = match rt.run(cond) {
-            Ok(truth) => truth,
-            Err(left) => return end_after(rt, Err(left), ends_at(node, IF_CONDITION_ENDS)),
-        };
-        let (arm, ends) = if truth != 0 { (then, then_ends) } else { (els, else_ends) };
-        let value = if arm.is_null() { Ok(0) } else { rt.run(arm) };
-        let value = end_after(rt, value, ends)?;
-        Ok(if els.is_null() { 0 } else { value })
-    }
+    // SAFETY: `node` is an `if` node [`build`] made.
+    unsafe { run_given(rt, node).map(|given| given.unwrap_or(0)) }
+}
+
+/// The arm the condition picks runs as a line, and what it gives the `if` gives (›A scope's
+/// value is what it evaluates to, and `return` is an optional early exit from the enclosing
+/// function‹ [[R207]]). The arm that ran frees, at its end or on a `return` or fault through it,
+/// what the other arm moved or freed, and a condition that leaves frees what either arm would
+/// have.
+///
+/// # Safety
+/// `node` must be an `if` node [`build`] made; its ends held places.
+pub(super) unsafe fn run_given(rt: &mut Runtime, node: DyadPtr) -> Result<Option<i64>, RunError> {
+    let (cond, then, els) = branches(node);
+    let (then_ends, else_ends) = arm_ends(node);
+    let truth = match rt.run(cond) {
+        Ok(truth) => truth,
+        Err(left) => return end_after(rt, Err(left), ends_at(node, IF_CONDITION_ENDS)),
+    };
+    let (arm, ends) = if truth != 0 { (then, then_ends) } else { (els, else_ends) };
+    let given = rt.run_line(arm);
+    end_after(rt, given, ends)
 }
 
 /// Frees `ends`, last declared first, once `value` is known; a fault stays the error shown,
@@ -218,11 +175,11 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 ///
 /// # Safety
 /// `ends` must be held places laid out in the frame `rt` runs.
-unsafe fn end_after(
+unsafe fn end_after<T>(
     rt: &mut Runtime,
-    value: Result<i64, RunError>,
+    value: Result<T, RunError>,
     ends: &[DyadPtr],
-) -> Result<i64, RunError> {
+) -> Result<T, RunError> {
     let ended = ends.iter().rev().try_for_each(|&place| super::drop_model::end_held(rt, place));
     match (value, ended) {
         (Err(fault), _) if !matches!(fault, RunError::Return(_)) => Err(fault),
@@ -233,13 +190,16 @@ unsafe fn end_after(
 
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is an `if` node [`build`] made.
-    unsafe {
-        let (cond, then, els) = branches(node);
-        let (then_ends, else_ends) = arm_ends(node);
-        let condition_ends = ends_at(node, IF_CONDITION_ENDS);
-        if els.is_null() {
-            return lw.lower_if_stmt(cond, condition_ends, then, then_ends, else_ends);
-        }
-        lw.lower_if(cond, condition_ends, [(then, then_ends), (els, else_ends)])
-    }
+    lw.lower_as_value(|lw| unsafe { lower_given(lw, node) })
+}
+
+/// [`run_given`]'s lowering: the value an arm gives passes out.
+///
+/// # Safety
+/// `node` must be an `if` node [`build`] made; its ends held places.
+pub(super) unsafe fn lower_given(lw: &mut Lowerer, node: DyadPtr) -> Result<(), CompileError> {
+    let (cond, then, els) = branches(node);
+    let (then_ends, else_ends) = arm_ends(node);
+    let condition_ends = ends_at(node, IF_CONDITION_ENDS);
+    lw.lower_if_given(cond, condition_ends, [(then, then_ends), (els, else_ends)])
 }

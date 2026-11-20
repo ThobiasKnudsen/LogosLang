@@ -75,17 +75,14 @@ pub(crate) unsafe fn fill(types: &Core, node: DyadPtr) {
     *(dyad::value(node) as *mut DyadPtr).add(OP) = types.ops.scope_;
 }
 
-/// What a block gives back, worked out from its last line when asked: what that line hands
-/// on, `void` for none. ›A mint's output type is written in its `static output_type`
-/// declaration; a type that does not mint has its parse write it into each node‹ [[R194]].
+/// What a block gives back, worked out from the lines that give it when asked, `void` for none.
+/// ›A mint's output type is written in its `static output_type` declaration; a type that does
+/// not mint has its parse write it into each node‹ [[R194]].
 ///
 /// # Safety
 /// `node` must be a scope node from the store.
 pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
-    match crate::parse::last_sequence_expr(node) {
-        Some(last) => super::read::output_type(types, last),
-        None => types.void_,
-    }
+    super::flow::value_type(types, node).unwrap_or(types.void_)
 }
 
 /// The scope's `dyads`, made empty on first read.
@@ -142,22 +139,6 @@ pub(crate) unsafe fn exprs_of<'a>(node: DyadPtr) -> Option<&'a [DyadPtr]> {
     } else {
         Some(array::items(arr))
     }
-}
-
-/// The line a sequence's `lines` give their value from: the last that is no comment; `None` for
-/// none, null `lines` among them.
-///
-/// # Safety
-/// `lines` must be null or an `array` node of reduced dyads from the store.
-pub(crate) unsafe fn last_line(lines: DyadPtr) -> Option<DyadPtr> {
-    if lines.is_null() {
-        return None;
-    }
-    array::items(lines)
-        .iter()
-        .rev()
-        .find(|&&line| !super::numtype::is_comment_type(dyad::ty(line)))
-        .copied()
 }
 
 /// A closed sequence with `node`'s op and parent running `exprs` instead.
@@ -327,48 +308,51 @@ pub(crate) unsafe fn parent_of(node: DyadPtr) -> DyadPtr {
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a sequence node; its first slot is its expression array.
-    unsafe {
-        let Some(exprs) = exprs_of(node) else {
-            return Err(RunError::EmptyScope);
-        };
-        rt.push_plan(held_of(node));
-        let ran = run_lines(rt, node, exprs);
-        rt.pop_plan();
-        ran
-    }
+    unsafe { run_given(rt, node).map(|given| given.unwrap_or(0)) }
+}
+
+/// The scope run as a line: the value its first line that gives one gave, its lines after that
+/// never run, or `None` where every line went on without one (›A scope's value is what it
+/// evaluates to, and `return` is an optional early exit from the enclosing function‹ [[R207]]).
+///
+/// # Safety
+/// `node` must be a sequence node from the store.
+pub(super) unsafe fn run_given(rt: &mut Runtime, node: DyadPtr) -> Result<Option<i64>, RunError> {
+    let Some(exprs) = exprs_of(node) else {
+        return Err(RunError::EmptyScope);
+    };
+    rt.push_plan(held_of(node));
+    let ran = run_lines(rt, node, exprs);
+    rt.pop_plan();
+    ran
 }
 
 /// The scope's lines from its cursor, each ended as it completes, then its end.
 ///
 /// # Safety
 /// `node` must be a sequence node from the store and `exprs` its lines.
-unsafe fn run_lines(rt: &mut Runtime, node: DyadPtr, exprs: &[DyadPtr]) -> Result<i64, RunError> {
-    let defer_ty = rt.types().defer_;
+unsafe fn run_lines(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    exprs: &[DyadPtr],
+) -> Result<Option<i64>, RunError> {
     let start = rt.take_cursor(node);
-    let mut last = 0i64;
-    let tail = exprs
-        .iter()
-        .rposition(|&e| !super::numtype::is_comment_type(dyad::ty(e)) && dyad::ty(e) != defer_ty);
-    for (i, &expr) in exprs.iter().enumerate() {
-        let logos = dyad::ty(expr);
-        // Prose never runs; a `defer` runs at the end, from the exit.
-        if super::numtype::is_comment_type(logos) || logos == defer_ty {
-            continue;
-        }
-        // Before the cursor: the pass ran it in this frame already.
-        if i < start {
-            continue;
-        }
-        // A line's scratch is freed with the line; the tail's is the value handed on.
+    // The pass ran the line that gave the value in this frame already.
+    if let Some(value) = start.given {
+        run_exit(rt, node, start.at + 1)?;
+        return Ok(Some(value));
+    }
+    for (i, &expr) in exprs.iter().enumerate().skip(start.at) {
+        // A line's scratch is freed with the line; a value given is handed on with its own.
         let mark = rt.stack_mark();
         let held = rt.line_mark();
-        let ran = rt.run(expr);
+        let ran = rt.run_line(expr);
         match super::drop_model::end_line(rt, held, ran) {
-            Ok(v) => {
-                last = v;
-                if tail != Some(i) {
-                    rt.stack_release(mark);
-                }
+            Ok(None) => rt.stack_release(mark),
+            // The line that gave the value completed and ends the scope.
+            Ok(Some(value)) => {
+                run_exit(rt, node, i + 1)?;
+                return Ok(Some(value));
             }
             // A `return` leaves through this scope: what it holds at line `i` ends.
             Err(RunError::Return(v)) => {
@@ -385,7 +369,7 @@ unsafe fn run_lines(rt: &mut Runtime, node: DyadPtr, exprs: &[DyadPtr]) -> Resul
         }
     }
     run_exit(rt, node, exprs.len())?;
-    Ok(last)
+    Ok(None)
 }
 
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
@@ -396,4 +380,15 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         };
         lw.lower_scope(node, exprs)?.ok_or(CompileError::EmptyScope)
     }
+}
+
+/// [`run_given`]'s lowering: the value a line gives passes out.
+///
+/// # Safety
+/// As [`run`].
+pub(super) unsafe fn lower_given(lw: &mut Lowerer, node: DyadPtr) -> Result<(), CompileError> {
+    let Some(exprs) = exprs_of(node) else {
+        return Err(CompileError::EmptyScope);
+    };
+    lw.lower_scope_given(node, exprs).map(|_| ())
 }

@@ -575,7 +575,8 @@ pub(crate) unsafe fn own_mark_of(id: DyadPtr) -> OwnMark {
 }
 
 /// Says that a node of `id` hands on as its value what its operands `roles` give, every one
-/// alike, and of the lines its operands `lines` hold, the last's.
+/// alike, and of the lines its operands `lines` hold, those that give it
+/// ([`super::flow::giving_lines`]).
 ///
 /// # Safety
 /// `id` must carry an operand record whose roles name each of `roles` and `lines`.
@@ -594,7 +595,8 @@ pub(crate) unsafe fn install_hands_on(id: DyadPtr, roles: &[&str], lines: &[&str
 }
 
 /// The slots of a node of `id` whose operands it hands on as its value, one bit each, as
-/// `(nodes, lines)`: those whose node it hands on, and those whose lines it hands on the last of.
+/// `(nodes, lines)`: those whose node it hands on, and those whose lines it hands on the giving
+/// ones of.
 /// `(0, 0)` where it gives its own value. Safe on any node, as `kind_of` is.
 ///
 /// # Safety

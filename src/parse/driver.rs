@@ -808,13 +808,14 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `scope` must be a node from the store.
-    pub(crate) unsafe fn args_of(&self, scope: DyadPtr) -> Vec<DyadPtr> {
+    pub(crate) unsafe fn args_of(&mut self, scope: DyadPtr) -> Vec<DyadPtr> {
         if dyad::ty(scope) != self.types.scope {
             return vec![scope];
         }
         let Some(items) = crate::identities::scope::exprs_of(scope) else {
             return vec![scope];
         };
+        self.rt.note_lines_read(scope);
         let defer_ = self.types.defer_;
         items
             .iter()
@@ -962,6 +963,26 @@ impl<'a> Parser<'a> {
         };
         // SAFETY: `node` is a valid dyad in the store (the caller's contract).
         self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run(node) })
+    }
+
+    /// [`Parser::run_on_pass`] for a line of a scope: the value it gives the scope, `None`
+    /// where it goes on without one.
+    ///
+    /// # Safety
+    /// As [`Parser::run_on_pass`].
+    pub(super) unsafe fn run_line_on_pass(
+        &mut self,
+        node: DyadPtr,
+    ) -> Result<Option<i64>, crate::run::RunError> {
+        let host = crate::run::Host {
+            parser: (self as *mut Self).cast(),
+            lex_on: Self::lex_on,
+            mint: Self::mint_host,
+            construct: Self::construct_host,
+            parse_waiting: Self::parse_waiting_host,
+        };
+        // SAFETY: `node` is a valid dyad in the store (the caller's contract).
+        self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run_line(node) })
     }
 
     /// [`Parser::run_on_pass`] for a call whose record result is copied into `dest`.

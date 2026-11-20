@@ -62,15 +62,16 @@ fn help() -> String {
          \x20 logos import ./file.logos\n\
          \x20 logos 'import ./file.logos, main(«hello»)'\n\
          `import` loads a file: it runs top to bottom, and the importer\n\
-         reaches only its `pub` names. The line's tail value is printed.\n\
+         reaches only its `pub` names. The value of the first line that\n\
+         gives one is printed, and the lines after it never run.\n\
          There are no build or compile flags: the code itself decides what\n\
          compiles.\n",
         env!("CARGO_PKG_VERSION")
     )
 }
 
-/// Run the command line as one line of Logos source; its tail value prints at
-/// the end. Parse errors render with a
+/// Run the command line as one line of Logos source; the value its first line that gives one
+/// gave prints at the end. Parse errors render with a
 /// caret; run errors are message-only, nodes carrying no positions.
 fn run_line(source: &str) -> ExitCode {
     let path = "<command line>";
@@ -120,11 +121,12 @@ fn run_line(source: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// A line of the program read whole and run by the one pass: the text its tail shows, or
-/// none when the tail gives no value or there is none. The command line and the REPL both
-/// echo what this gives (›The command line is Logos source; the binary stays out of the
-/// way‹ [[R302]]). An error comes back rendered, what the line holds left for the caller to
-/// end.
+/// A line of the program read whole and run by the one pass: the text the value its first
+/// line that gives one gave shows, or none when no line gives one. The command line and the
+/// REPL both echo what this gives (›The command line is Logos source; the binary stays out of
+/// the way‹ [[R302]], ›A scope's value is what it evaluates to, and `return` is an optional early
+/// exit from the enclosing function‹ [[R207]]). An error comes back rendered, what the line holds
+/// left for the caller to end.
 fn run_program_line(
     p: &mut Parser,
     types: &Core,
@@ -138,33 +140,25 @@ fn run_program_line(
         }
         Err(e) => return Err(report::render(path, source, p.offset(), &report::parse_message(&e))),
     };
-    // Asked before the drain runs the tail, as a use is asked where it is written.
-    let tail = match tail {
-        // SAFETY: the tail is a line the parser built.
-        Some((cell, end)) => match unsafe { seed::identities::read::gives_value(types, cell.dyad) }
-        {
-            Ok(shown) => shown.then_some(cell.dyad),
-            Err(e) => return Err(report::render(path, source, end, &report::parse_message(&e))),
-        },
-        None => None,
-    };
-    // The tail is read after the root's own run and before the teardowns, which may free
+    // The value is read after the root's own run and before the teardowns, which may free
     // what it points at, and rendered before the pass's runtime goes: an unnamed result
     // lives in that runtime's scratch.
     let message = |e: ParseError| format!("{path}: {}", report::parse_message(&e));
-    let ran = p.finish().map_err(message)?;
-    let Some(node) = tail else {
-        p.end_tail().map_err(message)?;
-        return Ok(None);
-    };
-    let bits = match ran {
-        Some((last, bits)) if last == node => bits,
-        // A tail the pass never ran, a `[…]` line, runs now.
-        _ => {
-            p.end_tail().map_err(message)?;
+    let (node, bits) = match p.finish().map_err(message)? {
+        Some(given) => given,
+        None => match tail.map(|(cell, _)| cell.dyad) {
+            // A `[…]` last line, which the pass never runs, gives its value now.
             // SAFETY: `node` is a line the parser built.
-            unsafe { p.value_of(node) }.map_err(message)?
-        }
+            Some(node) if unsafe { p.gives_unrun(node) } => {
+                p.end_tail().map_err(message)?;
+                // SAFETY: as above.
+                (node, unsafe { p.value_of(node) }.map_err(message)?)
+            }
+            _ => {
+                p.end_tail().map_err(message)?;
+                return Ok(None);
+            }
+        },
     };
     // SAFETY: `node` is the parsed dyad whose value `bits` is.
     let shown = unsafe { seed::identities::display_value(types, node, bits) };

@@ -37,6 +37,7 @@ pub(crate) mod declare;
 pub(crate) mod drop_model;
 pub(crate) mod dyad_place;
 pub mod error;
+pub(crate) mod flow;
 #[path = "fn.rs"]
 mod fn_mod;
 #[path = "for.rs"]
@@ -936,8 +937,10 @@ unsafe fn land_with(
         Ok(_) | Err(ParseError::ArmsDiffer) => {}
         Err(e) => return Err(e),
     }
-    let landed =
-        walk_tail(types, value, &mut |leaf| land_leaf(store, types, leaf, ty, place, how))?;
+    let mut landed = value;
+    flow::rewrite_given(types, &mut landed, &mut |leaf| {
+        land_leaf(store, types, leaf, ty, place, how)
+    })?;
     read::value_type(types, landed)?;
     Ok(landed)
 }
@@ -1156,8 +1159,8 @@ pub(crate) unsafe fn same_type(a: DyadPtr, b: DyadPtr) -> bool {
 /// # Safety
 /// `node` must be a valid dyad from the store, the expression whose value `bits` is.
 pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
-    // A scope's value is its trailing expression; render that node.
-    let node = types.through(trailing_expr(types, node));
+    // A block's value is given by one of its lines, each of one type; render the first.
+    let node = types.through(flow::first_given(types, node));
     if read::output_type(types, node) == types.bool_ {
         return if bits != 0 { "true" } else { "false" }.to_string();
     }
@@ -1218,20 +1221,6 @@ unsafe fn display_held(types: &Core, ty: DyadPtr, bits: i64) -> String {
         Some((read::Read::Rational, _)) => rational::spell_at(at),
         _ => "dyad".to_string(),
     }
-}
-
-/// The innermost trailing expression of a scope, whose value the run result is.
-///
-/// # Safety
-/// `node` must be a valid dyad from the store.
-unsafe fn trailing_expr(types: &Core, mut node: DyadPtr) -> DyadPtr {
-    while !node.is_null() && dyad::ty(node) == types.scope {
-        match crate::parse::last_sequence_expr(node) {
-            Some(inner) if inner != node => node = inner,
-            _ => break,
-        }
-    }
-    node
 }
 
 /// The container is already sign-extended, so signed integers print as-is.
@@ -1322,8 +1311,10 @@ unsafe fn is_receiver(callee: DyadPtr, i: usize) -> bool {
         .is_some_and(|&b| !b.is_null() && !binding::Binding::is_named(b))
 }
 
-/// Land every value a body gives, its last line's and each `return`'s, in the declared output
-/// type.
+/// Land every value a body gives, each of its lines' that give one, or a `return`'s, in the
+/// declared output type; a body that can end without one is refused (›A scope's value is what
+/// it evaluates to, and `return` is an optional early exit from the enclosing function‹
+/// [[R207]]).
 ///
 /// # Safety
 /// `body`/`output` are valid dyads from the store.
@@ -1336,14 +1327,17 @@ pub(crate) unsafe fn commit_fn_body(
     if read::place_layout(types, output).is_none() {
         return Ok(body);
     }
-    walk_tail(types, body, &mut |leaf| {
-        // A line held for the run lands in the result when it runs.
-        if waiting::lands_in(types, leaf, output) {
-            return Ok(leaf);
-        }
-        refuse_statement(types, leaf)?;
-        // An `out` already hands back its bytes.
-        if dyad::ty(leaf) == types.by_copy.out {
+    let mut body = body;
+    let slot = if dyad::ty(body) == types.return_ {
+        dyad::value(body) as *mut DyadPtr
+    } else {
+        &mut body as *mut DyadPtr
+    };
+    waiting::lands_in(types, *slot, output);
+    let flow = flow::rewrite_given(types, slot, &mut |leaf| {
+        // A line held for the run lands in the result when it runs; an `out` already hands back
+        // its bytes.
+        if dyad::ty(leaf) == types.waiting.line || dyad::ty(leaf) == types.by_copy.out {
             return Ok(leaf);
         }
         // The caller holds what the call gives.
@@ -1353,70 +1347,12 @@ pub(crate) unsafe fn commit_fn_body(
             return Ok(by_copy::build_out(store, types, landed));
         }
         Ok(landed)
-    })
-}
-
-/// Walk the value-producing positions of `node` (itself, a `return`'s operand, both
-/// `if` branches, a scope's trailing expression) and write back what `leaf` returns.
-///
-/// # Safety
-/// `node` is a valid dyad from the store.
-unsafe fn walk_tail(
-    types: &Core,
-    node: DyadPtr,
-    leaf: &mut impl FnMut(DyadPtr) -> Result<DyadPtr, ParseError>,
-) -> Result<DyadPtr, ParseError> {
-    if dyad::ty(node) == types.return_ {
-        let ops = dyad::value(node) as *mut DyadPtr;
-        *ops = walk_tail(types, *ops, leaf)?;
-        return Ok(node);
+    })?;
+    match flow {
+        flow::Flow { falls: false, .. } => Ok(body),
+        flow::Flow { gives: true, .. } => Err(ParseError::EndsWithoutValue),
+        flow::Flow { gives: false, .. } => Err(ParseError::StatementAsValue),
     }
-    // An `error` leaves the function, so it hands the tail nothing to check.
-    if dyad::ty(node) == types.error.error {
-        return Ok(node);
-    }
-    // An else-less `if` yields unit, so it cannot be a value function's tail.
-    if dyad::ty(node) == types.if_ {
-        let ops = dyad::value(node) as *mut DyadPtr;
-        if (*ops.add(2)).is_null() {
-            return Err(ParseError::MissingElse);
-        }
-        let then_c = walk_tail(types, *ops.add(1), leaf)?;
-        let else_c = walk_tail(types, *ops.add(2), leaf)?;
-        *ops.add(1) = then_c;
-        *ops.add(2) = else_c;
-        return Ok(node);
-    }
-    // Trailing prose is invisible to value flow, so the tail is the last non-comment expression.
-    if dyad::ty(node) == types.scope {
-        let arr = scope::exprs_array(node);
-        if !arr.is_null() {
-            let (len, data) = array::parts(arr);
-            let data = data as *mut DyadPtr;
-            let mut i = len;
-            while i > 0 {
-                let cand = *data.add(i - 1);
-                if !numtype::is_comment_type(dyad::ty(cand)) {
-                    *data.add(i - 1) = walk_tail(types, cand, leaf)?;
-                    break;
-                }
-                i -= 1;
-            }
-        }
-        return Ok(node);
-    }
-    leaf(node)
-}
-
-/// A node that gives nothing is no value's tail.
-///
-/// # Safety
-/// `node` is a valid dyad from the store.
-unsafe fn refuse_statement(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
-    if read::output_type(types, node) == types.void_ {
-        return Err(ParseError::StatementAsValue);
-    }
-    Ok(())
 }
 
 /// The written `T(value)`, or `T lossy (value)` with `lossy`, checked as an unwritten value

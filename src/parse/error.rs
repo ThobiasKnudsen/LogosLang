@@ -114,6 +114,18 @@ pub enum ParseError {
     /// One arm of an `if` whose value is used makes its value and another borrows one: who
     /// owns it would show only when it runs.
     ArmsMakeAndBorrow,
+    /// A line written after one that always gives its scope a value, which never runs.
+    LineAfterValue,
+    /// A line written after one that always leaves, a `return` or an `error`, which never runs.
+    LineAfterLeave,
+    /// A line of a `-> void` function's body gives a value.
+    VoidBodyGives,
+    /// A value is needed, and some path ends without giving one: a block one of whose lines
+    /// gives only on some paths, a loop.
+    EndsWithoutValue,
+    /// A line gives a name its block holds on some paths only, so the block's end would free it
+    /// on the others while the value given lives on.
+    HeldGivenOnSomePaths,
     /// A logical operator applied to a non-`bool` operand.
     NonBoolOperands,
     /// A value lands in a type that is not its own and is not known to hold every value of it.

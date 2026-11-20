@@ -174,9 +174,14 @@ struct Context<'a> {
     /// The block that closed last, with the values its last line made that it handed on as its
     /// own value.
     handed_tail: Option<(DyadPtr, Vec<DyadPtr>)>,
-    /// Where the runtime's values of the program's last line begin, kept to their line's end
-    /// until its echo has read them.
+    /// Where the runtime's values of the line that gave the program its value begin, kept to
+    /// their line's end until its echo has read them.
     tail_values: Option<usize>,
+    /// The line that gave the program its value, with the value.
+    program_value: Option<(DyadPtr, i64)>,
+    /// Each `( … )` cell closed with a line refused as a line of a scope, where that line starts
+    /// and why: the line the cell stands in decides once it closes.
+    held_back: Vec<(DyadPtr, usize, ParseError)>,
 }
 
 impl<'a> Context<'a> {
@@ -197,7 +202,7 @@ impl<'a> Context<'a> {
             each_pass: false,
             each_pass_read: false,
             definitions: Vec::new(),
-            open: vec![OpenScope::default()],
+            open: vec![OpenScope::top_level()],
             dir: PathBuf::from("."),
             queued: std::collections::VecDeque::new(),
             last_write: LastWrite::NONE,
@@ -222,6 +227,8 @@ impl<'a> Context<'a> {
             next_block: bodies::BlockValue::Used,
             handed_tail: None,
             tail_values: None,
+            program_value: None,
+            held_back: Vec::new(),
         }
     }
 

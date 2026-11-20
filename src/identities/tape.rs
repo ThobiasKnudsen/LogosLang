@@ -140,7 +140,7 @@ pub(super) fn register(
     let (flag_write, flag_write_leaf) = op(cx, &["tape", "k", "flag", "op"], run_flag_write);
     let (spelling, spelling_leaf) = read(cx, &["tape", "k"], run_spelling);
     let (insert, insert_leaf) = op(cx, &["tape", "k", "cells", "op"], run_insert);
-    let (remove, remove_leaf) = read(cx, &["tape", "k"], run_remove);
+    let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
     let (slot_name, slot_name_leaf) = read(cx, &["tape", "k"], run_slot_name);
     let (cell_type, cell_type_leaf) = read(cx, &["tape", "k", "i"], run_line_type);
@@ -554,7 +554,7 @@ pub(crate) unsafe fn build_member(
         return Err(ParseError::CtorArity);
     };
     let k = index(store, types, k)?;
-    if op == ids.recenter {
+    if op == ids.recenter || op == ids.remove {
         return Ok(act(store, op, leaf, &[recv, k]));
     }
     // ›`tape.spelling[k]` is the text a cell was lexed from‹ [[R249]]
@@ -698,7 +698,11 @@ fn run_remove(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let (tape, k) = tape_at(rt, ops)?;
-        Ok((*tape).remove(k).map(|c| c.dyad as i64).unwrap_or(0))
+        // A bracket taken off the tape never runs, so its lines are no scope's.
+        if let Some(cell) = (*tape).remove(k) {
+            rt.note_lines_read(cell.dyad);
+        }
+        Ok(0)
     }
 }
 
@@ -962,6 +966,7 @@ unsafe fn scope_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<DyadPtr, R
     if dyad::ty(cell) != types.scope && dyad::ty(cell) != types.square_brackets {
         return Err(RunError::NotAScope(cell));
     }
+    rt.note_lines_read(cell);
     Ok(cell)
 }
 

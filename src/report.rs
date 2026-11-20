@@ -72,13 +72,39 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::ArmsDiffer => {
-            "the arms of this `if` give different types: convert them to one type, \
-             as in `if c (i64 (i32 1)) else (i64 2)`"
+            "the arms of this `if`, or the lines that give this block its value, give different \
+             types: convert them to one type, as in `if c (i64 (i32 1)) else (i64 2)`"
                 .into()
         }
         ParseError::ArmsMakeAndBorrow => {
-            "make a value in every arm, or borrow in every arm: one arm of this `if` makes its \
-             value and another borrows one, so who owns it would be known only when it runs"
+            "make a value in every arm, or borrow in every arm: one arm of this `if`, or one line \
+             that gives this block its value, makes its value and another borrows one, so who \
+             owns it would be known only when it runs"
+                .into()
+        }
+        ParseError::LineAfterValue => {
+            "this line never runs: the line before it always gives its scope a value, which ends \
+             the scope; a value nobody wants is thrown away with `free`, as in `free (f())`"
+                .into()
+        }
+        ParseError::LineAfterLeave => {
+            "this line never runs: the line before it always leaves, with a `return` or an \
+             `error`"
+                .into()
+        }
+        ParseError::VoidBodyGives => {
+            "this line gives a value, and a `-> void` function gives none; a value nobody wants \
+             is thrown away with `free`, as in `free (f())`"
+                .into()
+        }
+        ParseError::HeldGivenOnSomePaths => {
+            "this block gives a name it holds on some paths only, and its end frees that name on \
+             the others: give it with `move`, as in `if c (move a)`"
+                .into()
+        }
+        ParseError::EndsWithoutValue => {
+            "this can end without giving a value, and a value is needed here: an `if` without \
+             `else` or a loop gives one only on some paths"
                 .into()
         }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
