@@ -190,7 +190,8 @@ impl<'a> Parser<'a> {
         let (mut any, mut line_reads, mut assigns) = (false, false, false);
         let mut declares: Option<usize> = None;
         let (mut prev, mut before_prev): (Option<DyadPtr>, Option<DyadPtr>) = (None, None);
-        // After a `fn` or `type`, the rest of the level is a body read where it is built.
+        // After a `fn` or `type`, not a member's name, the rest of the level is a body read where
+        // it is built.
         let mut skipping = false;
         // A `-> dyad` function just scanned, with whether an infix stands before it; and whether
         // the bracket just closed was its call's.
@@ -268,7 +269,7 @@ impl<'a> Parser<'a> {
             if skipping {
                 continue;
             }
-            if id == types.fn_type || id == types.type_ {
+            if (id == types.fn_type || id == types.type_) && prev != Some(types.dot_) {
                 skipping = true;
                 continue;
             }

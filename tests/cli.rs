@@ -2160,6 +2160,14 @@ fn a_line_that_reads_a_dyad_name_is_parsed_where_it_is_written_up_to_the_name() 
              f(i64 0)",
             "3",
         ),
+        // A member named `type` is no `type (…)`, so what the line reads after it is seen.
+        ("h := fn (x := i32 ?, a := dyad ?) -> bool ( x.type == a.type ), h(i32 1, i32 2)", "true"),
+        ("h := fn (x := i32 ?, a := dyad ?) -> bool ( x.type == a.type ), h(i32 1, f64 2.0)", "false"),
+        (
+            "f := fn () -> dyad ( i32 5 ), h := fn (x := i32 ?) -> bool ( x.type == f().type ), \
+             h(i32 1)",
+            "true",
+        ),
     ] {
         let out = logos().arg(src).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -2241,6 +2249,15 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
     let (code, _, stderr) = run_line(&src);
     assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
     assert!(stderr.contains("never bare") && !stderr.contains("held line"), "stderr: {stderr}");
+    // A held stamp's type is known only when the parse runs, so the parse's later lines read the
+    // node's fields by name, not as fields of the type being defined.
+    let src = "w := type ( v := i32 ?, static output_type := i32, static run = ( v + v ) ), \
+               mut d := dyad ?, d = w, q := type ( static parse_rank = 60, static parse = ( \
+               tape[0].type = d, tape[0].v = tape[1], tape.is_constructed[0] = true, \
+               tape.remove(1) ) ), x := i32 4, print «{q x}»";
+    let (code, _, stderr) = run_line(src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("held line") && !stderr.contains("no field"), "stderr: {stderr}");
     // A type's `free` body reads its value's fields bare, as a `static` function does.
     let src = "mut total := i64 0, g := fn () -> dyad ( i64 1 ), \
                t := type ( n := i64 ?, static free = ( total = total + g() + n ) ), \
