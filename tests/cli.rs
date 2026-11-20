@@ -2160,6 +2160,14 @@ fn a_line_that_reads_a_dyad_name_is_parsed_where_it_is_written_up_to_the_name() 
              f(i64 0)",
             "3",
         ),
+        // A member named `type` is no `type (…)`, so what the line reads after it is seen.
+        ("h := fn (x := i32 ?, a := dyad ?) -> bool ( x.type == a.type ), h(i32 1, i32 2)", "true"),
+        ("h := fn (x := i32 ?, a := dyad ?) -> bool ( x.type == a.type ), h(i32 1, f64 2.0)", "false"),
+        (
+            "f := fn () -> dyad ( i32 5 ), h := fn (x := i32 ?) -> bool ( x.type == f().type ), \
+             h(i32 1)",
+            "true",
+        ),
     ] {
         let out = logos().arg(src).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -2177,6 +2185,84 @@ fn a_line_that_reads_a_dyad_name_is_parsed_where_it_is_written_up_to_the_name() 
         assert!(!out.status.success() && stderr.contains("unknown name"), "{src}: {stderr}");
         assert!(!stderr.contains("held line"), "{src}: stderr: {stderr}");
     }
+}
+
+#[test]
+fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
+    let t = "t := type ( mut n := i64 ?, static k := fn (a := dyad ?) -> i64 ( a + n ), \
+             static is_i32 := fn (a := dyad ?) -> bool ( a.type == i32 ), \
+             static last := fn (a := dyad ?) -> i64 ( a ), \
+             static add := fn (a := dyad ?) -> void ( n = a + n ), \
+             static bump := fn () -> i64 ( n = n + 1, n ), \
+             static add_bump := fn (a := dyad ?) -> i64 ( a + bump() ) )";
+    // A bare field of the `static` function's value is read through that value when the line runs.
+    for (tail, want) in [
+        ("v := t (3), v.k(i64 5)", "8"),
+        ("v := t (3), w := t (10), v.k(i64 5) + w.k(i64 5)", "23"),
+        ("v := t (3), v.is_i32(i32 5)", "true"),
+        ("v := t (3), v.is_i32(f64 2.5)", "false"),
+        ("v := t (3), v.last(i64 42)", "42"),
+        ("mut v := t (3), v.add(i64 5), v.n", "8"),
+        ("mut v := t (3), v.add_bump(i64 5), v.n", "4"),
+        ("v := t (3), g := fn () -> i64 ( v.k(i64 5) ), g.compile(), g()", "8"),
+    ] {
+        let src = format!("{t}, {tail}");
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // A field written in a held line, there or in a bare call, is a write of the value the
+    // function is called on, which must be `mut`, checked where the call is written.
+    for tail in ["v := t (3), v.add(i64 5)", "v := t (3), v.add_bump(i64 5)"] {
+        let src = format!("{t}, {tail}");
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("`v` is not `mut`"), "{src}: stderr: {stderr}");
+        assert!(!stderr.contains("held line"), "{src}: stderr: {stderr}");
+    }
+    let (code, _, stderr) = run_line(&format!("{t}, v := t (3), v.last(f64 2.5)"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
+    // A type's `run` body: a bare call there works on the node's own value.
+    let inc = "inc := type ( a := i32 ?, output_type := type ?, \
+               static twice := fn () -> i32 ( a * 2 ), static run = ( g() + twice() + a ), \
+               static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = inc, \
+               tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
+               tape.remove(-1) ) )";
+    let src =
+        format!("g := fn () -> dyad ( i32 1 ), {inc}, f := fn (y := i32 ?) -> i32 ( y inc ), f(5)");
+    assert_eq!(line(&src), "16", "{src}");
+    // A type's `parse` body: a held line runs when the parse does, and a bare field in one is
+    // refused where it is written, as on any line of a parse.
+    let parse = |line: &str| {
+        format!(
+            "mut d := dyad ?, d = i32 1, inc := type ( a := i32 ?, output_type := type ?, \
+             static run = ( a ), static parse_rank = *.parse_rank + 1, static parse = ( \
+             tape[0].type = inc, tape[0].a = tape[-1], {line}, tape.is_constructed[0] = true, \
+             tape.remove(-1) ) )"
+        )
+    };
+    let src = format!(
+        "{}, f := fn (y := i32 ?) -> i32 ( y inc ), f(5)",
+        parse("tape[0].output_type = d.type")
+    );
+    assert_eq!(line(&src), "5", "{src}");
+    let src = format!("{}, i32 5 inc", parse("tape[0].output_type = i32, d + a"));
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("never bare") && !stderr.contains("held line"), "stderr: {stderr}");
+    // A held stamp's type is known only when the parse runs, so the parse's later lines read the
+    // node's fields by name, not as fields of the type being defined.
+    let src = "w := type ( v := i32 ?, static output_type := i32, static run = ( v + v ) ), \
+               mut d := dyad ?, d = w, q := type ( static parse_rank = 60, static parse = ( \
+               tape[0].type = d, tape[0].v = tape[1], tape.is_constructed[0] = true, \
+               tape.remove(1) ) ), x := i32 4, print «{q x}»";
+    let (code, _, stderr) = run_line(src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("held line") && !stderr.contains("no field"), "stderr: {stderr}");
+    // A type's `free` body reads its value's fields bare, as a `static` function does.
+    let src = "mut total := i64 0, g := fn () -> dyad ( i64 1 ), \
+               t := type ( n := i64 ?, static free = ( total = total + g() + n ) ), \
+               h := fn () -> void ( x := t (3) ), h(), total";
+    assert_eq!(line(src), "4", "{src}");
 }
 
 #[test]
@@ -3796,11 +3882,9 @@ fn a_dyad_no_name_holds_is_read_through_as_a_named_one_is() {
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
     // A body's line that reads a call's node through `.` waits for the run.
     assert_eq!(line(&format!("{f}, h := fn () -> bool ( f().type == i32 ), h()")), "true");
-    // One in a function written in a type's body does not wait: stand-in for #310.
-    let src = format!("{f}, t := type ( static k := fn () -> bool ( f().type == i32 ) ), t.k()");
-    let (code, _, stderr) = run_line(&src);
-    assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
+    // So does one in a function written in a type's body.
+    let t = "t := type ( n := i64 ?, static k := fn () -> bool ( f().type == i32 ) )";
+    assert_eq!(line(&format!("{f}, {t}, v := t (3), v.k()")), "true");
 }
 
 /// Run one command line and return its stdout, asserting success.
