@@ -464,8 +464,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::KeptEntry(name) => format!(
             "`{name}` cannot be kept in this `{{ … }}`'s value: the seed keeps a name whose value \
-             moves whole into a field and has no `free` to run, as a number, a string, a map or a \
-             record does"
+             moves whole into a field, as a number, a string, a map, a record or a pointer does"
         ),
         ParseError::OwnParameterNotInSeed => {
             "an `own` parameter, which takes its argument's ownership, is not in the seed yet".into()

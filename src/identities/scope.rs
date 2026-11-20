@@ -246,6 +246,19 @@ pub(crate) unsafe fn exit_items<'a>(node: DyadPtr) -> &'a [DyadPtr] {
     }
 }
 
+/// The scope's exit is `items` from here.
+///
+/// # Safety
+/// `node` must be a scope node from the store; `items` exit items.
+pub(crate) unsafe fn set_exit(
+    store: &mut Store,
+    array_ty: DyadPtr,
+    node: DyadPtr,
+    items: &[DyadPtr],
+) {
+    *(dyad::value(node) as *mut DyadPtr).add(EXIT) = array::build(store, array_ty, items);
+}
+
 /// Appends `items` to the scope's exit, the array made on first use.
 ///
 /// # Safety

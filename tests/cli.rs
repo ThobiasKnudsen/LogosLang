@@ -9853,19 +9853,116 @@ fn a_curly_bracket_keeps_its_scope_as_a_value_whose_names_are_read_with_a_dot() 
     }
     let (echoes, stderr) = repl(b"m := { a := i32 1, b := i32 2 }\nm.a + m.b\n");
     assert_eq!(echoes, ["3"], "stderr: {stderr}");
-    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), \
-               m := { b := bag(1) }";
     for (src, expect) in [
         ("mut m := { a := i32 1 }, m.a = 5", "`a` is not `mut`"),
         ("m := { mut a := i32 1 }, m.a = 5", "`m` is not `mut`"),
         ("m := { a := i32 1 }, a", "`a` is not in scope here"),
         ("m := { a := i32 1 ), m.a", "1:19: error: this bracket is never closed"),
         ("x := i32 1 }", "1:12: error: this `}` closes nothing"),
-        (bag, "`b` cannot be kept in this `{ … }`'s value"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), ";
+    let run = |src: String, want: &str| {
+        let out = logos().arg(&src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{src}: stderr: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{src}");
+    };
+    let same = |want: &'static str| (want, want);
+    for c in ["", "f.compile(), "] {
+        for (body, (then, otherwise)) in [
+            (
+                "m := { b := bag (1), c := bag (2), a := i32 7 }, print «end {m.b.n} {m.c.n} {m.a}»",
+                same("end 1 2 7\nfreed 2\nfreed 1\n"),
+            ),
+            (
+                "m := { b := bag (1), n := { c := bag (2), d := bag (3) }, e := bag (4) }, print «end»",
+                same("end\nfreed 4\nfreed 3\nfreed 2\nfreed 1\n"),
+            ),
+            ("m := { e := dyad (bag, bag (6)), b := bag (1) }, print «end»", same("end\nfreed 1\nfreed 6\n")),
+            ("m := { b := bag (1) }, k := m, print «end»", same("end\nfreed 1\nfreed 1\n")),
+            ("m := { e := dyad (bag, bag (6)) }, k := m, print «end»", same("end\nfreed 6\nfreed 6\n")),
+            ("m := { b := bag (1) }, k := move m, print «end»", same("end\nfreed 1\n")),
+            ("m := { b := bag (1), c := bag (2) }, free m, print «end»", same("freed 2\nfreed 1\nend\n")),
+            ("free ({ b := bag (1), c := bag (2) }), print «end»", same("freed 2\nfreed 1\nend\n")),
+            // ›`move` and `free` take a field path too‹: the value's end ends the other entries.
+            (
+                "m := { b := bag (1), c := bag (2) }, free m.b, print «end {m.c.n}»",
+                same("freed 1\nend 2\nfreed 2\n"),
+            ),
+            (
+                "m := { b := bag (1), c := bag (2) }, k := move m.b, print «end {k.n}»",
+                same("end 1\nfreed 1\nfreed 2\n"),
+            ),
+            (
+                "m := { b := bag (1), n := { c := bag (2), d := bag (3) } }, free m.n.c, print «end»",
+                same("freed 2\nend\nfreed 3\nfreed 1\n"),
+            ),
+            (
+                "m := { e := dyad (bag, bag (6)), b := bag (1) }, free m.e, print «end»",
+                same("freed 6\nend\nfreed 1\n"),
+            ),
+            ("mut m := { mut b := bag (1) }, m.b = bag (3), print «end»", same("freed 1\nend\nfreed 3\n")),
+            (
+                "m := { b := bag (1), c := bag (2) }, if t ( free m.b ) else ( print «kept» ), print «end»",
+                ("freed 1\nend\nfreed 2\n", "kept\nfreed 1\nend\nfreed 2\n"),
+            ),
+            (
+                "m := { b := bag (1), c := bag (2) }, if t ( return 9 ), free m.b, print «end»",
+                ("freed 2\nfreed 1\n", "freed 1\nend\nfreed 2\n"),
+            ),
+            (
+                "m := { b := bag (1), c := bag (2) }, k := move m.c, if t ( return 9 ), print «end»",
+                ("freed 2\nfreed 1\n", "end\nfreed 2\nfreed 1\n"),
+            ),
+        ] {
+            let src = format!(
+                "{bag}f := fn (t := bool ?) -> i32 ( {body}, 0 ), {c}x := f(true), print «-», y := f(false)"
+            );
+            run(src, &format!("{then}-\n{otherwise}"));
+        }
+        // A fault inside the bracket ends the entries made before it.
+        let src = format!(
+            "{bag}g := fn () -> i32 ( error «stop» ), \
+             f := fn () -> i32 ( m := {{ b := bag (1), x := g(), c := bag (2) }}, 0 ), {c}f()"
+        );
+        let out = logos().arg(&src).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{src}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "freed 1\n", "{src}");
+    }
+    run(format!("{bag}m := {{ b := bag (1) }}, print «end»"), "end\nfreed 1\n");
+    run(
+        "m := { p := alloc 1 of i32 5, a := i32 1 }, q := move m.p, print «end {q@}»".into(),
+        "end 5\n",
+    );
+    let head = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )\n";
+    for (lines, want) in [
+        (
+            "m := { b := bag (1), c := bag (2) }\nk := bag (7)\nfree m.b\nprint «mid»\n",
+            ["freed 1", "mid", "freed 7", "freed 2"].as_slice(),
+        ),
+        (
+            "m := { b := bag (1), c := bag (2) }\nk := move m.b\nprint «mid»\n",
+            &["mid", "freed 1", "freed 2"],
+        ),
+        (
+            "m := { b := bag (1), n := { c := bag (2), d := bag (3) } }\nfree m.n\nprint «mid»\n",
+            &["freed 3", "freed 2", "mid", "freed 1"],
+        ),
+        (
+            "m := { b := bag (1), n := { c := bag (2), d := bag (3) } }\nfree m.n.c\nfree m.b\n",
+            &["freed 2", "freed 1", "freed 3"],
+        ),
+    ] {
+        let (echoes, stderr) = repl(format!("{head}{lines}").as_bytes());
+        assert_eq!(echoes, want, "{lines}: stderr: {stderr}");
     }
 }
 

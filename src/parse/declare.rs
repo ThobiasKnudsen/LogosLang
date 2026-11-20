@@ -269,17 +269,26 @@ impl<'a> Parser<'a> {
     }
 
     /// Whether the exit item holds `place` still: the same name, or a name that holds over the
-    /// same bytes, as an imported `pub` name over the file's. A borrow over the same bytes, a
-    /// plain record's second name, is another name.
+    /// same bytes, as an imported `pub` name over the file's, or the same entry of a `{ … }`
+    /// value. A borrow over the same bytes, a plain record's second name, is another name.
     ///
     /// # Safety
     /// `place` must be a dyad from the store.
     pub(super) unsafe fn holds(&self, item: &ExitItem, place: DyadPtr) -> bool {
+        use crate::identities::drop_model::same_place;
+        let types = self.types;
+        let same_entry = || {
+            dyad::ty(place) == types.field_
+                && dyad::ty(item.what) == types.field_
+                && same_place(types, item.what, place)
+                && types.type_of(item.what) == types.type_of(place)
+        };
         item.end.is_none()
             && (item.what == place
-                || dyad::ty(place) == self.types.binding_
+                || dyad::ty(place) == types.binding_
                     && self.name_holds(place)
-                    && crate::identities::drop_model::same_place(self.types, item.what, place))
+                    && same_place(types, item.what, place)
+                || same_entry())
     }
 
     /// `node` has emptied `ended`'s place: its name is dead from here on (DESIGN ›`move` and
@@ -292,7 +301,10 @@ impl<'a> Parser<'a> {
         }
         if !ended.is_name() {
             // SAFETY: `ended` holds the name's binding and the field bindings its path reads.
-            unsafe { self.end_path(ended, node) };
+            unsafe {
+                self.end_held_path(&ended);
+                self.end_path(ended, node);
+            }
             return;
         }
         // SAFETY: `ended.binding` is the binding the resolver returned for the operand.
@@ -314,11 +326,76 @@ impl<'a> Parser<'a> {
         self.cx.ended_log.push((ended.binding, holder));
     }
 
+    /// The field path `ended` reaches an entry of a `{ … }` value an open scope holds: that entry
+    /// ends here as a held name does, so the value's end ends only its other entries (›`move` and
+    /// `free` take a field path too‹ [[R75]]). Nothing for any other path.
+    ///
+    /// # Safety
+    /// `ended.binding` must be a name's binding dyad and `ended.path` field bindings.
+    unsafe fn end_held_path(&mut self, ended: &Ended) {
+        use crate::identities::{drop_model, instance};
+        if !self.name_holds(ended.binding) {
+            return;
+        }
+        let mut place = ended.binding;
+        for &field in &ended.path {
+            if !drop_model::ends_entry(self.types, place, field) {
+                return;
+            }
+            place = match self.held_entry(place, field) {
+                Some(entry) => entry,
+                // Held by an earlier REPL line: the session splits its hold when the line ends.
+                None => instance::build_field(self.rt.store, self.types, place, field),
+            };
+        }
+        let holder = self.holder_of(place).unwrap_or_else(|| {
+            self.cx.open[0].ended_earlier.push(place);
+            0
+        });
+        for open in &mut self.cx.open[holder..] {
+            open.ended.push(place);
+        }
+        self.cx.ended_log.push((place, holder));
+    }
+
+    /// The place of entry `field` of `place` as an open scope holds it: the hold of a `{ … }`
+    /// value held whole first becomes one hold per entry with an end, in written order where the
+    /// value's stood, so the scope's end still ends them last declared first, and a `return`
+    /// that would end the value ends those entries. `None` where no open scope holds the entry.
+    ///
+    /// # Safety
+    /// `place` must be a name's binding or an entry place this returned, `field` an entry of its
+    /// value with an end ([`crate::identities::drop_model::ends_entry`]).
+    unsafe fn held_entry(&mut self, place: DyadPtr, field: DyadPtr) -> Option<DyadPtr> {
+        use crate::identities::{drop_model, instance};
+        let types = self.types;
+        let is_entry = |what: DyadPtr| {
+            // SAFETY: an exit item holds a binding, a `defer` or a `field` place.
+            dyad::ty(what) == types.field_
+                && unsafe { instance::field_parts(what) } == (place, field)
+        };
+        let split = self.cx.open.iter().flat_map(|s| &s.exit);
+        if let Some(item) = split.filter(|h| h.end.is_none()).find(|h| is_entry(h.what)) {
+            return Some(item.what);
+        }
+        let holder = self.holder_of(place)?;
+        let at = self.cx.open[holder].exit.iter().position(|h| self.holds(h, place))?;
+        let whole = self.cx.open[holder].exit[at];
+        let entries = drop_model::held_entries(self.rt.store, types, place)?;
+        let items = entries.iter().map(|&what| ExitItem { what, from: whole.from, end: None });
+        self.cx.open[holder].exit.splice(at..=at, items);
+        for r in self.cx.frames.iter_mut().flat_map(|f| &mut f.returns) {
+            if let Some(k) = r.live.iter().position(|&n| n == whole.what) {
+                r.live.splice(k..=k, entries.iter().copied());
+            }
+        }
+        entries.into_iter().find(|&e| instance::field_parts(e).1 == field)
+    }
+
     /// `node` has ended the field path `ended`: each path binding along it under the name's
     /// entry, made on the first end that reaches it, and the last is dead from here, so the name
     /// and every path above the last are dead as a whole (DESIGN ›`move` and `free` take a field
-    /// path too‹). Nothing more is settled: no holder on the path fills `free`, so no holder's
-    /// end reaches the field.
+    /// path too‹).
     ///
     /// # Safety
     /// `ended.binding` must be a name's binding dyad and `ended.path` field bindings; `node` a
@@ -864,9 +941,9 @@ impl<'a> Parser<'a> {
                 // Whatever is written into it later is the name's to end: `a := own t ?`, `a := r ?`
                 // of a plain record whose body fills `free`, `a := own @T ?` and `d := dyad ?`.
                 match teardown_of_type(self.types, t) {
-                    Teardown::Node(_) => self.hold_node(binding),
-                    Teardown::Block(_) | Teardown::Dyad => self.hold(binding),
+                    t if t.of_record() => self.hold_node(binding),
                     Teardown::Nothing => {}
+                    _ => self.hold(binding),
                 }
                 if !crate::identities::hashmap::is_hashmap(self.types, t) {
                     Binding::add_gate(
@@ -886,13 +963,13 @@ impl<'a> Parser<'a> {
                 || dyad::ty(read) == self.types.by_copy.result
             {
                 // Both make their value into the name's own bytes: the target slot. A record
-                // just made or moved out, of a type whose body fills `free`, makes the name its
-                // owner.
+                // just made or moved out, of a type whose body fills `free` or a `{ … }` whose
+                // entries have ends, makes the name its owner.
                 let t = crate::identities::read::output_type(self.types, read);
                 let width = crate::identities::by_copy::place_width(self.types, t);
                 let place = self.place_for(binding, t, width);
                 *(dyad::value(read) as *mut DyadPtr) = place;
-                if let Teardown::Node(_) = teardown_of(self.types, value) {
+                if teardown_of(self.types, value).of_record() {
                     self.hold_node(binding);
                     self.take(value);
                 }
@@ -947,7 +1024,7 @@ impl<'a> Parser<'a> {
                 let place = self.place_for(binding, ty_node, width);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
                 match teardown_of(self.types, value) {
-                    Teardown::Node(_) => {
+                    t if t.of_record() => {
                         self.hold_node(binding);
                         self.take(value);
                     }
