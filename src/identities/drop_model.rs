@@ -1273,13 +1273,7 @@ unsafe fn moved_out_via(
     if marked_own(node) {
         return Some(node);
     }
-    let logos = dyad::ty(node);
-    let (nodes, lines) = meta::hands_on_of(logos);
-    if nodes | lines != 0 {
-        let operands = (0..u8::BITS as usize)
-            .filter(|&k| (nodes | lines) & 1 << k != 0)
-            .map(|k| handed_operand(node, k, lines))
-            .collect::<Option<Vec<_>>>()?;
+    if let Some(operands) = handed_operands(node) {
         // A used `if` ends its value alike in every arm (`handed_ends`), so the first operand's
         // is it. Each is walked, so `visit` sees what each hands on, a `return` arm's too.
         let mut first = None;
@@ -1326,8 +1320,25 @@ unsafe fn marked_own(node: DyadPtr) -> bool {
     }
 }
 
+/// The operands `node` hands on as its value, every one alike, as its type's record names them;
+/// `None` where it gives its own value, or where one is missing: an `else`-less `if`'s arm, a
+/// block with no lines.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+unsafe fn handed_operands(node: DyadPtr) -> Option<Vec<DyadPtr>> {
+    let (nodes, lines) = meta::hands_on_of(dyad::ty(node));
+    if nodes | lines == 0 {
+        return None;
+    }
+    (0..u8::BITS as usize)
+        .filter(|&k| (nodes | lines) & 1 << k != 0)
+        .map(|k| handed_operand(node, k, lines))
+        .collect()
+}
+
 /// The operand in slot `k` that `node` hands on, or, where `k` is among `lines`, the last of the
-/// lines it holds; `None` where there is none: an `else`-less `if`'s arm, a block with no lines.
+/// lines it holds; `None` where there is none.
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store whose type's record hands on slot `k`.
@@ -1359,11 +1370,6 @@ pub(crate) enum Teardown {
 pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Teardown {
     if let Some(pointee) = owning_pointee_of(types, value) {
         return Teardown::Block(pointee);
-    }
-    let node = types.through(value);
-    if dyad::ty(node) == types.scope {
-        return crate::parse::last_sequence_expr(node)
-            .map_or(Teardown::Nothing, |tail| teardown_of(types, tail));
     }
     let output = super::read::output_type(types, value);
     if output == types.dyad_ && moves_out(types, value) {
@@ -1403,21 +1409,16 @@ unsafe fn type_free(types: &Core, value: DyadPtr, t: DyadPtr) -> DyadPtr {
 /// `node` must be a reduced dyad from the store.
 pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<bool>, ParseError> {
     let d = types.through(node);
-    let logos = dyad::ty(d);
-    if logos == types.return_ {
+    // A `return` hands its operand to the caller, not to its line, so no record says it.
+    if dyad::ty(d) == types.return_ {
         return handed_ends(types, *(dyad::value(d) as *const DyadPtr));
     }
-    if logos == types.scope {
-        return match crate::parse::last_sequence_expr(d) {
-            Some(last) => handed_ends(types, last),
-            None => Ok(None),
-        };
-    }
-    if logos == types.if_ {
-        let (_, then, els) = super::if_mod::branches(d);
-        if !els.is_null() {
-            return arms_end_alike(handed_ends(types, then)?, handed_ends(types, els)?);
+    if let Some(operands) = handed_operands(d) {
+        let mut ends = None;
+        for operand in operands {
+            ends = arms_end_alike(ends, handed_ends(types, operand)?)?;
         }
+        return Ok(ends);
     }
     let t = super::read::output_type(types, node);
     if t == types.void_ {
@@ -1815,6 +1816,8 @@ mod tests {
         }
     }
 
+    /// Read through the walk, as no program reaches it yet: a body's close asks the walk before
+    /// `commit_fn_body` sets where its lines land, and a call reads its callee's record.
     #[test]
     fn a_held_line_whose_value_lands_in_a_new_node_carries_the_own_mark() {
         let mut store = Store::new();
