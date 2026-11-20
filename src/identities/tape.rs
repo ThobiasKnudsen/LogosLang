@@ -1013,22 +1013,27 @@ pub(crate) unsafe fn checked_number(types: &Core, read: DyadPtr) -> Option<DyadP
 }
 
 /// A bracket a type's `parse` hands to the call it places is the list the new value is built
-/// from, so the value owns what its lines hold: a line naming a value whose type fills a
-/// `free` must move it in, `move x`, or two names would own one value.
+/// from, so the value owns what its lines hold: a line naming a value whose type fills a `free`
+/// puts a copy of it in (›A value owns what its elements hold and frees it‹ [[R226]]), in a new
+/// bracket of the same kind; `bracket` itself where no line takes a copy.
 ///
 /// # Safety
 /// `bracket` must be a scope or `square_brackets` node from the store.
-unsafe fn owned_lines(types: &Core, bracket: DyadPtr) -> Result<(), crate::parse::ParseError> {
-    for &line in super::scope::exprs_of(bracket).unwrap_or(&[]) {
-        let line = types.through(line);
-        let named = matches!(super::read::read_kind(types, line), super::read::Read::Container(_));
-        let owned =
-            super::node_output(types, line).is_some_and(|t| !meta::instances_free_of(t).is_null());
-        if named && owned {
-            return Err(crate::parse::ParseError::LineNotMoved);
-        }
+unsafe fn owned_lines(store: &mut Store, types: &Core, bracket: DyadPtr) -> DyadPtr {
+    let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
+    let taken: Vec<DyadPtr> = lines
+        .iter()
+        .map(|&line| match super::node_output(types, types.through(line)) {
+            Some(_) => super::copy::taken(store, types, line),
+            None => line,
+        })
+        .collect();
+    if taken == lines {
+        return bracket;
     }
-    Ok(())
+    let mut slots = [std::ptr::null_mut(); super::scope::SLOTS];
+    slots[0] = super::array::build(store, types.array_, &taken);
+    store.alloc_words(dyad::ty(bracket), &slots)
 }
 
 /// The operand a node's address gives a placed node: for a type's own fresh node, a copy
@@ -1063,10 +1068,10 @@ pub(crate) unsafe fn build_bracket_arg(
     store: &mut Store,
     types: &Core,
     bracket: DyadPtr,
-) -> Result<DyadPtr, crate::parse::ParseError> {
-    owned_lines(types, bracket)?;
+) -> DyadPtr {
+    let bracket = owned_lines(store, types, bracket);
     let output = at_dyad(store, types);
-    Ok(node(store, types.tape.bracket_arg, types.tape.bracket_arg_leaf, &[bracket], output))
+    node(store, types.tape.bracket_arg, types.tape.bracket_arg_leaf, &[bracket], output)
 }
 
 /// The kind of bracket `node` is, `scope` or `square_brackets`, written or wrapped by

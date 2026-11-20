@@ -273,9 +273,6 @@ pub enum ParseError {
     /// `move` or `free` of a field path under a holder whose type fills its own `free`, which
     /// frees the field with the rest: the path, then that holder, each spelled.
     EndUnderFree(Box<(String, String)>),
-    /// A name as a line of a list a type's `parse` builds from, where the value's type fills
-    /// a `free`: the built value owns its lines, so the name must be moved in.
-    LineNotMoved,
     /// `own` over a type with nothing to own: neither a pointer nor a type whose body fills
     /// `free`.
     OwnNeedsPointer,

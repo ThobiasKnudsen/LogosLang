@@ -6541,15 +6541,17 @@ fn an_array_holds_arrays_as_their_addresses() {
         ("u := array t, u == array t", "true"),
         // A copy is its name's own, so it moves in.
         ("z := array i32 [5], w := z, c := array t [move w], c[0][0]", "5"),
+        // A named line puts a copy in: the outer array and the name each own their own.
+        ("z := array i32 [5], c := array t [z], c[0][0] = i32 9, z[0]", "5"),
+        ("z := array i32 [5], c := array t [z], c[0][0] = i32 9, c[0][0]", "9"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert_eq!(stdout.trim(), printed, "{tail}");
     }
-    // The outer array owns its elements, so a name is moved in; a borrow cannot be.
+    // A name moved in is dead; a borrow cannot be moved.
     for (tail, expect) in [
         ("x[0]", "`x` is dead here"),
-        ("z := array i32 [5], c := array t [z]", "write `move x` to move it in"),
         ("f := fn (p := t ?) -> u64 ( c := array t [move p], c.size )", "only its owner can"),
     ] {
         let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
@@ -6749,6 +6751,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "free\nset\nbag\nfree\n"),
         ("l := array bagged [bag (), bag ()], print «made»", "made\nbag\nfree\nbag\nfree\n"),
         ("g := bag (), l := array bagged [move g], print «made»", "made\nbag\nfree\n"),
+        ("g := bag (), l := array bagged [g], print «made»", "made\nbag\nfree\nbag\nfree\n"),
         ("mut a := own box ?, a = box (3, 1), print «set»", "set\nfree\n"),
     ] {
         let (code, stdout, stderr) = run_line(&bag_line(tail));
