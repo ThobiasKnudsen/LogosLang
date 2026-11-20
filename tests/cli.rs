@@ -2398,7 +2398,7 @@ fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
             (format!("f := fn () -> void ( print «{{1/2}}» ), {c}f()"), "1/2\n"),
             (format!("f := fn () -> i64 ( 10000000000 ), {c}f()"), "10000000000\n"),
             (format!("f := fn () -> i32 ( r := 1/2, 1 ), {c}f()"), "1\n"),
-            (format!("f := fn () -> i32 ( defer 1/2, 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( defer free (1/2), 1 ), {c}f()"), "1\n"),
             (format!("f := fn () -> dyad ( mut d := dyad ?, d = 1/3, d ), {c}f()"), "1/3\n"),
             (
                 format!(
@@ -4695,6 +4695,7 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
     let mk_of = "mk := fn (u := type ?) -> type ( u )";
     let boxed = "mut t := type ?, t = i32, mk := fn () -> type ( t )";
     let o = "o := type ( static m := fn () -> type ( i32 ) )";
+    let o_by_name = format!("{o}, k := o.m");
     let pt = "pt := type ( mut a := i32 ? ), mk := fn () -> type ( pt )";
     let h = "h := fn () -> i32 ( print «h», 1 ), mk := fn () -> type ( print «mk», i32 )";
     for (named, unnamed, want) in [
@@ -4729,6 +4730,8 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
         (boxed, "i32", "u := mk(), u 3", "mk() 3", "3"),
         (mk, "type", "u := mk(), x := u 3, x.type", "x := mk() 3, x.type", "i32"),
         (mk_of, "type", "u := mk(i64), x := u 3, x.type", "x := mk(i64) 3, x.type", "i64"),
+        (o, "i32", "u := o.m(), u 3", "o.m() 3", "3"),
+        (o_by_name.as_str(), "i32", "u := k(), u 3", "k() 3", "3"),
         (mk, "i32", "u := mk(), u(7)", "mk()(7)", "7"),
         (pt, "i32", "u := mk(), v := u(4), v.a", "v := mk()(4), v.a", "4"),
         (mk, "type", "u := mk(), u", "mk()", "i32"),
@@ -4746,6 +4749,9 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
     // In a body the call runs where the body is written; what stands before it waits for f's call.
     let src = format!("{h}, f := fn () -> i32 ( h() + mk() 5 ), print «defined», f()");
     assert_eq!(line(&src), "mk\ndefined\nh\n6");
+    let om = "o := type ( static m := fn () -> type ( print «m», i32 ) )";
+    let src = format!("{om}, f := fn () -> i32 ( o.m() 3 ), print «defined», f()");
+    assert_eq!(line(&src), "m\ndefined\n3");
 }
 
 #[test]
@@ -5643,7 +5649,7 @@ fn a_text_node_and_a_place_of_text_read_as_the_node() {
         for (src, want) in [
             (format!("f := fn () -> i32 ( free («a»), 1 ), {c}f()"), "1\n"),
             (format!("f := fn () -> i32 ( s := «a», 1 ), {c}f()"), "1\n"),
-            (format!("f := fn () -> i32 ( defer «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( defer free («a»), 1 ), {c}f()"), "1\n"),
             (format!("f := fn (a := string ?) -> i32 ( print «{{a}}», 1 ), {c}f(«hi»)"), "hi\n1\n"),
             (format!("f := fn () -> string ( «a» ), {c}f()"), "a\n"),
         ] {
@@ -6744,7 +6750,8 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         ),
         (
             format!(
-                "{say}, g := fn (x := f64 ?) -> i32 ( defer say(1), n := i32 lossy (x), say(n) )"
+                "{say}, g := fn (x := f64 ?) -> i32 ( defer free (say(1)), n := i32 lossy (x), \
+                 say(n) )"
             ),
             fault,
             "say 1\n",
@@ -6821,20 +6828,11 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
             "freed 3\nfreed 1\n",
             range,
         ),
-        // A `return` in a `defer` the cleanup runs runs the rest of its end; a fault stops it.
-        (
-            format!(
-                "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), defer ( return 7 ), \
-                 b := bag(2), n := i32 lossy (x), n )"
-            ),
-            fault,
-            "freed 2\nfreed 1\n",
-            nan,
-        ),
+        // A fault in a `defer` stops the end it runs in.
         (
             format!(
                 "{RECORD}, h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), \
-                 g := fn (x := f64 ?) -> i32 ( a := bag(1), defer ( h(x) ), b := bag(2), 3 )"
+                 g := fn (x := f64 ?) -> i32 ( a := bag(1), defer free (h(x)), b := bag(2), 3 )"
             ),
             fault,
             "freed 2\n",
@@ -7176,9 +7174,13 @@ fn a_line_frees_at_its_end_what_it_made_that_nothing_took() {
         ("c := true, x := if c ( bag(7) ) else ( bag(8) ), print «after»".into(), "after\nfreed 7\n"),
         ("x := ( free (bag(9)), i32 5 ), print «x {x}»".into(), "freed 9\nx 5\n"),
         // A `defer` is a line of its own when its scope ends.
-        ("f := fn () -> i32 ( defer bag(1), 2 ), free (f()), print «after»".into(), "freed 1\nafter\n"),
         (
-            "f := fn () -> i32 ( defer bag(1), 2 ), f.compile(), free (f()), print «after»".into(),
+            "f := fn () -> i32 ( defer free (bag(1)), 2 ), free (f()), print «after»".into(),
+            "freed 1\nafter\n",
+        ),
+        (
+            "f := fn () -> i32 ( defer free (bag(1)), 2 ), f.compile(), free (f()), print «after»"
+                .into(),
             "freed 1\nafter\n",
         ),
         // A `.` reads the node and runs nothing, so nothing is made to free.
@@ -7820,60 +7822,59 @@ fn a_return_ends_what_each_scope_if_and_call_it_leaves_holds_compiled_or_not() {
     }
 }
 
-/// ›A value's teardown runs where its life ends; the ending identity reads the type's `free`
-/// slot‹ [[R57]] and ›A scope's value is what it evaluates to, and `return` is an optional early
-/// exit from the enclosing function‹ [[R207]]: a `return` in a `defer` runs the rest of its
-/// scope's end before it leaves, on both tiers.
+/// ›A scope's value is what it evaluates to, and `return` is an optional early exit from the
+/// enclosing function‹ [[R207]]: a `defer` holds no `return`, at any depth, and gives no value;
+/// each is refused where it is written, so nothing runs on either tier.
 #[test]
-fn a_return_in_a_defer_runs_the_rest_of_its_scopes_end_compiled_or_not() {
-    let f = "f := fn (q := bag ?, m := i32 ?) -> i32 ( q.n + m )";
-    for (g, calls, printed) in [
+fn a_defer_holds_no_return_and_gives_no_value() {
+    let leaves = "a `defer` cannot leave its function";
+    let gives = "this gives a value, and a `defer` gives none";
+    for (g, word, error) in [
+        ("g := fn () -> i32 ( defer ( return 7 ), return 3 )", "return 7", leaves),
+        ("g := fn () -> i32 ( defer return 7, 3 )", "return 7", leaves),
         (
             "g := fn () -> i32 ( a := bag(1), defer ( return 7 ), b := bag(2), 3 )",
-            "print «got {g()}»",
-            "freed 2\nfreed 1\ngot 7\n",
+            "return 7",
+            leaves,
         ),
+        ("g := fn (c := i32 ?) -> i32 ( defer ( if (c == 1) (return 7) ), 3 )", "return 7", leaves),
         (
-            "g := fn () -> i32 ( a := bag(1), defer ( b := bag(5), return 7 ), c := bag(2), 3 )",
-            "print «got {g()}»",
-            "freed 2\nfreed 5\nfreed 1\ngot 7\n",
+            "g := fn () -> i32 ( defer ( for i in 0..3 ( if (i == 1) (return 7) ) ), 3 )",
+            "return 7",
+            leaves,
         ),
-        (
-            "g := fn (c := i32 ?) -> i32 ( a := bag(1), defer ( if (c == 1) (return 7) ), \
-             b := bag(2), 3 )",
-            "print «got {g(1)}», print «got {g(0)}»",
-            "freed 2\nfreed 1\ngot 7\nfreed 2\nfreed 1\ngot 3\n",
-        ),
-        (
-            "g := fn () -> i32 ( a := bag(1), x := ( b := bag(2), defer ( return 7 ), \
-             c := bag(3), i32 5 ), d := bag(4), x )",
-            "print «got {g()}»",
-            "freed 3\nfreed 2\nfreed 1\ngot 7\n",
-        ),
-        (
-            "g := fn () -> i32 ( a := bag(1), for 0..2 ( b := bag(2), defer ( return 7 ), \
-             c := bag(3) ), 4 )",
-            "print «got {g()}»",
-            "freed 3\nfreed 2\nfreed 1\ngot 7\n",
-        ),
-        (
-            "g := fn (c := i32 ?) -> i32 ( a := bag(1), if (c > 0) ( b := bag(2), \
-             defer ( return 7 ), d := bag(4) ) else ( free a ), 3 )",
-            "print «got {g(1)}», print «got {g(0)}»",
-            "freed 4\nfreed 2\nfreed 1\ngot 7\nfreed 1\ngot 3\n",
-        ),
-        (
-            "g := fn () -> i32 ( a := bag(1), f(bag(2), ( b := bag(3), defer ( return 7 ), \
-             c := bag(4), i32 5 )) )",
-            "print «got {g()}»",
-            "freed 4\nfreed 3\nfreed 2\nfreed 1\ngot 7\n",
-        ),
+        ("g := fn () -> i32 ( x := ( defer ( return 7 ), i32 5 ), x )", "return 7", leaves),
+        ("g := fn () -> i32 ( defer ( defer ( return 7 ) ), 3 )", "return 7", leaves),
+        // The line after the `return` is the `return`'s to answer for, not the `defer`'s.
+        ("g := fn () -> i32 ( defer ( return 7, print «x» ), 3 )", "return 7", leaves),
+        ("g := fn () -> i32 ( defer ( 7 ), 3 )", "( 7 )", gives),
+        ("g := fn () -> i32 ( defer 7, 3 )", "7,", gives),
+        ("g := fn () -> i32 ( defer bag(1), 3 )", "bag(1),", gives),
+        ("g := fn (c := i32 ?) -> i32 ( defer ( if (c == 1) (7) ), 3 )", "( if", gives),
+        ("g := fn () -> i32 ( defer ( for i in 0..3 ( if (i == 1) (i) ) ), 3 )", "( for", gives),
     ] {
         for compile in ["", "g.compile(), "] {
-            let src = format!("{RECORD}, {f}, {g}, {compile}{calls}");
+            let src = format!("{RECORD}, {g}, {compile}print «got {{g()}}»");
             let (code, stdout, stderr) = run_line(&src);
-            assert_eq!((code, stdout.as_str()), (Some(0), printed), "{compile}{g}: {stderr}");
+            assert_eq!((code, stdout.as_str()), (Some(1), ""), "{compile}{g}: {stderr}");
+            let at = src.find(word).expect("the word is in the program");
+            let col = src[..at].chars().count() + 1;
+            let head = format!("<command line>:1:{col}: error: {error}");
+            assert!(stderr.starts_with(&head), "{compile}{g}: stderr: {stderr}");
         }
+    }
+    // A function written in a `defer` leaves itself, and a value nobody wants is thrown away.
+    for compile in ["", "g.compile(), "] {
+        let src = format!(
+            "{RECORD}, g := fn () -> i32 ( a := bag(1), defer ( h := fn () -> i32 ( return 5 ), \
+             print «h {{h()}}» ), defer free (bag(2)), 3 ), {compile}print «got {{g()}}»"
+        );
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(0), "freed 2\nh 5\nfreed 1\ngot 3\n"),
+            "{compile}: {stderr}"
+        );
     }
 }
 
@@ -9900,19 +9901,116 @@ fn a_curly_bracket_keeps_its_scope_as_a_value_whose_names_are_read_with_a_dot() 
     }
     let (echoes, stderr) = repl(b"m := { a := i32 1, b := i32 2 }\nm.a + m.b\n");
     assert_eq!(echoes, ["3"], "stderr: {stderr}");
-    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), \
-               m := { b := bag(1) }";
     for (src, expect) in [
         ("mut m := { a := i32 1 }, m.a = 5", "`a` is not `mut`"),
         ("m := { mut a := i32 1 }, m.a = 5", "`m` is not `mut`"),
         ("m := { a := i32 1 }, a", "`a` is not in scope here"),
         ("m := { a := i32 1 ), m.a", "1:19: error: this bracket is never closed"),
         ("x := i32 1 }", "1:12: error: this `}` closes nothing"),
-        (bag, "`b` cannot be kept in this `{ … }`'s value"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), ";
+    let run = |src: String, want: &str| {
+        let out = logos().arg(&src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{src}: stderr: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{src}");
+    };
+    let same = |want: &'static str| (want, want);
+    for c in ["", "f.compile(), "] {
+        for (body, (then, otherwise)) in [
+            (
+                "m := { b := bag (1), c := bag (2), a := i32 7 }, print «end {m.b.n} {m.c.n} {m.a}»",
+                same("end 1 2 7\nfreed 2\nfreed 1\n"),
+            ),
+            (
+                "m := { b := bag (1), n := { c := bag (2), d := bag (3) }, e := bag (4) }, print «end»",
+                same("end\nfreed 4\nfreed 3\nfreed 2\nfreed 1\n"),
+            ),
+            ("m := { e := dyad (bag, bag (6)), b := bag (1) }, print «end»", same("end\nfreed 1\nfreed 6\n")),
+            ("m := { b := bag (1) }, k := m, print «end»", same("end\nfreed 1\nfreed 1\n")),
+            ("m := { e := dyad (bag, bag (6)) }, k := m, print «end»", same("end\nfreed 6\nfreed 6\n")),
+            ("m := { b := bag (1) }, k := move m, print «end»", same("end\nfreed 1\n")),
+            ("m := { b := bag (1), c := bag (2) }, free m, print «end»", same("freed 2\nfreed 1\nend\n")),
+            ("free ({ b := bag (1), c := bag (2) }), print «end»", same("freed 2\nfreed 1\nend\n")),
+            // ›`move` and `free` take a field path too‹: the value's end ends the other entries.
+            (
+                "m := { b := bag (1), c := bag (2) }, free m.b, print «end {m.c.n}»",
+                same("freed 1\nend 2\nfreed 2\n"),
+            ),
+            (
+                "m := { b := bag (1), c := bag (2) }, k := move m.b, print «end {k.n}»",
+                same("end 1\nfreed 1\nfreed 2\n"),
+            ),
+            (
+                "m := { b := bag (1), n := { c := bag (2), d := bag (3) } }, free m.n.c, print «end»",
+                same("freed 2\nend\nfreed 3\nfreed 1\n"),
+            ),
+            (
+                "m := { e := dyad (bag, bag (6)), b := bag (1) }, free m.e, print «end»",
+                same("freed 6\nend\nfreed 1\n"),
+            ),
+            ("mut m := { mut b := bag (1) }, m.b = bag (3), print «end»", same("freed 1\nend\nfreed 3\n")),
+            (
+                "m := { b := bag (1), c := bag (2) }, if t ( free m.b ) else ( print «kept» ), print «end»",
+                ("freed 1\nend\nfreed 2\n", "kept\nfreed 1\nend\nfreed 2\n"),
+            ),
+            (
+                "m := { b := bag (1), c := bag (2) }, if t ( return 9 ), free m.b, print «end»",
+                ("freed 2\nfreed 1\n", "freed 1\nend\nfreed 2\n"),
+            ),
+            (
+                "m := { b := bag (1), c := bag (2) }, k := move m.c, if t ( return 9 ), print «end»",
+                ("freed 2\nfreed 1\n", "end\nfreed 2\nfreed 1\n"),
+            ),
+        ] {
+            let src = format!(
+                "{bag}f := fn (t := bool ?) -> i32 ( {body}, 0 ), {c}x := f(true), print «-», y := f(false)"
+            );
+            run(src, &format!("{then}-\n{otherwise}"));
+        }
+        // A fault inside the bracket ends the entries made before it.
+        let src = format!(
+            "{bag}g := fn () -> i32 ( error «stop» ), \
+             f := fn () -> i32 ( m := {{ b := bag (1), x := g(), c := bag (2) }}, 0 ), {c}f()"
+        );
+        let out = logos().arg(&src).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{src}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "freed 1\n", "{src}");
+    }
+    run(format!("{bag}m := {{ b := bag (1) }}, print «end»"), "end\nfreed 1\n");
+    run(
+        "m := { p := alloc 1 of i32 5, a := i32 1 }, q := move m.p, print «end {q@}»".into(),
+        "end 5\n",
+    );
+    let head = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )\n";
+    for (lines, want) in [
+        (
+            "m := { b := bag (1), c := bag (2) }\nk := bag (7)\nfree m.b\nprint «mid»\n",
+            ["freed 1", "mid", "freed 7", "freed 2"].as_slice(),
+        ),
+        (
+            "m := { b := bag (1), c := bag (2) }\nk := move m.b\nprint «mid»\n",
+            &["mid", "freed 1", "freed 2"],
+        ),
+        (
+            "m := { b := bag (1), n := { c := bag (2), d := bag (3) } }\nfree m.n\nprint «mid»\n",
+            &["freed 3", "freed 2", "mid", "freed 1"],
+        ),
+        (
+            "m := { b := bag (1), n := { c := bag (2), d := bag (3) } }\nfree m.n.c\nfree m.b\n",
+            &["freed 2", "freed 1", "freed 3"],
+        ),
+    ] {
+        let (echoes, stderr) = repl(format!("{head}{lines}").as_bytes());
+        assert_eq!(echoes, want, "{lines}: stderr: {stderr}");
     }
 }
 

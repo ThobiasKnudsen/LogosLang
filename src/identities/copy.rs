@@ -41,10 +41,13 @@ enum Owned {
     Block(DyadPtr),
     /// A node a Logos `parse` built, of a type that fills `free`: the node, field by field.
     Node(DyadPtr),
-    /// A record kept in its bytes, of a type that fills `free`: its fields, in place.
+    /// A record kept in its bytes, of a type that fills `free` or a `{ … }` whose entries have
+    /// ends: its fields, in place.
     Record(DyadPtr),
     /// A map: its table, each map among its values copied too. The store keeps every table.
     Map(DyadPtr),
+    /// A `dyad` entry of a `{ … }`: the node it made, as a `dyad ?` place copies it.
+    Dyad,
 }
 
 /// Whether a value of `ty` owns memory, so its bytes alone are not its copy.
@@ -75,19 +78,29 @@ unsafe fn owned(types: &Core, ty: DyadPtr) -> Option<Owned> {
     match teardown_of_type(types, ty) {
         Teardown::Block(pointee) => Some(Owned::Block(pointee)),
         Teardown::Node(_) if meta::is_node_valued(ty, types.fn_type) => Some(Owned::Node(ty)),
-        Teardown::Node(_) => Some(Owned::Record(ty)),
+        Teardown::Node(_) | Teardown::Entries(_) => Some(Owned::Record(ty)),
         // A `dyad ?` place copies the node it holds itself.
         Teardown::Dyad | Teardown::Nothing => None,
     }
 }
 
-/// What field `binding` of type `ty` owns: a field holding a node owns it only with `own` on its
-/// binding, one holding a record in its bytes always (›A field may be `own t ?`, `t` a type whose
-/// body fills `static free`‹ [[R68]]).
+/// What field `binding` of type `ty` owns: an entry of a `{ … }` whatever the name it was held,
+/// a `dyad`'s node included (›`{ … }` outside text is a scope kept as a value, read with `.`‹
+/// [[R374]]); any other field holding a node only with `own` on its binding, one holding a record
+/// in its bytes always (›A field may be `own t ?`, `t` a type whose body fills `static free`‹
+/// [[R68]]).
 ///
 /// # Safety
-/// `binding` must be a field's binding dyad and `ty` its declared type, from the store.
+/// `binding` must be a field's binding dyad, laid out in its record type, and `ty` its declared
+/// type, from the store.
 unsafe fn field_owned(types: &Core, binding: DyadPtr, ty: DyadPtr) -> Option<Owned> {
+    let owner = Binding::read(binding).frame;
+    if let Teardown::Entries(_) = teardown_of_type(types, owner) {
+        return match teardown_of_type(types, ty) {
+            Teardown::Dyad => Some(Owned::Dyad),
+            _ => owned(types, ty),
+        };
+    }
     match owned(types, ty)? {
         Owned::Node(_) if !Binding::has_gate(binding, types.own_) => None,
         owned => Some(owned),
@@ -147,31 +160,46 @@ pub(crate) unsafe fn taken(store: &mut Store, types: &Core, value: DyadPtr) -> D
 /// `at` must hold a whole value of `ty`, a type node from the store, laid out as its places are.
 pub(crate) unsafe fn deepen(rt: &mut Runtime, ty: DyadPtr, at: *mut u8) -> Result<(), RunError> {
     match owned(rt.types(), ty) {
-        None => {}
-        Some(Owned::Block(pointee)) => {
+        Some(what) => deepen_as(rt, what, at),
+        None => Ok(()),
+    }
+}
+
+/// [`deepen`] of a value at `at` that owns `what`.
+///
+/// # Safety
+/// As [`deepen`], the value at `at` owning `what`.
+unsafe fn deepen_as(rt: &mut Runtime, what: Owned, at: *mut u8) -> Result<(), RunError> {
+    match what {
+        Owned::Block(pointee) => {
             let block = std::ptr::read_unaligned(at as *const u64) as usize as *mut u8;
             if !block.is_null() {
                 let copy = copy_block(rt, pointee, block)?;
                 std::ptr::write_unaligned(at as *mut u64, copy as u64);
             }
         }
-        Some(Owned::Node(t)) => {
+        Owned::Node(t) => {
             let node = std::ptr::read_unaligned(at as *const DyadPtr);
             if !node.is_null() {
                 let copy = copy_node(rt, t, node)?;
                 std::ptr::write_unaligned(at as *mut DyadPtr, copy);
             }
         }
-        Some(Owned::Record(t)) => {
+        Owned::Record(t) => {
             for (binding, field_ty) in fields(t) {
-                if field_owned(rt.types(), binding, field_ty).is_some() {
-                    deepen(rt, field_ty, at.add(Binding::read(binding).offset))?;
+                if let Some(what) = field_owned(rt.types(), binding, field_ty) {
+                    deepen_as(rt, what, at.add(Binding::read(binding).offset))?;
                 }
             }
         }
-        Some(Owned::Map(t)) => {
+        Owned::Map(t) => {
             let types: *const Core = rt.types();
             super::hashmap::deepen(rt.store(), &*types, t, at);
+        }
+        Owned::Dyad => {
+            let held = std::ptr::read_unaligned(at as *const usize) as DyadPtr;
+            let copy = super::dyad_place::copy(rt, held)?;
+            std::ptr::write_unaligned(at as *mut i64, copy);
         }
     }
     Ok(())
@@ -224,7 +252,7 @@ unsafe fn copy_node(rt: &mut Runtime, ty: DyadPtr, node: DyadPtr) -> Result<Dyad
                 *slots.add(k) = rt.store().alloc_blob(field_ty, &word.to_ne_bytes());
             }
             // A field kept in bytes keeps the node it was written from, run at each read.
-            Some(Owned::Record(_) | Owned::Map(_)) | None => {}
+            Some(Owned::Record(_) | Owned::Map(_) | Owned::Dyad) | None => {}
         }
     }
     Ok(copy)

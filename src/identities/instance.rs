@@ -160,6 +160,22 @@ pub(crate) unsafe fn kept_scope(types: &Core, node: DyadPtr) -> Option<(DyadPtr,
     kept.then_some((body, line))
 }
 
+/// Whether `ty` is the record a `{ … }` lays out: its body is the scope it keeps, whose last line
+/// makes a value of `ty`.
+///
+/// # Safety
+/// `ty` must be null or a valid dyad from the store.
+pub(crate) unsafe fn keeps_scope(types: &Core, ty: DyadPtr) -> bool {
+    if !meta::is_record_type(ty) {
+        return false;
+    }
+    let body = meta::record_body_of(ty);
+    !body.is_null()
+        && dyad::ty(body) == types.scope
+        && kept_scope(types, body)
+            .is_some_and(|(_, line)| *(dyad::value(line) as *const DyadPtr).add(1) == ty)
+}
+
 /// The record's storage and the field's binding a `field` place was built over.
 ///
 /// # Safety
@@ -195,7 +211,8 @@ unsafe fn places(types: &Core, ty: DyadPtr) -> Option<Vec<(usize, Carry)>> {
 
 /// `[target, type, op, output_type, args…, null]`: the value is made into the name `target`
 /// when one takes it (`:=` writes its binding there), else into scratch; the node yields its
-/// address.
+/// address. `holder` says who ends what a field takes: a `{ … }`'s value its entries, and nobody
+/// yet for any other record's fields.
 ///
 /// # Safety
 /// `record_logos` must be a record type node and `args` reduced dyads, all from the store.
@@ -205,6 +222,7 @@ pub(crate) unsafe fn build_ctor(
     construct: DyadPtr,
     record_logos: DyadPtr,
     args: &[DyadPtr],
+    holder: super::dyad_place::Holder,
 ) -> Result<DyadPtr, ParseError> {
     let places = places(types, record_logos).ok_or(ParseError::UnsupportedOperands)?;
     if args.len() != places.len() {
@@ -217,7 +235,7 @@ pub(crate) unsafe fn build_ctor(
     ops.push(record_logos);
     for (&arg, &field) in args.iter().zip(super::array::items(meta::record_fields_of(record_logos)))
     {
-        ops.push(super::land(store, types, arg, super::hole::type_in(field))?);
+        ops.push(super::land_held(store, types, arg, super::hole::type_in(field), holder)?);
     }
     ops.push(std::ptr::null_mut());
     Ok(store.alloc_words(construct, &ops))

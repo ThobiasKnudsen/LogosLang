@@ -173,7 +173,7 @@ impl<'a> Parser<'a> {
             let name = Box::new(name.to_string());
             return Err(ParseError::StaticFnNeedsValue { name, member });
         }
-        Ok(self.rt.store.alloc_head(self.types.dyad_, std::ptr::null_mut()))
+        Ok(crate::identities::no_value(self.rt.store, self.types))
     }
 
     /// The callee as written names a `static` member of a type being defined, so `v.name(…)`
