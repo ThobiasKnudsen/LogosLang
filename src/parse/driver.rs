@@ -673,7 +673,7 @@ impl<'a> Parser<'a> {
 
     /// An identity a cell may be handed on to: a function value, or a type
     /// node with a record head.
-    fn is_identity_node(&self, d: DyadPtr) -> bool {
+    pub(super) fn is_identity_node(&self, d: DyadPtr) -> bool {
         // SAFETY: `d` is null or a resolved dyad from the store.
         unsafe {
             !d.is_null()

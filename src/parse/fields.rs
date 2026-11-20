@@ -612,6 +612,19 @@ impl<'a> Parser<'a> {
                 }
             }
             if let Some(node) = self.known_node(lhs, self.cx.member_root) {
+                // A file's scope: a `pub` name of the file, used as a name is, or applied as a
+                // name of a function or a type is.
+                if let Some(member) = self.file_member(node, name) {
+                    let member = member.inspect_err(|_| self.cx.pos = nstart)?;
+                    let callee = self.types.through(member);
+                    let Some(args) = call.filter(|_| self.is_identity_node(callee)) else {
+                        return Ok((member, 0));
+                    };
+                    if self.in_pass_order() && self.returns_type(callee) {
+                        self.run_first(tape, left.start)?;
+                    }
+                    return self.build_call(callee, &args).map(|call| (call, 1));
+                }
                 if let Some(read) = self.reached_member(node, name, index, key.is_some())? {
                     return Ok(read);
                 }
@@ -1399,7 +1412,7 @@ impl<'a> Parser<'a> {
 
     /// `node` reached by path: as a value its address, so using it runs nothing;
     /// the reads after it fold through [`Parser::known_node`].
-    fn reach(&mut self, node: DyadPtr) -> DyadPtr {
+    pub(super) fn reach(&mut self, node: DyadPtr) -> DyadPtr {
         self.address_value(self.types.dyad_, node)
     }
 

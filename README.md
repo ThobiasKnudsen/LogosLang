@@ -137,11 +137,12 @@ Before `sum_to.compile()` the loop is a graph walk. After it, the same function 
 ### Import
 
 ```
-logos import ./lib.logos                 # run a file top to bottom
-logos 'import ./lib.logos, double(21)'   # ...and call something it exposes
+logos import file «./lib.logos»                  # run a file top to bottom
+logos 'import file «./lib.logos», double(21)'    # ...and call something it exposes
+logos '(logos file «./lib.logos»).double(21)'    # ...or read that one name, with no import
 ```
 
-There is no `main`. The top level is the program, and the file's last value is its result. An imported file runs inside its own scope and sees only the built-in names and its own imports, never the importer's, so it means the same thing wherever it is imported. A file loads once per run, and an import cycle is an error. A file exposes only the names it marks `pub`, spelled `pub name := …`; a name is written after its declaration only when declared `mut`, and `pub mut` does both.
+A file is reached by `file` and its path written as text, relative to the folder of the file that reads it, so every file name is written the same way, `file «.hidden.logos»` too. `import` reads it as Logos and sets its `pub` names where the `import` stands; `logos file «…»` reads it the same way and gives its scope, whose `pub` names are read with `.`. There is no `main`: the top level is the program. A file read as Logos runs inside its own scope and sees only the built-in names and the files it reads itself, never its reader's, so it means the same thing wherever it is read. A file loads once per run, every reader sharing it, and a cycle is an error. A file exposes only the names it marks `pub`, spelled `pub name := …`; a name is written after its declaration only when declared `mut`, and `pub mut` does both. A file reaches only files inside its project's folder, the folder of the file the command line reads; the command line itself may name any path.
 
 ## Defining the language from inside
 
@@ -196,7 +197,7 @@ The seed runs:
 - functions returning `type`, dependent declarations, and comptime `if`;
 - `alloc`, `move`, `free`, `defer`, `own` in a type, and raw pointers;
 - `.compile()` with a deoptimizing JIT;
-- `import`, the command line as source, and the REPL;
+- `file «path»`, `import file «path»` and `logos file «path»`, the command line as source, and the REPL;
 - `pub`, `mut`, `immut` and `static` on a name's binding: a name is written after its declaration only where it says `mut`, a write along a field path needs `mut` on every step, and `immut` on a field refuses even its constructor's fill.
 
 Specified in the rules and not yet built:
@@ -221,9 +222,9 @@ Builds for macOS, Linux, and Windows are on the [downloads page](https://logosla
 ### Run
 
 ```
-logos import ./file.logos       # run a file
-logos 'x := i32 5, x * 2'       # run one line of source
-logos                           # start the REPL
+logos import file «./file.logos»    # run a file
+logos 'x := i32 5, x * 2'           # run one line of source
+logos                               # start the REPL
 logos --help
 ```
 
@@ -239,7 +240,7 @@ Each line is a line of the program, as the command line is: any number of items 
 cargo build --release                                   # target/release/logos
 cargo test --release                                    # unit tests and the end-to-end CLI tests
 cargo test                                              # the same in the debug profile, where debug_assert! fires
-./target/release/logos import examples/answer.logos     # 42
+./target/release/logos import file «examples/answer.logos»     # 42
 ```
 
 Stable Rust is enough. Cranelift is the one heavy dependency. The Rust toolchain is a build dependency, not a runtime one: the binary ships alone.

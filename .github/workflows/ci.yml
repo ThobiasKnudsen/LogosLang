@@ -68,7 +68,7 @@ jobs:
           set -euo pipefail
           BIN=target/release/logos
           "$BIN" --help > /dev/null
-          out="$("$BIN" import examples/answer.logos | tail -n1)"
+          out="$("$BIN" 'import file «examples/answer.logos»' | tail -n1)"
           [ "$out" = "42" ] || { echo "::error::smoke test: expected 42, got '$out'"; exit 1; }
           echo "OK: $BIN runs and answer.logos evaluates to 42."
 
