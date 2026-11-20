@@ -887,8 +887,8 @@ impl<'a> Parser<'a> {
             cell.target = reached;
             cell.root = path_root;
         }
-        // `.type` reads a node's type word (›`x.type` reads the type word of the node a name or
-        // an expression stands for‹ [[R279]]); every other read gives what the member holds.
+        // Every read gives what the member holds, but `.type` hands its type on to nothing:
+        // stand-in for #393.
         Ok(if type_word { Constructed::Placed } else { Constructed::Gave })
     }
 

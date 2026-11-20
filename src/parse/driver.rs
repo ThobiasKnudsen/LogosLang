@@ -335,12 +335,11 @@ impl<'a> Parser<'a> {
                 }
             }
             let Some((n, _, construct, id)) = best else {
-                // A bracket no identity claimed, standing before another cell, is an
-                // expression like any other: its value wakes its type's `parse`. One holding a
-                // type stands: stand-in for #377.
+                // A bracket no identity claimed, standing before another cell, gives its value
+                // as any expression does, a type included.
                 let last = tape.iter().last().map(|(n, _)| n);
                 let woken = tape.iter().find(|&(n, c)| {
-                    Some(n) != last && c.bracket && self.wakes(self.cell_identity(c), false)
+                    Some(n) != last && c.bracket && self.wakes(self.cell_identity(c), true)
                 });
                 let Some((n, _)) = woken else { break };
                 tape.center_on(n);
