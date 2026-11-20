@@ -125,9 +125,12 @@ pub enum ParseError {
     /// A value is needed, and some path ends without giving one: a block one of whose lines
     /// gives only on some paths, a loop.
     EndsWithoutValue,
-    /// A line gives a name its block holds on some paths only, so the block's end would free it
-    /// on the others while the value given lives on.
-    HeldGivenOnSomePaths,
+    /// A line gives a name a block holds out of it, and a reader to its right takes the value on
+    /// the way, so the name has moved where nothing hands it on.
+    HeldTakenOnTheWay,
+    /// A line gives a name its block holds as the block's value through a construct the seed
+    /// does not move it out of, so the block's end would free it under the value.
+    HeldGivenUnmoved,
     /// A logical operator applied to a non-`bool` operand.
     NonBoolOperands,
     /// A value lands in a type that is not its own and is not known to hold every value of it.

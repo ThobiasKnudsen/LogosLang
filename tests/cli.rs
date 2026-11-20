@@ -6670,6 +6670,52 @@ fn a_plain_record_s_owner_runs_its_free_once() {
     assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
 }
 
+/// ›A last value moves out‹ [[R66]]: a line that gives its block a name the block holds moves
+/// it out on the paths where it gives it, with no `move` written, and the paths that go on free
+/// it where the `if` ends.
+#[test]
+fn a_block_moves_out_a_name_it_holds_on_the_paths_that_give_it() {
+    let block = "x := ( a := bag(1), if c (a), bag(2) ), print «end»";
+    let f = "f := fn (c := bool ?) -> own bag ( a := bag(1), if c (a), bag(2) )";
+    for (tail, printed) in [
+        (format!("c := true, {block}"), "end\nfreed 1\n"),
+        (format!("c := false, {block}"), "freed 1\nend\nfreed 2\n"),
+        (format!("{f}, x := f(true), print «end»"), "end\nfreed 1\n"),
+        (format!("{f}, x := f(false), print «end»"), "freed 1\nend\nfreed 2\n"),
+        (format!("{f}, f.compile(), x := f(true), print «end»"), "end\nfreed 1\n"),
+        (format!("{f}, f.compile(), x := f(false), print «end»"), "freed 1\nend\nfreed 2\n"),
+        (
+            "c := true, x := ( a := bag(1), if c (a) else (bag(2)) ), print «end»".into(),
+            "end\nfreed 1\n",
+        ),
+        ("x := ( a := bag(1), ( k := i32 1, a ) ), print «end»".into(), "end\nfreed 1\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+    // A reader to the left takes the value, so the arm borrows; one to the right is refused.
+    let (code, stdout, stderr) = run_line(
+        "c := true, a := alloc 1 of i32 7, b := alloc 1 of i32 8, y := if c (a) else (b), y@",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "7\n"), "stderr: {stderr}");
+    for (src, expect) in [
+        (
+            "c := true, x := ( a := alloc 1 of i32 7, b := alloc 1 of i32 8, if c (a) else (b) + 1 ), 0",
+            "this line takes the value on the way",
+        ),
+        ("x := ( a := alloc 1 of i32 7, &a ), 0", "hands out the address of a name its scope holds"),
+        (
+            "x := ( a := alloc 1 of i32 7, for i in 0..3 ( if (i == 1) (a) ), alloc 1 of i32 9 ), 0",
+            "give it with `move`",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
 /// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹ [[R58]]: `move a` of a plain
 /// record copies its bytes into the name or parameter that takes it, which frees it once, and
 /// `a` is dead from that line, on both tiers.

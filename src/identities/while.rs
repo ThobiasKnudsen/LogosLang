@@ -29,7 +29,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     unsafe { meta::install_hands_on(while_, &["body"], &[]) };
     cx.declare("while", while_);
     cx.metas.insert(while_, |p, id, tape| {
-        let node = p.parse_while(id)?;
+        let node = p.parse_while(id, p.starts_line(tape))?;
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)
     });

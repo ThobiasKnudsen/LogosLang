@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `scope`: the type of a scope node, the parser's membership marker and, for
-//! a block, the sequence node itself: `[exprs, op, parent, exit, held]`, the parent link
+//! a block, the sequence node itself: `[exprs, op, parent, exit, held, flow]`, the parent link
 //! set at [`mint`], the expressions (the `dyads` field) pushed as each line
 //! completes, the op set at [`fill`] when the block closes, and the exit, what the
 //! scope's end runs, and what its lines' ends free, set when it closes.
@@ -12,6 +12,7 @@ use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::drop_model::ExitItem;
+use super::flow::Flow;
 use super::{array, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -47,7 +48,7 @@ pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> Dya
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }
 
-/// The slots of a scope node's value, `[exprs, op, parent, exit, held]`.
+/// The slots of a scope node's value, `[exprs, op, parent, exit, held, flow]`.
 const EXPRS: usize = 0;
 const OP: usize = 1;
 const PARENT: usize = 2;
@@ -57,14 +58,40 @@ const EXIT: usize = 3;
 /// end of the line a value was made in frees it (›A value's teardown runs where its life ends;
 /// the ending identity reads the type's `free` slot‹ [[R57]]).
 const HELD: usize = 4;
-pub(crate) const SLOTS: usize = HELD + 1;
+/// How a closed block's lines end, once a walk has read it: null before, else a word,
+/// `1 + gives + 2 * falls`, never an address.
+const FLOW: usize = 5;
+pub(crate) const SLOTS: usize = FLOW + 1;
 
 /// The block's membership key while it parses, and the sequence node once
 /// [`fill`] gives it its expressions; `parent` is null at the arche. A scope that
 /// holds names alone (the root, a type's member scope) is minted with no parent.
 pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> DyadPtr {
     let none = std::ptr::null_mut();
-    store.alloc_words(scope_ty, &[none, none, parent, none, none])
+    store.alloc_words(scope_ty, &[none, none, parent, none, none, none])
+}
+
+/// How the closed block `node`'s lines end, if a walk has read it.
+///
+/// # Safety
+/// `node` must be a scope node from the store.
+pub(crate) unsafe fn kept_flow(node: DyadPtr) -> Option<Flow> {
+    let word = *(dyad::value(node) as *const DyadPtr).add(FLOW) as usize;
+    (word != 0).then(|| Flow { gives: (word - 1) & 1 != 0, falls: (word - 1) & 2 != 0 })
+}
+
+/// Keeps how `node`'s lines end, once it is closed, so no walk reads them again (›Reading a
+/// program takes time in step with its size; no walk runs once per path‹ [[R170]]).
+///
+/// # Safety
+/// `node` must be a scope node from the store, and `flow` how its lines end.
+pub(crate) unsafe fn keep_flow(node: DyadPtr, flow: Flow) {
+    let slots = dyad::value(node) as *mut DyadPtr;
+    if (*slots.add(OP)).is_null() {
+        return;
+    }
+    let word = 1 + usize::from(flow.gives) + 2 * usize::from(flow.falls);
+    *slots.add(FLOW) = std::ptr::without_provenance_mut(word);
 }
 
 /// The block closed: it runs as a sequence over its `dyads`.
@@ -154,7 +181,8 @@ pub(crate) unsafe fn with_exprs(
     let slots = dyad::value(node) as *const DyadPtr;
     let lines = array::build(store, types.array_, exprs);
     let kept = [*slots.add(OP), *slots.add(PARENT), *slots.add(EXIT), *slots.add(HELD)];
-    store.alloc_words(dyad::ty(node), &[lines, kept[0], kept[1], kept[2], kept[3]])
+    let none = std::ptr::null_mut();
+    store.alloc_words(dyad::ty(node), &[lines, kept[0], kept[1], kept[2], kept[3], none])
 }
 
 /// The nodes whose values the scope's lines free at their ends.

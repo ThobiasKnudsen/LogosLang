@@ -43,7 +43,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     unsafe { meta::install_hands_on(if_, &["then", "else"], &[]) };
     cx.declare("if", if_);
     cx.metas.insert(if_, |p, id, tape| {
-        let node = p.parse_if(id)?;
+        let node = p.parse_if(id, p.starts_line(tape))?;
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)
     });

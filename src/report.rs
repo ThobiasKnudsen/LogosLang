@@ -102,9 +102,14 @@ pub fn parse_message(e: &ParseError) -> String {
              is thrown away with `free`, as in `free (f())`"
                 .into()
         }
-        ParseError::HeldGivenOnSomePaths => {
-            "this block gives a name it holds on some paths only, and its end frees that name on \
-             the others: give it with `move`, as in `if c (move a)`"
+        ParseError::HeldGivenUnmoved => {
+            "this block gives a name it holds, and its end frees that name: give it with `move`, \
+             as in `if c (move a)`"
+                .into()
+        }
+        ParseError::HeldTakenOnTheWay => {
+            "a name a block holds moves out of it as the block's value here, and this line takes \
+             the value on the way: name it first, as in `y := if c (a) else (b)`, or write `move`"
                 .into()
         }
         ParseError::EndsWithoutValue => {

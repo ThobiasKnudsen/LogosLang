@@ -171,6 +171,12 @@ struct Context<'a> {
     dropping: usize,
     /// What the construct around the block about to open does with its value.
     next_block: bodies::BlockValue,
+    /// The construct around the block about to open starts its line, so the block's value is
+    /// the line's, unless a reader to its right takes it.
+    next_passes_out: bool,
+    /// The tape the innermost scope's line being read is built on, compared by address only: a
+    /// reader's right side is built on a tape of its own.
+    line_tape: *const tape::ParsingTape,
     /// The block that closed last, with the values its last line made that it handed on as its
     /// own value.
     handed_tail: Option<(DyadPtr, Vec<DyadPtr>)>,
@@ -225,6 +231,8 @@ impl<'a> Context<'a> {
             ended_log: Vec::new(),
             dropping: 0,
             next_block: bodies::BlockValue::Used,
+            next_passes_out: false,
+            line_tape: std::ptr::null(),
             handed_tail: None,
             tail_values: None,
             program_value: None,

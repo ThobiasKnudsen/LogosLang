@@ -62,7 +62,7 @@ impl<F: FnMut(*mut DyadPtr) -> Result<(), ParseError>> Given for F {
 /// `node` must be null or a reduced dyad from the store.
 pub(crate) unsafe fn of(types: &Core, node: DyadPtr) -> Flow {
     let mut node = node;
-    walk(types, &mut node, &mut |_| Ok(())).unwrap_or(Flow::STATEMENT)
+    flow_of(types, &mut node, None).unwrap_or(Flow::STATEMENT)
 }
 
 /// How the node in `slot` ends as a line, `given` told every node that gives its value. A
@@ -77,6 +77,19 @@ pub(crate) unsafe fn walk(
     slot: *mut DyadPtr,
     given: &mut dyn Given,
 ) -> Result<Flow, ParseError> {
+    flow_of(types, slot, Some(given))
+}
+
+/// [`walk`]; with no `given`, a closed block's lines are read once and kept, never walked again
+/// (›Reading a program takes time in step with its size; no walk runs once per path‹ [[R170]]).
+///
+/// # Safety
+/// As [`walk`].
+unsafe fn flow_of(
+    types: &Core,
+    slot: *mut DyadPtr,
+    mut given: Option<&mut dyn Given>,
+) -> Result<Flow, ParseError> {
     let node = *slot;
     if node.is_null() || is_prose(types, node) {
         return Ok(Flow::STATEMENT);
@@ -87,31 +100,39 @@ pub(crate) unsafe fn walk(
     }
     match passing(types, node) {
         Some(Passing::Lines(lines)) => {
-            let mut gives = false;
+            if let Some(kept) = scope::kept_flow(node).filter(|_| given.is_none()) {
+                return Ok(kept);
+            }
+            let mut flow = Flow { gives: false, falls: true };
             for line in line_slots(lines) {
-                let flow = walk(types, line, given)?;
-                gives |= flow.gives;
-                if flow.ends_scope() {
-                    return Ok(Flow { gives, falls: false });
+                let line =
+                    flow_of(types, line, given.as_mut().map(|g| &mut **g as &mut dyn Given))?;
+                flow.gives |= line.gives;
+                if line.ends_scope() {
+                    flow.falls = false;
+                    break;
                 }
             }
-            Ok(Flow { gives, falls: true })
+            scope::keep_flow(node, flow);
+            Ok(flow)
         }
         Some(Passing::Arms(then, els)) => {
-            let then = walk(types, then, given)?;
+            let then = flow_of(types, then, given.as_mut().map(|g| &mut **g as &mut dyn Given))?;
             let els = match els {
-                Some(els) => walk(types, els, given)?,
+                Some(els) => flow_of(types, els, given)?,
                 None => Flow::STATEMENT,
             };
             Ok(Flow { gives: then.gives || els.gives, falls: then.falls || els.falls })
         }
         Some(Passing::Body(body)) => {
-            let body = walk(types, body, given)?;
+            let body = flow_of(types, body, given)?;
             Ok(Flow { gives: body.gives, falls: true })
         }
         None if read::output_type(types, node) == types.void_ => Ok(Flow::STATEMENT),
         None => {
-            given.value(slot)?;
+            if let Some(given) = given {
+                given.value(slot)?;
+            }
             Ok(Flow::VALUE)
         }
     }
@@ -174,6 +195,15 @@ fn passer(types: &Core, ty: DyadPtr) -> Option<Passer> {
             return None;
         };
     Some(Passer { shape, run, lower })
+}
+
+/// Whether a value passes out through `node`, a block, an `if` or a loop, rather than `node`
+/// giving its own.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn passes_value(types: &Core, node: DyadPtr) -> bool {
+    passer(types, dyad::ty(node)).is_some()
 }
 
 /// # Safety
