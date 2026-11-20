@@ -2096,6 +2096,8 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
             (format!("f := fn () -> i32 ( mut d := dyad ?, d = i64 5, d = 1/2, 1 ), {c}f()"), "1"),
             ("mut d := dyad ?, d = «a», d".to_string(), "a"),
             (format!("f := fn () -> i32 ( mut d := dyad ?, d = «a», 1 ), {c}f()"), "1"),
+            ("mut d := dyad ?, d = alloc 1 of i32 5, d@".to_string(), "5"),
+            (format!("f := fn (q := dyad ?) -> i32 ( 1 ), {c}f(alloc 1 of i32 5)"), "1"),
         ] {
             let out = logos().arg(&src).output().unwrap();
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -2103,14 +2105,68 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
             assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
         }
     }
-    // An owning value, and a number in a place no name holds.
+    // A number in a place no name holds.
     for src in [
-        "mut d := dyad ?, d = alloc 1 of i32 5",
         "f := fn (mut q := dyad ?) -> i32 ( 1 ), f(5)",
         "p := alloc 1 of dyad ?, p@ = 5",
         "r := type ( v := dyad ? ), x := r (5)",
     ] {
         let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("does not take this value yet"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), ";
+    for c in ["", "f.compile(), "] {
+        for (tail, want) in [
+            ("mut d := dyad ?, d = bag (1)".to_string(), "freed 1\n"),
+            (
+                "mut d := dyad ?, d = bag (1), d = bag (2), print «end»".to_string(),
+                "freed 1\nend\nfreed 2\n",
+            ),
+            ("mut d := dyad ?, d = bag (1), e := d, print «end»".to_string(), "end\nfreed 1\nfreed 1\n"),
+            ("b := bag (7), mut d := dyad ?, d = b, print «end»".to_string(), "end\nfreed 7\nfreed 7\n"),
+            ("d := dyad (bag, bag (6)), print «end»".to_string(), "end\nfreed 6\n"),
+            ("f := fn () -> dyad ( bag (9) ), mut y := bag ?, y = f(), print «end»".to_string(), "freed 0\nend\nfreed 9\n"),
+            (format!("f := fn (a := dyad ?) -> i32 ( 1 ), {c}f(bag (3))"), "freed 3\n1\n"),
+            (
+                format!("f := fn (a := dyad ?) -> dyad ( a ), {c}x := f(bag (3)), print «end»"),
+                "freed 3\nend\nfreed 3\n",
+            ),
+            (format!("f := fn () -> dyad ( bag (9) ), {c}x := f(), print «end»"), "end\nfreed 9\n"),
+            (
+                format!("f := fn () -> dyad ( b := bag (9), b ), {c}x := f(), print «end»"),
+                "end\nfreed 9\n",
+            ),
+            (
+                format!("g := fn (q := bag ?) -> i32 ( print «g», q.n ), f := fn () -> dyad ( bag (9) ), {c}g(f())"),
+                "g\nfreed 9\n9\n",
+            ),
+            (
+                format!(
+                    "g := fn () -> dyad ( print «g», i32 2 ), f := fn () -> dyad ( print «f», \
+                     bag (4) ), k := fn (a := bag ?, b := i32 ?) -> i32 ( b ), {c}k(f(), g() + 1)"
+                ),
+                "f\ng\nfreed 4\n3\n",
+            ),
+        ] {
+            let src = format!("{bag}{tail}");
+            let out = logos().arg(&src).output().unwrap();
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "{src}: stderr: {stderr}");
+            assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{src}");
+        }
+    }
+    // A parameter borrows a named value, and the new node would end it: stand-in for #348.
+    for tail in [
+        "b := bag (4), f := fn (a := dyad ?) -> i32 ( 1 ), f(b)",
+        "f := fn (a := dyad ?) -> i32 ( 1 ), g := fn (a := dyad ?) -> i32 ( f(a) ), g(bag (5))",
+    ] {
+        let src = format!("{bag}{tail}");
+        let out = logos().arg(&src).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("does not take this value yet"), "{src}: stderr: {stderr}");
     }
