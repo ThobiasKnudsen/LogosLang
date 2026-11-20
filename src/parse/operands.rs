@@ -593,7 +593,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `node` must be a reduced dyad this parser built into its store.
     unsafe fn ran_value(&mut self, at: usize, node: DyadPtr) -> Result<DyadPtr, ParseError> {
-        use crate::identities::drop_model::{teardown_of, Teardown};
+        use crate::identities::drop_model::{teardown_of, teardown_of_type, Teardown};
         use crate::identities::read::{self, place_layout, Read};
         use crate::identities::{dyad_place, ran};
         let types = self.types;
@@ -620,7 +620,7 @@ impl<'a> Parser<'a> {
             // one its line made.
             let ty = dyad::ty(stood);
             return match read::carry_of(types, ty) {
-                Some(carry) if dyad_place::has_end(types, ty) => {
+                Some(carry) if teardown_of_type(types, ty) != Teardown::Nothing => {
                     Ok(self.stand_ran(ran::word_in(carry, stood), ty))
                 }
                 _ => Ok(stood),
