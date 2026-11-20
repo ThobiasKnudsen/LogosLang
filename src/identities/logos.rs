@@ -25,7 +25,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 
 fn construct(
     p: &mut Parser,
-    id: DyadPtr,
+    _id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
     if let Some(scope) = p.construct_logos_file(tape)? {
@@ -38,7 +38,5 @@ fn construct(
         tape.remove(0);
         return Ok(Constructed::Placed);
     }
-    let value = p.stand_as_value(tape, id);
-    tape.place(value);
-    Ok(Constructed::Placed)
+    Ok(Constructed::Decline)
 }

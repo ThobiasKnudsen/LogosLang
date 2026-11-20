@@ -32,9 +32,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
             tape.place(node);
             return Ok(crate::parse::Constructed::Placed);
         }
-        let value = p.stand_as_value(tape, id);
-        tape.place(value);
-        Ok(crate::parse::Constructed::Placed)
+        Ok(crate::parse::Constructed::Decline)
     });
 
     // `left` and `right` carry a type's own record, not a delimiter's, so each

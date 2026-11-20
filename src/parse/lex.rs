@@ -490,6 +490,22 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The token at the cursor read as the start of what follows a word, no value to its left, so
+    /// a `-` there negates: `None` at the end, `Some(None)` for a spelling no identity has.
+    pub(super) fn peek_start(&mut self) -> Option<Option<DyadPtr>> {
+        if self.cx.feed.is_some() {
+            let i = self.feed_index()?;
+            let mut cell = self.cx.feed.as_ref()?.cells[i];
+            self.feed_resolve(&mut cell);
+            return Some((!cell.is_fresh(self.types)).then(|| cell.identity(self.types)));
+        }
+        self.skip_whitespace();
+        let source = self.cx.source;
+        let rest = source.get(self.cx.pos..).filter(|rest| !rest.is_empty())?;
+        let resolved = token(&self.cx.scopes, self.trie, rest, true, Left::Nothing);
+        Some(resolved.ok().filter(|(r, _)| !r.fresh).map(|(r, _)| r.identity))
+    }
+
     pub(super) fn consume_token(&mut self, id: DyadPtr) -> bool {
         match self.peek_token() {
             Some((t, matched)) if t == id => {

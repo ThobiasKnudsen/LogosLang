@@ -203,6 +203,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 
     // Its run native is a no-op: a scope's end runs the inner, never the defer node.
     let defer_ = keyword(cx, "defer", meta::prec::READER, &["inner", "op"], |p, _id, tape| {
+        if !p.finds_right_side(tape) {
+            return Ok(crate::parse::Constructed::Decline);
+        }
         let inner = p.parse_deferred()?;
         let types = p.types();
         let node = build_defer(p.store(), types, inner);

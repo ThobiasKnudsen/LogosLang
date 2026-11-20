@@ -151,13 +151,33 @@ impl<'a> Parser<'a> {
             && (prec::OR..=prec::MULTIPLICATIVE).contains(&rank)
     }
 
-    /// Whether a bracket reader takes the `(` at the cursor: only when woken
-    /// at discovery, the one moment it may read source, and not where the `(`
-    /// ends a complete `if` or `while` condition, being the body.
+    /// Whether a word that reads its own right side finds one to consume (›`parse_rank` and
+    /// `associativity` are data, and the only triggers‹ [[R215]]): woken at discovery and at the
+    /// frontier, the one moment it may read source, with a token at the cursor that is no
+    /// boundary, no operator that reads to its left, and no `(` that is the body of a complete
+    /// `if` or `while` condition. Where it finds none it declines, and stands as its own value (›A
+    /// constructor's outcome is read off its own cell; no holding, no re-invocation‹ [[R261]]).
+    pub(crate) fn finds_right_side(&mut self, tape: &ParsingTape) -> bool {
+        if !self.cx.discovering || tape.at(1).is_some() {
+            return false;
+        }
+        match self.peek_start() {
+            None => false,
+            Some(None) => true,
+            Some(Some(id)) if id == self.types.open_ => {
+                !(self.cx.lex_mode == Some(RightSide::Condition) && self.condition_ends(tape, None))
+            }
+            Some(Some(id)) => {
+                let operator = self.ctor_of(id).is_some() && self.reads_left(id);
+                self.boundary_of(id).is_none() && !operator
+            }
+        }
+    }
+
+    /// Whether a bracket reader takes the `(` at the cursor: a right side it finds that opens with
+    /// its bracket.
     pub(crate) fn reads_own_bracket(&mut self, tape: &ParsingTape) -> bool {
-        self.cx.discovering
-            && self.at_open()
-            && !(self.cx.lex_mode == Some(RightSide::Condition) && self.condition_ends(tape, None))
+        self.finds_right_side(tape) && self.at_open()
     }
 
     /// An operand, or `?`, which reads only to its left.
