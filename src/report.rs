@@ -210,16 +210,24 @@ pub fn parse_message(e: &ParseError) -> String {
              is written"
         ),
         ParseError::DyadReadEachPass => {
-            "a `while` condition cannot read what a call that gives a `dyad` gives yet: the call \
-             runs while the condition is parsed, and such a condition is parsed again on every \
-             pass, so the call would run once more than the condition does; give its value a \
-             name first, as `mut v := g(), while i < v ( …, v = g() )`"
+            "a `while` condition cannot read what a call that gives a `dyad` gives through a \
+             bracket or a member yet: such a condition is held only where the call is written \
+             bare, and parsing it here would run the call once more than the condition runs; \
+             write the call bare, as `while i < g() (…)`, or give its value a name first"
                 .into()
         }
-        ParseError::DyadCallAfterRun => {
-            "a call that gives a `dyad` runs while its line is parsed, so it cannot stand yet \
-             after something in its line that runs, which runs only when the line runs; give \
-             its value a name on a line of its own first, as `v := g(), h() + v`"
+        ParseError::DyadCallAfterUnbuilt => {
+            "a call that gives a `dyad` runs while its line is parsed, after what its line runs \
+             before it; here something before it that runs cannot run first yet, such as an \
+             earlier argument, a part of a quote, or what stands before a branch; give the \
+             call's value a name on a line of its own first, as `v := g(), k(h(), v + 1)`"
+                .into()
+        }
+        ParseError::RanValueNotHeld => {
+            "what stands before a call that gives a `dyad` in its line runs first, and here its \
+             value cannot stand in its place yet: only a number, a pointer that owns nothing, a \
+             rational or a record whose body fills no `free` can; give that value a name on a \
+             line of its own first"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {

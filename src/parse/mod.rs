@@ -128,6 +128,11 @@ struct Context<'a> {
     /// The stop mode of the segment being lexed, so a lazy read inside a
     /// constructor stops at the same boundaries the loop would.
     lex_mode: Option<RightSide>,
+    /// Where a bracket of the line being parsed opens that holds a read of what a call that gives
+    /// a `dyad` gives, still ahead: what stands before it runs first (`Parser::note_cuts`).
+    cuts: Vec<usize>,
+    /// Where the source the last such scan covered ends.
+    cuts_end: usize,
     /// While an `if` reads a bare branch: the depth of the branch's own scope,
     /// where `else` and `,` end it; a nested bracket reads them as usual.
     else_ends: Option<usize>,
@@ -196,6 +201,8 @@ impl<'a> Context<'a> {
             member_asleep: false,
             reader: std::ptr::null_mut(),
             lex_mode: None,
+            cuts: Vec::new(),
+            cuts_end: 0,
             else_ends: None,
             feed: None,
             kept: None,

@@ -112,13 +112,13 @@ pub(super) struct OpenScope {
     /// outermost node it runs as (›A value's teardown runs where its life ends; the ending
     /// identity reads the type's `free` slot‹ [[R57]]).
     made: Vec<DyadPtr>,
-    /// Where the line being parsed first builds something that runs only when the line runs:
-    /// a call the pass runs while it parses must stand before it (›The pass runs only as far
-    /// as it must, in order, and never twice‹ [[R288]]). An argument list's and a `[…]`'s
+    /// Where the line being parsed builds something that runs only when the line runs, one start
+    /// per node: what a call the pass runs while it parses must run first (›The pass runs only as
+    /// far as it must, in order, and never twice‹ [[R288]]). An argument list's and a `[…]`'s
     /// lines are parts of the call's line.
-    pub(super) runs_from: Option<usize>,
+    pub(super) runs: Vec<usize>,
     /// The same for the closed lines `unrun` holds, which a drain runs first.
-    unrun_runs_from: Option<usize>,
+    unrun_runs: Vec<usize>,
     /// The values the scope's closed lines made that nothing took: each line's end frees its
     /// own. The scope node's `held` slot once it closes.
     pub(super) held: Vec<DyadPtr>,
@@ -208,10 +208,6 @@ pub(super) struct WrittenResult<'s> {
     text: &'s str,
     /// Whether `own` stands in it.
     owned: bool,
-}
-
-fn earliest(a: Option<usize>, b: Option<usize>) -> Option<usize> {
-    a.into_iter().chain(b).min()
 }
 
 /// Refuses a value a function hands on, `made` as `handed_ends` reads it, that its `own` mark
@@ -1216,22 +1212,31 @@ impl<'a> Parser<'a> {
     fn parse_while_parts(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
         self.skip_whitespace();
         let start = self.cx.pos;
-        let made = self.cx.open.last().map(|o| o.made.clone());
-        let was = std::mem::replace(&mut self.cx.each_pass, true);
-        let was_read = std::mem::replace(&mut self.cx.each_pass_read, false);
-        let cond = self.parse_condition();
-        self.cx.each_pass = was;
-        let read = std::mem::replace(&mut self.cx.each_pass_read, was_read);
-        let mut cond = cond?;
-        // The condition stood for the nodes its `dyad` names held as it was parsed, and runs
-        // again each pass: it is parsed again each time (›A `dyad ?` place is transparent: a
-        // placeholder for a new node of any type‹ [[R293]]), and what this parse made never runs.
-        if read {
-            if let (Some(open), Some(made)) = (self.cx.open.last_mut(), made) {
-                open.made = made;
+        let held_end = if self.in_pass_order() { self.condition_reads_call() } else { None };
+        let cond = if let Some(end) = held_end {
+            self.cx.pos = end;
+            self.hold_condition(start)?
+        } else {
+            let made = self.cx.open.last().map(|o| o.made.clone());
+            let was = std::mem::replace(&mut self.cx.each_pass, true);
+            let was_read = std::mem::replace(&mut self.cx.each_pass_read, false);
+            let cond = self.parse_condition();
+            self.cx.each_pass = was;
+            let read = std::mem::replace(&mut self.cx.each_pass_read, was_read);
+            let cond = cond?;
+            // The condition stood for the nodes its `dyad` names held as it was parsed, and runs
+            // again each pass: it is parsed again each time (›A `dyad ?` place is transparent: a
+            // placeholder for a new node of any type‹ [[R293]]), and what this parse made never
+            // runs.
+            if read {
+                if let (Some(open), Some(made)) = (self.cx.open.last_mut(), made) {
+                    open.made = made;
+                }
+                self.hold_condition(start)?
+            } else {
+                cond
             }
-            cond = self.hold_condition(start)?;
-        }
+        };
         // A repeated body: parse-time rebinding is off inside.
         self.cx.runtime_depth += 1;
         self.cx.next_block = BlockValue::Thrown;
@@ -1646,8 +1651,8 @@ impl<'a> Parser<'a> {
         // what it did run stands in the body as its result.
         let mut closed = self.cx.open.pop().expect("pushed above");
         if let Some(open) = self.cx.open.last_mut() {
-            let inner = earliest(closed.runs_from, closed.unrun_runs_from);
-            open.runs_from = earliest(open.runs_from, inner);
+            open.runs.append(&mut closed.runs);
+            open.runs.append(&mut closed.unrun_runs);
         }
         self.close_returns(self.cx.open.len());
         if closed.arguments {
@@ -1850,7 +1855,8 @@ impl<'a> Parser<'a> {
             if let Some((.., plan)) = open.unrun.last_mut().filter(|(_, at, ..)| *at == line) {
                 plan.extend_from_slice(&made);
             }
-            open.unrun_runs_from = earliest(open.unrun_runs_from, open.runs_from.take());
+            let runs = std::mem::take(&mut open.runs);
+            open.unrun_runs.extend(runs);
         }
         open.held.extend(made);
         self.cx.open[depth].lines += 1;
@@ -1889,7 +1895,7 @@ impl<'a> Parser<'a> {
             return;
         }
         let open = self.cx.open.last_mut().expect("a node is built in an open scope");
-        open.runs_from = earliest(open.runs_from, Some(cell.start));
+        open.runs.push(cell.start);
     }
 
     /// Where the pass runs each line once it has parsed it: the top level, or a held line
@@ -1961,7 +1967,7 @@ impl<'a> Parser<'a> {
             .open
             .iter_mut()
             .map(|s| {
-                s.unrun_runs_from = None;
+                s.unrun_runs.clear();
                 (s.scope, std::mem::take(&mut s.unrun))
             })
             .collect();

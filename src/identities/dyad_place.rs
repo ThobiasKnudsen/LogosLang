@@ -134,6 +134,14 @@ unsafe fn is_data(types: &Core, t: DyadPtr) -> bool {
     ) && carry_of(types, t).is_some()
 }
 
+/// Whether a value of `t` moves whole into a new node of its type and ends with its bytes.
+///
+/// # Safety
+/// `t` must be null or a valid dyad from the store.
+pub(crate) unsafe fn moves_whole(types: &Core, t: DyadPtr) -> bool {
+    is_data(types, t) && !has_end(types, t)
+}
+
 /// Whether a value of `t` ends by more than its bytes: an owning pointer, or a record whose
 /// body fills `free`.
 ///

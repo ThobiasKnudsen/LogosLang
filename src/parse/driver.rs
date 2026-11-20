@@ -196,6 +196,9 @@ impl<'a> Parser<'a> {
                         || crate::identities::meta::prec::built_as_lexed(prec)
                         || self.goes_before_reader(id, prec))
                 {
+                    if self.is_opener(id) {
+                        self.cut_at(tape, cell.start)?;
+                    }
                     self.run_ctor(construct, id, tape, true)?;
                 }
             }
@@ -735,6 +738,7 @@ impl<'a> Parser<'a> {
                 Ok(None) => {}
                 Err(e) => return Some(Err(e)),
             }
+            self.note_cuts();
             let mut tape = ParsingTape::new();
             self.start_from_kept(&mut tape);
             let boundary = match self.lex_segment(&mut tape) {

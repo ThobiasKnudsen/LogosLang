@@ -315,7 +315,7 @@ impl<'a> Parser<'a> {
     /// shifts the token.
     pub(crate) fn binary_operands(
         &mut self,
-        tape: &ParsingTape,
+        tape: &mut ParsingTape,
     ) -> Result<Option<(DyadPtr, DyadPtr)>, ParseError> {
         let (Some(&l), Some(&r)) = (tape.at(-1), tape.at(1)) else {
             return Ok(None);
@@ -330,29 +330,35 @@ impl<'a> Parser<'a> {
                 return Err(self.fail_at(cell.start, e));
             }
         }
-        let lhs = self.read_through_value(l.start, lhs)?;
-        let rhs = self.read_through_value(r.start, rhs)?;
+        let lhs = self.read_through_value(tape, -1, lhs)?;
+        let rhs = self.read_through_value(tape, 1, rhs)?;
+        // A left side the pass ran stands for the value its run gave.
+        let lhs = match tape.at(-1) {
+            Some(ran) if ran.dyad != l.dyad => ran.dyad,
+            _ => lhs,
+        };
         Ok(Some((lhs, rhs)))
     }
 
-    /// `operand` read through when it gives a `dyad` no name holds, where its own type is read,
-    /// as an infix's operand and by `.type`: the node it gives stands in its place (›A `dyad ?`
-    /// place is transparent: a placeholder for a new node of any type‹ [[R293]]). Where that
-    /// node's type is known where the operand is written, it is read at that type each time the
-    /// line runs (`dyad_place::read_through`, which every landing in a typed place reads it by
-    /// too). A call whose node's type is known only at run runs now, after the lines before its
-    /// own, where the pass has reached its line (the top level, or a body's line parsed when it
-    /// runs), and stands for the node it gave, as a `dyad` name read there does; a body's line
-    /// holding one waits for the run (`waiting_line_end`). It is refused where its own line
-    /// builds something that runs before it, which would run only after it (›The pass runs only
-    /// as far as it must, in order, and never twice‹ [[R288]]).
+    /// `operand`, the cell at `k` of `tape`, read through when it gives a `dyad` no name holds,
+    /// where its own type is read, as an infix's operand and by `.type`: the node it gives stands
+    /// in its place (›A `dyad ?` place is transparent: a placeholder for a new node of any
+    /// type‹ [[R293]]). Where that node's type is known where the operand is written, it is read
+    /// at that type each time the line runs (`dyad_place::read_through`, which every landing in a
+    /// typed place reads it by too). A call whose node's type is known only at run runs now,
+    /// where the pass has reached its line (the top level, or a body's line parsed when it runs),
+    /// after what stands before it ([`Self::run_before`]), and its cell stands for the node it
+    /// gave, as a `dyad` name read there does; a body's line holding one waits for the run
+    /// (`waiting_line_end`), and so does a `while` condition holding one (`hold_condition`).
     pub(super) fn read_through_value(
         &mut self,
-        at: usize,
+        tape: &mut ParsingTape,
+        k: isize,
         operand: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         use crate::identities::{dyad_place, read};
         let types = self.types;
+        let at = tape.at(k).map_or(self.cx.pos, |c| c.start);
         // SAFETY: `operand` is a reduced dyad from the store.
         unsafe {
             if read::output_type(types, operand) != types.dyad_ {
@@ -370,33 +376,139 @@ impl<'a> Parser<'a> {
             if !call || !self.in_pass_order() {
                 return Ok(operand);
             }
-            // A condition is parsed again on every pass, so this run would be one too many:
-            // stand-in for #307.
-            if self.cx.each_pass {
-                return Err(self.fail_at(at, ParseError::DyadReadEachPass));
-            }
-            // Run here, before the line it stands in has run up to it: stand-in for #307.
-            if self.cx.open.iter().any(|o| o.runs_from.is_some_and(|from| from < at)) {
-                return Err(self.fail_at(at, ParseError::DyadCallAfterRun));
-            }
-            self.drain()?;
-            let held = self.run_on_pass(operand).map_err(ParseError::Run)? as usize as DyadPtr;
-            if held.is_null() {
-                return Err(self.fail_at(at, ParseError::Run(crate::run::RunError::NullPointer)));
-            }
-            self.take(operand);
-            if let Some(open) = self.cx.open.last_mut().filter(|o| o.runs_from == Some(at)) {
-                open.runs_from = None;
-            }
-            if crate::identities::type_identity_of(types, held).is_some() {
-                return Ok(held);
-            }
-            let node = dyad_place::stable(self.rt.store, types, held);
-            if node != held {
-                dyad_place::end(&mut self.rt, held as i64);
-            }
-            Ok(node)
         }
+        // A condition the scan did not find holding the call is parsed again on every pass, so
+        // this run would be one too many: stand-in for a scan that reads through a bracket and a
+        // member's call.
+        if self.cx.each_pass {
+            return Err(self.fail_at(at, ParseError::DyadReadEachPass));
+        }
+        if !self.run_before(tape, at)? {
+            return Err(self.fail_at(at, ParseError::DyadCallAfterUnbuilt));
+        }
+        // SAFETY: as above.
+        let node = unsafe { self.ran_value(at, operand)? };
+        if let Some(handle) = tape.handle_at(k) {
+            tape.stand_as_ran(handle, node);
+            self.ran_through(tape, handle);
+        }
+        Ok(node)
+    }
+
+    /// Everything parsed before `at` that has not run, run first, in order (›The pass runs only
+    /// as far as it must, in order, and never twice‹ [[R288]]): the lines before the one being
+    /// parsed, then the part of it that stands on `tape` before `at`, each cell of which then
+    /// stands for the value its run gave. `false`, with nothing run, where that line holds
+    /// something before `at` that runs and stands on no tape here: an earlier line of an
+    /// argument list or `[…]` still open (stand-in for #301), a part of a quote still being
+    /// built, what stands before a branch a construct reads, or a node whose operation is not
+    /// built yet.
+    pub(super) fn run_before(
+        &mut self,
+        tape: &mut ParsingTape,
+        at: usize,
+    ) -> Result<bool, ParseError> {
+        let standing = self.standing_runs(tape, at);
+        let covered = |s: usize| standing.iter().any(|&(_, from, to)| from <= s && s < to);
+        if self.cx.open.iter().flat_map(|o| &o.runs).any(|&s| s < at && !covered(s)) {
+            return Ok(false);
+        }
+        self.drain()?;
+        for (handle, from, _) in standing {
+            let node = self.as_operand(*tape.cell_of(handle))?;
+            // SAFETY: a standing cell holds a node this parser built into its store, or names a
+            // binding the resolver found.
+            let value = unsafe { self.ran_value(from, node)? };
+            tape.stand_as_ran(handle, value);
+            self.ran_through(tape, handle);
+        }
+        Ok(true)
+    }
+
+    /// The cells on `tape` before `at` that the line runs when it runs, each with its handle and
+    /// the source it spans, up to where the next cell starts.
+    fn standing_runs(&self, tape: &ParsingTape, at: usize) -> Vec<(usize, usize, usize)> {
+        let cells: Vec<(usize, Cell)> = tape.iter().map(|(n, c)| (n, *c)).collect();
+        let ends = cells.iter().skip(1).map(|(_, c)| c.start).chain(std::iter::once(usize::MAX));
+        cells
+            .iter()
+            .zip(ends)
+            .filter(|((_, c), _)| c.start < at && self.runs_standing(c))
+            .map(|(&(n, c), end)| (n, c.start, end))
+            .collect()
+    }
+
+    /// Whether the line runs `cell` when it runs: a node that runs, a bracket's scope, which runs
+    /// its lines, and a read of a place holding a number or a pointer, which a call after it may
+    /// write. A node whose operation is not built yet is none of them. An `=`'s target is not on
+    /// the tape its right side is read on (`construct_left`).
+    fn runs_standing(&self, cell: &Cell) -> bool {
+        use crate::identities::read::{read_kind, Dispatch, Read};
+        let types = self.types;
+        let node = if cell.constructed { cell.dyad } else { cell.binding(types) };
+        if node.is_null() {
+            return false;
+        }
+        // SAFETY: a constructed cell holds a node from the store, and a binding the resolver
+        // found is a binding dyad.
+        unsafe {
+            if dyad::ty(node) == types.scope {
+                return true;
+            }
+            match read_kind(types, node) {
+                Read::Executable(Dispatch::Call(_) | Dispatch::Leaf(_)) => true,
+                Read::Scalar(_) | Read::Pointer(_) => types.storage_type(node).is_some(),
+                _ => false,
+            }
+        }
+    }
+
+    /// The cell `handle` names ran: what its line had noted as running inside it, up to where the
+    /// next cell starts, has run.
+    fn ran_through(&mut self, tape: &ParsingTape, handle: usize) {
+        let from = tape.cell_of(handle).start;
+        let to = tape.next_start(handle).unwrap_or(usize::MAX);
+        let open = self.cx.open.last_mut().expect("a line is read in an open scope");
+        open.runs.retain(|&s| !(from <= s && s < to));
+    }
+
+    /// What stands for `node` once the pass has run it here: the node or the type a `-> dyad`
+    /// or `-> type` call gave, as itself, a node the run made copied into the store and freed;
+    /// any other value in a new node of its type the store holds. Refused at `at` where the value
+    /// does not move whole or ends by more than its bytes, which the line's end would run.
+    ///
+    /// # Safety
+    /// `node` must be a reduced dyad this parser built into its store.
+    unsafe fn ran_value(&mut self, at: usize, node: DyadPtr) -> Result<DyadPtr, ParseError> {
+        use crate::identities::drop_model::{teardown_of, Teardown};
+        use crate::identities::{dyad_place, read};
+        let types = self.types;
+        let out = read::output_type(types, node);
+        let gives_node = out == types.dyad_ || out == types.type_;
+        if !gives_node
+            && (!dyad_place::moves_whole(types, out)
+                || teardown_of(types, node) != Teardown::Nothing)
+        {
+            return Err(self.fail_at(at, ParseError::RanValueNotHeld));
+        }
+        let run = if gives_node {
+            node
+        } else {
+            dyad_place::build_new_node(self.rt.store, types, node, out)
+        };
+        let held = self.run_on_pass(run).map_err(ParseError::Run)? as usize as DyadPtr;
+        if held.is_null() {
+            return Err(self.fail_at(at, ParseError::Run(crate::run::RunError::NullPointer)));
+        }
+        self.take(node);
+        if crate::identities::type_identity_of(types, held).is_some() {
+            return Ok(held);
+        }
+        let stood = dyad_place::stable(self.rt.store, types, held);
+        if stood != held {
+            dyad_place::end(&mut self.rt, held as i64);
+        }
+        Ok(stood)
     }
 
     /// `e` with its caret at `at`, for a constructor refusing an operand it read.

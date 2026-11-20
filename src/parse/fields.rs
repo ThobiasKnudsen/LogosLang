@@ -436,7 +436,6 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
             if name == "type" {
-                let lhs = self.read_through_value(left.start, lhs)?;
                 return self.type_read(lhs).map(|t| (t, 0));
             }
             // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
@@ -743,6 +742,18 @@ impl<'a> Parser<'a> {
         };
         self.cx.member_root = root;
         self.cx.member_path.clear();
+        // `.type` reads the type of the node a `dyad` no name holds gives.
+        let lhs = if &source[nstart..nstart + nlen] == "type" {
+            match self.read_through_value(tape, -1, lhs) {
+                Ok(lhs) => lhs,
+                Err(e) => {
+                    self.cx.member_root = std::ptr::null_mut();
+                    return Err(e);
+                }
+            }
+        } else {
+            lhs
+        };
         let member = Member { start: nstart, len: nlen, index, key, call };
         // SAFETY: `lhs` is a reduced dyad off the tape.
         let access = unsafe { self.field_access_each(lhs, left, member) };

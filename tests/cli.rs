@@ -2073,10 +2073,6 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
             "f := fn (a := dyad ?) -> i64 ( if a > 0 ( return 1 ), 2 ), f(i64 2)",
             "cannot hold `return` yet",
         ),
-        (
-            "g := fn () -> dyad ( i64 6 ), mut i := i64 0, while i < g() ( i = i + 1 ), i",
-            "cannot read what a call that gives a `dyad` gives",
-        ),
         ("f := fn (a := dyad ?) -> i64 ( a ), f.compile(), f(i64 42)", "cannot be compiled yet"),
     ] {
         let out = logos().arg(src).output().unwrap();
@@ -3598,13 +3594,10 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // A condition is parsed again on every pass, and its first parse would run the call too:
-    // stand-in for #307.
-    let (code, _, stderr) = run_line(&format!("{g}, mut i := i32 0, while i < g() ( i = i + 1 )"));
-    assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("cannot read what a call that gives a `dyad`"), "stderr: {stderr}");
-    // What runs in the call's line runs in the order it is written, the lines before it first.
+    // What runs in the call's line runs in the order it is written, the lines before it first,
+    // and the part of its line before it too, inside a bracket around the call as well.
     let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 )";
+    let k1 = "k := fn (a := i32 ?) -> i32 ( print «k», a )";
     for (src, want) in [
         (format!("{calls}, g() + h()"), "g\nh\n3"),
         (format!("{calls}, x := ( h(), g() + 1 ), x"), "h\ng\n3"),
@@ -3613,23 +3606,77 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
             format!("{calls}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(1, g() + 1)"),
             "g\n4",
         ),
+        (format!("{calls}, h() + g()"), "h\ng\n3"),
+        (format!("{calls}, h() * 2 + g()"), "h\ng\n4"),
+        (format!("{calls}, h() + (g() * 2)"), "h\ng\n5"),
+        (format!("{calls}, (h(), 1) + g()"), "h\ng\n3"),
+        (format!("{calls}, g() + h() + g()"), "g\nh\ng\n5"),
+        (format!("{calls}, h() + (h() * (g() + 1))"), "h\nh\ng\n4"),
+        (format!("{calls}, x := h() + (g() + 1), x"), "h\ng\n4"),
+        (format!("{calls}, {k1}, h() + k(g() + 1)"), "h\ng\nk\n4"),
+        (format!("{calls}, h() == 1 and g().type == i32"), "h\ng\ntrue"),
+        (format!("{calls}, print «{{h() + g()}}»"), "h\ng\n3"),
+        (format!("{calls}, print «{{h() + (g() + 1)}}»"), "h\ng\n4"),
+        (format!("{calls}, k := fn () -> i32 ( h() + g() ), k()"), "h\ng\n3"),
+        (format!("{calls}, k := fn () -> i32 ( h() + (g() + 1) ), k()"), "h\ng\n4"),
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // Something its line runs before it would run after it: stand-in for #307.
-    for src in [
-        format!("{calls}, h() + g()"),
-        format!("{calls}, h() + (g() * 2)"),
-        format!("{calls}, (h(), 1) + g()"),
-        format!("{calls}, print «{{h()}} {{g() + 1}}»"),
-        format!("{calls}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(h(), g() + 1)"),
-        format!("{calls}, k := fn () -> i32 ( h() + g() ), k()"),
+    // A name read before the call is read before the call writes it.
+    let writes = "mut n := i32 1, c := fn () -> dyad ( n = 5, i32 1 )";
+    for (src, want) in [
+        (format!("{writes}, n + c()"), "2"),
+        (format!("{writes}, n = n + c(), n"), "2"),
+        (format!("{writes}, x := n + c(), print «{{x}} {{n}}»"), "2 5"),
+        (format!("{writes}, f := fn () -> i32 ( n + c() ), f()"), "2"),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // What stands before the call cannot run first yet: an earlier argument (stand-in for #301),
+    // a part of a quote, a node with no operation built yet; or it gives text.
+    for (src, refusal) in [
+        (format!("{calls}, print «{{h()}} {{g() + 1}}»"), "cannot run first yet"),
+        (
+            format!("{calls}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(h(), g() + 1)"),
+            "cannot run first yet",
+        ),
+        (format!("{calls}, x := [h(), 2], x[0] + (g() + 1)"), "cannot run first yet"),
+        (
+            format!("{calls}, t := fn () -> string ( «x» ), t() == «x» and (g() == i32 2)"),
+            "cannot stand in its place yet",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stdout.is_empty(), "{src}: stdout: {stdout}");
-        assert!(stderr.contains("cannot stand yet after something in its line"), "{src}: {stderr}");
+        assert!(stderr.contains(refusal), "{src}: {stderr}");
     }
+    // A `while` condition that holds the call is held before it is parsed, so the call runs once
+    // each time the condition runs, at the top level and in a body; a `[` in it is no body.
+    let count = "mut n := i32 0, c := fn () -> dyad ( n = n + 1, i32 3 ), mut i := i32 0";
+    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
+    for (src, want) in [
+        (format!("{g}, mut i := i32 0, while i < g() ( i = i + 1 ), i"), "5"),
+        (format!("{count}, while i < c() ( i = i + 1 ), n"), "4"),
+        (format!("{count}, while c() > i ( i = i + 1 ), n"), "4"),
+        (format!("{count}, while i < c() and i < 9 ( i = i + 1 ), n"), "4"),
+        (format!("{count}, while (i < c()) ( i = i + 1 ), n"), "4"),
+        (format!("{array}, {count}, while c() > a[0] + i ( i = i + 1 ), n"), "3"),
+        (format!("{array}, {count}, while a[0] + i < c() ( i = i + 1 ), n"), "3"),
+        (
+            format!(
+                "{g}, f := fn () -> i32 ( mut i := i32 0, while i < g() ( i = i + 1 ), i ), f()"
+            ),
+            "5",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // A call read through a bracket around it is not seen by the scan that holds the condition.
+    let (code, _, stderr) =
+        run_line(&format!("{g}, mut i := i32 0, while i < (g()) ( i = i + 1 ), i"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("through a bracket or a member"), "stderr: {stderr}");
 }
 
 #[test]
