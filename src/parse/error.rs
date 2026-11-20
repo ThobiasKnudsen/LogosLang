@@ -56,6 +56,9 @@ pub enum ParseError {
     NonOwningIntoOwning,
     /// `dyad (T, v)` for a `T` whose value does not move whole into a new node.
     BadDyadType,
+    /// `x := T ?` for a `T` known only when its line runs, whose value does not move whole into
+    /// the new node laid out then.
+    RunPlaceNotData,
     /// `parse_rank = …` whose value is not a number known at the definition.
     NonComptimeRank,
     /// `associativity = …` with something other than `left` or `right`.

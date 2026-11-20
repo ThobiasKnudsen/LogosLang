@@ -2232,14 +2232,17 @@ fn a_type_is_a_value_a_place_can_hold() {
         ParseError::BadDeclaredType
     );
 
-    assert_eq!(
-        parse_err("fn (t := type ?) -> i32 ( x := t ?, 1 )"),
-        ParseError::TypeKnownOnlyAtRun
-    );
-    assert_eq!(
-        parse_err("fn (t := type ?) -> f64 ( t.parse_rank )"),
-        ParseError::TypeKnownOnlyAtRun
-    );
+    // What needs the type a box holds only at run is parsed when its line runs; what those lines
+    // give is in tests/cli.rs, whose runs parse them.
+    for src in
+        ["fn (t := type ?) -> i32 ( x := t ?, 1 )", "fn (t := type ?) -> f64 ( t.parse_rank )"]
+    {
+        assert_eq!(parses(src), Ok(()), "{src}");
+    }
+    assert!(matches!(
+        parse_err("fn (t := type ?) -> i32 ( x := t ?, x )"),
+        ParseError::Unwritten(_)
+    ));
 
     assert_eq!(run_script("i32 == i32"), 1);
     assert_eq!(
@@ -2331,7 +2334,7 @@ fn every_place_that_needs_a_type_now_answers_one_operand_alike() {
         let src = format!("fn (t := {param} ?) -> i32 ( mk := fn () -> t ( 7 ), 1 )");
         assert_eq!(parse_err(&src), ParseError::TypeKnownOnlyAtRun, "{src}");
     }
-    assert_eq!(parse_err("fn (t := type ?) -> i32 ( t 5 )"), ParseError::TypeKnownOnlyAtRun);
+    assert_eq!(parses("fn (t := type ?) -> i32 ( t 5 )"), Ok(()));
     let f = ["f := fn () -> dyad ( i32 5 )"];
     for src in ["y := f() ?", "y := dyad (f(), 7)", "f() 5", "f().parse_rank"] {
         assert_eq!(parse_err_after(&f, src), ParseError::TypeKnownOnlyAtRun, "{src}");

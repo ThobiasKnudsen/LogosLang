@@ -789,12 +789,18 @@ impl<'a> Parser<'a> {
             if id == t.static_ {
                 return true;
             }
-            if id != t.mut_ && id != t.pub_ && id != t.immut_ {
+            if !self.is_gate_word(id) {
                 return false;
             }
             k -= 1;
         }
         false
+    }
+
+    /// A word written left of the name a `:=` declares.
+    pub(super) fn is_gate_word(&self, id: DyadPtr) -> bool {
+        let t = self.types;
+        [t.static_, t.mut_, t.pub_, t.immut_].contains(&id)
     }
 
     /// `name := value`: the binding is made before the value parses and points at the
@@ -849,7 +855,14 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = binding;
         self.cx.filling.push(binding);
         self.cx.filling_at.push(self.cx.pos);
-        let value = self.parse_expression_cell();
+        let mut unwritten = false;
+        let value = self.waiting_value().and_then(|held| match held {
+            Some((held, hole)) => {
+                unwritten = hole;
+                Ok(held)
+            }
+            None => self.parse_expression_cell(),
+        });
         self.cx.filling.pop();
         self.cx.filling_at.pop();
         self.cx.last_declared = binding;
@@ -861,6 +874,14 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `binding` is the binding just declared; `value` a reduced dyad from the store.
         let declared = unsafe { self.land_at_binding(binding, value, cell.hole, cell.owning) }?;
+        // A place laid out when its line runs holds no value until a write fills it, as one
+        // declared `T ?` does.
+        if unwritten {
+            // SAFETY: `binding` is the binding just declared.
+            unsafe {
+                Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.unknown)
+            };
+        }
         let node =
             crate::identities::declare::build(self.rt.store, self.types, binding, value, declared);
         tape.remove(-1); // the name token, consumed
