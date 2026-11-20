@@ -864,7 +864,8 @@ impl<'a> Parser<'a> {
         self.cx.member_root = root;
         self.cx.member_path.clear();
         // `.type` reads the type of the node a `dyad` no name holds gives.
-        let lhs = if &source[nstart..nstart + nlen] == "type" {
+        let type_word = &source[nstart..nstart + nlen] == "type";
+        let lhs = if type_word {
             match self.read_through_value(tape, -1, lhs) {
                 Ok(lhs) => lhs,
                 Err(e) => {
@@ -886,30 +887,22 @@ impl<'a> Parser<'a> {
             tape.remove(1);
         }
         tape.remove(-1);
-        // A type identity a parse's `tape[0].f` folded to, or a member call for a type gave,
-        // stands as its own unconstructed cell, so it reads its right side as anywhere else.
-        let called = bracket.is_some() && consumed == 1;
-        // SAFETY: `node` is a node from the store.
-        let folded_type = (this_read && unsafe { self.identity_head(node) }.is_some())
-            || (called && self.stands_in_for_call(node));
-        if folded_type {
-            tape.set_dyad(0, node);
+        let path = if path.is_empty() {
+            std::ptr::null_mut()
         } else {
-            let path = if path.is_empty() {
-                std::ptr::null_mut()
-            } else {
-                crate::identities::array::build(self.rt.store, self.types.array_, &path)
-            };
-            tape.place(node);
-            tape.span_center(left.start, end);
-            let cell = tape.at_mut(0).expect("placed above");
-            cell.path = path;
-            if plain {
-                cell.target = reached;
-                cell.root = path_root;
-            }
+            crate::identities::array::build(self.rt.store, self.types.array_, &path)
+        };
+        tape.place(node);
+        tape.span_center(left.start, end);
+        let cell = tape.at_mut(0).expect("placed above");
+        cell.path = path;
+        if plain {
+            cell.target = reached;
+            cell.root = path_root;
         }
-        Ok(Constructed::Placed)
+        // Every read gives what the member holds, but `.type` hands its type on to nothing:
+        // stand-in for #393.
+        Ok(if type_word { Constructed::Placed } else { Constructed::Gave })
     }
 
     /// The comptime index a `[…]` cell carries when its interior is a

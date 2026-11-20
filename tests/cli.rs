@@ -4847,6 +4847,61 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
 }
 
 #[test]
+fn a_member_holding_a_type_reads_what_follows_it_as_a_name_holding_the_type_does() {
+    let o = "o := type ( static e := i32 )";
+    let pt = "pt := type ( mut a := i32 ? ), o := type ( static e := pt )";
+    for (defs, out, named, unnamed, want) in [
+        (o, "i32", "u := o.e, u 3", "o.e 3", "3"),
+        (o, "type", "u := o.e, x := u 3, x.type", "x := o.e 3, x.type", "i32"),
+        (o, "i32", "u := o.e, u(7)", "o.e(7)", "7"),
+        (pt, "i32", "u := o.e, v := u(4), v.a", "v := o.e(4), v.a", "4"),
+        (o, "type", "u := o.e, u", "o.e", "i32"),
+        (o, "bool", "u := o.e, u == i32", "o.e == i32", "true"),
+        (o, "i32", "u := o.e, mut x := u ?, x = 4, x", "mut x := o.e ?, x = 4, x", "4"),
+    ] {
+        for body in [named, unnamed] {
+            let src = format!("{defs}, {body}");
+            assert_eq!(line(&src), want, "{src}");
+            for call in ["f()", "f.compile(), f()"] {
+                let src = format!("{defs}, f := fn () -> {out} ( {body} ), {call}");
+                assert_eq!(line(&src), want, "{src}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_bracket_holding_a_type_reads_what_follows_it_as_a_name_holding_the_type_does() {
+    let none = "z := i32 0";
+    let mk = "mk := fn () -> type ( i32 )";
+    let pt = "pt := type ( mut a := i32 ? )";
+    let o = "o := type ( static e := i32 )";
+    for (defs, out, named, unnamed, want) in [
+        (none, "i32", "u := (i32), u 3", "(i32) 3", "3"),
+        (none, "type", "u := (i32), x := u 3, x.type", "x := (i32) 3, x.type", "i32"),
+        (none, "i32", "u := i32, v := (u), v 3", "u := i32, (u) 3", "3"),
+        (mk, "i32", "u := (mk()), u 3", "(mk()) 3", "3"),
+        (mk, "i32", "u := (immediate mk()), u 3", "(immediate mk()) 3", "3"),
+        (pt, "i32", "u := (pt), v := u(4), v.a", "v := (pt)(4), v.a", "4"),
+        (o, "i32", "u := (o.e), u 3", "(o.e) 3", "3"),
+        (none, "type", "u := (i32), u", "(i32)", "i32"),
+    ] {
+        for body in [named, unnamed] {
+            let src = format!("{defs}, {body}");
+            assert_eq!(line(&src), want, "{src}");
+            for call in ["f()", "f.compile(), f()"] {
+                let src = format!("{defs}, f := fn () -> {out} ( {body} ), {call}");
+                assert_eq!(line(&src), want, "{src}");
+            }
+        }
+    }
+    // A bracket an identity to its left takes stays that identity's argument.
+    let k = "k := fn (t := type ?) -> type ( t )";
+    assert_eq!(line(&format!("{k}, k (i64) 3")), "3");
+    assert_eq!(line(&format!("{k}, x := k (i64) 3, x.type")), "i64");
+}
+
+#[test]
 fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_once() {
     // Each point where the parse needs a value runs the earlier arguments first, each then
     // standing for the value it gave, and the call runs them no more.
