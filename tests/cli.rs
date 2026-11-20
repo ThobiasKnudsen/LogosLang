@@ -7482,6 +7482,20 @@ fn an_assignment_copies_a_value_that_owns_memory() {
     ]);
 }
 
+/// ›Explicit heap: `alloc n` and `alloc n of T v`‹: each cell is built from the value, the first
+/// taking it and every other one owning a copy of its own.
+#[test]
+fn alloc_gives_each_cell_a_value_of_its_own() {
+    let array = "import ./identities/array.logos, p := alloc 2 of array i32 [1, 2]";
+    let boxes = format!("{BOX}, p := alloc 2 of box (1, 2), ((p + 1)@.p + 0)@ = i32 9");
+    assert_runs(&[
+        (format!("{array}, (p + 1)@[0] = i32 9, p@[0]"), "1\n"),
+        (format!("{array}, (p + 1)@[0] = i32 9, (p + 1)@[0]"), "9\n"),
+        (format!("{boxes}, print «{{(p@.p + 0)@}} {{((p + 1)@.p + 0)@}}»"), "1 9\n"),
+        (format!("{boxes}, free p@, free (p + 1)@, print «freed»"), "free\nfree\nfreed\n"),
+    ]);
+}
+
 /// DESIGN ›Explicit heap: `alloc n` and `alloc n of T v`‹: a cell through a pointer is read and
 /// written whole for every type a place of it has, a plain record, a rational, `type`, `dyad`.
 #[test]

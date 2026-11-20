@@ -42,6 +42,14 @@ enum Owned {
     Record(DyadPtr),
 }
 
+/// Whether a value of `ty` owns memory, so its bytes alone are not its copy.
+///
+/// # Safety
+/// `ty` must be null or a type node from the store.
+pub(crate) unsafe fn owns(types: &Core, ty: DyadPtr) -> bool {
+    owned(types, ty).is_some()
+}
+
 /// `None` where a value of `ty` owns no memory, so its bytes are its copy.
 ///
 /// # Safety
@@ -106,7 +114,7 @@ pub(crate) unsafe fn taken(store: &mut Store, types: &Core, value: DyadPtr) -> D
 ///
 /// # Safety
 /// `at` must hold a whole value of `ty`, a type node from the store, laid out as its places are.
-unsafe fn deepen(rt: &mut Runtime, ty: DyadPtr, at: *mut u8) -> Result<(), RunError> {
+pub(crate) unsafe fn deepen(rt: &mut Runtime, ty: DyadPtr, at: *mut u8) -> Result<(), RunError> {
     match owned(rt.types(), ty) {
         None => {}
         Some(Owned::Block(pointee)) => {

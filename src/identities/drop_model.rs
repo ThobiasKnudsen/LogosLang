@@ -1434,12 +1434,18 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if mem.is_null() {
             return Err(RunError::OutOfMemory);
         }
+        rt.note_alloc();
         if let Some(taken) = taken {
+            // The first cell takes the value; every other cell owns a copy of its own.
+            let owns = super::copy::owns(rt.types(), pointee);
             for k in 0..count {
-                super::assign::put(carry, mem.add(k * width), taken);
+                let cell = mem.add(k * width);
+                super::assign::put(carry, cell, taken);
+                if owns && k > 0 {
+                    super::copy::deepen(rt, pointee, cell)?;
+                }
             }
         }
-        rt.note_alloc();
         Ok(mem as i64)
     }
 }
