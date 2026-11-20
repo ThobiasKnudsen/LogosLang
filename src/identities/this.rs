@@ -646,7 +646,9 @@ fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 
 /// The value the field holds, as a whole read of a place of its type hands it over: read from a
 /// plain record's bytes, or yielded by the node a slot holds; an unfilled slot is the checked
-/// error. A number field of the parse's own node has a value only where it holds a constant.
+/// error. A number field of the parse's own node has a value only where it holds a constant, and
+/// a plain number a number field holds reads as that number type, exactly (›A tape read checked
+/// against a number type reads as that number‹ [[R229]]).
 ///
 /// # Safety
 /// `node` must be a load node from `build_load`; `this` what its first operand yields. The node
@@ -658,7 +660,10 @@ unsafe fn load(rt: &mut Runtime, node: DyadPtr, this: DyadPtr) -> Result<i64, Ru
     match field_at(rt, this, ops, *ops.add(5))? {
         Field::Bytes(addr, ..) => Ok(super::assign::load(carry, addr)),
         Field::Slot(slot, k) if (*slot).is_null() => Err(RunError::UnfilledField(k)),
-        Field::Slot(slot, _) if is_fill(rt.types(), node) && super::numtype::is_scalar_type(ty) => {
+        Field::Slot(slot, _)
+            if super::numtype::is_scalar_type(ty)
+                && (is_fill(rt.types(), node) || dyad::ty(*slot) == rt.types().rational) =>
+        {
             super::tape::constant_number(rt.types(), *slot, ty)
         }
         Field::Slot(slot, _) => super::assign::take(rt, carry, *slot),

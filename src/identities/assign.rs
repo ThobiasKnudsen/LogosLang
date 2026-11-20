@@ -192,13 +192,12 @@ pub(super) fn build_store(
     let place = unsafe { place_of(types, lhs_d) };
     // SAFETY: as above.
     if place.is_none() && !unsafe { is_lex_rank_field(types, lhs_d) } {
-        // SAFETY: as above; a `Literal` read is a rational node with its fraction blob.
-        return Err(unsafe {
-            if read_kind(types, lhs_d) == Read::Literal {
-                ParseError::AssignToLiteral(Box::new(super::rational::spell(lhs_d)))
-            } else {
-                ParseError::BadAssignTarget
-            }
+        return Err(if lhs_ty == types.rational {
+            // SAFETY: as above; a node of `rational_number` holds its fraction's bytes.
+            let spelled = unsafe { super::rational::spell(lhs_d) };
+            ParseError::AssignToLiteral(Box::new(spelled))
+        } else {
+            ParseError::BadAssignTarget
         });
     }
     // SAFETY: `lhs_d` is a reduced dyad from the store.

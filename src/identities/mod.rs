@@ -1071,7 +1071,7 @@ pub(crate) unsafe fn copy_place(
     types: &Core,
     value: DyadPtr,
 ) -> Option<(DyadPtr, usize)> {
-    if read::read_kind(types, value) == read::Read::Literal {
+    if matches!(operand_of(types, value), Operand::Literal) {
         return None;
     }
     let t = read::output_type(types, value);
@@ -1118,7 +1118,7 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
         return if bits != 0 { "true" } else { "false" }.to_string();
     }
     // A rational value's bits are the address of its sixteen bytes.
-    if rational::is_rational_value(types, node) {
+    if read::output_type(types, node) == types.rational {
         let p = bits as usize as *const u8;
         if !p.is_null() {
             return rational::spell_at(p);

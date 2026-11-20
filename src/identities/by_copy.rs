@@ -172,17 +172,14 @@ pub(crate) unsafe fn words(types: &Core, f: DyadPtr) -> usize {
     slots(types, f).last().map_or(first, |s| s.word + s.width.map_or(1, |w| w.div_ceil(8)))
 }
 
-/// Evaluate `node`, whose value is its bytes, and yield their address: a record place's own, a
-/// literal's, or the address the node runs to, as every node that makes or reaches such a
-/// value does.
+/// Evaluate `node`, whose value is its bytes, and yield their address: a record place's own, or
+/// the address the node runs to, as every node that makes or reaches such a value does.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store whose type moves as its bytes.
 pub(crate) unsafe fn record_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut u8, RunError> {
     let node = rt.through(node);
     match read_kind(rt.types(), node) {
-        // A literal's bytes are a rational value's.
-        Read::Literal => Ok(dyad::value(node)),
         // No whole read of a record place: its bytes are where it lies.
         Read::Aggregate => {
             let addr = rt.place_addr(node).ok_or(RunError::NoActivation)?;
@@ -205,8 +202,6 @@ pub(crate) unsafe fn lower_record_addr(
 ) -> Result<Value, CompileError> {
     let node = lw.through(node);
     match read_kind(lw.types(), node) {
-        // A literal is source: its bytes' address is a constant.
-        Read::Literal => Ok(lw.const_i64(dyad::value(node) as usize as i64)),
         Read::Aggregate => lw.place_addr(node),
         _ => lw.lower(node),
     }
@@ -225,8 +220,8 @@ fn run_result(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 super::rational::run_into(rt, call, dest)?;
                 Ok(dest as i64)
             }
-            Read::Literal => {
-                std::ptr::copy_nonoverlapping(dyad::value(call), dest, 16);
+            Read::Rational => {
+                std::ptr::copy_nonoverlapping(record_addr(rt, call)?, dest, 16);
                 Ok(dest as i64)
             }
             _ => Err(RunError::NoWholeRead),

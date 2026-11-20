@@ -521,7 +521,7 @@ pub(crate) unsafe fn own_result(
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let ty = super::read::handed_on(types, place);
+    let ty = super::read::output_type(types, place);
     super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place])
 }
 
@@ -1558,12 +1558,15 @@ fn run_value_release(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// ›`move` and `free` take a field path too‹).
 fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `move` node `[place]` from the store; a field or cell it
-    // reaches is an owning one, eight bytes wide, as is a name that holds an address.
+    // reaches is an owning one, eight bytes wide, as is a name that holds an address. A name
+    // that stands for a constant is no place and holds nothing to empty.
     unsafe {
         let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
         let value = rt.run(place)?;
         let types = rt.types();
-        if dyad::ty(place) != types.binding_ || holds_by_address(types, types.type_of(place)) {
+        let emptied =
+            dyad::ty(place) != types.binding_ || holds_by_address(types, types.type_of(place));
+        if emptied && super::read::place_of(types, place).is_some() {
             let slot = super::pointer::place_addr(rt, place)?;
             std::ptr::write_unaligned(slot as *mut i64, 0);
         }
@@ -1608,7 +1611,9 @@ mod tests {
         let root = p.parse_sequence().expect("parse");
         // SAFETY: `root` is the scope just parsed into the parser's store.
         let bits = unsafe { p.value_of(root) }.expect("run");
-        (bits, p.into_runtime().live_allocs())
+        // SAFETY: as above; `bits` is what it ran to.
+        let v = unsafe { crate::identities::rational::as_number(&core, root, bits) };
+        (v, p.into_runtime().live_allocs())
     }
 
     fn try_run(src: &str) -> Result<(i64, usize), RunError> {
@@ -1624,7 +1629,9 @@ mod tests {
         let mut rt = p.into_runtime();
         // SAFETY: `root` is the scope just parsed into `store`, which outlives `rt`.
         let bits = unsafe { rt.run(root) }?;
-        Ok((bits, rt.live_allocs()))
+        // SAFETY: as above; `bits` is what it ran to.
+        let v = unsafe { crate::identities::rational::as_number(types, root, bits) };
+        Ok((v, rt.live_allocs()))
     }
 
     #[test]
@@ -1814,8 +1821,8 @@ mod tests {
             "x := (free a, i32 1) + g()",
             "x := g() + (b := move a, i32 1)",
             "x := (b := move a, i32 1) + g()",
-            "x := ( c := i32 1, y := g() + (free a, i32 1), 2 )",
-            "x := ( c := i32 1, y := (free a, i32 1) + g(), 2 )",
+            "x := ( c := i32 1, y := g() + (free a, i32 1), i32 2 )",
+            "x := ( c := i32 1, y := (free a, i32 1) + g(), i32 2 )",
         ] {
             for src in [
                 format!("{g}f := fn () -> i32 ( a := alloc 1 of i32 7, {line}, x ),\nf()"),
@@ -1914,8 +1921,8 @@ mod tests {
             ("(if (c == 1) (return 5), i32 2)", "(if (c == 1) (return 5) else (free a), i32 2)");
         let bodies = [
             format!("x := {ret} + (free a, i32 1)"),
-            format!("x := ( {ret}, 7 ) + (free a, i32 1)"),
-            format!("x := ( {ret} + (free a, i32 1), 7 )"),
+            format!("x := ( {ret}, i32 7 ) + (free a, i32 1)"),
+            format!("x := ( {ret} + (free a, i32 1), i32 7 )"),
             format!("x := (free a, i32 1) + {ret}"),
             format!("x := ( {ret}, free a, i32 1 )"),
             format!("x := {other} + 1"),

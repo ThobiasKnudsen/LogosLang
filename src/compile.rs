@@ -97,8 +97,6 @@ pub enum CompileError {
     EmptyScope,
     /// A builder's invariant found broken: a seed bug, named.
     Internal(&'static str),
-    /// A literal with no exact `i32` value.
-    UncomputableLiteral,
     /// A call's argument count differs from the callee's parameter count.
     ArityMismatch,
     /// Cranelift rejected the setup, function, or finalization.
@@ -261,10 +259,6 @@ impl<'a> Lowerer<'a, '_> {
             Read::Container(_) => self.read_place(node, types::I64),
             // A rational travels as the address of its sixteen bytes; only its steps refuse.
             Read::Rational => self.place_addr(node),
-            Read::Literal => match crate::identities::rational::mold(node) {
-                Some(v) => Ok(self.const_i32(v)),
-                None => Err(CompileError::UncomputableLiteral),
-            },
             Read::Scalar(nt) => self.read_place(node, nt.cranelift_type()),
             Read::Pointer(_) => self.read_place(node, NumType::U64.cranelift_type()),
             Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),
@@ -678,8 +672,8 @@ impl<'a> Lowerer<'a, '_> {
             Operand::Concrete(nt) => nt,
             // A pointer rides the container as its 8-byte address.
             Operand::Pointer(_) => NumType::U64,
-            // An uncommitted literal is the bare-literal i32 default; a non-numeric value (a
-            // `bool`, a void call's unit) rides as the i32 unit.
+            // A non-numeric value (a `bool`, a void call's unit) rides as the i32 unit; a plain
+            // number lowers to its address, already an `i64`.
             Operand::Literal | Operand::NonNumeric => NumType::I32,
         };
         widen_to_i64(self.builder, v, nt)

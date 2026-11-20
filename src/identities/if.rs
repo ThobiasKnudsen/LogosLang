@@ -86,7 +86,7 @@ pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
 /// # Safety
 /// `node` must be an `if` node [`build`] made.
 pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, ParseError> {
-    read(types, node).map(|v| v.handed)
+    read(types, node).map(|v| v.ty)
 }
 
 /// An `if`'s value as one walk over its arms reads it, each nested `if` read once, so a chain
@@ -94,11 +94,8 @@ pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, 
 /// time in step with its size; no walk runs once per path‹).
 #[derive(Clone, Copy)]
 struct ArmsRead {
-    /// The arms' one type before a plain number is handed on, so a plain number stays a
-    /// `rational_number` beside an arm of a number type.
+    /// The arms' one type.
     ty: DyadPtr,
-    /// What the then arm hands on.
-    handed: DyadPtr,
     /// Whether every arm makes its value (`Some(true)`) or borrows it, as
     /// [`super::drop_model::handed_ends`] reads it.
     made: Option<bool>,
@@ -147,7 +144,7 @@ unsafe fn arm_value(types: &Core, arm: DyadPtr) -> Result<ArmsRead, ParseError> 
     }
     let ty = super::read::value_type(types, arm)?;
     let made = super::drop_model::handed_ends(types, arm)?;
-    Ok(ArmsRead { ty, handed: super::read::handed_on(types, arm), made })
+    Ok(ArmsRead { ty, made })
 }
 
 /// # Safety

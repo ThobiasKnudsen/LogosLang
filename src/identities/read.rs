@@ -31,10 +31,8 @@ pub enum Read {
     Node,
     /// A dyad view: the stored address is the value.
     Address,
-    /// A comptime rational, molded on read.
-    Literal,
-    /// A run-time rational: sixteen bytes `[num, den]` in a place, read by address and
-    /// copied like a record.
+    /// A `rational_number`: sixteen bytes `[num, den]`, a node's own or a place's, read by
+    /// address and copied like a record.
     Rational,
     /// A record instance place: read by field or by address, never whole.
     Aggregate,
@@ -127,7 +125,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
                 Read::Executable(Dispatch::None)
             }
         }
-        meta::FRACTION_TAG => Read::Literal,
+        meta::FRACTION_TAG => Read::Rational,
         COMMENT_TAG | VOID_TAG => Read::Unit,
         // The rest have no whole-value read.
         _ => {
@@ -142,18 +140,6 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             Read::Opaque
         }
     }
-}
-
-/// What a sequence, an arm or a `move` hands on from `node`: its output, a plain number read
-/// as an `i32`: stand-in for #214.
-///
-/// # Safety
-/// `node` must be a reduced dyad from the store.
-pub(crate) unsafe fn handed_on(types: &Core, node: DyadPtr) -> DyadPtr {
-    if dyad::ty(types.through(node)) == types.rational {
-        return types.i32_;
-    }
-    output_type(types, node)
 }
 
 /// The type `node` gives back when it runs, read from the node: a place's declared type, a
@@ -602,7 +588,7 @@ mod tests {
             assert_eq!(types.frame_of(param("b")), Some((crate::binding::Frame::Call(f), 4)));
             assert_eq!(read_kind(types, exprs[7]), Read::Scalar(NumType::I32));
             assert!(!types.is_storage(exprs[7]), "a literal is no storage");
-            assert_eq!(read_kind(types, exprs[8]), Read::Literal);
+            assert_eq!(read_kind(types, exprs[8]), Read::Rational);
             assert_eq!(read_kind(types, exprs[9]), Read::Opaque);
             assert_eq!(read_kind(types, exprs[10]), Read::Unit);
             assert_eq!(read_kind(types, exprs[11]), Read::Address);
@@ -728,7 +714,7 @@ mod tests {
             assert_eq!(read_kind(&core, n), Read::Scalar(NumType::I64));
             assert_eq!(read_kind(&core, t), Read::Identity);
             assert_eq!(read_kind(&core, d), Read::Address);
-            assert_eq!(read_kind(&core, r), Read::Literal);
+            assert_eq!(read_kind(&core, r), Read::Rational);
             assert!(!core.is_storage(n) && !core.is_storage(t));
         }
     }

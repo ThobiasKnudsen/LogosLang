@@ -1179,8 +1179,7 @@ impl<'a> Parser<'a> {
             }
             let slot = types.through(*slots.add(i));
             let comptime = match read_kind(types, slot) {
-                Read::Literal => true,
-                Read::Scalar(_) => !types.is_storage(slot),
+                Read::Scalar(_) | Read::Rational => !types.is_storage(slot),
                 // A literal handed on by `rational_number`, or into a rational field.
                 Read::Executable(_) if dyad::ty(slot) == types.by_copy.out => {
                     let expr = types.through(*(dyad::value(slot) as *const DyadPtr));

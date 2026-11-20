@@ -288,6 +288,22 @@ pub(crate) unsafe fn read_at(p: *const u8) -> (i64, i64) {
     (num, den)
 }
 
+/// What running `node` gave, `bits`, as a number: a whole `rational_number`'s read from its
+/// bytes, any other value's bits as they are.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store and `bits` what running it gave.
+#[cfg(test)]
+pub(crate) unsafe fn as_number(types: &Core, node: DyadPtr, bits: i64) -> i64 {
+    if super::read::output_type(types, node) != types.rational {
+        return bits;
+    }
+    match read_at(bits as usize as *const u8) {
+        (num, 1) => num,
+        (num, den) => panic!("{num}/{den} is no whole number"),
+    }
+}
+
 /// # Safety
 /// `p` must point at sixteen writable bytes.
 pub(crate) unsafe fn write_at(p: *mut u8, num: i64, den: i64) {
@@ -334,11 +350,6 @@ pub(crate) fn mold_to(node: DyadPtr, nt: NumType) -> Option<i64> {
         U64 => u64::try_from(q).ok().map(|v| v as i64),
         F32 | F64 => None,
     }
-}
-
-/// `mold_to` at `i32`, for the bare-literal paths.
-pub(crate) fn mold(node: DyadPtr) -> Option<i32> {
-    mold_to(node, NumType::I32).map(|b| b as i32)
 }
 
 /// What `lossy` gives for a plain number: an integer type takes its whole part, wrapped to

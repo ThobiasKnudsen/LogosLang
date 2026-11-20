@@ -83,7 +83,7 @@ pub(crate) unsafe fn fill(types: &Core, node: DyadPtr) {
 /// `node` must be a scope node from the store.
 pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
     match crate::parse::last_sequence_expr(node) {
-        Some(last) => super::read::handed_on(types, last),
+        Some(last) => super::read::output_type(types, last),
         None => types.void_,
     }
 }
