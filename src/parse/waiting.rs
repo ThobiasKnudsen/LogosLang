@@ -474,20 +474,23 @@ impl<'a> Parser<'a> {
         if field && in_parse {
             return Err(ParseError::BareFieldInParse(Box::new(cell.spelling().to_string())));
         }
-        let writes = if field {
-            next == Some(types.assign)
-        } else {
+        let bits = if field {
+            RECEIVER_READS | (u64::from(next == Some(types.assign)) * RECEIVER_WRITES)
+        } else if next == Some(types.open_) {
             // SAFETY: a resolved cell's identity is null or a dyad from the store.
-            next == Some(types.open_)
-                && unsafe {
-                    let f = types.through(self.cell_identity(cell));
-                    self.takes_this(f) && fn_receiver(types, f) & RECEIVER_WRITES != 0
+            unsafe {
+                let f = types.through(self.cell_identity(cell));
+                if self.takes_this(f) {
+                    fn_receiver(types, f)
+                } else {
+                    0
                 }
+            }
+        } else {
+            0
         };
-        let receiver = self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null());
-        if let Some(def) = receiver.filter(|_| !in_parse) {
-            def.read_receiver |= field;
-            def.wrote_receiver |= writes;
+        if let Some(def) = self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
+            def.note_receiver_use(bits);
         }
         Ok(field)
     }

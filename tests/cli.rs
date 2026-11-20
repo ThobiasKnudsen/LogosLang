@@ -1090,11 +1090,17 @@ fn a_static_member_is_read_through_a_node_and_through_the_type() {
 fn a_static_function_called_on_no_value_uses_no_field() {
     let t = "t := type ( n := i64 ?, static k := fn () -> i64 ( 1 ), \
              static inc := fn (a := i64 ?) -> i64 ( a + 1 ), static j := fn () -> i64 ( k() + 1 ), \
-             static get := fn () -> i64 ( n ), static via := fn () -> i64 ( get() ) )";
+             static get := fn () -> i64 ( n ), static via := fn () -> i64 ( get() ), \
+             static held_k := fn (a := dyad ?) -> i64 ( a + k() ), \
+             static held_get := fn (a := dyad ?) -> i64 ( a + get() ) )";
     for (tail, want) in [
         ("t.k()", "1\n"),
         ("t.inc(i64 5)", "6\n"),
         ("t.j()", "2\n"),
+        // A line that waits for the run calls bare as any other line does.
+        ("t.held_k(i64 1)", "2\n"),
+        ("g := fn () -> i64 ( t.held_k(i64 1) ), g.compile(), g()", "2\n"),
+        ("v := t (3), g := fn () -> i64 ( v.held_get(i64 1) ), g.compile(), g()", "4\n"),
         ("g := fn () -> i64 ( t.k() ), g()", "1\n"),
         ("g := fn () -> i64 ( t.k() ), g.compile(), g()", "1\n"),
         ("g := fn (b := i64 ?) -> i64 ( t.inc(b) ), g.compile(), g(i64 5)", "6\n"),
@@ -1119,6 +1125,12 @@ fn a_static_function_called_on_no_value_uses_no_field() {
     for (src, name, through) in [
         (format!("{t}, t.get()"), "get", "`v.get(…)`"),
         (format!("{t}, t.via()"), "via", "`v.via(…)`"),
+        (format!("{t}, t.held_get(i64 1)"), "held_get", "`v.held_get(…)`"),
+        (
+            format!("{t}, g := fn () -> i64 ( t.held_get(i64 1) ), g.compile(), g()"),
+            "held_get",
+            "`v.held_get(…)`",
+        ),
         (format!("{t}, g := fn () -> i64 ( t.get() ), g()"), "get", "`v.get(…)`"),
         (format!("{set}, s.set()"), "set", "`v.set(…)`"),
         (format!("{t}, f := t.get, f()"), "f", "by the member that holds it"),

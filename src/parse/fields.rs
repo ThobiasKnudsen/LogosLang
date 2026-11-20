@@ -136,11 +136,9 @@ impl<'a> Parser<'a> {
         if !self.takes_this(f) {
             return Ok(args);
         }
-        let bits = fn_receiver(self.types, f);
         let receiver = match self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
             Some(def) if !def.in_parse => {
-                def.read_receiver |= bits & RECEIVER_READS != 0;
-                def.wrote_receiver |= bits & RECEIVER_WRITES != 0;
+                def.note_receiver_use(fn_receiver(self.types, f));
                 Some(def.this_param)
             }
             Some(_) => None,
