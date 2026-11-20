@@ -60,7 +60,7 @@ impl<'a> Parser<'a> {
         let open = self.cx.open.last();
         if self.cx.runtime_depth == 0
             || !in_run_order
-            || open.is_none_or(|o| o.list || o.arguments)
+            || open.is_none_or(|o| !o.own_lines())
             || !self.cx.definitions.is_empty()
         {
             return Ok(None);

@@ -3679,6 +3679,23 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
+    // An earlier argument runs before the call too, once: the call reads the value it gave.
+    let k2 = "k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b )";
+    let k3 = "k3 := fn (a := i32 ?, b := i32 ?, c := i32 ?) -> i32 ( a + b + c )";
+    let arrays = "import ./identities/array.logos";
+    for (src, want) in [
+        (format!("{calls}, {k2}, k(h(), g() + 1)"), "h\ng\n4"),
+        (format!("{calls}, {k2}, k(h(), (g() + 1))"), "h\ng\n4"),
+        (format!("{calls}, {k2}, h() + k(h(), k(h(), g() + 1))"), "h\nh\nh\ng\n6"),
+        (format!("{calls}, {k3}, k3(h(), g() + 1, h())"), "h\ng\nh\n5"),
+        (format!("{calls}, {k2}, f := fn () -> i32 ( k(h(), g() + 1) ), f()"), "h\ng\n4"),
+        (
+            format!("{arrays}, {calls}, c := array i32 [h(), g() + 1], print «{{c[0]}} {{c[1]}}»"),
+            "h\ng\n1 3",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
     // A name read before the call is read before the call writes it.
     let writes = "mut n := i32 1, c := fn () -> dyad ( n = 5, i32 1 )";
     for (src, want) in [
@@ -3686,17 +3703,15 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
         (format!("{writes}, n = n + c(), n"), "2"),
         (format!("{writes}, x := n + c(), print «{{x}} {{n}}»"), "2 5"),
         (format!("{writes}, f := fn () -> i32 ( n + c() ), f()"), "2"),
+        (format!("{writes}, {k2}, k(n, c() + 1)"), "3"),
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // What stands before the call cannot run first yet: an earlier argument (stand-in for #301),
-    // a part of a quote, a node with no operation built yet; or it gives text.
+    // What stands before the call cannot run first yet: a part of a quote, an earlier argument
+    // whose value cannot stand in its place, a node with no operation built yet; or it gives text.
     for (src, refusal) in [
         (format!("{calls}, print «{{h()}} {{g() + 1}}»"), "cannot run first yet"),
-        (
-            format!("{calls}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(h(), g() + 1)"),
-            "cannot run first yet",
-        ),
+        (format!("{calls}, {k2}, k([h(), 2], g() + 1)"), "cannot run first yet"),
         (format!("{calls}, x := [h(), 2], x[0] + (g() + 1)"), "cannot run first yet"),
         (
             format!("{calls}, t := fn () -> string ( «x» ), t() == «x» and (g() == i32 2)"),
@@ -3734,6 +3749,24 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
         run_line(&format!("{g}, mut i := i32 0, while i < (g()) ( i = i + 1 ), i"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("through a bracket or a member"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_box_read_in_an_argument_list_runs_no_earlier_argument_twice() {
+    // The box's read runs the lines of their own before it; an argument is a part of its call's
+    // line, which runs it once.
+    let defs =
+        "h := fn () -> i32 ( print «h», 1 ), k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b )";
+    for (src, want) in [
+        (format!("{defs}, d := dyad (i32, 7), k(h(), d + 1)"), "h\n9"),
+        (format!("{defs}, mut t := type ?, t = i32, k(h(), t 5)"), "h\n6"),
+        (format!("{defs}, d := dyad (i32, 7), k(h(), k(h(), d + 1))"), "h\nh\n10"),
+        (format!("{defs}, d := dyad (i32, 7), x := k(h(), d + 1), x"), "h\n9"),
+        (format!("{defs}, d := dyad (i32, 7), x := ( h(), k(h(), d + 1) ), x"), "h\nh\n9"),
+        (format!("{defs}, d := dyad (i32, 7), f := fn () -> i32 ( k(h(), d + 1) ), f()"), "h\n9"),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
 }
 
 #[test]
