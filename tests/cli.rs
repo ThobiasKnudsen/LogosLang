@@ -2198,6 +2198,105 @@ fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
 }
 
 #[test]
+fn an_if_that_makes_a_dyad_in_one_arm_and_borrows_one_in_another_is_refused() {
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), ";
+    let head =
+        format!("{bag}mk := fn () -> dyad ( bag (6) ), mut d := dyad ?, d = bag (5), c := i32 1, ");
+    // Refused wherever the value goes, as over `bag`: at a `free`'s operand, and where a `:=`
+    // closes the `if`.
+    for (tail, at) in [
+        ("free (if (c == 1) (dyad (bag, bag (6))) else (d)), print «end»", "(if"),
+        ("free (if (c == 1) (mk()) else (d)), print «end»", "(if"),
+        ("x := if (c == 1) (dyad (bag, bag (6))) else (d), print «end»", ", print"),
+        ("x := if (c == 1) (d) else (mk()), print «end»", ", print"),
+        ("x := if (c == 1) (dyad (i32, 6)) else (d), print «end»", ", print"),
+        ("a := bag (5), x := if (c == 1) (bag (6)) else (a), print «end»", ", print"),
+    ] {
+        let src = format!("{head}{tail}");
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        let col = src[..head.len() + tail.find(at).unwrap()].chars().count() + 1;
+        let want = format!(
+            "<command line>:1:{col}: error: make a value in every arm, or borrow in every arm"
+        );
+        assert!(stderr.starts_with(&want), "{src}: stderr: {stderr}");
+    }
+    // Arms alike hand the value on: each bag is freed once.
+    for (tail, want) in [
+        (
+            "free (if (c == 1) (dyad (bag, bag (6))) else (move d)), print «end»",
+            "freed 5\nfreed 6\nend\n",
+        ),
+        (
+            "x := if (c == 1) (dyad (bag, bag (6))) else (move d), print «end»",
+            "freed 5\nend\nfreed 6\n",
+        ),
+        (
+            "x := if (c == 1) (mk()) else (dyad (bag, bag (7))), print «end»",
+            "end\nfreed 6\nfreed 5\n",
+        ),
+        (
+            "mut e := dyad ?, e = bag (7), x := if (c == 1) (d) else (e), print «end»",
+            "end\nfreed 5\nfreed 7\nfreed 5\n",
+        ),
+    ] {
+        let src = format!("{head}{tail}");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, want, "{src}");
+    }
+    // A type's `run` whose output is `dyad` gives a new node its caller holds, whatever it made.
+    let gives_dyad = |run: &str| {
+        format!(
+            "t := type ( lhs := i32 ?, static output_type := dyad, static run = ( {run} ), \
+             static parse_rank = 60, static parse = ( tape[0].type = t, tape[0].lhs = tape[1], \
+             tape.is_constructed[0] = true, tape.remove(1) ) ), \
+             f := fn (m := i32 ?) -> i32 ( y := t m, 1 ), "
+        )
+    };
+    // A function's value lands in its result: a `dyad` read through into `-> i32` hands on a
+    // number, and into `-> bag` the bag its node held, which only `-> own bag` may.
+    for c in ["", "f.compile(), "] {
+        for (tail, want) in [
+            (
+                format!("{}{c}free (f(i32 5)), print «end»", gives_dyad("bag (lhs)")),
+                "freed 5\nend\n",
+            ),
+            (
+                format!("{}{c}free (f(i32 5)), print «end»", gives_dyad("dyad (bag, bag (lhs))")),
+                "freed 5\nend\n",
+            ),
+            (format!("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) ), {c}f(i32 3)"), "3\n"),
+            (format!("f := fn (m := i32 ?) -> i32 ( return dyad (i32, m) ), {c}f(i32 3)"), "3\n"),
+            (
+                format!("f := fn () -> own bag ( dyad (bag, bag (6)) ), {c}x := f(), print «end»"),
+                "end\nfreed 6\n",
+            ),
+            (
+                format!(
+                    "f := fn () -> own bag ( return dyad (bag, bag (6)) ), {c}x := f(), print «end»"
+                ),
+                "end\nfreed 6\n",
+            ),
+        ] {
+            let src = format!("{bag}{tail}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+            assert_eq!(stdout, want, "{src}");
+        }
+    }
+    for tail in [
+        "f := fn () -> bag ( dyad (bag, bag (6)) ), x := f(), print «end»",
+        "f := fn () -> bag ( return dyad (bag, bag (6)) ), x := f(), print «end»",
+    ] {
+        let src = format!("{bag}{tail}");
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("hands on a value it made: write `-> own bag`"), "{src}: {stderr}");
+    }
+}
+
+#[test]
 fn a_parameter_moves_nothing_whose_type_ends_its_value_a_dyad_as_a_record() {
     let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), ";
     // A type whose values a Logos `parse` builds, with or without a `free` of its own.

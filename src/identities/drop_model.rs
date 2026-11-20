@@ -1471,12 +1471,17 @@ pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<b
     if t == types.void_ {
         return Ok(None);
     }
-    // A pointer that owns nothing borrows what an owning one of its pointee would end. A `dyad`
-    // read through into a typed place hands on no node, which shows only where it lands:
-    // stand-in for #363.
-    let has_end = numtype::is_pointer_type(t)
-        || matches!(teardown_of_type(types, t), Teardown::Node(_) | Teardown::Block(_));
-    Ok(has_end.then(|| teardown_of(types, node) != Teardown::Nothing))
+    Ok(has_end(types, t).then(|| teardown_of(types, node) != Teardown::Nothing))
+}
+
+/// Whether a value of type `t` has an end beyond its bytes, as [`teardown_of_type`] reads the
+/// type: a `dyad`'s node included, and a pointer that owns nothing, which borrows what an owning
+/// one of its pointee would end.
+///
+/// # Safety
+/// `t` must be null or a valid dyad from the store.
+pub(crate) unsafe fn has_end(types: &Core, t: DyadPtr) -> bool {
+    numtype::is_pointer_type(t) || teardown_of_type(types, t) != Teardown::Nothing
 }
 
 /// What two arms hand on together, each as [`handed_ends`] reads it: refused where one makes
@@ -2771,6 +2776,9 @@ mod tests {
             "g := fn (q := @i64 ?) -> dyad ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
             "g := fn (n := i32 ?, q := @i32 ?) -> @i32 \
              ( if (n == 0) (q) else (if (n == 1) (alloc 1 of i32 5) else (g(n - 1, q))) )",
+            // A `dyad` ends the node it holds, so it makes or borrows as a pointer does.
+            "mut d := dyad ?,\nd = i32 5,\nx := if (c == 1) (dyad (i32, 6)) else (d),\n1",
+            "mut d := dyad ?,\nd = i32 5,\nfree (if (c == 1) (d) else (dyad (i32, 6))),\n1",
         ] {
             assert_eq!(parse_err(&format!("{c}{src}")), ParseError::ArmsMakeAndBorrow, "{src}");
         }

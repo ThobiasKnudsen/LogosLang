@@ -844,12 +844,20 @@ impl<'a> Parser<'a> {
         let OpenFn { size: frame_size, outer, returns, .. } =
             self.cx.frames.pop().expect("parse_fn pushed a frame");
         let body = body?;
+        // What the call gets lands in `output`: a `dyad` result is a new node the caller holds
+        // whatever the body gives (›A `dyad ?` place is transparent: a placeholder for a new node
+        // of any type‹ [[R293]]), and a `dyad` read through into a typed result is a value of that
+        // type, so the body's value is made for the caller only where `output` has an end.
+        // SAFETY: `output` is the result type node the signature read.
+        let lands_with_end = output != self.types.dyad_
+            && unsafe { crate::identities::drop_model::has_end(self.types, output) };
         // The value its lines give is the call's, so an `if` among them is a used one.
         let made = if output == self.types.void_ {
             None
         } else {
             // SAFETY: `body` is the valid dyad just built.
             unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?
+                .filter(|_| lands_with_end)
         };
 
         // SAFETY: `body`/`output` are valid dyads just built.
@@ -869,19 +877,15 @@ impl<'a> Parser<'a> {
             }
         }
         // The last value, once its type is, and every `return`'s operand, which a `return` makes
-        // the call's value, are checked against the mark a call reads. A `-> dyad` result is a
-        // new node its caller holds, which takes a value made in the body and a copy of one it
-        // borrows (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹
-        // [[R293]]).
-        if output != self.types.void_ && output != self.types.dyad_ {
-            // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
-            let marked =
-                unsafe { !(*(dyad::value(node) as *const DyadPtr).add(FN_OUTPUT_GATE)).is_null() };
-            let written = result.map(|r| r.text);
-            check_handed(marked, written, made)?;
-            for r in &returns {
-                check_handed(marked, written, r.made).map_err(|e| self.fail_at(r.at, e))?;
-            }
+        // the call's value, are checked against the mark a call reads.
+        // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
+        let marked =
+            unsafe { !(*(dyad::value(node) as *const DyadPtr).add(FN_OUTPUT_GATE)).is_null() };
+        let written = result.map(|r| r.text);
+        check_handed(marked, written, made)?;
+        for r in &returns {
+            let made = r.made.filter(|_| lands_with_end);
+            check_handed(marked, written, made).map_err(|e| self.fail_at(r.at, e))?;
         }
         for r in returns {
             let ends: Vec<DyadPtr> = r
