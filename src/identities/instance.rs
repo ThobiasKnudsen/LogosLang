@@ -60,7 +60,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
     );
     let field = cx.store.alloc_head(cx.type_, record);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
+    let sides = &["lhs", "rhs"];
+    let record = meta::token_record(cx, meta::prec::TIGHT, crate::parse::Assoc::Left, sides);
     let dot = cx.store.alloc_head(cx.type_, record);
     cx.declare(".", dot);
     // `.` reads its member's spelling off the cell to its right, and a `[i]` or `()` cell after
@@ -69,11 +70,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
 
     // `[` is `(` in square brackets: it parses its interior as any bracket's into a
     // `square_brackets` cell the reads after `.` consume, or, after a tape, into the element read.
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
+    let record = meta::token_record(cx, meta::prec::OPEN, crate::parse::Assoc::Left, &["lhs"]);
     let open_sq = cx.store.alloc_head(cx.type_, record);
     cx.declare("[", open_sq);
     cx.metas.insert(open_sq, |p, _id, tape| p.construct_index(tape));
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+    let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, &[]);
     let close_sq = cx.store.alloc_head(cx.type_, record);
     cx.declare("]", close_sq);
     let record = meta::operand_record(

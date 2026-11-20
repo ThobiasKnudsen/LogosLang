@@ -43,7 +43,7 @@ pub struct HashmapIds {
 }
 
 pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> HashmapIds {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
+    let record = meta::token_record(cx, meta::prec::TIGHT, crate::parse::Assoc::Left, &[]);
     let hashmap = cx.store.alloc_head(cx.type_, record);
     cx.declare("hashmap", hashmap);
     cx.metas.insert(hashmap, |p, _id, tape| construct(p, tape));

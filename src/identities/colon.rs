@@ -11,7 +11,8 @@ use crate::dyad::DyadPtr;
 
 /// The trie longest-matches `:=` over `:`, so the declaration operator is untouched.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
+    let sides = &["lhs", "rhs"];
+    let record = meta::token_record(cx, meta::prec::TIGHT, crate::parse::Assoc::Left, sides);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(":", id);
     cx.metas.insert(id, |p, _id, tape| p.construct_binding_read(tape));

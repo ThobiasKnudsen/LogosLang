@@ -9,6 +9,7 @@ use crate::dyad;
 
 /// What a `type (…)` body's lines have filled so far: the head the type node
 /// takes at the close, its one set of slots, and its values' fields.
+#[derive(Clone)]
 pub(super) struct OpenType {
     pub(super) scope: DyadPtr,
     /// The five slot words as this definition's own markers, declared into the body's scope.

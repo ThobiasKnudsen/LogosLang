@@ -35,7 +35,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let unknown_name = cx.store.alloc_head(cx.type_, record);
     cx.declare("unknown_name", unknown_name);
     let mut mint = |pattern: &str| {
-        let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+        let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, &[]);
         let id = cx.store.alloc_head(cx.type_, record);
         let entry = cx.declare_pattern(pattern, id);
         // SAFETY: `entry` is the binding dyad `declare_pattern` just minted.

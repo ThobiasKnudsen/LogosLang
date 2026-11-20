@@ -64,7 +64,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // The owning pointer's destructor slot points at it; `free` reaches it through the slot.
     let teardown_leaf = callable::mint_native(cx.store, cs.callable, run_teardown, cs.seed_native);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+    let sides = &["lhs", "rhs"];
+    let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, sides);
     let of_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("of", of_);
 

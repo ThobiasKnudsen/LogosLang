@@ -65,11 +65,15 @@ impl<'a> Parser<'a> {
     /// the body. The identity left of a `(` decides whose it is (DESIGN ›`X (…)`
     /// is one spelling‹): a value with a constructor is applied to it, so
     /// `1 == f(x)` is complete only after the call, while a type is the compared value.
-    /// A comment on the tape is read through, so `# «a» true` is complete only at `true`.
+    /// A comment is read through, on the tape and next, so `# «a» true` is complete only at
+    /// `true` and `5 * 2 # «c» == 10` only after `10`.
     /// `next` is `None` for a `(` a bracket reader peeks at unlexed.
     pub(super) fn condition_ends(&self, tape: &ParsingTape, next: Option<&Cell>) -> bool {
         let id = next.map_or(self.types.open_, |c| self.cell_identity(c));
         let open = id == self.types.open_;
+        if id == self.types.hash_ || next.is_some_and(|c| self.is_comment_cell(c)) {
+            return false;
+        }
         if !open && next.is_some_and(|c| !c.constructed) && self.reads_left(id) {
             return false;
         }
@@ -153,36 +157,31 @@ impl<'a> Parser<'a> {
             || (!cell.constructed && self.cell_identity(cell) == self.types.unknown)
     }
 
-    /// An infix operator, a tight read, an index, or a token a construct
-    /// spells between its parts; `else` ends a branch instead. An infix is
-    /// what its record says: its first operand, or a type's first field, is `lhs`.
+    /// Whether `id` continues what stands to its left, as its record says: an infix operator's
+    /// first operand, a token's first side (`..`, `.`, `in`) or a type's first field is `lhs`.
+    /// A quote, a `(`, a gate word or `else` names none, so it starts what follows it.
     fn reads_left(&self, id: DyadPtr) -> bool {
         use crate::identities::meta;
-        if id == self.types.else_ {
-            return false;
+        // SAFETY: `id` is null or a resolved identity; roles are read only off an operand or
+        // token record, fields only off a record type.
+        unsafe {
+            self.identity_head(id).is_some_and(|h| match meta::kind_of(h) {
+                Some(meta::RECORD_TAG) => {
+                    let fields = meta::record_fields_of(h);
+                    let first = if fields.is_null() {
+                        None
+                    } else {
+                        crate::identities::array::items(fields).first().copied()
+                    };
+                    let mut scope = ScopeStack::new();
+                    scope.push(meta::record_scope_of(h));
+                    first.is_some_and(|f| {
+                        scope.resolve(self.trie, "lhs").is_ok_and(|r| r.identity == f)
+                    })
+                }
+                _ => meta::takes_lhs(h),
+            })
         }
-        // SAFETY: `id` is null or a resolved identity; roles are read only off an operand
-        // record, fields only off a record type.
-        self.is_delimiter(id)
-            || unsafe {
-                self.identity_head(id).is_some_and(|h| match meta::kind_of(h) {
-                    Some(meta::TUPLE_TAG | meta::LIST_TAG) => meta::takes_lhs(h),
-                    Some(meta::RECORD_TAG) => {
-                        let fields = meta::record_fields_of(h);
-                        let first = if fields.is_null() {
-                            None
-                        } else {
-                            crate::identities::array::items(fields).first().copied()
-                        };
-                        let mut scope = ScopeStack::new();
-                        scope.push(meta::record_scope_of(h));
-                        first.is_some_and(|f| {
-                            scope.resolve(self.trie, "lhs").is_ok_and(|r| r.identity == f)
-                        })
-                    }
-                    _ => false,
-                })
-            }
     }
 
     /// A literal, a plain name, or a data type: what a type standing to its

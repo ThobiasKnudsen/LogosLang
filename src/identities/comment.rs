@@ -18,7 +18,7 @@ pub(crate) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, COMMENT_TAG, meta::prec::INERT);
     let id = cx.store.alloc_head(cx.type_, record);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::LITERAL);
+    let record = meta::token_record(cx, meta::prec::LITERAL, crate::parse::Assoc::Left, &[]);
     let hash = cx.store.alloc_head(cx.type_, record);
     cx.declare("#", hash);
     cx.metas.insert(hash, construct);

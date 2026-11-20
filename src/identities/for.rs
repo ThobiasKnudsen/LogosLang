@@ -37,11 +37,12 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     cx.lower.insert(for_, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+    let sides = &["lhs", "rhs"];
+    let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, sides);
     let in_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("in", in_);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::RANGE);
+    let record = meta::token_record(cx, meta::prec::RANGE, crate::parse::Assoc::Left, sides);
     let range = cx.store.alloc_head(cx.type_, record);
     cx.declare("..", range);
 
