@@ -396,12 +396,12 @@ impl<'a> Parser<'a> {
 
     /// Everything parsed before `at` that has not run, run first, in order (›The pass runs only
     /// as far as it must, in order, and never twice‹ [[R288]]): the lines before the one being
-    /// parsed, then the part of it that stands on `tape` before `at`, each cell of which then
-    /// stands for the value its run gave. `false`, with nothing run, where that line holds
-    /// something before `at` that runs and stands on no tape here: an earlier line of an
-    /// argument list or `[…]` still open (stand-in for #301), a part of a quote still being
-    /// built, what stands before a branch a construct reads, or a node whose operation is not
-    /// built yet.
+    /// parsed, then the part of it before `at`: the earlier lines of each argument list or `[…]`
+    /// still open, and what stands on `tape`, each of which then stands for the value its run
+    /// gave. `false`, with nothing run, where that line holds something before `at` that runs
+    /// and cannot run first: a part whose value cannot stand in its place, a part of a quote
+    /// still being built, what stands before a branch a construct reads, or a node whose
+    /// operation is not built yet.
     pub(super) fn run_before(
         &mut self,
         tape: &mut ParsingTape,
@@ -410,6 +410,12 @@ impl<'a> Parser<'a> {
         let standing = self.standing_runs(tape, at);
         let covered = |s: usize| standing.iter().any(|&(_, from, to)| from <= s && s < to);
         if self.cx.open.iter().flat_map(|o| &o.runs).any(|&s| s < at && !covered(s)) {
+            return Ok(false);
+        }
+        // A part whose value cannot stand in its place would run after the call: stand-in for #328.
+        let mut parts = self.cx.open.iter().filter(|o| !o.own_lines()).flat_map(|o| &o.unrun);
+        // SAFETY: a part is a reduced dyad this parser built into its store.
+        if !parts.all(|part| !self.runs_first(part) || unsafe { self.stands_as_ran(part.node) }) {
             return Ok(false);
         }
         self.drain()?;
@@ -462,6 +468,39 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether a part of the line being parsed, a closed line of an argument list or `[…]`, runs
+    /// before a call the pass runs after it: it holds a node that runs, or the line runs it.
+    pub(super) fn runs_first(&self, part: &UnrunLine) -> bool {
+        // SAFETY: a part is a reduced dyad this parser built into its store.
+        !part.runs.is_empty() || self.runs_standing(&unsafe { Cell::built(part.node) })
+    }
+
+    /// Line `line` of the open bracket `scope`, a part of the line being parsed, runs before what
+    /// the pass needs at the cursor, and the value it gave stands in its place, which the call
+    /// that takes the bracket reads; what the part made and nothing took ends with it.
+    ///
+    /// # Safety
+    /// `node` must be line `line` of `scope`, a bracket still open, and `plan` the nodes whose
+    /// values the line holds to its end.
+    pub(super) unsafe fn run_part(
+        &mut self,
+        scope: DyadPtr,
+        line: usize,
+        node: DyadPtr,
+        plan: &[DyadPtr],
+    ) -> Result<(), ParseError> {
+        let held = self.rt.line_mark();
+        self.rt.push_plan(plan);
+        let value = self.ran_value(self.cx.pos, node);
+        self.rt.pop_plan();
+        // SAFETY: what the part made since `held` its run gave, still live.
+        let ended = crate::identities::drop_model::end_line(&mut self.rt, held, Ok(0));
+        let value = value?;
+        ended.map_err(ParseError::Run)?;
+        crate::identities::scope::set_item(scope, line, value);
+        Ok(())
+    }
+
     /// The cell `handle` names ran: what its line had noted as running inside it, up to where the
     /// next cell starts, has run.
     fn ran_through(&mut self, tape: &ParsingTape, handle: usize) {
@@ -473,23 +512,19 @@ impl<'a> Parser<'a> {
 
     /// What stands for `node` once the pass has run it here: the node or the type a `-> dyad`
     /// or `-> type` call gave, as itself, a node the run made copied into the store and freed;
-    /// any other value in a new node of its type the store holds. Refused at `at` where the value
-    /// does not move whole or ends by more than its bytes, which the line's end would run.
+    /// any other value in a new node of its type the store holds. Refused at `at` where it cannot
+    /// stand ([`Self::stands_as_ran`]).
     ///
     /// # Safety
     /// `node` must be a reduced dyad this parser built into its store.
     unsafe fn ran_value(&mut self, at: usize, node: DyadPtr) -> Result<DyadPtr, ParseError> {
-        use crate::identities::drop_model::{teardown_of, Teardown};
         use crate::identities::{dyad_place, read};
         let types = self.types;
-        let out = read::output_type(types, node);
-        let gives_node = out == types.dyad_ || out == types.type_;
-        if !gives_node
-            && (!dyad_place::moves_whole(types, out)
-                || teardown_of(types, node) != Teardown::Nothing)
-        {
+        if !self.stands_as_ran(node) {
             return Err(self.fail_at(at, ParseError::RanValueNotHeld));
         }
+        let out = read::output_type(types, node);
+        let gives_node = out == types.dyad_ || out == types.type_;
         let run = if gives_node {
             node
         } else {
@@ -508,6 +543,23 @@ impl<'a> Parser<'a> {
             dyad_place::end(&mut self.rt, held as i64);
         }
         Ok(stood)
+    }
+
+    /// Whether what `node` gives can stand in its place once the pass has run it: a node or a
+    /// type, or a value that moves whole and ends by no more than its bytes, which the line's end
+    /// would run.
+    ///
+    /// # Safety
+    /// `node` must be a reduced dyad this parser built into its store.
+    pub(super) unsafe fn stands_as_ran(&self, node: DyadPtr) -> bool {
+        use crate::identities::drop_model::{teardown_of, Teardown};
+        use crate::identities::{dyad_place, read};
+        let types = self.types;
+        let out = read::output_type(types, node);
+        out == types.dyad_
+            || out == types.type_
+            || (dyad_place::moves_whole(types, out)
+                && teardown_of(types, node) == Teardown::Nothing)
     }
 
     /// `e` with its caret at `at`, for a constructor refusing an operand it read.

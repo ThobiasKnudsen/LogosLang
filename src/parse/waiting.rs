@@ -61,7 +61,7 @@ impl<'a> Parser<'a> {
     /// `return`, `free` or `move` is refused here: stand-in for #281.
     pub(super) fn waiting_line_end(&mut self) -> Result<Option<Waits>, ParseError> {
         let open = self.cx.open.last();
-        if self.cx.runtime_depth == 0 || open.is_none_or(|o| o.list || o.arguments) {
+        if self.cx.runtime_depth == 0 || open.is_none_or(|o| !o.own_lines()) {
             return Ok(None);
         }
         let start = self.cx.pos;

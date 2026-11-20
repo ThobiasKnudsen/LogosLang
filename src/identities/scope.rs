@@ -112,6 +112,17 @@ pub(crate) unsafe fn push_item(store: &mut Store, array_ty: DyadPtr, node: DyadP
     }
 }
 
+/// Line `k` of the scope is `item` from here.
+///
+/// # Safety
+/// `node` must be a scope or `square_brackets` node from the store holding more than `k` lines;
+/// `item` a reduced dyad.
+pub(crate) unsafe fn set_item(node: DyadPtr, k: usize, item: DyadPtr) {
+    let (len, lines) = array::parts(exprs_array(node));
+    debug_assert!(k < len, "line {k} of a scope with {len}");
+    *(lines as *mut DyadPtr).add(k) = item;
+}
+
 /// Null for a scope that is no sequence yet: a record or parameter scope, one whose
 /// lines nobody has read.
 ///
