@@ -1,0 +1,2 @@
+# A file whose name holds a `-`, which no name could spell.
+pub k := i32 6

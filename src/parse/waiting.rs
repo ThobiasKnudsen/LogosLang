@@ -350,6 +350,12 @@ impl<'a> Parser<'a> {
                 found.unknown_now += 1;
             }
             if (id == types.fn_type || id == types.type_) && prev != Some(types.dot_) {
+                // `logos file «…»` reads the file as Logos where it is written: no body follows.
+                if id == types.type_ && self.next_identity() == Some(types.file) {
+                    found.needs += 1;
+                    (before_prev, prev) = (prev, Some(id));
+                    continue;
+                }
                 skipping = true;
                 continue;
             }
@@ -394,13 +400,6 @@ impl<'a> Parser<'a> {
                     && before_prev.is_some_and(|owner| {
                         self.member_gives_type(owner, &self.cx.source[at..at + r.matched])
                     });
-            }
-            // An import's path is text the import reads itself, not tokens.
-            if id == types.import_ && prev != Some(types.dot_) {
-                self.skip_whitespace();
-                if let Some(end) = self.raw_path_end(self.cx.pos) {
-                    self.cx.pos = end;
-                }
             }
             assigns |= id == types.assign;
             // SAFETY: a resolved token's identity is a dyad from the store.

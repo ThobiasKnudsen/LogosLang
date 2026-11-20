@@ -37,6 +37,7 @@ pub(crate) mod declare;
 pub(crate) mod drop_model;
 pub(crate) mod dyad_place;
 pub mod error;
+pub mod file;
 pub(crate) mod flow;
 #[path = "fn.rs"]
 mod fn_mod;
@@ -164,8 +165,9 @@ pub struct Core {
     pub mut_: DyadPtr,
     pub immut_: DyadPtr,
     pub static_: DyadPtr,
-    /// Its node is the trace of the load; running it re-yields the file's tail.
+    /// Its node is the trace of the load; running it does nothing.
     pub import_: DyadPtr,
+    pub file: DyadPtr,
     /// The cell type.
     pub dyad_: DyadPtr,
     pub binding_: DyadPtr,
@@ -340,6 +342,7 @@ impl Core {
         let (pub_, mut_, immut_, static_) = gate::register(&mut cx);
         let (import_, import_leaf) = import::register(&mut cx, &callables);
         op_leaves.import_ = import_leaf;
+        let file = file::register(&mut cx);
         let dyad_ = dyad::register(&mut cx);
         let colon_ = colon::register(&mut cx);
         let unknown = hole::register(&mut cx);
@@ -508,6 +511,7 @@ impl Core {
             immut_,
             static_,
             import_,
+            file,
             dyad_,
             binding_,
             colon_,
