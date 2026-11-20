@@ -4500,6 +4500,23 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
+    // An earlier part of a quote runs before the call too, once: the word reads the value it gave.
+    for (src, want) in [
+        (format!("{calls}, print «{{h()}} {{g() + 1}}»"), "h\ng\n1 3"),
+        (format!("{calls}, print «a {{h()}} b {{«x»}} c {{g() + 1}}»"), "h\ng\na 1 b x c 3"),
+        (format!("{calls}, print «{{h()}} {{h()}} {{g() + 1}}»"), "h\nh\ng\n1 1 3"),
+        (format!("{calls}, {k2}, print «{{h()}} {{k(h(), g() + 1)}}»"), "h\nh\ng\n1 4"),
+        (format!("{calls}, print «{{h()}} {{( print «in», g() + 1 )}}»"), "h\nin\ng\n1 3"),
+        (
+            format!("{calls}, f := fn () -> i32 ( print «{{h()}} {{g() + 1}}», 7 ), f()"),
+            "h\ng\n1 3\n7",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    let (code, stdout, stderr) = run_line(&format!("{calls}, error «{{h()}} {{g() + 1}}»"));
+    assert_eq!((code, stdout.as_str()), (Some(1), "h\ng\n"), "stderr: {stderr}");
+    assert!(stderr.contains("1 3"), "stderr: {stderr}");
     // A name read before the call is read before the call writes it.
     let writes = "mut n := i32 1, c := fn () -> dyad ( n = 5, i32 1 )";
     for (src, want) in [
@@ -4511,11 +4528,11 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // What stands before the call cannot run first yet: a part of a quote, a node with no
-    // operation built yet.
+    // What stands before the call cannot run first yet: a node with no operation built yet, and
+    // what stands before a branch.
     for (src, refusal) in [
-        (format!("{calls}, print «{{h()}} {{g() + 1}}»"), "cannot run first yet"),
         (format!("{calls}, x := [h(), 2], x[0] + (g() + 1)"), "cannot run first yet"),
+        (format!("{calls}, x := h() + if true (g() + 1) else (0), x"), "cannot run first yet"),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
@@ -4574,24 +4591,17 @@ fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them
         (format!("{h}, print «{{h()}} {{t}}», x := t 5, x.type"), "h\n1 i32\ni32"),
         (format!("{d}, x := h() + d, x"), "h\n8"),
         (format!("{d}, x := h() + (1 + d), x"), "h\n9"),
+        // An earlier part of a quote runs first too, where the parse reads the value itself, or
+        // the type a box holds.
+        (format!("{d}, print «{{h()}} {{d}}»"), "h\n1 7"),
+        (format!("{d}, print «{{h()}} {{d}} {{h()}} {{d}}»"), "h\nh\n1 7 1 7"),
+        (format!("{h}, {mk}, print «{{h()}} {{mk()}}»"), "h\nmk\n1 i32"),
+        (format!("{h}, print «{{h()}} {{(t 5).type}}»"), "h\n1 i32"),
+        (format!("{h}, print «{{h()}} {{t}} {{t 5}}»"), "h\n1 i32 5"),
+        (format!("{h}, print «{{h()}} {{dyad (t, 7)}}»"), "h\n1 7"),
+        (format!("{h}, print «{{h()}} {{t.size_bytes}}»"), "h\n1 4"),
     ] {
         assert_eq!(line(&src), want, "{src}");
-    }
-    // A part of a quote cannot run first yet, where the parse reads the value itself, or the
-    // type a box holds.
-    for src in [
-        format!("{d}, print «{{h()}} {{d}}»"),
-        format!("{h}, {mk}, print «{{h()}} {{mk()}}»"),
-        format!("{h}, print «{{h()}} {{(t 5).type}}»"),
-        format!("{h}, print «{{h()}} {{t}} {{t 5}}»"),
-        format!("{h}, print «{{h()}} {{t ?}}»"),
-        format!("{h}, print «{{h()}} {{dyad (t, 7)}}»"),
-        format!("{h}, print «{{h()}} {{t.size_bytes}}»"),
-    ] {
-        let (code, stdout, stderr) = run_line(&src);
-        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-        assert!(stdout.is_empty(), "{src}: stdout: {stdout}");
-        assert!(stderr.contains("cannot run first yet"), "{src}: stderr: {stderr}");
     }
 }
 
@@ -4616,6 +4626,15 @@ fn a_constructor_a_member_call_for_a_type_and_an_import_run_after_the_part_of_th
         (format!("{h}, h() + ({imp} , i32 1)"), "h\nimp\n2"),
         (format!("{array}, {h}, l := array i32 [4, 5], h() + l[1]"), "h\n6"),
         (format!("{array}, l := array i32 [4, 5], print «{{l[0]}} {{l[1]}}»"), "4 5"),
+        // In a later part of a quote, after the earlier parts.
+        (format!("{h}, {q}, print «{{h()}} {{(q [5, i32 7]).v}}»"), "h\nq\n1 5"),
+        (format!("{h}, {o}, print «{{h()}} {{o.m() == i32}}»"), "h\nm\n1 true"),
+        (format!("{h}, print «{{h()}} {{({imp} , i32 1)}}»"), "h\nimp\n1 1"),
+        (format!("{array}, {h}, l := array i32 [4, 5], print «{{h()}} {{l[1]}}»"), "h\n1 5"),
+        (
+            format!("{h}, {q}, f := fn () -> i32 ( print «{{h()}} {{(q [5, i32 7]).v}}», 2 ), f()"),
+            "q\nh\n1 5\n2",
+        ),
         // A line a constructor took whole leaves nothing of it to run.
         (format!("{count}, {boxed}, count [1, 2], x := h() + t 5, x.type"), "h\ni32"),
         // What a run builds on a tape of its own, the line does not run.
@@ -4651,6 +4670,7 @@ fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_
         (format!("{defs}, d := dyad (i32, 7), x := ( free (h()), k(h(), d + 1) ), x"), "h\nh\n9"),
         (format!("{defs}, d := dyad (i32, 7), f := fn () -> i32 ( k(h(), d + 1) ), f()"), "h\n9"),
         (format!("{defs}, {g}, k(h(), immediate g())"), "h\ng\n3"),
+        (format!("{defs}, {g}, print «{{h()}} {{immediate g()}}»"), "h\ng\n1 2"),
         (format!("{defs}, {mk}, kt(h(), mk())"), "h\nmk\n1"),
         (format!("{defs}, {g}, {mk}, kt(h(), type ( static s := g() ))"), "h\ng\n1"),
         (format!("{defs}, {q}, k(h(), (q [5, i32 7]).v)"), "h\nq\n6"),

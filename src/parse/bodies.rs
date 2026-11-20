@@ -152,8 +152,8 @@ pub(super) struct OpenScope {
     pub(super) ended_earlier: Vec<DyadPtr>,
     /// Items parsed at depth 0 and not yet run. Where the scope's lines are lines of their own,
     /// `drain` runs them when the pass needs a value, the scope's own run otherwise; where they
-    /// are parts of a call's line, the call runs them, or a call the pass runs while it parses
-    /// runs them first.
+    /// are parts of the line a call or a quote's word stands in, that call or word runs them, or
+    /// a point where the pass needs a value runs them first.
     pub(super) unrun: Vec<UnrunLine>,
     /// The values the line being parsed has made that nothing took so far, each by the
     /// outermost node it runs as (›A value's teardown runs where its life ends; the ending
@@ -190,6 +190,10 @@ pub(super) struct OpenScope {
     /// A call's argument list, which is never the scope its lines stand in: at its close, what
     /// it holds for `&` goes to the scope the call stands in.
     pub(super) arguments: bool,
+    /// A quote's parts read so far, its text and its `{…}` alike, which are its lines: they go to
+    /// the word that reads the quote, and one the pass ran first stands here for the value it
+    /// gave.
+    pub(super) quote: Option<Vec<DyadPtr>>,
     /// The names `exit` holds for `&`: values `&` landed here, and those an argument list
     /// read here handed on.
     address_holds: Vec<DyadPtr>,
@@ -245,11 +249,33 @@ impl OpenScope {
         self.given_at.map_or(self.lines, |at| at + 1)
     }
 
+    /// A quote's parts, read by `print` or `error`.
+    pub(super) fn quote() -> Self {
+        OpenScope { quote: Some(Vec::new()), ..OpenScope::default() }
+    }
+
     /// Whether the scope's lines are lines of their own, which run where the scope runs; an
     /// argument list's and a `[…]`'s are parts of the line the call that takes them stands in
-    /// (›A bracket goes to the call whole‹ [[R228]]).
+    /// (›A bracket goes to the call whole‹ [[R228]]), and a quote's of the line its word stands in.
     pub(super) fn own_lines(&self) -> bool {
-        !self.list && !self.arguments
+        !self.list && !self.arguments && self.quote.is_none()
+    }
+
+    /// Line `line`, a part of the line being parsed that the pass ran first, stands for `value` in
+    /// its place: among a quote's parts, or in the bracket's scope, which the call that takes it
+    /// reads.
+    ///
+    /// # Safety
+    /// `line` must be one of the scope's lines, and `value` a reduced dyad from the store.
+    pub(super) unsafe fn stand(&mut self, line: usize, value: DyadPtr) {
+        match &mut self.quote {
+            Some(parts) => parts[line] = value,
+            None => {
+                let scope = self.scope.expect("a bracket's lines are lines of its block node");
+                // SAFETY: the caller's contract; `scope` is the bracket's block node.
+                unsafe { crate::identities::scope::set_item(scope, line, value) };
+            }
+        }
     }
 
     /// The values the pass ran early that stand in the scope's lines, closed or not, taken out.
@@ -1925,13 +1951,7 @@ impl<'a> Parser<'a> {
             self.rt.hold_back_lines(scope);
             self.cx.held_back.push((scope, start, e));
         }
-        if let Some(open) = self.cx.open.last_mut() {
-            open.runs.append(&mut closed.runs);
-            open.runs.append(&mut closed.closed_runs);
-            open.runs.extend(closed.unrun.iter().flat_map(|u| &u.runs));
-            open.stood.append(&mut closed.take_stood());
-        }
-        self.close_returns(self.cx.open.len());
+        self.hand_on_notes(&mut closed);
         if closed.arguments {
             self.hand_on_address_holds(&mut closed);
         }
@@ -1947,10 +1967,7 @@ impl<'a> Parser<'a> {
                     closed.held.retain(|m| !path.contains(m));
                 }
             }
-            if let Some(open) = self.cx.open.last_mut() {
-                open.made.retain(|m| !closed.held.contains(m));
-                open.made.append(&mut closed.held);
-            }
+            self.hand_on_held(&mut closed);
         }
         // Prose and a `defer` (it runs at exit, never as the tail) are
         // invisible to value flow.
@@ -2035,6 +2052,28 @@ impl<'a> Parser<'a> {
         Ok((scope, cell))
     }
 
+    /// `closed`, a scope just closed inside the line being parsed: what it runs when that line
+    /// runs, and the values the pass ran early in it, go to the scope open around it, and a
+    /// `return` inside it stands in that scope's line from here.
+    pub(super) fn hand_on_notes(&mut self, closed: &mut OpenScope) {
+        if let Some(open) = self.cx.open.last_mut() {
+            open.runs.append(&mut closed.runs);
+            open.runs.append(&mut closed.closed_runs);
+            open.runs.extend(closed.unrun.iter().flat_map(|u| &u.runs));
+            open.stood.append(&mut closed.take_stood());
+        }
+        self.close_returns(self.cx.open.len());
+    }
+
+    /// `closed`, whose lines are parts of the line being parsed, closed: the values they made
+    /// that nothing took are made in that line.
+    pub(super) fn hand_on_held(&mut self, closed: &mut OpenScope) {
+        if let Some(open) = self.cx.open.last_mut() {
+            open.made.retain(|m| !closed.held.contains(m));
+            open.made.append(&mut closed.held);
+        }
+    }
+
     /// `{ … }`'s last line: the value of the record its names lay out, made from them; its tail.
     ///
     /// # Safety
@@ -2084,6 +2123,17 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.cx.scopes.close_item(self.rt.store, self.types.array_, item) };
+        // SAFETY: the caller's contract.
+        unsafe { self.settle_line(item) };
+    }
+
+    /// What the line `item` of the innermost scope noted as it was parsed settles on it, a line
+    /// of a scope node or a part of a quote: the names it ended, a `defer`, what it made and runs,
+    /// and the values the pass ran early in it.
+    ///
+    /// # Safety
+    /// `item` must be a line this parser just returned, or a part of the quote being read.
+    pub(super) unsafe fn settle_line(&mut self, item: DyadPtr) {
         let depth = self.cx.open.len() - 1;
         let line = self.cx.open[depth].lines;
         if let Some(frame) = self.cx.frames.last_mut() {
@@ -2230,11 +2280,12 @@ impl<'a> Parser<'a> {
     /// twice‹). A block's cursor moves to its last line, so its own run starts after it. The
     /// lists are taken first, so a nested drain finds nothing. A scope's lines count as run as
     /// they go, prose, `defer` and `[…]` lines included. The closed lines of an open argument
-    /// list or `[…]` are parts of the line being parsed: each that runs runs too, then standing
-    /// in its place for the value it gave, which the call that takes the bracket reads. A line
-    /// that gives its block, the program or a file its value ends it there: the lines after it
-    /// never run, nor those of the scopes open inside it (›A scope's value is what it evaluates
-    /// to, and `return` is an optional early exit from the enclosing function‹ [[R207]]).
+    /// list or `[…]`, and the parts of an open quote, are parts of the line being parsed: each
+    /// that runs runs too, then standing in its place for the value it gave, which the call that
+    /// takes the bracket, or the word that reads the quote, reads. A line that gives its block,
+    /// the program or a file its value ends it there: the lines after it never run, nor those of
+    /// the scopes open inside it (›A scope's value is what it evaluates to, and `return` is an
+    /// optional early exit from the enclosing function‹ [[R207]]).
     pub fn drain(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {
         let lists: Vec<_> = self
             .cx
@@ -2258,7 +2309,7 @@ impl<'a> Parser<'a> {
                     unsafe { crate::identities::scope::exprs_of(scope) }.map_or(0, <[_]>::len);
                 self.rt.set_cursor(scope, crate::run::Cursor { at: lines, given: None });
             }
-            let part = scope.filter(|_| !own);
+            let part = !own;
             for unrun in list {
                 let runs = if own {
                     // A `[…]` line is a list that goes whole to the call that takes it, which
@@ -2285,8 +2336,8 @@ impl<'a> Parser<'a> {
                     .map_err(ParseError::Run)?;
                 continue;
             }
-            if part.is_some() || !runs {
-                // A part stands in the line its call stands in, which has not ended.
+            if part || !runs {
+                // A part stands in the line its call or word stands in, which has not ended.
                 self.cx.open[depth].stood.extend(stood.iter().copied());
             }
             if runs {
@@ -2297,9 +2348,9 @@ impl<'a> Parser<'a> {
                     self.cx.open[at].reached.push(name);
                 }
             }
-            if let (true, Some(scope)) = (runs, part) {
-                // SAFETY: `node` is line `line` of `scope`, the bracket open at `depth`.
-                unsafe { self.run_part(depth, scope, line, node, &plan) }?;
+            if runs && part {
+                // SAFETY: `node` is line `line` of the bracket or quote open at `depth`.
+                unsafe { self.run_part(depth, line, node, &plan) }?;
             } else if runs {
                 // SAFETY: `node` is line `line` of the scope open at `depth`, its `plan` and
                 // `stood` its own.
