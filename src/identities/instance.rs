@@ -24,7 +24,8 @@ use crate::store::Store;
 /// Where a construct node's arguments begin.
 const ARGS: usize = 4;
 
-/// The handles: `construct` and its leaf, the `field` place, `.`, `square_brackets`, `[`, `]`.
+/// The handles: `construct` and its leaf, the `field` place, `.`, `square_brackets`, `[`, `]`,
+/// `{`, `}`.
 pub(super) struct InstanceIds {
     pub construct: DyadPtr,
     pub construct_leaf: DyadPtr,
@@ -33,6 +34,8 @@ pub(super) struct InstanceIds {
     pub square_brackets: DyadPtr,
     pub open_sq: DyadPtr,
     pub close_sq: DyadPtr,
+    pub open_curly: DyadPtr,
+    pub close_curly: DyadPtr,
 }
 
 /// `construct` and `field` have no spelling: the parser builds the one from a record-typed
@@ -89,7 +92,27 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
     let square_brackets = cx.store.alloc_head(cx.type_, record);
     cx.declare("square_brackets", square_brackets);
 
-    InstanceIds { construct, construct_leaf: leaf, field, dot, square_brackets, open_sq, close_sq }
+    // Outside text, `{` is the curly bracket: its lines kept as a value of the record its names
+    // lay out (›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]).
+    let record = meta::token_record(cx, meta::prec::OPEN, crate::parse::Assoc::Left, &[]);
+    let open_curly = cx.store.alloc_head(cx.type_, record);
+    cx.declare("{", open_curly);
+    cx.metas.insert(open_curly, |p, _id, tape| p.construct_curly(tape));
+    let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, &[]);
+    let close_curly = cx.store.alloc_head(cx.type_, record);
+    cx.declare("}", close_curly);
+
+    InstanceIds {
+        construct,
+        construct_leaf: leaf,
+        field,
+        dot,
+        square_brackets,
+        open_sq,
+        close_sq,
+        open_curly,
+        close_curly,
+    }
 }
 
 /// `p.x`: the place of field `x` inside the record's storage `record`, `binding` the field's.
@@ -100,6 +123,42 @@ pub(crate) fn build_field(
     binding: DyadPtr,
 ) -> DyadPtr {
     store.alloc_words(types.field_, &[record, binding, std::ptr::null_mut()])
+}
+
+/// The names a `{ … }` keeps: its live declarations, in written order.
+///
+/// # Safety
+/// `scope` must be a scope node from the store.
+pub(crate) unsafe fn kept_names(types: &Core, scope: DyadPtr) -> Vec<DyadPtr> {
+    let lines = super::scope::exprs_of(scope).unwrap_or_default();
+    lines
+        .iter()
+        .filter(|&&line| dyad::ty(line) == types.declare_)
+        .map(|&line| super::declare::binding_of(line))
+        .filter(|&name| {
+            let b = Binding::read(name);
+            b.scope == scope && !b.is_dead()
+        })
+        .collect()
+}
+
+/// The scope a `{ … }` value keeps and the line that makes the value, when `node` is one: the
+/// block, or its one line, whose last line constructs a value of the record the block is the
+/// body of.
+///
+/// # Safety
+/// `node` must be a node from the store.
+pub(crate) unsafe fn kept_scope(types: &Core, node: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
+    let line =
+        if dyad::ty(node) == types.scope { crate::parse::last_sequence_expr(node)? } else { node };
+    if dyad::ty(line) != types.construct_ {
+        return None;
+    }
+    let body = meta::record_body_of(*(dyad::value(line) as *const DyadPtr).add(1));
+    let kept = !body.is_null()
+        && dyad::ty(body) == types.scope
+        && crate::parse::last_sequence_expr(body) == Some(line);
+    kept.then_some((body, line))
 }
 
 /// The record's storage and the field's binding a `field` place was built over.

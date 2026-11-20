@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::dyad;
-use crate::identities::drop_model::{teardown_of, ExitItem, Teardown};
+use crate::identities::drop_model::{teardown_of, teardown_of_type, ExitItem, Teardown};
 
 impl<'a> Parser<'a> {
     /// A gate word marks the declaration that just reduced to its right.
@@ -848,7 +848,7 @@ impl<'a> Parser<'a> {
                 let node = crate::identities::this::build_copy(self.rt.store, self.types, template);
                 let place = self.place_for(binding, t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, node)?;
-                if !crate::identities::meta::instances_free_of(t).is_null() {
+                if teardown_of_type(self.types, t) != Teardown::Nothing {
                     self.hold_node(binding);
                 }
                 // A field with a default starts with it, the empty node's slot holding it.
@@ -862,19 +862,12 @@ impl<'a> Parser<'a> {
                 let t = crate::identities::hole::type_in(value);
                 let width = crate::identities::by_copy::place_width(self.types, t);
                 let place = self.place_for(binding, t, width);
-                // `a := own t ?`, and `a := r ?` of a plain record `r` whose body fills `free`:
-                // the owner of whatever is written into it later.
-                let record_free = crate::identities::this::is_plain(self.types, t)
-                    && !crate::identities::meta::instances_free_of(t).is_null();
-                if owning || record_free {
-                    self.hold_node(binding);
-                }
-                // `a := own @T ?`: the owner of whatever block is written into it later, and
-                // `d := dyad ?` of the node.
-                if crate::identities::drop_model::is_owning_place(self.types, place)
-                    || t == self.types.dyad_ && !owning
-                {
-                    self.hold(binding);
+                // Whatever is written into it later is the name's to end: `a := own t ?`, `a := r ?`
+                // of a plain record whose body fills `free`, `a := own @T ?` and `d := dyad ?`.
+                match teardown_of_type(self.types, t) {
+                    Teardown::Node(_) => self.hold_node(binding),
+                    Teardown::Block(_) | Teardown::Dyad => self.hold(binding),
+                    Teardown::Nothing => {}
                 }
                 if !crate::identities::hashmap::is_hashmap(self.types, t) {
                     Binding::add_gate(

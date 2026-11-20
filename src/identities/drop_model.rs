@@ -129,11 +129,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         };
         let types = p.types();
         // SAFETY: `place` is a resolved dyad from the store.
-        let ty = unsafe { super::read::output_type(types, place) };
-        // SAFETY: `ty` is null or a type node from the store.
         let ends = unsafe {
-            meta::is_node_valued(ty, types.fn_type)
-                || super::this::is_plain(types, ty) && !meta::instances_free_of(ty).is_null()
+            teardown_of_type(types, super::read::output_type(types, place)) != Teardown::Nothing
         };
         // A name moves whatever it holds, but a name that only borrows a value with an end, a
         // parameter's included, holds none.
@@ -141,7 +138,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         let name = ended.as_ref().filter(|e| e.is_name());
         // SAFETY: as above, and `name` holds the binding the resolver returned for it.
         let owner = unsafe {
-            name.is_some_and(|e| p.owns_node(e.binding))
+            name.is_some_and(|e| p.name_holds(e.binding))
                 || p.is_owning_read(place)
                 || is_owning_place(types, place)
         };
@@ -731,22 +728,24 @@ unsafe fn end_value(rt: &mut Runtime, node: DyadPtr, this: i64) -> Result<(), Ru
     end_of_type(rt, ty, this)
 }
 
-/// Ends a value of `ty` given as `this`, as [`end_value`] does for the value a node gave.
+/// Ends a value of `ty` given as `this`, as [`end_value`] does for the value a node gave, by what
+/// [`teardown_of_type`] says ends it.
 ///
 /// # Safety
-/// `this` must be a live value of `ty`, a type whose value ends by more than its bytes, or 0.
+/// `this` must be a live value of `ty`, or 0.
 pub(crate) unsafe fn end_of_type(rt: &mut Runtime, ty: DyadPtr, this: i64) -> Result<(), RunError> {
     if this == 0 {
         return Ok(());
     }
-    if ty == rt.types().dyad_ {
-        super::dyad_place::end(rt, this)
-    } else if owning_pointee(ty).is_some() {
-        heap_free(this as u64 as *mut u8);
-        rt.note_free();
-        Ok(())
-    } else {
-        rt.apply_values(meta::instances_free_of(ty), &[this]).map(|_| ())
+    match teardown_of_type(rt.types(), ty) {
+        Teardown::Nothing => Ok(()),
+        Teardown::Dyad => super::dyad_place::end(rt, this),
+        Teardown::Block(_) => {
+            heap_free(this as u64 as *mut u8);
+            rt.note_free();
+            Ok(())
+        }
+        Teardown::Node(free) => rt.apply_values(free, &[this]).map(|_| ()),
     }
 }
 
@@ -831,9 +830,9 @@ pub(crate) fn build_instance_free(
     free_node(store, types, [place, free, types.ops.instance_free_])
 }
 
-/// The `free` the type of what a dereference `p@` reads fills, [`type_free`]'s answer: a node's,
-/// whose address the cell holds, or a plain record's, kept in the cell's bytes. DESIGN ›A value
-/// owns what its elements hold and frees it‹.
+/// The `free` the type of what a dereference `p@` reads fills, as [`teardown_of_type`] reads it:
+/// a node's, whose address the cell holds, or a plain record's, kept in the cell's bytes. DESIGN
+/// ›A value owns what its elements hold and frees it‹.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
@@ -841,8 +840,10 @@ pub(crate) unsafe fn cell_free(types: &Core, place: DyadPtr) -> Option<DyadPtr> 
     if dyad::ty(place) != types.deref_ {
         return None;
     }
-    let free = type_free(types, place, super::read::output_type(types, place));
-    (!free.is_null()).then_some(free)
+    match teardown_of_type(types, super::read::output_type(types, place)) {
+        Teardown::Node(free) => Some(free),
+        _ => None,
+    }
 }
 
 /// The pointee of a field read where the field is declared `own @T ?`; `None` for any
@@ -1192,12 +1193,7 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
         return entry(rt, place).map(|_| ());
     }
     let held = take_held(rt, place, ty)?;
-    if ty == rt.types().dyad_ {
-        super::dyad_place::end(rt, held)?;
-    } else if held != 0 {
-        rt.apply_values(meta::instances_free_of(ty), &[held])?;
-    }
-    Ok(())
+    end_of_type(rt, ty, held)
 }
 
 /// What a place of type `ty` hands that type's `free`: a plain record its bytes' address, a
@@ -1224,10 +1220,14 @@ unsafe fn take_held(rt: &mut Runtime, place: DyadPtr, ty: DyadPtr) -> Result<i64
 /// # Safety
 /// As `end_held`.
 pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<(), CompileError> {
-    if is_owning_place(lw.types(), place) || !lw.types().is_storage(place) {
+    if !lw.types().is_storage(place) {
         return Err(CompileError::NotLowerable(place));
     }
     let ty = lw.types().type_of(place);
+    let teardown = teardown_of_type(lw.types(), ty);
+    if matches!(teardown, Teardown::Block(_)) {
+        return Err(CompileError::NotLowerable(place));
+    }
     let this = if super::this::is_plain(lw.types(), ty) {
         lw.place_addr(place)?
     } else {
@@ -1236,22 +1236,17 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
         lw.write_place(place, types::I64, null)?;
         held
     };
-    if ty == lw.types().dyad_ {
-        lw.call_seed(super::dyad_place::compiled_end as *const () as usize, &[this])?;
-        return Ok(());
+    match teardown {
+        Teardown::Dyad => {
+            lw.call_seed(super::dyad_place::compiled_end as *const () as usize, &[this])?;
+        }
+        Teardown::Node(free) => {
+            let free = lw.node_addr(free);
+            lw.call_seed(compiled_instance_free as *const () as usize, &[this, free])?;
+        }
+        Teardown::Nothing | Teardown::Block(_) => {}
     }
-    let free = lw.node_addr(meta::instances_free_of(ty));
-    lw.call_seed(compiled_instance_free as *const () as usize, &[this, free])?;
     Ok(())
-}
-
-/// What a bound owning pointer points at, so the binding site can mint its owning
-/// `@pointee` type: the pointee of the owning type the value that moves out gives back.
-///
-/// # Safety
-/// `node` must be a valid dyad from the store.
-unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
-    moved_out(types, node).and_then(|out| owning_pointee(super::read::output_type(types, out)))
 }
 
 /// The pointee of an owning `@pointee` type, one whose record carries a destructor.
@@ -1386,51 +1381,54 @@ unsafe fn handed_operand(node: DyadPtr, k: usize, lines: u8) -> Option<DyadPtr> 
     }
 }
 
-/// What ends the life of a value a name or a `free` holds (DESIGN ›Holding is decided at the
-/// binding site, parameters included‹).
+/// What ends a value beyond its bytes: a type's answer, [`teardown_of_type`], and a value's, which
+/// is its type's where it is made or moved there, [`teardown_of`] (›Holding is decided at the
+/// binding site, parameters included‹ [[R61]]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Teardown {
     /// A borrow, or a value whose type fills no `free`.
     Nothing,
-    /// A node just made or moved, of a type that fills `free`: that `free`.
+    /// The `free` its type fills, run over a node by its address or a plain record by its bytes'.
     Node(DyadPtr),
     /// An owning pointer to this pointee type: its block is freed.
     Block(DyadPtr),
-    /// A `dyad` just made or moved: the node it holds is freed where a `dyad ?` place made it.
+    /// A `dyad`: the node it holds is freed where a `dyad ?` place made it.
     Dyad,
 }
 
 /// # Safety
 /// `value` must be a reduced dyad from the store.
 pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Teardown {
-    if let Some(pointee) = owning_pointee_of(types, value) {
-        return Teardown::Block(pointee);
+    if !moves_out(types, value) {
+        return Teardown::Nothing;
     }
-    let output = super::read::output_type(types, value);
-    if output == types.dyad_ && moves_out(types, value) {
-        return Teardown::Dyad;
-    }
-    let free = type_free(types, value, output);
-    if !free.is_null() && moves_out(types, value) {
-        Teardown::Node(free)
-    } else {
-        Teardown::Nothing
-    }
+    teardown_of_type(types, super::read::output_type(types, value))
 }
 
-/// The `free` `value`'s type `t` fills, for a node or a plain record in its bytes; null where
-/// there is none.
+/// What ends a value of type `t`, read off the type alone: the one answer every identity that
+/// ends a value, holds one or moves one asks (›A value's teardown runs where its life ends; the
+/// ending identity reads the type's `free` slot‹ [[R57]]).
 ///
 /// # Safety
-/// `value` must be a reduced dyad from the store, `t` its output type.
-unsafe fn type_free(types: &Core, value: DyadPtr, t: DyadPtr) -> DyadPtr {
-    let typed = super::node_output(types, value).is_some()
-        || (matches!(super::read::carry_of(types, t), Some(super::read::Carry::Bytes(_)))
-            && meta::is_record_type(t));
-    if typed {
-        meta::instances_free_of(t)
+/// `t` must be null or a valid dyad from the store.
+pub(crate) unsafe fn teardown_of_type(types: &Core, t: DyadPtr) -> Teardown {
+    if t.is_null() {
+        return Teardown::Nothing;
+    }
+    let t = super::type_identity_of(types, t).unwrap_or(t);
+    if t == types.dyad_ {
+        return Teardown::Dyad;
+    }
+    if let Some(pointee) = owning_pointee(t) {
+        return Teardown::Block(pointee);
+    }
+    // A record whose node runs is a call, which leaves no value of its own to end.
+    let freed = meta::is_node_valued(t, types.fn_type) || super::this::is_plain(types, t);
+    let free = if freed { meta::instances_free_of(t) } else { std::ptr::null_mut() };
+    if free.is_null() {
+        Teardown::Nothing
     } else {
-        std::ptr::null_mut()
+        Teardown::Node(free)
     }
 }
 
@@ -1459,8 +1457,17 @@ pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<b
     if t == types.void_ {
         return Ok(None);
     }
-    let has_end = numtype::is_pointer_type(t) || !type_free(types, node, t).is_null();
-    Ok(has_end.then(|| teardown_of(types, node) != Teardown::Nothing))
+    Ok(has_end(types, t).then(|| teardown_of(types, node) != Teardown::Nothing))
+}
+
+/// Whether a value of type `t` has an end beyond its bytes, as [`teardown_of_type`] reads the
+/// type: a `dyad`'s node included, and a pointer that owns nothing, which borrows what an owning
+/// one of its pointee would end.
+///
+/// # Safety
+/// `t` must be null or a valid dyad from the store.
+pub(crate) unsafe fn has_end(types: &Core, t: DyadPtr) -> bool {
+    numtype::is_pointer_type(t) || teardown_of_type(types, t) != Teardown::Nothing
 }
 
 /// What two arms hand on together, each as [`handed_ends`] reads it: refused where one makes
@@ -2747,6 +2754,9 @@ mod tests {
             "g := fn (q := @i64 ?) -> dyad ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
             "g := fn (n := i32 ?, q := @i32 ?) -> @i32 \
              ( if (n == 0) (q) else (if (n == 1) (alloc 1 of i32 5) else (g(n - 1, q))) )",
+            // A `dyad` ends the node it holds, so it makes or borrows as a pointer does.
+            "mut d := dyad ?,\nd = i32 5,\nx := if (c == 1) (dyad (i32, 6)) else (d),\n1",
+            "mut d := dyad ?,\nd = i32 5,\nfree (if (c == 1) (d) else (dyad (i32, 6))),\n1",
         ] {
             assert_eq!(parse_err(&format!("{c}{src}")), ParseError::ArmsMakeAndBorrow, "{src}");
         }

@@ -34,6 +34,9 @@ pub struct HashmapIds {
     /// `hashmap K -> V` as a value: `[op, map type]`, a new empty map.
     pub fresh: DyadPtr,
     pub fresh_leaf: DyadPtr,
+    /// `hashmap K -> V { … }`: `[op, map type, key, value, …, null]`, a new map of those entries.
+    pub entries: DyadPtr,
+    pub entries_leaf: DyadPtr,
     /// What `m == ?` and `m != ?` run, under `==`'s and `!=`'s mints.
     pub eq_unknown_leaf: DyadPtr,
     pub ne_unknown_leaf: DyadPtr,
@@ -63,6 +66,15 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
     let (get, get_leaf) = op(cx, &["map", "key", "op", "output_type"], run_get);
     let (put, put_leaf) = op(cx, &["map", "key", "value", "type", "op"], run_put);
     let (fresh, fresh_leaf) = op(cx, &["op", "output_type"], run_fresh);
+    let record = meta::operand_record(
+        cx,
+        meta::LIST_TAG,
+        meta::prec::INERT,
+        crate::parse::Assoc::Left,
+        &["op", "output_type"],
+    );
+    let entries = cx.store.alloc_head(cx.type_, record);
+    let entries_leaf = callable::mint_native(cx.store, cs.callable, run_entries, cs.seed_native);
     let eq_unknown_leaf =
         callable::mint_native(cx.store, cs.callable, run_eq_unknown, cs.seed_native);
     let ne_unknown_leaf =
@@ -78,6 +90,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
         put_leaf,
         fresh,
         fresh_leaf,
+        entries,
+        entries_leaf,
         eq_unknown_leaf,
         ne_unknown_leaf,
         empty_bytes,
@@ -87,19 +101,69 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
 
 /// `hashmap K -> V`: consumes the three cells to its right and places a new empty map, a value
 /// `:=` and `=` both take, or the interned type when `?` follows, for `?` to read (DESIGN ›The
-/// reflection boundary is callable-versus-data‹).
+/// reflection boundary is callable-versus-data‹), or the map of a `{ … }`'s names when one
+/// follows.
 fn construct(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
     let types = p.types();
     let ty = map_type(p, tape)?;
-    let hole_follows =
-        p.cell_at(tape, 1)?.is_some_and(|c| !c.constructed && c.identity(types) == types.unknown);
-    if hole_follows {
+    let next = p.cell_at(tape, 1)?;
+    if next.is_some_and(|c| !c.constructed && c.identity(types) == types.unknown) {
         tape.place(ty);
+        return Ok(Constructed::Placed);
+    }
+    let filled = match next.filter(|c| c.constructed) {
+        // SAFETY: a constructed cell holds a node from the store; `ty` is the mint just read.
+        Some(c) => unsafe { from_scope(p.store(), types, ty, c.dyad) }?,
+        None => None,
+    };
+    if let Some(filled) = filled {
+        tape.remove(1);
+        tape.place(filled);
         return Ok(Constructed::Placed);
     }
     let fresh = p.store().alloc_words(types.hashmap.fresh, &[types.hashmap.fresh_leaf, ty]);
     tape.place(fresh);
     Ok(Constructed::Placed)
+}
+
+/// `hashmap K -> V { … }` when `value` is a `{ … }`: each name the scope keeps is an entry, its
+/// spelling the key and its value converted into `V` (›`{ … }` outside text is a scope kept as a
+/// value, read with `.`‹ [[R374]]). The scope's last line makes the map in place of its record's
+/// value, so its lines still run first. `None` when `value` is no `{ … }`.
+///
+/// # Safety
+/// `map_ty` must be a mint of `hashmap` and `value` a node from the store.
+unsafe fn from_scope(
+    store: &mut Store,
+    types: &Core,
+    map_ty: DyadPtr,
+    value: DyadPtr,
+) -> Result<Option<DyadPtr>, ParseError> {
+    let Some((scope, line)) = super::instance::kept_scope(types, value) else {
+        return Ok(None);
+    };
+    let (k, v) = params_of(types, map_ty).expect("`map_type` mints a hashmap");
+    if k != types.string_ {
+        return Err(ParseError::ScopeKeysAreText);
+    }
+    let mut ops = vec![types.hashmap.entries_leaf, map_ty];
+    for name in super::instance::kept_names(types, scope) {
+        let spelling = crate::binding::Binding::spelling(name);
+        if crate::binding::Binding::read(name).pattern {
+            return Err(ParseError::PatternIsNoKey(Box::new(spelling)));
+        }
+        ops.push(super::string::build_text(store, types.string_, spelling.as_bytes()));
+        ops.push(super::land(store, types, name, v)?);
+    }
+    ops.push(std::ptr::null_mut());
+    let map = store.alloc_words(types.hashmap.entries, &ops);
+    if line == value {
+        return Ok(Some(map));
+    }
+    let lines = array::items(super::scope::exprs_array(scope));
+    let at = lines.iter().rposition(|&l| l == line).expect("`kept_scope` found the line in it");
+    super::scope::set_item(scope, at, map);
+    Ok(Some(value))
 }
 
 /// The map type `K -> V` right of the center names, its three cells consumed. A value type
@@ -129,7 +193,8 @@ fn map_type(p: &mut Parser, tape: &mut ParsingTape) -> Result<DyadPtr, ParseErro
 }
 
 /// A key or value type: one whose value fits the table's `i64` exactly, so a node
-/// type by identity or an integer type by its bits. A map as the value is [`map_type`]'s.
+/// type by identity, text by its node or an integer type by its bits. A map as the value is
+/// [`map_type`]'s.
 fn param(p: &mut Parser, tape: &mut ParsingTape, offset: isize) -> Result<DyadPtr, ParseError> {
     let types = p.types();
     let cell = p.cell_at(tape, offset)?.ok_or(ParseError::HashmapShape)?;
@@ -139,6 +204,7 @@ fn param(p: &mut Parser, tape: &mut ParsingTape, offset: isize) -> Result<DyadPt
         let t = super::type_identity_of(types, d).ok_or(ParseError::HashmapShape)?;
         let fits = t == types.type_
             || t == types.dyad_
+            || t == types.string_
             || (t != types.bool_
                 && matches!(
                     super::read::place_layout(types, t),
@@ -337,6 +403,21 @@ fn holds_unknown(types: &Core, table: *mut Table) -> bool {
     std::ptr::eq(table.cast::<dyad::Dyad>(), types.unknown)
 }
 
+/// `key` run, as a table keys it: a text by the one node the store keeps for it, so two nodes of
+/// one text are one key (›A type with a canonical form ships a normalizer; equality there is
+/// identification‹ [[R325]]); any other key by its bits.
+///
+/// # Safety
+/// `key` must be a reduced dyad from the store.
+unsafe fn run_key(rt: &mut Runtime, key: DyadPtr) -> Result<i64, RunError> {
+    let bits = rt.run(key)?;
+    if super::read::output_type(rt.types(), key) != rt.types().string_ {
+        return Ok(bits);
+    }
+    let node = bits as usize as DyadPtr;
+    Ok(rt.store().text_key(super::string::text(node), node) as i64)
+}
+
 /// A missing key hands back the unknown where the value type's places hold it, and
 /// is the checked error where they do not (›`?` is one value, the unknown; `key := T ?`
 /// declares without a value‹ [[R103]]). A map value is handed back as the address of its eight
@@ -346,7 +427,7 @@ fn run_get(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // bytes, null, `?` or a table `run_put` allocated in the store.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let key = rt.run(*ops.add(1))?;
+        let key = run_key(rt, *ops.add(1))?;
         let (_, table) = table_slot(rt, *ops)?;
         if let Some(&v) = table.as_ref().and_then(|t| t.get(&key)) {
             return Ok(v);
@@ -366,6 +447,35 @@ fn run_get(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// The address of the empty map's eight bytes, which the place taking the value copies.
 fn run_fresh(rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunError> {
     Ok(rt.types().hashmap.empty_bytes as i64)
+}
+
+/// A new table of the entries `from_scope` read, each key and value run in written order, a map
+/// among the values copied as `=` copies one; the address of eight bytes holding it, which the
+/// place taking the value copies.
+fn run_entries(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an entries node `from_scope` built, `[op, map type, key, value, …,
+    // null]`; a map value's address is that of a map's eight bytes.
+    unsafe {
+        let ops = dyad::value(node) as *const DyadPtr;
+        let types: *const Core = rt.types();
+        let (_, v) = params_of(&*types, *ops.add(1)).expect("`from_scope` keeps a hashmap mint");
+        let mut entries = Vec::new();
+        let mut at = 2;
+        while !(*ops.add(at)).is_null() {
+            let key = run_key(rt, *ops.add(at))?;
+            let value = if is_hashmap(&*types, v) {
+                let addr = super::by_copy::record_addr(rt, *ops.add(at + 1))?;
+                held_copy(rt.store(), &*types, std::ptr::read_unaligned(addr as *const _), v)
+            } else {
+                rt.run(*ops.add(at + 1))?
+            };
+            entries.push((key, value));
+            at += 2;
+        }
+        let table = rt.store().alloc_table();
+        (*table).extend(entries);
+        Ok(rt.store().alloc_bytes(&(table as usize).to_ne_bytes()) as i64)
+    }
 }
 
 fn run_eq_unknown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -398,7 +508,7 @@ fn run_put(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // value's address is that of a map's eight bytes, null or a table `run_put` allocated.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let key = rt.run(*ops.add(1))?;
+        let key = run_key(rt, *ops.add(1))?;
         let value = if is_hashmap(rt.types(), *ops.add(3)) {
             let addr = super::by_copy::record_addr(rt, *ops.add(2))?;
             let table = std::ptr::read_unaligned(addr as *const *mut Table);

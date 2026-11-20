@@ -164,6 +164,11 @@ pub enum ParseError {
     /// `hashmap` not followed by `K -> V`, or a key or value type whose values are
     /// not one word read by value.
     HashmapShape,
+    /// `hashmap K -> V { … }` with a key type other than `string`: each key is a name's spelling.
+    ScopeKeysAreText,
+    /// A pattern declared in the `{ … }` a `hashmap` reads, which stands for many spellings and so
+    /// is no key; carries its pattern.
+    PatternIsNoKey(Box<String>),
     /// A constructor edited the tape and returned with its own cell still
     /// unconstructed and still its own identity: neither a decline nor a
     /// construction. Carries the cell's spelling.
@@ -289,6 +294,9 @@ pub enum ParseError {
     NoSuchSlot(String),
     /// A type body with an `own` field and no `free = (…)` to free it.
     OwningFieldNeedsFree,
+    /// A name of a `{ … }` whose value its scope's end runs a teardown for, or that does not
+    /// move whole into a field; carries the name.
+    KeptEntry(Box<String>),
     /// `own @T ?` on a parameter, which would consume the caller's argument.
     OwnParameterNotInSeed,
     /// A `move` or `free` inside a loop or `fn` body names a place declared
