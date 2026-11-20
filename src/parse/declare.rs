@@ -368,44 +368,82 @@ impl<'a> Parser<'a> {
     /// is dead as a whole: only `x.…` and `x:…` pass (DESIGN ›`move` and `free` take a field
     /// path too‹).
     pub(super) fn check_unwritten(&mut self, cell: &Cell) -> Result<(), ParseError> {
-        let binding = cell.binding(self.types);
+        self.check_read(cell.binding(self.types), cell.start)
+    }
+
+    /// [`Self::check_unwritten`] of a use of `binding` written at `at`, the cursor after it.
+    fn check_read(&mut self, binding: DyadPtr, at: usize) -> Result<(), ParseError> {
         if binding.is_null() {
             return Ok(());
         }
+        let types = self.types;
+        let next = self.next_identity();
+        let next_is = |id: DyadPtr| next == Some(id);
         // SAFETY: a non-null cell binding is a binding dyad from the store.
         if unsafe { Binding::has_ended_path(binding) }
-            && !matches!(self.peek_token(), Some((t, _)) if t == self.types.dot_ || t == self.types.colon_)
+            && !next_is(types.dot_)
+            && !next_is(types.colon_)
         {
-            self.cx.pos = cell.start;
+            self.cx.pos = at;
             // SAFETY: as above.
             let name = unsafe { Binding::spelling(binding) };
             return Err(ParseError::Resolve(ResolveError::Dead(name)));
         }
         // SAFETY: as above.
-        if !unsafe { Binding::has_gate(binding, self.types.unknown) } {
-            return Ok(());
-        }
-        if matches!(self.peek_token(), Some((t, _)) if t == self.types.assign || t == self.types.colon_)
+        if !unsafe { Binding::has_gate(binding, types.unknown) }
+            || next_is(types.assign)
+            || next_is(types.colon_)
         {
             return Ok(());
         }
         // `v.f`: the field read or write decides, one field at a time.
         // SAFETY: as above.
-        if !unsafe { Binding::read(binding) }.unwritten.is_null()
-            && matches!(self.peek_token(), Some((t, _)) if t == self.types.dot_)
-        {
+        if !unsafe { Binding::read(binding) }.unwritten.is_null() && next_is(types.dot_) {
             return Ok(());
         }
-        self.cx.pos = cell.start;
+        self.cx.pos = at;
         // SAFETY: as above.
         Err(ParseError::Unwritten(Box::new(unsafe { Binding::spelling(binding) })))
     }
 
-    /// The `=` just built, with the name and the field's binding its target `v.f` reached, or
-    /// nulls: the item the sibling rule reads.
-    pub(crate) fn note_write(&mut self, node: DyadPtr, fill: (DyadPtr, DyadPtr)) {
+    /// A use of `binding` in a line held for the run, written at `at` with the cursor after it,
+    /// and a field `v.f` read after it: checked where the line is written as the lexer and `.`
+    /// check them, since a line that writes after it changes the binding before the held line
+    /// runs (›A binding's fields are read at elaboration, at the line of the read; running code
+    /// never reads a binding‹ [[R286]]).
+    pub(super) fn check_held_read(
+        &mut self,
+        binding: DyadPtr,
+        at: usize,
+    ) -> Result<(), ParseError> {
+        self.check_read(binding, at)?;
+        if !self.consume_token(self.types.dot_) {
+            return Ok(());
+        }
+        let Some((start, len)) = self.lex_spelling() else { return Ok(()) };
+        let source = self.cx.source;
+        let next = self.next_identity();
+        let (writes, dotted) = (next == Some(self.types.assign), next == Some(self.types.dot_));
+        // SAFETY: `binding` is a binding dyad from the store, which `.` reads as its own place.
+        unsafe {
+            self.check_name_field(
+                binding,
+                std::ptr::null_mut(),
+                binding,
+                &source[start..start + len],
+                writes,
+                dotted,
+            )
+        }
+        .map(|_| ())
+        .inspect_err(|_| self.cx.pos = start)
+    }
+
+    /// The `=` just built, or the line just held whose `=` writes when it runs, with the place it
+    /// writes as `=` read it: the item the sibling rule reads.
+    pub(crate) fn note_write(&mut self, node: DyadPtr, place: &Cell) {
         let ids = &self.types.this;
-        // SAFETY: `node` is the `=` node just built.
+        // SAFETY: `node` is the `=` node or the held line just built.
         let ty = unsafe { dyad::ty(node) };
         if ty == self.types.tape.write {
             self.forget_narrowed();
@@ -417,7 +455,7 @@ impl<'a> Parser<'a> {
             }
         }
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
-        self.cx.last_write = LastWrite { node, scope, fill };
+        self.cx.last_write = LastWrite { node, scope, place: place.dyad, fill: place.target };
     }
 
     /// The type a check has narrowed the cell, line or field to, the innermost check first.
@@ -458,14 +496,14 @@ impl<'a> Parser<'a> {
         self.cx.narrow_next = None;
     }
 
-    /// A statement `x = …` built in the block that declared `x := T ?` lifts
-    /// `?`'s read veto from that line on; a write nested in a group, an `if`,
-    /// a loop or a `fn` body is no statement of that block, so it does not.
+    /// A statement `x = …` in the block that declared `x := T ?`, built or held for the run,
+    /// lifts `?`'s read veto from that line on; a write nested in a group, an `if`, a loop or a
+    /// `fn` body is no statement of that block, so it does not.
     ///
     /// # Safety
     /// `item` must be a reduced dyad from the store.
     pub unsafe fn fill_if_sibling_write(&mut self, item: DyadPtr) {
-        let LastWrite { node, scope, fill } = self.cx.last_write;
+        let LastWrite { node, scope, place, fill } = self.cx.last_write;
         if item.is_null() || item != node {
             return;
         }
@@ -490,16 +528,15 @@ impl<'a> Parser<'a> {
             }
             return;
         }
-        let target = *(dyad::value(item) as *const DyadPtr);
-        if target.is_null()
-            || dyad::ty(target) != self.types.binding_
-            || !Binding::has_gate(target, self.types.unknown)
-            || Binding::read(target).scope != scope
+        if place.is_null()
+            || dyad::ty(place) != self.types.binding_
+            || !Binding::has_gate(place, self.types.unknown)
+            || Binding::read(place).scope != scope
         {
             return;
         }
-        Binding::remove_gate(self.rt.store, self.types.array_, target, self.types.unknown);
-        Binding::set_unwritten(target, std::ptr::null_mut());
+        Binding::remove_gate(self.rt.store, self.types.array_, place, self.types.unknown);
+        Binding::set_unwritten(place, std::ptr::null_mut());
     }
 
     /// `v := T ?` of a type with fields: each field waits for its own write, those with a

@@ -114,8 +114,12 @@ struct Context<'a> {
     /// Body items a constructed segment yielded, in the order they are lines,
     /// not yet handed out.
     queued: std::collections::VecDeque<Cell>,
-    /// The last `=` built: what the sibling-write rule reads at the next item.
+    /// The last `=` built, or held line that writes when it runs: what the sibling-write rule
+    /// reads at the next item.
     last_write: LastWrite,
+    /// While a held line is parsed up to a cut where an `=` stands: the source ends before that
+    /// `=`, so what was read last is the place it writes.
+    cut_before_assign: bool,
     /// Whether the constructor now running was woken at discovery, its token
     /// just lexed and the source after it unread, rather than at the boundary:
     /// an identity that reads its own bracket reads source only at discovery.
@@ -197,6 +201,7 @@ impl<'a> Context<'a> {
             dir: PathBuf::from("."),
             queued: std::collections::VecDeque::new(),
             last_write: LastWrite::NONE,
+            cut_before_assign: false,
             discovering: false,
             member_asleep: false,
             reader: std::ptr::null_mut(),
@@ -234,12 +239,14 @@ impl<'a> Context<'a> {
     }
 }
 
-/// The last `=` node built, the scope it was built in, and the name and the field's binding
-/// its target reached when it was a `v.f` over a name (nulls otherwise).
+/// The last `=` node built, or held line that writes, the scope it was written in, the place it
+/// writes as `=` read it, and the name and the field's binding that place reached when it was a
+/// `v.f` over a name (nulls otherwise).
 #[derive(Clone, Copy)]
 struct LastWrite {
     node: DyadPtr,
     scope: DyadPtr,
+    place: DyadPtr,
     fill: (DyadPtr, DyadPtr),
 }
 
@@ -247,6 +254,7 @@ impl LastWrite {
     const NONE: LastWrite = LastWrite {
         node: std::ptr::null_mut(),
         scope: std::ptr::null_mut(),
+        place: std::ptr::null_mut(),
         fill: (std::ptr::null_mut(), std::ptr::null_mut()),
     };
 }

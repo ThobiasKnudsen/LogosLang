@@ -716,6 +716,8 @@ impl<'a> Parser<'a> {
                 self.waiting_line_end().and_then(|end| end.map(|e| self.hold_line(e)).transpose());
             match waits {
                 Ok(Some(held)) => {
+                    // SAFETY: `held` holds the line `hold_line` just built.
+                    unsafe { self.fill_if_sibling_write(held.dyad) };
                     if !bare_branch {
                         self.consume_separator();
                     }
