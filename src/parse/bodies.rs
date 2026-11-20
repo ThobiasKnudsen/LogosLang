@@ -372,18 +372,13 @@ unsafe fn type_check_of(types: &Core, cond: DyadPtr) -> Option<(CellKey, DyadPtr
     crate::identities::tape::type_read_key(types, read).map(|key| (key, ty, eq))
 }
 
-/// Trailing comment nodes are prose, not the tail; `None` for a scope with
-/// no expression array.
+/// The scope's [`last_line`](crate::identities::scope::last_line).
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store; a non-null value must be the
 /// `[exprs, op, parent]` triple `parse_sequence` fills.
 pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
-    crate::identities::scope::exprs_of(node)?
-        .iter()
-        .rev()
-        .find(|&&e| !crate::identities::numtype::is_comment_type(dyad::ty(e)))
-        .copied()
+    crate::identities::scope::last_line(crate::identities::scope::exprs_array(node))
 }
 
 /// The positions `commit_tail` enumerates: a `return` itself, an `if`'s
