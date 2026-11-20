@@ -1831,11 +1831,22 @@ impl<'a> Parser<'a> {
     /// line ended is held up to it; one an enclosing scope holds, this scope holds from its
     /// start up to it, so a `return` or fault before the line frees it (DESIGN ›`move` and
     /// `free` are static: the parse marks the name dead‹), and the pass that runs the line
-    /// tells the holder.
+    /// tells the holder. A comment is a line of the scope too, but none of that is its own: a
+    /// comment that leads an expression closes before it, and leaves it all to that line.
     ///
     /// # Safety
     /// `item` must be a line this parser just returned.
     unsafe fn close_line(&mut self, item: DyadPtr) {
+        // SAFETY: `item` is a reduced dyad from the store.
+        if unsafe { crate::identities::numtype::is_comment_type(dyad::ty(item)) } {
+            let scope = self.cx.scopes.current().expect("a line closes inside an open scope");
+            // SAFETY: `scope` is the open scope's node, `item` a reduced dyad.
+            unsafe {
+                crate::identities::scope::push_item(self.rt.store, self.types.array_, scope, item)
+            };
+            self.cx.open.last_mut().expect("a line closes inside an open scope").lines += 1;
+            return;
+        }
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.cx.scopes.close_item(self.rt.store, self.types.array_, item) };
         let depth = self.cx.open.len() - 1;
@@ -1974,37 +1985,24 @@ impl<'a> Parser<'a> {
     /// pass runs only as far as it must, in order, and never twice‹). A block's
     /// cursor moves to its last line, so its own run starts after it. The lists
     /// are taken first, so a nested drain finds nothing. A scope's lines count as run as
-    /// they go, prose, `defer` and `[…]` lines included. An argument list's and a `[…]`'s
-    /// lines are left for the call that takes them.
+    /// they go, prose, `defer` and `[…]` lines included. The closed lines of an open argument
+    /// list or `[…]` are parts of the line being parsed: each that runs runs too, then standing
+    /// in its place for the value it gave, which the call that takes the bracket reads. One
+    /// whose value cannot stand in its place is left for that call, with every part after it.
     pub fn drain(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {
-        self.drain_lines(false, None)
-    }
-
-    /// [`Self::drain`], and the closed lines of every open argument list and `[…]` too, each
-    /// part of the line being parsed then standing in its place for the value it gave: what
-    /// stands before a call the pass runs at `at` while it parses runs first, in order, and once.
-    pub(super) fn drain_with_parts(&mut self, at: usize) -> Result<(), ParseError> {
-        self.drain_lines(false, Some(at)).map(|_| ())
+        self.drain_lines(false)
     }
 
     /// [`Self::drain`]; with `keep_tail`, the values the last line run made are left for
-    /// [`Self::end_tail`], once its value is read; with `parts_at`, [`Self::drain_with_parts`].
-    fn drain_lines(
-        &mut self,
-        keep_tail: bool,
-        parts_at: Option<usize>,
-    ) -> Result<Option<(DyadPtr, i64)>, ParseError> {
+    /// [`Self::end_tail`], once its value is read.
+    fn drain_lines(&mut self, keep_tail: bool) -> Result<Option<(DyadPtr, i64)>, ParseError> {
         let lists: Vec<_> = self
             .cx
             .open
             .iter_mut()
             .map(|s| {
-                let own = s.own_lines();
-                if !own && parts_at.is_none() {
-                    return (s.scope, own, Vec::new());
-                }
                 s.closed_runs.clear();
-                (s.scope, own, std::mem::take(&mut s.unrun))
+                (s.scope, s.own_lines(), std::mem::take(&mut s.unrun))
             })
             .collect();
         let mut items = Vec::new();
@@ -2039,7 +2037,16 @@ impl<'a> Parser<'a> {
         }
         let mut last = None;
         let mut left = items.iter().filter(|&&(_, runs, _, part)| runs && part.is_none()).count();
+        let mut parts_left = false;
         for (unrun, runs, depth, part) in items {
+            if part.is_some() {
+                // SAFETY: a part is a reduced dyad this parser built into its store.
+                parts_left = parts_left || (runs && !unsafe { self.stands_as_ran(unrun.node) });
+                if parts_left {
+                    self.cx.open[depth].unrun.push(unrun);
+                    continue;
+                }
+            }
             let UnrunLine { node, line, ends, plan, .. } = unrun;
             if runs {
                 // The holder frees the names the line ends no more, even when the line
@@ -2049,9 +2056,9 @@ impl<'a> Parser<'a> {
                     self.cx.open[at].reached.push(name);
                 }
             }
-            if let (true, Some((scope, at))) = (runs, part.zip(parts_at)) {
+            if let (true, Some(scope)) = (runs, part) {
                 // SAFETY: `node` is line `line` of `scope`, a bracket still open.
-                unsafe { self.run_part(scope, line, node, &plan, at) }?;
+                unsafe { self.run_part(scope, line, node, &plan) }?;
             } else if runs {
                 // A line's scratch goes with the line; the last item's is the value handed on.
                 let mark = self.rt.stack_mark();
@@ -2187,7 +2194,7 @@ impl<'a> Parser<'a> {
     /// constructor is the driver‹), yielding the tail it ran, whose line ends at
     /// [`Self::end_tail`].
     pub fn finish(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {
-        self.drain_lines(true, None)
+        self.drain_lines(true)
     }
 
     /// The program's end: what the program holds and defers, handed to the top scope,

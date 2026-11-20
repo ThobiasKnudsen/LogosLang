@@ -417,7 +417,7 @@ impl<'a> Parser<'a> {
         if !parts.all(|part| !self.runs_first(part) || unsafe { self.stands_as_ran(part.node) }) {
             return Ok(false);
         }
-        self.drain_with_parts(at)?;
+        self.drain()?;
         for (handle, from, _) in standing {
             let node = self.as_operand(*tape.cell_of(handle))?;
             // SAFETY: a standing cell holds a node this parser built into its store, or names a
@@ -474,9 +474,9 @@ impl<'a> Parser<'a> {
         !part.runs.is_empty() || self.runs_standing(&unsafe { Cell::built(part.node) })
     }
 
-    /// Line `line` of the open bracket `scope`, a part of the line being parsed, runs before the
-    /// call at `at`, and the value it gave stands in its place, which the call that takes the
-    /// bracket reads; what the part made and nothing took ends with it.
+    /// Line `line` of the open bracket `scope`, a part of the line being parsed, runs before what
+    /// the pass needs at the cursor, and the value it gave stands in its place, which the call
+    /// that takes the bracket reads; what the part made and nothing took ends with it.
     ///
     /// # Safety
     /// `node` must be line `line` of `scope`, a bracket still open, and `plan` the nodes whose
@@ -487,11 +487,10 @@ impl<'a> Parser<'a> {
         line: usize,
         node: DyadPtr,
         plan: &[DyadPtr],
-        at: usize,
     ) -> Result<(), ParseError> {
         let held = self.rt.line_mark();
         self.rt.push_plan(plan);
-        let value = self.ran_value(at, node);
+        let value = self.ran_value(self.cx.pos, node);
         self.rt.pop_plan();
         // SAFETY: what the part made since `held` its run gave, still live.
         let ended = crate::identities::drop_model::end_line(&mut self.rt, held, Ok(0));
@@ -551,7 +550,7 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `node` must be a reduced dyad this parser built into its store.
-    unsafe fn stands_as_ran(&self, node: DyadPtr) -> bool {
+    pub(super) unsafe fn stands_as_ran(&self, node: DyadPtr) -> bool {
         use crate::identities::drop_model::{teardown_of, Teardown};
         use crate::identities::{dyad_place, read};
         let types = self.types;

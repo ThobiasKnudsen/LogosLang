@@ -3838,11 +3838,17 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
 }
 
 #[test]
-fn a_box_read_in_an_argument_list_runs_no_earlier_argument_twice() {
-    // The box's read runs the lines of their own before it; an argument is a part of its call's
-    // line, which runs it once.
+fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_once() {
+    // Each point where the parse needs a value runs the earlier arguments first, each then
+    // standing for the value it gave, and the call runs them no more.
     let defs =
         "h := fn () -> i32 ( print «h», 1 ), k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b )";
+    let g = "g := fn () -> i32 ( print «g», 2 )";
+    let mk =
+        "mk := fn () -> type ( print «mk», i32 ), kt := fn (a := i32 ?, b := type ?) -> i32 ( a )";
+    let q = "q := type ( v := i32 ?, static parse_rank = 61, static parse = ( print «q», \
+             tape[0].type = q, tape[0].v = tape[1].dyads[0], tape.remove(1), \
+             tape.is_constructed[0] = true ) )";
     for (src, want) in [
         (format!("{defs}, d := dyad (i32, 7), k(h(), d + 1)"), "h\n9"),
         (format!("{defs}, mut t := type ?, t = i32, k(h(), t 5)"), "h\n6"),
@@ -3850,6 +3856,37 @@ fn a_box_read_in_an_argument_list_runs_no_earlier_argument_twice() {
         (format!("{defs}, d := dyad (i32, 7), x := k(h(), d + 1), x"), "h\n9"),
         (format!("{defs}, d := dyad (i32, 7), x := ( h(), k(h(), d + 1) ), x"), "h\nh\n9"),
         (format!("{defs}, d := dyad (i32, 7), f := fn () -> i32 ( k(h(), d + 1) ), f()"), "h\n9"),
+        (format!("{defs}, {g}, k(h(), immediate g())"), "h\ng\n3"),
+        (format!("{defs}, {mk}, kt(h(), mk())"), "h\nmk\n1"),
+        (format!("{defs}, {g}, {mk}, kt(h(), type ( static s := g() ))"), "h\ng\n1"),
+        (format!("{defs}, {q}, k(h(), (q [5, i32 7]).v)"), "h\nq\n6"),
+        (
+            "mut t := type ?, t = i64, h := fn () -> i64 ( t = i32, 1 ), \
+             k := fn (a := i64 ?, b := dyad ?) -> dyad ( b ), x := k(h(), t 5), x.type"
+                .to_string(),
+            "i32",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // An earlier argument whose value cannot stand in its place is left for the call, with every
+    // argument after it, which runs each once.
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), \
+               mb := fn () -> own bag ( print «mb», bag(4) ), \
+               kb := fn (a := bag ?, b := i32 ?, c := i32 ?) -> i32 ( b + c )";
+    let src = format!("{defs}, {bag}, d := dyad (i32, 7), kb(mb(), h(), d + 1)");
+    assert_eq!(line(&src), "mb\nh\nfreed 4\n9", "{src}");
+}
+
+#[test]
+fn a_comment_leading_a_line_leaves_that_line_what_it_made_and_runs() {
+    let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 ), \
+                 k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b )";
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
+    for (src, want) in [
+        (format!("{calls}, k(# «a» h(), g() + 1)"), "h\ng\n4"),
+        (format!("{calls}, d := dyad (i32, 7), k(# «a» h(), d + 1)"), "h\n9"),
+        (format!("{bag}, # «a» bag(3), print «x»"), "freed 3\nx"),
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
