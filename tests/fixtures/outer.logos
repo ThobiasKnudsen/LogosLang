@@ -1,3 +1,3 @@
 # a relative import resolves against THIS file's folder, not the working dir
-import ./subdir/inner.logos,
+import file «./subdir/inner.logos»,
 print «{inner_val + 0}»

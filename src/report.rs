@@ -160,7 +160,22 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::NotMutable(name) => {
             format!("`{name}` is not `mut`: a name is written after its declaration only when declared `mut {name} := …`")
         }
-        ParseError::ExpectedPath => "`import` must be followed by a file path".into(),
+        ParseError::ImportTakesFile => {
+            "`import` reads the file it is given: write `import file «path»`".into()
+        }
+        ParseError::AddressNotPlain => {
+            "a `file «…»` address is written as plain text: a file whose address is computed \
+             while the program runs is read through the `fs` the command line hands down"
+                .into()
+        }
+        ParseError::FileOutsideProject { path, root } => format!(
+            "`file «{path}»` is outside this project's folder, {root}: a file reaches only files \
+             inside its project's folder, and reads any other while the program runs, through the \
+             `fs` the command line hands down"
+        ),
+        ParseError::NoPubName(name) => {
+            format!("the file has no `pub` name `{name}`: only its `pub` names are read")
+        }
         ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
         ParseError::ExpectedQuote(word) => format!("`{word}` must be followed by a «…» quote"),
         ParseError::EmptySpelling => {
@@ -192,18 +207,17 @@ pub fn parse_message(e: &ParseError) -> String {
              another identity, remove it, or set the flag on the untouched cell to stand as itself"
         ),
         ParseError::BadPattern(why) => format!("this pattern does not compile: {why}"),
-        ParseError::ImportInRuntimeBody => {
-            "`import` loads at parse time, so it cannot stand inside a \
+        ParseError::LoadInRuntimeBody(word) => format!(
+            "`{word}` reads a file as Logos at parse time, so it cannot stand inside a \
              function body, loop, or runtime branch"
-                .into()
-        }
-        ParseError::ImportRead(detail) => format!("cannot read {detail}"),
+        ),
+        ParseError::FileRead(detail) => format!("cannot read {detail}"),
         ParseError::ImportCycle(path) => format!(
-            "importing `{path}` here closes an import cycle — the import graph \
+            "reading `{path}` as Logos here closes a cycle: the graph of files reaching files \
              must be a DAG"
         ),
         ParseError::ImportFailed { path, rendered } => {
-            format!("import of `{path}` failed:\n{rendered}")
+            format!("reading `{path}` as Logos failed:\n{rendered}")
         }
         ParseError::BadReflectRead => {
             "this read does not fit the node's type".into()

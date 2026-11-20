@@ -1,0 +1,2 @@
+# Reads a file outside its project's folder, which only the `fs` the command line hands down may.
+f := file «../../Cargo.toml»

@@ -108,9 +108,13 @@ struct Context<'a> {
     /// The open scopes, innermost last, the base entry the top level; its
     /// length is the bracket depth.
     open: Vec<OpenScope>,
-    /// The folder relative import paths resolve against: the importing file's
-    /// own folder during a nested import, else the working directory.
+    /// The folder a relative `file «…»` path resolves against: the reading file's own folder
+    /// while a file is read as Logos, else the working directory.
     dir: PathBuf,
+    /// The project's folder, which a `file «…»` stays inside: the folder of the file the command
+    /// line read, which every file read from it keeps; `None` on the command line, which reaches
+    /// any path.
+    root: Option<PathBuf>,
     /// Body items a constructed segment yielded, in the order they are lines,
     /// not yet handed out.
     queued: std::collections::VecDeque<Cell>,
@@ -210,6 +214,7 @@ impl<'a> Context<'a> {
             definitions: Vec::new(),
             open: vec![OpenScope::top_level()],
             dir: PathBuf::from("."),
+            root: None,
             queued: std::collections::VecDeque::new(),
             last_write: LastWrite::NONE,
             cut_before_assign: false,
@@ -245,6 +250,7 @@ impl<'a> Context<'a> {
     fn nested(outer: &Self, source: &'a str, scopes: ScopeStack) -> Self {
         Context {
             dir: outer.dir.clone(),
+            root: outer.root.clone(),
             held_depth: outer.held_depth,
             last_declared: outer.last_declared,
             last_write: outer.last_write,

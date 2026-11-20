@@ -1,1 +1,1 @@
-import ./cycle_a.logos
+import file «./cycle_a.logos»

@@ -1353,7 +1353,10 @@ fn a_scope_gives_the_value_of_the_first_line_that_gives_one_both_tiers() {
     diff_typed_call(both, "f(1)", 5);
     diff_typed_call(both, "f(0)", 6);
     // The lines of an array are data its reader takes, each kept.
-    assert_eq!(run_script("import identities/array.logos, a := array i32 [1, 2, 3], a[2]"), 3);
+    assert_eq!(
+        run_script("import file «identities/array.logos», a := array i32 [1, 2, 3], a[2]"),
+        3
+    );
 }
 
 #[test]

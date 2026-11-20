@@ -165,8 +165,19 @@ pub enum ParseError {
     Immutable(Box<String>),
     /// A read of a name declared `T ?` before a sibling write filled it; carries the name.
     Unwritten(Box<String>),
-    /// An `import` was not followed by a path token.
-    ExpectedPath,
+    /// An `import` was not followed by the `file «…»` it reads.
+    ImportTakesFile,
+    /// A `file «…»` address holding a `{…}`: an address computed when the program runs.
+    AddressNotPlain,
+    /// A file read from inside a project names a file outside its project's folder.
+    FileOutsideProject {
+        /// The path as written.
+        path: String,
+        /// The project's folder.
+        root: String,
+    },
+    /// `.name` over a file's scope where the file has no `pub` name `name`; carries the name.
+    NoPubName(Box<String>),
     /// A `regex` was not followed by a `«…»` quote.
     ExpectedPattern,
     /// A `lex`, `print` or `error` was not followed by a `«…»` quote; carries the word.
@@ -194,15 +205,15 @@ pub enum ParseError {
     /// reported at the definition, since the index compiles a branch only on
     /// first lookup.
     BadPattern(String),
-    /// An `import` inside a deferred-or-repeated body: the load happens once,
-    /// at parse, so `import` belongs where parse order and run order coincide.
-    ImportInRuntimeBody,
-    /// The imported file could not be read: the joined path and the OS error.
-    ImportRead(String),
-    /// The named file is already loading: the import graph must be a DAG.
+    /// An `import` or a `logos file «…»` inside a deferred-or-repeated body: the load happens
+    /// once, at parse, so it belongs where parse order and run order coincide. Carries the word.
+    LoadInRuntimeBody(&'static str),
+    /// A `file «…»` could not be read: the joined path and why.
+    FileRead(String),
+    /// The named file is already loading: the graph of files reaching files must be a DAG.
     ImportCycle(String),
     ImportFailed {
-        /// The path as written at the import site.
+        /// The path as written after `file`.
         path: String,
         /// The fully rendered inner report (file:line:col, caret and all).
         rendered: String,

@@ -60,11 +60,14 @@ fn help() -> String {
          \x20 logos                start the interactive REPL\n\
          \x20 logos --help         show this help\n\n\
          Everything after `logos` is Logos source, run by the one pass:\n\
-         \x20 logos import ./file.logos\n\
-         \x20 logos 'import ./file.logos, main(«hello»)'\n\
-         `import` loads a file: it runs top to bottom, and the importer\n\
-         reaches only its `pub` names. The value of the first line that\n\
-         gives one is printed, and the lines after it never run.\n\
+         \x20 logos import file «./file.logos»\n\
+         \x20 logos 'import file «./file.logos», main(«hello»)'\n\
+         \x20 logos '(logos file «./file.logos»).main(«hello»)'\n\
+         `import` reads a file as Logos: it runs top to bottom, once, and\n\
+         its `pub` names are set where the `import` stands; `logos` reads\n\
+         it the same way and gives its scope, whose `pub` names are read\n\
+         with `.`. The value of the first line that gives one is printed,\n\
+         and the lines after it never run.\n\
          There are no build or compile flags: the code itself decides what\n\
          compiles.\n",
         env!("CARGO_PKG_VERSION")

@@ -2463,7 +2463,7 @@ mod tests {
 
     /// A value whose owning field holds an array, in the array's shape: `bag ()` is a node
     /// whose run makes a new `bagged`, and `bag` with no bracket is `bagged`.
-    const BAG: &str = "import ./identities/array.logos, t := array i32, \
+    const BAG: &str = "import file «./identities/array.logos», t := array i32, \
         bagged := type ( \
             mut items := own t ?, \
             static free = ( free items ), \
@@ -2639,7 +2639,7 @@ mod tests {
             ParseError::NoSuchSlot("drop".into())
         );
         assert_eq!(
-            run("import ./identities/array.logos, mut x := array i32 [1], y := move x, free y, 0"),
+            run("import file «./identities/array.logos», mut x := array i32 [1], y := move x, free y, 0"),
             (0, 0)
         );
     }
@@ -2653,7 +2653,7 @@ mod tests {
             "the same value no word takes ends its scope, and the line after never runs"
         );
         assert_eq!(
-            run("import ./identities/array.logos, (array i32 [1, 2])[1]"),
+            run("import file «./identities/array.logos», (array i32 [1, 2])[1]"),
             (2, 0),
             "an array no name takes ends after its line has read it"
         );

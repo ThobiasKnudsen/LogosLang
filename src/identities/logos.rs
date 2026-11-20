@@ -34,6 +34,12 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
             tape.place(node);
             return Ok(crate::parse::Constructed::Placed);
         }
+        // `logos file «…»` reads the file as Logos; `type` reads it too while it is `logos`'s
+        // alias.
+        if let Some(scope) = p.construct_logos_file(tape)? {
+            tape.place(scope);
+            return Ok(crate::parse::Constructed::Placed);
+        }
         let value = p.stand_as_value(tape, id);
         tape.place(value);
         Ok(crate::parse::Constructed::Placed)

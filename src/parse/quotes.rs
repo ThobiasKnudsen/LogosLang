@@ -1,34 +1,34 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The words that read the `«…»` to their right (`regex`, `lex`, `print`, `error`), `here`,
-//! `caller`, and `import`, which reads a file as text dropped in place.
+//! The words that read the `«…»` to their right (`regex`, `lex`, `print`, `error`, `file`),
+//! `here`, `caller`, and the two that read a file as Logos, `logos` and `import`.
 
 use super::*;
 use crate::dyad;
 use crate::identities::drop_model::ExitItem;
 use crate::identities::string::Piece;
 
-/// The once-per-run import registry: a file loads once per run, every
-/// importer sharing the one loaded section, and a path met again while its
-/// own load is in progress is a cycle.
+/// The once-per-run registry of files read as Logos: a file loads once per run, every reader
+/// sharing the one loaded section, and a path met again while its own load is in progress is a
+/// cycle.
 #[derive(Debug, Default)]
 pub struct Imports {
     entries: HashMap<PathBuf, ImportState>,
     /// The section scope each loaded file's declarations landed in: a
     /// section's names live for the run, so a `pub` function's body may read
-    /// a private sibling from anywhere (DESIGN ›Importing is dropping the text there‹).
+    /// a private sibling from anywhere (›Importing is dropping the text there, wrapped in its own
+    /// scope‹ [[R306]]).
     pub(super) sections: HashSet<DyadPtr>,
 }
 
 #[derive(Debug)]
 enum ImportState {
-    /// Importing it again now is a cycle.
+    /// Reading it as Logos again now is a cycle.
     Loading,
-    /// The `pub` names in declaration order, each with the identity it
-    /// resolves to inside the file.
-    /// `pubs`: each `pub` name's spelling and its binding in the file's scope.
-    Loaded { pubs: Vec<(String, DyadPtr)>, text: &'static str },
+    /// `section` is the file's scope; `pubs` each `pub` name's spelling and its binding there, in
+    /// declaration order.
+    Loaded { section: DyadPtr, pubs: Vec<(String, DyadPtr)>, text: &'static str },
 }
 
 impl Imports {
@@ -39,69 +39,141 @@ impl Imports {
             ImportState::Loading => None,
         })
     }
+
+    /// The `pub` names of the file whose scope `section` is; `None` for any other scope.
+    pub(super) fn pubs_of(&self, section: DyadPtr) -> Option<&[(String, DyadPtr)]> {
+        self.entries.values().find_map(|state| match state {
+            ImportState::Loaded { section: s, pubs, .. } if *s == section => Some(&pubs[..]),
+            _ => None,
+        })
+    }
+}
+
+/// A file a `file «…»` reached: its node, the path as written and where it is on this computer.
+struct Reached {
+    node: DyadPtr,
+    path: String,
+    canon: PathBuf,
 }
 
 impl<'a> Parser<'a> {
-    /// Consume the path token (raw text up to whitespace or `,`, or a `«…»`
-    /// string), load the file, and place `{type: import, value: [path, op]}`.
-    /// The load happens here, once per run; the node's run does nothing.
+    pub(crate) fn construct_file(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let reached = self.reach_file()?;
+        let file = self.reach(reached.node);
+        tape.place(file);
+        Ok(Constructed::Placed)
+    }
+
+    /// The `«…»` after `file`, an address written as plain text, and the file it names, read now
+    /// (›`file «path»` and `url «address»` reach a file; `import` sets its `pub` names where it
+    /// stands‹ [[R375]]): relative to the reading file's folder, and inside its project's folder
+    /// wherever the reader is a file.
+    fn reach_file(&mut self) -> Result<Reached, ParseError> {
+        let (start, _) = self.quote_span_after("file")?;
+        let quote = crate::identities::string::read(self.cx.source, start)
+            .map_err(|e| self.lex_error(0, e))?;
+        let fail = |p: &mut Self, e: ParseError| {
+            p.cx.pos = start;
+            Err(e)
+        };
+        if quote.pieces.iter().any(|piece| matches!(piece, Piece::Scope(_))) {
+            return fail(self, ParseError::AddressNotPlain);
+        }
+        let path = String::from_utf8_lossy(&quote.text(self.cx.source)).into_owned();
+        let joined = self.cx.dir.join(&path);
+        let unread = |e: std::io::Error| ParseError::FileRead(format!("{}: {e}", joined.display()));
+        let canon = match joined.canonicalize() {
+            Ok(canon) => canon,
+            Err(e) => return fail(self, unread(e)),
+        };
+        if let Some(root) = self.cx.root.as_ref().filter(|root| !canon.starts_with(root)) {
+            let root = root.display().to_string();
+            return fail(self, ParseError::FileOutsideProject { path, root });
+        }
+        let bytes = match std::fs::read(&canon) {
+            Ok(bytes) => bytes,
+            Err(e) => return fail(self, unread(e)),
+        };
+        let node = crate::identities::file::build(self.rt.store, self.types, &path, &bytes);
+        Ok(Reached { node, path, canon })
+    }
+
+    /// The `file «…»` written after `word`, read as Logos: the file reached, and the section it
+    /// loaded into. Reading it runs it now, once per run, so it stands only where parse order and
+    /// run order coincide, and what stands before it on its line runs first.
+    fn read_logos_after(
+        &mut self,
+        tape: &mut ParsingTape,
+        word: &'static str,
+    ) -> Result<(Reached, DyadPtr), ParseError> {
+        if self.cx.runtime_depth != 0 {
+            return Err(ParseError::LoadInRuntimeBody(word));
+        }
+        let at = tape.at(0).map_or(self.cx.pos, |c| c.start);
+        let file = self.types.file;
+        let consumed = self.consume_token(file);
+        debug_assert!(consumed, "`file` is the next word");
+        let reached = self.reach_file()?;
+        self.run_first(tape, at)?;
+        let section = self.load_logos(&reached)?;
+        Ok((reached, section))
+    }
+
+    /// `import file «…»`: the file read as Logos, its `pub` names set where the `import` stands,
+    /// and `{type: import, value: [file, op]}` placed, whose run does nothing.
     pub(crate) fn construct_import(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        // The load is a comptime effect: inside a deferred-or-repeated body
-        // parse order and run order do not coincide.
-        if self.cx.runtime_depth != 0 {
-            return Err(ParseError::ImportInRuntimeBody);
-        }
         self.skip_whitespace();
-        let source = self.cx.source;
         let start = self.cx.pos;
-        let path_text: String = match self.raw_path_end(start) {
-            Some(end) => {
-                self.cx.pos = end;
-                source[start..end].to_string()
-            }
-            None => {
-                let r = self.token_at(start, false)?;
-                self.cx.pos += r.matched;
-                let node = self
-                    .construct_leaf(r.identity, start, r.matched)?
-                    .ok_or(ParseError::ExpectedPath)?;
-                // SAFETY: the leaf just built is a string node.
-                let text = unsafe { crate::identities::string::text(node) };
-                String::from_utf8_lossy(text).into_owned()
-            }
-        };
-        if path_text.is_empty() {
+        if self.next_identity() != Some(self.types.file) {
             self.cx.pos = start;
-            return Err(ParseError::ExpectedPath);
+            return Err(ParseError::ImportTakesFile);
         }
-        // The load runs the file now, so what stands before the `import` runs first.
-        let at = tape.at(0).map_or(start, |c| c.start);
-        self.run_first(tape, at)?;
-        self.import_file(&path_text)?;
+        let (file, section) = self.read_logos_after(tape, "import")?;
+        let pubs = self.imports.pubs_of(section).expect("a loaded section").to_vec();
+        self.publish(&pubs)?;
         let types = self.types;
-        let path_node = crate::identities::string::build_text(
-            self.rt.store,
-            types.string_,
-            path_text.as_bytes(),
-        );
-        let ops = [path_node, types.ops.import_];
-        let node = self.rt.store.alloc_words(types.import_, &ops);
+        let node = self.rt.store.alloc_words(types.import_, &[file.node, types.ops.import_]);
         tape.place(node);
         Ok(Constructed::Placed)
     }
 
-    /// Where the path an `import` reads from `start` ends, where it is written raw: at whitespace,
-    /// a `,` or the text's end. `None` for a `«…»` string, which is one token.
-    pub(super) fn raw_path_end(&self, start: usize) -> Option<usize> {
-        let rest = &self.cx.source[start..];
-        if rest.starts_with('«') {
-            return None;
+    /// `logos file «…»`: the file read as Logos and its scope given, reached as a node, so its
+    /// `pub` names are read with `.`. `None` where `file` does not follow, or `logos` was not
+    /// woken where it is written.
+    pub(crate) fn construct_logos_file(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        let start = self.cx.pos;
+        if !self.cx.discovering || self.next_identity() != Some(self.types.file) {
+            self.cx.pos = start;
+            return Ok(None);
         }
-        let len = rest.find(|c: char| c.is_ascii_whitespace() || c == ',').unwrap_or(rest.len());
-        Some(start + len)
+        let (_, section) = self.read_logos_after(tape, "logos")?;
+        Ok(Some(self.reach(section)))
+    }
+
+    /// `.name` over a file's scope: its `pub` name `name`, used as a name is; `None` where `node`
+    /// is no file's scope. Nothing else of the file is reached (›`logos` and `import` load a Logos
+    /// file; whoever reads it reaches only its `pub` names‹ [[R303]]).
+    pub(super) fn file_member(
+        &self,
+        node: DyadPtr,
+        name: &str,
+    ) -> Option<Result<DyadPtr, ParseError>> {
+        let pubs = self.imports.pubs_of(node)?;
+        Some(
+            pubs.iter()
+                .find(|(spelling, _)| spelling == name)
+                .map(|&(_, binding)| binding)
+                .ok_or_else(|| ParseError::NoPubName(Box::new(name.to_string()))),
+        )
     }
 
     /// Read the `«…»` to the right at discovery and place a `regex` node
@@ -327,30 +399,24 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// On a first load the file runs in its own section, a fresh stack of the
-    /// root plus a section scope, so it sees ambient names and its own imports
-    /// only (DESIGN ›Importing is dropping the text there‹); its `pub` names then land here.
-    fn import_file(&mut self, path_text: &str) -> Result<(), ParseError> {
-        let joined = self.cx.dir.join(path_text);
-        let canon = joined
-            .canonicalize()
-            .map_err(|e| ParseError::ImportRead(format!("{}: {e}", joined.display())))?;
-        match self.imports.entries.get(&canon) {
-            Some(ImportState::Loading) => {
-                return Err(ParseError::ImportCycle(path_text.to_string()))
-            }
-            Some(ImportState::Loaded { pubs, .. }) => {
-                let pubs = pubs.clone();
-                self.publish(&pubs)?;
-                return Ok(());
-            }
+    /// The file read as Logos, its section given. On a first load the file runs in its own
+    /// section, a fresh stack of the root plus a section scope, so it sees ambient names and what
+    /// it reads itself only (›Importing is dropping the text there, wrapped in its own scope‹
+    /// [[R306]]); a file the command line reads roots its project there, and every file read from
+    /// it keeps that root.
+    fn load_logos(&mut self, file: &Reached) -> Result<DyadPtr, ParseError> {
+        let Reached { node, path, canon } = file;
+        match self.imports.entries.get(canon) {
+            Some(ImportState::Loading) => return Err(ParseError::ImportCycle(path.clone())),
+            Some(ImportState::Loaded { section, .. }) => return Ok(*section),
             None => {}
         }
-        let text = std::fs::read_to_string(&canon)
-            .map_err(|e| ParseError::ImportRead(format!("{}: {e}", joined.display())))?;
+        // SAFETY: `node` is the `file` node `reach_file` built.
+        let text = std::str::from_utf8(unsafe { crate::identities::file::bytes(*node) })
+            .map_err(|_| ParseError::FileRead(format!("{path}: it is not UTF-8 text")))?;
         // Sources are process-lived: every span and every later report
         // indexes into its file's text.
-        let text: &'static str = Box::leak(text.into_boxed_str());
+        let text: &'static str = Box::leak(text.to_owned().into_boxed_str());
         self.imports.entries.insert(canon.clone(), ImportState::Loading);
 
         // A fresh stack of the root (ambient names) plus a fresh scope node
@@ -361,32 +427,34 @@ impl<'a> Parser<'a> {
         let section = nested.push_section(self.rt.store, self.types.scope);
         self.imports.sections.insert(section);
 
+        let dir: PathBuf = canon.parent().map(Into::into).unwrap_or_else(|| PathBuf::from("."));
         let cx = Context {
-            dir: canon.parent().map(Into::into).unwrap_or_else(|| PathBuf::from(".")),
+            root: Some(self.cx.root.clone().unwrap_or_else(|| dir.clone())),
+            dir,
             ..Context::nested(&self.cx, text, nested)
         };
         let g = self.enter(cx);
-        // An import is text dropped in place (DESIGN ›Importing is dropping the text there‹):
-        // it shares the importer's bracket stack, so its `drain` runs the items in source order.
+        // A file read as Logos is text dropped in place: it shares the reader's bracket stack, so
+        // its `drain` runs the items in source order.
         // Its top level is a scope of its own, which lives as long as the program: what it
         // still holds at its end, and its `defer`s, join the program's exit.
         g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect("pushed by enter").open);
         g.0.cx.open.push(OpenScope::top_level());
         let inner = g.0.run_imported(section);
         let inner_pos = g.0.cx.pos;
-        let file = g.0.cx.open.pop().expect("pushed above");
+        let top = g.0.cx.open.pop().expect("pushed above");
         if inner.is_err() {
-            g.0.end_after_fault(&file);
+            g.0.end_after_fault(&top);
         } else {
             let program = g.0.cx.open.first_mut().expect("the program's scope is open");
             let from = program.lines + 1;
             // A line that gave the file a value ended it: what its later lines hold never was.
-            let ran = file.reached_lines();
-            for item in file.exit.into_iter().filter(|h| h.end.is_none() && h.held_at(ran)) {
+            let ran = top.reached_lines();
+            for item in top.exit.into_iter().filter(|h| h.end.is_none() && h.held_at(ran)) {
                 program.imported.insert(item.what);
                 program.exit.push(ExitItem { from, ..item });
             }
-            program.held.extend(file.held);
+            program.held.extend(top.held);
         }
         g.0.outer.last_mut().expect("pushed by enter").open = std::mem::take(&mut g.0.cx.open);
         drop(g);
@@ -395,18 +463,16 @@ impl<'a> Parser<'a> {
             Err(message) => {
                 // Remove the Loading entry so a later attempt (a REPL retry)
                 // reports the real failure, not a phantom cycle.
-                self.imports.entries.remove(&canon);
+                self.imports.entries.remove(canon);
                 Err(ParseError::ImportFailed {
-                    path: path_text.to_string(),
-                    rendered: crate::report::render(path_text, text, inner_pos, &message),
+                    path: path.clone(),
+                    rendered: crate::report::render(path, text, inner_pos, &message),
                 })
             }
             Ok(pubs) => {
-                self.imports
-                    .entries
-                    .insert(canon, ImportState::Loaded { pubs: pubs.clone(), text });
-                self.publish(&pubs)?;
-                Ok(())
+                let loaded = ImportState::Loaded { section, pubs, text };
+                self.imports.entries.insert(canon.clone(), loaded);
+                Ok(section)
             }
         }
     }
