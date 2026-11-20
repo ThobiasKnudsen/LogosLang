@@ -191,12 +191,14 @@ impl<'a> Parser<'a> {
     /// `x.m(…)`, the call after a member read: what `m` holds, applied to the arguments. A
     /// `static` function that works on a value takes the one the read reached first, meeting the
     /// gates a write through `left` meets, or with none passes [`Parser::on_no_value`]; any other
-    /// function takes the arguments alone. `None` when `m` holds no function.
+    /// function takes the arguments alone. `None` when `m` holds no function. A call for a type
+    /// runs where it is built, so what stands on `tape` before the read runs first.
     ///
     /// # Safety
     /// `member` and the arguments must be reduced dyads from the store.
     unsafe fn call_member(
         &mut self,
+        tape: &mut ParsingTape,
         member: DyadPtr,
         name: &str,
         left: &Cell,
@@ -227,6 +229,9 @@ impl<'a> Parser<'a> {
             });
         }
         with.extend(args);
+        if self.in_pass_order() && self.returns_type(member) {
+            self.run_first(tape, left.start)?;
+        }
         // The call's result is no member: the path was the member's own.
         self.cx.member_path.clear();
         self.build_call(member, &with).map(Some)
@@ -409,6 +414,7 @@ impl<'a> Parser<'a> {
     /// `lhs` must be a reduced dyad from the store and `t` a type `is_node_valued` accepts.
     unsafe fn run_node_member(
         &mut self,
+        tape: &mut ParsingTape,
         lhs: DyadPtr,
         left: Cell,
         t: DyadPtr,
@@ -443,7 +449,8 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         if let Some(args) = call {
-            if let Some(call) = self.call_member(member, name, &left, Receiver::Node(lhs), args)? {
+            let receiver = Receiver::Node(lhs);
+            if let Some(call) = self.call_member(tape, member, name, &left, receiver, args)? {
                 return Ok(Some((call, 1)));
             }
         }
@@ -473,18 +480,25 @@ impl<'a> Parser<'a> {
     /// `lhs` must be a valid dyad from the store.
     unsafe fn field_access_each(
         &mut self,
+        tape: &mut ParsingTape,
         lhs: DyadPtr,
         left: Cell,
         member: Member,
     ) -> Result<(DyadPtr, usize), ParseError> {
         let Some((connective, a, b)) = crate::identities::group::members(self.types, lhs) else {
-            return self.field_access(lhs, left, member);
+            return self.field_access(tape, lhs, left, member);
         };
-        // A member reads as `.`'s left operand does, through its name.
+        // A member reads as `.`'s left operand does, through its name, and stands where the group
+        // does.
         let (a, b) =
             (self.settled_type(self.types.through(a)), self.settled_type(self.types.through(b)));
-        let (a, consumed) = self.field_access_each(a, Cell::built(a), member.clone())?;
-        let (b, _) = self.field_access_each(b, Cell::built(b), member)?;
+        let standing = |d: DyadPtr| {
+            let mut cell = Cell::built(d);
+            cell.start = left.start;
+            cell
+        };
+        let (a, consumed) = self.field_access_each(tape, a, standing(a), member.clone())?;
+        let (b, _) = self.field_access_each(tape, b, standing(b), member)?;
         let joined = crate::identities::group::join(self.rt.store, self.types, connective, a, b)?;
         Ok((joined, consumed))
     }
@@ -497,6 +511,7 @@ impl<'a> Parser<'a> {
     /// `lhs` must be a valid dyad from the store.
     unsafe fn field_access(
         &mut self,
+        tape: &mut ParsingTape,
         lhs: DyadPtr,
         left: Cell,
         member: Member,
@@ -526,8 +541,8 @@ impl<'a> Parser<'a> {
                 let node = self.cx.definitions.last().expect("a parse body is open").this_param;
                 let member = self.this_field(name, nstart)?;
                 if let Some(args) = call {
-                    let called =
-                        self.call_member(member, name, &left, Receiver::Node(node), args)?;
+                    let receiver = Receiver::Node(node);
+                    let called = self.call_member(tape, member, name, &left, receiver, args)?;
                     if let Some(call) = called {
                         return Ok((call, 1));
                     }
@@ -582,7 +597,7 @@ impl<'a> Parser<'a> {
                 }
                 let ty = dyad::ty(node);
                 return self
-                    .static_member_access(node, &left, ty, name, call)?
+                    .static_member_access(tape, node, &left, ty, name, call)?
                     .ok_or(ParseError::BadReflectRead);
             }
             // A field whose declared type gives a value is read when the code runs, even through a
@@ -591,7 +606,7 @@ impl<'a> Parser<'a> {
             // how the operand is used‹ [[R193]]).
             if let Some(t) = crate::identities::node_output(self.types, lhs) {
                 if self.reads_whole(t, name) {
-                    if let Some(read) = self.run_node_member(lhs, left, t, name, None)? {
+                    if let Some(read) = self.run_node_member(tape, lhs, left, t, name, None)? {
                         return Ok(read);
                     }
                 }
@@ -605,7 +620,8 @@ impl<'a> Parser<'a> {
                 != crate::identities::read::Read::Node
             {
                 if let Some(t) = crate::identities::node_output(self.types, lhs) {
-                    if let Some(read) = self.run_node_member(lhs, left, t, name, call.clone())? {
+                    let read = self.run_node_member(tape, lhs, left, t, name, call.clone())?;
+                    if let Some(read) = read {
                         return Ok(read);
                     }
                 }
@@ -624,7 +640,8 @@ impl<'a> Parser<'a> {
                     if let Some(args) = call {
                         if let Some((member, _)) = self.static_member_of(t, name) {
                             let none = Receiver::Nothing;
-                            if let Some(call) = self.call_member(member, name, &left, none, args)? {
+                            let called = self.call_member(tape, member, name, &left, none, args)?;
+                            if let Some(call) = called {
                                 return Ok((call, 1));
                             }
                         }
@@ -709,7 +726,8 @@ impl<'a> Parser<'a> {
                 Ok(found) => found,
                 Err(e) => {
                     let name = &self.cx.source[nstart..nstart + nlen];
-                    return self.static_member_access(lhs, &left, pointee, name, call)?.ok_or(e);
+                    let read = self.static_member_access(tape, lhs, &left, pointee, name, call)?;
+                    return read.ok_or(e);
                 }
             };
             self.cx.member_path = self.field_path(&left, binding);
@@ -739,7 +757,8 @@ impl<'a> Parser<'a> {
             Ok(found) => found,
             Err(e) => {
                 let name = &self.cx.source[nstart..nstart + nlen];
-                return self.static_member_access(lhs, &left, record_logos, name, call)?.ok_or(e);
+                let read = self.static_member_access(tape, lhs, &left, record_logos, name, call)?;
+                return read.ok_or(e);
             }
         };
         // A field is bytes inside storage; a node's fields are read above, through its slots.
@@ -845,7 +864,7 @@ impl<'a> Parser<'a> {
         };
         let member = Member { start: nstart, len: nlen, index, key, call };
         // SAFETY: `lhs` is a reduced dyad off the tape.
-        let access = unsafe { self.field_access_each(lhs, left, member) };
+        let access = unsafe { self.field_access_each(tape, lhs, left, member) };
         self.cx.member_root = std::ptr::null_mut();
         let path = std::mem::take(&mut self.cx.member_path);
         let (node, consumed) = access?;
@@ -1625,6 +1644,7 @@ impl<'a> Parser<'a> {
     /// `lhs` must be a reduced dyad from the store and `logos` a type identity node.
     unsafe fn static_member_access(
         &mut self,
+        tape: &mut ParsingTape,
         lhs: DyadPtr,
         left: &Cell,
         logos: DyadPtr,
@@ -1635,7 +1655,8 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         if let Some(args) = call {
-            if let Some(call) = self.call_member(member, name, left, Receiver::Value(lhs), args)? {
+            let receiver = Receiver::Value(lhs);
+            if let Some(call) = self.call_member(tape, member, name, left, receiver, args)? {
                 return Ok(Some((call, 1)));
             }
         }
@@ -1670,6 +1691,23 @@ impl<'a> Parser<'a> {
         members.push(body);
         let r = members.resolve(self.trie, name).ok()?;
         Some((r.identity, r.binding))
+    }
+
+    /// Whether `name` read after `owner`, a name as a line's scan resolves it, is a `static`
+    /// function whose result is a type, of the type `owner` names or holds a value of: a call of
+    /// it runs where it is built, as [`Self::call_member`] does.
+    ///
+    /// # Safety
+    /// `owner` must be null or a resolved dyad from the store.
+    pub(super) unsafe fn member_gives_type(&self, owner: DyadPtr, name: &str) -> bool {
+        let types = self.types;
+        if owner.is_null() {
+            return false;
+        }
+        let held = self.settled_type(types.through(owner));
+        let t = crate::identities::type_identity_of(types, held)
+            .unwrap_or_else(|| types.type_of(owner));
+        self.static_member_of(t, name).is_some_and(|(member, _)| self.returns_type(member))
     }
 
     /// # Safety

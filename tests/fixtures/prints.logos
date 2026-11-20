@@ -1,0 +1,2 @@
+# A file whose top level prints, so where its import runs shows in the output.
+print «imp»
