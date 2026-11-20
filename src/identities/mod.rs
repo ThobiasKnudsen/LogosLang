@@ -23,7 +23,7 @@ pub mod read;
 
 mod and;
 pub(crate) mod array;
-mod assign;
+pub(crate) mod assign;
 pub(crate) mod binary;
 #[path = "bool.rs"]
 pub(crate) mod bool_mod;

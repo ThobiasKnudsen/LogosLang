@@ -3402,6 +3402,11 @@ fn a_name_is_written_only_if_declared_mut() {
         parse_err_after(&["x := i32 ?"], "x = 6"),
         ParseError::NotMutable(Box::new("x".into()))
     );
+    // The gates are met where `=` reads its place, before its right side is read.
+    assert_eq!(
+        parse_err_after(&["x := i32 5"], "x = nope"),
+        ParseError::NotMutable(Box::new("x".into()))
+    );
     assert_eq!(parse_err("mut mut x := 5"), ParseError::DoubleGate);
     assert_eq!(
         parse_err_after(&["immut x := i32 5"], "x = 6"),

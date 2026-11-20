@@ -2364,6 +2364,52 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
 }
 
 #[test]
+fn a_held_line_checks_the_gates_of_what_it_writes_where_it_is_written() {
+    // The place left of `=` stands before the read, so it is read and its gates are checked
+    // where the line is written, though the function is never called.
+    for (src, name) in [
+        ("f := fn (a := dyad ?) -> i64 ( x := i64 3, x = a + x, x ), 0", "x"),
+        ("f := fn (a := dyad ?) -> i64 ( x := i64 3, x = undefinedname + a, x ), 0", "x"),
+        ("t := type ( n := i64 ?, static add := fn (a := dyad ?) -> void ( n = a + n ) ), 0", "n"),
+        (
+            "p := type ( mut x := i64 ? ), \
+             f := fn (a := dyad ?) -> i64 ( q := p (1), q.x = a + q.x, q.x ), 0",
+            "q",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("`{name}` is not `mut`")), "{src}: stderr: {stderr}");
+        assert!(!stderr.contains("held line"), "{src}: stderr: {stderr}");
+    }
+    // The place read there is the one each run writes, in a line held inside another's bracket
+    // too, whose parse where it is written stops at its cut as the outer line's does.
+    for (src, want) in [
+        ("f := fn (a := dyad ?) -> i64 ( if a > 0 ( i64 1 + a ) else ( i64 2 ) ), f(i64 5)", "6"),
+        ("f := fn (a := dyad ?) -> i64 ( mut x := i64 3, x = a + x, x ), f(i64 5) + f(i64 1)", "12"),
+        (
+            "t := type ( mut n := i64 ?, static add := fn (a := dyad ?) -> void ( n = a + n ) ), \
+             mut v := t (3), v.add(i64 5), v.add(i64 1), v.n",
+            "9",
+        ),
+        (
+            "p := type ( mut x := i64 ? ), \
+             f := fn (a := dyad ?) -> i64 ( mut q := p (1), q.x = a + q.x, q.x ), f(i64 5)",
+            "6",
+        ),
+        ("f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, d ), f(i64 7)", "7"),
+        (
+            "f := fn (a := dyad ?) -> i64 ( mut x := i64 3, if a > 0 ( x = a + x ) else ( x = x ), \
+             x ), f(i64 5)",
+            "8",
+        ),
+        ("f := fn (a := dyad ?) -> i64 ( mut x := i64 3, while x < a ( x = a + x ), x ), f(i64 5)", "8"),
+    ] {
+        assert_eq!(line(src), want, "{src}");
+    }
+}
+
+#[test]
 fn inclusion_the_design_leaves_open_is_a_checked_error() {
     for src in ["i32 ⊆ type\n", "u8 ⊆ dyad\n", "bool ⊆ type\n"] {
         let (echoes, stderr) = repl(src.as_bytes());

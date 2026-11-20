@@ -18,10 +18,10 @@ impl<'a> Parser<'a> {
         self.add_gate(binding, gate)
     }
 
-    /// A write into a place reached by a path is granted by every binding
-    /// along it, `immut` vetoing first; the constructor's fill of its fresh
-    /// node is granted unless `immut` vetoes it; a place reached no such way passes here.
-    pub(crate) fn check_path_write(&self, target: &Cell) -> Result<(), ParseError> {
+    /// A write into a name is granted by its own binding, and into a place reached by a path by
+    /// every binding along it, `immut` vetoing first; the constructor's fill of its fresh node is
+    /// granted unless `immut` vetoes it; a place reached no such way passes here.
+    pub(crate) fn check_write(&self, target: &Cell) -> Result<(), ParseError> {
         use crate::identities::this;
         let node = target.dyad;
         // SAFETY: `target` holds a reduced dyad from the store and a null or `array` path; a
@@ -37,6 +37,9 @@ impl<'a> Parser<'a> {
             // A fill of a field of a type stamped as the parse runs: its `immut` is read then.
             if this::is_named(self.types, node) {
                 return Ok(());
+            }
+            if target.path.is_null() && dyad::ty(node) == self.types.binding_ {
+                return self.check_gates(&[node]);
             }
         }
         self.check_gates(&self.path_of(target))

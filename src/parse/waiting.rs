@@ -3,10 +3,10 @@
 
 //! A line whose value's type is known only when it runs, since it reads a `dyad` name, or a
 //! `-> dyad` call as an infix's operand or through `.`: found before it is lexed, parsed where it
-//! is written up to that read, and from there each time it runs, over the nodes such values hold
-//! then (`identities::waiting`, ›A `dyad ?` place is transparent: a placeholder for a new node of
-//! any type‹ [[R293]]). A `while` condition that read a `dyad` name is held the same way, parsed
-//! again on each pass.
+//! is written up to that read or a reader before it, and from there each time it runs, over the
+//! nodes such values hold then (`identities::waiting`, ›A `dyad ?` place is transparent: a
+//! placeholder for a new node of any type‹ [[R293]]). A `while` condition that read a `dyad` name
+//! is held the same way, parsed again on each pass.
 
 use super::*;
 use crate::identities::meta::prec;
@@ -18,8 +18,9 @@ use crate::identities::read::{read_kind, Read};
 #[derive(Default)]
 struct Found {
     read_at: Option<usize>,
-    /// The first top-level identity built as it is lexed that may read past the cell after it.
-    reader_at: Option<usize>,
+    /// The first top-level identity built as it is lexed that may read past the cell after it:
+    /// where the cells built with it start, and whether it is `=`.
+    reader_at: Option<(usize, bool)>,
     /// The first `&`, at any depth: the scope the line stands in holds what it lands.
     address_at: Option<usize>,
     refused: Option<(usize, String)>,
@@ -29,9 +30,11 @@ struct Found {
     cuts: Vec<usize>,
 }
 
-/// A line that waits: where it ends, and where the part left to the run starts.
+/// A line that waits: where it ends, where the part left to the run starts, and whether an `=`
+/// stands there, the part before it being the place it writes.
 pub(super) struct Waits {
     cut: usize,
+    writes: bool,
     end: usize,
 }
 
@@ -76,9 +79,15 @@ impl<'a> Parser<'a> {
             return Err(ParseError::WaitingLineHolds(Box::new(word)));
         }
         let read_at = found.read_at.unwrap_or(start);
-        let sooner = |at: Option<usize>| at.is_some_and(|at| at < read_at);
-        let whole = sooner(found.reader_at) || sooner(found.address_at);
-        Ok(Some(Waits { cut: if whole { start } else { read_at }, end }))
+        // A reader before the read may read past it, so the parse here stops before the reader.
+        let (cut, writes) = match found.reader_at {
+            Some((at, writes)) if at < read_at => (at, writes),
+            _ => (read_at, false),
+        };
+        if found.address_at.is_some_and(|at| at < cut) {
+            return Ok(Some(Waits { cut: start, writes: false, end }));
+        }
+        Ok(Some(Waits { cut, writes, end }))
     }
 
     /// Where the line at the cursor reads what a call that gives a `dyad` gives inside a bracket,
@@ -236,7 +245,7 @@ impl<'a> Parser<'a> {
                     chain = at;
                 }
                 if self.reads_past_next(id) {
-                    found.reader_at.get_or_insert(at);
+                    found.reader_at.get_or_insert((chain, id == types.assign));
                 }
             }
             if self.is_opener(id) {
@@ -398,7 +407,7 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let start = self.cx.pos;
         let end = start + self.cx.source[start..waits.end].trim_end().len();
-        let kept = self.parse_up_to(waits.cut)?;
+        let kept = self.parse_up_to(&waits)?;
         let text = crate::identities::string::build_text(
             self.rt.store,
             types.string_,
@@ -495,12 +504,16 @@ impl<'a> Parser<'a> {
         Ok(field)
     }
 
-    /// The line at the cursor parsed up to `cut`, the read the run supplies: lexed, and built as
-    /// far as building a cell as it is lexed goes (›A `dyad ?` place is transparent: a placeholder
-    /// for a new node of any type‹ [[R293]], its Q-61 line); a name nothing declared is reported
-    /// here, as at the line's end. What that parse noted for the line goes with the cells. The
-    /// cursor ends at `cut`.
-    fn parse_up_to(&mut self, cut: usize) -> Result<Kept, ParseError> {
+    /// The line at the cursor parsed up to the cut, the read the run supplies or a reader before
+    /// it: lexed, and built as far as building a cell as it is lexed goes (›A `dyad ?` place is
+    /// transparent: a placeholder for a new node of any type‹ [[R293]], its Q-61 line); a name
+    /// nothing declared is reported here, as at the line's end. Before an `=`, what was lexed is
+    /// the place it writes, read here as `=` reads it, so a write its gates refuse is refused
+    /// where it is written (›A function is built once; a `fn` or `run` body is built as far as
+    /// it can be where it is written‹ [[R299]]). What that parse noted for the line goes with
+    /// the cells. The cursor ends at the cut.
+    fn parse_up_to(&mut self, waits: &Waits) -> Result<Kept, ParseError> {
+        let cut = waits.cut;
         if cut <= self.cx.pos {
             return Ok(Kept::default());
         }
@@ -509,13 +522,23 @@ impl<'a> Parser<'a> {
         let source = self.cx.source;
         self.cx.source = &source[..cut];
         let mut tape = ParsingTape::new();
-        let lexed = self.lex_segment(&mut tape);
+        let parsed = self.lex_segment(&mut tape).and_then(|boundary| {
+            debug_assert!(
+                matches!(boundary, Boundary::Eof),
+                "the cut stands before the line's end"
+            );
+            if waits.writes {
+                tape.set_cursor(tape.len());
+                let (place, _) = crate::identities::assign::read_target(self, &mut tape)?;
+                tape.push(place);
+            }
+            Ok(())
+        });
         self.cx.source = source;
         let open = self.cx.open.last_mut().expect("a line is read in an open scope");
         let notes = open.take_line_notes();
         open.add_line_notes(before);
-        let boundary = lexed?;
-        debug_assert!(matches!(boundary, Boundary::Eof), "the cut stands before the line's end");
+        parsed?;
         let cells: Vec<Cell> = tape.iter().map(|(_, c)| *c).collect();
         for &cell in cells.iter().filter(|c| c.is_fresh(self.types)) {
             self.as_operand(cell)?;
@@ -543,7 +566,7 @@ impl<'a> Parser<'a> {
     pub(super) fn hold_condition(&mut self, start: usize) -> Result<DyadPtr, ParseError> {
         let end = self.cx.pos;
         self.cx.pos = start;
-        let held = self.hold_line(Waits { cut: start, end })?;
+        let held = self.hold_line(Waits { cut: start, writes: false, end })?;
         self.cx.pos = end;
         // SAFETY: `held` holds the line `hold_line` just built, which has not run.
         unsafe { crate::identities::waiting::set_into(held.dyad, self.types.bool_) };
