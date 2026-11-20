@@ -226,6 +226,24 @@ pub(super) struct OpenScope {
     /// In such a cell, the first line refused as a line of a scope, with where it starts: the
     /// refusal stands once the cell's line closes, unless a reader took the lines as data.
     held_back: Option<(usize, ParseError)>,
+    /// A `{ … }`'s lines: the value they make.
+    pub(super) kept: Option<KeptValue>,
+}
+
+/// The value a `{ … }` makes, while its lines are read: the record its names lay out, minted at
+/// the `{` so that a `fn` written in it reads its sibling names through the value it is reached
+/// by, as a `static` function reads its value's fields (›A type body describes one level‹
+/// [[R222]]).
+pub(super) struct KeptValue {
+    /// The record type, laid out when the `}` closes it.
+    pub(super) ty: DyadPtr,
+    /// Each `fn` written here that reads the value, with the names it read them among, in
+    /// field order: the record's first fields must still be those names when it is laid out.
+    pub(super) readers: Vec<(DyadPtr, Vec<DyadPtr>)>,
+    /// How many function frames and definitions are open around its own lines.
+    pub(super) depth: (usize, usize),
+    /// Its names lie in the program frame, which every call reaches.
+    pub(super) in_program_frame: bool,
 }
 
 /// What the parse of a line notes on its scope as it goes: the values it made that nothing took,
@@ -713,10 +731,13 @@ impl<'a> Parser<'a> {
         binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         // A `static` function reached through a value takes that value
-        // (DESIGN ›The constructor is a field‹): the `fn` takes it first.
-        let member = !binding.is_null()
-            && self.cx.member_fn_depth == Some(self.cx.frames.len())
-            && self.cx.definitions.last().is_some_and(|d| d.this_param.is_null());
+        // (DESIGN ›The constructor is a field‹): the `fn` takes it first. So does a `fn` written
+        // in a `{ … }`, whose sibling names are the value's.
+        let kept = self.kept_entry(binding);
+        let member = kept.is_some()
+            || !binding.is_null()
+                && self.cx.member_fn_depth == Some(self.cx.frames.len())
+                && self.cx.definitions.last().is_some_and(|d| d.this_param.is_null());
         let (input, params) = self.parse_record_taking(member.then_some(self.types.dyad_))?;
         self.expect_arrow()?;
         self.skip_whitespace();
@@ -755,6 +776,8 @@ impl<'a> Parser<'a> {
         }
         // The value is the first parameter, the one no name declares.
         let this = params[0];
+        let in_kept = kept.is_some();
+        self.cx.definitions.extend(kept);
         let def = self.cx.definitions.last_mut().expect("checked above");
         def.this_param = this;
         def.read_receiver = false;
@@ -775,6 +798,14 @@ impl<'a> Parser<'a> {
         def.this_param = std::ptr::null_mut();
         let receiver = (u64::from(def.read_receiver) * RECEIVER_READS)
             | (u64::from(def.wrote_receiver) * RECEIVER_WRITES);
+        if in_kept {
+            let def = self.cx.definitions.pop().expect("pushed above");
+            if receiver != 0 {
+                let open = self.cx.open.last_mut().expect("the `{ … }` is open");
+                let kept = open.kept.as_mut().expect("the `fn` is written in a `{ … }`");
+                kept.readers.push((binding, def.block.1));
+            }
+        }
         if let (Ok(&f), true) = (f.as_ref(), receiver != 0) {
             let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
             let leaf = self.rt.store.alloc_blob(u64_ty, &receiver.to_ne_bytes());
@@ -782,6 +813,27 @@ impl<'a> Parser<'a> {
             unsafe { *(dyad::value(f) as *mut DyadPtr).add(FN_RECEIVER) = leaf };
         }
         f
+    }
+
+    /// The `{ … }` a `fn` declared as `binding` is written in, as the definition its body is read
+    /// in (›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]): the innermost
+    /// open scope is that `{ … }`'s own.
+    fn kept_entry(&self, binding: DyadPtr) -> Option<OpenType> {
+        let open = self.cx.open.last()?;
+        let (kept, scope) = (open.kept.as_ref()?, open.scope?);
+        if binding.is_null() || self.cx.scopes.current() != Some(scope) {
+            return None;
+        }
+        // SAFETY: `scope` is the open `{ … }`'s block node, its closed lines reduced dyads.
+        let names = unsafe { crate::identities::instance::kept_names(self.types, scope) };
+        // SAFETY: a kept name is a binding dyad from the store.
+        let fields = names.into_iter().filter(|&name| unsafe { self.types.is_storage(name) });
+        Some(OpenType::kept(scope, fields.collect(), kept.ty))
+    }
+
+    /// The `{ … }` whose block is `scope`, while its lines are read.
+    pub(super) fn open_kept(&self, scope: DyadPtr) -> Option<&KeptValue> {
+        self.cx.open.iter().rev().find(|o| o.scope == Some(scope))?.kept.as_ref()
     }
 
     /// The half of `parse_fn` after the signature, shared with a slot body read bare: the
@@ -1929,6 +1981,12 @@ impl<'a> Parser<'a> {
         let passes_out = std::mem::take(&mut self.cx.next_passes_out)
             && matches!(value, BlockValue::Used | BlockValue::Body)
             && lines == Lines::Own;
+        let kept = (lines == Lines::Kept).then(|| KeptValue {
+            ty: self.rt.store.alloc_leaf(self.types.type_),
+            readers: Vec::new(),
+            depth: (self.cx.frames.len(), self.cx.definitions.len()),
+            in_program_frame: self.in_program_frame(),
+        });
         let open = OpenScope {
             narrowed,
             scope: Some(scope),
@@ -1937,6 +1995,7 @@ impl<'a> Parser<'a> {
             gives_none,
             passes_out,
             cell,
+            kept,
             ..OpenScope::default()
         };
         self.cx.open.push(open);
@@ -2099,9 +2158,10 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `scope` must be the innermost open scope, the block whose lines were just read.
     unsafe fn close_kept(&mut self, scope: DyadPtr) -> Result<(Cell, usize), ParseError> {
-        let (record, names) = self.kept_record(scope)?;
-        let types = self.types;
         let open = self.cx.open.len() - 1;
+        let kept = self.cx.open[open].kept.take().expect("a `{ … }`'s lines make its value");
+        let (record, names) = self.kept_record(scope, kept)?;
+        let types = self.types;
         let made_at = self.cx.open[open].lines;
         let mut entries = Vec::with_capacity(names.len());
         for name in names {

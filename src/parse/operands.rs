@@ -1010,8 +1010,12 @@ impl<'a> Parser<'a> {
     /// A value made once (`static`, `immediate`) runs at parse, where a name of the
     /// loop or branch around it has no value yet.
     pub(super) fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
-        // SAFETY: `binding` is the binding dyad the resolver returned for the name.
-        if self.cx.once_at.is_some() && unsafe { Binding::read(binding) }.unmade {
+        // A field named bare has no binding.
+        if self.cx.once_at.is_none() || binding.is_null() {
+            return Ok(());
+        }
+        // SAFETY: a non-null `binding` is the binding dyad the resolver returned for the name.
+        if unsafe { Binding::read(binding) }.unmade {
             return Err(ParseError::OnceReadsUnmade);
         }
         Ok(())
@@ -1062,9 +1066,16 @@ impl<'a> Parser<'a> {
                         .into_owned()
                 }
             };
-            // A `static` name is one place for the run, reachable wherever its function is.
-            // SAFETY: as above.
-            let is_static = unsafe { Binding::has_gate(binding, self.types.static_) };
+            // A `static` name is one place for the run, reachable wherever its function is, and so
+            // is a name of a `{ … }` that holds no bytes, which reads through its value.
+            // SAFETY: as above; a binding's scope is a scope node from the store.
+            let is_static = unsafe {
+                Binding::has_gate(binding, self.types.static_)
+                    || !fields.is_storage()
+                        && !fields.scope.is_null()
+                        && crate::identities::instance::kept_scope(self.types, fields.scope)
+                            .is_some()
+            };
             if !is_static
                 && !self.cx.scopes.is_open(fields.scope)
                 && !self.outer.iter().any(|c| c.scopes.is_open(fields.scope))

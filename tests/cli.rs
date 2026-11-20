@@ -10158,6 +10158,113 @@ fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
     }
 }
 
+/// ›A type body describes one level‹ [[R222]]: a field named bare is read as the field inside a
+/// `static` initializer too, which checks only names for a value made once.
+#[test]
+fn a_field_named_bare_inside_a_static_initializer_is_read() {
+    let src = "static w := ( t := type ( x := i32 ?, static f := fn () -> i32 ( x + 1 ) ), \
+               u := t (4), u.f() ), w";
+    assert_eq!(run_line(src), (Some(0), "5\n".to_string(), String::new()), "{src}");
+}
+
+/// ›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]: a `fn` written in it
+/// reads its sibling names through the value it is reached by, as a `static` function reads its
+/// value's fields.
+#[test]
+fn a_fn_entry_of_a_curly_bracket_reads_its_sibling_names_through_the_value() {
+    for compile in ["", "f.compile(), "] {
+        for (body, printed) in [
+            ("m := { a := i32 1, get := fn () -> i32 ( a + 1 ) }, m.get()", "2"),
+            ("m := { a := i32 2, b := i32 3, get := fn (c := i32 ?) -> i32 ( a * b + c ) }, m.get(k)", "11"),
+            ("m := { a := k, get := fn () -> i32 ( a * 3 ) }, m.get()", "15"),
+            ("m := { a := i32 5, twice := fn () -> i32 ( a * 2 ), get := fn () -> i32 ( twice() + 1 ) }, m.get()", "11"),
+            ("m := { a := i32 2, sum := fn (x := i32 ?) -> i32 ( if x == 0 ( a ) else ( sum(x - 1) + a ) ) }, m.sum(3)", "8"),
+            ("x := i32 4, m := { p := &x, get := fn () -> i32 ( p@ ) }, m.get()", "4"),
+            ("mut m := { mut a := k, inc := fn () -> void ( a = a + 1 ) }, m.inc(), m.inc(), m.a", "7"),
+            ("m := { a := i32 1, get := fn () -> i32 ( a + 1 ) }, n := m, p := &n, n.get() + p@.get()", "4"),
+            ("m := { a := i32 1, seven := fn () -> i32 ( 7 ), b := seven() }, m.b", "7"),
+        ] {
+            let src = format!("f := fn (k := i32 ?) -> i32 ( {body} ), {compile}f(5)");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), ";
+    for (src, printed) in [
+        ("m := { a := i32 1, f := fn () -> i32 ( a + 1 ) }, m.f()".to_string(), "2\n"),
+        ("m := { a := i32 1, f := fn () -> i32 ( a + 1 ) }, m.f.compile(), m.f()".into(), "2\n"),
+        ("m := { x := f64 2.5, f := fn () -> f64 ( x * 2 ) }, m.f.compile(), m.f()".into(), "5.0\n"),
+        ("m := { a := i64 1, f := fn (d := dyad ?) -> i64 ( d + a ) }, m.f(i64 5)".into(), "6\n"),
+        (format!("{bag}m := {{ b := bag (4), a := i32 3, f := fn () -> i32 ( a ) }}, print «{{m.f()}}»"), "3\nfreed 4\n"),
+        ("static m := { a := i32 1, f := fn () -> i32 ( a + 1 ) }, m.f()".into(), "2\n"),
+    ] {
+        assert_eq!(run_line(&src), (Some(0), printed.to_string(), String::new()), "{src}");
+    }
+    // Before its `}`, a bare call of an entry reads the names from the scope being built.
+    for compile in ["", "f.compile(), "] {
+        for (body, printed) in [
+            ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := f() }, m.b", "2"),
+            ("x := f64 2.5, f := fn () -> f64 ( x * 2 ), {compile}y := f() }, m.y", "5.0"),
+            ("a := i32 5, g := fn () -> i32 ( a * 2 ), f := fn () -> i32 ( g() + 1 ), {compile}b := f() }, m.b", "11"),
+            ("a := i32 2, f := fn (x := i32 ?) -> i32 ( if x == 0 ( a ) else ( f(x - 1) + a ) ), {compile}b := f(3) }, m.b", "8"),
+            ("p := alloc 1 of i32 7, f := fn () -> i32 ( p@ ), {compile}b := f() }, m.b", "7"),
+            ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := f(), t := type ( x := i32 ? ) }, m.b", "2"),
+            ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := f(), static s := b * 10 }, m.s", "20"),
+            ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := f() }, m.f() + m.b", "4"),
+        ] {
+            let src = format!("m := {{ {}", body.replace("{compile}", compile));
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    for (src, printed) in [
+        ("m := { mut a := i32 1, inc := fn () -> void ( a = a + 1 ), inc(), inc() }, m.a".to_string(), "3\n"),
+        ("static m := { a := i32 1, f := fn () -> i32 ( a + 1 ), b := f() }, m.b".into(), "2\n"),
+        ("m := { a := i32 1, f := fn () -> i32 ( a + 1 ), print «{f()}» }, m.a".into(), "2\n1\n"),
+        (format!("{bag}m := {{ b := bag (4), a := i32 3, f := fn () -> i32 ( a ), c := f() }}, print «{{m.c}}»"), "3\nfreed 4\n"),
+    ] {
+        assert_eq!(run_line(&src), (Some(0), printed.to_string(), String::new()), "{src}");
+    }
+    let (echoes, stderr) = repl(b"m := { a := i32 1, f := fn () -> i32 ( a + 1 ) }\nm.f()\n");
+    assert_eq!(echoes, ["2"], "stderr: {stderr}");
+    let (echoes, stderr) =
+        repl(b"m := { a := i32 1, f := fn () -> i32 ( a + 1 ), b := f() }\nm.b\n");
+    assert_eq!(echoes, ["2"], "stderr: {stderr}");
+    for (src, expect) in [
+        (
+            "m := { mut a := i32 1, inc := fn () -> void ( a = a + 1 ) }, m.inc()",
+            "`m` is not `mut`",
+        ),
+        (
+            "mut m := { a := i32 1, inc := fn () -> void ( a = a + 1 ) }, m.inc()",
+            "`a` is not `mut`",
+        ),
+        // A call that reaches no value has none to read: by another name, or from an entry of
+        // another `{ … }`, which may run once the names are gone.
+        ("m := { a := i32 1, f := fn () -> i32 ( a + 1 ) }, h := m.f, h()", "`h` works on a value"),
+        (
+            "m := { a := i32 7, f := fn () -> i32 ( a ), n := { g := fn () -> i32 ( f() ) } }, m.n.g()",
+            "`f` works on a value",
+        ),
+        // Inside a function the names lie in its frame, as a block's do.
+        (
+            "g := fn (k := i32 ?) -> i32 ( m := { a := k, f := fn () -> i32 ( a + 1 ), b := f() }, m.b ), g(4)",
+            "a nested function cannot use an outer function's local or parameter",
+        ),
+        (
+            "m := { a := i32 1, inc := fn () -> void ( a = a + 1 ), inc() }, m.a",
+            "`a` is not `mut`",
+        ),
+        (
+            "m := { a := i32 1, b := i32 2, f := fn () -> i32 ( b ), c := move a }, 0",
+            "1:69: error: `f` reads the names written above it from this `{ … }`'s value, so they \
+             must last to its `}`, and `a` ends before it",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_hashmap_reads_a_curly_bracket_each_name_s_spelling_a_text_key() {
     for (src, printed) in [
