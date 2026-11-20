@@ -4695,6 +4695,7 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
     let mk_of = "mk := fn (u := type ?) -> type ( u )";
     let boxed = "mut t := type ?, t = i32, mk := fn () -> type ( t )";
     let o = "o := type ( static m := fn () -> type ( i32 ) )";
+    let o_by_name = format!("{o}, k := o.m");
     let pt = "pt := type ( mut a := i32 ? ), mk := fn () -> type ( pt )";
     let h = "h := fn () -> i32 ( print «h», 1 ), mk := fn () -> type ( print «mk», i32 )";
     for (named, unnamed, want) in [
@@ -4729,6 +4730,8 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
         (boxed, "i32", "u := mk(), u 3", "mk() 3", "3"),
         (mk, "type", "u := mk(), x := u 3, x.type", "x := mk() 3, x.type", "i32"),
         (mk_of, "type", "u := mk(i64), x := u 3, x.type", "x := mk(i64) 3, x.type", "i64"),
+        (o, "i32", "u := o.m(), u 3", "o.m() 3", "3"),
+        (o_by_name.as_str(), "i32", "u := k(), u 3", "k() 3", "3"),
         (mk, "i32", "u := mk(), u(7)", "mk()(7)", "7"),
         (pt, "i32", "u := mk(), v := u(4), v.a", "v := mk()(4), v.a", "4"),
         (mk, "type", "u := mk(), u", "mk()", "i32"),
@@ -4746,6 +4749,9 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
     // In a body the call runs where the body is written; what stands before it waits for f's call.
     let src = format!("{h}, f := fn () -> i32 ( h() + mk() 5 ), print «defined», f()");
     assert_eq!(line(&src), "mk\ndefined\nh\n6");
+    let om = "o := type ( static m := fn () -> type ( print «m», i32 ) )";
+    let src = format!("{om}, f := fn () -> i32 ( o.m() 3 ), print «defined», f()");
+    assert_eq!(line(&src), "m\ndefined\n3");
 }
 
 #[test]
