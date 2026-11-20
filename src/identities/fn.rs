@@ -59,7 +59,8 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
         dyad::set_head(cx.fn_type, record);
     }
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+    let sides = &["lhs", "rhs"];
+    let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, sides);
     let arrow = cx.store.alloc_head(cx.type_, record);
     cx.declare("->", arrow);
     arrow

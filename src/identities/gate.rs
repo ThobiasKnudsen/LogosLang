@@ -32,12 +32,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
 /// No node is ever typed by a gate word; its identity exists to stand on a
 /// binding.
 pub(super) fn word(cx: &mut Cx, name: &str) -> DyadPtr {
-    let record = meta::record_assoc(
-        cx.store,
-        meta::TOKEN_TAG,
-        meta::prec::PREFIX,
-        crate::parse::Assoc::Right,
-    );
+    let record = meta::token_record(cx, meta::prec::PREFIX, crate::parse::Assoc::Right, &[]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(name, id);
     id

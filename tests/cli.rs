@@ -4365,6 +4365,32 @@ fn a_comment_before_a_bare_condition_s_value_is_read_through() {
     }
 }
 
+/// ›An `if` body needs no brackets‹ [[R265]]: the condition is the first complete expression, and
+/// a quote, whose record names no left side, starts the body; a comment after a complete part
+/// still leaves the cell after it to decide.
+#[test]
+fn a_bare_condition_ends_before_a_quote() {
+    let mut cases: Vec<(String, &str)> = [
+        ("if (true) «a» else «b»", "a\n"),
+        ("c := true, if c «a» else «b»", "a\n"),
+        ("c := true, if c # «c» and false «a» else «b»", "b\n"),
+        ("mut c := true, if c mut y := 1, 0", "0\n"),
+    ]
+    .into_iter()
+    .map(|(src, want)| (src.to_string(), want))
+    .collect();
+    for c in ["", "f.compile(), "] {
+        for (src, want) in [
+            (format!("f := fn () -> i32 ( if (true) «a» else «b», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> string ( if (true) «a» else «b» ), {c}f()"), "a\n"),
+            (format!("f := fn (c := bool ?) -> string ( if c «a» else «b» ), {c}f(false)"), "b\n"),
+        ] {
+            cases.push((src, want));
+        }
+    }
+    assert_runs(&cases);
+}
+
 #[test]
 fn the_boundary_s_comment_lift_reads_a_built_cell_with_no_node_without_faulting() {
     // `h1` marks the unknown `zz` built, which leaves its cell with no node, and `h2`

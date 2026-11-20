@@ -22,8 +22,9 @@
 //! [66]       u8   1 where the type's definition says a value of it is its node's address
 //! [67..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
-//!              TUPLE/LIST         u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
-//!                                 none), then arity × `dyad@` role-name strings
+//!              TUPLE/LIST/TOKEN   u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
+//!                                 none), then arity × `dyad@` role-name strings; a token's
+//!                                 roles name the sides it stands between, never a slot
 //!              RECORD            see `RECORD_TAG`
 //!            a mint's is its origin's, no op or output slot, then `[output_type, op, key]`,
 //!            the words its nodes share and the array of field types it was made for
@@ -49,7 +50,8 @@ pub(crate) const LIST_TAG: u8 = 15;
 pub(crate) const FRACTION_TAG: u8 = 16;
 /// Values are themselves types, each carrying a record like this one; the root's kind.
 pub(crate) const TYPEREC_TAG: u8 = 18;
-/// A parse-only token; no values exist.
+/// A parse-only token; no values exist. Its roles name the sides it stands between: `lhs` first
+/// where it continues what stands to its left, none where it starts what follows it.
 pub(crate) const TOKEN_TAG: u8 = 19;
 /// Values are `[entry: @exec, convention]`, 16 bytes; every exec leaf is one.
 pub(crate) const CALLABLE_TAG: u8 = 20;
@@ -150,6 +152,7 @@ pub(crate) fn record_of_nodes(store: &mut Store, kind: u8, parse_rank: f64) -> *
 /// Right for a prefix word, so that in a chain the rightmost runs first and each finds
 /// its operand constructed.
 pub(crate) fn record_assoc(store: &mut Store, kind: u8, parse_rank: f64, assoc: Assoc) -> *mut u8 {
+    debug_assert_ne!(kind, TOKEN_TAG, "a token's record names its sides: `token_record`");
     let blob = header(kind, assoc, parse_rank);
     store.alloc_bytes(&blob)
 }
@@ -162,6 +165,17 @@ pub(crate) fn operand_record(
     roles: &[&str],
 ) -> *mut u8 {
     debug_assert!(matches!(kind, TUPLE_TAG | LIST_TAG), "operand records carry operand kinds");
+    roles_record(cx, kind, parse_rank, assoc, roles)
+}
+
+/// A parse-only token's record, `sides` the sides it stands between, `lhs` first where it
+/// continues what stands to its left (`..`, `.`, `:=`), none where it starts what follows it
+/// (`«`, `(`, a gate word).
+pub(crate) fn token_record(cx: &mut Cx, parse_rank: f64, assoc: Assoc, sides: &[&str]) -> *mut u8 {
+    roles_record(cx, TOKEN_TAG, parse_rank, assoc, sides)
+}
+
+fn roles_record(cx: &mut Cx, kind: u8, parse_rank: f64, assoc: Assoc, roles: &[&str]) -> *mut u8 {
     debug_assert!(!cx.string_.is_null(), "role names need the string logos registered");
     let mut blob = header(kind, assoc, parse_rank).to_vec();
     let slot_of = |name: &str| roles.iter().position(|&r| r == name).map_or(NO_SLOT, |i| i as u8);
@@ -566,7 +580,7 @@ pub(crate) unsafe fn assoc_of(id: DyadPtr) -> Assoc {
 }
 
 /// # Safety
-/// `id` must carry an operand record (a `TUPLE_TAG` or `LIST_TAG` kind).
+/// `id` must carry an operand record (a `TUPLE_TAG` or `LIST_TAG` kind) or a token's.
 pub(crate) unsafe fn arity_of(id: DyadPtr) -> usize {
     *dyad::head(id).add(PAYLOAD_OFF) as usize
 }
@@ -578,12 +592,13 @@ pub(crate) unsafe fn role_of(id: DyadPtr, i: usize) -> DyadPtr {
     std::ptr::read_unaligned(p as *const DyadPtr)
 }
 
-/// Whether `id` is an operator whose first operand is `lhs`, the value to its left.
+/// Whether `id` reads what stands to its left: an operator whose first operand is `lhs`, or a
+/// token whose first side is.
 ///
 /// # Safety
 /// `id` must be a non-null dyad from the store; `kind_of` turns away a node with no record.
 pub(crate) unsafe fn takes_lhs(id: DyadPtr) -> bool {
-    matches!(kind_of(id), Some(TUPLE_TAG | LIST_TAG))
+    matches!(kind_of(id), Some(TUPLE_TAG | LIST_TAG | TOKEN_TAG))
         && arity_of(id) > 0
         && crate::reflect::text_of(role_of(id, 0)) == b"lhs"
 }

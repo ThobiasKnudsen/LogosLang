@@ -10,7 +10,7 @@ use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
+    let record = meta::token_record(cx, meta::prec::OPEN, crate::parse::Assoc::Left, &[]);
     let open = cx.store.alloc_head(cx.type_, record);
     cx.declare("(", open);
     cx.metas.insert(open, |p, _id, tape| {
@@ -20,7 +20,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+    let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, &[]);
     let close = cx.store.alloc_head(cx.type_, record);
     cx.declare(")", close);
 

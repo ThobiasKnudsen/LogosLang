@@ -49,7 +49,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
     // `else` is a parse-only token between the branches, not a function.
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+    let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, &[]);
     let else_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("else", else_);
 

@@ -17,7 +17,7 @@ use crate::Core;
 /// `f64` is built first, then `lossy`, then `i32` (›A parse is ranked by what it takes from its
 /// right‹ [[R116]]).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record_assoc(cx.store, meta::TOKEN_TAG, meta::prec::CONVERT, Assoc::Right);
+    let record = meta::token_record(cx, meta::prec::CONVERT, Assoc::Right, &["lhs", "rhs"]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("lossy", id);
     cx.metas.insert(id, construct);
