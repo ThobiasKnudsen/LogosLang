@@ -368,6 +368,15 @@ pub(super) fn build_alloc(
     // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
     // SAFETY: `init` is a reduced dyad just parsed.
     let init = init.filter(|&i| unsafe { !types.is_hole(i) }).unwrap_or(std::ptr::null_mut());
+    // The first cell takes a copy of a named owner, as a name's place does.
+    // SAFETY: `init` is null or a reduced dyad of `pointee`'s type; `pointee` a type node.
+    let init = unsafe {
+        if !init.is_null() && super::copy::owns(types, pointee) {
+            super::copy::taken(store, types, init)
+        } else {
+            init
+        }
+    };
     // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store; the
     // owning `@pointee` is made with the mint, so its nodes give one type.
     unsafe {

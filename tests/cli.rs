@@ -7622,6 +7622,20 @@ fn alloc_gives_each_cell_a_value_of_its_own() {
         (format!("{array}, (p + 1)@[0] = i32 9, (p + 1)@[0]"), "9\n"),
         (format!("{boxes}, print «{{(p@.p + 0)@}} {{((p + 1)@.p + 0)@}}»"), "1 9\n"),
         (format!("{boxes}, free p@, free (p + 1)@, print «freed»"), "free\nfree\nfreed\n"),
+        // A named owner is copied into every cell, the first included.
+        (
+            "import ./identities/array.logos, a := array i32 [1, 2], p := alloc 2 of a, \
+             p@[0] = i32 9, a[0]"
+                .to_string(),
+            "1\n",
+        ),
+        (
+            format!(
+                "{BOX}, x := box (1, 2), p := alloc 1 of x, (p@.p + 0)@ = i32 9, \
+                 print «{{(x.p + 0)@}}»"
+            ),
+            "1\nfree\n",
+        ),
     ]);
 }
 
