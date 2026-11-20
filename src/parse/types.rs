@@ -172,14 +172,11 @@ impl<'a> Parser<'a> {
         &mut self,
         scope: DyadPtr,
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
-        use crate::identities::{declare, hole, read::carry_of};
+        use crate::identities::{hole, read::carry_of};
         let types = self.types;
-        let lines = crate::identities::scope::exprs_of(scope).unwrap_or_default();
         let mut names = Vec::new();
-        for &line in lines.iter().filter(|&&l| dyad::ty(l) == types.declare_) {
-            let name = declare::binding_of(line);
-            let b = Binding::read(name);
-            if b.scope != scope || b.is_dead() || !types.is_storage(name) {
+        for name in crate::identities::instance::kept_names(types, scope) {
+            if !types.is_storage(name) {
                 continue;
             }
             let ends =

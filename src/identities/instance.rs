@@ -125,6 +125,42 @@ pub(crate) fn build_field(
     store.alloc_words(types.field_, &[record, binding, std::ptr::null_mut()])
 }
 
+/// The names a `{ … }` keeps: its live declarations, in written order.
+///
+/// # Safety
+/// `scope` must be a scope node from the store.
+pub(crate) unsafe fn kept_names(types: &Core, scope: DyadPtr) -> Vec<DyadPtr> {
+    let lines = super::scope::exprs_of(scope).unwrap_or_default();
+    lines
+        .iter()
+        .filter(|&&line| dyad::ty(line) == types.declare_)
+        .map(|&line| super::declare::binding_of(line))
+        .filter(|&name| {
+            let b = Binding::read(name);
+            b.scope == scope && !b.is_dead()
+        })
+        .collect()
+}
+
+/// The scope a `{ … }` value keeps and the line that makes the value, when `node` is one: the
+/// block, or its one line, whose last line constructs a value of the record the block is the
+/// body of.
+///
+/// # Safety
+/// `node` must be a node from the store.
+pub(crate) unsafe fn kept_scope(types: &Core, node: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
+    let line =
+        if dyad::ty(node) == types.scope { crate::parse::last_sequence_expr(node)? } else { node };
+    if dyad::ty(line) != types.construct_ {
+        return None;
+    }
+    let body = meta::record_body_of(*(dyad::value(line) as *const DyadPtr).add(1));
+    let kept = !body.is_null()
+        && dyad::ty(body) == types.scope
+        && crate::parse::last_sequence_expr(body) == Some(line);
+    kept.then_some((body, line))
+}
+
 /// The record's storage and the field's binding a `field` place was built over.
 ///
 /// # Safety

@@ -67,6 +67,9 @@ pub struct Store {
     /// because a table owns heap of its own and its `Drop` must run.
     #[allow(clippy::vec_box)]
     tables: Vec<Box<HashMap<i64, i64>>>,
+    /// One text node per text, the first a `string` key of a table was read from: what the
+    /// tables key text by, so two nodes holding one text are one key.
+    texts: HashMap<Box<[u8]>, DyadPtr>,
     /// The compiled code each fn node owns (DESIGN ›The executing primitive has two paths‹).
     artifacts: HashMap<DyadPtr, Artifact>,
     /// Retired while a jump was live; freed when the last jump returns.
@@ -133,6 +136,7 @@ impl Store {
             #[cfg(test)]
             node_list: Vec::new(),
             tables: Vec::new(),
+            texts: HashMap::new(),
             artifacts: HashMap::new(),
             retired: Vec::new(),
             live_jumps: 0,
@@ -289,6 +293,15 @@ impl Store {
         ptr
     }
 
+    /// The one node a table keys `text` by: `node`, which holds `text`, when none does yet.
+    pub fn text_key(&mut self, text: &[u8], node: DyadPtr) -> DyadPtr {
+        if let Some(&kept) = self.texts.get(text) {
+            return kept;
+        }
+        self.texts.insert(text.into(), node);
+        node
+    }
+
     /// Every node, in birth order: a test's walk, since a block's size is known only to its type.
     #[cfg(test)]
     pub fn iter(&self) -> impl Iterator<Item = DyadPtr> + '_ {
@@ -312,13 +325,16 @@ impl Store {
                 + size_of::<HashMap<i64, i64>>()
                 + table.capacity() * (size_of::<(i64, i64)>() + 1);
         }
+        // Each text's own box, and an entry and a control byte per bucket.
+        boxed_bytes += self.texts.keys().map(|text| text.len()).sum::<usize>()
+            + self.texts.capacity() * (size_of::<(Box<[u8]>, DyadPtr)>() + 1);
         StoreStats {
             nodes: self.nodes,
             node_bytes: self.node_bytes,
             arena_bytes: self.arena.used - self.node_bytes,
             arena_allocs: self.hung,
             boxed_bytes,
-            boxed_allocs: self.tables.len(),
+            boxed_allocs: self.tables.len() + self.texts.len(),
         }
     }
 }

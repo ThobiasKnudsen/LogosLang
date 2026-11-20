@@ -9364,6 +9364,34 @@ fn a_curly_bracket_keeps_its_scope_as_a_value_whose_names_are_read_with_a_dot() 
 }
 
 #[test]
+fn a_hashmap_reads_a_curly_bracket_each_name_s_spelling_a_text_key() {
+    for (src, printed) in [
+        ("mut h := hashmap string -> i32 { a := 1, b := 2 }, h[«a»]", "1"),
+        ("mut h := hashmap string -> i32 { a := 1, b := 2 }, h[«new york»] = 3, h[«new york»] + h[«b»]", "5"),
+        ("h := hashmap string -> i32 { a := 1, b := a + 1 }, h[«b»]", "2"),
+        ("h := hashmap string -> i32 { }, h == ?", "false"),
+        ("h := hashmap string -> type { t := i32, u := f64 }, h[«u»] == f64", "true"),
+        ("h := hashmap string -> string { a := «x» }, print «{h[«a»]}»", "x"),
+        ("h := hashmap string -> hashmap string -> i32 { a := hashmap string -> i32 { x := 7 } }, r := h[«a»], r[«x»]", "7"),
+        ("f := fn (k := i32 ?) -> i32 ( h := hashmap string -> i32 { a := k, b := k * 2 }, h[«b»] ), f(4)", "8"),
+        ("mut h := hashmap string -> i32 { a := 1 }, mut n := h, n[«a»] = 9, h[«a»]", "1"),
+        ("mut h := hashmap string -> i32, h[«x»] = 4, k := «x», h[k]", "4"),
+    ] {
+        assert_eq!(run_line(src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    for (src, expect) in [
+        ("h := hashmap i32 -> i32 { a := 1 }", "keys each entry by its name's spelling"),
+        ("h := hashmap string -> i32 { regex «x+» := i32 }", "`x+` is a pattern"),
+        ("h := hashmap string -> i32 { a := 1.5 }", "no exact value in the type it lands in"),
+        ("h := hashmap string -> i32 { a := 1 }, h[«z»]", "the map holds no value at this key"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_tape_line_no_check_narrowed_is_checked_through_a_record_pointer() {
     let q = "pt := type ( mut a := u64 ?, mut b := u64 ? ), \
              q := type ( v := u64 ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
