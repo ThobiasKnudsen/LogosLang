@@ -1283,6 +1283,10 @@ unsafe fn moved_out_via(
     if logos == types.by_copy.out {
         return moved_out_via(types, *(dyad::value(node) as *const DyadPtr), visit);
     }
+    // A line held for the run whose value lands in a `dyad` gives the node it lands in.
+    if logos == types.waiting.line {
+        return (super::read::output_type(types, node) == types.dyad_).then_some(node);
+    }
     if logos == types.scope {
         return crate::parse::last_sequence_expr(node)
             .and_then(|tail| moved_out_via(types, tail, visit));
@@ -1788,6 +1792,10 @@ mod tests {
             "mut d := dyad ?, d = i64 1, g := fn (a := dyad ?) -> i64 ( a ), g(d), 1",
             "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() + 1 ), f(), 1",
             "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( 1 + g() * 2 ), for 0..3 ( f() ), 1",
+            "f := fn (a := dyad ?) -> void ( print «{a + 1}» ), f(i64 5), f(f64 2.5), 1",
+            "f := fn (a := dyad ?) -> void ( print «{a + 1/2}» ), f(1/3), 1",
+            "f := fn (a := dyad ?) -> void ( for 0..3 ( print «{a * 2}» ) ), f(i64 5), 1",
+            "f := fn (a := dyad ?) -> void ( if a > 0 ( print «{a + 1}» ) ), f(i64 5), 1",
         ] {
             assert_eq!(run_hosted(src), (1, 0), "{src}");
         }

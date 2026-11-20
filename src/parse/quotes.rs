@@ -190,6 +190,10 @@ impl<'a> Parser<'a> {
                         continue;
                     };
                     // SAFETY: `part` is the reduced dyad just parsed.
+                    if unsafe { crate::identities::waiting::give_dyad(self.types, part) } {
+                        self.note_made(part);
+                    }
+                    // SAFETY: as above.
                     if let Err(e) = unsafe { crate::identities::read::value_type(self.types, part) }
                     {
                         return Err(self.fail_at(inner.start, e));

@@ -71,6 +71,21 @@ pub(crate) unsafe fn set_into(node: DyadPtr, into: DyadPtr) {
     *ops.add(LINE_OUTPUT) = into;
 }
 
+/// Where `value`, a quote's `{…}`, gives the value of a line held for the run, that line gives a
+/// `dyad`: the node its value lands in when it runs, since its type is known only then. Whether
+/// it did.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store, parsed just now.
+pub(crate) unsafe fn give_dyad(types: &Core, value: DyadPtr) -> bool {
+    let tail = super::trailing_expr(types, value);
+    if tail.is_null() || dyad::ty(tail) != types.waiting.line {
+        return false;
+    }
+    set_into(tail, types.dyad_);
+    true
+}
+
 /// The parts [`build_line`] stored: text, line, scope, the open `fn` nodes, `into`.
 ///
 /// # Safety
