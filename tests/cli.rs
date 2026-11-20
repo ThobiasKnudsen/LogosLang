@@ -7179,6 +7179,55 @@ fn a_line_frees_what_it_made_where_it_ends() {
     }
 }
 
+/// ›The pass runs only as far as it must, in order, and never twice‹ [[R288]] and ›Holding is
+/// decided at the binding site, parameters included‹ [[R61]]: a part of a line the pass runs
+/// before a point that needs a value, a `.` read among them, leaves what it made beside the
+/// value it gave to the line's end, which frees it last made first.
+#[test]
+fn what_a_part_the_pass_ran_early_made_ends_where_its_line_ends() {
+    let sized = BOX.replace("print «free»", "print «free {size}»");
+    let defs = "two := fn () -> own boxed ( print «two», box (1, 2) ), \
+                three := fn () -> own boxed ( box (1, 2, 3) ), mut tt := type ?, tt = u64";
+    let k = "p := fn () -> u64 ( print «p», 0 ), k := fn (a := u64 ?, b := u64 ?) -> u64 ( a + b )";
+    let q = "q := type ( v := u64 ?, static parse_rank = 61, static parse = ( print «q», \
+             tape[0].type = q, tape[0].v = tape[1].dyads[0], tape.remove(1), \
+             tape.is_constructed[0] = true ) )";
+    for (tail, printed) in [
+        (format!("{defs}, x := two().size + tt 5, print «x {{x}}»"), "two\nfree 2\nx 7\n"),
+        (
+            format!("{defs}, x := (two().size + three().size) + tt 5, print «x {{x}}»"),
+            "two\nfree 3\nfree 2\nx 10\n",
+        ),
+        // An argument the pass ran early is a part of the line the call stands in.
+        (
+            format!("{defs}, {k}, x := k(two().size, tt 5) + p(), print «x {{x}}»"),
+            "two\np\nfree 2\nx 7\n",
+        ),
+        (
+            format!("{defs}, {k}, x := k(two().size, three().size) + p(), print «x {{x}}»"),
+            "two\np\nfree 3\nfree 2\nx 5\n",
+        ),
+        // A constructor written in Logos runs after it.
+        (
+            format!("{defs}, {q}, x := two().size + (q [5, u64 7]).v, print «x {{x}}»"),
+            "two\nq\nfree 2\nx 7\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{sized}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    // A fault leaves the line, in the early run or after it: what the run made ends first.
+    let array = "import ./identities/array.logos, a := array u64 [1, 2]";
+    for tail in [
+        format!("{defs}, {array}, x := (two().size + a[5]) + tt 5, print «after»"),
+        format!("{defs}, {array}, x := two().size + tt 5 + a[5], print «after»"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{sized}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(1), "two\nfree 2\n"), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("index out of range"), "{tail}: stderr: {stderr}");
+    }
+}
+
 /// DESIGN ›Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of‹
 /// [[R162]].
 #[test]

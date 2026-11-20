@@ -2201,6 +2201,11 @@ impl<'a> Parser<'a> {
         open.made.push(path[0]);
     }
 
+    /// What the line being parsed has made so far that nothing took.
+    pub(super) fn line_made(&self) -> Vec<DyadPtr> {
+        self.cx.open.last().map_or_else(Vec::new, |o| o.made.clone())
+    }
+
     /// `cell` was just built where the pass runs a line once it has parsed it: a node that runs,
     /// a call or an operator, runs only then.
     pub(super) fn note_runs(&mut self, cell: &Cell) {
