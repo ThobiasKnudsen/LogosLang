@@ -70,6 +70,8 @@ pub struct OpLeaves {
     pub(crate) displace_: DyadPtr,
     /// A call's argument the call holds: it runs the value.
     pub(crate) hold_: DyadPtr,
+    /// The copy of a value a place that holds takes.
+    pub(crate) copy_: DyadPtr,
     pub(crate) import_: DyadPtr,
 }
 
@@ -329,6 +331,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         defer_: std::ptr::null_mut(),
         displace_: std::ptr::null_mut(),
         hold_: std::ptr::null_mut(),
+        copy_: std::ptr::null_mut(),
         import_: std::ptr::null_mut(),
     }
 }

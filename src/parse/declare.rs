@@ -784,9 +784,12 @@ impl<'a> Parser<'a> {
         hole: bool,
         owning: bool,
     ) -> Result<DyadPtr, ParseError> {
-        if !hole {
+        let value = if hole {
+            value
+        } else {
             crate::identities::read::value_type(self.types, value)?;
-        }
+            crate::identities::copy::taken(self.rt.store, self.types, value)
+        };
         // A bare name as the value is its binding (a use); the declaration inspects
         // the dyad behind it and keeps `value` as what the initializer stores.
         let read = self.types.through(value);
@@ -876,8 +879,8 @@ impl<'a> Parser<'a> {
                     Binding::set_dyad(binding, read);
                     read
                 } else {
-                    // A node a Logos `parse` builds is held by its address: `b := a` borrows it,
-                    // and a value just made or moved makes the name its owner.
+                    // A node a Logos `parse` builds is held by its address; a value just made,
+                    // moved or copied makes the name its owner.
                     let place = self.place_for(binding, t, 8);
                     let init =
                         crate::identities::build_init(self.rt.store, self.types, place, value)?;

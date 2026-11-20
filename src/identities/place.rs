@@ -129,7 +129,6 @@ unsafe fn place(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunEr
                 if layout == Layout::Call && super::tape::bracket_kind(types, new).is_some() =>
             {
                 super::tape::build_bracket_arg(rt.store(), types, new)
-                    .map_err(|e| RunError::Parse(Box::new(e)))?
             }
             Placed::New(new) => new,
         };

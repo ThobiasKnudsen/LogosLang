@@ -762,7 +762,7 @@ unsafe extern "C" fn compiled_copy(ctx: *mut crate::run::Context, template: Dyad
 /// # Safety
 /// `template` must be a node `run_logos_ctor` minted, `[field…]` and the words
 /// `run_body::TAIL_LEN` counts.
-unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
     let ty = dyad::ty(template);
     let n = super::array::items(meta::record_fields_of(ty)).len() + super::run_body::TAIL_LEN;
     let slots = std::slice::from_raw_parts(dyad::value(template) as *const DyadPtr, n).to_vec();

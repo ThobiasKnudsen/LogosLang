@@ -1242,7 +1242,7 @@ impl<'a> Parser<'a> {
                 && dyad::ty(slot) != types.tape.bracket_arg
             {
                 *slots.add(i) =
-                    crate::identities::tape::build_bracket_arg(self.rt.store, types, slot)?;
+                    crate::identities::tape::build_bracket_arg(self.rt.store, types, slot);
             }
         }
         crate::identities::run_body::field_types(types, ty, node)

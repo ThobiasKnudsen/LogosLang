@@ -32,6 +32,7 @@ pub(crate) mod callable;
 mod colon;
 mod comment;
 mod convert;
+pub(crate) mod copy;
 pub(crate) mod declare;
 pub(crate) mod drop_model;
 pub(crate) mod dyad_place;
@@ -154,6 +155,8 @@ pub struct Core {
     /// The type of a call's argument the call holds: its value made or moved there, ended
     /// when the call returns.
     pub hold_: DyadPtr,
+    /// The copy a place that holds its value takes of a value it would only borrow.
+    pub copy_: DyadPtr,
     /// The gate word; its constructor fills the declare node's gate slot.
     pub pub_: DyadPtr,
     pub mut_: DyadPtr,
@@ -392,6 +395,8 @@ impl Core {
         let error = error::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let by_copy = by_copy::register(&mut cx, &callables);
+        let (copy_, copy_leaf) = copy::register(&mut cx, &callables);
+        op_leaves.copy_ = copy_leaf;
         let here = here::register(&mut cx, &callables);
         let dyad_place = dyad_place::register(&mut cx, &callables);
         let waiting = waiting::register(&mut cx, &callables);
@@ -487,6 +492,7 @@ impl Core {
             exit_item,
             displace_,
             hold_,
+            copy_,
             pub_,
             mut_,
             immut_,

@@ -315,13 +315,19 @@ pub(crate) unsafe fn heap_alloc(total: usize) -> *mut u8 {
     base.add(HEADER)
 }
 
+/// The byte count of the block at `ptr`, as `heap_alloc` was given it.
+///
+/// # Safety
+/// `ptr` must be a live address from `heap_alloc`.
+pub(crate) unsafe fn block_size(ptr: *mut u8) -> usize {
+    (ptr.sub(HEADER) as *const u64).read() as usize
+}
+
 /// # Safety
 /// `ptr` must be a live address from `heap_alloc`.
 pub(crate) unsafe fn heap_free(ptr: *mut u8) {
-    let base = ptr.sub(HEADER);
-    let total = (base as *const u64).read() as usize;
-    let layout = block_layout(total).expect("a live block was laid out once already");
-    std::alloc::dealloc(base, layout);
+    let layout = block_layout(block_size(ptr)).expect("a live block was laid out once already");
+    std::alloc::dealloc(ptr.sub(HEADER), layout);
 }
 
 /// The pointee is the value's own type (`alloc 2 of i32 5` allocates two `i32`), `u8` with
@@ -362,6 +368,15 @@ pub(super) fn build_alloc(
     // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
     // SAFETY: `init` is a reduced dyad just parsed.
     let init = init.filter(|&i| unsafe { !types.is_hole(i) }).unwrap_or(std::ptr::null_mut());
+    // The first cell takes a copy of a named owner, as a name's place does.
+    // SAFETY: `init` is null or a reduced dyad of `pointee`'s type; `pointee` a type node.
+    let init = unsafe {
+        if !init.is_null() && super::copy::owns(types, pointee) {
+            super::copy::taken(store, types, init)
+        } else {
+            init
+        }
+    };
     // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store; the
     // owning `@pointee` is made with the mint, so its nodes give one type.
     unsafe {
@@ -410,8 +425,8 @@ pub(crate) fn is_owning_place(types: &Core, place: DyadPtr) -> bool {
 }
 
 /// Whether `holder`, a name, field or pointer a place is reached through, only borrows what it
-/// reaches: a pointer that owns nothing, as one `&` made, a copy of an owner and a parameter
-/// without `own` hold, or a name or field holding a node without `own`. A record kept in its
+/// reaches: a pointer that owns nothing, as one `&` made and a parameter without `own` hold, or
+/// a name or field holding a node without `own`. A record kept in its
 /// bytes is its holder's own. DESIGN ›`move` is the act, `own` the gate word, `free` the end‹.
 ///
 /// # Safety
@@ -555,8 +570,20 @@ pub(crate) unsafe fn build_place_free(
     })
 }
 
-/// `=` over a place that holds its value, a name or an owning field: the free of the value it
-/// displaces, `None` over any other place.
+/// Whether `=` over `target` writes a place that holds its value, a name or an owning field:
+/// the place frees the value it displaces and takes a copy of one it would only borrow.
+///
+/// # Safety
+/// `target` must be the reduced dyad `=` writes.
+pub(crate) unsafe fn holds_place(p: &crate::parse::Parser, target: DyadPtr) -> bool {
+    let types = p.types();
+    dyad::ty(target) == types.binding_ && p.name_holds(target)
+        || owning_field_pointee(types, target).is_some()
+        || p.is_owning_read(target)
+}
+
+/// `=` over a place that [`holds_place`]: the free of the value it displaces, `None` over any
+/// other place.
 ///
 /// # Safety
 /// `target` must be the reduced dyad `=` writes.
@@ -564,11 +591,10 @@ pub(crate) unsafe fn displaced_free(
     p: &mut crate::parse::Parser,
     target: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
-    let types = p.types();
-    let named = dyad::ty(target) == types.binding_ && p.name_holds(target);
-    if !named && owning_field_pointee(types, target).is_none() && !p.is_owning_read(target) {
+    if !holds_place(p, target) {
         return Ok(None);
     }
+    let named = dyad::ty(target) == p.types().binding_ && p.name_holds(target);
     build_place_free(p, target, named).map(Some)
 }
 
@@ -1242,6 +1268,7 @@ unsafe fn moved_out_via(
     let logos = dyad::ty(node);
     if super::mint::origin(logos) == types.alloc_
         || super::mint::origin(logos) == types.move_
+        || super::mint::origin(logos) == types.copy_
         || logos == types.this.copy
         || logos == types.construct_
         || logos == types.dyad_place.new_node
@@ -1417,12 +1444,18 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if mem.is_null() {
             return Err(RunError::OutOfMemory);
         }
+        rt.note_alloc();
         if let Some(taken) = taken {
+            // The first cell takes the value; every other cell owns a copy of its own.
+            let owns = super::copy::owns(rt.types(), pointee);
             for k in 0..count {
-                super::assign::put(carry, mem.add(k * width), taken);
+                let cell = mem.add(k * width);
+                super::assign::put(carry, cell, taken);
+                if owns && k > 0 {
+                    super::copy::deepen(rt, pointee, cell)?;
+                }
             }
         }
-        rt.note_alloc();
         Ok(mem as i64)
     }
 }
@@ -1641,10 +1674,12 @@ mod tests {
             parse_err("x := i32 1, mut a := alloc 1 of i32 5, a = &x"),
             ParseError::NonOwningIntoOwning
         );
+        // A named owner is copied in: each name frees its own block.
         assert_eq!(
-            parse_err("mut a := alloc 1 of i32 5, b := alloc 1 of i32 6, a = b"),
-            ParseError::NonOwningIntoOwning
+            run("mut a := alloc 1 of i32 5, b := alloc 1 of i32 6, a = b, a@ = 9, b@"),
+            (6, 0)
         );
+        assert_eq!(free_log(), vec![5, 6, 9]);
         assert_eq!(run("x := i32 1, mut p := &x, p = &x, p@").0, 1);
         assert_eq!(run("mut a := alloc 1 of i32 5, a@ = 9, a@"), (9, 0));
 
@@ -2380,10 +2415,8 @@ mod tests {
         assert_eq!(run("mut a := own @i32 ?,\na = alloc 1 of i32 5,\na@"), (5, 0));
         assert_eq!(free_log(), vec![5]);
         assert_eq!(run("mut a := own @i32 ?,\n1"), (1, 0), "an unwritten owner frees nothing");
-        assert_eq!(
-            parse_err("mut a := own @i32 ?,\nb := alloc 1 of i32 6,\na = b"),
-            ParseError::NonOwningIntoOwning
-        );
+        assert_eq!(run("mut a := own @i32 ?,\nb := alloc 1 of i32 6,\na = b,\na@"), (6, 0));
+        assert_eq!(free_log(), vec![6, 6]);
         assert_eq!(parse_err("a := own i32 ?"), ParseError::OwnNeedsPointer);
         assert_eq!(
             parse_err("f := fn (p := own @i32 ?) -> i32 ( p@ )"),

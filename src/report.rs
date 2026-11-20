@@ -253,11 +253,6 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::TypeKnownOnlyAtRun => {
             "which type this is is known only when the program runs, and this needs it now".into()
         }
-        ParseError::LineNotMoved => {
-            "what this list holds becomes the new value's, and a name keeps what it holds: \
-             write `move x` to move it in, or make the value in the list"
-                .into()
-        }
         ParseError::NonOwningIntoOwning => {
             "this place owns what it holds, so what is assigned must own too (`alloc …`, or `move x`)"
                 .into()

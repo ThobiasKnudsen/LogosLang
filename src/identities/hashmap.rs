@@ -265,14 +265,24 @@ pub(crate) unsafe fn build_unknown_compare(
 }
 
 /// The eight bytes a map kept as another map's value lives in, holding a copy of `table`, a
-/// table of the map type `map_ty`: `=` copies a value that owns memory deep (›`:=` decides
-/// nothing about copy or reference; the type's reading rule does‹ [[R107]]).
+/// table of the map type `map_ty`.
 ///
 /// # Safety
 /// `table` must be null or a table `run_put` allocated, of a map of type `map_ty`.
 unsafe fn held_copy(store: &mut Store, types: &Core, table: *mut Table, map_ty: DyadPtr) -> i64 {
     let copy = copy_table(store, types, table, map_ty);
     store.alloc_bytes(&(copy as usize).to_ne_bytes()) as i64
+}
+
+/// The eight bytes at `at`, a map of the type `map_ty` copied bit for bit, come to hold a copy
+/// of the table they share.
+///
+/// # Safety
+/// `at` must hold a map of type `map_ty`: null, `?`'s address or a table `run_put` allocated.
+pub(crate) unsafe fn deepen(store: &mut Store, types: &Core, map_ty: DyadPtr, at: *mut u8) {
+    let table = std::ptr::read_unaligned(at as *const *mut Table);
+    let copy = copy_table(store, types, table, map_ty);
+    std::ptr::write_unaligned(at as *mut *mut Table, copy);
 }
 
 /// A new table holding `table`'s entries, each map among its values copied too; the empty
@@ -381,19 +391,18 @@ fn is_unknown(rt: &mut Runtime, node: DyadPtr) -> Result<bool, RunError> {
 }
 
 /// The operands run first, so the table is read after anything they write. A map value is
-/// handed over as the address of its eight bytes and kept as a copy of its own.
+/// handed over as the address of its eight bytes, a copy `=` took, and kept in eight bytes of
+/// its own.
 fn run_put(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_get`; a null table is replaced by a fresh one before the insert. A map
     // value's address is that of a map's eight bytes, null or a table `run_put` allocated.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let key = rt.run(*ops.add(1))?;
-        let v = *ops.add(3);
-        let value = if is_hashmap(rt.types(), v) {
+        let value = if is_hashmap(rt.types(), *ops.add(3)) {
             let addr = super::by_copy::record_addr(rt, *ops.add(2))?;
             let table = std::ptr::read_unaligned(addr as *const *mut Table);
-            let types: *const Core = rt.types();
-            held_copy(rt.store(), &*types, table, v)
+            rt.store().alloc_bytes(&(table as usize).to_ne_bytes()) as i64
         } else {
             rt.run(*ops.add(2))?
         };

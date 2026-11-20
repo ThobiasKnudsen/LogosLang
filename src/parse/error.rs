@@ -50,8 +50,8 @@ pub enum ParseError {
     /// The pass needed a type identity and found a place that will only hold
     /// one when the program runs (DESIGN ›A type is a comptime value‹).
     TypeKnownOnlyAtRun,
-    /// `=` into an owning place whose right side does not own: two teardowns
-    /// over one block, or one over memory the store owns.
+    /// `=` into an owning place of what owns nothing there: a `&` or a plain
+    /// `@T`, or, through a pointer's cell, which takes no copy, a borrowed owner.
     NonOwningIntoOwning,
     /// `dyad (T, v)` for a `T` whose value does not move whole into a new node.
     BadDyadType,
@@ -273,9 +273,6 @@ pub enum ParseError {
     /// `move` or `free` of a field path under a holder whose type fills its own `free`, which
     /// frees the field with the rest: the path, then that holder, each spelled.
     EndUnderFree(Box<(String, String)>),
-    /// A name as a line of a list a type's `parse` builds from, where the value's type fills
-    /// a `free`: the built value owns its lines, so the name must be moved in.
-    LineNotMoved,
     /// `own` over a type with nothing to own: neither a pointer nor a type whose body fills
     /// `free`.
     OwnNeedsPointer,

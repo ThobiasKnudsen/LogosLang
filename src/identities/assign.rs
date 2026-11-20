@@ -88,6 +88,23 @@ fn construct(
         // SAFETY: `target` and `value` are reduced dyads from the store.
         unsafe { p.bracket_into(target, value) }?
     };
+    // A place takes a copy of a value it would only borrow, one an owner must free only where
+    // the place holds its value (›`:=` decides nothing about copy or reference; the type's
+    // reading rule does‹ [[R107]]).
+    // SAFETY: `target` and `value` are reduced dyads from the store.
+    let value = unsafe {
+        let copies = || match super::read::value_type(types, value) {
+            Ok(ty) => {
+                !super::copy::needs_owner(types, ty) || super::drop_model::holds_place(p, target)
+            }
+            Err(_) => false,
+        };
+        if !into_cell && slot.is_none() && copies() {
+            super::copy::taken(p.store(), types, value)
+        } else {
+            value
+        }
+    };
     // What `=` writes reaches a place, which holds it or not; the line's end never frees it
     // (›Holding is decided at the binding site, parameters included‹ [[R61]]).
     p.take(value);
@@ -102,8 +119,8 @@ fn construct(
         unsafe { p.slot_fill(kind, target, value) }?
     } else {
         let types = p.types();
-        // An owner takes only what hands ownership over: a borrow stored there would be
-        // torn down by two owners.
+        // A value whose type owns nothing, a `&` or a plain `@T`, has no copy an owner could
+        // free.
         // SAFETY: `target` and `value` are reduced dyads from the store.
         if unsafe {
             (dyad::ty(target) == types.binding_ && p.owns_node(target) || p.is_owning_read(target))
@@ -278,7 +295,7 @@ pub(super) fn build_store(
             None => super::land(store, types, rhs, place_type)?,
         }
     };
-    // A non-owning value in an owning place ends in a double free at scope exit.
+    // A value that owns nothing here, in an owning place, is freed by an owner that never had it.
     // SAFETY: `rhs` is a reduced dyad from the store.
     let rhs_ends = unsafe { super::drop_model::teardown_of(types, rhs) };
     if super::drop_model::is_owning_place(types, lhs_d)
