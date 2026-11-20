@@ -927,7 +927,7 @@ impl<'a> Parser<'a> {
         // A constructor runs now, by nature, so what stands before it runs first, but its left
         // operand, which it reads as written (›How a Logos constructor builds its node‹ [[R362]]).
         // Where a part before it cannot run first yet, only the lines before its own run:
-        // stand-in for #371, #372.
+        // stand-in for #371.
         let from = tape.at(-1).or(tape.at(0)).map_or(self.cx.pos, |c| c.start);
         if let Before::Waits(_) = self.ran_first(tape, from)? {
             self.drain()?;

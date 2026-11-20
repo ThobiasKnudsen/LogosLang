@@ -436,8 +436,10 @@ impl<'a> Parser<'a> {
             return Err(self.fail_at(at, ParseError::DyadReadEachPass));
         }
         self.run_first(tape, at)?;
+        let plan = self.line_made();
+        let depth = self.cx.open.len() - 1;
         // SAFETY: as above.
-        let node = unsafe { self.ran_value(at, operand)? };
+        let node = unsafe { self.run_early(depth, at, operand, &plan)? };
         if let Some(handle) = tape.handle_at(k) {
             tape.stand_as_ran(handle, node);
             self.ran_through(tape, handle);
@@ -517,11 +519,13 @@ impl<'a> Parser<'a> {
             return Ok(Before::Waits(depth));
         }
         self.drain()?;
+        let depth = self.cx.open.len() - 1;
         for (handle, from, _) in standing {
             let node = self.as_operand(*tape.cell_of(handle))?;
+            let plan = self.line_made();
             // SAFETY: a standing cell holds a node this parser built into its store, or names a
             // binding the resolver found.
-            let value = unsafe { self.ran_value(from, node)? };
+            let value = unsafe { self.run_early(depth, from, node, &plan)? };
             self.note_made(value);
             tape.stand_as_ran(handle, value);
             self.ran_through(tape, handle);
@@ -575,10 +579,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Line `line` of the bracket `scope` open at `depth`, a part of the line being parsed, runs
-    /// before what the pass needs at the cursor, and the value it gave stands in its place, which
-    /// the call that takes the bracket reads; what else the part made and nothing took ends with
-    /// it. The value itself lives on in its place, so the call holds it or the line's end ends it
-    /// (›Holding is decided at the binding site, parameters included‹ [[R61]]).
+    /// before what the pass needs at the cursor ([`Self::run_early`]), and the value it gave
+    /// stands in its place, which the call that takes the bracket reads. The value lives on in its
+    /// place, so the call holds it or the line's end ends it (›Holding is decided at the binding
+    /// site, parameters included‹ [[R61]]).
     ///
     /// # Safety
     /// `node` must be line `line` of `scope`, and `plan` the nodes whose values the line holds to
@@ -591,17 +595,8 @@ impl<'a> Parser<'a> {
         node: DyadPtr,
         plan: &[DyadPtr],
     ) -> Result<(), ParseError> {
-        use crate::identities::drop_model::{end_line, handed_through, teardown_of, Teardown};
-        let own = handed_through(self.types, node);
-        let ends: Vec<DyadPtr> = plan.iter().copied().filter(|m| !own.contains(m)).collect();
-        let held = self.rt.line_mark();
-        self.rt.push_plan(&ends);
-        let value = self.ran_value(self.cx.pos, node);
-        self.rt.pop_plan();
-        // SAFETY: what the part made since `held` its run gave, still live.
-        let ended = end_line(&mut self.rt, held, Ok(0));
-        let value = value?;
-        ended.map_err(ParseError::Run)?;
+        use crate::identities::drop_model::{teardown_of, Teardown};
+        let value = self.run_early(depth, self.cx.pos, node, plan)?;
         crate::identities::scope::set_item(scope, line, value);
         let open = &mut self.cx.open[depth];
         open.held.retain(|m| !plan.contains(m));
@@ -609,6 +604,59 @@ impl<'a> Parser<'a> {
             open.held.push(value);
         }
         Ok(())
+    }
+
+    /// `node`, a part of the line the scope open at `depth` is parsing, runs early, giving what
+    /// stands for it ([`Self::ran_value`]). What else its run made that nothing took, the value of
+    /// each node of `plan` that ran, `node`'s own aside, the line ends where it ends, last made
+    /// first, as it ends what it makes when it runs (›Holding is decided at the binding site,
+    /// parameters included‹ [[R61]]): each stands as a value the pass ran early. A fault leaves
+    /// the line, so what the run made ends before the fault shows.
+    ///
+    /// # Safety
+    /// `node` must be a reduced dyad this parser built into its store, and `plan` the nodes whose
+    /// values the line holds to its end.
+    unsafe fn run_early(
+        &mut self,
+        depth: usize,
+        at: usize,
+        node: DyadPtr,
+        plan: &[DyadPtr],
+    ) -> Result<DyadPtr, ParseError> {
+        use crate::identities::drop_model::{end_line, handed_through};
+        use crate::identities::{ran, read};
+        let types = self.types;
+        let own = handed_through(types, node);
+        let ends: Vec<DyadPtr> = plan.iter().copied().filter(|m| !own.contains(m)).collect();
+        let mark = self.rt.line_mark();
+        let before = self.cx.open[depth].stood.len();
+        self.rt.push_plan(&ends);
+        let value = self.ran_value(at, node);
+        self.rt.pop_plan();
+        let value = match value {
+            Ok(value) => value,
+            Err(fault) => {
+                // SAFETY: what the run made since `mark`, still live. The fault stays the error
+                // shown.
+                let _ = end_line(&mut self.rt, mark, Ok(()));
+                return Err(fault);
+            }
+        };
+        let made: Vec<DyadPtr> = self
+            .rt
+            .take_line_values(mark)
+            .into_iter()
+            .map(|(made, word)| {
+                let out = read::output_type(types, made);
+                let stood = ran::build(self.rt.store, types, word, true, out);
+                self.rt.stand(stood);
+                stood
+            })
+            .collect();
+        let stood = &mut self.cx.open[depth].stood;
+        let first = before.min(stood.len());
+        stood.splice(first..first, made);
+        Ok(value)
     }
 
     /// The cell `handle` names ran: what its line had noted as running inside it, up to where the
