@@ -1,0 +1,4 @@
+# Reads a file one folder up: inside the project when the command line read a file there,
+# outside it when the command line read this one.
+import file «../lib_pub.logos»,
+pub up := double(2)

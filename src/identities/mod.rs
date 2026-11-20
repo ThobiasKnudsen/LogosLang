@@ -37,6 +37,7 @@ pub(crate) mod declare;
 pub(crate) mod drop_model;
 pub(crate) mod dyad_place;
 pub mod error;
+pub mod file;
 pub(crate) mod flow;
 #[path = "fn.rs"]
 mod fn_mod;
@@ -164,8 +165,9 @@ pub struct Core {
     pub mut_: DyadPtr,
     pub immut_: DyadPtr,
     pub static_: DyadPtr,
-    /// Its node is the trace of the load; running it re-yields the file's tail.
+    /// Its node is the trace of the load; running it does nothing.
     pub import_: DyadPtr,
+    pub file: DyadPtr,
     /// The cell type.
     pub dyad_: DyadPtr,
     pub binding_: DyadPtr,
@@ -340,6 +342,7 @@ impl Core {
         let (pub_, mut_, immut_, static_) = gate::register(&mut cx);
         let (import_, import_leaf) = import::register(&mut cx, &callables);
         op_leaves.import_ = import_leaf;
+        let file = file::register(&mut cx);
         let dyad_ = dyad::register(&mut cx);
         let colon_ = colon::register(&mut cx);
         let unknown = hole::register(&mut cx);
@@ -508,6 +511,7 @@ impl Core {
             immut_,
             static_,
             import_,
+            file,
             dyad_,
             binding_,
             colon_,
@@ -1081,12 +1085,27 @@ pub(crate) unsafe fn node_value_output(types: &Core, node: DyadPtr) -> Option<Dy
     meta::value_is_node(t, types.fn_type).then_some(t)
 }
 
-/// A `-> type` call's argument the pass can run now: a type, or a literal.
+/// A `-> type` call's argument the pass can run now: a type, a literal, or [`no_value`].
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_comptime_arg(types: &Core, node: DyadPtr) -> bool {
-    is_type_value(types, node) || matches!(operand_of(types, node), Operand::Literal)
+    is_type_value(types, node)
+        || matches!(operand_of(types, node), Operand::Literal)
+        || is_no_value(types, node)
+}
+
+/// What a `static` function's call works on where it has no value: through the type (`t.k()`),
+/// by another name, or bare from a parse (›A bare call of a `static` function works on the value
+/// the calling body is about‹ [[R238]]).
+pub(crate) fn no_value(store: &mut Store, types: &Core) -> DyadPtr {
+    store.alloc_head(types.dyad_, std::ptr::null_mut())
+}
+
+/// # Safety
+/// `node` must be a valid dyad from the store.
+unsafe fn is_no_value(types: &Core, node: DyadPtr) -> bool {
+    dyad::ty(node) == types.dyad_ && dyad::head(node).is_null()
 }
 
 /// The display spelling of a type value; a type with no spelling of its own shows as `type`.

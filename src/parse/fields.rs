@@ -218,7 +218,7 @@ impl<'a> Parser<'a> {
             let name = Box::new(name.to_string());
             return Err(ParseError::StaticFnNeedsValue { name, member });
         }
-        Ok(self.rt.store.alloc_head(self.types.dyad_, std::ptr::null_mut()))
+        Ok(crate::identities::no_value(self.rt.store, self.types))
     }
 
     /// The callee as written names a `static` member of a type being defined, so `v.name(…)`
@@ -658,6 +658,19 @@ impl<'a> Parser<'a> {
                 }
             }
             if let Some(node) = self.known_node(lhs, self.cx.member_root) {
+                // A file's scope: a `pub` name of the file, used as a name is, or applied as a
+                // name of a function or a type is.
+                if let Some(member) = self.file_member(node, name) {
+                    let member = member.inspect_err(|_| self.cx.pos = nstart)?;
+                    let callee = self.types.through(member);
+                    let Some(args) = call.filter(|_| self.is_identity_node(callee)) else {
+                        return Ok((member, 0));
+                    };
+                    if self.in_pass_order() && self.returns_type(callee) {
+                        self.run_first(tape, left.start)?;
+                    }
+                    return self.build_call(callee, &args).map(|call| (call, 1));
+                }
                 if let Some(read) = self.reached_member(node, name, index, key.is_some())? {
                     return Ok(read);
                 }
@@ -897,7 +910,8 @@ impl<'a> Parser<'a> {
         self.cx.member_root = root;
         self.cx.member_path.clear();
         // `.type` reads the type of the node a `dyad` no name holds gives.
-        let lhs = if &source[nstart..nstart + nlen] == "type" {
+        let type_word = &source[nstart..nstart + nlen] == "type";
+        let lhs = if type_word {
             match self.read_through_value(tape, -1, lhs) {
                 Ok(lhs) => lhs,
                 Err(e) => {
@@ -919,30 +933,22 @@ impl<'a> Parser<'a> {
             tape.remove(1);
         }
         tape.remove(-1);
-        // A type identity a parse's `tape[0].f` folded to, or a member call for a type gave,
-        // stands as its own unconstructed cell, so it reads its right side as anywhere else.
-        let called = bracket.is_some() && consumed == 1;
-        // SAFETY: `node` is a node from the store.
-        let folded_type = (this_read && unsafe { self.identity_head(node) }.is_some())
-            || (called && self.stands_in_for_call(node));
-        if folded_type {
-            tape.set_dyad(0, node);
+        let path = if path.is_empty() {
+            std::ptr::null_mut()
         } else {
-            let path = if path.is_empty() {
-                std::ptr::null_mut()
-            } else {
-                crate::identities::array::build(self.rt.store, self.types.array_, &path)
-            };
-            tape.place(node);
-            tape.span_center(left.start, end);
-            let cell = tape.at_mut(0).expect("placed above");
-            cell.path = path;
-            if plain {
-                cell.target = reached;
-                cell.root = path_root;
-            }
+            crate::identities::array::build(self.rt.store, self.types.array_, &path)
+        };
+        tape.place(node);
+        tape.span_center(left.start, end);
+        let cell = tape.at_mut(0).expect("placed above");
+        cell.path = path;
+        if plain {
+            cell.target = reached;
+            cell.root = path_root;
         }
-        Ok(Constructed::Placed)
+        // Every read gives what the member holds, but `.type` hands its type on to nothing:
+        // stand-in for #393.
+        Ok(if type_word { Constructed::Placed } else { Constructed::Gave })
     }
 
     /// The comptime index a `[…]` cell carries when its interior is a
@@ -1445,7 +1451,7 @@ impl<'a> Parser<'a> {
 
     /// `node` reached by path: as a value its address, so using it runs nothing;
     /// the reads after it fold through [`Parser::known_node`].
-    fn reach(&mut self, node: DyadPtr) -> DyadPtr {
+    pub(super) fn reach(&mut self, node: DyadPtr) -> DyadPtr {
         self.address_value(self.types.dyad_, node)
     }
 

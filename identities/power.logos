@@ -14,8 +14,8 @@
 # through exp and ln, in exp.logos and ln.logos. A float on either side, or a fraction as
 # the exponent, makes the result a float.
 
-import ln.logos,
-import exp.logos,
+import file «ln.logos»,
+import file «exp.logos»,
 
 ^ := type (
     static power_mints := hashmap type -> hashmap type -> type,

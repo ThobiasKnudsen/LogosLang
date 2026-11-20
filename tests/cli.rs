@@ -16,21 +16,21 @@ fn logos() -> Command {
 
 #[test]
 fn an_import_runs_the_file_which_prints() {
-    let out = logos().args(["import", "examples/answer.logos"]).output().unwrap();
+    let out = logos().arg("import file «examples/answer.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
 }
 
 #[test]
 fn the_drop_model_runs_at_file_scope() {
-    let out = logos().args(["import", "tests/fixtures/heap.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/heap.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
 }
 
 #[test]
 fn a_parse_error_renders_clickable_with_a_caret() {
-    let out = logos().args(["import", "tests/fixtures/unknown_name.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/unknown_name.logos»").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("unknown_name.logos:2:5: error: unknown name"), "stderr: {err}");
@@ -40,18 +40,20 @@ fn a_parse_error_renders_clickable_with_a_caret() {
 
 #[test]
 fn an_unreadable_path_fails_cleanly() {
-    let out = logos().args(["import", "tests/fixtures/no_such_file.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/no_such_file.logos»").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read"));
 }
 
 #[test]
 fn an_import_exposes_pub_and_hides_private() {
-    let out = logos().arg("import tests/fixtures/lib_pub.logos, double(21)").output().unwrap();
+    let out =
+        logos().arg("import file «tests/fixtures/lib_pub.logos», double(21)").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
 
-    let out = logos().arg("import tests/fixtures/lib_pub.logos, helper(1)").output().unwrap();
+    let out =
+        logos().arg("import file «tests/fixtures/lib_pub.logos», helper(1)").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("not in scope"),
@@ -62,15 +64,18 @@ fn an_import_exposes_pub_and_hides_private() {
 
 #[test]
 fn importing_a_library_alone_is_silent_and_clean() {
-    let out = logos().args(["import", "tests/fixtures/lib_pub.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/lib_pub.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert!(out.stdout.is_empty());
 }
 
 #[test]
 fn logos_stats_measures_the_store_on_stderr() {
-    let out =
-        logos().env("LOGOS_STATS", "1").args(["import", "examples/answer.logos"]).output().unwrap();
+    let out = logos()
+        .env("LOGOS_STATS", "1")
+        .arg("import file «examples/answer.logos»")
+        .output()
+        .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
     let err = String::from_utf8_lossy(&out.stderr);
@@ -97,7 +102,8 @@ fn logos_stats_measures_the_store_on_stderr() {
 
 #[test]
 fn an_imported_file_cannot_see_the_import_site() {
-    let out = logos().arg("x := 5, import tests/fixtures/uses_missing.logos").output().unwrap();
+    let out =
+        logos().arg("x := 5, import file «tests/fixtures/uses_missing.logos»").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("uses_missing.logos:2:6"), "stderr: {err}");
@@ -106,14 +112,14 @@ fn an_imported_file_cannot_see_the_import_site() {
 
 #[test]
 fn a_relative_import_resolves_against_the_importing_file() {
-    let out = logos().args(["import", "tests/fixtures/outer.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/outer.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n");
 }
 
 #[test]
 fn an_import_cycle_is_a_checked_error() {
-    let out = logos().args(["import", "tests/fixtures/cycle_a.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/cycle_a.logos»").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("cycle"),
@@ -124,15 +130,15 @@ fn an_import_cycle_is_a_checked_error() {
 
 #[test]
 fn an_import_failure_reports_the_outer_position_then_the_inner_one() {
-    let out = logos().arg("import tests/fixtures/broken.logos").output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/broken.logos»").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     let lines: Vec<&str> = stderr.lines().collect();
     assert!(
-        lines[0].contains("import of `tests/fixtures/broken.logos` failed"),
+        lines[0].contains("reading `tests/fixtures/broken.logos` as Logos failed"),
         "stderr: {stderr}"
     );
-    assert!(lines[1].contains("import tests/fixtures/broken.logos"), "stderr: {stderr}");
+    assert!(lines[1].contains("import file «tests/fixtures/broken.logos»"), "stderr: {stderr}");
     assert!(lines[2].trim_end().ends_with('^'), "stderr: {stderr}");
     assert!(lines[3].starts_with("tests/fixtures/broken.logos:2:"), "stderr: {stderr}");
     assert!(
@@ -145,8 +151,8 @@ fn an_import_failure_reports_the_outer_position_then_the_inner_one() {
 fn a_repeat_import_is_idempotent() {
     let out = logos()
         .arg(
-            "import tests/fixtures/subdir/inner.logos, \
-             import tests/fixtures/subdir/inner.logos, inner_val + 0",
+            "import file «tests/fixtures/subdir/inner.logos», \
+             import file «tests/fixtures/subdir/inner.logos», inner_val + 0",
         )
         .output()
         .unwrap();
@@ -155,9 +161,84 @@ fn a_repeat_import_is_idempotent() {
 }
 
 #[test]
+fn a_bare_path_after_import_is_refused_and_named() {
+    let (code, _, stderr) = run_line("import tests/fixtures/lib_pub.logos, double(21)");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("1:8: error: `import` reads the file it is given"), "{stderr}");
+    assert!(stderr.contains("write `import file «path»`"), "{stderr}");
+}
+
+#[test]
+fn logos_file_gives_the_files_scope_whose_pub_names_are_read_with_a_dot() {
+    let lib = "logos file «tests/fixtures/lib_pub.logos»";
+    assert_eq!(line(&format!("({lib}).double(21)")), "42");
+    assert_eq!(line(&format!("m := {lib}, m.double(4)")), "8");
+    // A `pub` function reached so compiles as one an `import` set does.
+    assert_eq!(line(&format!("g := ({lib}).double, g.compile(), g(5)")), "10");
+    // Only `pub` names: a private one, and the scope's own lines, are not reached.
+    for member in ["helper(1)", "dyads"] {
+        let (code, _, stderr) = run_line(&format!("({lib}).{member}"));
+        assert_eq!(code, Some(1), "{member}: stderr: {stderr}");
+        assert!(stderr.contains("the file has no `pub` name"), "{member}: {stderr}");
+    }
+}
+
+#[test]
+fn logos_file_and_import_read_one_loaded_scope() {
+    let gated = "file «tests/fixtures/gated.logos»";
+    assert_eq!(line(&format!("(logos {gated}).r = 7, import {gated}, r")), "7");
+    assert_eq!(line(&format!("import {gated}, r = 9, (logos {gated}).r")), "9");
+    let (code, _, stderr) = run_line(&format!("(logos {gated}).s = 7"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`s` is not `mut`"), "{stderr}");
+    // Loaded once per run, whichever reads it first.
+    let prints = "file «tests/fixtures/prints_pub.logos»";
+    assert_eq!(line(&format!("x := (logos {prints}).v, import {prints}, x + v")), "imp\n4");
+}
+
+#[test]
+fn a_file_address_is_text_so_any_file_name_is_reached() {
+    let (hidden, dashed) = ("tests/fixtures/.hidden.logos", "tests/fixtures/my-file.logos");
+    assert_eq!(line(&format!("(logos file «{hidden}»).h + (logos file «{dashed}»).k")), "11");
+    // A `{…}` would compute the address while the program runs, which only `fs` may.
+    let (code, _, stderr) = run_line("file «tests/fixtures/{1}.logos»");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("1:6: error: a `file «…»` address is written as plain text"));
+    assert!(stderr.contains("`fs`"), "{stderr}");
+    // `file` alone gives the file, its path as written and its bytes, read in the pass anywhere:
+    // in a function body too, on both tiers.
+    let dashed_file = format!("f := file «{dashed}»");
+    assert_eq!(line(&format!("{dashed_file}, print «{{f.path}}»")), dashed);
+    assert!(line(&format!("{dashed_file}, print «{{f.bytes}}»")).ends_with("pub k := i32 6"));
+    let g = "g := fn () -> i32 ( f := file «tests/fixtures/lib_pub.logos», print «{f.path}», 1 )";
+    assert_eq!(line(&format!("{g}, g()")), "tests/fixtures/lib_pub.logos\n1");
+    assert_eq!(line(&format!("{g}, g.compile(), g()")), "tests/fixtures/lib_pub.logos\n1");
+}
+
+#[test]
+fn a_file_reaches_only_files_inside_its_projects_folder() {
+    // The command line read `reads_subdir.logos`, so its folder is the project, which the file
+    // it reads keeps: `subdir/reads_up.logos` reaches `../lib_pub.logos`.
+    assert_eq!(line("import file «tests/fixtures/reads_subdir.logos», top"), "5");
+    // Read by the command line itself, `reads_up.logos` roots the project at `subdir`.
+    for (file, at) in [
+        ("subdir/reads_up.logos", "reads_up.logos:3:13: error: `file «../lib_pub.logos»`"),
+        ("reads_outside.logos", "reads_outside.logos:2:11: error: `file «../../Cargo.toml»`"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("import file «tests/fixtures/{file}»"));
+        assert_eq!(code, Some(1), "{file}: stderr: {stderr}");
+        assert!(stderr.contains(at), "{file}: {stderr}");
+        assert!(stderr.contains("is outside this project's folder"), "{file}: {stderr}");
+        assert!(stderr.contains("through the `fs` the command line hands down"), "{stderr}");
+    }
+    // The command line itself names any path.
+    assert_eq!(line("f := file «Cargo.toml», 1"), "1");
+}
+
+#[test]
 fn the_repl_imports_once_per_session_and_keeps_pub_names() {
     let (echoes, stderr) =
-        repl(b"import examples/answer.logos\nimport tests/fixtures/lib_pub.logos\ndouble(4)\n");
+        repl("import file «examples/answer.logos»\nimport file «tests/fixtures/lib_pub.logos»\ndouble(4)\n");
     assert_eq!(echoes, ["42", "8"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -237,7 +318,7 @@ fn any_spelling_the_index_can_hold_is_nameable() {
     assert_eq!(echoes, ["6", "3", "-1", "7"], "stderr: {stderr}");
     assert!(stderr.contains("<repl>:1:2: error:"), "stderr: {stderr}");
     // caret.logos: 9 + 512 + 18.
-    let out = logos().args(["import", "tests/fixtures/caret.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/caret.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "539\n");
 }
@@ -255,7 +336,7 @@ fn a_type_s_size_bytes_is_a_u64_for_records_numbers_and_pointers() {
 
 #[test]
 fn the_power_demo_prints_nine() {
-    let out = logos().args(["import", "identities/power.logos"]).output().unwrap();
+    let out = logos().arg("import file «identities/power.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
 }
@@ -265,8 +346,7 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
     // The demo's own `^`, its last line swapped for each case.
     let demo = std::fs::read_to_string("identities/power.logos").unwrap();
     // Given on the command line, its imports resolve against the working directory.
-    let body =
-        demo.trim_end().rsplit_once('\n').unwrap().0.replace("import ", "import identities/");
+    let body = demo.trim_end().rsplit_once('\n').unwrap().0.replace("file «", "file «identities/");
     for (tail, want) in [
         ("x := f64 2.0, x ^ 3", "8.0"),
         ("x := i32 3, y := f64 2.0, x ^ y", "9.0"),
@@ -315,8 +395,7 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
 #[test]
 fn the_power_demo_converts_a_whole_exponent_so_each_mint_has_one_result_type() {
     let demo = std::fs::read_to_string("identities/power.logos").unwrap();
-    let body =
-        demo.trim_end().rsplit_once('\n').unwrap().0.replace("import ", "import identities/");
+    let body = demo.trim_end().rsplit_once('\n').unwrap().0.replace("file «", "file «identities/");
     // The last word: whether `a` and `b` are nodes of one mint of `^`.
     let same = "print «{a} {b} {a:start.rhs.type == b:start.rhs.type}»";
     let int_then_float = "9 1.7320508075688774 false";
@@ -597,7 +676,7 @@ fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
 
 #[test]
 fn the_array_fills_its_elements_when_the_program_runs() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for (tail, printed) in [
         ("x := i32 4, y := i32 5, a := array i32 [x, y, 3], a[0] + a[1]", "9"),
         ("x := i32 5, y := i32 6, b := array i32 [x, y, 3], b[0] + b[1] + b[2]", "14"),
@@ -619,7 +698,7 @@ fn the_array_fills_its_elements_when_the_program_runs() {
 
 #[test]
 fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for (def, name, call, printed) in [
         ("f := fn (x := i32 ?) -> i32 ( c := array i32 [x, x], c[1] )", "f", "f(7)", "7"),
         (
@@ -671,7 +750,7 @@ fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
 
 #[test]
 fn an_array_travels_as_its_address() {
-    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
+    let array = "import file «./identities/array.logos», a := array i32 [1, 2, 3]";
     for (tail, printed) in [
         ("b := a, b[1]", "2"),
         ("f := fn (p := array i32 ?) -> i32 ( p[1] ), f(a)", "2"),
@@ -714,7 +793,7 @@ fn an_array_travels_as_its_address() {
 
 #[test]
 fn a_call_result_takes_its_index_as_a_name_does() {
-    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3], \
+    let array = "import file «./identities/array.logos», a := array i32 [1, 2, 3], \
                  mk := fn () -> own array i32 ( array i32 [1, 2] )";
     for (tail, printed) in [
         ("mk()[1]", "2"),
@@ -843,15 +922,16 @@ fn a_static_function_writes_only_a_mut_field() {
 
 #[test]
 fn the_array_written_in_logos_reads_an_element_and_its_size() {
-    let out = logos().args(["import", "./identities/array.logos"]).output().unwrap();
+    let out = logos().arg("import file «./identities/array.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     for (tail, printed) in [("a[1]", "2\n"), ("a.size_bytes()", "12\n")] {
-        let src = format!("import ./identities/array.logos, a := array i32 [1, 2, 3], {tail}");
+        let src =
+            format!("import file «./identities/array.logos», a := array i32 [1, 2, 3], {tail}");
         let out = logos().arg(&src).output().unwrap();
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{src}");
     }
-    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
+    let array = "import file «./identities/array.logos», a := array i32 [1, 2, 3]";
     for (tail, printed) in [
         ("a[0] + a[2]", "4"),
         ("f := fn () -> i32 ( a[0] + a[2] ), f.compile(), f()", "4"),
@@ -908,7 +988,7 @@ fn an_empty_node_is_filled_field_by_field() {
 
 #[test]
 fn an_index_of_any_integer_type_reads_inside_the_array() {
-    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
+    let array = "import file «./identities/array.logos», a := array i32 [1, 2, 3]";
     for (tail, printed) in [
         ("mut s := i32 0, for i in (i32 0)..(i32 3) ( s = s + a[i] ), s", "6"),
         ("mut s := i32 0, for i in 0..3 ( s = s + a[i] ), s", "6"),
@@ -946,7 +1026,7 @@ fn an_index_of_any_integer_type_reads_inside_the_array() {
 
 #[test]
 fn an_array_element_is_written_where_the_read_finds_it() {
-    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
+    let array = "import file «./identities/array.logos», a := array i32 [1, 2, 3]";
     for (tail, printed) in [
         ("a[0] = i32 9, a[0]", "9"),
         ("a[0] = 9, a[0] + a[1]", "11"),
@@ -1477,7 +1557,7 @@ fn spellings_ending_at_one_node_are_each_found_by_their_own_key() {
 
 #[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
-    let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/squared.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "92\n");
     // A parse that consumes nothing sets its flag and stands as itself.
@@ -2085,7 +2165,7 @@ fn an_if_lands_each_arm_and_an_operation_meets_in_the_wider_type() {
 
 #[test]
 fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for tail in
         ["mut d := dyad ?, d = array i32 [1, 2]", "a := array i32 [1, 2], mut d := dyad ?, d = a"]
     {
@@ -2398,7 +2478,7 @@ fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
             (format!("f := fn () -> void ( print «{{1/2}}» ), {c}f()"), "1/2\n"),
             (format!("f := fn () -> i64 ( 10000000000 ), {c}f()"), "10000000000\n"),
             (format!("f := fn () -> i32 ( r := 1/2, 1 ), {c}f()"), "1\n"),
-            (format!("f := fn () -> i32 ( defer 1/2, 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( defer free (1/2), 1 ), {c}f()"), "1\n"),
             (format!("f := fn () -> dyad ( mut d := dyad ?, d = 1/3, d ), {c}f()"), "1/3\n"),
             (
                 format!(
@@ -3178,8 +3258,12 @@ fn a_reflect_read_that_does_not_fit_is_an_error() {
 #[test]
 fn an_import_inside_a_fn_body_is_rejected() {
     // The load is a comptime effect; inside a fn body parse and run order do not coincide.
-    let (_echoes, stderr) = repl(b"g := fn () -> i32 ( import examples/answer.logos 1 )\n");
-    assert!(stderr.contains("loads at parse time"), "stderr: {stderr}");
+    let (_echoes, stderr) = repl("g := fn () -> i32 ( import file «examples/answer.logos», 1 )\n");
+    assert!(stderr.contains("`import` reads a file as Logos at parse time"), "stderr: {stderr}");
+    let (code, _, stderr) =
+        run_line("g := fn () -> i32 ( (logos file «tests/fixtures/lib_pub.logos»).double(2) )");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`logos` reads a file as Logos at parse time"), "stderr: {stderr}");
 }
 
 #[test]
@@ -3317,7 +3401,8 @@ fn the_repl_refuses_a_call_whose_body_reads_a_freed_name() {
 #[test]
 fn an_imported_function_may_read_its_own_sections_private_names() {
     // The section is on no caller's stack, but its names live for the run.
-    let out = logos().arg("import tests/fixtures/lib_helper.logos, bump(41)").output().unwrap();
+    let out =
+        logos().arg("import file «tests/fixtures/lib_helper.logos», bump(41)").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
 }
@@ -3483,14 +3568,14 @@ fn logos_is_a_value_reflected_by_dot_logos_and_compared_by_identity() {
 
 #[test]
 fn the_type_reflection_example_runs() {
-    let out = logos().args(["import", "examples/type_reflection.logos"]).output().unwrap();
+    let out = logos().arg("import file «examples/type_reflection.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
 }
 
 #[test]
 fn a_logos_value_prints_its_spelling() {
-    let out = logos().args(["import", "tests/fixtures/logos_name.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/logos_name.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "i32\n");
 }
@@ -3604,7 +3689,7 @@ fn a_type_body_in_a_function_declares_fields_from_the_call_s_types() {
 
 #[test]
 fn the_type_returning_fn_example_runs() {
-    let out = logos().args(["import", "examples/type_returning_fn.logos"]).output().unwrap();
+    let out = logos().arg("import file «examples/type_returning_fn.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
 }
@@ -3613,7 +3698,7 @@ fn the_type_returning_fn_example_runs() {
 fn file_mode_runs_each_expression_as_it_parses() {
     // The file driver used to parse everything first, so the call read x's zeroed storage and answered i32 rather than f64.
     let out = logos()
-        .args(["import", "tests/fixtures/comptime_sees_committed_state.logos"])
+        .arg("import file «tests/fixtures/comptime_sees_committed_state.logos»")
         .output()
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -3652,7 +3737,7 @@ fn a_dependent_typed_declaration_takes_a_computed_type() {
 #[test]
 fn a_logos_declaration_works_after_other_code() {
     let out = logos()
-        .args(["import", "tests/fixtures/declared_logos_after_code.logos"])
+        .arg("import file «tests/fixtures/declared_logos_after_code.logos»")
         .output()
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -3725,14 +3810,14 @@ fn a_comptime_if_drops_the_untaken_branch_unparsed() {
 #[test]
 fn the_metatypefn_example_runs() {
     // The expected value tracks the file's current argument; the deep arm is pinned by the metalogos_arm fixture.
-    let out = logos().args(["import", "examples/metatypefn.logos"]).output().unwrap();
+    let out = logos().arg("import file «examples/metatypefn.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9.5\n");
 }
 
 #[test]
 fn the_metalogos_arm_fills_a_logos_variable() {
-    let out = logos().args(["import", "tests/fixtures/metalogos_arm.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/metalogos_arm.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "i32\n");
 }
@@ -3757,7 +3842,7 @@ fn a_for_loop_needs_no_index_in_both_tiers() {
 
 #[test]
 fn the_no_index_example_counts_the_evens() {
-    let out = logos().args(["import", "examples/no_index.logos"]).output().unwrap();
+    let out = logos().arg("import file «examples/no_index.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "5");
 }
@@ -3789,7 +3874,7 @@ fn help_prints_usage_and_version() {
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains(env!("CARGO_PKG_VERSION")));
-    assert!(text.contains("logos import ./file.logos"));
+    assert!(text.contains("logos import file «./file.logos»"));
 }
 
 #[test]
@@ -4242,7 +4327,7 @@ fn a_result_type_is_read_as_a_declaration_reads_its_type() {
     assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
     assert!(stderr.contains("unknown name `mk2`"), "stderr: {stderr}");
 
-    let out = logos().args(["import", "tests/fixtures/hole_result_type.logos"]).output().unwrap();
+    let out = logos().arg("import file «tests/fixtures/hole_result_type.logos»").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -4355,7 +4440,7 @@ fn only_a_marked_place_is_written_or_addressed() {
 
 #[test]
 fn an_element_has_an_address_and_taking_it_checks_the_index() {
-    let arr = "import ./identities/array.logos";
+    let arr = "import file «./identities/array.logos»";
     assert_eq!(line(&format!("{arr}, a := array i32 [1, 2], p := &(a[1]), p@ = 8, a[1]")), "8");
     assert_eq!(
         line(&format!(
@@ -4507,7 +4592,7 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     // An earlier argument runs before the call too, once: the call reads the value it gave.
     let k2 = "k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b )";
     let k3 = "k3 := fn (a := i32 ?, b := i32 ?, c := i32 ?) -> i32 ( a + b + c )";
-    let arrays = "import ./identities/array.logos";
+    let arrays = "import file «./identities/array.logos»";
     for (src, want) in [
         (format!("{calls}, {k2}, k(h(), g() + 1)"), "h\ng\n4"),
         (format!("{calls}, {k2}, k(h(), (g() + 1))"), "h\ng\n4"),
@@ -4577,7 +4662,7 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     // A `while` condition that holds the call is held before it is parsed, so the call runs once
     // each time the condition runs, at the top level and in a body; a `[` in it is no body.
     let count = "mut n := i32 0, c := fn () -> dyad ( n = n + 1, i32 3 ), mut i := i32 0";
-    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
+    let array = "import file «./identities/array.logos», a := array i32 [1, 2, 3]";
     for (src, want) in [
         (format!("{g}, mut i := i32 0, while i < g() ( i = i + 1 ), i"), "5"),
         (format!("{count}, while i < c() ( i = i + 1 ), n"), "4"),
@@ -4652,8 +4737,9 @@ fn a_constructor_a_member_call_for_a_type_and_an_import_run_after_the_part_of_th
              tape[0].type = q, tape[0].v = tape[1].dyads[0], tape.remove(1), \
              tape.is_constructed[0] = true ) )";
     let o = "o := type ( static m := fn () -> type ( print «m», i32 ) )";
-    let imp = "import ./tests/fixtures/prints.logos";
-    let array = "import ./identities/array.logos";
+    let imp = "import file «./tests/fixtures/prints.logos»";
+    let read = "(logos file «./tests/fixtures/prints_pub.logos»).v";
+    let array = "import file «./identities/array.logos»";
     let boxed = "mut t := type ?, t = i64, h := fn () -> i32 ( print «h», t = i32, 1 )";
     let count = "count := type ( static parse_rank = *.parse_rank + 1, \
                  static parse = ( tape.remove(1), tape.remove(0) ) )";
@@ -4663,12 +4749,18 @@ fn a_constructor_a_member_call_for_a_type_and_an_import_run_after_the_part_of_th
         (format!("{h}, {o}, h() == 1 and o.m() == i32"), "h\nm\ntrue"),
         (format!("{h}, {o}, h() == 1 and (o.m() == i32)"), "h\nm\ntrue"),
         (format!("{h}, h() + ({imp} , i32 1)"), "h\nimp\n2"),
+        (format!("{h}, h() + {read}"), "h\nimp\n3"),
+        (
+            format!("{h}, k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), k(h(), {read})"),
+            "h\nimp\n3",
+        ),
         (format!("{array}, {h}, l := array i32 [4, 5], h() + l[1]"), "h\n6"),
         (format!("{array}, l := array i32 [4, 5], print «{{l[0]}} {{l[1]}}»"), "4 5"),
         // In a later part of a quote, after the earlier parts.
         (format!("{h}, {q}, print «{{h()}} {{(q [5, i32 7]).v}}»"), "h\nq\n1 5"),
         (format!("{h}, {o}, print «{{h()}} {{o.m() == i32}}»"), "h\nm\n1 true"),
         (format!("{h}, print «{{h()}} {{({imp} , i32 1)}}»"), "h\nimp\n1 1"),
+        (format!("{h}, print «{{h()}} {{{read}}}»"), "h\nimp\n1 2"),
         (format!("{array}, {h}, l := array i32 [4, 5], print «{{h()}} {{l[1]}}»"), "h\n1 5"),
         (
             format!("{h}, {q}, f := fn () -> i32 ( print «{{h()}} {{(q [5, i32 7]).v}}», 2 ), f()"),
@@ -4695,6 +4787,7 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
     let mk_of = "mk := fn (u := type ?) -> type ( u )";
     let boxed = "mut t := type ?, t = i32, mk := fn () -> type ( t )";
     let o = "o := type ( static m := fn () -> type ( i32 ) )";
+    let o_by_name = format!("{o}, k := o.m");
     let pt = "pt := type ( mut a := i32 ? ), mk := fn () -> type ( pt )";
     let h = "h := fn () -> i32 ( print «h», 1 ), mk := fn () -> type ( print «mk», i32 )";
     for (named, unnamed, want) in [
@@ -4723,6 +4816,89 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
     }
     // The call runs where the parse reads it, after the part of its line before it.
     assert_eq!(line(&format!("{h}, x := h() + mk() 5, x")), "h\nmk\n6");
+    // Inside a body too, on both tiers.
+    for (defs, out, named, unnamed, want) in [
+        (mk, "i32", "u := mk(), u 3", "mk() 3", "3"),
+        (boxed, "i32", "u := mk(), u 3", "mk() 3", "3"),
+        (mk, "type", "u := mk(), x := u 3, x.type", "x := mk() 3, x.type", "i32"),
+        (mk_of, "type", "u := mk(i64), x := u 3, x.type", "x := mk(i64) 3, x.type", "i64"),
+        (o, "i32", "u := o.m(), u 3", "o.m() 3", "3"),
+        (o_by_name.as_str(), "i32", "u := k(), u 3", "k() 3", "3"),
+        (mk, "i32", "u := mk(), u(7)", "mk()(7)", "7"),
+        (pt, "i32", "u := mk(), v := u(4), v.a", "v := mk()(4), v.a", "4"),
+        (mk, "type", "u := mk(), u", "mk()", "i32"),
+        (mk, "bool", "u := mk(), u == i32", "mk() == i32", "true"),
+        (mk, "i32", "u := mk(), mut x := u ?, x = 4, x", "mut x := mk() ?, x = 4, x", "4"),
+        (mk, "i32", "if true ( u := mk(), u 3 ) else ( 4 )", "if true ( mk() 3 ) else ( 4 )", "3"),
+    ] {
+        for body in [named, unnamed] {
+            for call in ["f()", "f.compile(), f()"] {
+                let src = format!("{defs}, f := fn () -> {out} ( {body} ), {call}");
+                assert_eq!(line(&src), want, "{src}");
+            }
+        }
+    }
+    // In a body the call runs where the body is written; what stands before it waits for f's call.
+    let src = format!("{h}, f := fn () -> i32 ( h() + mk() 5 ), print «defined», f()");
+    assert_eq!(line(&src), "mk\ndefined\nh\n6");
+    let om = "o := type ( static m := fn () -> type ( print «m», i32 ) )";
+    let src = format!("{om}, f := fn () -> i32 ( o.m() 3 ), print «defined», f()");
+    assert_eq!(line(&src), "m\ndefined\n3");
+}
+
+#[test]
+fn a_member_holding_a_type_reads_what_follows_it_as_a_name_holding_the_type_does() {
+    let o = "o := type ( static e := i32 )";
+    let pt = "pt := type ( mut a := i32 ? ), o := type ( static e := pt )";
+    for (defs, out, named, unnamed, want) in [
+        (o, "i32", "u := o.e, u 3", "o.e 3", "3"),
+        (o, "type", "u := o.e, x := u 3, x.type", "x := o.e 3, x.type", "i32"),
+        (o, "i32", "u := o.e, u(7)", "o.e(7)", "7"),
+        (pt, "i32", "u := o.e, v := u(4), v.a", "v := o.e(4), v.a", "4"),
+        (o, "type", "u := o.e, u", "o.e", "i32"),
+        (o, "bool", "u := o.e, u == i32", "o.e == i32", "true"),
+        (o, "i32", "u := o.e, mut x := u ?, x = 4, x", "mut x := o.e ?, x = 4, x", "4"),
+    ] {
+        for body in [named, unnamed] {
+            let src = format!("{defs}, {body}");
+            assert_eq!(line(&src), want, "{src}");
+            for call in ["f()", "f.compile(), f()"] {
+                let src = format!("{defs}, f := fn () -> {out} ( {body} ), {call}");
+                assert_eq!(line(&src), want, "{src}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_bracket_holding_a_type_reads_what_follows_it_as_a_name_holding_the_type_does() {
+    let none = "z := i32 0";
+    let mk = "mk := fn () -> type ( i32 )";
+    let pt = "pt := type ( mut a := i32 ? )";
+    let o = "o := type ( static e := i32 )";
+    for (defs, out, named, unnamed, want) in [
+        (none, "i32", "u := (i32), u 3", "(i32) 3", "3"),
+        (none, "type", "u := (i32), x := u 3, x.type", "x := (i32) 3, x.type", "i32"),
+        (none, "i32", "u := i32, v := (u), v 3", "u := i32, (u) 3", "3"),
+        (mk, "i32", "u := (mk()), u 3", "(mk()) 3", "3"),
+        (mk, "i32", "u := (immediate mk()), u 3", "(immediate mk()) 3", "3"),
+        (pt, "i32", "u := (pt), v := u(4), v.a", "v := (pt)(4), v.a", "4"),
+        (o, "i32", "u := (o.e), u 3", "(o.e) 3", "3"),
+        (none, "type", "u := (i32), u", "(i32)", "i32"),
+    ] {
+        for body in [named, unnamed] {
+            let src = format!("{defs}, {body}");
+            assert_eq!(line(&src), want, "{src}");
+            for call in ["f()", "f.compile(), f()"] {
+                let src = format!("{defs}, f := fn () -> {out} ( {body} ), {call}");
+                assert_eq!(line(&src), want, "{src}");
+            }
+        }
+    }
+    // A bracket an identity to its left takes stays that identity's argument.
+    let k = "k := fn (t := type ?) -> type ( t )";
+    assert_eq!(line(&format!("{k}, k (i64) 3")), "3");
+    assert_eq!(line(&format!("{k}, x := k (i64) 3, x.type")), "i64");
 }
 
 #[test]
@@ -4876,9 +5052,9 @@ fn line(src: &str) -> String {
 #[test]
 fn an_imported_pub_name_keeps_its_gates() {
     // The importer's name is the file's binding again, gates included.
-    assert_eq!(line("import ./tests/fixtures/gated.logos, r = 9, r"), "9");
-    assert_eq!(line("import ./tests/fixtures/gated.logos, q.bump(), q.a"), "2");
-    let (code, _, stderr) = run_line("import ./tests/fixtures/gated.logos, s = 3, s");
+    assert_eq!(line("import file «./tests/fixtures/gated.logos», r = 9, r"), "9");
+    assert_eq!(line("import file «./tests/fixtures/gated.logos», q.bump(), q.a"), "2");
+    let (code, _, stderr) = run_line("import file «./tests/fixtures/gated.logos», s = 3, s");
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("`s` is not `mut`"), "stderr: {stderr}");
 }
@@ -4894,7 +5070,7 @@ fn assert_dead(lines: &[String], name: &str) {
 
 #[test]
 fn a_pub_name_the_file_ended_is_dead_for_the_importer() {
-    let lib = "import ./tests/fixtures/pub_ended.logos";
+    let lib = "import file «./tests/fixtures/pub_ended.logos»";
     let tails = ["a@", "free a", "b := move a", "f := fn () -> i32 ( a@ )", &format!("{lib}, a@")];
     assert_dead(&tails.map(|tail| format!("{lib}, {tail}")), "a");
     assert_dead(&[format!("{lib}, q")], "q");
@@ -4905,8 +5081,8 @@ fn a_pub_name_the_file_ended_is_dead_for_the_importer() {
 
 #[test]
 fn an_imported_name_one_importer_ended_is_dead_for_every_importer() {
-    let lib = "import ./tests/fixtures/owning_pub.logos";
-    let frees = "import ./tests/fixtures/frees_imported.logos";
+    let lib = "import file «./tests/fixtures/owning_pub.logos»";
+    let frees = "import file «./tests/fixtures/frees_imported.logos»";
     assert_dead(
         &[
             format!("{lib}, free p, {lib}, p@"),
@@ -4917,7 +5093,7 @@ fn an_imported_name_one_importer_ended_is_dead_for_every_importer() {
         "p",
     );
     let (echoes, stderr) = repl(
-        b"import ./tests/fixtures/held.logos\nfree h\nimport ./tests/fixtures/held.logos\nh.n\n",
+        "import file «./tests/fixtures/held.logos»\nfree h\nimport file «./tests/fixtures/held.logos»\nh.n\n",
     );
     assert_eq!(echoes, ["freed 9"], "stderr: {stderr}");
     assert!(stderr.contains("`h` is dead here"), "stderr: {stderr}");
@@ -4932,7 +5108,7 @@ fn an_imported_name_one_importer_ended_is_dead_for_every_importer() {
 
 #[test]
 fn an_imported_pub_spelling_is_keyed_and_ranked_as_the_file_declared_it() {
-    let lib = "import ./tests/fixtures/pub_spellings.logos";
+    let lib = "import file «./tests/fixtures/pub_spellings.logos»";
     assert_eq!(line(&format!("{lib}, (5k).type == type")), "true");
     assert_eq!(line(&format!("{lib}, {lib}, (5k).type == type")), "true");
     assert_eq!(line(&format!("{lib}, {lib}, @!")), "7");
@@ -4944,10 +5120,10 @@ fn an_imported_pub_spelling_is_keyed_and_ranked_as_the_file_declared_it() {
 
 #[test]
 fn an_import_tail_runs_once() {
-    assert_eq!(line("import ./tests/fixtures/counter.logos, c@"), "1");
+    assert_eq!(line("import file «./tests/fixtures/counter.logos», c@"), "1");
     // An import is a statement: nothing echoes, and the second import runs nothing.
     let (echoes, stderr) =
-        repl(b"import ./tests/fixtures/counter.logos\nimport ./tests/fixtures/counter.logos\nc@\n");
+        repl("import file «./tests/fixtures/counter.logos»\nimport file «./tests/fixtures/counter.logos»\nc@\n");
     assert_eq!(echoes, ["1"], "stderr: {stderr}");
 }
 
@@ -4955,9 +5131,9 @@ fn an_import_tail_runs_once() {
 fn a_static_name_in_a_file_imported_twice_is_one_place() {
     let out = logos()
         .arg(
-            "import tests/fixtures/static_importer_a.logos, \
-             import tests/fixtures/static_importer_b.logos, \
-             import tests/fixtures/static_counter.logos, print «{a} {b} {count}», 0",
+            "import file «tests/fixtures/static_importer_a.logos», \
+             import file «tests/fixtures/static_importer_b.logos», \
+             import file «tests/fixtures/static_counter.logos», print «{a} {b} {count}», 0",
         )
         .output()
         .unwrap();
@@ -4995,7 +5171,7 @@ fn the_pass_runs_only_as_far_as_it_must_in_order_and_never_twice() {
 
 #[test]
 fn immediate_runs_its_expression_as_it_parses_and_stands_as_the_value() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     assert_eq!(line(&format!("{array}, n := immediate ( 2 + 3 ), a := array i32 [n], a[0]")), "5");
     assert_eq!(line("x := immediate 2 + 3, x"), "5");
     let bump = "mut c := i32 0, bump := fn () -> i32 ( c = c + 1, c )";
@@ -5218,7 +5394,7 @@ fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
     // The quote holds `a «b» c` whole.
     let (code, stdout, stderr) = run_line("s := «a «b» c», print «{s}»");
     assert_eq!((code, stdout.as_str()), (Some(0), "a «b» c\n"), "{stderr}");
-    let (_, _, stderr) = run_line("import «tests/fixtures/a«b».logos»");
+    let (_, _, stderr) = run_line("import file «tests/fixtures/a«b».logos»");
     assert!(stderr.contains("cannot read ./tests/fixtures/a«b».logos"), "{stderr}");
 
     let (echoes, stderr) = repl("print «{«a»}»\nprint «a «b» c»\n".as_bytes());
@@ -5306,7 +5482,8 @@ fn a_comment_built_in_the_boundary_s_build_loop_is_read_through_before_the_next_
         let (echoes, stderr) = repl(format!("{}\n5 h\n", h("* 2 #")).as_bytes());
         assert_eq!(echoes, ["10"], "{rank}: {stderr}");
     }
-    let out = logos().arg("import tests/fixtures/spliced_comment.logos, ten").output().unwrap();
+    let out =
+        logos().arg("import file «tests/fixtures/spliced_comment.logos», ten").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "10\n");
 }
@@ -5581,7 +5758,7 @@ fn a_text_node_and_a_place_of_text_read_as_the_node() {
         ("s := «a», s", "a\n"),
         ("if (true) ( «a» ) else ( «b» )", "a\n"),
         ("immediate «a»", "a\n"),
-        ("import tests/fixtures/pub_text.logos, s", "a\n"),
+        ("import file «tests/fixtures/pub_text.logos», s", "a\n"),
         (
             "sq := type ( a := dyad ?, static parse = ( n := tape[-1]:name, \
              print «{n} {tape.spelling[-1]}», tape[0].type = sq, tape[0].a = tape[-1], \
@@ -5596,7 +5773,7 @@ fn a_text_node_and_a_place_of_text_read_as_the_node() {
         for (src, want) in [
             (format!("f := fn () -> i32 ( free («a»), 1 ), {c}f()"), "1\n"),
             (format!("f := fn () -> i32 ( s := «a», 1 ), {c}f()"), "1\n"),
-            (format!("f := fn () -> i32 ( defer «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( defer free («a»), 1 ), {c}f()"), "1\n"),
             (format!("f := fn (a := string ?) -> i32 ( print «{{a}}», 1 ), {c}f(«hi»)"), "hi\n1\n"),
             (format!("f := fn () -> string ( «a» ), {c}f()"), "a\n"),
         ] {
@@ -5723,7 +5900,7 @@ fn a_scope_is_read_by_path_and_reading_runs_nothing() {
 
 #[test]
 fn a_constructor_reads_the_scope_cell_to_its_right_line_by_line() {
-    let lib = "import tests/fixtures/scope_cell_lines.logos";
+    let lib = "import file «tests/fixtures/scope_cell_lines.logos»";
     for (line, want) in
         [("first (7, 8, 9) + last (7, 8, 9)", "16"), ("first (scope (free (1), 2), 3)", "2")]
     {
@@ -6512,7 +6689,7 @@ fn the_program_s_end_runs_its_defers_and_what_it_holds_last_first() {
         ),
         (format!("{BOX}, a := box (1, 2), defer print «d», print «made»"), "made\nd\nfree\n"),
         (
-            "import ./tests/fixtures/deferring.logos, print «main», k".to_string(),
+            "import file «./tests/fixtures/deferring.logos», print «main», k".to_string(),
             "main\nfile ends\n1\n",
         ),
     ] {
@@ -6525,21 +6702,21 @@ fn the_program_s_end_runs_its_defers_and_what_it_holds_last_first() {
     assert_eq!(echoes, ["bye", "1"], "stderr: {stderr}");
     // An imported name is the file's own place: ending it ends the file's hold, once.
     for src in [
-        "import ./tests/fixtures/owning_pub.logos, p@",
-        "import ./tests/fixtures/owning_pub.logos, free p, 1",
-        "import ./tests/fixtures/owning_pub.logos, q := move p, q@",
+        "import file «./tests/fixtures/owning_pub.logos», p@",
+        "import file «./tests/fixtures/owning_pub.logos», free p, 1",
+        "import file «./tests/fixtures/owning_pub.logos», q := move p, q@",
     ] {
         let (code, stdout, stderr) = run_line(src);
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
         assert!(matches!(stdout.trim(), "7" | "1"), "{src}: {stdout}");
     }
-    let (echoes, stderr) = repl(b"import ./tests/fixtures/owning_pub.logos\nfree p\n1\n");
+    let (echoes, stderr) = repl("import file «./tests/fixtures/owning_pub.logos»\nfree p\n1\n");
     assert_eq!(echoes, ["1"], "stderr: {stderr}");
 }
 
 #[test]
 fn a_fault_ends_every_live_scope_as_its_end_would() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for (tail, printed, error) in [
         (
             "f := fn () -> i32 ( a := box (1, 2), defer print «bye», error «stop» ), f()",
@@ -6580,7 +6757,7 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
         assert!(stderr.contains(error), "{tail}: stderr: {stderr}");
     }
     // An imported file that faults ends its own scope before the import fails.
-    let (code, stdout, stderr) = run_line("import ./tests/fixtures/faulting.logos, 1");
+    let (code, stdout, stderr) = run_line("import file «./tests/fixtures/faulting.logos», 1");
     assert_eq!((code, stdout.as_str()), (Some(1), "file cleanup\nfreed\n"), "stderr: {stderr}");
     assert!(stderr.contains("file stops"), "stderr: {stderr}");
     // The stopped function's `defer` runs, the line after the fault does not.
@@ -6600,7 +6777,7 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
 fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
     let nan = "a float that is not a number (NaN)";
     let range = "index out of range";
-    let checked = "import ./identities/array.logos, \
+    let checked = "import file «./identities/array.logos», \
          h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
          bag := type ( mut v := f64 ?, static free = ( print «freed {h(v)}» ) ), z := f64 0.0";
     for (before, after, printed, error) in [
@@ -6660,7 +6837,7 @@ fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
 fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
     let nan = "a float that is not a number (NaN)";
     let range = "index out of range";
-    let checked = "import ./identities/array.logos, \
+    let checked = "import file «./identities/array.logos», \
          h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
          bag := type ( mut v := f64 ?, static free = ( print «freed {h(v)}» ) ), z := f64 0.0";
     let say = "say := fn (k := i32 ?) -> i32 ( print «say {k}», k )";
@@ -6697,7 +6874,8 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         ),
         (
             format!(
-                "{say}, g := fn (x := f64 ?) -> i32 ( defer say(1), n := i32 lossy (x), say(n) )"
+                "{say}, g := fn (x := f64 ?) -> i32 ( defer free (say(1)), n := i32 lossy (x), \
+                 say(n) )"
             ),
             fault,
             "say 1\n",
@@ -6774,20 +6952,11 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
             "freed 3\nfreed 1\n",
             range,
         ),
-        // A `return` in a `defer` the cleanup runs runs the rest of its end; a fault stops it.
-        (
-            format!(
-                "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), defer ( return 7 ), \
-                 b := bag(2), n := i32 lossy (x), n )"
-            ),
-            fault,
-            "freed 2\nfreed 1\n",
-            nan,
-        ),
+        // A fault in a `defer` stops the end it runs in.
         (
             format!(
                 "{RECORD}, h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), \
-                 g := fn (x := f64 ?) -> i32 ( a := bag(1), defer ( h(x) ), b := bag(2), 3 )"
+                 g := fn (x := f64 ?) -> i32 ( a := bag(1), defer free (h(x)), b := bag(2), 3 )"
             ),
             fault,
             "freed 2\n",
@@ -7129,9 +7298,13 @@ fn a_line_frees_at_its_end_what_it_made_that_nothing_took() {
         ("c := true, x := if c ( bag(7) ) else ( bag(8) ), print «after»".into(), "after\nfreed 7\n"),
         ("x := ( free (bag(9)), i32 5 ), print «x {x}»".into(), "freed 9\nx 5\n"),
         // A `defer` is a line of its own when its scope ends.
-        ("f := fn () -> i32 ( defer bag(1), 2 ), free (f()), print «after»".into(), "freed 1\nafter\n"),
         (
-            "f := fn () -> i32 ( defer bag(1), 2 ), f.compile(), free (f()), print «after»".into(),
+            "f := fn () -> i32 ( defer free (bag(1)), 2 ), free (f()), print «after»".into(),
+            "freed 1\nafter\n",
+        ),
+        (
+            "f := fn () -> i32 ( defer free (bag(1)), 2 ), f.compile(), free (f()), print «after»"
+                .into(),
             "freed 1\nafter\n",
         ),
         // A `.` reads the node and runs nothing, so nothing is made to free.
@@ -7158,7 +7331,7 @@ fn a_line_frees_what_it_made_where_it_ends() {
     let two_three = "two := fn () -> own boxed ( box (1, 2) ), \
                      three := fn () -> own boxed ( box (1, 2, 3) )";
     let r = "r := fn (k := i32 ?) -> u64 ( if k > 0 ( return mk().size ), 0 )";
-    let array = "import ./identities/array.logos, a := array u64 [1, 2]";
+    let array = "import file «./identities/array.logos», a := array u64 [1, 2]";
     let w = "mut i := u64 0, while (mk().size > i) ( i = i + 1 )";
     let bare_w = "mut i := u64 0, while mk().size > i ( i = i + 1 )";
     for (tail, printed) in [
@@ -7260,7 +7433,7 @@ fn what_a_part_the_pass_ran_early_made_ends_where_its_line_ends() {
         assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
     }
     // A fault leaves the line, in the early run or after it: what the run made ends first.
-    let array = "import ./identities/array.logos, a := array u64 [1, 2]";
+    let array = "import file «./identities/array.logos», a := array u64 [1, 2]";
     for tail in [
         format!("{defs}, {array}, x := (two().size + a[5]) + tt 5, print «after»"),
         format!("{defs}, {array}, x := two().size + tt 5 + a[5], print «after»"),
@@ -7440,7 +7613,7 @@ fn a_cell_reached_through_a_borrow_is_not_ended_there() {
         "a := alloc 1 of i32 5, pp := &a, b := move pp@, 0",
         "f := fn (p := @bag ?) -> i32 ( free p@, 1 )",
         "id := fn (q := @bag ?) -> @bag ( q ), p := alloc 1 of bag (5), free (id(p))@, 0",
-        "import ./identities/array.logos, t := array i32, tt := array t, \
+        "import file «./identities/array.logos», t := array i32, tt := array t, \
          g := fn (h := tt ?) -> i32 ( free (h.ptr + 0)@, 1 )",
     ] {
         let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
@@ -7773,60 +7946,59 @@ fn a_return_ends_what_each_scope_if_and_call_it_leaves_holds_compiled_or_not() {
     }
 }
 
-/// ›A value's teardown runs where its life ends; the ending identity reads the type's `free`
-/// slot‹ [[R57]] and ›A scope's value is what it evaluates to, and `return` is an optional early
-/// exit from the enclosing function‹ [[R207]]: a `return` in a `defer` runs the rest of its
-/// scope's end before it leaves, on both tiers.
+/// ›A scope's value is what it evaluates to, and `return` is an optional early exit from the
+/// enclosing function‹ [[R207]]: a `defer` holds no `return`, at any depth, and gives no value;
+/// each is refused where it is written, so nothing runs on either tier.
 #[test]
-fn a_return_in_a_defer_runs_the_rest_of_its_scopes_end_compiled_or_not() {
-    let f = "f := fn (q := bag ?, m := i32 ?) -> i32 ( q.n + m )";
-    for (g, calls, printed) in [
+fn a_defer_holds_no_return_and_gives_no_value() {
+    let leaves = "a `defer` cannot leave its function";
+    let gives = "this gives a value, and a `defer` gives none";
+    for (g, word, error) in [
+        ("g := fn () -> i32 ( defer ( return 7 ), return 3 )", "return 7", leaves),
+        ("g := fn () -> i32 ( defer return 7, 3 )", "return 7", leaves),
         (
             "g := fn () -> i32 ( a := bag(1), defer ( return 7 ), b := bag(2), 3 )",
-            "print «got {g()}»",
-            "freed 2\nfreed 1\ngot 7\n",
+            "return 7",
+            leaves,
         ),
+        ("g := fn (c := i32 ?) -> i32 ( defer ( if (c == 1) (return 7) ), 3 )", "return 7", leaves),
         (
-            "g := fn () -> i32 ( a := bag(1), defer ( b := bag(5), return 7 ), c := bag(2), 3 )",
-            "print «got {g()}»",
-            "freed 2\nfreed 5\nfreed 1\ngot 7\n",
+            "g := fn () -> i32 ( defer ( for i in 0..3 ( if (i == 1) (return 7) ) ), 3 )",
+            "return 7",
+            leaves,
         ),
-        (
-            "g := fn (c := i32 ?) -> i32 ( a := bag(1), defer ( if (c == 1) (return 7) ), \
-             b := bag(2), 3 )",
-            "print «got {g(1)}», print «got {g(0)}»",
-            "freed 2\nfreed 1\ngot 7\nfreed 2\nfreed 1\ngot 3\n",
-        ),
-        (
-            "g := fn () -> i32 ( a := bag(1), x := ( b := bag(2), defer ( return 7 ), \
-             c := bag(3), i32 5 ), d := bag(4), x )",
-            "print «got {g()}»",
-            "freed 3\nfreed 2\nfreed 1\ngot 7\n",
-        ),
-        (
-            "g := fn () -> i32 ( a := bag(1), for 0..2 ( b := bag(2), defer ( return 7 ), \
-             c := bag(3) ), 4 )",
-            "print «got {g()}»",
-            "freed 3\nfreed 2\nfreed 1\ngot 7\n",
-        ),
-        (
-            "g := fn (c := i32 ?) -> i32 ( a := bag(1), if (c > 0) ( b := bag(2), \
-             defer ( return 7 ), d := bag(4) ) else ( free a ), 3 )",
-            "print «got {g(1)}», print «got {g(0)}»",
-            "freed 4\nfreed 2\nfreed 1\ngot 7\nfreed 1\ngot 3\n",
-        ),
-        (
-            "g := fn () -> i32 ( a := bag(1), f(bag(2), ( b := bag(3), defer ( return 7 ), \
-             c := bag(4), i32 5 )) )",
-            "print «got {g()}»",
-            "freed 4\nfreed 3\nfreed 2\nfreed 1\ngot 7\n",
-        ),
+        ("g := fn () -> i32 ( x := ( defer ( return 7 ), i32 5 ), x )", "return 7", leaves),
+        ("g := fn () -> i32 ( defer ( defer ( return 7 ) ), 3 )", "return 7", leaves),
+        // The line after the `return` is the `return`'s to answer for, not the `defer`'s.
+        ("g := fn () -> i32 ( defer ( return 7, print «x» ), 3 )", "return 7", leaves),
+        ("g := fn () -> i32 ( defer ( 7 ), 3 )", "( 7 )", gives),
+        ("g := fn () -> i32 ( defer 7, 3 )", "7,", gives),
+        ("g := fn () -> i32 ( defer bag(1), 3 )", "bag(1),", gives),
+        ("g := fn (c := i32 ?) -> i32 ( defer ( if (c == 1) (7) ), 3 )", "( if", gives),
+        ("g := fn () -> i32 ( defer ( for i in 0..3 ( if (i == 1) (i) ) ), 3 )", "( for", gives),
     ] {
         for compile in ["", "g.compile(), "] {
-            let src = format!("{RECORD}, {f}, {g}, {compile}{calls}");
+            let src = format!("{RECORD}, {g}, {compile}print «got {{g()}}»");
             let (code, stdout, stderr) = run_line(&src);
-            assert_eq!((code, stdout.as_str()), (Some(0), printed), "{compile}{g}: {stderr}");
+            assert_eq!((code, stdout.as_str()), (Some(1), ""), "{compile}{g}: {stderr}");
+            let at = src.find(word).expect("the word is in the program");
+            let col = src[..at].chars().count() + 1;
+            let head = format!("<command line>:1:{col}: error: {error}");
+            assert!(stderr.starts_with(&head), "{compile}{g}: stderr: {stderr}");
         }
+    }
+    // A function written in a `defer` leaves itself, and a value nobody wants is thrown away.
+    for compile in ["", "g.compile(), "] {
+        let src = format!(
+            "{RECORD}, g := fn () -> i32 ( a := bag(1), defer ( h := fn () -> i32 ( return 5 ), \
+             print «h {{h()}}» ), defer free (bag(2)), 3 ), {compile}print «got {{g()}}»"
+        );
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(0), "freed 2\nh 5\nfreed 1\ngot 3\n"),
+            "{compile}: {stderr}"
+        );
     }
 }
 
@@ -7865,7 +8037,8 @@ fn a_line_that_fails_frees_a_node_it_ended_and_did_not_reach() {
 
 #[test]
 fn an_array_holds_arrays_as_their_addresses() {
-    let array = "import ./identities/array.logos, x := array i32 [1, 2], y := array i32 [3, 4], \
+    let array =
+        "import file «./identities/array.logos», x := array i32 [1, 2], y := array i32 [3, 4], \
                  t := array i32, b := array t [move x, move y]";
     for (tail, printed) in [
         ("b[1][0]", "3"),
@@ -7901,7 +8074,7 @@ fn an_array_holds_arrays_as_their_addresses() {
 /// A value whose field holds an array, built in the array's shape: `holder ()` is a node
 /// whose run makes a new `held`, and `holder` with no bracket is `held`, whose parse
 /// reads nothing.
-const HOLDER: &str = "import ./identities/array.logos, t := array i32, \
+const HOLDER: &str = "import file «./identities/array.logos», t := array i32, \
     held := type ( \
         mut items := t ?, \
         static count := fn () -> u64 ( items.size ), \
@@ -7953,7 +8126,7 @@ fn a_field_holding_an_array_reads_as_that_array() {
 /// in the array's shape: `bag ()` makes a new `bagged`.
 fn bag_line(tail: &str) -> String {
     format!(
-        "import ./identities/array.logos, {BOX}, t := array i32, \
+        "import file «./identities/array.logos», {BOX}, t := array i32, \
          bagged := type ( \
              mut items := own t ?, \
              mut b := own boxed ?, \
@@ -8130,7 +8303,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
 
 #[test]
 fn a_chooser_takes_the_type_the_chooser_right_of_it_leaves() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for (tail, printed) in [
         ("t := array array i32, u := array (array i32), t == u", "true"),
         ("t := array array i32, u := array i32, v := array u, t == v", "true"),
@@ -8150,7 +8323,7 @@ fn a_chooser_takes_the_type_the_chooser_right_of_it_leaves() {
 
 #[test]
 fn a_nested_list_builds_each_element_with_the_element_type() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for (tail, printed) in [
         ("a := array array i32 [[1, 2], [3, 4]], a[1][0]", "3"),
         ("a := array array i32 [[1, 2], [3, 4]], a[0][1] + a[1][1]", "6"),
@@ -8209,7 +8382,7 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
 
 #[test]
 fn the_outer_array_s_free_frees_each_element_once() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for (tail, printed) in [
         ("a := array boxed [box (1, 2), box (3, 4)], print «made»", "made\nfree\nfree\n"),
         (
@@ -8243,7 +8416,7 @@ fn the_outer_array_s_free_frees_each_element_once() {
 
 #[test]
 fn free_of_an_element_runs_its_free_there_and_the_array_skips_it() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for tail in [
         "x := box (1, 2), arr := array boxed [move x], free (arr[0]), print «after»",
         "x := box (1, 2), arr := array boxed [move x], free arr[0], print «after»",
@@ -8289,7 +8462,7 @@ fn free_of_an_element_runs_its_free_there_and_the_array_skips_it() {
 
 #[test]
 fn free_of_a_value_runs_it_and_frees_what_it_made() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for (tail, printed) in [
         ("free (box (1, 2)), print «after»", "free\nafter\n"),
         ("free box (1, 2), print «after»", "free\nafter\n"),
@@ -8360,7 +8533,7 @@ fn the_repl_runs_a_freed_value_and_refuses_a_hole_and_a_moved_value() {
 
 #[test]
 fn an_array_is_freed_by_its_owner_and_a_borrow_outliving_it_reads_nothing() {
-    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
+    let array = "import file «./identities/array.logos», a := array i32 [1, 2, 3]";
     for (tail, printed) in [
         ("free a, 5", "5"),
         ("b := a, f := fn (p := array i32 ?) -> i32 ( p[1] ), f(b)", "2"),
@@ -8807,7 +8980,7 @@ fn an_assignment_copies_a_value_that_owns_memory() {
     let r = "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
     let body = "mut v := r(1), w := r(2), v = w, v.n = 3, 0";
     let freed = "freed 1\nfreed 2\nfreed 3\n0\n";
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     assert_runs(&[
         (format!("{r}, {body}"), freed),
         (format!("{r}, f := fn () -> i32 ( {body} ), f()"), freed),
@@ -8835,7 +9008,7 @@ fn an_assignment_copies_a_value_that_owns_memory() {
 /// taking it and every other one owning a copy of its own.
 #[test]
 fn alloc_gives_each_cell_a_value_of_its_own() {
-    let array = "import ./identities/array.logos, p := alloc 2 of array i32 [1, 2]";
+    let array = "import file «./identities/array.logos», p := alloc 2 of array i32 [1, 2]";
     let boxes = format!("{BOX}, p := alloc 2 of box (1, 2), ((p + 1)@.p + 0)@ = i32 9");
     assert_runs(&[
         (format!("{array}, (p + 1)@[0] = i32 9, p@[0]"), "1\n"),
@@ -8844,7 +9017,7 @@ fn alloc_gives_each_cell_a_value_of_its_own() {
         (format!("{boxes}, free p@, free (p + 1)@, print «freed»"), "free\nfree\nfreed\n"),
         // A named owner is copied into every cell, the first included.
         (
-            "import ./identities/array.logos, a := array i32 [1, 2], p := alloc 2 of a, \
+            "import file «./identities/array.logos», a := array i32 [1, 2], p := alloc 2 of a, \
              p@[0] = i32 9, a[0]"
                 .to_string(),
             "1\n",
@@ -9072,7 +9245,10 @@ fn a_minus_negates_or_subtracts_by_where_it_stands() {
         ("m := i32 3, 2 - -m".to_string(), "5\n"),
         ("m := f64 2.5, i32 lossy -m".to_string(), "-2\n"),
         ("mut x := i32 0, x=-1, x".to_string(), "-1\n"),
-        ("import ./identities/array.logos, a := array i32 [-1, 2], a[0]".to_string(), "-1\n"),
+        (
+            "import file «./identities/array.logos», a := array i32 [-1, 2], a[0]".to_string(),
+            "-1\n",
+        ),
     ];
     for sub in ["1-m", "1 - m", "1- m"] {
         cases.push((format!("m := i32 3, {sub}"), "-2\n"));
@@ -9625,8 +9801,8 @@ fn an_input_with_nothing_in_it_has_no_value_on_the_command_line_and_in_a_file() 
         "# a\n# b",
         "",
         "   ",
-        "import tests/fixtures/only_prose.logos",
-        "import tests/fixtures/empty.logos",
+        "import file «tests/fixtures/only_prose.logos»",
+        "import file «tests/fixtures/empty.logos»",
     ] {
         assert_eq!(run_line(src), (Some(0), String::new(), String::new()), "{src:?}");
     }
@@ -9637,8 +9813,8 @@ fn an_input_with_nothing_in_it_has_no_value_on_the_command_line_and_in_a_file() 
         ("1, # done", "1"),
         ("( y := i32 2, y + 1 )", "3"),
         ("x := 1, y := 2, x + y", "3"),
-        ("import tests/fixtures/only_prose.logos, 1", "1"),
-        ("import tests/fixtures/empty.logos, 1", "1"),
+        ("import file «tests/fixtures/only_prose.logos», 1", "1"),
+        ("import file «tests/fixtures/empty.logos», 1", "1"),
     ] {
         assert_eq!(line(src), want, "{src:?}");
     }
@@ -9651,7 +9827,7 @@ fn a_closer_no_bracket_opened_is_one_error_naming_it() {
         ("1 ], 5", "<command line>:1:3: error: this `]` closes nothing: no bracket is open here"),
         (")", "<command line>:1:1: error: this `)` closes nothing: no bracket is open here"),
         (
-            "import tests/fixtures/stray_closer.logos, 2",
+            "import file «tests/fixtures/stray_closer.logos», 2",
             "stray_closer.logos:1:3: error: this `)` closes nothing: no bracket is open here",
         ),
     ] {
@@ -9672,7 +9848,7 @@ fn a_repl_line_is_a_line_of_the_program() {
           print «{1}», # done\n\
           z := i32 1,\n\
           print «{z}»\n\
-          import tests/fixtures/only_prose.logos, print «{7}»\n\
+          import file «tests/fixtures/only_prose.logos», print «{7}»\n\
           w := i32 1, print «{5}»\n\
           free (6), v := i32 1\n\
           v\n",
@@ -9734,7 +9910,7 @@ fn a_failed_repl_line_leaves_no_trace() {
 
 #[test]
 fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
-    let held = "import ./tests/fixtures/held.logos";
+    let held = "import file «./tests/fixtures/held.logos»";
     // Neither a fault, a failed parse after the import, nor a `free` the line parsed and never
     // ran ends the file: the session does, once.
     for failing in [
@@ -9750,13 +9926,13 @@ fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
     let (echoes, stderr) = repl(format!("{held}, free h, error «boom»\n1\n").as_bytes());
     assert_eq!(echoes, ["freed 9", "1"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"import ./tests/fixtures/owning_pub.logos, error \xc2\xabboom\xc2\xbb\n\
-          import ./tests/fixtures/owning_pub.logos, p@\n",
+        "import file «./tests/fixtures/owning_pub.logos», error «boom»\n\
+          import file «./tests/fixtures/owning_pub.logos», p@\n",
     );
     assert_eq!(echoes, ["7"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"import ./tests/fixtures/counter.logos, error \xc2\xabboom\xc2\xbb\n\
-          import ./tests/fixtures/counter.logos\nc@\n",
+        "import file «./tests/fixtures/counter.logos», error «boom»\n\
+          import file «./tests/fixtures/counter.logos»\nc@\n",
     );
     assert_eq!(echoes, ["1"], "stderr: {stderr}");
     // The line's own holds still end at its fault, and the names it published roll back.
@@ -9766,7 +9942,7 @@ fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
     assert_eq!(echoes, ["freed 2", "freed 1", "freed 9"], "stderr: {stderr}");
     assert!(stderr.contains("`h` is not in scope here"), "stderr: {stderr}");
     // On the command line the run ends at the fault, and the file with it.
-    let (code, stdout, _) = run_line("import ./tests/fixtures/deferring.logos, error «x»");
+    let (code, stdout, _) = run_line("import file «./tests/fixtures/deferring.logos», error «x»");
     assert_eq!((code, stdout.as_str()), (Some(1), "file ends\n"));
 }
 
@@ -9809,7 +9985,7 @@ fn a_quote_s_braces_are_a_scope_whose_text_is_its_tail() {
 
 #[test]
 fn an_array_element_lands_by_the_element_type() {
-    let array = "import ./identities/array.logos";
+    let array = "import file «./identities/array.logos»";
     for (src, printed) in [
         (format!("{array}, a := array bool [true, false], a[1]"), "false\n"),
         (format!("{array}, a := array (array i32) [[1, 2], [3]], a[0][1]"), "2\n"),
