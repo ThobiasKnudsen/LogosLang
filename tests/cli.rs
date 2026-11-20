@@ -4376,6 +4376,7 @@ fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them
     let mk = "mk := fn () -> type ( print «mk», t )";
     let mk_of = "mk := fn (u := type ?) -> type ( print «mk», u )";
     let d = "mut d := dyad ?, d = i64 5, h := fn () -> i32 ( print «h», d = i32 7, 1 )";
+    let is_i32 = "is_i32 := fn (u := type ?) -> bool ( u == i32 )";
     for (src, want) in [
         (format!("{h}, x := h() + t 5, x.type"), "h\ni32"),
         (format!("{h}, x := h() + (t 5), x.type"), "h\ni32"),
@@ -4387,15 +4388,26 @@ fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them
         (format!("{h}, {mk_of}, h() == 1 and mk(t) == i32"), "h\nmk\ntrue"),
         (format!("{h}, h() == 1 and t == i32"), "h\ntrue"),
         (format!("{h}, print «{{h()}} {{t}}»"), "h\n1 i32"),
+        (format!("{h}, print «{{h()}} {{t}} {{t.type}}»"), "h\n1 i32 type"),
+        (format!("{h}, print «{{h()}} {{u := t, u}}»"), "h\n1 i32"),
+        (format!("{h}, {is_i32}, print «{{h()}} {{is_i32(t)}}»"), "h\n1 true"),
+        (format!("{h}, print «{{h()}} {{t}}», x := t 5, x.type"), "h\n1 i32\ni32"),
         (format!("{d}, x := h() + d, x"), "h\n8"),
         (format!("{d}, x := h() + (1 + d), x"), "h\n9"),
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    // A part of a quote cannot run first yet, where the parse reads the value itself.
-    for src in
-        [format!("{d}, print «{{h()}} {{d}}»"), format!("{h}, {mk}, print «{{h()}} {{mk()}}»")]
-    {
+    // A part of a quote cannot run first yet, where the parse reads the value itself, or the
+    // type a box holds.
+    for src in [
+        format!("{d}, print «{{h()}} {{d}}»"),
+        format!("{h}, {mk}, print «{{h()}} {{mk()}}»"),
+        format!("{h}, print «{{h()}} {{(t 5).type}}»"),
+        format!("{h}, print «{{h()}} {{t}} {{t 5}}»"),
+        format!("{h}, print «{{h()}} {{t ?}}»"),
+        format!("{h}, print «{{h()}} {{dyad (t, 7)}}»"),
+        format!("{h}, print «{{h()}} {{t.size_bytes}}»"),
+    ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stdout.is_empty(), "{src}: stdout: {stdout}");

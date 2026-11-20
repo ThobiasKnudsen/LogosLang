@@ -7,6 +7,16 @@
 use super::*;
 use crate::dyad;
 
+/// What a point where the parse needs a value finds before it in its line, once the pass has
+/// tried to run it first.
+pub(super) enum Before {
+    /// Everything before it has run.
+    Ran,
+    /// A part that runs and cannot run first yet stands in the line being parsed of the open
+    /// scope at this depth, and nothing ran.
+    Waits(usize),
+}
+
 impl<'a> Parser<'a> {
     /// `fn`'s constructor claims it so a recursive self-call inside the body
     /// resolves the published signature.
@@ -313,14 +323,19 @@ impl<'a> Parser<'a> {
     }
 
     /// The type identity `operand` names, where a type is needed now: read as `?` reads the type
-    /// to its left, so a box the pass has filled, `type` or `dyad`, names what it holds; a place
+    /// to its left, so a box the pass has filled, `type` or `dyad`, names what it holds; a box
+    /// read after a part of its line that cannot run first yet is refused there; a place
     /// or call whose type is known only at run is the checked error; anything else lands in `type`
     /// as `=` lands a value in a `type ?` place, so a value that is no type is refused
     /// (›A `type ?` place is a box, written any number of times‹ [[R291]]).
     pub(crate) fn type_known_now(&mut self, operand: DyadPtr) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         // SAFETY: `operand` is a reduced dyad from the store.
-        let read = self.settled_type(unsafe { types.through(operand) });
+        let place = unsafe { types.through(operand) };
+        if let Some(at) = self.unsettled_at(place) {
+            return Err(self.fail_at(at, ParseError::RunsBeforeUnbuilt));
+        }
+        let read = self.settled_type(place);
         // A name with no node yet names no type.
         if read.is_null() {
             return Err(ParseError::BadDeclaredType);
@@ -438,23 +453,46 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         at: usize,
     ) -> Result<(), ParseError> {
-        if self.ran_first(tape, at)? {
-            return Ok(());
+        match self.ran_first(tape, at)? {
+            Before::Ran => Ok(()),
+            Before::Waits(_) => Err(self.fail_at(at, ParseError::RunsBeforeUnbuilt)),
         }
-        Err(self.fail_at(at, ParseError::RunsBeforeUnbuilt))
+    }
+
+    /// A `type ?` box, `id`, read at `at`: what stands before it runs first, as for every box
+    /// read. Where a part of its line before it cannot run first, nothing runs, and until that
+    /// line closes the box stands for itself, as in a body: read as a value it reads its place
+    /// when the line runs, and a use of the type it holds is refused ([`Self::type_known_now`]).
+    pub(super) fn read_type_box(
+        &mut self,
+        tape: &mut ParsingTape,
+        id: DyadPtr,
+        at: usize,
+    ) -> Result<(), ParseError> {
+        if let Before::Waits(depth) = self.ran_first(tape, at)? {
+            self.cx.open[depth].unsettled.push((id, at));
+        }
+        Ok(())
+    }
+
+    /// Where `place`, a `type ?` box, was last read after a part of its line that cannot run
+    /// first, while that line is still being parsed: the type it holds there is known only once
+    /// that part has run (›A `type ?` place is a box, written any number of times‹ [[R291]]).
+    pub(super) fn unsettled_at(&self, place: DyadPtr) -> Option<usize> {
+        let reads = self.cx.open.iter().flat_map(|o| &o.unsettled);
+        reads.filter(|&&(read, _)| read == place).map(|&(_, at)| at).max()
     }
 
     /// What stands before `at` runs first ([`Self::run_before`]); where the line does not run in
-    /// the pass, a `while` condition's or a body's, only the lines before it do. `false`, with
-    /// nothing run, where something before `at` in its line cannot run first.
+    /// the pass, a `while` condition's or a body's, only the lines before it do.
     pub(super) fn ran_first(
         &mut self,
         tape: &mut ParsingTape,
         at: usize,
-    ) -> Result<bool, ParseError> {
+    ) -> Result<Before, ParseError> {
         if self.cx.each_pass || !self.in_pass_order() {
             self.drain()?;
-            return Ok(true);
+            return Ok(Before::Ran);
         }
         self.run_before(tape, at)
     }
@@ -463,18 +501,20 @@ impl<'a> Parser<'a> {
     /// as far as it must, in order, and never twice‹ [[R288]]): the lines before the one being
     /// parsed, then the part of it before `at`: the earlier lines of each argument list or `[…]`
     /// still open, and what stands on `tape`, each of which then stands for the value its run
-    /// gave. `false`, with nothing run, where that line holds something before `at` that runs
-    /// and cannot run first: a part of a quote still being built, what stands before a branch a
-    /// construct reads, or a node whose operation is not built yet.
+    /// gave. Nothing runs where that line holds something before `at` that runs and cannot run
+    /// first: a part of a quote still being built, what stands before a branch a construct
+    /// reads, or a node whose operation is not built yet.
     pub(super) fn run_before(
         &mut self,
         tape: &mut ParsingTape,
         at: usize,
-    ) -> Result<bool, ParseError> {
+    ) -> Result<Before, ParseError> {
         let standing = self.standing_runs(tape, at);
         let covered = |s: usize| standing.iter().any(|&(_, from, to)| from <= s && s < to);
-        if self.cx.open.iter().flat_map(|o| &o.runs).any(|&s| s < at && !covered(s)) {
-            return Ok(false);
+        let blocked =
+            self.cx.open.iter().position(|o| o.runs.iter().any(|&s| s < at && !covered(s)));
+        if let Some(depth) = blocked {
+            return Ok(Before::Waits(depth));
         }
         self.drain()?;
         for (handle, from, _) in standing {
@@ -486,7 +526,7 @@ impl<'a> Parser<'a> {
             tape.stand_as_ran(handle, value);
             self.ran_through(tape, handle);
         }
-        Ok(true)
+        Ok(Before::Ran)
     }
 
     /// The cells on `tape` before `at` that the line runs when it runs, each with its handle and

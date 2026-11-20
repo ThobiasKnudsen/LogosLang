@@ -234,11 +234,7 @@ impl<'a> Parser<'a> {
             if dyad_box {
                 self.run_first(tape, cell.start)?;
             } else if self.is_box(id) {
-                // A `type ?` box read as a value reads its place when it runs, so only a use of
-                // the type it holds needs what stands before it: stand-in for #350.
-                if !self.ran_first(tape, cell.start)? {
-                    self.drain()?;
-                }
+                self.read_type_box(tape, id, cell.start)?;
             } else if matches!(kind, Read::Container(t) if !t.is_null()) {
                 self.drain()?;
             }
@@ -309,9 +305,10 @@ impl<'a> Parser<'a> {
     /// A place holding a type denotes the type it holds, since lexing a box's
     /// cell first ran everything before it (DESIGN ›A type is a comptime
     /// value‹); in a deferred body, or a frame slot, the place denotes itself,
-    /// except a slot of the call a held `type (…)` is being built in, which is live.
+    /// except a slot of the call a held `type (…)` is being built in, which is live; so does
+    /// a box read after a part of its line that cannot run first yet.
     pub(super) fn settled_type(&self, id: DyadPtr) -> DyadPtr {
-        if self.cx.runtime_depth > 0 {
+        if self.cx.runtime_depth > 0 || self.unsettled_at(id).is_some() {
             return id;
         }
         // SAFETY: `id` is null or a resolved dyad from the store; the read is of a place this parser allocated, eight bytes wide.

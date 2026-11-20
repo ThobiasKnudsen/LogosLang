@@ -303,3 +303,11 @@ pub enum ParseError {
     /// carries the name.
     EndsPrimordialName(Box<String>),
 }
+
+impl ParseError {
+    /// A refusal from `Parser::type_known_now` of an operand that does name a type, which only
+    /// running gives: the program's run, or that of a part of its line that cannot run first.
+    pub(crate) fn type_given_by_running(&self) -> bool {
+        matches!(self, ParseError::TypeKnownOnlyAtRun | ParseError::RunsBeforeUnbuilt)
+    }
+}
