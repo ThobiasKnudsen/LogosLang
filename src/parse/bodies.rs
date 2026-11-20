@@ -941,9 +941,9 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `return a` of a name a scope the `return` leaves holds: the operand becomes `move a`, a
-    /// plain record's handed on by its bytes' address, and `a` is dead from this line, as a
-    /// written `move a` makes it (›A last value moves out‹ [[R66]]).
+    /// `return a` of a name a scope the `return` leaves holds: the operand becomes `move a`, and
+    /// `a` is dead from this line, as a written `move a` makes it (›A last value moves out‹
+    /// [[R66]]).
     ///
     /// # Safety
     /// `node` must be a `return` node `[value, op]` from the store; `binding` the name's
@@ -956,15 +956,8 @@ impl<'a> Parser<'a> {
         if self.cx.scopes.crosses_barrier(Binding::read(binding).scope) {
             return Err(ParseError::MoveOfOuterName);
         }
-        let types = self.types;
-        let store = &mut *self.rt.store;
-        let moved = crate::identities::drop_model::build_move(store, types, binding);
-        *(dyad::value(node) as *mut DyadPtr) =
-            if crate::identities::this::is_plain(types, types.type_of(binding)) {
-                crate::identities::by_copy::build_out(store, types, moved)
-            } else {
-                moved
-            };
+        let moved = crate::identities::drop_model::build_move(self.rt.store, self.types, binding);
+        *(dyad::value(node) as *mut DyadPtr) = moved;
         self.mark_dead(Ended::name(binding), moved);
         Ok(())
     }
@@ -1754,17 +1747,11 @@ impl<'a> Parser<'a> {
             }
             if let Some(at) = held_at(place) {
                 closed.exit[at].end = Some(tail);
-                // A plain record moves out as its bytes' address, which the taker copies.
                 // SAFETY: `place` is a place this scope's binding site laid out, and
                 // `tail` indexes the scope's own lines, which nothing else reads yet.
                 unsafe {
-                    let store = &mut *self.rt.store;
-                    let moved = crate::identities::drop_model::build_move(store, types, place);
-                    let moved = if crate::identities::this::is_plain(types, types.type_of(place)) {
-                        crate::identities::by_copy::build_out(store, types, moved)
-                    } else {
-                        moved
-                    };
+                    let moved =
+                        crate::identities::drop_model::build_move(self.rt.store, types, place);
                     crate::identities::scope::set_item(scope, tail, moved);
                 }
             }
