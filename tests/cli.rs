@@ -2353,9 +2353,7 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
                mut d := dyad ?, d = w, q := type ( static parse_rank = 60, static parse = ( \
                tape[0].type = d, tape[0].v = tape[1], tape.is_constructed[0] = true, \
                tape.remove(1) ) ), x := i32 4, print «{q x}»";
-    let (code, _, stderr) = run_line(src);
-    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-    assert!(stderr.contains("held line") && !stderr.contains("no field"), "stderr: {stderr}");
+    assert_eq!(line(src), "8", "{src}");
     // A type's `free` body reads its value's fields bare, as a `static` function does.
     let src = "mut total := i64 0, g := fn () -> dyad ( i64 1 ), \
                t := type ( n := i64 ?, static free = ( total = total + g() + n ) ), \
@@ -3273,7 +3271,10 @@ fn a_logos_declaration_works_after_other_code() {
 #[test]
 fn a_logos_declaration_rejects_a_non_type() {
     let (_echoes, stderr) = repl(b"a := 5 ?\n");
-    assert!(stderr.contains("expected one expression, found more"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("the declared or assigned type must be a type value"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -3849,6 +3850,45 @@ fn a_result_type_is_read_as_a_declaration_reads_its_type() {
         stderr.contains("1:62: error: which type this is is known only when"),
         "stderr: {stderr}"
     );
+}
+
+#[test]
+fn a_filled_box_names_the_type_it_holds_wherever_one_is_needed() {
+    for (src, expect) in [
+        ("mut u := type ?, mut d := dyad ?, d = i32, u = d, u", "i32\n"),
+        ("mut u := type ?, mut d := dyad ?, d = i32, u = d, x := u 5, x + 1", "6\n"),
+        ("mut d := dyad ?, d = i32, mut y := d ?, y = 4, y + 1", "5\n"),
+        ("mut d := dyad ?, d = i32, y := dyad (d, 7), y + 1", "8\n"),
+        ("mut d := dyad ?, d = i32, mk := fn () -> d ( 7 ), mk.compile(), mk() + 1", "8\n"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), expect, "{src}");
+    }
+
+    for (src, at) in [
+        ("x := i32 5, y := x ?, 1", "1:21"),
+        ("x := i32 5, y := dyad (x, 7), 1", "1:29"),
+        ("x := i32 5, mk := fn () -> x ( 7 ), 1", "1:28"),
+        ("x := i32 5, mut u := type ?, u = x, 1", "1:35"),
+        ("mut d := dyad ?, d = i32 5, y := d ?, 1", "1:37"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{src}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("{at}: error: the declared or assigned type must be")),
+            "{src}: {stderr}"
+        );
+    }
+
+    for param in ["type", "dyad"] {
+        let src = format!("f := fn (t := {param} ?) -> i32 ( mk := fn () -> t ( 7 ), 1 ), f(i32)");
+        let out = logos().arg(&src).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{src}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("1:47: error: which type this is is known only when"), "{stderr}");
+    }
 }
 
 #[test]

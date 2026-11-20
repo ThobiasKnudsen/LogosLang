@@ -652,7 +652,13 @@ impl<'a> Parser<'a> {
                 ParseError::Empty => ParseError::ExpectedReturnType,
                 e => e,
             })?;
-            (self.written_result_type(out, start)?, out.owning)
+            // The function is built here, so its result type is needed now (›`fn` is not a
+            // primitive: a function is a type in this same shape‹ [[R199]]).
+            let ty = self
+                .operand_dyad(out)
+                .and_then(|d| self.type_known_now(d))
+                .map_err(|e| self.fail_at(start, e))?;
+            (ty, out.owning)
         };
         let source = self.cx.source;
         let result = WrittenResult { text: source[start..self.cx.pos].trim_end(), owned };
@@ -699,21 +705,6 @@ impl<'a> Parser<'a> {
             unsafe { *(dyad::value(f) as *mut DyadPtr).add(FN_RECEIVER) = leaf };
         }
         f
-    }
-
-    /// The type `-> T` names, read as `?` reads its left operand and landed as `=` lands a value
-    /// in a `type ?` place; the function is built here, so the type must be known now (›`fn` is
-    /// not a primitive: a function is a type in this same shape‹ [[R199]], ›A `type ?` place is a
-    /// box, written any number of times‹ [[R291]]).
-    fn written_result_type(&mut self, out: Cell, start: usize) -> Result<DyadPtr, ParseError> {
-        let read = self.operand_dyad(out)?;
-        let types = self.types;
-        // SAFETY: `read` is a reduced dyad from the store, and `type` a type node.
-        let landed = unsafe { crate::identities::land(self.rt.store, types, read, types.type_) }
-            .map_err(|e| self.fail_at(start, e))?;
-        // SAFETY: `landed` is a reduced dyad from the store.
-        unsafe { crate::identities::type_identity_of(types, landed) }
-            .ok_or_else(|| self.fail_at(start, ParseError::TypeKnownOnlyAtRun))
     }
 
     /// The half of `parse_fn` after the signature, shared with a slot body read bare: the

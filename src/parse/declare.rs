@@ -965,17 +965,9 @@ impl<'a> Parser<'a> {
             let [ty, value] = args[..] else {
                 return Err(ParseError::CtorArity);
             };
-            let ty = self.settled_type(types.through(ty));
-            let Some(ty) = crate::identities::type_identity_of(types, ty) else {
-                // A box the pass has not filled holds its type only when the program runs, and
-                // the line does not wait for it: stand-in for #292.
-                let out = crate::identities::read::output_type(types, ty);
-                return Err(if out == types.type_ || out == types.dyad_ {
-                    ParseError::TypeKnownOnlyAtRun
-                } else {
-                    ParseError::BadDeclaredType
-                });
-            };
+            // A box the pass has not filled holds its type only when the program runs, and the
+            // line does not wait for it: stand-in for #292.
+            let ty = self.type_known_now(ty)?;
             crate::identities::dyad_place::build_of_type(self.rt.store, types, ty, value)?
         };
         tape.remove(1);
@@ -1006,26 +998,8 @@ impl<'a> Parser<'a> {
                 if cell.is_fresh(types) || waiting {
                     None
                 } else {
-                    // A box the pass has already filled declares with the
-                    // type it holds.
                     let d = self.operand_dyad(cell)?;
-                    let d = self.settled_type(d);
-                    // SAFETY: `d` is a resolved dyad from the store.
-                    unsafe {
-                        // A place holding a type cannot say what a hole's
-                        // layout is (DESIGN ›A type is a comptime value‹).
-                        if crate::identities::read::read_kind(types, d)
-                            == crate::identities::read::Read::Identity
-                        {
-                            Some(d)
-                        } else {
-                            let out = crate::identities::read::output_type(types, d);
-                            if out == types.type_ || out == types.dyad_ {
-                                return Err(ParseError::TypeKnownOnlyAtRun);
-                            }
-                            None
-                        }
-                    }
+                    Some(self.type_known_now(d)?)
                 }
             }
             None => None,

@@ -618,25 +618,22 @@ impl<'a> Parser<'a> {
                 let node = crate::identities::here::build_back(self.rt.store, self.types, lhs);
                 return Ok((node, 0));
             }
-            if crate::identities::is_type_value(self.types, lhs) {
-                if let Some(args) = call {
-                    if let Some((member, _)) = self.static_member_of(lhs, name) {
-                        let none = Receiver::Nothing;
-                        if let Some(call) = self.call_member(member, name, &left, none, args)? {
-                            return Ok((call, 1));
+            // A type's fields are its identity's; a value that is no type has its node's.
+            match self.type_known_now(lhs) {
+                Ok(t) => {
+                    if let Some(args) = call {
+                        if let Some((member, _)) = self.static_member_of(t, name) {
+                            let none = Receiver::Nothing;
+                            if let Some(call) = self.call_member(member, name, &left, none, args)? {
+                                return Ok((call, 1));
+                            }
                         }
                     }
+                    let n = self.logos_member(t, name, index)?;
+                    return Ok((n, usize::from(name == "roles")));
                 }
-                let n = self.logos_member(lhs, name, index)?;
-                return Ok((n, usize::from(name == "roles")));
-            }
-            // A place holding a type: its fields are the identity's, which
-            // nobody knows until the program runs (DESIGN ›A type is a comptime value‹).
-            let out = crate::identities::read::output_type(self.types, lhs);
-            if out == self.types.type_
-                || out == self.types.dyad_ && self.types.is_storage(self.types.through(lhs))
-            {
-                return Err(ParseError::TypeKnownOnlyAtRun);
+                Err(ParseError::TypeKnownOnlyAtRun) => return Err(ParseError::TypeKnownOnlyAtRun),
+                Err(_) => {}
             }
             // A node that is the value has its type's fields; a call stands for what it returns,
             // so its node's own fields are never read (DESIGN ›Reading a path runs nothing‹).
@@ -1429,7 +1426,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `lhs` must be a reduced dyad from the store.
     unsafe fn type_read(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
-        use crate::identities::{read, tape, this};
+        use crate::identities::{dyad_place, read, tape, this};
         let types = self.types;
         if dyad::ty(lhs) == types.tape.cell_dyad_at || tape::is_cell_read(types, lhs) {
             return Ok(tape::build_cell_type(self.rt.store, types, lhs));
@@ -1456,19 +1453,13 @@ impl<'a> Parser<'a> {
         if dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
-        // A call giving a `dyad` that the pass has not run: the node it gives is known only at run.
-        if read::output_type(types, lhs) == types.dyad_
-            && matches!(
-                read::read_kind(types, lhs),
-                read::Read::Executable(read::Dispatch::Call(_))
-            )
-        {
+        if dyad_place::known_only_at_run(types, lhs) {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }
         if let Some(node) = self.operator_node(lhs) {
             return Ok(dyad::ty(node));
         }
-        let t = crate::identities::read::value_type(types, lhs)?;
+        let t = read::value_type(types, lhs)?;
         if t.is_null() {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }

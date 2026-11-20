@@ -182,6 +182,18 @@ pub(crate) unsafe fn made_type(types: &Core, value: DyadPtr) -> Option<DyadPtr> 
     (from != types.dyad_).then_some(from)
 }
 
+/// Whether the node `value` gives, and so its type, is known only when the program runs: a
+/// `dyad` place or call the pass has not read through. A hole gives no node, and `dyad (T, v)`
+/// gives one of `T`.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn known_only_at_run(types: &Core, value: DyadPtr) -> bool {
+    super::read::output_type(types, value) == types.dyad_
+        && !types.is_hole(types.through(value))
+        && made_type(types, value).is_none()
+}
+
 /// What `value` gives where a value is read from it, when it gives a `dyad` no name holds: the
 /// value the node it gives holds (›A `dyad ?` place is transparent: a placeholder for a new
 /// node of any type‹ [[R293]]), read each time the line runs at the type that node is made of
