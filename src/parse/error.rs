@@ -228,10 +228,10 @@ pub enum ParseError {
     /// holds such a condition before it is parsed does not see it: through a bracket or a
     /// member's call.
     DyadReadEachPass,
-    /// A call that gives a `dyad`, which the pass runs as it parses the operator reading it,
-    /// stands after something its own line runs that the pass cannot run first: a part of a
-    /// quote, what stands before a branch, or a node whose operation is not built yet.
-    DyadCallAfterUnbuilt,
+    /// A point where the parse needs a value (a box read, a call for a type, a `-> dyad` call an
+    /// operator reads) stands after something its own line runs that the pass cannot run first:
+    /// a part of a quote, what stands before a branch, or a node whose operation is not built yet.
+    RunsBeforeUnbuilt,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,

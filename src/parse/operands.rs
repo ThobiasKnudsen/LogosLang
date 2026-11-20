@@ -420,9 +420,7 @@ impl<'a> Parser<'a> {
         if self.cx.each_pass {
             return Err(self.fail_at(at, ParseError::DyadReadEachPass));
         }
-        if !self.run_before(tape, at)? {
-            return Err(self.fail_at(at, ParseError::DyadCallAfterUnbuilt));
-        }
+        self.run_first(tape, at)?;
         // SAFETY: as above.
         let node = unsafe { self.ran_value(at, operand)? };
         if let Some(handle) = tape.handle_at(k) {
@@ -430,6 +428,24 @@ impl<'a> Parser<'a> {
             self.ran_through(tape, handle);
         }
         Ok(node)
+    }
+
+    /// A point at `at` where the parse needs a value: what stands before it runs first
+    /// ([`Self::run_before`]), or the point is refused where something before it cannot. Where
+    /// the line does not run in the pass, a `while` condition's or a body's, only the lines
+    /// before it do.
+    pub(super) fn run_first(
+        &mut self,
+        tape: &mut ParsingTape,
+        at: usize,
+    ) -> Result<(), ParseError> {
+        if self.cx.each_pass || !self.in_pass_order() {
+            return self.drain().map(|_| ());
+        }
+        if self.run_before(tape, at)? {
+            return Ok(());
+        }
+        Err(self.fail_at(at, ParseError::RunsBeforeUnbuilt))
     }
 
     /// Everything parsed before `at` that has not run, run first, in order (›The pass runs only

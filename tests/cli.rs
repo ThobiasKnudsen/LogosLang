@@ -4299,6 +4299,30 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
 }
 
 #[test]
+fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them() {
+    let h = "mut t := type ?, t = i64, h := fn () -> i32 ( print «h», t = i32, 1 )";
+    let mk = "mk := fn () -> type ( print «mk», t )";
+    let mk_of = "mk := fn (u := type ?) -> type ( print «mk», u )";
+    for (src, want) in [
+        (format!("{h}, x := h() + t 5, x.type"), "h\ni32"),
+        (format!("{h}, x := h() + (t 5), x.type"), "h\ni32"),
+        (format!("{h}, x := h() + (1 + (t 5)), x.type"), "h\ni32"),
+        (format!("{h}, x := h() + h() + t 5, x.type"), "h\nh\ni32"),
+        (format!("{h}, x := h() + t 5, y := t 6, print «{{x}} {{y.type}}»"), "h\n6 i32"),
+        (format!("{h}, {mk}, h() == 1 and mk() == i32"), "h\nmk\ntrue"),
+        (format!("{h}, {mk}, h() == 1 and (mk() == i32)"), "h\nmk\ntrue"),
+        (format!("{h}, {mk_of}, h() == 1 and mk(t) == i32"), "h\nmk\ntrue"),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // A part of a quote cannot run first yet.
+    let (code, stdout, stderr) = run_line(&format!("{h}, print «{{h()}} {{t 5}}»"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stdout.is_empty(), "stdout: {stdout}");
+    assert!(stderr.contains("cannot run first yet"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_once() {
     // Each point where the parse needs a value runs the earlier arguments first, each then
     // standing for the value it gave, and the call runs them no more.

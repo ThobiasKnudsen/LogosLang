@@ -184,7 +184,7 @@ impl<'a> Parser<'a> {
     /// cells lexed left of it.
     pub(super) fn lex_cell(
         &mut self,
-        tape: &ParsingTape,
+        tape: &mut ParsingTape,
     ) -> Result<Option<(Cell, usize)>, ParseError> {
         let in_run_order = match &self.cx.feed {
             Some(feed) => feed.in_run_order,
@@ -219,27 +219,23 @@ impl<'a> Parser<'a> {
             }
             cell
         };
-        // A box is read by the pass wherever it stands as an operand, and the
-        // read is honest only if everything parsed before it has run; so where
-        // parse order is run order, its cell is the point the pass runs to.
+        // A place holding a node is read by the pass wherever it stands as an operand, and the
+        // read is honest only if everything parsed before it has run; so where parse order is
+        // run order, its cell is the point the pass runs to. A box, `type ?` or `dyad ?`, is
+        // read for the identity it holds, so the part of its own line before it runs first too
+        // (›The pass runs only as far as it must, in order, and never twice‹ [[R288]]).
         if in_run_order && self.cx.runtime_depth == 0 {
+            use crate::identities::read::{read_kind, Read};
+            let id = cell.identity(self.types);
             // SAFETY: the binding the trie resolved, or the fresh spelling's node, is a dyad
             // from the store.
-            let is_box = unsafe {
-                matches!(
-                    crate::identities::read::read_kind(self.types, cell.identity(self.types)),
-                    crate::identities::read::Read::Container(t) if !t.is_null()
-                )
-            };
-            if is_box {
+            let kind = unsafe { read_kind(self.types, id) };
+            if self.is_box(id) {
+                self.run_first(tape, cell.start)?;
+            } else if matches!(kind, Read::Container(t) if !t.is_null()) {
                 self.drain()?;
             }
-            let id = cell.identity(self.types);
-            // SAFETY: as above.
-            let dyad_box = unsafe {
-                crate::identities::read::read_kind(self.types, id)
-                    == crate::identities::read::Read::Container(self.types.dyad_)
-            };
+            let dyad_box = kind == Read::Container(self.types.dyad_);
             if dyad_box {
                 if let Some(held) = self.read_through(id) {
                     self.cx.each_pass_read |= self.cx.each_pass;
@@ -255,6 +251,17 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(Some((cell, cell.start)))
+    }
+
+    /// Whether `id` names a box, a `type ?` or `dyad ?` place, read for the identity it holds
+    /// (›A `type ?` place is a box, written any number of times‹ [[R291]]).
+    pub(super) fn is_box(&self, id: DyadPtr) -> bool {
+        use crate::identities::read::{read_kind, Read};
+        // SAFETY: `id` is null or a resolved dyad from the store.
+        match unsafe { read_kind(self.types, id) } {
+            Read::Container(t) => t == self.types.type_ || t == self.types.dyad_,
+            _ => false,
+        }
     }
 
     /// What a read of `id`, a `dyad` name, stands for once the pass has run everything before

@@ -202,6 +202,10 @@ impl<'a> Parser<'a> {
         bindings: &mut Vec<DyadPtr>,
     ) -> Result<(), ParseError> {
         loop {
+            if relaxed {
+                // A type body's line has run as it was read, its `static` made there.
+                self.cx.open.last_mut().expect("the type body's scope is open").runs.clear();
+            }
             if self.at_close() {
                 break;
             }

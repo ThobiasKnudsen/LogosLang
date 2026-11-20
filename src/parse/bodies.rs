@@ -1944,6 +1944,13 @@ impl<'a> Parser<'a> {
         open.runs.push(cell.start);
     }
 
+    /// What the line being parsed noted as running before `at` runs inside the node built at
+    /// `at`, where that node runs it: an `=`'s place, which it reaches after its right side.
+    pub(crate) fn runs_inside(&mut self, at: usize) {
+        let open = self.cx.open.last_mut().expect("a node is built in an open scope");
+        open.runs.retain(|&s| s >= at);
+    }
+
     /// Where the pass runs each line once it has parsed it: the top level, or a held line
     /// parsed when it runs, outside every deferred body.
     pub(super) fn in_pass_order(&self) -> bool {
