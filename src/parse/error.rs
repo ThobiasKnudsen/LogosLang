@@ -309,8 +309,9 @@ pub enum ParseError {
     RunReturnBorrows,
     /// `static w = …` in a type body where `w` is no slot and nothing declared.
     NoSuchSlot(String),
-    /// A type body with an `own` field and no `free = (…)` to free it.
-    OwningFieldNeedsFree,
+    /// A type body whose fields, named here, own what they hold, and no `static free = (…)` to
+    /// free it.
+    FieldsNeedFree(Vec<String>),
     /// A name of a `{ … }` whose value its scope's end runs a teardown for, or that does not
     /// move whole into a field; carries the name.
     KeptEntry(Box<String>),

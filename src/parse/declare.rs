@@ -208,17 +208,16 @@ impl<'a> Parser<'a> {
         Ok(binding)
     }
 
-    /// Whether `d` is a read of a field declared `own` over a node's type: what it reaches
-    /// is owned, for `=`, `move` and `free` to consult.
+    /// Whether `d` is a read of a field that owns what it holds (`copy::field_needs_owner`), for
+    /// `=`, `move` and `free` to consult.
     pub(crate) fn is_owning_read(&self, d: DyadPtr) -> bool {
-        use crate::identities::this;
-        // SAFETY: `d` is null or a reduced dyad from the store; a field read's binding operand
-        // is null or a binding dyad.
+        use crate::identities::{copy, this};
+        // SAFETY: `d` is null or a reduced dyad from the store; a field's binding is null or a
+        // binding dyad.
         unsafe {
-            !d.is_null() && this::is_field_read(self.types, d) && {
-                let binding = this::field_binding_of(self.types, d);
-                !binding.is_null() && self.owns_node(binding)
-            }
+            !d.is_null()
+                && this::field_step(self.types, d)
+                    .is_some_and(|(_, b)| !b.is_null() && copy::field_needs_owner(self.types, b))
         }
     }
 

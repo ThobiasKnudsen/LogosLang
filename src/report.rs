@@ -452,16 +452,22 @@ pub fn parse_message(e: &ParseError) -> String {
             "`{name}` names no slot: a type body fills `static parse = (…)`, `static run = (…)`, \
              `static free = (…)` and its ranks, and declares a member of its own, `static {name} := …`"
         ),
+        ParseError::FieldsNeedFree(fields) => {
+            let named = fields.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ");
+            let (which, own, it) = match fields.len() {
+                1 => ("field", "owns what it holds", "it"),
+                _ => ("fields", "own what they hold", "they"),
+            };
+            format!(
+                "the {which} {named} {own}, so {it} must be freed by the type's \
+                 `static free = (…)`, which this type body does not fill"
+            )
+        }
         ParseError::KeptEntry(name) => format!(
             "`{name}` cannot be kept in this `{{ … }}`'s value: the seed keeps a name whose value \
              moves whole into a field and has no `free` to run, as a number, a string, a map or a \
              record does"
         ),
-        ParseError::OwningFieldNeedsFree => {
-            "a field declared `own` must be freed by the type's `static free = (…)`, which this \
-             type body does not fill"
-                .into()
-        }
         ParseError::OwnParameterNotInSeed => {
             "an `own` parameter, which takes its argument's ownership, is not in the seed yet".into()
         }

@@ -82,7 +82,8 @@ unsafe fn owned(types: &Core, ty: DyadPtr) -> Option<Owned> {
 }
 
 /// What field `binding` of type `ty` owns: a field holding a node owns it only with `own` on its
-/// binding (›A field may be `own t ?`, `t` a type whose body fills `static free`‹ [[R68]]).
+/// binding, one holding a record in its bytes always (›A field may be `own t ?`, `t` a type whose
+/// body fills `static free`‹ [[R68]]).
 ///
 /// # Safety
 /// `binding` must be a field's binding dyad and `ty` its declared type, from the store.
@@ -91,6 +92,27 @@ unsafe fn field_owned(types: &Core, binding: DyadPtr, ty: DyadPtr) -> Option<Own
         Owned::Node(_) if !Binding::has_gate(binding, types.own_) => None,
         owned => Some(owned),
     }
+}
+
+/// Whether field `binding` holds a value its holder must free, as [`needs_owner`] says of a value.
+///
+/// # Safety
+/// `binding` must be a field's binding dyad from the store.
+pub(crate) unsafe fn field_needs_owner(types: &Core, binding: DyadPtr) -> bool {
+    !matches!(field_owned(types, binding, types.type_of(binding)), None | Some(Owned::Map(_)))
+}
+
+/// The bindings of the fields of the record type `ty` whose values its own `free` must free
+/// (›A type whose fields carry teardowns must write its own destructor‹ [[R59]]).
+///
+/// # Safety
+/// `ty` must be a record type node from the store.
+pub(crate) unsafe fn owning_fields<'a>(
+    types: &'a Core,
+    ty: DyadPtr,
+) -> impl Iterator<Item = DyadPtr> + 'a {
+    // SAFETY: each is a field's binding dyad from the store.
+    fields(ty).map(|(b, _)| b).filter(move |&b| unsafe { field_needs_owner(types, b) })
 }
 
 /// Each field of a value of the record type `ty`, with its binding and declared type.
