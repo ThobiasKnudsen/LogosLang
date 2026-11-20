@@ -4723,6 +4723,29 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
     }
     // The call runs where the parse reads it, after the part of its line before it.
     assert_eq!(line(&format!("{h}, x := h() + mk() 5, x")), "h\nmk\n6");
+    // Inside a body too, on both tiers.
+    for (defs, out, named, unnamed, want) in [
+        (mk, "i32", "u := mk(), u 3", "mk() 3", "3"),
+        (boxed, "i32", "u := mk(), u 3", "mk() 3", "3"),
+        (mk, "type", "u := mk(), x := u 3, x.type", "x := mk() 3, x.type", "i32"),
+        (mk_of, "type", "u := mk(i64), x := u 3, x.type", "x := mk(i64) 3, x.type", "i64"),
+        (mk, "i32", "u := mk(), u(7)", "mk()(7)", "7"),
+        (pt, "i32", "u := mk(), v := u(4), v.a", "v := mk()(4), v.a", "4"),
+        (mk, "type", "u := mk(), u", "mk()", "i32"),
+        (mk, "bool", "u := mk(), u == i32", "mk() == i32", "true"),
+        (mk, "i32", "u := mk(), mut x := u ?, x = 4, x", "mut x := mk() ?, x = 4, x", "4"),
+        (mk, "i32", "if true ( u := mk(), u 3 ) else ( 4 )", "if true ( mk() 3 ) else ( 4 )", "3"),
+    ] {
+        for body in [named, unnamed] {
+            for call in ["f()", "f.compile(), f()"] {
+                let src = format!("{defs}, f := fn () -> {out} ( {body} ), {call}");
+                assert_eq!(line(&src), want, "{src}");
+            }
+        }
+    }
+    // In a body the call runs where the body is written; what stands before it waits for f's call.
+    let src = format!("{h}, f := fn () -> i32 ( h() + mk() 5 ), print «defined», f()");
+    assert_eq!(line(&src), "mk\ndefined\nh\n6");
 }
 
 #[test]
