@@ -101,6 +101,8 @@ pub enum CompileError {
     ArityMismatch,
     /// Cranelift rejected the setup, function, or finalization.
     Cranelift(String),
+    /// A body nested deeper than the compiling thread's stack holds.
+    TooDeep,
 }
 
 /// One thing being lowered that ends values when a `return` or a fault leaves through it, read
@@ -177,6 +179,9 @@ impl<'a> Lowerer<'a, '_> {
     /// # Safety
     /// `node` must be a valid dyad from the store.
     pub unsafe fn lower(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
+        if crate::stack::exhausted(crate::stack::limit()) {
+            return Err(CompileError::TooDeep);
+        }
         let node = self.through(node);
         let value = self.lower_node(node)?;
         if self.planned(node) {

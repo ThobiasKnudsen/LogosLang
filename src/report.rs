@@ -611,6 +611,12 @@ pub fn compile_message(e: &CompileError) -> String {
         CompileError::Internal(what) => format!("the seed broke its own rule: {what}"),
         CompileError::ArityMismatch => "a call's argument count does not match its function".into(),
         CompileError::Cranelift(msg) => format!("the backend rejected this: {msg}"),
+        CompileError::TooDeep => {
+            format!(
+                "this body nests too deep to compile here: the compile used up its {} stack",
+                work_stack()
+            )
+        }
     }
 }
 

@@ -2344,6 +2344,30 @@ fn runaway_depth_is_a_checked_error_not_an_abort() {
 }
 
 #[test]
+fn a_compile_that_meets_the_stack_limit_is_a_checked_error() {
+    on_work_stack(|| {
+        let chain = format!("{}n{}", "n + (".repeat(500), ")".repeat(500));
+        let src = format!("f := fn (n := i32 ?) -> i32 ( {chain} ), 0");
+        let (mut store, mut trie, core) = new_core();
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let mut p = Parser::new(&src, &mut store, &mut trie, &core, scopes);
+        let root = p.parse_sequence().unwrap();
+        let mut rt = p.into_runtime();
+        // SAFETY: `root` is the sequence just parsed; its first expression declares `f`.
+        let f = unsafe {
+            rt.run(root).unwrap();
+            let items = crate::identities::array::items(*(dyad::value(root) as *const DyadPtr));
+            declare::declared_of(items[0])
+        };
+        // SAFETY: `f` is the fn node just parsed and outlives the call.
+        let compiled =
+            with_stack_left(64 * 1024, || unsafe { compile_fn(rt.store, &core.lower, &core, f) });
+        assert!(matches!(compiled, Err(crate::compile::CompileError::TooDeep)));
+    });
+}
+
+#[test]
 fn the_unknown_is_one_value_a_type_or_dyad_place_holds() {
     assert_eq!(run_script("mut a := type ?, a = ?, a == ?"), 1);
     assert_eq!(run_script("mut a := type ?, a = ?, a != ?"), 0);
@@ -2581,6 +2605,19 @@ fn on_work_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T
     let test = std::thread::current().name().unwrap_or("work").to_owned();
     crate::stack::on_work_stack(std::thread::Builder::new().name(test), f)
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// Runs `f` once no more than `left` bytes of the work stack stand above its limit.
+fn with_stack_left<T>(left: usize, f: impl FnOnce() -> T) -> T {
+    let pad = [0u8; 1024];
+    std::hint::black_box(&pad);
+    let r = if crate::stack::here() > crate::stack::limit() + left {
+        with_stack_left(left, f)
+    } else {
+        f()
+    };
+    std::hint::black_box(&pad);
+    r
 }
 
 #[test]
