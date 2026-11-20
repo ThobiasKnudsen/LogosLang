@@ -57,7 +57,7 @@ pub(crate) struct HeldLine {
     cut: usize,
     kept: Kept,
     definitions: Vec<OpenType>,
-    run_fields: Option<(DyadPtr, Vec<DyadPtr>)>,
+    run_fields: Option<(DyadPtr, Vec<DyadPtr>, DyadPtr)>,
 }
 
 impl<'a> Parser<'a> {
@@ -547,7 +547,7 @@ impl<'a> Parser<'a> {
         } else {
             0
         };
-        if let Some(def) = self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
+        if let Some(def) = self.about_value_mut() {
             def.note_receiver_use(bits);
         }
         Ok(field)

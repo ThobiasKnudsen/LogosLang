@@ -57,16 +57,36 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether the line being read runs in a call of `f`: not in a function written inside `f`'s
+    /// body, nor in a value made once at its definition, where no call of it is live.
+    fn reading_body_of(&self, f: DyadPtr) -> bool {
+        let live = self.cx.once_at.is_none_or(|at| self.cx.frames.len() > at);
+        live && self.cx.frames.last().is_some_and(|open| open.frame == f)
+    }
+
+    /// The open definition while the body being read is about its value: a parse's node, a
+    /// `free`'s or a `static` function's value. A function written inside that body, or a value
+    /// made once in it, is about none (›A bare call of a `static` function works on the value the
+    /// calling body is about‹ [[R238]]), as it reads no other local of the body around it.
+    pub(super) fn about_value(&self) -> Option<&OpenType> {
+        let def = self.cx.definitions.last().filter(|d| !d.this_param.is_null())?;
+        // SAFETY: `this_param` is a parameter's binding dyad from the store, laid out in its frame.
+        let frame = unsafe { Binding::read(def.this_param) }.frame;
+        self.reading_body_of(frame).then_some(def)
+    }
+
+    pub(super) fn about_value_mut(&mut self) -> Option<&mut OpenType> {
+        self.about_value()?;
+        self.cx.definitions.last_mut()
+    }
+
     /// Inside a `free` or a `static` function a field of the value is named bare (DESIGN
     /// ›There is no `this`‹); fields come first, so an outer name never stands in for one.
     /// Inside a parse the same name is the checked error, the field going through `tape[0]`.
     pub(super) fn names_own_field(&self, cell: &Cell) -> bool {
-        let Some(def) = self.cx.definitions.last() else {
+        let Some(def) = self.about_value() else {
             return false;
         };
-        if def.this_param.is_null() {
-            return false;
-        }
         let mut fields = ScopeStack::new();
         fields.push(def.block.0);
         fields
@@ -141,15 +161,19 @@ impl<'a> Parser<'a> {
             with.extend(args);
             return Ok(with);
         }
-        let receiver = match self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
+        let bits = fn_receiver(self.types, f);
+        let receiver = match self.about_value_mut() {
             Some(def) if !def.in_parse => {
-                def.note_receiver_use(fn_receiver(self.types, f));
+                def.note_receiver_use(bits);
                 Some(def.this_param)
             }
             Some(_) => None,
-            None => self.cx.run_fields.as_ref().map(|(ty, places)| {
-                crate::identities::this::build_pack(self.rt.store, self.types, *ty, places)
-            }),
+            None => {
+                let here = self.cx.run_fields.as_ref().is_some_and(|r| self.reading_body_of(r.2));
+                self.cx.run_fields.as_ref().filter(|_| here).map(|(ty, places, _)| {
+                    crate::identities::this::build_pack(self.rt.store, self.types, *ty, places)
+                })
+            }
         };
         let receiver = match receiver {
             Some(value) => value,
@@ -185,8 +209,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         let (depth, in_program_frame) = (kept.depth, kept.in_program_frame);
-        let def = self.cx.definitions.last();
-        if def.is_some_and(|d| d.block.0 == scope && !d.this_param.is_null()) {
+        if self.about_value().is_some_and(|d| d.block.0 == scope) {
             return Ok(None);
         }
         if fn_receiver(self.types, f) != 0 {

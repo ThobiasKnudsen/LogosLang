@@ -622,7 +622,7 @@ impl<'a> Parser<'a> {
         let static_output = self.declared_output_type(ty);
         let output = output_field.map(|i| key[i]).or(static_output).unwrap_or(types.void_);
         let (input, places) = self.hidden_param_record(&params, 0)?;
-        self.cx.run_fields = Some((ty, places.clone()));
+        self.cx.run_fields = Some((ty, places.clone(), spec));
         let param_scope = crate::identities::meta::record_scope_of(input);
         self.cx.scopes.push(param_scope);
         let declared = match (output_name, output_field) {
