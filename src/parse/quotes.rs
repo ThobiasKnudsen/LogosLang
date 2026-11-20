@@ -189,7 +189,15 @@ impl<'a> Parser<'a> {
                     let Some(part) = self.parse_within(inner.start, inner.end)? else {
                         continue;
                     };
+                    // A line that waits gives the quote a `dyad`, since its type is known only when
+                    // it runs; the line the quote stands in frees that node at its end.
                     // SAFETY: `part` is the reduced dyad just parsed.
+                    if unsafe {
+                        crate::identities::waiting::lands_in(self.types, part, self.types.dyad_)
+                    } {
+                        self.note_made(part);
+                    }
+                    // SAFETY: as above.
                     if let Err(e) = unsafe { crate::identities::read::value_type(self.types, part) }
                     {
                         return Err(self.fail_at(inner.start, e));

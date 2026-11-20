@@ -2408,6 +2408,36 @@ fn a_held_line_checks_the_gates_of_what_it_writes_where_it_is_written() {
 }
 
 #[test]
+fn a_quote_part_of_a_body_that_reads_a_dyad_value_gives_it_when_it_runs() {
+    for (src, want) in [
+        ("f := fn (a := dyad ?) -> void ( print «{a + 1}» ), f(i64 5)", "6"),
+        ("f := fn (a := dyad ?) -> void ( print «{i64 1 + a}» ), f(i64 5)", "6"),
+        ("f := fn (a := dyad ?) -> void ( if a > 0 ( print «{a + 1}» ) ), f(i64 5)", "6"),
+        (
+            "f := fn (a := dyad ?) -> void ( print «x {a + 1} y {a * 2}» ), f(i64 5), f(f64 2.5)",
+            "x 6 y 10\nx 3.5 y 5.0",
+        ),
+        ("f := fn (a := dyad ?) -> void ( print «{a > 3}» ), f(i64 5)", "true"),
+        ("f := fn (a := dyad ?) -> void ( print «{a + 1/2}» ), f(1/3)", "5/6"),
+        (
+            "f := fn (a := dyad ?) -> void ( for i in 0..3 ( print «{a + i}» ) ), f(i64 5)",
+            "5\n6\n7",
+        ),
+    ] {
+        assert_eq!(line(src), want, "{src}");
+    }
+    let (code, _, stderr) =
+        run_line("f := fn (a := dyad ?) -> void ( error «bad {a + 1}» ), f(i64 5)");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("bad 6"), "stderr: {stderr}");
+    // A part that gives nothing is refused when its line is parsed, as it runs.
+    let src = "mut x := i64 0, f := fn (a := dyad ?) -> void ( print «{x = a + 1}» ), f(i64 5)";
+    let (code, _, stderr) = run_line(src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("held line") && stderr.contains("gives nothing"), "stderr: {stderr}");
+}
+
+#[test]
 fn inclusion_the_design_leaves_open_is_a_checked_error() {
     for src in ["i32 ⊆ type\n", "u8 ⊆ dyad\n", "bool ⊆ type\n"] {
         let (echoes, stderr) = repl(src.as_bytes());

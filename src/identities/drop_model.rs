@@ -1811,6 +1811,10 @@ mod tests {
             "mut d := dyad ?, d = i64 1, g := fn (a := dyad ?) -> i64 ( a ), g(d), 1",
             "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() + 1 ), f(), 1",
             "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( 1 + g() * 2 ), for 0..3 ( f() ), 1",
+            "f := fn (a := dyad ?) -> void ( print «{a + 1}» ), f(i64 5), f(f64 2.5), 1",
+            "f := fn (a := dyad ?) -> void ( print «{a + 1/2}» ), f(1/3), 1",
+            "f := fn (a := dyad ?) -> void ( for 0..3 ( print «{a * 2}» ) ), f(i64 5), 1",
+            "f := fn (a := dyad ?) -> void ( if a > 0 ( print «{a + 1}» ) ), f(i64 5), 1",
         ] {
             assert_eq!(run_hosted(src), (1, 0), "{src}");
         }
