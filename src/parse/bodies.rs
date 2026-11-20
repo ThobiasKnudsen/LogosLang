@@ -1015,6 +1015,23 @@ impl<'a> Parser<'a> {
         self.cx.frames.last().map_or(0, |f| f.returns.len())
     }
 
+    /// A `defer`'s body. It runs as its scope ends, once the way out is chosen and with nothing
+    /// to take a value, so a `return` in it, at any depth, and a body that gives a value are
+    /// refused where they are written (›A scope's value is what it evaluates to, and `return` is
+    /// an optional early exit from the enclosing function‹ [[R207]]).
+    pub(crate) fn parse_deferred(&mut self) -> Result<DyadPtr, ParseError> {
+        let from = self.returns_len();
+        let body = self.parse_expression_cell()?;
+        if let Some(at) = self.returns_from(from).first().map(|r| r.at) {
+            return Err(self.fail_at(at, ParseError::ReturnInDefer));
+        }
+        // SAFETY: `body` is the reduced dyad just parsed.
+        if unsafe { flow::of(self.types, body.dyad) }.gives {
+            return Err(self.fail_at(body.start, ParseError::DeferGives));
+        }
+        Ok(body.dyad)
+    }
+
     /// `if cond then` with an optional `else else`: the node is
     /// `[cond, then, else]`, else null when absent, so an else-less `if` is a
     /// statement. Each branch is a bracket or the next expression, and a bare

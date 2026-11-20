@@ -102,6 +102,12 @@ pub fn parse_message(e: &ParseError) -> String {
              is thrown away with `free`, as in `free (f())`"
                 .into()
         }
+        ParseError::DeferGives => {
+            "this gives a value, and a `defer` gives none: it runs as its scope ends, and nothing \
+             takes a value there; a value nobody wants is thrown away with `free`, as in \
+             `defer free (f())`"
+                .into()
+        }
         ParseError::HeldGivenUnmoved => {
             "this block gives a name it holds, and its end frees that name: give it with `move`, \
              as in `if c (move a)`"
@@ -140,6 +146,11 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::ReturnOutsideFunction => "`return` is written only inside a function".into(),
+        ParseError::ReturnInDefer => {
+            "a `defer` cannot leave its function: it runs as its scope ends, once the way out is \
+             already chosen, so it holds no `return`"
+                .into()
+        }
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
         ParseError::AssignToLiteral(lit) => format!(

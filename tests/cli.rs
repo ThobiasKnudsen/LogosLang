@@ -2398,7 +2398,7 @@ fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
             (format!("f := fn () -> void ( print «{{1/2}}» ), {c}f()"), "1/2\n"),
             (format!("f := fn () -> i64 ( 10000000000 ), {c}f()"), "10000000000\n"),
             (format!("f := fn () -> i32 ( r := 1/2, 1 ), {c}f()"), "1\n"),
-            (format!("f := fn () -> i32 ( defer 1/2, 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( defer free (1/2), 1 ), {c}f()"), "1\n"),
             (format!("f := fn () -> dyad ( mut d := dyad ?, d = 1/3, d ), {c}f()"), "1/3\n"),
             (
                 format!(
@@ -5572,7 +5572,7 @@ fn a_text_node_and_a_place_of_text_read_as_the_node() {
         for (src, want) in [
             (format!("f := fn () -> i32 ( free («a»), 1 ), {c}f()"), "1\n"),
             (format!("f := fn () -> i32 ( s := «a», 1 ), {c}f()"), "1\n"),
-            (format!("f := fn () -> i32 ( defer «a», 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( defer free («a»), 1 ), {c}f()"), "1\n"),
             (format!("f := fn (a := string ?) -> i32 ( print «{{a}}», 1 ), {c}f(«hi»)"), "hi\n1\n"),
             (format!("f := fn () -> string ( «a» ), {c}f()"), "a\n"),
         ] {
@@ -6673,7 +6673,8 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         ),
         (
             format!(
-                "{say}, g := fn (x := f64 ?) -> i32 ( defer say(1), n := i32 lossy (x), say(n) )"
+                "{say}, g := fn (x := f64 ?) -> i32 ( defer free (say(1)), n := i32 lossy (x), \
+                 say(n) )"
             ),
             fault,
             "say 1\n",
@@ -6750,20 +6751,11 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
             "freed 3\nfreed 1\n",
             range,
         ),
-        // A `return` in a `defer` the cleanup runs runs the rest of its end; a fault stops it.
-        (
-            format!(
-                "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), defer ( return 7 ), \
-                 b := bag(2), n := i32 lossy (x), n )"
-            ),
-            fault,
-            "freed 2\nfreed 1\n",
-            nan,
-        ),
+        // A fault in a `defer` stops the end it runs in.
         (
             format!(
                 "{RECORD}, h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), \
-                 g := fn (x := f64 ?) -> i32 ( a := bag(1), defer ( h(x) ), b := bag(2), 3 )"
+                 g := fn (x := f64 ?) -> i32 ( a := bag(1), defer free (h(x)), b := bag(2), 3 )"
             ),
             fault,
             "freed 2\n",
@@ -7062,9 +7054,13 @@ fn a_line_frees_at_its_end_what_it_made_that_nothing_took() {
         ("c := true, x := if c ( bag(7) ) else ( bag(8) ), print «after»".into(), "after\nfreed 7\n"),
         ("x := ( free (bag(9)), i32 5 ), print «x {x}»".into(), "freed 9\nx 5\n"),
         // A `defer` is a line of its own when its scope ends.
-        ("f := fn () -> i32 ( defer bag(1), 2 ), free (f()), print «after»".into(), "freed 1\nafter\n"),
         (
-            "f := fn () -> i32 ( defer bag(1), 2 ), f.compile(), free (f()), print «after»".into(),
+            "f := fn () -> i32 ( defer free (bag(1)), 2 ), free (f()), print «after»".into(),
+            "freed 1\nafter\n",
+        ),
+        (
+            "f := fn () -> i32 ( defer free (bag(1)), 2 ), f.compile(), free (f()), print «after»"
+                .into(),
             "freed 1\nafter\n",
         ),
         // A `.` reads the node and runs nothing, so nothing is made to free.
@@ -7706,60 +7702,59 @@ fn a_return_ends_what_each_scope_if_and_call_it_leaves_holds_compiled_or_not() {
     }
 }
 
-/// ›A value's teardown runs where its life ends; the ending identity reads the type's `free`
-/// slot‹ [[R57]] and ›A scope's value is what it evaluates to, and `return` is an optional early
-/// exit from the enclosing function‹ [[R207]]: a `return` in a `defer` runs the rest of its
-/// scope's end before it leaves, on both tiers.
+/// ›A scope's value is what it evaluates to, and `return` is an optional early exit from the
+/// enclosing function‹ [[R207]]: a `defer` holds no `return`, at any depth, and gives no value;
+/// each is refused where it is written, so nothing runs on either tier.
 #[test]
-fn a_return_in_a_defer_runs_the_rest_of_its_scopes_end_compiled_or_not() {
-    let f = "f := fn (q := bag ?, m := i32 ?) -> i32 ( q.n + m )";
-    for (g, calls, printed) in [
+fn a_defer_holds_no_return_and_gives_no_value() {
+    let leaves = "a `defer` cannot leave its function";
+    let gives = "this gives a value, and a `defer` gives none";
+    for (g, word, error) in [
+        ("g := fn () -> i32 ( defer ( return 7 ), return 3 )", "return 7", leaves),
+        ("g := fn () -> i32 ( defer return 7, 3 )", "return 7", leaves),
         (
             "g := fn () -> i32 ( a := bag(1), defer ( return 7 ), b := bag(2), 3 )",
-            "print «got {g()}»",
-            "freed 2\nfreed 1\ngot 7\n",
+            "return 7",
+            leaves,
         ),
+        ("g := fn (c := i32 ?) -> i32 ( defer ( if (c == 1) (return 7) ), 3 )", "return 7", leaves),
         (
-            "g := fn () -> i32 ( a := bag(1), defer ( b := bag(5), return 7 ), c := bag(2), 3 )",
-            "print «got {g()}»",
-            "freed 2\nfreed 5\nfreed 1\ngot 7\n",
+            "g := fn () -> i32 ( defer ( for i in 0..3 ( if (i == 1) (return 7) ) ), 3 )",
+            "return 7",
+            leaves,
         ),
-        (
-            "g := fn (c := i32 ?) -> i32 ( a := bag(1), defer ( if (c == 1) (return 7) ), \
-             b := bag(2), 3 )",
-            "print «got {g(1)}», print «got {g(0)}»",
-            "freed 2\nfreed 1\ngot 7\nfreed 2\nfreed 1\ngot 3\n",
-        ),
-        (
-            "g := fn () -> i32 ( a := bag(1), x := ( b := bag(2), defer ( return 7 ), \
-             c := bag(3), i32 5 ), d := bag(4), x )",
-            "print «got {g()}»",
-            "freed 3\nfreed 2\nfreed 1\ngot 7\n",
-        ),
-        (
-            "g := fn () -> i32 ( a := bag(1), for 0..2 ( b := bag(2), defer ( return 7 ), \
-             c := bag(3) ), 4 )",
-            "print «got {g()}»",
-            "freed 3\nfreed 2\nfreed 1\ngot 7\n",
-        ),
-        (
-            "g := fn (c := i32 ?) -> i32 ( a := bag(1), if (c > 0) ( b := bag(2), \
-             defer ( return 7 ), d := bag(4) ) else ( free a ), 3 )",
-            "print «got {g(1)}», print «got {g(0)}»",
-            "freed 4\nfreed 2\nfreed 1\ngot 7\nfreed 1\ngot 3\n",
-        ),
-        (
-            "g := fn () -> i32 ( a := bag(1), f(bag(2), ( b := bag(3), defer ( return 7 ), \
-             c := bag(4), i32 5 )) )",
-            "print «got {g()}»",
-            "freed 4\nfreed 3\nfreed 2\nfreed 1\ngot 7\n",
-        ),
+        ("g := fn () -> i32 ( x := ( defer ( return 7 ), i32 5 ), x )", "return 7", leaves),
+        ("g := fn () -> i32 ( defer ( defer ( return 7 ) ), 3 )", "return 7", leaves),
+        // The line after the `return` is the `return`'s to answer for, not the `defer`'s.
+        ("g := fn () -> i32 ( defer ( return 7, print «x» ), 3 )", "return 7", leaves),
+        ("g := fn () -> i32 ( defer ( 7 ), 3 )", "( 7 )", gives),
+        ("g := fn () -> i32 ( defer 7, 3 )", "7,", gives),
+        ("g := fn () -> i32 ( defer bag(1), 3 )", "bag(1),", gives),
+        ("g := fn (c := i32 ?) -> i32 ( defer ( if (c == 1) (7) ), 3 )", "( if", gives),
+        ("g := fn () -> i32 ( defer ( for i in 0..3 ( if (i == 1) (i) ) ), 3 )", "( for", gives),
     ] {
         for compile in ["", "g.compile(), "] {
-            let src = format!("{RECORD}, {f}, {g}, {compile}{calls}");
+            let src = format!("{RECORD}, {g}, {compile}print «got {{g()}}»");
             let (code, stdout, stderr) = run_line(&src);
-            assert_eq!((code, stdout.as_str()), (Some(0), printed), "{compile}{g}: {stderr}");
+            assert_eq!((code, stdout.as_str()), (Some(1), ""), "{compile}{g}: {stderr}");
+            let at = src.find(word).expect("the word is in the program");
+            let col = src[..at].chars().count() + 1;
+            let head = format!("<command line>:1:{col}: error: {error}");
+            assert!(stderr.starts_with(&head), "{compile}{g}: stderr: {stderr}");
         }
+    }
+    // A function written in a `defer` leaves itself, and a value nobody wants is thrown away.
+    for compile in ["", "g.compile(), "] {
+        let src = format!(
+            "{RECORD}, g := fn () -> i32 ( a := bag(1), defer ( h := fn () -> i32 ( return 5 ), \
+             print «h {{h()}}» ), defer free (bag(2)), 3 ), {compile}print «got {{g()}}»"
+        );
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(0), "freed 2\nh 5\nfreed 1\ngot 3\n"),
+            "{compile}: {stderr}"
+        );
     }
 }
 
