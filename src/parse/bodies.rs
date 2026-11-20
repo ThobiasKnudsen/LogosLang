@@ -97,6 +97,21 @@ pub(super) enum BlockValue {
     Condition,
 }
 
+/// What a bracket's lines are to whatever reads the bracket.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lines {
+    /// Lines of their own, the scope valued by its last one.
+    Own,
+    /// A `[…]`'s items, which go whole to the call that takes them.
+    List,
+    /// A call's argument list.
+    Arguments,
+    /// A `{…}`'s lines, the scope itself the value: its last line, which the parse adds, makes
+    /// the value of the record its names lay out (›`{ … }` outside text is a scope kept as a
+    /// value, read with `.`‹ [[R374]]).
+    Kept,
+}
+
 /// Where a scope's lines end.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LinesEnd {
@@ -1636,7 +1651,7 @@ impl<'a> Parser<'a> {
         list: bool,
         end: LinesEnd,
     ) -> Result<(DyadPtr, Cell), ParseError> {
-        self.parse_block_as(list, false, end)
+        self.parse_block_as(if list { Lines::List } else { Lines::Own }, end)
     }
 
     /// The lines of a `(` just lexed, `tape`'s center: a call's argument list when the call
@@ -1645,7 +1660,13 @@ impl<'a> Parser<'a> {
         let left = tape.at(-1).map(|c| c.start);
         let arguments =
             left.is_some() && self.cx.open.last().is_some_and(|o| o.arguments_after == left);
-        self.parse_block_as(false, arguments, LinesEnd::Closer).map(|(_, value)| value)
+        let lines = if arguments { Lines::Arguments } else { Lines::Own };
+        self.parse_block_as(lines, LinesEnd::Closer).map(|(_, value)| value)
+    }
+
+    /// The lines of a `{` just lexed, the scope kept as a value.
+    pub(super) fn parse_kept_block(&mut self) -> Result<(DyadPtr, Cell), ParseError> {
+        self.parse_block_as(Lines::Kept, LinesEnd::Closer)
     }
 
     /// The cell `offset` right of the center, read by a call whose callee stands just left of
@@ -1667,19 +1688,24 @@ impl<'a> Parser<'a> {
 
     fn parse_block_as(
         &mut self,
-        list: bool,
-        arguments: bool,
+        lines: Lines,
         end: LinesEnd,
     ) -> Result<(DyadPtr, Cell), ParseError> {
         self.check_stack()?;
         let value = std::mem::take(&mut self.cx.next_block);
         let scope = self.open_scope();
         let narrowed = self.cx.narrow_next.take().into_iter().collect();
+        let (list, arguments) = (lines == Lines::List, lines == Lines::Arguments);
         let open =
             OpenScope { narrowed, scope: Some(scope), list, arguments, ..OpenScope::default() };
         self.cx.open.push(open);
         let array_ = self.types.array_;
-        let tail = match self.read_lines(end) {
+        let read = self.read_lines(end).and_then(|tail| match lines {
+            // SAFETY: `scope` is the block just read, still open.
+            Lines::Kept => unsafe { self.close_kept(scope) }.map(Some),
+            _ => Ok(tail),
+        });
+        let tail = match read {
             Ok(tail) => tail,
             Err(e) => {
                 self.cx.scopes.pop();
@@ -1814,6 +1840,24 @@ impl<'a> Parser<'a> {
             self.hand_on_block(scope, handed);
         }
         Ok((scope, cell))
+    }
+
+    /// `{ … }`'s last line: the value of the record its names lay out, made from them; its tail.
+    ///
+    /// # Safety
+    /// `scope` must be the innermost open scope, the block whose lines were just read.
+    unsafe fn close_kept(&mut self, scope: DyadPtr) -> Result<(Cell, usize), ParseError> {
+        let (record, names) = self.kept_record(scope)?;
+        let types = self.types;
+        let value = crate::identities::instance::build_ctor(
+            self.rt.store,
+            types,
+            types.construct_,
+            record,
+            &names,
+        )?;
+        self.close_line(value);
+        Ok((Cell::built(value), self.cx.pos))
     }
 
     /// A block closed whose value is `value`, its last line's or itself: the line it stands in

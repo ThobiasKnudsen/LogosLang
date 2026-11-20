@@ -135,9 +135,18 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::HashmapShape => {
             "`hashmap` is followed by `K -> V`: a key type, `->`, a value type, each `type`, \
-             `dyad` or an integer type, and the value type also a map, `hashmap K2 -> V2`"
+             `dyad`, `string` or an integer type, and the value type also a map, `hashmap K2 -> V2`"
                 .into()
         }
+        ParseError::ScopeKeysAreText => {
+            "a `hashmap` that reads `{ … }` keys each entry by its name's spelling, so its key type \
+             is `string`: `hashmap string -> V { … }`"
+                .into()
+        }
+        ParseError::PatternIsNoKey(pattern) => format!(
+            "`{pattern}` is a pattern, which stands for many spellings, so it is no key of the \
+             `hashmap` that reads this `{{ … }}`"
+        ),
         ParseError::InsertTakesTape => {
             "`insert` splices a tape: give it a `lex «…»` fragment or a parsing_tape value".into()
         }
@@ -405,6 +414,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::NoSuchSlot(name) => format!(
             "`{name}` names no slot: a type body fills `static parse = (…)`, `static run = (…)`, \
              `static free = (…)` and its ranks, and declares a member of its own, `static {name} := …`"
+        ),
+        ParseError::KeptEntry(name) => format!(
+            "`{name}` cannot be kept in this `{{ … }}`'s value: the seed keeps a name whose value \
+             moves whole into a field and has no `free` to run, as a number, a string, a map or a \
+             record does"
         ),
         ParseError::OwningFieldNeedsFree => {
             "a field declared `own` must be freed by the type's `static free = (…)`, which this \
