@@ -18,5 +18,10 @@ pub(crate) fn register(cx: &mut Cx) {
     );
     let immediate = cx.store.alloc_head(cx.type_, record);
     cx.declare("immediate", immediate);
-    cx.metas.insert(immediate, |p, _id, tape| p.construct_immediate(tape));
+    cx.metas.insert(immediate, |p, _id, tape| {
+        if !p.finds_right_side(tape) {
+            return Ok(crate::parse::Constructed::Decline);
+        }
+        p.construct_immediate(tape)
+    });
 }

@@ -32,16 +32,14 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
 /// no bracket to its right, `scope` stands as the type.
 pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> DyadPtr {
     cx.declare("scope", scope_);
-    cx.metas.insert(scope_, |p, id, tape| {
-        if p.reads_own_bracket(tape) {
-            p.expect_open()?;
-            let body = p.parse_sequence()?;
-            p.expect_close()?;
-            tape.place_bracket(body);
-        } else {
-            let value = p.stand_as_value(tape, id);
-            tape.place(value);
+    cx.metas.insert(scope_, |p, _id, tape| {
+        if !p.reads_own_bracket(tape) {
+            return Ok(Constructed::Decline);
         }
+        p.expect_open()?;
+        let body = p.parse_sequence()?;
+        p.expect_close()?;
+        tape.place_bracket(body);
         Ok(Constructed::Placed)
     });
     cx.lower.insert(scope_, lower);

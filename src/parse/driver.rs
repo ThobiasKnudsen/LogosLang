@@ -150,17 +150,9 @@ impl<'a> Parser<'a> {
         let id = self.cell_identity(&cell);
         if !cell.constructed {
             self.check_unwritten(&cell)?;
-            if id == self.types.sep_ {
+            if let Some(boundary) = self.boundary_of(id) {
                 self.cx.pos = start;
-                return Ok(Some(Boundary::Comma));
-            }
-            if self.is_closer(id) {
-                self.cx.pos = start;
-                return Ok(Some(Boundary::Close));
-            }
-            if id == self.types.else_ && self.cx.else_ends == Some(self.cx.open.len()) {
-                self.cx.pos = start;
-                return Ok(Some(Boundary::Else));
+                return Ok(Some(boundary));
             }
             if let Some(mode) = self.cx.lex_mode {
                 if mode != RightSide::Condition && id == self.types.open_ && !tape.is_empty() {
@@ -210,6 +202,20 @@ impl<'a> Parser<'a> {
             self.discover_pending(tape)?;
         }
         Ok(None)
+    }
+
+    /// The boundary an unbuilt token ends its segment at: a `,`, a closer, or the `else` that ends
+    /// an `if`'s bare branch.
+    pub(super) fn boundary_of(&self, id: DyadPtr) -> Option<Boundary> {
+        if id == self.types.sep_ {
+            Some(Boundary::Comma)
+        } else if self.is_closer(id) {
+            Some(Boundary::Close)
+        } else if id == self.types.else_ && self.cx.else_ends == Some(self.cx.open.len()) {
+            Some(Boundary::Else)
+        } else {
+            None
+        }
     }
 
     /// A cell a reader's lazy read lexes that would construct before the reader at the
@@ -808,9 +814,7 @@ impl<'a> Parser<'a> {
             dyad::ty(node) == self.types.type_ && dyad::head(node).is_null()
         };
         if unfinished {
-            let value = self.stand_as_value(tape, id);
-            tape.place(value);
-            return Ok(Constructed::Placed);
+            return Ok(Constructed::Decline);
         }
         // The bracket, lexed on demand: application runs at discovery.
         if let Some(scope) =
@@ -832,9 +836,7 @@ impl<'a> Parser<'a> {
             tape.place(node);
             return Ok(Constructed::Gave);
         }
-        let value = self.stand_as_value(tape, id);
-        tape.place(value);
-        Ok(Constructed::Placed)
+        Ok(Constructed::Decline)
     }
 
     /// The scope's expressions in order (prose and teardown structure aside),
