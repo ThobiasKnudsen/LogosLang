@@ -246,6 +246,19 @@ pub(crate) unsafe fn exit_items<'a>(node: DyadPtr) -> &'a [DyadPtr] {
     }
 }
 
+/// The scope's exit is `items` from here.
+///
+/// # Safety
+/// `node` must be a scope node from the store; `items` exit items.
+pub(crate) unsafe fn set_exit(
+    store: &mut Store,
+    array_ty: DyadPtr,
+    node: DyadPtr,
+    items: &[DyadPtr],
+) {
+    *(dyad::value(node) as *mut DyadPtr).add(EXIT) = array::build(store, array_ty, items);
+}
+
 /// Appends `items` to the scope's exit, the array made on first use.
 ///
 /// # Safety
@@ -287,8 +300,7 @@ unsafe fn run_exit_after_fault(
     run_exit_items(rt, node, |types, item| item.held_at_fault(types, failed))
 }
 
-/// A `return` in a `defer` leaves once the rest of the end has run; a fault stops the end. A
-/// `defer` line's values end with it, when the exit runs it.
+/// A fault stops the end. A `defer` line's values end with it, when the exit runs it.
 ///
 /// # Safety
 /// As [`run_exit`].
@@ -312,18 +324,13 @@ unsafe fn run_held_exit_items(
     node: DyadPtr,
     runs: impl Fn(&crate::Core, &ExitItem) -> bool,
 ) -> Result<(), RunError> {
-    let mut left = Ok(());
     for &item in exit_items(node).iter().rev() {
         let item = super::drop_model::exit_item_of(item);
         if runs(rt.types(), &item) {
-            match item.run(rt) {
-                Err(RunError::Return(v)) => left = Err(RunError::Return(v)),
-                Err(fault) => return Err(fault),
-                Ok(()) => {}
-            }
+            item.run(rt)?;
         }
     }
-    left
+    Ok(())
 }
 
 /// Null at the arche.

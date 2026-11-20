@@ -177,9 +177,7 @@ impl<'a> Parser<'a> {
             if !types.is_storage(name) {
                 continue;
             }
-            let ends =
-                self.cx.open.last().is_some_and(|o| o.exit.iter().any(|h| self.holds(h, name)));
-            if ends || carry_of(types, types.type_of(name)).is_none() {
+            if carry_of(types, types.type_of(name)).is_none() {
                 return Err(ParseError::KeptEntry(Box::new(Binding::spelling(name))));
             }
             names.push(name);

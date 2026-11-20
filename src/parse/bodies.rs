@@ -40,7 +40,7 @@ pub(super) struct OpenReturn {
     made: Option<bool>,
     /// The names the scopes it leaves hold at it, in declaration order; an `if` whose arm
     /// frees one on the `return`'s way out takes it off.
-    live: Vec<DyadPtr>,
+    pub(super) live: Vec<DyadPtr>,
     /// The names its line ended after it.
     ended: Vec<DyadPtr>,
     /// The values `&` landed before it in the line it leaves of a scope it leaves, or in an
@@ -1041,6 +1041,23 @@ impl<'a> Parser<'a> {
         self.cx.frames.last().map_or(0, |f| f.returns.len())
     }
 
+    /// A `defer`'s body. It runs as its scope ends, once the way out is chosen and with nothing
+    /// to take a value, so a `return` in it, at any depth, and a body that gives a value are
+    /// refused where they are written (›A scope's value is what it evaluates to, and `return` is
+    /// an optional early exit from the enclosing function‹ [[R207]]).
+    pub(crate) fn parse_deferred(&mut self) -> Result<DyadPtr, ParseError> {
+        let from = self.returns_len();
+        let body = self.parse_expression_cell()?;
+        if let Some(at) = self.returns_from(from).first().map(|r| r.at) {
+            return Err(self.fail_at(at, ParseError::ReturnInDefer));
+        }
+        // SAFETY: `body` is the reduced dyad just parsed.
+        if unsafe { flow::of(self.types, body.dyad) }.gives {
+            return Err(self.fail_at(body.start, ParseError::DeferGives));
+        }
+        Ok(body.dyad)
+    }
+
     /// `if cond then` with an optional `else else`: the node is
     /// `[cond, then, else]`, else null when absent, so an else-less `if` is a
     /// statement. Each branch is a bracket or the next expression, and a bare
@@ -1549,6 +1566,7 @@ impl<'a> Parser<'a> {
                     types.construct_,
                     callee,
                     &args,
+                    crate::identities::dyad_place::Holder::Nobody,
                 )
             }
         } else {
@@ -2075,18 +2093,34 @@ impl<'a> Parser<'a> {
     }
 
     /// `{ … }`'s last line: the value of the record its names lay out, made from them; its tail.
+    /// A name the scope holds moves into the value, whose end ends it (›`{ … }` outside text is a
+    /// scope kept as a value, read with `.`‹ [[R374]]).
     ///
     /// # Safety
     /// `scope` must be the innermost open scope, the block whose lines were just read.
     unsafe fn close_kept(&mut self, scope: DyadPtr) -> Result<(Cell, usize), ParseError> {
         let (record, names) = self.kept_record(scope)?;
         let types = self.types;
+        let open = self.cx.open.len() - 1;
+        let made_at = self.cx.open[open].lines;
+        let mut entries = Vec::with_capacity(names.len());
+        for name in names {
+            let held = self.cx.open[open].exit.iter().position(|h| self.holds(h, name));
+            entries.push(match held {
+                Some(at) => {
+                    self.cx.open[open].exit[at].end = Some(made_at);
+                    crate::identities::drop_model::build_move(self.rt.store, types, name)
+                }
+                None => name,
+            });
+        }
         let value = crate::identities::instance::build_ctor(
             self.rt.store,
             types,
             types.construct_,
             record,
-            &names,
+            &entries,
+            crate::identities::dyad_place::Holder::Owner,
         )?;
         self.close_line(value);
         Ok((Cell::built(value), self.cx.pos))
@@ -2645,6 +2679,9 @@ impl<'a> Parser<'a> {
         let ended = std::mem::take(&mut self.cx.open[0].ended_earlier);
         // SAFETY: `top` is a scope node the driver minted, its exit null or exit items.
         unsafe {
+            for &place in &ended {
+                self.split_earlier_hold(top, place);
+            }
             for &node in scope::exit_items(top) {
                 let item = drop_model::exit_item_of(node);
                 if ended.iter().any(|&name| self.holds(&item, name)) {
@@ -2653,6 +2690,47 @@ impl<'a> Parser<'a> {
             }
         }
         ended
+    }
+
+    /// The session `top` holds the `{ … }` value whose entry `place` is, held whole by an earlier
+    /// REPL line: that hold becomes one hold per entry with an end, where it stood, as a scope
+    /// still open splits its own (›`move` and `free` take a field path too‹ [[R75]]). Nothing
+    /// for a name, or an entry already held on its own.
+    ///
+    /// # Safety
+    /// `top` must be the session's scope node, its exit null or exit items; `place` a binding or a
+    /// `field` place from the store.
+    unsafe fn split_earlier_hold(&mut self, top: DyadPtr, place: DyadPtr) {
+        use crate::identities::{drop_model, instance, scope};
+        let types = self.types;
+        if dyad::ty(place) != types.field_ {
+            return;
+        }
+        let held = |p: &Self, place: DyadPtr| {
+            scope::exit_items(top)
+                .iter()
+                // SAFETY: `top`'s exit holds exit item nodes, their places dyads from the store.
+                .position(|&node| unsafe { p.holds(&drop_model::exit_item_of(node), place) })
+        };
+        if held(self, place).is_some() {
+            return;
+        }
+        let record = instance::field_parts(place).0;
+        self.split_earlier_hold(top, record);
+        let Some(at) = held(self, record) else {
+            return;
+        };
+        let Some(entries) = drop_model::held_entries(self.rt.store, types, record) else {
+            return;
+        };
+        let items = scope::exit_items(top);
+        let from = drop_model::exit_item_of(items[at]).from;
+        let mut nodes = items[..at].to_vec();
+        for what in entries {
+            nodes.push(ExitItem { what, from, end: None }.build(self.rt.store, types));
+        }
+        nodes.extend_from_slice(&items[at + 1..]);
+        scope::set_exit(self.rt.store, types.array_, top, &nodes);
     }
 
     /// [`Self::end_earlier_holds`] for a line that failed: only the names whose ending line the

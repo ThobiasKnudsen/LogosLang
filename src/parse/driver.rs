@@ -827,14 +827,14 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// Whether `node`, what a call built, is the type a call for a type gave where the pass runs
-    /// its line once parsed, which stands in for the call (›Inside a body, a `-> type` call may
-    /// take an argument known only at run‹ [[R296]]): handed on as its own unconstructed cell, it
-    /// reads what follows it as a name holding it does (›A name of a type with an instances'
-    /// `parse` wakes it, as the instance does, and so does any expression of the type‹ [[R230]]).
+    /// Whether `node`, what a call built, is the type a call for a type gave in the pass, which
+    /// stands in for the call, in a body too (›Inside a body, a `-> type` call may take an
+    /// argument known only at run‹ [[R296]]): handed on as its own unconstructed cell, it reads
+    /// what follows it as a name holding it does (›A name of a type with an instances' `parse`
+    /// wakes it, as the instance does, and so does any expression of the type‹ [[R230]]).
     pub(super) fn stands_in_for_call(&self, node: DyadPtr) -> bool {
         // SAFETY: `node` is a reduced dyad from the store.
-        self.in_pass_order() && unsafe { self.identity_head(node) }.is_some()
+        unsafe { self.identity_head(node) }.is_some()
     }
 
     /// The scope's expressions in order (prose and teardown structure aside),

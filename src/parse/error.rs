@@ -122,6 +122,8 @@ pub enum ParseError {
     VoidBodyGives,
     /// A line of a `{ … }` gives a value, where the scope itself is the value.
     KeptScopeGives,
+    /// A `defer` gives a value, which nothing takes when its scope ends.
+    DeferGives,
     /// A value is needed, and some path ends without giving one: a block one of whose lines
     /// gives only on some paths, a loop.
     EndsWithoutValue,
@@ -143,6 +145,8 @@ pub enum ParseError {
     LossyOutOfPlace,
     /// A `return` with no function around it to leave.
     ReturnOutsideFunction,
+    /// A `return` in a `defer`, at any depth.
+    ReturnInDefer,
     /// A node that gives nothing (a statement, a `-> void` call) stood where a value is
     /// required.
     StatementAsValue,
