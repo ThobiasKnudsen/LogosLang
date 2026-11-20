@@ -3754,6 +3754,59 @@ fn the_dyad_box_says_what_it_holds() {
 }
 
 #[test]
+fn a_result_type_is_read_as_a_declaration_reads_its_type() {
+    for (src, expect) in [
+        ("mut t := type ?, t = i32, mk := fn () -> t ( 7 ), m := mk(), m.type", "i32\n"),
+        ("mut t := type ?, t = i32, mk := fn () -> t ( 7 ), mk.compile(), m := mk(), m + 1", "8\n"),
+        ("mut d := dyad ?, d = i32, mk := fn () -> d ( 7 ), mk() + 1", "8\n"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), expect, "{src}");
+    }
+
+    let (echoes, stderr) = repl(
+        b"mut t := type ?\nt = i32\nmk := fn () -> t ( 7 )\nm := mk()\nm.type == i32\nm + 1\n",
+    );
+    assert_eq!(echoes, ["true", "8"], "stderr: {stderr}");
+
+    // A call over a number written after `->` took the process down.
+    for src in ["mk := fn () -> 5 ( 7 ), mk()", "mk := fn () -> 5 ( 7 ), mk.compile(), mk()"] {
+        let out = logos().arg(src).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{src}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("1:16: error: the declared or assigned type must be"),
+            "{src}: {stderr}"
+        );
+    }
+    let (echoes, stderr) = repl(b"mk2 := fn () -> 5 ( 7 )\nmk2()\n");
+    assert!(echoes.is_empty(), "echoes: {echoes:?}");
+    assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `mk2`"), "stderr: {stderr}");
+
+    let out = logos().args(["import", "tests/fixtures/hole_result_type.logos"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr
+            .contains("hole_result_type.logos:1:16: error: the declared or assigned type must be"),
+        "stderr: {stderr}"
+    );
+
+    let out = logos()
+        .arg("o := fn () -> i32 ( mut t := type ?, t = i32, mk := fn () -> t ( 7 ), m := mk(), m + 1 ), o()")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("1:62: error: which type this is is known only when"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn only_a_marked_place_is_written_or_addressed() {
     let pw = "pw := type ( mut a := i32 ?, mut b := i32 ?, output_type := type ?, static run = ( a * b ), \
               static parse_rank = *.parse_rank + 1, static associativity = right, \

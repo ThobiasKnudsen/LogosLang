@@ -652,10 +652,7 @@ impl<'a> Parser<'a> {
                 ParseError::Empty => ParseError::ExpectedReturnType,
                 e => e,
             })?;
-            // A named return type is a use of that name: its binding, read
-            // through to the type it names.
-            // SAFETY: `out.dyad` is a reduced dyad from the store.
-            (unsafe { self.types.through(out.dyad) }, out.owning)
+            (self.written_result_type(out, start)?, out.owning)
         };
         let source = self.cx.source;
         let result = WrittenResult { text: source[start..self.cx.pos].trim_end(), owned };
@@ -702,6 +699,23 @@ impl<'a> Parser<'a> {
             unsafe { *(dyad::value(f) as *mut DyadPtr).add(FN_RECEIVER) = leaf };
         }
         f
+    }
+
+    /// The type `-> T` writes, read as `?` reads the type to its left and landed as `=` lands a
+    /// value in a `type ?` place: a box the pass has already filled names the type it holds, and
+    /// a value that is no type is refused. The function is built where it is written, so a type
+    /// known only when the program runs is refused too (›`fn` is not a primitive: a function is
+    /// a type in this same shape‹ [[R199]], ›A `type ?` place is a box, written any number of
+    /// times‹ [[R291]]). An error points at `start`, where the written type begins.
+    fn written_result_type(&mut self, out: Cell, start: usize) -> Result<DyadPtr, ParseError> {
+        let read = self.operand_dyad(out)?;
+        let types = self.types;
+        // SAFETY: `read` is a reduced dyad from the store, and `type` a type node.
+        let landed = unsafe { crate::identities::land(self.rt.store, types, read, types.type_) }
+            .map_err(|e| self.fail_at(start, e))?;
+        // SAFETY: `landed` is a reduced dyad from the store.
+        unsafe { crate::identities::type_identity_of(types, landed) }
+            .ok_or_else(|| self.fail_at(start, ParseError::TypeKnownOnlyAtRun))
     }
 
     /// The half of `parse_fn` after the signature, shared with a slot body read bare: the
