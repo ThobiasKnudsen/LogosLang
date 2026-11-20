@@ -336,13 +336,13 @@ pub(super) fn build_alloc(
     use crate::identities::Operand;
     // SAFETY: `count` and `init` are reduced dyads just parsed.
     let count = unsafe {
+        let count = crate::identities::land_rational(
+            store,
+            types,
+            count,
+            types.numtypes[numtype::NumType::U64 as usize],
+        )?;
         match crate::identities::operand_of(types, count) {
-            Operand::Literal => crate::identities::land(
-                store,
-                types,
-                count,
-                types.numtypes[numtype::NumType::U64 as usize],
-            )?,
             Operand::Concrete(nt) if !nt.is_float() => count,
             _ => return Err(ParseError::UnsupportedOperands),
         }
@@ -1878,6 +1878,11 @@ mod tests {
     fn a_plain_number_count_lands_in_u64() {
         assert_eq!(run("a := alloc 3000000000 of u8 0,\n7"), (7, 0));
         assert_eq!(parse_err("a := alloc -1 of u8 0"), ParseError::UncomputableLiteral);
+        assert_eq!(run("a := alloc (if true (2) else (3)) of i32 7,\na@"), (7, 0));
+        assert_eq!(
+            parse_err("a := alloc (if true (1/2) else (3)) of u8 0"),
+            ParseError::UncomputableLiteral
+        );
         // A `u64` count past `i64::MAX` is too big a block, never a negative one.
         assert!(matches!(
             try_run("n := u64 lossy (i64 -1),\na := alloc n of u8 0,\n1"),

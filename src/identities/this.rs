@@ -662,7 +662,8 @@ unsafe fn load(rt: &mut Runtime, node: DyadPtr, this: DyadPtr) -> Result<i64, Ru
         Field::Slot(slot, k) if (*slot).is_null() => Err(RunError::UnfilledField(k)),
         Field::Slot(slot, _)
             if super::numtype::is_scalar_type(ty)
-                && (is_fill(rt.types(), node) || dyad::ty(*slot) == rt.types().rational) =>
+                && (is_fill(rt.types(), node)
+                    || super::read::output_type(rt.types(), *slot) == rt.types().rational) =>
         {
             super::tape::constant_number(rt.types(), *slot, ty)
         }

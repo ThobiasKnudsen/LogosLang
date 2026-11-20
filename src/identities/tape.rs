@@ -272,10 +272,10 @@ fn act(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> D
 /// # Safety
 /// `k` must be null or a reduced dyad from the store.
 unsafe fn index(store: &mut Store, types: &Core, k: DyadPtr) -> Result<DyadPtr, ParseError> {
-    if k.is_null() || !matches!(super::operand_of(types, k), super::Operand::Literal) {
+    if k.is_null() {
         return Ok(k);
     }
-    super::land(store, types, k, types.numtypes[NumType::I64 as usize])
+    super::land_rational(store, types, k, types.numtypes[NumType::I64 as usize])
 }
 
 /// `t[k]`: read, the cell's pointer; as `=`'s target, the write (`build_write`).

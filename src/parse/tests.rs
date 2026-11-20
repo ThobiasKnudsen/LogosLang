@@ -476,9 +476,11 @@ fn the_tape_affordances_are_reachable_from_logos() {
         assert_eq!(v as DyadPtr, a_rec, "a negative index reads the left context");
         let (v, s) = go("t[i - 2]", &mut store, &mut trie, types, s);
         assert_eq!(v as DyadPtr, a_rec, "an index may be an expression");
+        let (v, s) = go("t[if true (-1) else (0)]", &mut store, &mut trie, types, s);
+        assert_eq!(v as DyadPtr, a_rec, "each plain number an `if` hands on lands as the index");
         // A plain number lands in `i64` where it is written, so one with no `i64` is refused there.
         let mut s = s;
-        for src in ["t[1/2]", "t.spelling[1/2]"] {
+        for src in ["t[1/2]", "t.spelling[1/2]", "t[if true (1/2) else (0)]"] {
             let mut p = Parser::new(src, &mut store, &mut trie, types, s);
             assert_eq!(p.parse_expression().unwrap_err(), ParseError::UncomputableLiteral, "{src}");
             s = p.into_scopes();

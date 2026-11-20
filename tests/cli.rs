@@ -2067,6 +2067,7 @@ fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
     for (src, expect) in [
         ("x := ( 1, 7 ) + i32 1".to_string(), "do not match"),
         (format!("{}, x := q [1/2, 7], x.v", q("i32")), "only a constant is read as its number"),
+        (format!("{}, x := q [(1, 7), 7], x.v", q("i32")), "only a constant is read as its number"),
     ] {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}");
