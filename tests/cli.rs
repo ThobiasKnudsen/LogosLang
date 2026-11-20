@@ -1132,12 +1132,34 @@ fn a_static_function_called_on_no_value_uses_no_field() {
 }
 
 #[test]
+fn a_static_function_is_called_on_the_record_behind_a_pointer() {
+    let t = "u := type ( a := i64 ?, static s := fn () -> i64 ( a ) ), \
+             t := type ( mut n := i64 ?, inner := u ?, static k := fn () -> i64 ( 1 ), \
+             static get := fn () -> i64 ( n ), static bump := fn () -> i64 ( n = n + 10, n ) ), \
+             p := alloc 2 of t (i64 3, u (i64 7))";
+    for (tail, want) in [
+        ("p@.k()", "1\n"),
+        ("p@.get()", "3\n"),
+        ("(p + 1)@.get()", "3\n"),
+        ("p@.inner.s()", "7\n"),
+        ("g := fn (q := @t ?) -> i64 ( q@.get() + q@.inner.s() ), g.compile(), g(p)", "10\n"),
+        // The write reaches the record behind the pointer.
+        ("p@.bump(), p@.n", "13\n"),
+        ("g := fn (q := @t ?) -> i64 ( q@.bump(), q@.n ), g.compile(), g(p)", "13\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{t}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_static_member_holding_any_function_is_called_through_a_member_read() {
     let t = "g := fn (a := i64 ?) -> i64 ( a * 2 ), t := type ( n := i64 ?, static h := g ), \
              v := t (3)";
     for (tail, want) in [
         ("t.h(i64 4)", "8\n"),
         ("v.h(i64 5)", "10\n"),
+        ("p := alloc 1 of t (i64 1), p@.h(i64 6)", "12\n"),
         ("k := fn () -> i64 ( t.h(i64 4) ), k.compile(), k()", "8\n"),
         ("k := fn () -> i64 ( w := t (1), w.h(i64 6) ), k.compile(), k()", "12\n"),
     ] {

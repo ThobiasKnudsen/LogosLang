@@ -23,8 +23,9 @@ struct Member {
 enum Receiver {
     /// The node the read reached, handed on as it stands.
     Node(DyadPtr),
-    /// A value read through its type: a record laid out in bytes by the address of its bytes,
-    /// any other value by a `dyad` view, as a `dyad ?` parameter takes a node.
+    /// A value read through its type: a record laid out in bytes, in a frame or behind a
+    /// pointer, by the address of its bytes, any other value by a `dyad` view, as a `dyad ?`
+    /// parameter takes a node.
     Value(DyadPtr),
     /// No value: the call is through the type itself.
     Nothing,
@@ -219,7 +220,7 @@ impl<'a> Parser<'a> {
                 }
                 Receiver::Value(value) => {
                     self.check_receiver_write(left, member)?;
-                    if types.is_storage(value) {
+                    if types.is_storage(value) || dyad::ty(value) == types.deref_ {
                         crate::identities::by_copy::build_out(self.rt.store, types, value)
                     } else {
                         self.rt.store.alloc_head(types.dyad_, value.cast())
@@ -713,7 +714,7 @@ impl<'a> Parser<'a> {
                 Ok(found) => found,
                 Err(e) => {
                     let name = &self.cx.source[nstart..nstart + nlen];
-                    return self.static_member_read(pointee, name).map(|n| (n, 0)).ok_or(e);
+                    return self.static_member_access(lhs, &left, pointee, name, call)?.ok_or(e);
                 }
             };
             let types = self.types;
