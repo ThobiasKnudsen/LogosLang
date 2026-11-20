@@ -851,7 +851,8 @@ impl<'a> Parser<'a> {
         self.cx.member_root = root;
         self.cx.member_path.clear();
         // `.type` reads the type of the node a `dyad` no name holds gives.
-        let lhs = if &source[nstart..nstart + nlen] == "type" {
+        let type_word = &source[nstart..nstart + nlen] == "type";
+        let lhs = if type_word {
             match self.read_through_value(tape, -1, lhs) {
                 Ok(lhs) => lhs,
                 Err(e) => {
@@ -886,9 +887,9 @@ impl<'a> Parser<'a> {
             cell.target = reached;
             cell.root = path_root;
         }
-        // A parse's `tape[0].f`, or a member call, gives what the member holds.
-        let called = bracket.is_some() && consumed == 1;
-        Ok(if this_read || called { Constructed::Gave } else { Constructed::Placed })
+        // `.type` reads a node's type word (›`x.type` reads the type word of the node a name or
+        // an expression stands for‹ [[R279]]); every other read gives what the member holds.
+        Ok(if type_word { Constructed::Placed } else { Constructed::Gave })
     }
 
     /// The comptime index a `[…]` cell carries when its interior is a

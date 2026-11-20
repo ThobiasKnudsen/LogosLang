@@ -4749,6 +4749,30 @@ fn an_unnamed_call_for_a_type_reads_what_follows_it_as_a_name_holding_the_type_d
 }
 
 #[test]
+fn a_member_holding_a_type_reads_what_follows_it_as_a_name_holding_the_type_does() {
+    let o = "o := type ( static e := i32 )";
+    let pt = "pt := type ( mut a := i32 ? ), o := type ( static e := pt )";
+    for (defs, out, named, unnamed, want) in [
+        (o, "i32", "u := o.e, u 3", "o.e 3", "3"),
+        (o, "type", "u := o.e, x := u 3, x.type", "x := o.e 3, x.type", "i32"),
+        (o, "i32", "u := o.e, u(7)", "o.e(7)", "7"),
+        (pt, "i32", "u := o.e, v := u(4), v.a", "v := o.e(4), v.a", "4"),
+        (o, "type", "u := o.e, u", "o.e", "i32"),
+        (o, "bool", "u := o.e, u == i32", "o.e == i32", "true"),
+        (o, "i32", "u := o.e, mut x := u ?, x = 4, x", "mut x := o.e ?, x = 4, x", "4"),
+    ] {
+        for body in [named, unnamed] {
+            let src = format!("{defs}, {body}");
+            assert_eq!(line(&src), want, "{src}");
+            for call in ["f()", "f.compile(), f()"] {
+                let src = format!("{defs}, f := fn () -> {out} ( {body} ), {call}");
+                assert_eq!(line(&src), want, "{src}");
+            }
+        }
+    }
+}
+
+#[test]
 fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_once() {
     // Each point where the parse needs a value runs the earlier arguments first, each then
     // standing for the value it gave, and the call runs them no more.
