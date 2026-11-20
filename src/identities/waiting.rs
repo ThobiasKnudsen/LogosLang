@@ -75,18 +75,17 @@ pub(crate) unsafe fn set_into(types: &Core, node: DyadPtr, into: DyadPtr) {
     *ops.add(OWN) = if into == types.dyad_ { types.own_ } else { std::ptr::null_mut() };
 }
 
-/// Where `value`, a quote's `{…}`, gives the value of a line held for the run, that line gives a
-/// `dyad`: the node its value lands in when it runs, since its type is known only then. Whether
-/// it did.
+/// Where what `value` gives, itself or a scope's last line, is a line held for the run, that line
+/// lands its value in `into` when it runs. Whether there was one.
 ///
 /// # Safety
-/// `value` must be a reduced dyad from the store, parsed just now.
-pub(crate) unsafe fn give_dyad(types: &Core, value: DyadPtr) -> bool {
+/// `value` must be a reduced dyad from the store, parsed just now; `into` a type node.
+pub(crate) unsafe fn lands_in(types: &Core, value: DyadPtr, into: DyadPtr) -> bool {
     let tail = super::trailing_expr(types, value);
     if tail.is_null() || dyad::ty(tail) != types.waiting.line {
         return false;
     }
-    set_into(types, tail, types.dyad_);
+    set_into(types, tail, into);
     true
 }
 

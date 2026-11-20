@@ -1334,8 +1334,7 @@ pub(crate) unsafe fn commit_fn_body(
     }
     walk_tail(types, body, &mut |leaf| {
         // A line held for the run lands in the result when it runs.
-        if dyad::ty(leaf) == types.waiting.line {
-            waiting::set_into(types, leaf, output);
+        if waiting::lands_in(types, leaf, output) {
             return Ok(leaf);
         }
         refuse_statement(types, leaf)?;
