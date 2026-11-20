@@ -109,10 +109,9 @@ pub enum CompileError {
 /// from the list its run frees by as the interpreter unwinds it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Unwind<'a> {
-    /// A scope at its line `line`: those of `items`, its exit items still to run, held there,
-    /// and once that line `failed`, those it ended and may not have reached. A `rest` is what
-    /// its end has still to run while one of its items is lowered, which a fault there skips.
-    Scope { items: &'a [DyadPtr], line: usize, failed: bool, rest: bool },
+    /// A scope at its line `line`: those of `items`, its exit items, held there, and once that
+    /// line `failed`, those it ended and may not have reached.
+    Scope { items: &'a [DyadPtr], line: usize, failed: bool },
     /// An `if` arm's or condition's ends.
     Ends(&'a [DyadPtr]),
     /// An argument a call holds, passed as `this`; `first` marks the call's first, from which
@@ -455,7 +454,7 @@ impl<'a> Lowerer<'a, '_> {
         use crate::identities::flow;
         let at = self.unwind.len();
         let items = crate::identities::scope::exit_items(node);
-        let open = |line| Unwind::Scope { items, line, failed: false, rest: false };
+        let open = |line| Unwind::Scope { items, line, failed: false };
         self.unwind.push(open(0));
         let plan = crate::identities::scope::held_of(node);
         let zero = self.builder.ins().iconst(types::I64, 0);
@@ -598,9 +597,8 @@ impl<'a> Lowerer<'a, '_> {
 
     /// Ends what is open above `at`, innermost first: its own end, or a `return` or fault
     /// leaving it, as `scope::run_exit`, `scope::run_exit_after_fault` and the interpreter's
-    /// unwinding do. Each is closed before its teardowns are lowered, so a `return` or fault
-    /// among them leaves what lies outside it; a scope's items still to run stay open while one
-    /// is lowered, so a `return` in a `defer` runs them too; a call's held arguments close
+    /// unwinding do. Each is closed before its teardowns are lowered, so a fault among them
+    /// leaves what lies outside it, skipping the rest of that end; a call's held arguments close
     /// together, so a fault in one's `free` skips the rest, as `drop_model::end_held_args` does,
     /// and a line's values together, as `drop_model::end_line` does.
     ///
@@ -611,9 +609,9 @@ impl<'a> Lowerer<'a, '_> {
         while self.unwind.len() > at {
             let k = self.unwind.len() - 1;
             match self.unwind[k] {
-                Unwind::Scope { items, line, failed, .. } => {
+                Unwind::Scope { items, line, failed } => {
                     self.unwind.truncate(k);
-                    for (i, &item) in items.iter().enumerate().rev() {
+                    for &item in items.iter().rev() {
                         let item = drop_model::exit_item_of(item);
                         let runs = if failed {
                             item.held_at_fault(self.types, line)
@@ -621,11 +619,7 @@ impl<'a> Lowerer<'a, '_> {
                             item.held_at(line)
                         };
                         if runs {
-                            let rest =
-                                Unwind::Scope { items: &items[..i], line, failed, rest: true };
-                            self.unwind.push(rest);
                             item.lower(self)?;
-                            self.unwind.truncate(k);
                         }
                     }
                 }
@@ -681,12 +675,9 @@ impl<'a> Lowerer<'a, '_> {
         let open = self
             .unwind
             .iter()
-            .filter_map(|&u| match u {
-                Unwind::Scope { rest: true, .. } => None,
-                Unwind::Scope { items, line, .. } => {
-                    Some(Unwind::Scope { items, line, failed: true, rest: false })
-                }
-                held_or_ends => Some(held_or_ends),
+            .map(|&u| match u {
+                Unwind::Scope { items, line, .. } => Unwind::Scope { items, line, failed: true },
+                held_or_ends => held_or_ends,
             })
             .collect();
         let on = self.builder.create_block();
