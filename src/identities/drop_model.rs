@@ -415,8 +415,8 @@ pub(crate) fn is_owning_place(types: &Core, place: DyadPtr) -> bool {
 }
 
 /// Whether `holder`, a name, field or pointer a place is reached through, only borrows what it
-/// reaches: a pointer that owns nothing, as one `&` made, a copy of an owner and a parameter
-/// without `own` hold, or a name or field holding a node without `own`. A record kept in its
+/// reaches: a pointer that owns nothing, as one `&` made and a parameter without `own` hold, or
+/// a name or field holding a node without `own`. A record kept in its
 /// bytes is its holder's own. DESIGN ›`move` is the act, `own` the gate word, `free` the end‹.
 ///
 /// # Safety
