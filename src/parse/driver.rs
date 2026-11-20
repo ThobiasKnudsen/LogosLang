@@ -791,6 +791,11 @@ impl<'a> Parser<'a> {
             let cell = *tape.at(0).expect("the callee's own cell");
             // SAFETY: `id` is the resolved callee, a reduced dyad.
             let args = unsafe { self.with_receiver(id, &cell, args) }?;
+            // A call for a type runs where it is built, so what stands before it runs first.
+            // SAFETY: `id` is the resolved callee.
+            if self.in_pass_order() && unsafe { self.returns_type(id) } {
+                self.run_first(tape, cell.start)?;
+            }
             // SAFETY: `id` is the resolved callee and `args` reduced dyads.
             let node = unsafe { self.build_call(id, &args) }?;
             tape.remove(1);

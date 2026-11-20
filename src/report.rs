@@ -217,11 +217,12 @@ pub fn parse_message(e: &ParseError) -> String {
              write the call bare, as `while i < g() (…)`, or give its value a name first"
                 .into()
         }
-        ParseError::DyadCallAfterUnbuilt => {
-            "a call that gives a `dyad` runs while its line is parsed, after what its line runs \
-             before it; here something before it that runs cannot run first yet, such as a part \
-             of a quote or what stands before a branch; give the call's value a name on a line \
-             of its own first, as `v := g(), k(h(), v + 1)`"
+        ParseError::RunsBeforeUnbuilt => {
+            "the parse needs a value here (a box's, a call's for a type, or the node a call that \
+             gives a `dyad` gives), so what its line runs before it runs first; here something \
+             before it that runs cannot run first yet, such as a part of a quote or what stands \
+             before a branch; give the value a name on a line of its own first, as \
+             `v := g(), k(h(), v + 1)`"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {
