@@ -2879,6 +2879,35 @@ fn repl(input: &[u8]) -> (Vec<String>, String) {
 }
 
 #[test]
+fn the_repl_echoes_a_line_as_the_command_line_does() {
+    // Whether a last value shows is one rule; what a type definition or a `fn` shows is
+    // ›A value is shown as the text its type's `print` slot gives back‹ [[R305]], so it is
+    // only compared here.
+    for (program, shown) in [
+        ("x := i32 5, x.type", 1),
+        ("i32", 1),
+        ("t := i32, t", 1),
+        ("mut a := type ?, a = i32, a", 1),
+        ("type ( a := i32 ? )", 1),
+        ("f := fn () -> i32 ( 1 ), f", 1),
+        ("x := i32 5", 0),
+        ("t := i32", 0),
+        ("f := fn () -> i32 ( 1 )", 0),
+        ("p := type (v := i32 ?)", 0),
+    ] {
+        let (code, stdout, stderr) = run_line(program);
+        assert_eq!(code, Some(0), "{program}: stderr: {stderr}");
+        let printed: Vec<&str> = stdout.lines().collect();
+        assert_eq!(printed.len(), shown, "{program}: {stdout}");
+        let (echoes, stderr) = repl(format!("{program}\n").as_bytes());
+        assert_eq!(echoes, printed, "{program}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl(b"x := i32 5\nx.type\ni32\nt := i32\nt\n");
+    assert_eq!(echoes, ["i32", "i32", "i32"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn the_repl_rolls_back_a_failed_lines_declarations() {
     let (echoes, stderr) =
         repl(b"b := )\nb := 5\nf := fn (v := i32 ?) -> i32 ( v )\ng := f(1,2)\ng := f(3)\ng + b\n");
@@ -3074,7 +3103,7 @@ fn an_else_if_chain_selects_the_matching_arm() {
 fn the_repl_binds_a_name_to_a_type() {
     let (echoes, stderr) =
         repl(b"t := i32\nx := t 7\nt(9)\nf := fn (v := t ?) -> t ( v + v )\nt\nf(x)\n");
-    assert_eq!(echoes, ["9", "14"], "stderr: {stderr}");
+    assert_eq!(echoes, ["9", "i32", "14"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
@@ -4952,8 +4981,9 @@ fn a_name_of_the_text_type_stands_as_the_type() {
     let (code, _, stderr) = run_line(&format!("{t}, (t 1 + 2»), 7"));
     assert_eq!(code, Some(1), "{stderr}");
     assert!(stderr.contains("1:24: error: unknown name `»`"), "{stderr}");
+    let (_, shown, _) = run_line(&format!("{t}, t"));
     let (echoes, stderr) = repl(format!("{t}\n7\nt\n8\n").as_bytes());
-    assert_eq!(echoes, ["7", "8"], "stderr: {stderr}");
+    assert_eq!(echoes, ["7", shown.trim_end(), "8"], "stderr: {stderr}");
 }
 
 /// ›Text literals are plain values; `#` is the one comment constructor‹ [[R160]]: a text node and

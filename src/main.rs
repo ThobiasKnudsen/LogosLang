@@ -32,23 +32,6 @@ impl Engine {
     }
 }
 
-/// The REPL's echo rule: a line that gives nothing, a bare fn or a type definition stays
-/// silent; everything else echoes. Wider than the command line's: a bare type tail prints
-/// its spelling there.
-///
-/// # Safety
-/// `node` must be a valid dyad the REPL's [`seed::identities::read::gives_value`] passed.
-unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    let named = core.through(node);
-    let logos = core.type_of(named);
-    // A bare type definition is a statement; a place holding a type is a value and echoes.
-    if logos == core.type_ {
-        return seed::identities::read::read_kind(core, named)
-            == seed::identities::read::Read::Identity;
-    }
-    !matches!(seed::identities::read::gives_value(core, node), Ok(true)) || logos == core.fn_type
-}
-
 fn main() -> ExitCode {
     // A thread of the seed's stack size, so the depth guards decide, not the build profile.
     std::thread::Builder::new()
@@ -137,22 +120,23 @@ fn run_line(source: &str) -> ExitCode {
         print_stats(&mut engine, core, after, &sources);
     }
 
-    if let Some((_, shown)) = last {
+    if let Some(shown) = last {
         println!("{shown}");
     }
     ExitCode::SUCCESS
 }
 
-/// A line of the program read whole and run by the one pass: its tail with the text it
-/// shows, or none when the tail gives no value or there is none (DESIGN ›The command line is
-/// Logos source; the binary stays out of the way‹). An error comes back rendered, what the
-/// line holds left for the caller to end.
+/// A line of the program read whole and run by the one pass: the text its tail shows, or
+/// none when the tail gives no value or there is none. The command line and the REPL both
+/// echo what this gives (›The command line is Logos source; the binary stays out of the
+/// way‹ [[R302]]). An error comes back rendered, what the line holds left for the caller to
+/// end.
 fn run_program_line(
     p: &mut Parser,
     types: &Core,
     path: &str,
     source: &str,
-) -> Result<Option<(seed::dyad::DyadPtr, String)>, String> {
+) -> Result<Option<String>, String> {
     let tail = match p.read_lines(LinesEnd::TextEnd) {
         Ok(tail) => tail,
         Err(ParseError::Run(e)) => {
@@ -192,7 +176,7 @@ fn run_program_line(
     let shown = unsafe { seed::identities::display_value(types, node, bits) };
     // The last line ends once its value is shown.
     p.end_tail().map_err(message)?;
-    Ok(Some((node, shown)))
+    Ok(Some(shown))
 }
 
 /// `LOGOS_STATS`: the store after the core, after the line, and their delta
@@ -301,11 +285,8 @@ fn repl() -> ExitCode {
 
         match outcome {
             Ok(last) => {
-                if let Some((node, shown)) = last {
-                    // SAFETY: `node` is the line's tail, a dyad the parser built.
-                    if !unsafe { is_statement_node(&engine.core, node) } {
-                        println!("{shown}");
-                    }
+                if let Some(shown) = last {
+                    println!("{shown}");
                 }
                 scopes.commit();
             }
