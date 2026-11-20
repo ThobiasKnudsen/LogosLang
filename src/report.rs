@@ -543,9 +543,6 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NotAScope(_) => "this node is not a scope".into(),
         RunError::OutOfMemory => "the allocator refused this alloc".into(),
         RunError::NoDestructor(_) => "this place has no destructor to run".into(),
-        RunError::UncomputableLiteral => {
-            "a literal here has no exact value in the type it lands in".into()
-        }
         RunError::NoWholeNumber => "a float that is not a number (NaN) or is infinite has no \
                                     whole number, so `lossy` cannot convert it into an integer \
                                     type"
@@ -606,9 +603,6 @@ pub fn compile_message(e: &CompileError) -> String {
         CompileError::NoLayout(_) => "this type has no field layout to construct".into(),
         CompileError::EmptyScope => "a scope with nothing in it has no value".into(),
         CompileError::Internal(what) => format!("the seed broke its own rule: {what}"),
-        CompileError::UncomputableLiteral => {
-            "a literal here has no exact value in the type it lands in".into()
-        }
         CompileError::ArityMismatch => "a call's argument count does not match its function".into(),
         CompileError::Cranelift(msg) => format!("the backend rejected this: {msg}"),
     }

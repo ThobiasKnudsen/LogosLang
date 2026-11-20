@@ -850,6 +850,25 @@ pub(crate) unsafe fn land(
     land_with(store, types, value, ty, Landing::default())
 }
 
+/// A value of `rational_number` lands in the number type `ty` as [`land`] lands it: each plain
+/// number it gives, an `if`'s arms and a block's last line included, converts, and a rational
+/// known only when the program runs is refused. Any other value stands as written, for the
+/// reader to take or refuse by its own type.
+///
+/// # Safety
+/// As [`land`].
+pub(crate) unsafe fn land_rational(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    ty: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    if read::output_type(types, value) != types.rational {
+        return Ok(value);
+    }
+    land(store, types, value, ty)
+}
+
 /// As [`land`]; with `lossy`, what `ty lossy (value)` gives: a number of any number type, a plain
 /// number or a rational value also converts into the number type `ty`, losing what `ty` cannot
 /// hold.
@@ -1084,7 +1103,7 @@ pub(crate) unsafe fn copy_place(
     types: &Core,
     value: DyadPtr,
 ) -> Option<(DyadPtr, usize)> {
-    if read::read_kind(types, value) == read::Read::Literal {
+    if matches!(operand_of(types, value), Operand::Literal) {
         return None;
     }
     let t = read::output_type(types, value);
@@ -1131,7 +1150,7 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
         return if bits != 0 { "true" } else { "false" }.to_string();
     }
     // A rational value's bits are the address of its sixteen bytes.
-    if rational::is_rational_value(types, node) {
+    if read::output_type(types, node) == types.rational {
         let p = bits as usize as *const u8;
         if !p.is_null() {
             return rational::spell_at(p);

@@ -90,7 +90,7 @@ impl<'a> Parser<'a> {
         use crate::identities::tape;
         let types = self.types;
         let ops = dyad::value(target) as *const DyadPtr;
-        let cell = tape::build_slot(self.rt.store, types, *ops, *ops.add(1));
+        let cell = tape::build_slot(self.rt.store, types, *ops, *ops.add(1))?;
         if !self.is_node_cell(cell) || !(*ops.add(2)).is_null() {
             return Err(ParseError::StampOutsideParse);
         }
@@ -467,7 +467,7 @@ impl<'a> Parser<'a> {
                     let Some(i) = key else {
                         return Ok((tape::build_cell_dyads(store, types, lhs), 0));
                     };
-                    let line = tape::build_cell_dyad_at(store, types, lhs, i);
+                    let line = tape::build_cell_dyad_at(store, types, lhs, i)?;
                     return Ok((self.narrowed_read(line), 1));
                 }
                 if dyad::ty(lhs) == types.tape.cell_dyads && name == "size" {
@@ -480,7 +480,7 @@ impl<'a> Parser<'a> {
                     let Some(i) = key else {
                         return Ok((tape::build_bracket_dyads(store, types, lhs), 0));
                     };
-                    let line = tape::build_bracket_line(store, types, lhs, i);
+                    let line = tape::build_bracket_line(store, types, lhs, i)?;
                     return Ok((self.narrowed_read(line), 1));
                 }
             }
@@ -800,12 +800,11 @@ impl<'a> Parser<'a> {
             if dyad::ty(key) != self.types.rational {
                 return None;
             }
-            let i = crate::identities::rational::mold(key)?;
-            if i < 0 {
-                None
-            } else {
-                Some(i as usize)
-            }
+            let i = crate::identities::rational::mold_to(
+                key,
+                crate::identities::numtype::NumType::U64,
+            )?;
+            usize::try_from(i as u64).ok()
         }
     }
 
@@ -854,7 +853,10 @@ impl<'a> Parser<'a> {
                 let recv =
                     unsafe { crate::identities::tape::receiver_addr(self.rt.store, types, lhs) };
                 if let Some(recv) = recv {
-                    let slot = crate::identities::tape::build_slot(self.rt.store, types, recv, key);
+                    // SAFETY: `recv` and `key` are reduced dyads from the store.
+                    let slot = unsafe {
+                        crate::identities::tape::build_slot(self.rt.store, types, recv, key)
+                    }?;
                     // SAFETY: `slot` is the slot node just built.
                     let node = unsafe { self.narrowed_read(slot) };
                     tape.remove(-1);
@@ -1052,7 +1054,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `value` must be a reduced dyad from the store, no place and no hole.
     unsafe fn address_of_value(&mut self, value: DyadPtr) -> Result<DyadPtr, ParseError> {
-        use crate::identities::read::{read_kind, value_type, Read};
+        use crate::identities::{operand_of, read::value_type, Operand};
         let types = self.types;
         value_type(types, value)?;
         if !has_address(types, value) {
@@ -1061,7 +1063,7 @@ impl<'a> Parser<'a> {
         // A literal is a constant that no place holds: held, it is a run-time `rational_number`,
         // as `rational_number 1` makes one (DESIGN ›A plain number is a `rational_number`, and a
         // number type's definition converts it‹).
-        let value = if read_kind(types, value) == Read::Literal {
+        let value = if matches!(operand_of(types, value), Operand::Literal) {
             crate::identities::by_copy::build_out(self.rt.store, types, types.through(value))
         } else {
             value

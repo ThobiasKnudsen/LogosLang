@@ -324,7 +324,8 @@ pub(crate) unsafe fn heap_free(ptr: *mut u8) {
 }
 
 /// The pointee is the value's own type (`alloc 2 of i32 5` allocates two `i32`), `u8` with
-/// no value; the count must be an integer. Each cell is the place the value is copied into, as
+/// no value; the count must be an integer, a plain number landing in `u64` (›Explicit heap:
+/// `alloc n` and `alloc n of T v`‹ [[R56]]). Each cell is the place the value is copied into, as
 /// a declaration's is; a value no place holds whole is rejected.
 pub(super) fn build_alloc(
     store: &mut Store,
@@ -334,13 +335,18 @@ pub(super) fn build_alloc(
 ) -> Result<DyadPtr, ParseError> {
     use crate::identities::Operand;
     // SAFETY: `count` and `init` are reduced dyads just parsed.
-    unsafe {
+    let count = unsafe {
+        let count = crate::identities::land_rational(
+            store,
+            types,
+            count,
+            types.numtypes[numtype::NumType::U64 as usize],
+        )?;
         match crate::identities::operand_of(types, count) {
-            Operand::Literal => {}
-            Operand::Concrete(nt) if !nt.is_float() => {}
+            Operand::Concrete(nt) if !nt.is_float() => count,
             _ => return Err(ParseError::UnsupportedOperands),
         }
-    }
+    };
     let pointee = match init {
         None => types.numtypes[numtype::NumType::U8 as usize],
         // SAFETY: as above.
@@ -515,7 +521,7 @@ pub(crate) unsafe fn own_result(
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let ty = super::read::handed_on(types, place);
+    let ty = super::read::output_type(types, place);
     super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place])
 }
 
@@ -1388,18 +1394,21 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an `alloc` node `[count, init]` from the store, under its mint.
     unsafe {
         let slots = dyad::value(node) as *const DyadPtr;
-        let Some(&[_, pointee]) = super::mint::key_of(dyad::ty(node)) else {
+        let Some(&[count_type, pointee]) = super::mint::key_of(dyad::ty(node)) else {
             unreachable!("an `alloc` is typed by its mint for its count's type and pointee");
         };
         let count = rt.run(*slots.add(ALLOC_COUNT))?;
-        if count < 0 {
+        // A `u64` count past `i64::MAX` comes back as a negative word.
+        if count < 0 && numtype::of_type_node(count_type).is_signed_int() {
             return Err(RunError::BadCount(count));
         }
         let init = *slots.add(ALLOC_INIT);
         let carry = super::read::carry_of(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
         let taken = if init.is_null() { None } else { Some(super::assign::take(rt, carry, init)?) };
         let width = carry.width();
-        let count = count as usize;
+        let Ok(count) = usize::try_from(count as u64) else {
+            return Err(RunError::OutOfMemory);
+        };
         let Some(total) = count.checked_mul(width) else {
             return Err(RunError::OutOfMemory);
         };
@@ -1549,12 +1558,15 @@ fn run_value_release(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// ›`move` and `free` take a field path too‹).
 fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `move` node `[place]` from the store; a field or cell it
-    // reaches is an owning one, eight bytes wide, as is a name that holds an address.
+    // reaches is an owning one, eight bytes wide, as is a name that holds an address. A name
+    // that stands for a constant is no place and holds nothing to empty.
     unsafe {
         let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
         let value = rt.run(place)?;
         let types = rt.types();
-        if dyad::ty(place) != types.binding_ || holds_by_address(types, types.type_of(place)) {
+        let emptied =
+            dyad::ty(place) != types.binding_ || holds_by_address(types, types.type_of(place));
+        if emptied && super::read::place_of(types, place).is_some() {
             let slot = super::pointer::place_addr(rt, place)?;
             std::ptr::write_unaligned(slot as *mut i64, 0);
         }
@@ -1599,7 +1611,9 @@ mod tests {
         let root = p.parse_sequence().expect("parse");
         // SAFETY: `root` is the scope just parsed into the parser's store.
         let bits = unsafe { p.value_of(root) }.expect("run");
-        (bits, p.into_runtime().live_allocs())
+        // SAFETY: as above; `bits` is what it ran to.
+        let v = unsafe { crate::identities::rational::as_number(&core, root, bits) };
+        (v, p.into_runtime().live_allocs())
     }
 
     fn try_run(src: &str) -> Result<(i64, usize), RunError> {
@@ -1615,7 +1629,9 @@ mod tests {
         let mut rt = p.into_runtime();
         // SAFETY: `root` is the scope just parsed into `store`, which outlives `rt`.
         let bits = unsafe { rt.run(root) }?;
-        Ok((bits, rt.live_allocs()))
+        // SAFETY: as above; `bits` is what it ran to.
+        let v = unsafe { crate::identities::rational::as_number(types, root, bits) };
+        Ok((v, rt.live_allocs()))
     }
 
     #[test]
@@ -1805,8 +1821,8 @@ mod tests {
             "x := (free a, i32 1) + g()",
             "x := g() + (b := move a, i32 1)",
             "x := (b := move a, i32 1) + g()",
-            "x := ( c := i32 1, y := g() + (free a, i32 1), 2 )",
-            "x := ( c := i32 1, y := (free a, i32 1) + g(), 2 )",
+            "x := ( c := i32 1, y := g() + (free a, i32 1), i32 2 )",
+            "x := ( c := i32 1, y := (free a, i32 1) + g(), i32 2 )",
         ] {
             for src in [
                 format!("{g}f := fn () -> i32 ( a := alloc 1 of i32 7, {line}, x ),\nf()"),
@@ -1859,6 +1875,22 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_number_count_lands_in_u64() {
+        assert_eq!(run("a := alloc 3000000000 of u8 0,\n7"), (7, 0));
+        assert_eq!(parse_err("a := alloc -1 of u8 0"), ParseError::UncomputableLiteral);
+        assert_eq!(run("a := alloc (if true (2) else (3)) of i32 7,\na@"), (7, 0));
+        assert_eq!(
+            parse_err("a := alloc (if true (1/2) else (3)) of u8 0"),
+            ParseError::UncomputableLiteral
+        );
+        // A `u64` count past `i64::MAX` is too big a block, never a negative one.
+        assert!(matches!(
+            try_run("n := u64 lossy (i64 -1),\na := alloc n of u8 0,\n1"),
+            Err(RunError::OutOfMemory)
+        ));
+    }
+
+    #[test]
     fn alloc_reads_back_and_frees_at_scope_exit() {
         let (v, live) = run("a := alloc 1 of i32 5,\na@");
         assert_eq!(v, 5);
@@ -1894,8 +1926,8 @@ mod tests {
             ("(if (c == 1) (return 5), i32 2)", "(if (c == 1) (return 5) else (free a), i32 2)");
         let bodies = [
             format!("x := {ret} + (free a, i32 1)"),
-            format!("x := ( {ret}, 7 ) + (free a, i32 1)"),
-            format!("x := ( {ret} + (free a, i32 1), 7 )"),
+            format!("x := ( {ret}, i32 7 ) + (free a, i32 1)"),
+            format!("x := ( {ret} + (free a, i32 1), i32 7 )"),
             format!("x := (free a, i32 1) + {ret}"),
             format!("x := ( {ret}, free a, i32 1 )"),
             format!("x := {other} + 1"),

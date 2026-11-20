@@ -614,7 +614,7 @@ fn milestone_2_fn_runs_interpreted_and_jit_identically() {
 }
 
 #[test]
-fn rational_decimal_parses_but_is_uncomputable_as_i32() {
+fn a_decimal_reads_as_its_exact_rational() {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
@@ -623,17 +623,16 @@ fn rational_decimal_parses_but_is_uncomputable_as_i32() {
         let mut p = Parser::new("3.14", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
+    // SAFETY: `node` is the rational literal just parsed.
     unsafe {
         assert_eq!(dyad::ty(node), core.rational);
-        assert_eq!(rational::mold(node), None);
+        assert_eq!(read::read_kind(&core, node), read::Read::Rational);
     }
 
     let mut rt = Runtime::new(&core, &mut store);
-    // SAFETY: `node` is the rational literal just parsed.
-    assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::UncomputableLiteral));
-    // SAFETY: same node; compilation reports the same outcome as the oracle.
-    let compiled = unsafe { compile_nullary_i32(&core.lower, &core, node) };
-    assert!(matches!(compiled, Err(crate::compile::CompileError::UncomputableLiteral)));
+    // SAFETY: as above; a rational value is the address of its bytes.
+    let bits = unsafe { rt.run(node) }.unwrap();
+    assert_eq!(unsafe { rational::read_at(bits as usize as *const u8) }, (157, 50));
 }
 
 #[test]
@@ -648,7 +647,7 @@ fn whole_valued_rationals_still_compute() {
     };
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `node` is the rational literal just parsed.
-    assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
+    assert_eq!(unsafe { rational::as_number(&core, node, rt.run(node).unwrap()) }, 6);
 }
 
 #[test]
@@ -2488,7 +2487,7 @@ fn run_script_result(src: &str) -> Result<i64, crate::run::RunError> {
     let root = p.parse_sequence().unwrap();
     let mut rt = p.into_runtime();
     // SAFETY: `root` is the sequence just parsed; its exprs are valid.
-    unsafe { rt.run(root) }
+    unsafe { rt.run(root).map(|bits| rational::as_number(&core, root, bits)) }
 }
 
 fn script_parse_err(src: &str) -> ParseError {
@@ -2512,7 +2511,7 @@ fn run_script_depth(src: &str) -> (Result<i64, crate::run::RunError>, usize) {
     let root = p.parse_sequence().unwrap();
     let mut rt = p.into_runtime();
     // SAFETY: `root` is the sequence just parsed; its exprs are valid.
-    let r = unsafe { rt.run(root) };
+    let r = unsafe { rt.run(root).map(|bits| rational::as_number(&core, root, bits)) };
     (r, rt.ctx.depth)
 }
 
@@ -2575,7 +2574,7 @@ fn code_retired_under_a_live_jump_is_freed_when_the_jump_returns() {
     let node = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("1 + 1", &mut store, &mut trie, &core, s);
+        let mut p = Parser::new("i32 1 + i32 1", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
     // SAFETY: `node` is the expression just parsed.
@@ -3048,7 +3047,7 @@ fn block_local_declarations_do_not_leak() {
     let node = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("( x := 5, x + 1 )", &mut store, &mut trie, &core, s);
+        let mut p = Parser::new("( x := i32 5, x + 1 )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
     let mut rt = Runtime::new(&core, &mut store);
@@ -3143,7 +3142,7 @@ fn declaration_binds_a_name_to_a_value() {
         assert_eq!(dyad::ty(decl), core.declare_);
         assert_eq!(crate::binding::Binding::spelling(declare::binding_of(decl)), "x");
         assert_eq!(dyad::ty(bound), core.rational);
-        assert_eq!(rational::mold(bound), Some(5));
+        assert_eq!(rational::mold_to(bound, NumType::I32), Some(5));
     }
 
     let x_ref = {
@@ -3156,7 +3155,7 @@ fn declaration_binds_a_name_to_a_value() {
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `x_ref`/`decl` are valid nodes just parsed.
     unsafe {
-        assert_eq!(rt.run(x_ref).unwrap(), 5);
+        assert_eq!(rational::as_number(&core, x_ref, rt.run(x_ref).unwrap()), 5);
         assert_eq!(rt.run(decl).unwrap(), 0);
     }
     // SAFETY: `x_ref` is the binding of `x`.
@@ -3203,7 +3202,7 @@ fn pub_marks_the_names_binding() {
         assert_eq!(dyad::ty(decl), core.declare_);
         let bound = declare::declared_of(decl);
         assert_eq!(dyad::ty(bound), core.rational);
-        assert_eq!(rational::mold(bound), Some(5));
+        assert_eq!(rational::mold_to(bound, NumType::I32), Some(5));
     }
     let x_ref = {
         let mut s = ScopeStack::new();
@@ -3215,7 +3214,7 @@ fn pub_marks_the_names_binding() {
     // SAFETY: `decl`/`x_ref` are valid nodes just parsed.
     unsafe {
         assert_eq!(rt.run(decl).unwrap(), 0);
-        assert_eq!(rt.run(x_ref).unwrap(), 6);
+        assert_eq!(rational::as_number(&core, x_ref, rt.run(x_ref).unwrap()), 6);
     }
     let x = use_of(&mut store, &mut trie, &core, "x");
     // SAFETY: `x` is the binding of `x`.

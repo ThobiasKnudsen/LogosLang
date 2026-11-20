@@ -2019,6 +2019,63 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
 }
 
 #[test]
+fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
+    let q = |ty: &str| {
+        format!(
+            "q := type ( v := {ty} ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
+             tape[0].v = tape[1].dyads[0], tape.remove(1), tape.is_constructed[0] = true ) )"
+        )
+    };
+    let mut rows = vec![
+        ("mut d := dyad ?, d = 1/3, d".to_string(), "1/3\n"),
+        ("r := rational_number 1/3, mut d := dyad ?, d = r, d".to_string(), "1/3\n"),
+        ("r := 1/3, d := dyad (rational_number, r), d".to_string(), "1/3\n"),
+        ("d := dyad (rational_number, 1/3), d".to_string(), "1/3\n"),
+        ("r := 1/2, 0".to_string(), "0\n"),
+        ("1/2".to_string(), "1/2\n"),
+        ("r := 1/2, r".to_string(), "1/2\n"),
+        ("print «{1/2}»".to_string(), "1/2\n"),
+        ("if (true) 1/2 else 1/3".to_string(), "1/2\n"),
+        ("10000000000".to_string(), "10000000000\n"),
+        ("r := 5, r + 3000000000".to_string(), "3000000005\n"),
+        ("for 0..2 ( x := 5, y := move x, print «{y}» )".to_string(), "5\n5\n"),
+        (format!("{}, x := q [10000000000, 7], x.v", q("i64")), "10000000000\n"),
+    ];
+    for c in ["", "f.compile(), "] {
+        rows.extend([
+            (format!("f := fn () -> rational_number ( r := 1/2, r ), {c}f()"), "1/2\n"),
+            (format!("f := fn () -> rational_number ( if (true) 1/2 else 1/3 ), {c}f()"), "1/2\n"),
+            (format!("f := fn () -> void ( print «{{1/2}}» ), {c}f()"), "1/2\n"),
+            (format!("f := fn () -> i64 ( 10000000000 ), {c}f()"), "10000000000\n"),
+            (format!("f := fn () -> i32 ( r := 1/2, 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> i32 ( defer 1/2, 1 ), {c}f()"), "1\n"),
+            (format!("f := fn () -> dyad ( mut d := dyad ?, d = 1/3, d ), {c}f()"), "1/3\n"),
+            (
+                format!(
+                    "f := fn (r := rational_number ?) -> dyad ( mut d := dyad ?, d = r, d ), \
+                     {c}f(1/3)"
+                ),
+                "1/3\n",
+            ),
+        ]);
+    }
+    for (src, printed) in rows {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: {stderr}");
+    }
+    // A block's plain number is a `rational_number` too, which no `i32` holds whole.
+    for (src, expect) in [
+        ("x := ( 1, 7 ) + i32 1".to_string(), "do not match"),
+        (format!("{}, x := q [1/2, 7], x.v", q("i32")), "only a constant is read as its number"),
+        (format!("{}, x := q [(1, 7), 7], x.v", q("i32")), "only a constant is read as its number"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
     for (src, want) in [
         ("f := fn (a := dyad ?) -> i64 ( a ), f(i64 42)", "42"),
@@ -4336,7 +4393,7 @@ fn a_body_lexed_once_holds_the_scopes_of_its_quotes() {
         (run_body("print «{n} {a + 1} {«)»} {«x {«y»}»}»"), "1 4 ) x {«y»}\n"),
         (run_body("\n# «note {a}»\nprint «a={a}»\n"), "a=3\n"),
         (
-            "f := fn () -> i32 ( t := type ( static k := immediate ( print «v {1}», 1 ) ), 1 ), f()"
+            "f := fn () -> i32 ( t := type ( static k := immediate ( print «v {1}», i32 1 ) ), 1 ), f()"
                 .to_string(),
             "v 1\n1\n",
         ),
@@ -6258,8 +6315,8 @@ fn a_return_frees_what_its_line_ends_after_it_compiled_or_not() {
     let ret = "(if (c == 1) (return 5), i32 2)";
     for (body, other) in [
         (format!("x := {ret} + (free a, i32 1)"), 3),
-        (format!("x := ( {ret}, 7 ) + (free a, i32 1)"), 8),
-        (format!("x := ( {ret} + (free a, i32 1), 7 )"), 7),
+        (format!("x := ( {ret}, i32 7 ) + (free a, i32 1)"), 8),
+        (format!("x := ( {ret} + (free a, i32 1), i32 7 )"), 7),
     ] {
         for compile in ["", "f.compile(), "] {
             let (code, stdout, stderr) = run_line(&format!(
@@ -6307,7 +6364,7 @@ fn a_return_ends_what_each_scope_if_and_call_it_leaves_holds_compiled_or_not() {
         ),
         (
             "g := fn (c := i32 ?) -> i32 ( a := bag(1), x := ( b := bag(2), \
-             if (c == 1) (return 5), 7 ), d := bag(3), x )",
+             if (c == 1) (return 5), i32 7 ), d := bag(3), x )",
             "print «got {g(1)}», print «got {g(0)}»",
             "freed 2\nfreed 1\ngot 5\nfreed 2\nfreed 3\nfreed 1\ngot 7\n",
         ),

@@ -83,8 +83,6 @@ pub enum RunError {
     OutOfMemory,
     /// A teardown of a place whose type carries no destructor.
     NoDestructor(DyadPtr),
-    /// A literal with no exact `i32` value: a fraction, or out of range.
-    UncomputableLiteral,
     /// NaN or an infinity converted into an integer type.
     NoWholeNumber,
     /// Arithmetic on `rational_number` values with no value: a division by zero, or past an
@@ -1004,9 +1002,6 @@ impl<'a> Runtime<'a> {
             // A rational value travels as the address of its sixteen bytes.
             Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),
             Read::Container(_) => self.read_container(node),
-            Read::Literal => crate::identities::rational::mold(node)
-                .map(i64::from)
-                .ok_or(RunError::UncomputableLiteral),
             Read::Scalar(_) | Read::Pointer(_) => {
                 let slot = self.place_addr(node).ok_or(RunError::NoActivation)?;
                 if slot.is_null() {
