@@ -219,7 +219,8 @@ pub enum ParseError {
     /// A field of a type without its type: `a := ?`, or `a` alone on its line.
     FieldNeedsType,
     /// A value lands in a `dyad ?` place that it can neither be held as nor moved whole into a
-    /// new node: text, an owning value, a record whose body fills `free`.
+    /// new node: one that is no node where nothing holds the place, or one with an end of its own
+    /// that a parameter would only borrow.
     DyadTakesNode,
     /// A line that waits for the run to parse it holds `:=`, `return`, `free` or `move`, whose
     /// checks the parse makes where they are written; carries the word.

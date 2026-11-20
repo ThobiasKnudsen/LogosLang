@@ -714,13 +714,20 @@ pub(crate) unsafe fn end_held_args(
 /// # Safety
 /// `node` must be a node from the store whose value `this` is.
 unsafe fn end_value(rt: &mut Runtime, node: DyadPtr, this: i64) -> Result<(), RunError> {
+    let ty = super::read::output_type(rt.types(), node);
+    end_of_type(rt, ty, this)
+}
+
+/// Ends a value of `ty` given as `this`, as [`end_value`] does for the value a node gave.
+///
+/// # Safety
+/// `this` must be a live value of `ty`, a type whose value ends by more than its bytes, or 0.
+pub(crate) unsafe fn end_of_type(rt: &mut Runtime, ty: DyadPtr, this: i64) -> Result<(), RunError> {
     if this == 0 {
         return Ok(());
     }
-    let ty = super::read::output_type(rt.types(), node);
     if ty == rt.types().dyad_ {
-        super::dyad_place::end(rt, this);
-        Ok(())
+        super::dyad_place::end(rt, this)
     } else if owning_pointee(ty).is_some() {
         heap_free(this as u64 as *mut u8);
         rt.note_free();
@@ -1173,7 +1180,7 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
     }
     let held = take_held(rt, place, ty)?;
     if ty == rt.types().dyad_ {
-        super::dyad_place::end(rt, held);
+        super::dyad_place::end(rt, held)?;
     } else if held != 0 {
         rt.apply_values(meta::instances_free_of(ty), &[held])?;
     }
@@ -1759,6 +1766,38 @@ mod tests {
                 assert_eq!(run(&compiled), (1, 0), "{compiled}");
             }
         }
+    }
+
+    #[test]
+    fn a_dyad_place_ends_the_value_it_holds_with_its_node() {
+        for src in [
+            "mut d := dyad ?, d = alloc 1 of i32 5, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, d = alloc 1 of i32 6, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, d = i64 7, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, free d, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, e := d, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, e := move d, 1",
+            "p := alloc 1 of i32 5, mut d := dyad ?, d = p, 1",
+            "mut d := dyad ?, for 0..3 ( d = alloc 1 of i32 5 ), 1",
+            "f := fn (a := dyad ?) -> i32 ( 1 ), f(alloc 1 of i32 5)",
+            "f := fn (a := dyad ?) -> dyad ( a ), x := f(alloc 1 of i32 5), 1",
+            "f := fn () -> dyad ( alloc 1 of i32 5 ), x := f(), 1",
+            "f := fn () -> dyad ( alloc 1 of i32 5 ), f(), 1",
+            "f := fn () -> dyad ( p := alloc 1 of i32 5, p ), x := f(), 1",
+        ] {
+            assert_eq!(run(src), (1, 0), "{src}");
+        }
+        // A body that makes no block compiles; the call's argument and result end as they do
+        // interpreted.
+        for src in [
+            "f := fn (a := dyad ?) -> i32 ( 1 ), f.compile(), f(alloc 1 of i32 5)",
+            "f := fn (a := dyad ?) -> dyad ( a ), f.compile(), x := f(alloc 1 of i32 5), 1",
+        ] {
+            assert_eq!(run(src), (1, 0), "{src}");
+        }
+        let read = "g := fn (q := @i32 ?) -> i32 ( q@ ), f := fn () -> dyad ( alloc 1 of i32 5 ), \
+                    g(f())";
+        assert_eq!(run(read), (5, 0), "{read}");
     }
 
     #[test]
