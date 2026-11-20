@@ -314,13 +314,19 @@ pub(crate) unsafe fn heap_alloc(total: usize) -> *mut u8 {
     base.add(HEADER)
 }
 
+/// The byte count of the block at `ptr`, as `heap_alloc` was given it.
+///
+/// # Safety
+/// `ptr` must be a live address from `heap_alloc`.
+pub(crate) unsafe fn block_size(ptr: *mut u8) -> usize {
+    (ptr.sub(HEADER) as *const u64).read() as usize
+}
+
 /// # Safety
 /// `ptr` must be a live address from `heap_alloc`.
 pub(crate) unsafe fn heap_free(ptr: *mut u8) {
-    let base = ptr.sub(HEADER);
-    let total = (base as *const u64).read() as usize;
-    let layout = block_layout(total).expect("a live block was laid out once already");
-    std::alloc::dealloc(base, layout);
+    let layout = block_layout(block_size(ptr)).expect("a live block was laid out once already");
+    std::alloc::dealloc(ptr.sub(HEADER), layout);
 }
 
 /// The pointee is the value's own type (`alloc 2 of i32 5` allocates two `i32`), `u8` with
@@ -1241,6 +1247,7 @@ unsafe fn moved_out_via(
     let logos = dyad::ty(node);
     if super::mint::origin(logos) == types.alloc_
         || super::mint::origin(logos) == types.move_
+        || super::mint::origin(logos) == types.copy_
         || logos == types.this.copy
         || logos == types.construct_
         || logos == types.dyad_place.new_node

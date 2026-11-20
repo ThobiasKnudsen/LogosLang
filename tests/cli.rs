@@ -669,8 +669,11 @@ fn an_array_travels_as_its_address() {
         ("f := fn (p := array i32 ?) -> i32 ( p[1] ), f(a)", "2"),
         ("f := fn (p := array i32 ?) -> i32 ( p[1] + p[2] ), f.compile(), f(a)", "5"),
         ("f := fn (p := array i32 ?) -> u64 ( p.size_bytes() + p.size ), f(a)", "15"),
-        // `b := a` shares the array: a write through `b` is seen through `a`.
-        ("b := a, b.ptr@ = i32 9, a[0]", "9"),
+        // `b := a` copies the array: a write through `b` is not seen through `a`, while one
+        // through a parameter is.
+        ("b := a, b.ptr@ = i32 9, a[0]", "1"),
+        ("b := a, b.ptr@ = i32 9, b[0]", "9"),
+        ("f := fn (p := array i32 ?) -> i32 ( p[0] = i32 9, 0 ), f(a), a[0]", "9"),
         (
             "t := array i32, mk := fn (v := i32 ?) -> own t ( c := array i32 [v, 1], c ), \
              m := mk(3), n := mk(4), m[0] + n[0]",
@@ -939,7 +942,8 @@ fn an_array_element_is_written_where_the_read_finds_it() {
         ("j := u64 0, a[j + 1] = 5, a[1]", "5"),
         ("a[0] = a[2], a[0]", "3"),
         ("a.at(1) = 4, a[1]", "4"),
-        ("b := a, b[0] = i32 7, a[0]", "7"),
+        ("b := a, b[0] = i32 7, a[0]", "1"),
+        ("b := a, b[0] = i32 7, b[0]", "7"),
         ("b := array u8 [1, 2], b[1] = 200, b[1]", "200"),
         ("f := fn (p := array i32 ?) -> void ( p[1] = 8 ), f(a), a[1]", "8"),
         ("f := fn (p := array i32 ?) -> void ( p[1] = 8 ), f.compile(), f(a), a[1]", "8"),
@@ -5263,8 +5267,9 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
             "got\nfree\nafter\n",
         ),
         ("mk := fn () -> own box ( box (9, 1) ), m := mk(), print «got»", "got\nfree\n"),
-        // A borrow frees nothing: one free, by the owner.
-        ("a := box (5, 1), b := a, print «borrowed»", "borrowed\nfree\n"),
+        // A copy is its name's own: each name frees its own value. An argument borrows and frees
+        // nothing: one free, by the owner.
+        ("a := box (5, 1), b := a, print «copied»", "copied\nfree\nfree\n"),
         (
             "a := box (5, 1), f := fn (q := box ?) -> i32 ( (q.p + 0)@ ), f(a), print «after»",
             "after\nfree\n",
@@ -5272,8 +5277,11 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
         ("a := box (7, 1), b := move a, print «moved»", "moved\nfree\n"),
         // An early `free` tears down now, and the scope end finds nothing left.
         ("a := box (7, 1), free a, print «after»", "free\nafter\n"),
-        // A returned borrow is no owner: the callee's own array is freed as it returns.
-        ("mk := fn () -> box ( a := box (9, 1), b := a, b ), m := mk(), print «got»", "free\ngot\n"),
+        // A copy moves out as its name's last value: the callee frees its own as it returns.
+        (
+            "mk := fn () -> own box ( a := box (9, 1), b := a, b ), m := mk(), print «got»",
+            "free\ngot\nfree\n",
+        ),
         // An `if` whose every arm makes or moves the value hands it on as either arm would.
         ("c := true, x := if c (box (1, 2)) else (box (3, 4)), print «{x.size}»", "2\nfree\n"),
         (
@@ -5295,7 +5303,11 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
     }
     for (tail, expect) in [
         ("a := box (7, 1), free a, a", "`a` is dead here"),
-        ("a := box (7, 1), b := a, c := move b", "only its owner can"),
+        (
+            "f := fn (q := box ?) -> i32 ( c := move q, 1 ), a := box (7, 1), f(a)",
+            "only its owner can",
+        ),
+        ("mk := fn () -> box ( a := box (9, 1), b := a, b ), m := mk()", "write `-> own box`"),
         ("mut a := box (7, 1), b := box (8, 1), a = b", "what is assigned must own too"),
     ] {
         let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
@@ -5764,9 +5776,10 @@ fn a_plain_record_s_owner_runs_its_free_once() {
         ("a := bag(6), free a, print «after»", "freed 6\nafter\n"),
         ("a := bag(7), if true ( free a ), print «after»", "freed 7\nafter\n"),
         ("c := i32 0, a := bag(15), if (c == 1) ( free a ), print «after»", "freed 15\nafter\n"),
-        // A borrow frees nothing: one free, by the owner; `free` of the borrow ends its name.
-        ("a := bag(8), b := a, print «borrowed»", "borrowed\nfreed 8\n"),
-        ("a := bag(14), b := a, free b, print «after»", "after\nfreed 14\n"),
+        // A copy is its name's own: each name frees its own value, `free` of the copy now. An
+        // argument borrows and frees nothing: one free, by the owner.
+        ("a := bag(8), b := a, print «copied»", "copied\nfreed 8\nfreed 8\n"),
+        ("a := bag(14), b := a, free b, print «after»", "freed 14\nafter\nfreed 14\n"),
         (
             "a := bag(9), f := fn (q := bag ?) -> i32 ( q.n ), f(a), print «after»",
             "after\nfreed 9\n",
@@ -5774,10 +5787,10 @@ fn a_plain_record_s_owner_runs_its_free_once() {
         // The last value moves out: the caller's name is the owner.
         ("mk := fn () -> own bag ( bag(10) ), m := mk(), print «got»", "got\nfreed 10\n"),
         ("mk := fn () -> own bag ( a := bag(11), a ), m := mk(), print «got»", "got\nfreed 11\n"),
-        // A returned borrow is no owner: the callee's own record is freed as it returns.
+        // A copy moves out as its name's last value: the callee frees its own as it returns.
         (
-            "mk := fn () -> bag ( a := bag(12), b := a, b ), m := mk(), print «got»",
-            "freed 12\ngot\n",
+            "mk := fn () -> own bag ( a := bag(12), b := a, b ), m := mk(), print «got»",
+            "freed 12\ngot\nfreed 12\n",
         ),
         ("free (bag(16)), print «after»", "freed 16\nafter\n"),
     ] {
@@ -6086,8 +6099,6 @@ fn a_cell_reached_through_a_borrow_is_not_ended_there() {
         "a := bag(1), pp := &a, b := move pp@, 0",
         "a := alloc 1 of i32 5, pp := &a, free pp@, 0",
         "a := alloc 1 of i32 5, pp := &a, b := move pp@, 0",
-        "p := alloc 1 of bag (5), q := p, free q@, 0",
-        "p := alloc 2 of bag (5), q := p, free (q + 1)@, 0",
         "f := fn (p := @bag ?) -> i32 ( free p@, 1 )",
         "id := fn (q := @bag ?) -> @bag ( q ), p := alloc 1 of bag (5), free (id(p))@, 0",
         "import ./identities/array.logos, t := array i32, tt := array t, \
@@ -6096,6 +6107,14 @@ fn a_cell_reached_through_a_borrow_is_not_ended_there() {
         let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains(borrowed), "{tail}: {stderr}");
+    }
+    // A copy of an owning pointer owns its own block, so its cells are its own to end.
+    for (tail, printed) in [
+        ("p := alloc 1 of bag (5), q := p, free q@, 0", "freed 5\n0\n"),
+        ("p := alloc 2 of bag (5), q := p, free (q + 1)@, 0", "freed 5\n0\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
     }
     for (tail, printed) in [
         ("a := i32 5, pp := &a, free pp@, print «after»", "after\n"),
@@ -6519,6 +6538,8 @@ fn an_array_holds_arrays_as_their_addresses() {
         ("f := fn (p := array t ?) -> i32 ( p[1][1] ), f(b)", "4"),
         ("f := fn (p := array t ?) -> i32 ( p[1][1] ), f.compile(), f(b)", "4"),
         ("u := array t, u == array t", "true"),
+        // A copy is its name's own, so it moves in.
+        ("z := array i32 [5], w := z, c := array t [move w], c[0][0]", "5"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
@@ -6528,7 +6549,7 @@ fn an_array_holds_arrays_as_their_addresses() {
     for (tail, expect) in [
         ("x[0]", "`x` is dead here"),
         ("z := array i32 [5], c := array t [z]", "write `move x` to move it in"),
-        ("z := array i32 [5], w := z, c := array t [move w]", "only its owner can"),
+        ("f := fn (p := t ?) -> u64 ( c := array t [move p], c.size )", "only its owner can"),
     ] {
         let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -6567,7 +6588,9 @@ fn a_field_holding_an_array_reads_as_that_array() {
         ("h := holder (), h.items.size", "3"),
         ("h := holder (), h.items.at(2)", "6"),
         ("h := holder (), h.items[0] = i32 9, h.items[0] + h.items[1]", "14"),
-        ("h := holder (), c := h.items, c[0] = i32 7, h.items[0]", "7"),
+        // A name declared from the field holds a copy of the array, its own.
+        ("h := holder (), c := h.items, c[0] = i32 7, h.items[0]", "4"),
+        ("h := holder (), c := h.items, c[0] = i32 7, c[0]", "7"),
         ("f := fn (p := t ?) -> i32 ( p[2] ), h := holder (), f(h.items)", "6"),
         ("f := fn (p := t ?) -> i32 ( p[2] ), f.compile(), h := holder (), f(h.items)", "6"),
         ("f := fn (h := holder ?) -> i32 ( h.items[0] = i32 9, h.items[0] ), f(holder ())", "9"),
@@ -6627,6 +6650,8 @@ fn a_field_under_a_type_that_fills_free_is_refused_where_it_is_written() {
         ("f := fn () -> i32 ( g := bag (), free g.b, 1 ), f.compile(), f()", "g"),
         ("b := box (5, 6), y := move b.p, y@", "b"),
         ("g := fn () -> i32 ( b := box (5, 6), y := move b.p, y@ ), g.compile(), g()", "b"),
+        // A copy is its name's own, refused as its type fills `free`.
+        ("g := bag (), h := g, y := move h.b, 1", "h"),
     ] {
         let (code, stdout, stderr) = run_line(&bag_line(tail));
         assert_eq!(code, Some(1), "{tail}: stdout: {stdout}");
@@ -6641,7 +6666,6 @@ fn a_field_under_a_type_that_fills_free_is_refused_where_it_is_written() {
         ("g := bag (), for i in 0..2 ( y := move g.b )", "declared outside this loop"),
         ("l := array bagged [bag (), bag ()], y := move l[0].b, 1", unfollowed),
         ("l := array bagged [bag (), bag ()], free l[0].b, 1", unfollowed),
-        ("g := bag (), h := g, y := move h.b, 1", unfollowed),
         ("f := fn (q := bagged ?) -> i32 ( y := move q.b, 1 ), 1", unfollowed),
         (
             "r := type ( mut p := own @i32 ?, static free = ( free p ), \
@@ -6719,7 +6743,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("g := bag (), print «made»", "made\nbag\nfree\n"),
         ("g := bag (), free g, print «after»", "bag\nfree\nafter\n"),
         ("f := fn () -> i32 ( g := bag (), g.items[2] ), f(), print «after»", "bag\nfree\nafter\n"),
-        ("g := bag (), h := g, print «borrowed»", "borrowed\nbag\nfree\n"),
+        ("g := bag (), h := g, print «copied»", "copied\nbag\nfree\nbag\nfree\n"),
         // `=` frees the box it displaces before the write.
         ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "free\nset\nbag\nfree\n"),
         ("l := array bagged [bag (), bag ()], print «made»", "made\nbag\nfree\nbag\nfree\n"),
@@ -6737,6 +6761,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("g := bag (), g.items[0] = i32 9, g.items[0]", "9"),
         ("f := fn (p := t ?) -> u64 ( p.size ), g := bag (), f(g.items)", "3"),
         ("g := bag (), x := array i32 [1, 2], g.items = move x, g.items[1]", "2"),
+        ("g := bag (), x := array i32 [1], y := x, g.items = move y, g.items[0]", "1"),
         ("l := array bagged [bag (), bag ()], l[1].items[0] = i32 8, l[1].items[0]", "8"),
     ] {
         let (code, stdout, stderr) = run_line(&bag_line(tail));
@@ -6745,7 +6770,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
     }
     for (tail, expect) in [
         ("g := bag (), x := array i32 [1], g.items = x", "what is assigned must own too"),
-        ("g := bag (), x := array i32 [1], y := x, g.items = move y", "only its owner can"),
+        ("f := fn (p := t ?) -> i32 ( g := bag (), g.items = move p, 1 )", "only its owner can"),
         ("nd := type ( mut items := own t ? )", "must be freed by the type's `static free = (…)`"),
         ("g := bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
         ("mk := fn () -> t ( array i32 [1] ), 1", "write `-> own t`"),
@@ -6991,18 +7016,25 @@ fn the_repl_runs_a_freed_value_and_refuses_a_hole_and_a_moved_value() {
 #[test]
 fn an_array_is_freed_by_its_owner_and_a_borrow_outliving_it_reads_nothing() {
     let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
-    for (tail, printed) in
-        [("free a, 5", "5"), ("b := a, f := fn (p := array i32 ?) -> i32 ( p[1] ), f(b)", "2")]
-    {
+    for (tail, printed) in [
+        ("free a, 5", "5"),
+        ("b := a, f := fn (p := array i32 ?) -> i32 ( p[1] ), f(b)", "2"),
+        // A copy is its own array, so it outlives the one it was made from.
+        ("b := a, free a, b[0]", "1"),
+    ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert_eq!(stdout.trim(), printed, "{tail}");
     }
-    // Until the borrow checker, a borrow may outlive its owner; the free emptied the
-    // array's pointer, so a read at the first cell is refused (one further in is not).
-    for (tail, expect) in
-        [("free a, a[0]", "`a` is dead here"), ("b := a, free a, b[0]", "holds nothing")]
-    {
+    // Until the borrow checker, a call's result may borrow the argument the call frees as it
+    // returns; the free emptied the array's pointer, so a read at the first cell is refused.
+    for (tail, expect) in [
+        ("free a, a[0]", "`a` is dead here"),
+        (
+            "f := fn (q := array i32 ?) -> array i32 ( q ), w := f(array i32 [1, 2]), w[0]",
+            "holds nothing",
+        ),
+    ] {
         let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
@@ -7406,11 +7438,11 @@ fn a_declaration_copies_a_plain_record() {
         cases.push((format!("{q}, {f}, {call}"), "3\n"));
         cases.push((format!("{q}, {f}, f.compile(), {call}"), "3\n"));
     }
-    // A copy of a value whose type fills `free` owns nothing: the value is freed once.
+    // A copy of a value whose type fills `free` owns its copy: each name frees its own.
     cases.push((
         "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), w := r(2), y := w, 0"
             .to_string(),
-        "freed 2\n0\n",
+        "freed 2\nfreed 2\n0\n",
     ));
     assert_runs(&cases);
 }
