@@ -569,7 +569,7 @@ impl<'a> Parser<'a> {
         let held = self.hold_line(Waits { cut: start, writes: false, end })?;
         self.cx.pos = end;
         // SAFETY: `held` holds the line `hold_line` just built, which has not run.
-        unsafe { crate::identities::waiting::set_into(held.dyad, self.types.bool_) };
+        unsafe { crate::identities::waiting::set_into(self.types, held.dyad, self.types.bool_) };
         Ok(held.dyad)
     }
 

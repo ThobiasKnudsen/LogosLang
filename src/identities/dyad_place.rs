@@ -46,6 +46,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DyadPlaceIds {
         &["value", "from", "op", "output_type"],
     );
     let new_node = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `new_node` carries the record built above.
+    unsafe { meta::mark_own(new_node) };
     cx.lower.insert(new_node, lower_new_node);
     let new_node_leaf = callable::mint_native(cx.store, cs.callable, run_new_node, cs.seed_native);
     let record = meta::operand_record(
@@ -180,6 +182,18 @@ pub(crate) unsafe fn made_type(types: &Core, value: DyadPtr) -> Option<DyadPtr> 
     }
     let (_, from) = parts(node);
     (from != types.dyad_).then_some(from)
+}
+
+/// Whether the node `value` gives, and so its type, is known only when the program runs: a
+/// `dyad` place or call the pass has not read through. A hole gives no node, and `dyad (T, v)`
+/// gives one of `T`.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn known_only_at_run(types: &Core, value: DyadPtr) -> bool {
+    super::read::output_type(types, value) == types.dyad_
+        && !types.is_hole(types.through(value))
+        && made_type(types, value).is_none()
 }
 
 /// What `value` gives where a value is read from it, when it gives a `dyad` no name holds: the

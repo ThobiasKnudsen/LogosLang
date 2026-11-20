@@ -2262,6 +2262,27 @@ fn a_result_type_is_written_as_a_type_place_is() {
 }
 
 #[test]
+fn every_place_that_needs_a_type_now_answers_one_operand_alike() {
+    let defs = ["x := i32 5", "mut u := type ?"];
+    for src in ["y := x ?", "y := dyad (x, 7)", "fn () -> x ( 7 )", "u = x"] {
+        assert_eq!(parse_err_after(&defs, src), ParseError::BadDeclaredType, "{src}");
+    }
+    for src in ["y := 5 ?", "y := dyad (i32, 7) ?", "y := dyad (dyad (i32, 7), 7)"] {
+        assert_eq!(parse_err(src), ParseError::BadDeclaredType, "{src}");
+    }
+
+    for param in ["type", "dyad"] {
+        let src = format!("fn (t := {param} ?) -> i32 ( mk := fn () -> t ( 7 ), 1 )");
+        assert_eq!(parse_err(&src), ParseError::TypeKnownOnlyAtRun, "{src}");
+    }
+    assert_eq!(parse_err("fn (t := type ?) -> i32 ( t 5 )"), ParseError::TypeKnownOnlyAtRun);
+    let f = ["f := fn () -> dyad ( i32 5 )"];
+    for src in ["y := f() ?", "y := dyad (f(), 7)", "f() 5", "f().parse_rank"] {
+        assert_eq!(parse_err_after(&f, src), ParseError::TypeKnownOnlyAtRun, "{src}");
+    }
+}
+
+#[test]
 fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
     // An owning value would have two ends.
     assert_eq!(parse_err("fn () -> dyad ( alloc 1 of i32 5 )"), ParseError::DyadTakesNode);

@@ -417,23 +417,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Usually `Trailing`; where the first leftover is a box holding a node,
-    /// the real reason is that the box could not say what it holds (a deferred
-    /// body), so `a 5` never juxtaposed.
-    pub(super) fn leftover_error(&self, first: DyadPtr) -> ParseError {
-        // SAFETY: `first` is a constructed node from the store.
-        let node_box = unsafe {
-            let d = self.types.through(first);
-            let out = crate::identities::read::output_type(self.types, d);
-            !d.is_null()
-                && ((out == self.types.type_ || out == self.types.dyad_)
-                    && self.types.is_storage(d)
-                    || out == self.types.type_ && !crate::identities::is_type_value(self.types, d))
-        };
-        if node_box {
-            ParseError::TypeKnownOnlyAtRun
-        } else {
-            ParseError::Trailing
+    /// Usually `Trailing`; where the first leftover gives a type known only at run, the real
+    /// reason is that it could not say which type it is, so `a 5` never juxtaposed.
+    pub(super) fn leftover_error(&mut self, first: DyadPtr) -> ParseError {
+        match self.type_known_now(first) {
+            Err(ParseError::TypeKnownOnlyAtRun) => ParseError::TypeKnownOnlyAtRun,
+            _ => ParseError::Trailing,
         }
     }
 
@@ -754,7 +743,7 @@ impl<'a> Parser<'a> {
             }
             if items.len() > 1 {
                 self.cx.pos = items[1].1;
-                return Some(Err(ParseError::Trailing));
+                return Some(Err(self.leftover_error(items[0].0.dyad)));
             }
             if let Some(&(item, _)) = items.first() {
                 // SAFETY: `item` is a reduced dyad just constructed.

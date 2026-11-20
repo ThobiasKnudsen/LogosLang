@@ -40,6 +40,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ByCopyIds {
         &["target", "call", "type", "op", "output_type"],
     );
     let result = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `result` carries the record built above, which names `call`.
+    unsafe { meta::install_hands_on(result, &["call"], &[]) };
     cx.lower.insert(result, lower_result);
     let result_leaf = callable::mint_native(cx.store, cs.callable, run_result, cs.seed_native);
     let record = meta::operand_record(
@@ -50,6 +52,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ByCopyIds {
         &["expr", "op", "output_type"],
     );
     let out = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `out` carries the record built above, which names `expr`.
+    unsafe { meta::install_hands_on(out, &["expr"], &[]) };
     cx.lower.insert(out, lower_out);
     let out_leaf = callable::mint_native(cx.store, cs.callable, run_out, cs.seed_native);
     ByCopyIds { result, result_leaf, out, out_leaf }

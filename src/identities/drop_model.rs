@@ -162,6 +162,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     });
     cx.lower.insert(move_, lower_move);
     let move_leaf = callable::mint_native(cx.store, cs.callable, run_move, cs.seed_native);
+    // SAFETY: both carry the records `keyword` built.
+    unsafe {
+        meta::mark_own(alloc_);
+        meta::mark_own(move_);
+    }
 
     // A place: a name that holds its value, an owning field or an owning cell gets its
     // teardown, and a name, field path or cell whose type fills no `free` the inert `free`. A
@@ -1265,38 +1270,22 @@ unsafe fn moved_out_via(
 ) -> Option<DyadPtr> {
     let node = types.through(node);
     visit(node);
-    let logos = dyad::ty(node);
-    if super::mint::origin(logos) == types.alloc_
-        || super::mint::origin(logos) == types.move_
-        || super::mint::origin(logos) == types.copy_
-        || logos == types.this.copy
-        || logos == types.construct_
-        || logos == types.dyad_place.new_node
-    {
+    if marked_own(node) {
         return Some(node);
     }
-    // A record call's result moves out when its callee's value does; a record handed on by
-    // its bytes' address, when what it copies does.
-    if logos == types.by_copy.result {
-        return moved_out_via(types, super::by_copy::carried(types, node), visit);
-    }
-    if logos == types.by_copy.out {
-        return moved_out_via(types, *(dyad::value(node) as *const DyadPtr), visit);
-    }
-    if logos == types.scope {
-        return crate::parse::last_sequence_expr(node)
-            .and_then(|tail| moved_out_via(types, tail, visit));
-    }
-    // A used `if` ends its value alike in every arm (`handed_ends`), so the then arm's is it.
-    if logos == types.if_ {
-        let (_, then, els) = super::if_mod::branches(node);
-        if els.is_null() {
-            return None;
+    if let Some(operands) = handed_operands(node) {
+        // A used `if` ends its value alike in every arm (`handed_ends`), so the first operand's
+        // is it. Each is walked, so `visit` sees what each hands on, a `return` arm's too.
+        let mut first = None;
+        let mut every = true;
+        for (i, operand) in operands.into_iter().enumerate() {
+            let out = moved_out_via(types, operand, visit);
+            if i == 0 {
+                first = out;
+            }
+            every &= out.is_some();
         }
-        // Both arms are walked, so `visit` sees what either hands on, a `return` arm's beside.
-        let out = moved_out_via(types, then, visit);
-        let els = moved_out_via(types, els, visit);
-        return out.filter(|_| els.is_some());
+        return first.filter(|_| every);
     }
     if let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
         super::read::read_kind(types, node)
@@ -1318,6 +1307,50 @@ unsafe fn moved_out_via(
     None
 }
 
+/// Whether what `node` gives is made for whoever takes it: it carries the `own` mark, on its
+/// type's record or in its own slot (›Three fail-closed ownership rules, and `-> own @T`‹ [[R62]]).
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+unsafe fn marked_own(node: DyadPtr) -> bool {
+    match meta::own_mark_of(dyad::ty(node)) {
+        meta::OwnMark::Nowhere => false,
+        meta::OwnMark::Every => true,
+        meta::OwnMark::Slot(k) => !(*(dyad::value(node) as *const DyadPtr).add(k)).is_null(),
+    }
+}
+
+/// The operands `node` hands on as its value, every one alike, as its type's record names them;
+/// `None` where it gives its own value, or where one is missing: an `else`-less `if`'s arm, a
+/// block with no lines.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+unsafe fn handed_operands(node: DyadPtr) -> Option<Vec<DyadPtr>> {
+    let (nodes, lines) = meta::hands_on_of(dyad::ty(node));
+    if nodes | lines == 0 {
+        return None;
+    }
+    (0..u8::BITS as usize)
+        .filter(|&k| (nodes | lines) & 1 << k != 0)
+        .map(|k| handed_operand(node, k, lines))
+        .collect()
+}
+
+/// The operand in slot `k` that `node` hands on, or, where `k` is among `lines`, the last of the
+/// lines it holds; `None` where there is none.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store whose type's record hands on slot `k`.
+unsafe fn handed_operand(node: DyadPtr, k: usize, lines: u8) -> Option<DyadPtr> {
+    let operand = *(dyad::value(node) as *const DyadPtr).add(k);
+    if lines & 1 << k != 0 {
+        super::scope::last_line(operand)
+    } else {
+        (!operand.is_null()).then_some(operand)
+    }
+}
+
 /// What ends the life of a value a name or a `free` holds (DESIGN ›Holding is decided at the
 /// binding site, parameters included‹).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1337,11 +1370,6 @@ pub(crate) enum Teardown {
 pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Teardown {
     if let Some(pointee) = owning_pointee_of(types, value) {
         return Teardown::Block(pointee);
-    }
-    let node = types.through(value);
-    if dyad::ty(node) == types.scope {
-        return crate::parse::last_sequence_expr(node)
-            .map_or(Teardown::Nothing, |tail| teardown_of(types, tail));
     }
     let output = super::read::output_type(types, value);
     if output == types.dyad_ && moves_out(types, value) {
@@ -1381,21 +1409,16 @@ unsafe fn type_free(types: &Core, value: DyadPtr, t: DyadPtr) -> DyadPtr {
 /// `node` must be a reduced dyad from the store.
 pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<bool>, ParseError> {
     let d = types.through(node);
-    let logos = dyad::ty(d);
-    if logos == types.return_ {
+    // A `return` hands its operand to the caller, not to its line, so no record says it.
+    if dyad::ty(d) == types.return_ {
         return handed_ends(types, *(dyad::value(d) as *const DyadPtr));
     }
-    if logos == types.scope {
-        return match crate::parse::last_sequence_expr(d) {
-            Some(last) => handed_ends(types, last),
-            None => Ok(None),
-        };
-    }
-    if logos == types.if_ {
-        let (_, then, els) = super::if_mod::branches(d);
-        if !els.is_null() {
-            return arms_end_alike(handed_ends(types, then)?, handed_ends(types, els)?);
+    if let Some(operands) = handed_operands(d) {
+        let mut ends = None;
+        for operand in operands {
+            ends = arms_end_alike(ends, handed_ends(types, operand)?)?;
         }
+        return Ok(ends);
     }
     let t = super::read::output_type(types, node);
     if t == types.void_ {
@@ -1790,6 +1813,33 @@ mod tests {
             "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( 1 + g() * 2 ), for 0..3 ( f() ), 1",
         ] {
             assert_eq!(run_hosted(src), (1, 0), "{src}");
+        }
+    }
+
+    /// Read through the walk, as no program reaches it yet: a body's close asks the walk before
+    /// `commit_fn_body` sets where its lines land, and a call reads its callee's record.
+    #[test]
+    fn a_held_line_whose_value_lands_in_a_new_node_carries_the_own_mark() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        for (output, ends) in [("dyad", Teardown::Dyad), ("i64", Teardown::Nothing)] {
+            let mut scopes = ScopeStack::new();
+            scopes.push(core.root_scope);
+            let src = format!("fn (a := dyad ?) -> {output} ( a + 1 )");
+            let mut p = Parser::new(&src, &mut store, &mut trie, &core, scopes);
+            let f = p.parse_expression().expect("parse");
+            // SAFETY: `f` is the `fn` node just parsed; its body is its one line, or a block.
+            unsafe {
+                let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);
+                let line = if dyad::ty(body) == core.scope {
+                    crate::parse::last_sequence_expr(body).expect("one line")
+                } else {
+                    body
+                };
+                assert_eq!(dyad::ty(line), core.waiting.line, "{src}");
+                assert_eq!(teardown_of(&core, line), ends, "{src}");
+            }
         }
     }
 

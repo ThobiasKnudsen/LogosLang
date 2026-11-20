@@ -26,6 +26,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record =
         meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::INERT, Assoc::Left, &["value"]);
     let copy = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `copy` carries the record built above.
+    unsafe { meta::mark_own(copy) };
     cx.lower.insert(copy, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (copy, leaf)
