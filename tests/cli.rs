@@ -6104,6 +6104,21 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
     }
+    // `mk` reads to its left, so held or handed on by `.type` it wakes with nothing there:
+    // stand-in for #402.
+    for src in [
+        format!("{mk}, t := mk, 1"),
+        format!("{mk}, mk.tag"),
+        format!("{mk}, y := i32 3, (y mk).type == pt"),
+        format!("{mk}, y := i32 3, (y mk).type.tag"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: {stderr}");
+        assert!(
+            stderr.contains("this gives nothing, and a value is needed here"),
+            "{src}: {stderr}"
+        );
+    }
     // A field the node's type does not have is the error that says so, never a read of the
     // record the node gives when it runs.
     for src in [
