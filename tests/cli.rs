@@ -10265,6 +10265,90 @@ fn a_fn_entry_of_a_curly_bracket_reads_its_sibling_names_through_the_value() {
     }
 }
 
+/// ›A type body describes one level‹ [[R222]]: a field named bare in a `static` function, a `free`
+/// or a `fn` entry of a `{ … }` reads as the same field read through the value, on both tiers:
+/// text and a type as what they hold, a record's field with a `.`, and a write through it meets
+/// the gates `v.p.x = …` would.
+#[test]
+fn a_field_named_bare_reads_as_the_field_read_through_the_value() {
+    let pt = "pt := type ( mut x := i32 ?, y := i32 ?, static sum := fn () -> i32 ( x + y ) ), ";
+    for compile in ["", "v.f.compile(), "] {
+        for (head, call, printed) in [
+            ("t := type ( s := string ?, static f := fn () -> void ( print «{s}!» ) ), v := t («hi»)", "v.f()", "hi!"),
+            ("t := type ( s := string ?, static f := fn () -> string ( s ) ), v := t («hi»)", "v.f()", "hi"),
+            ("t := type ( k := type ?, static f := fn () -> void ( print «{k}» ) ), v := t (i32)", "v.f()", "i32"),
+            ("t := type ( k := type ?, static f := fn () -> type ( k ) ), v := t (i32)", "v.f()", "i32"),
+            ("q := type ( p := pt ?, static f := fn () -> i32 ( p.x ) ), v := q (pt (1, 2))", "v.f()", "1"),
+            ("q := type ( p := pt ?, static f := fn () -> i32 ( p.y + 1 ) ), v := q (pt (1, 2))", "v.f()", "3"),
+            ("q := type ( p := pt ?, static f := fn () -> i32 ( p.sum() ) ), v := q (pt (1, 2))", "v.f()", "3"),
+            ("q := type ( p := pt ?, static f := fn () -> pt ( p ) ), v := q (pt (1, 2))", "v.f().y", "2"),
+            (
+                "l := type ( a := pt ?, b := pt ? ), q := type ( r := l ?, static f := fn () -> i32 ( r.b.y ) ), \
+                 v := q (l (pt (1, 2), pt (3, 4)))",
+                "v.f()",
+                "4",
+            ),
+            ("v := { s := «hi», f := fn () -> void ( print «{s}!» ) }", "v.f()", "hi!"),
+            ("v := { p := pt (1, 2), f := fn () -> i32 ( p.x ) }", "v.f()", "1"),
+        ] {
+            let src = format!("{pt}{head}, {compile}{call}");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    let bag =
+        "bag := type ( s := string ?, p := pt ?, static free = ( print «freed {s} {p.y}» ) ), ";
+    for compile in ["", "f.compile(), "] {
+        let src =
+            format!("{pt}{bag}f := fn () -> i32 ( b := bag («x», pt (1, 2)), 1 ), {compile}f()");
+        assert_eq!(run_line(&src), (Some(0), "freed x 2\n1\n".into(), String::new()), "{src}");
+    }
+    let writes = |p: &str, v: &str| {
+        format!(
+            "{pt}q := type ( {p}p := pt ?, static f := fn () -> void ( p.x = 9 ) ), \
+             {v}v := q (pt (1, 2)), v.f(), v.p.x"
+        )
+    };
+    let src = writes("mut ", "mut ");
+    assert_eq!(run_line(&src), (Some(0), "9\n".into(), String::new()), "{src}");
+    for (src, expect) in [
+        (writes("mut ", ""), "`v` is not `mut`"),
+        (writes("", "mut "), "`p` is not `mut`"),
+        (
+            format!("{pt}q := type ( p := pt ?, static f := fn () -> i32 ( p.z ) ), 0"),
+            "unknown name `z`",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›Reading a path runs nothing‹ [[R273]]: a call stands for what it returns, so `.` after it
+/// reads a field of the record it returns, or calls its type's `static` function on it, as `.`
+/// after a name of the record does; a record a type makes is read so too.
+#[test]
+fn a_dot_reads_a_field_of_a_record_no_name_holds() {
+    let head = "pt := type ( x := i32 ?, y := i32 ?, static sum := fn () -> i32 ( x + y ) ), \
+                g := fn (n := i32 ?) -> pt ( pt (n * 2, n) ), ";
+    for compile in ["", "h.compile(), "] {
+        for (body, printed) in [
+            ("g(5).x", "10"),
+            ("g(5).y + 1", "6"),
+            ("pt (3, 4).y", "4"),
+            ("g(5).sum()", "15"),
+            ("pt (1, 2).sum()", "3"),
+        ] {
+            let src = format!("{head}h := fn () -> i32 ( {body} ), {compile}h()");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    let src = format!("{head}g(5).z");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("unknown name `z`"), "{src}: stderr: {stderr}");
+}
+
 #[test]
 fn a_hashmap_reads_a_curly_bracket_each_name_s_spelling_a_text_key() {
     for (src, printed) in [

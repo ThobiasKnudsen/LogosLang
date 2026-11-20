@@ -80,6 +80,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     };
     let (slot, slot_leaf) =
         op(cx, &["value", "k", "binding", "fill", "owner", "op", "output_type"], run_slot);
+    cx.lower.insert(slot, lower_slot);
     let (write, write_leaf) = op(cx, &["value", "k", "v", "owner", "binding", "op"], run_write);
     let (load, load_leaf) =
         op(cx, &["value", "k", "type", "binding", "fill", "owner", "op", "output_type"], run_load);
@@ -143,17 +144,20 @@ fn act(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> D
 }
 
 /// `k` is the field's index among the instance fields, as a `u64` literal; `owner` the type
-/// whose value `this` is.
-pub(crate) fn build_slot(
+/// whose value `this` is. The read gives the field's declared type, as the field read through
+/// a name does; `@dyad` only for a field no type was declared for.
+#[allow(clippy::too_many_arguments)]
+fn build_slot(
     store: &mut Store,
     types: &Core,
     this: DyadPtr,
     k: DyadPtr,
+    declared: DyadPtr,
     binding: DyadPtr,
     fill: DyadPtr,
     owner: DyadPtr,
 ) -> DyadPtr {
-    let output = super::pointer::at_dyad(store, types);
+    let output = if declared.is_null() { super::pointer::at_dyad(store, types) } else { declared };
     let ops = [this, k, binding, fill, owner];
     node(store, types.this.slot, types.this.slot_leaf, &ops, output)
 }
@@ -219,7 +223,7 @@ pub(crate) unsafe fn build_field_read(
     if reads_whole(types, declared) {
         build_load(store, types, this, k, declared, binding, fill, owner)
     } else {
-        build_slot(store, types, this, k, binding, fill, owner)
+        build_slot(store, types, this, k, declared, binding, fill, owner)
     }
 }
 
@@ -621,7 +625,22 @@ unsafe fn slot_of(
     owner: DyadPtr,
     name: DyadPtr,
 ) -> Result<(*mut DyadPtr, usize), RunError> {
-    match field_of(rt, ops, owner, name)? {
+    let this = rt.run(*ops)? as DyadPtr;
+    slot_at(rt, this, ops, owner, name)
+}
+
+/// As [`slot_of`], of the value `this` the read's first operand gave.
+///
+/// # Safety
+/// As [`field_at`].
+unsafe fn slot_at(
+    rt: &mut Runtime,
+    this: DyadPtr,
+    ops: *const DyadPtr,
+    owner: DyadPtr,
+    name: DyadPtr,
+) -> Result<(*mut DyadPtr, usize), RunError> {
+    match field_at(rt, this, ops, owner, name)? {
         Field::Slot(slot, k) => Ok((slot, k)),
         Field::Bytes(addr, ty, k) if holds_node(rt.types(), ty) => Ok((addr.cast(), k)),
         Field::Bytes(..) => Err(RunError::NoThis),
@@ -662,8 +681,17 @@ pub(crate) unsafe fn field_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut 
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.
 pub(crate) unsafe fn held(rt: &mut Runtime, read: DyadPtr) -> Result<DyadPtr, RunError> {
+    let this = rt.run(*(dyad::value(read) as *const DyadPtr))? as DyadPtr;
+    held_at(rt, read, this)
+}
+
+/// As [`held`], of the value `this` the read's first operand gave.
+///
+/// # Safety
+/// As [`held`]; `this` is null or what the read's first operand yields.
+unsafe fn held_at(rt: &mut Runtime, read: DyadPtr, this: DyadPtr) -> Result<DyadPtr, RunError> {
     let (owner, name) = (owner_of(rt.types(), read), field_binding_of(rt.types(), read));
-    let (slot, k) = slot_of(rt, dyad::value(read) as *const DyadPtr, owner, name)?;
+    let (slot, k) = slot_at(rt, this, dyad::value(read) as *const DyadPtr, owner, name)?;
     let held = slot.read_unaligned();
     if held.is_null() {
         return Err(RunError::UnfilledField(k));
@@ -674,6 +702,26 @@ pub(crate) unsafe fn held(rt: &mut Runtime, read: DyadPtr) -> Result<DyadPtr, Ru
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a slot node from the store; its value holds a node with a slot per field.
     unsafe { Ok(held(rt, node)? as i64) }
+}
+
+/// The receiver is read in the compiled frame and the node by [`held_at`], as [`lower_load`]
+/// reads a value.
+fn lower_slot(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a slot node from `build_slot`, its receiver its first operand.
+    unsafe {
+        let this = lw.lower(*(dyad::value(node) as *const DyadPtr))?;
+        let read = lw.node_addr(node);
+        lw.call_seed(compiled_slot as *const () as usize, &[read, this])
+    }
+}
+
+/// # Safety
+/// Called only by compiled code, with its context, a slot node `lower_slot` baked and the
+/// value its first operand gave there.
+unsafe extern "C" fn compiled_slot(ctx: *mut crate::run::Context, read: DyadPtr, this: i64) -> i64 {
+    crate::run::interpret_step(ctx, |rt| {
+        held_at(rt, read, this as usize as DyadPtr).map(|n| n as i64)
+    })
 }
 
 fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -718,12 +766,11 @@ fn lower_load(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let ty = *ops.add(2);
-        let carry = carry_of(lw.types(), ty);
-        // A rational travels as the address of its bytes; a record's bytes do not lower yet.
-        let nt = match carry {
+        // A rational or a record travels as the address of its bytes.
+        let nt = match carry_of(lw.types(), ty) {
             Some(Carry::Word(nt)) => Some(nt),
-            Some(Carry::Bytes(_)) if ty == lw.types().rational => None,
-            _ => return Err(CompileError::NotLowerable(node)),
+            Some(Carry::Bytes(_)) => None,
+            None => return Err(CompileError::NotLowerable(node)),
         };
         let this = lw.lower(*ops)?;
         let read = lw.node_addr(node);

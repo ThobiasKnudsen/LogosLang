@@ -1213,11 +1213,14 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
         }
     }
     let kind = read::read_kind(types, node);
-    // The bits are a node's address: what a box holds, or a value that is its node.
-    if matches!(kind, read::Read::Container(_) | read::Read::Node)
-        || read::output_type(types, node) == types.dyad_
-        || node_value_output(types, node).is_some()
-    {
+    // The bits are a node's address: what a box holds, or a value of a type a place keeps as the
+    // address of its node.
+    let gives_node = !types.is_hole(node)
+        && matches!(
+            read::place_layout(types, read::output_type(types, node)),
+            Some((read::Read::Container(_), _))
+        );
+    if matches!(kind, read::Read::Container(_) | read::Read::Node) || gives_node {
         let ty = types.type_of(node);
         return if ty.is_null() { bits.to_string() } else { display_held(types, ty, bits) };
     }
