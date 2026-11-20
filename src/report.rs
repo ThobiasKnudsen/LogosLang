@@ -478,7 +478,7 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoActivation => "a function's local was read outside any call".into(),
         RunError::Uninitialized => "a value here has no storage to read".into(),
         RunError::NoWholeRead => {
-            "a record, text or hole is not read as one value; read a field or take its address"
+            "a record or hole is not read as one value; read a field or take its address"
                 .into()
         }
         RunError::NotText => "`lex` takes a string".into(),

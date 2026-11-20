@@ -1,0 +1,2 @@
+# a `pub` name whose value is text
+pub s := «a»

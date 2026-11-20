@@ -1487,7 +1487,7 @@ unsafe fn compile_fn_body(
 }
 
 /// How the declared output travels in the container: not at all for `void`,
-/// as an address for a type value, a node a Logos `parse` builds, or a record's
+/// as an address for a type value, a value that is its node's address, or a record's
 /// result slot, at its width for a scalar.
 ///
 /// # Safety
@@ -1497,7 +1497,7 @@ unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, Com
         Ok(None)
     } else if out == types.type_
         || out == types.dyad_
-        || crate::identities::meta::is_node_valued(out, types.fn_type)
+        || crate::identities::meta::value_is_node(out, types.fn_type)
         || crate::identities::read::carry_of(types, out)
             .and_then(crate::identities::read::Carry::bytes)
             .is_some()

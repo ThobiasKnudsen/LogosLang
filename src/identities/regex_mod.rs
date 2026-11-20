@@ -13,7 +13,7 @@ use crate::dyad::DyadPtr;
 /// A text-shaped record at the rank of a word that consumes raw text to its
 /// right at discovery, the rank `import` has.
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, STRING_TAG, meta::prec::IMPORT);
+    let record = meta::record_of_nodes(cx.store, STRING_TAG, meta::prec::IMPORT);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("regex", id);
     cx.metas.insert(id, |p, _id, tape| p.construct_regex(tape));

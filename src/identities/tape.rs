@@ -334,8 +334,8 @@ unsafe fn slot_parts(over: DyadPtr) -> (DyadPtr, DyadPtr) {
 /// `slot` must be a slot node from `build_slot`.
 pub(crate) unsafe fn build_slot_name(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
     let (recv, k) = slot_parts(slot);
-    let output = at_dyad(store, types);
-    node(store, types.tape.slot_name, types.tape.slot_name_leaf, &[recv, k], output)
+    // ›`x:name` is the name's spelling, held by the binding‹ [[R285]]
+    node(store, types.tape.slot_name, types.tape.slot_name_leaf, &[recv, k], types.string_)
 }
 
 /// The tape, the cell index, and the line index of a line read, null for the cell itself.
@@ -557,7 +557,14 @@ pub(crate) unsafe fn build_member(
     if op == ids.recenter {
         return Ok(act(store, op, leaf, &[recv, k]));
     }
-    let output = if op == ids.is_constructed { types.bool_ } else { at_dyad(store, types) };
+    // ›`tape.spelling[k]` is the text a cell was lexed from‹ [[R249]]
+    let output = if op == ids.is_constructed {
+        types.bool_
+    } else if op == ids.spelling {
+        types.string_
+    } else {
+        at_dyad(store, types)
+    };
     Ok(node(store, op, leaf, &[recv, k], output))
 }
 
