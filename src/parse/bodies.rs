@@ -503,8 +503,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Over the swapped-in state: the hidden parameter record, the return
-    /// type (the type the set holds in the field named `output_type`, or `void`),
-    /// and the body read as a function's, filling `spec`.
+    /// type (the type the set holds in the field `output_type`, else the type's
+    /// `static output_type`, else `void`), and the body read as a function's, filling `spec`.
     ///
     /// # Safety
     /// As `construct_run_body`; `spec` the `fn` node minted for the set.
@@ -526,14 +526,15 @@ impl<'a> Parser<'a> {
             .into_iter()
             .map(|b| (Binding::read(b).dyad, Binding::spelling(b)))
             .collect();
+        let output_field = self.output_field(ty);
         let mut params: Vec<(Option<&str>, DyadPtr)> = Vec::with_capacity(fields.len());
-        let mut type_fields = Vec::new();
+        let mut output_name = None;
         for (i, &field) in fields.iter().enumerate() {
             let name = names.get(&field).map(String::as_str);
-            let ty = if crate::identities::hole::type_in(field) == types.type_ {
-                // A field of type `type` names the type this set holds in it, so
-                // `output_type 1` reads `i32 1`; its parameter place goes unnamed.
-                type_fields.extend(name.map(|n| (n, key[i])));
+            let ty = if output_field == Some(i) {
+                // The field names the type this node's run gives, so `output_type 1` reads
+                // `i32 1`; its parameter place goes unnamed.
+                output_name = name;
                 params.push((None, types.type_));
                 continue;
             } else if key[i] == types.scope || key[i] == types.square_brackets {
@@ -546,22 +547,15 @@ impl<'a> Parser<'a> {
             params.push((name, ty));
         }
         let static_output = self.declared_output_type(ty);
-        let mut scope = ScopeStack::new();
-        scope.push(field_scope);
-        let output = scope
-            .resolve(self.trie, crate::identities::mint::STATIC_FIELD)
-            .ok()
-            .and_then(|r| fields.iter().position(|&f| f == r.identity))
-            .filter(|&i| crate::identities::hole::type_in(fields[i]) == types.type_)
-            .map(|i| key[i])
-            .or(static_output)
-            .unwrap_or(types.void_);
+        let output = output_field.map(|i| key[i]).or(static_output).unwrap_or(types.void_);
         let (input, places) = self.hidden_param_record(&params, 0)?;
         self.cx.run_fields = Some((ty, places.clone()));
         let param_scope = crate::identities::meta::record_scope_of(input);
         self.cx.scopes.push(param_scope);
-        let declared =
-            type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
+        let declared = match (output_name, output_field) {
+            (Some(n), Some(i)) => self.declare_name(n, key[i], 0).map(|_| ()),
+            _ => Ok(()),
+        };
         let declared = declared.and_then(|()| match static_output {
             Some(t) => self.declare_output_type(ty, t),
             None => Ok(()),
@@ -569,6 +563,23 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         declared?;
         self.fn_over_body(types.fn_type, input, &places, output, None, spec, std::ptr::null_mut())
+    }
+
+    /// Which of `ty`'s fields is its `type` field `output_type`, where each node's parse writes the
+    /// type its run gives (›A mint's output type is written in its `static output_type`
+    /// declaration; a type that does not mint has its parse write it into each node‹ [[R194]]).
+    ///
+    /// # Safety
+    /// `ty` must carry a `RECORD_TAG` record.
+    pub(super) unsafe fn output_field(&self, ty: DyadPtr) -> Option<usize> {
+        let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
+        let mut scope = ScopeStack::new();
+        scope.push(crate::identities::meta::record_scope_of(ty));
+        scope
+            .resolve(self.trie, crate::identities::mint::STATIC_FIELD)
+            .ok()
+            .and_then(|r| fields.iter().position(|&f| f == r.identity))
+            .filter(|&i| crate::identities::hole::type_in(fields[i]) == self.types.type_)
     }
 
     /// The type `ty`'s own `static output_type` holds, what every node of it gives (›A mint's

@@ -984,14 +984,14 @@ fn a_comparison_written_in_logos_ends_a_bare_condition() {
     assert_eq!(run_script(&format!("{types}x := i32 1, if x.type ≈ scope (10) else (20)")), 20);
 }
 
-/// Where a condition's bool cannot be known before its operator is built: a type standing
-/// right of an infix ranked outside the comparisons takes the `(` after it, as right of `+`.
+/// A type standing right of an infix ranked outside the comparisons takes the `(` after it, as
+/// right of `+`, so `i32 (10)`, no type, lands in the field `rhs := type ?`.
 #[test]
 fn a_type_right_of_an_infix_outside_the_comparisons_takes_its_bracket() {
     let plus_ranked = logos_comparison("type", "+.parse_rank");
     assert_eq!(
         script_parse_err(&format!("{plus_ranked}x := i32 1, if x.type ≈ i32 (10) else (20)")),
-        ParseError::NonBoolCondition
+        ParseError::BadDeclaredType
     );
     assert_eq!(
         run_script(&format!("{plus_ranked}x := i32 1, if (x.type ≈ i32) (10) else (20)")),
