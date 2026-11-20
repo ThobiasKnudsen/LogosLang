@@ -708,13 +708,14 @@ impl<'a> Parser<'a> {
             if pointee.is_null() || !crate::identities::meta::is_record_type(pointee) {
                 return Err(ParseError::UnsupportedOperands);
             }
-            let (field, offset, _) = match self.resolve_field(pointee, nstart, nlen) {
+            let (field, offset, binding) = match self.resolve_field(pointee, nstart, nlen) {
                 Ok(found) => found,
                 Err(e) => {
                     let name = &self.cx.source[nstart..nstart + nlen];
                     return self.static_member_access(lhs, &left, pointee, name, call)?.ok_or(e);
                 }
             };
+            self.cx.member_path = self.field_path(&left, binding);
             let types = self.types;
             return Ok((
                 crate::identities::pointer::build_deref(
@@ -750,15 +751,21 @@ impl<'a> Parser<'a> {
         }
         let node =
             crate::identities::instance::build_field(self.rt.store, self.types, lhs, binding);
-        // Every binding along the path grants a write into the place: the
-        // name the path starts at, then each field.
-        let mut path = self.path_of(&left);
+        self.cx.member_path = self.field_path(&left, binding);
+        Ok((node, 0))
+    }
+
+    /// The bindings a write into the field `binding` of `left` must be granted by: the path
+    /// `left` was reached by, or the name it is, then the field (›An access along a path needs
+    /// every binding on the path to grant it‹ [[R122]]). A dereference's cell is reached by
+    /// nothing and is no name, so a path read through `p@` starts at the `@`.
+    fn field_path(&self, left: &Cell, binding: DyadPtr) -> Vec<DyadPtr> {
+        let mut path = self.path_of(left);
         if path.is_empty() && !self.cx.member_root.is_null() {
             path.push(self.cx.member_root);
         }
         path.push(binding);
-        self.cx.member_path = path;
-        Ok((node, 0))
+        path
     }
 
     /// `.`'s constructor: the member read of `tape[-1]` named by the cell to

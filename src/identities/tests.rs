@@ -2359,7 +2359,7 @@ fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers(
     for (f, args, expect) in [
         ("f := fn (a := @i32 ?) -> i32 ( a@ = 4, a@ )", "mut x := i32 1, f(&x)", 4),
         (
-            "point := type ( x := i32 ?, y := i32 ? ), \
+            "point := type ( x := i32 ?, mut y := i32 ? ), \
              f := fn (p := @point ?) -> i32 ( p@.y = 9, p@ = point(5, p@.y), p@.x + p@.y )",
             "mut v := point (1, 2), f(&v)",
             14,
