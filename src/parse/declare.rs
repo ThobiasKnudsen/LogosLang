@@ -443,7 +443,7 @@ impl<'a> Parser<'a> {
     /// writes as `=` read it: the item the sibling rule reads.
     pub(crate) fn note_write(&mut self, node: DyadPtr, place: &Cell) {
         let ids = &self.types.this;
-        // SAFETY: `node` is the `=` node just built.
+        // SAFETY: `node` is the `=` node or the held line just built.
         let ty = unsafe { dyad::ty(node) };
         if ty == self.types.tape.write {
             self.forget_narrowed();
