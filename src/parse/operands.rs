@@ -420,9 +420,7 @@ impl<'a> Parser<'a> {
         if self.cx.each_pass {
             return Err(self.fail_at(at, ParseError::DyadReadEachPass));
         }
-        if !self.run_before(tape, at)? {
-            return Err(self.fail_at(at, ParseError::DyadCallAfterUnbuilt));
-        }
+        self.run_first(tape, at)?;
         // SAFETY: as above.
         let node = unsafe { self.ran_value(at, operand)? };
         if let Some(handle) = tape.handle_at(k) {
@@ -430,6 +428,35 @@ impl<'a> Parser<'a> {
             self.ran_through(tape, handle);
         }
         Ok(node)
+    }
+
+    /// A point at `at` where the parse needs a value: what stands before it runs first
+    /// ([`Self::ran_first`]), or the point is refused, with nothing run, where something before
+    /// it cannot.
+    pub(super) fn run_first(
+        &mut self,
+        tape: &mut ParsingTape,
+        at: usize,
+    ) -> Result<(), ParseError> {
+        if self.ran_first(tape, at)? {
+            return Ok(());
+        }
+        Err(self.fail_at(at, ParseError::RunsBeforeUnbuilt))
+    }
+
+    /// What stands before `at` runs first ([`Self::run_before`]); where the line does not run in
+    /// the pass, a `while` condition's or a body's, only the lines before it do. `false`, with
+    /// nothing run, where something before `at` in its line cannot run first.
+    pub(super) fn ran_first(
+        &mut self,
+        tape: &mut ParsingTape,
+        at: usize,
+    ) -> Result<bool, ParseError> {
+        if self.cx.each_pass || !self.in_pass_order() {
+            self.drain()?;
+            return Ok(true);
+        }
+        self.run_before(tape, at)
     }
 
     /// Everything parsed before `at` that has not run, run first, in order (›The pass runs only
@@ -585,10 +612,19 @@ impl<'a> Parser<'a> {
                 return Ok(held);
             }
             let stood = dyad_place::stable(self.rt.store, types, held);
-            if stood != held {
-                dyad_place::end(&mut self.rt, held as i64);
+            if stood == held {
+                return Ok(stood);
             }
-            return Ok(stood);
+            dyad_place::release(&mut self.rt, held as i64);
+            // A value with an end of its own moved into the store's copy, which then stands as
+            // one its line made.
+            let ty = dyad::ty(stood);
+            return match read::carry_of(types, ty) {
+                Some(carry) if dyad_place::has_end(types, ty) => {
+                    Ok(self.stand_ran(ran::word_in(carry, stood), ty))
+                }
+                _ => Ok(stood),
+            };
         }
         let ends = teardown_of(types, node) != Teardown::Nothing;
         let layout = place_layout(types, out).map(|(r, _)| r);
@@ -602,7 +638,7 @@ impl<'a> Parser<'a> {
                 let held = self.run_on_pass(run).map_err(ParseError::Run)? as usize as DyadPtr;
                 let stood = dyad_place::stable(self.rt.store, types, held);
                 if stood != held {
-                    dyad_place::end(&mut self.rt, held as i64);
+                    dyad_place::release(&mut self.rt, held as i64);
                 }
                 (Some(stood), ran::word_in(carry, stood))
             }
@@ -610,20 +646,18 @@ impl<'a> Parser<'a> {
         self.take(node);
         match stood {
             Some(stood) if !ends => Ok(stood),
-            _ => {
-                let ran = ran::build(self.rt.store, types, word, ends, out);
-                if ends {
-                    self.rt.stand(ran);
-                    self.cx
-                        .open
-                        .last_mut()
-                        .expect("a line is read in an open scope")
-                        .stood
-                        .push(ran);
-                }
-                Ok(ran)
-            }
+            _ if ends => Ok(self.stand_ran(word, out)),
+            _ => Ok(ran::build(self.rt.store, types, word, false, out)),
         }
+    }
+
+    /// A `ran` node of `out` giving `word`, a value with an end of its own the pass ran early,
+    /// which what takes it, or its line's end, ends.
+    fn stand_ran(&mut self, word: i64, out: DyadPtr) -> DyadPtr {
+        let ran = crate::identities::ran::build(self.rt.store, self.types, word, true, out);
+        self.rt.stand(ran);
+        self.cx.open.last_mut().expect("a line is read in an open scope").stood.push(ran);
+        ran
     }
 
     /// Each item of the `[…]` `list` that runs runs, in order, and stands in its place for the

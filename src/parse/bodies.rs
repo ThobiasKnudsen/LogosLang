@@ -504,8 +504,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Over the swapped-in state: the hidden parameter record, the return
-    /// type (the type the set holds in the field named `output_type`, or `void`),
-    /// and the body read as a function's, filling `spec`.
+    /// type (the type the set holds in the field `output_type`, else the type's
+    /// `static output_type`, else `void`), and the body read as a function's, filling `spec`.
     ///
     /// # Safety
     /// As `construct_run_body`; `spec` the `fn` node minted for the set.
@@ -527,14 +527,15 @@ impl<'a> Parser<'a> {
             .into_iter()
             .map(|b| (Binding::read(b).dyad, Binding::spelling(b)))
             .collect();
+        let output_field = self.output_field(ty);
         let mut params: Vec<(Option<&str>, DyadPtr)> = Vec::with_capacity(fields.len());
-        let mut type_fields = Vec::new();
+        let mut output_name = None;
         for (i, &field) in fields.iter().enumerate() {
             let name = names.get(&field).map(String::as_str);
-            let ty = if crate::identities::hole::type_in(field) == types.type_ {
-                // A field of type `type` names the type this set holds in it, so
-                // `output_type 1` reads `i32 1`; its parameter place goes unnamed.
-                type_fields.extend(name.map(|n| (n, key[i])));
+            let ty = if output_field == Some(i) {
+                // The field names the type this node's run gives, so `output_type 1` reads
+                // `i32 1`; its parameter place goes unnamed.
+                output_name = name;
                 params.push((None, types.type_));
                 continue;
             } else if key[i] == types.scope || key[i] == types.square_brackets {
@@ -547,22 +548,15 @@ impl<'a> Parser<'a> {
             params.push((name, ty));
         }
         let static_output = self.declared_output_type(ty);
-        let mut scope = ScopeStack::new();
-        scope.push(field_scope);
-        let output = scope
-            .resolve(self.trie, crate::identities::mint::STATIC_FIELD)
-            .ok()
-            .and_then(|r| fields.iter().position(|&f| f == r.identity))
-            .filter(|&i| crate::identities::hole::type_in(fields[i]) == types.type_)
-            .map(|i| key[i])
-            .or(static_output)
-            .unwrap_or(types.void_);
+        let output = output_field.map(|i| key[i]).or(static_output).unwrap_or(types.void_);
         let (input, places) = self.hidden_param_record(&params, 0)?;
         self.cx.run_fields = Some((ty, places.clone()));
         let param_scope = crate::identities::meta::record_scope_of(input);
         self.cx.scopes.push(param_scope);
-        let declared =
-            type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
+        let declared = match (output_name, output_field) {
+            (Some(n), Some(i)) => self.declare_name(n, key[i], 0).map(|_| ()),
+            _ => Ok(()),
+        };
         let declared = declared.and_then(|()| match static_output {
             Some(t) => self.declare_output_type(ty, t),
             None => Ok(()),
@@ -570,6 +564,23 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         declared?;
         self.fn_over_body(types.fn_type, input, &places, output, None, spec, std::ptr::null_mut())
+    }
+
+    /// Which of `ty`'s fields is its `type` field `output_type`, where each node's parse writes the
+    /// type its run gives (›A mint's output type is written in its `static output_type`
+    /// declaration; a type that does not mint has its parse write it into each node‹ [[R194]]).
+    ///
+    /// # Safety
+    /// `ty` must carry a `RECORD_TAG` record.
+    pub(super) unsafe fn output_field(&self, ty: DyadPtr) -> Option<usize> {
+        let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
+        let mut scope = ScopeStack::new();
+        scope.push(crate::identities::meta::record_scope_of(ty));
+        scope
+            .resolve(self.trie, crate::identities::mint::STATIC_FIELD)
+            .ok()
+            .and_then(|r| fields.iter().position(|&f| f == r.identity))
+            .filter(|&i| crate::identities::hole::type_in(fields[i]) == self.types.type_)
     }
 
     /// The type `ty`'s own `static output_type` holds, what every node of it gives (›A mint's
@@ -830,8 +841,11 @@ impl<'a> Parser<'a> {
             }
         }
         // The last value, once its type is, and every `return`'s operand, which a `return` makes
-        // the call's value, are checked against the mark a call reads.
-        if output != self.types.void_ {
+        // the call's value, are checked against the mark a call reads. A `-> dyad` result is a
+        // new node its caller holds, which takes a value made in the body and a copy of one it
+        // borrows (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹
+        // [[R293]]).
+        if output != self.types.void_ && output != self.types.dyad_ {
             // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
             let marked =
                 unsafe { !(*(dyad::value(node) as *const DyadPtr).add(FN_OUTPUT_GATE)).is_null() };
@@ -939,9 +953,9 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `return a` of a name a scope the `return` leaves holds: the operand becomes `move a`, a
-    /// plain record's handed on by its bytes' address, and `a` is dead from this line, as a
-    /// written `move a` makes it (›A last value moves out‹ [[R66]]).
+    /// `return a` of a name a scope the `return` leaves holds: the operand becomes `move a`, and
+    /// `a` is dead from this line, as a written `move a` makes it (›A last value moves out‹
+    /// [[R66]]).
     ///
     /// # Safety
     /// `node` must be a `return` node `[value, op]` from the store; `binding` the name's
@@ -954,15 +968,8 @@ impl<'a> Parser<'a> {
         if self.cx.scopes.crosses_barrier(Binding::read(binding).scope) {
             return Err(ParseError::MoveOfOuterName);
         }
-        let types = self.types;
-        let store = &mut *self.rt.store;
-        let moved = crate::identities::drop_model::build_move(store, types, binding);
-        *(dyad::value(node) as *mut DyadPtr) =
-            if crate::identities::this::is_plain(types, types.type_of(binding)) {
-                crate::identities::by_copy::build_out(store, types, moved)
-            } else {
-                moved
-            };
+        let moved = crate::identities::drop_model::build_move(self.rt.store, self.types, binding);
+        *(dyad::value(node) as *mut DyadPtr) = moved;
         self.mark_dead(Ended::name(binding), moved);
         Ok(())
     }
@@ -1486,16 +1493,18 @@ impl<'a> Parser<'a> {
                 use crate::identities::drop_model::{
                     build_hold, param_holds, teardown_of, Teardown,
                 };
+                let written = args.clone();
                 crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
                 for (i, arg) in args.iter_mut().enumerate() {
                     // What the argument lands as, a new node a `dyad ?` parameter takes a value
-                    // in included.
+                    // in included, which takes the value written there with it.
                     if teardown_of(types, *arg) == Teardown::Nothing {
                         continue;
                     }
                     if !param_holds(types, callee, i) {
                         return Err(ParseError::UnboundOwningValue);
                     }
+                    self.take(written[i]);
                     self.take(*arg);
                     *arg = build_hold(self.rt.store, types, *arg);
                 }
@@ -1818,17 +1827,11 @@ impl<'a> Parser<'a> {
             }
             if let Some(at) = held_at(place) {
                 closed.exit[at].end = Some(tail);
-                // A plain record moves out as its bytes' address, which the taker copies.
                 // SAFETY: `place` is a place this scope's binding site laid out, and
                 // `tail` indexes the scope's own lines, which nothing else reads yet.
                 unsafe {
-                    let store = &mut *self.rt.store;
-                    let moved = crate::identities::drop_model::build_move(store, types, place);
-                    let moved = if crate::identities::this::is_plain(types, types.type_of(place)) {
-                        crate::identities::by_copy::build_out(store, types, moved)
-                    } else {
-                        moved
-                    };
+                    let moved =
+                        crate::identities::drop_model::build_move(self.rt.store, types, place);
                     crate::identities::scope::set_item(scope, tail, moved);
                 }
             }
@@ -2034,6 +2037,13 @@ impl<'a> Parser<'a> {
         }
         let open = self.cx.open.last_mut().expect("a node is built in an open scope");
         open.runs.push(cell.start);
+    }
+
+    /// What the line being parsed noted as running before `at` runs inside the node built at
+    /// `at`, where that node runs it: an `=`'s place, which it reaches after its right side.
+    pub(crate) fn runs_inside(&mut self, at: usize) {
+        let open = self.cx.open.last_mut().expect("a node is built in an open scope");
+        open.runs.retain(|&s| s >= at);
     }
 
     /// Where the pass runs each line once it has parsed it: the top level, or a held line

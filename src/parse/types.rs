@@ -202,6 +202,10 @@ impl<'a> Parser<'a> {
         bindings: &mut Vec<DyadPtr>,
     ) -> Result<(), ParseError> {
         loop {
+            if relaxed {
+                // A type body's line has run as it was read, its `static` made there.
+                self.cx.open.last_mut().expect("the type body's scope is open").runs.clear();
+            }
             if self.at_close() {
                 break;
             }
@@ -1227,8 +1231,8 @@ impl<'a> Parser<'a> {
     }
 
     /// The node's field types (`run_body::field_types`), once each typed field holds its
-    /// operand at its type and each bracket field the bracket as an argument. `None` while one
-    /// is unknown.
+    /// operand at its type, the field `output_type` the type its run gives, and each bracket
+    /// field the bracket as an argument. `None` while a field is unfilled.
     ///
     /// # Safety
     /// As `resolve_specialization`; `ty` the node's type's origin.
@@ -1240,17 +1244,19 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
         let slots = dyad::value(node) as *mut DyadPtr;
+        let output = self.output_field(ty);
         for (i, &field) in fields.iter().enumerate() {
             let declared = crate::identities::hole::type_in(field);
             let slot = *slots.add(i);
             if slot.is_null() {
                 return Ok(None);
             }
-            if declared == types.type_ {
-                continue;
-            }
-            if declared != types.square_brackets && declared != types.scope {
-                *slots.add(i) = crate::identities::land(self.rt.store, types, slot, declared)?;
+            if output == Some(i) {
+                // The run is built for the type it gives, so that type is needed now.
+                *slots.add(i) = self.type_known_now(slot)?;
+            } else if declared != types.square_brackets && declared != types.scope {
+                let value = self.held_type_or(slot);
+                *slots.add(i) = crate::identities::land(self.rt.store, types, value, declared)?;
             } else if crate::identities::tape::bracket_kind(types, slot).is_some()
                 && dyad::ty(slot) != types.tape.bracket_arg
             {
@@ -1258,6 +1264,6 @@ impl<'a> Parser<'a> {
                     crate::identities::tape::build_bracket_arg(self.rt.store, types, slot);
             }
         }
-        crate::identities::run_body::field_types(types, ty, node)
+        crate::identities::run_body::field_types(types, ty, node, output)
     }
 }

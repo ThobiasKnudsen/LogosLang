@@ -26,7 +26,10 @@ struct Found {
     refused: Option<(usize, String)>,
     /// How many reads of what a call that gives a `dyad` gives the scan has met, at any depth.
     call_reads: usize,
-    /// Where each bracket that holds such a read opens, at any depth.
+    /// How many box reads and calls for a type the scan has met, at any depth.
+    needs: usize,
+    /// Where each bracket that holds such a read, a box read or a call for a type opens, at any
+    /// depth.
     cuts: Vec<usize>,
 }
 
@@ -90,10 +93,10 @@ impl<'a> Parser<'a> {
         Ok(Some(Waits { cut, writes, end }))
     }
 
-    /// Where the line at the cursor reads what a call that gives a `dyad` gives inside a bracket,
-    /// where the pass runs that call as it parses it: each bracket that holds such a read, at any
-    /// depth, before whose parse what stands before it in its line runs ([`Self::cut_at`]). A line
-    /// a scan already covered keeps its cuts. The cursor stays.
+    /// Where the line at the cursor reads what a call that gives a `dyad` gives, or a box, or calls
+    /// for a type, inside a bracket, where the pass does so as it parses it: each bracket that
+    /// holds such a point, at any depth, before whose parse what stands before it in its line runs
+    /// ([`Self::cut_at`]). A line a scan already covered keeps its cuts. The cursor stays.
     pub(super) fn note_cuts(&mut self) {
         if !self.in_pass_order() || self.cx.pos < self.cx.cuts_end {
             return;
@@ -108,7 +111,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Before the bracket at `at` is parsed into `tape`, where the line's scan found it holds a
-    /// read of what a call that gives a `dyad` gives: what stands before it runs, in order (›The
+    /// point where the parse needs a value: what stands before it runs, in order (›The
     /// pass runs only as far as it must, in order, and never twice‹ [[R288]]). Where something
     /// before it cannot run first, nothing does, and the read refuses.
     pub(super) fn cut_at(&mut self, tape: &mut ParsingTape, at: usize) -> Result<(), ParseError> {
@@ -249,13 +252,13 @@ impl<'a> Parser<'a> {
                 }
             }
             if self.is_opener(id) {
-                let calls_before = found.call_reads;
+                let reads_before = found.call_reads + found.needs;
                 let inner = if skipping {
                     self.skip_bracket(id).map(|_| false)?
                 } else {
                     self.scan_level(depth + 1, found)?
                 };
-                if found.call_reads > calls_before {
+                if found.call_reads + found.needs > reads_before {
                     found.cuts.push(at);
                 }
                 let call_operand = callee.take();
@@ -302,6 +305,10 @@ impl<'a> Parser<'a> {
             }
             if id == types.declare_tok {
                 declares.get_or_insert(at);
+            }
+            // SAFETY: a resolved token's identity is a dyad from the store.
+            if prev != Some(types.dot_) && (self.is_box(id) || unsafe { self.returns_type(id) }) {
+                found.needs += 1;
             }
             assigns |= id == types.assign;
             // SAFETY: a resolved token's identity is a dyad from the store.

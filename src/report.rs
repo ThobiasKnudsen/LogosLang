@@ -224,9 +224,8 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::DyadTakesNode => {
             "a `dyad ?` place does not take this value yet: it takes a node, or a value of a type \
-             whose value moves whole (a number, a pointer that owns nothing, a rational, a record \
-             whose body fills no `free`), which it holds in a new node; a field, a cell and a \
-             `mut` parameter take only a node yet"
+             whose value moves whole, which it holds in a new node; a field, a cell and a `mut` \
+             parameter take only a node yet"
                 .into()
         }
         ParseError::WaitingLineHolds(word) => format!(
@@ -242,11 +241,12 @@ pub fn parse_message(e: &ParseError) -> String {
              write the call bare, as `while i < g() (…)`, or give its value a name first"
                 .into()
         }
-        ParseError::DyadCallAfterUnbuilt => {
-            "a call that gives a `dyad` runs while its line is parsed, after what its line runs \
-             before it; here something before it that runs cannot run first yet, such as a part \
-             of a quote or what stands before a branch; give the call's value a name on a line \
-             of its own first, as `v := g(), k(h(), v + 1)`"
+        ParseError::RunsBeforeUnbuilt => {
+            "the parse needs a value here (a box's, a call's for a type, or the node a call that \
+             gives a `dyad` gives), so what its line runs before it runs first; here something \
+             before it that runs cannot run first yet, such as a part of a quote or what stands \
+             before a branch; give the value a name on a line of its own first, as \
+             `v := g(), k(h(), v + 1)`"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {
@@ -278,8 +278,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::BadDyadType => {
             "`dyad (T, v)` cannot make a node of this type yet: it takes a type whose value moves \
-             whole (a number, a bool, a pointer that owns nothing, a rational, a record whose body \
-             fills no `free`)"
+             whole (a number, a bool, a pointer, a rational, a record kept in its bytes)"
                 .into()
         }
         ParseError::TooDeep => {
@@ -396,10 +395,6 @@ pub fn parse_message(e: &ParseError) -> String {
                  the rest of `{holder}`: `move` and `free` cannot take `{path}` out alone; free \
                  `{holder}` whole"
             )
-        }
-        ParseError::RecordMoveNotInSeed => {
-            "moving a plain record is not in the seed yet: its bytes are not copied into a name"
-                .into()
         }
         ParseError::HeldRecordThroughPointerNotInSeed => {
             "writing a record whose type fills `free` through a pointer is not in the seed yet: \

@@ -131,22 +131,21 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         // SAFETY: `place` is a resolved dyad from the store.
         let ty = unsafe { super::read::output_type(types, place) };
         // SAFETY: `ty` is null or a type node from the store.
-        if unsafe { super::this::is_plain(types, ty) } {
-            return Err(ParseError::RecordMoveNotInSeed);
-        }
-        // A name moves whatever it holds, a borrowed node's name excepted: it holds none.
+        let ends = unsafe {
+            meta::is_node_valued(ty, types.fn_type)
+                || super::this::is_plain(types, ty) && !meta::instances_free_of(ty).is_null()
+        };
+        // A name moves whatever it holds, but a name that only borrows a value with an end, a
+        // parameter's included, holds none.
         // A field or cell moves only what it owns: stand-in for #66.
         let name = ended.as_ref().filter(|e| e.is_name());
         // SAFETY: as above, and `name` holds the binding the resolver returned for it.
-        let (owner, node_valued) = unsafe {
-            (
-                name.is_some_and(|e| p.owns_node(e.binding))
-                    || p.is_owning_read(place)
-                    || is_owning_place(types, place),
-                meta::is_node_valued(ty, types.fn_type),
-            )
+        let owner = unsafe {
+            name.is_some_and(|e| p.owns_node(e.binding))
+                || p.is_owning_read(place)
+                || is_owning_place(types, place)
         };
-        if !owner && node_valued && name.is_some() {
+        if !owner && ends && name.is_some() {
             return Err(ParseError::MoveOfBorrow);
         }
         if !owner && name.is_none() {
@@ -537,13 +536,19 @@ pub(crate) unsafe fn own_result(
 }
 
 /// `move` of a place: `[place]` under `move`'s mint for the moved value's type, which it gives,
-/// so the name that takes it learns whether it holds it.
+/// so the name that takes it learns whether it holds it. A plain record moves as its bytes'
+/// address, which the taker copies.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let ty = super::read::output_type(types, place);
-    super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place])
+    let moved = super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place]);
+    if super::this::is_plain(types, ty) {
+        super::by_copy::build_out(store, types, moved)
+    } else {
+        moved
+    }
 }
 
 /// What `free` of the place runs: a name that holds its value (`holder`) its teardown, an
@@ -709,18 +714,33 @@ pub(crate) unsafe fn end_held_args(
 
 /// Ends the value `node` gave, which its holder lets go: `this` is its word, or its bytes'
 /// address for a record kept in them; an owning pointer's block is freed, a `dyad` the node it
-/// made, anything else runs its type's `free` over it, and NULL ends nothing.
+/// made, with the value it holds unless it borrows that value, anything else runs its type's
+/// `free` over it, and NULL ends nothing.
 ///
 /// # Safety
 /// `node` must be a node from the store whose value `this` is.
 unsafe fn end_value(rt: &mut Runtime, node: DyadPtr, this: i64) -> Result<(), RunError> {
+    let types = rt.types();
+    let ty = super::read::output_type(types, node);
+    let given =
+        if dyad::ty(node) == types.hold_ { *(dyad::value(node) as *const DyadPtr) } else { node };
+    if ty == types.dyad_ && super::dyad_place::borrows(types, given) {
+        super::dyad_place::release(rt, this);
+        return Ok(());
+    }
+    end_of_type(rt, ty, this)
+}
+
+/// Ends a value of `ty` given as `this`, as [`end_value`] does for the value a node gave.
+///
+/// # Safety
+/// `this` must be a live value of `ty`, a type whose value ends by more than its bytes, or 0.
+pub(crate) unsafe fn end_of_type(rt: &mut Runtime, ty: DyadPtr, this: i64) -> Result<(), RunError> {
     if this == 0 {
         return Ok(());
     }
-    let ty = super::read::output_type(rt.types(), node);
     if ty == rt.types().dyad_ {
-        super::dyad_place::end(rt, this);
-        Ok(())
+        super::dyad_place::end(rt, this)
     } else if owning_pointee(ty).is_some() {
         heap_free(this as u64 as *mut u8);
         rt.note_free();
@@ -1195,7 +1215,7 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
     }
     let held = take_held(rt, place, ty)?;
     if ty == rt.types().dyad_ {
-        super::dyad_place::end(rt, held);
+        super::dyad_place::end(rt, held)?;
     } else if held != 0 {
         rt.apply_values(meta::instances_free_of(ty), &[held])?;
     }
@@ -1773,6 +1793,66 @@ mod tests {
                 assert_eq!(run(&compiled), (1, 0), "{compiled}");
             }
         }
+    }
+
+    #[test]
+    fn a_dyad_place_ends_the_value_it_holds_with_its_node() {
+        for src in [
+            "mut d := dyad ?, d = alloc 1 of i32 5, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, d = alloc 1 of i32 6, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, d = i64 7, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, free d, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, e := d, 1",
+            "mut d := dyad ?, d = alloc 1 of i32 5, e := move d, 1",
+            "p := alloc 1 of i32 5, mut d := dyad ?, d = p, 1",
+            "mut d := dyad ?, for 0..3 ( d = alloc 1 of i32 5 ), 1",
+            "f := fn (a := dyad ?) -> i32 ( 1 ), f(alloc 1 of i32 5)",
+            "f := fn (a := dyad ?) -> dyad ( a ), x := f(alloc 1 of i32 5), 1",
+            "f := fn () -> dyad ( alloc 1 of i32 5 ), x := f(), 1",
+            "f := fn () -> dyad ( alloc 1 of i32 5 ), free (f()), 1",
+            "f := fn () -> dyad ( p := alloc 1 of i32 5, p ), x := f(), 1",
+        ] {
+            assert_eq!(run(src), (1, 0), "{src}");
+        }
+        // A body that makes no block compiles; the call's argument and result end as they do
+        // interpreted.
+        for src in [
+            "f := fn (a := dyad ?) -> i32 ( 1 ), f.compile(), f(alloc 1 of i32 5)",
+            "f := fn (a := dyad ?) -> dyad ( a ), f.compile(), x := f(alloc 1 of i32 5), 1",
+        ] {
+            assert_eq!(run(src), (1, 0), "{src}");
+        }
+        let read = "g := fn (q := @i32 ?) -> i32 ( q@ ), f := fn () -> dyad ( alloc 1 of i32 5 ), \
+                    g(f())";
+        assert_eq!(run(read), (5, 0), "{read}");
+    }
+
+    #[test]
+    fn a_dyad_parameter_borrows_a_value_a_name_holds() {
+        let f = "f := fn (a := dyad ?) -> i32 ( 1 )";
+        for (src, want) in [
+            (format!("p := alloc 1 of i32 5, {f}, f(p)"), 1),
+            (format!("p := alloc 1 of i32 5, {f}, f.compile(), f(p)"), 1),
+            (
+                format!("p := alloc 1 of i32 5, {f}, g := fn () -> i32 ( f(p) ), g.compile(), g()"),
+                1,
+            ),
+            (format!("p := alloc 1 of i32 5, {f}, for 0..3 ( free (f(p)) ), p@"), 5),
+            (
+                "p := alloc 1 of i32 5, f := fn (a := dyad ?) -> i32 ( a@ ), free (f(p)), p@"
+                    .into(),
+                5,
+            ),
+            (format!("mut d := dyad ?, d = alloc 1 of i32 5, {f}, f(d)"), 1),
+            ("p := alloc 1 of i32 5, f := fn (a := dyad ?) -> dyad ( a ), x := f(p), p@".into(), 5),
+        ] {
+            assert_eq!(run_hosted(&src), (want, 0), "{src}");
+            if src.starts_with("p :=") {
+                assert_eq!(free_log(), vec![5], "{src}");
+            }
+        }
+        let held = format!("{f}, g := fn (a := dyad ?) -> i32 ( f(a) ), g(alloc 1 of i32 5)");
+        assert_eq!(run_hosted(&held), (1, 0), "{held}");
     }
 
     #[test]

@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! What a `dyad ?` place holds: a value that is no node is written into a new node `[T | bytes]`
-//! on the heap, which the place owns and frees when a write replaces it and when its life ends;
-//! a node the store holds is held as it is and never freed; and the one read of the node a
-//! `dyad` value no name holds gives, wherever a value is read from it. ›A `dyad ?` place is
-//! transparent: a placeholder for a new node of any type‹ [[R293]].
+//! on the heap, which the place owns and frees, with the value's own end unless it borrows the
+//! value, when a write replaces it and when its life ends; a node the store holds is held as it is
+//! and never freed; and the one read of the node a `dyad` value no name holds gives, wherever a
+//! value is read from it. ›A `dyad ?` place is transparent: a placeholder for a new node of any
+//! type‹ [[R293]].
 
 use cranelift_codegen::ir::Value;
 
 use super::assign::{handed_type, load, lower_load, lower_take, put, take};
 use super::callable::{self, Callables};
-use super::drop_model::{heap_alloc, heap_free, teardown_of, Teardown};
+use super::drop_model::{end_of_type, heap_alloc, heap_free, teardown_of, Teardown};
 use super::read::{carry_of, place_layout, Carry, Read};
 use super::{meta, numtype, Cx};
 use crate::compile::{CompileError, Lowerer};
@@ -23,14 +24,15 @@ use crate::Core;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DyadPlaceIds {
-    /// `[value, from, op, output_type]`: a new node of type `from` holding `value`; with `from`
-    /// `dyad`, a copy of the node another `dyad ?` place holds, where that place owns it.
+    /// `[value, from, borrows, op, output_type]`: a new node of type `from` holding `value`; with
+    /// `from` `dyad`, a copy of the node another `dyad ?` place holds, where that place owns it;
+    /// `borrows` is non-null where a name holds `value`, which the node then ends without.
     pub new_node: DyadPtr,
     pub new_node_leaf: DyadPtr,
     /// `[value, into, ends, lossy, op, output_type]`: the value of type `into` read out of the
-    /// node `value` gives; `ends` is non-null where `value` is made there, and the read ends that
-    /// node unless its line's end does; `lossy` is non-null where the node lands in `into` as in
-    /// `into lossy (…)`.
+    /// node `value` gives; `ends` is non-null where `value` is made there, and the read moves the
+    /// value out and frees that node unless its line's end ends it; `lossy` is non-null where the
+    /// node lands in `into` as in `into lossy (…)`.
     pub read: DyadPtr,
     pub read_leaf: DyadPtr,
 }
@@ -43,7 +45,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DyadPlaceIds {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["value", "from", "op", "output_type"],
+        &["value", "from", "borrows", "op", "output_type"],
     );
     let new_node = cx.store.alloc_head(cx.type_, record);
     // SAFETY: `new_node` carries the record built above.
@@ -63,9 +65,28 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DyadPlaceIds {
     DyadPlaceIds { new_node, new_node_leaf, read, read_leaf }
 }
 
-/// `value` landed in a `dyad ?` place: any node the store holds as it is; where the place's
-/// holder ends what it takes (`held`), a value whose type moves whole in a new node of that type,
-/// and what another `dyad ?` place holds copied, unless it moves out of where it was made.
+/// Who ends what a `dyad ?` place takes (›Holding is decided at the binding site, parameters
+/// included‹ [[R61]]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Holder {
+    /// A field, a cell, a `mut` parameter, a `static` function's receiver: nothing ends what the
+    /// place takes, so it takes only a node: stand-in for #256.
+    #[default]
+    Nobody,
+    /// A call, for its parameter: it ends a value made or moved there, and borrows a named one,
+    /// freeing the new node it lands in without the value's end (›A filled `static free` is the
+    /// value's teardown; one name owns each value‹ [[R65]]).
+    Call,
+    /// A name, or the caller of a `-> dyad` function: it ends a value made or moved there, and a
+    /// copy of a named one (›`:=` decides nothing about copy or reference; the type's reading rule
+    /// does‹ [[R107]]).
+    Owner,
+}
+
+/// `value` landed in a `dyad ?` place: any node the store holds as it is; where `holder` ends
+/// what the place takes, a value whose type moves whole in a new node of that type, one a name
+/// holds borrowed there by a call or copied by an owner, and what another `dyad ?` place holds
+/// borrowed by a call or copied by an owner, unless it moves out of where it was made.
 ///
 /// # Safety
 /// `value` must be a reduced dyad from the store.
@@ -73,29 +94,31 @@ pub(crate) unsafe fn land(
     store: &mut Store,
     types: &Core,
     value: DyadPtr,
-    held: bool,
+    holder: Holder,
 ) -> Result<DyadPtr, ParseError> {
     if types.is_hole(types.through(value)) {
         return Ok(value);
     }
     let from = super::read::output_type(types, value);
+    let made = teardown_of(types, value) != Teardown::Nothing;
     if from == types.dyad_ {
-        let made = teardown_of(types, value) != Teardown::Nothing;
-        return match (held, made) {
-            (true, true) => Ok(value),
-            (true, false) => Ok(build_new_node(store, types, value, from)),
+        return match (holder, made) {
+            (Holder::Nobody, true) => Err(ParseError::DyadTakesNode),
+            (Holder::Owner, false) => Ok(build_new_node(store, types, value, from)),
             // A place no name holds borrows what another place holds, as a `static` function's
             // receiver does: stand-in for #256.
-            (false, false) => Ok(value),
-            (false, true) => Err(ParseError::DyadTakesNode),
+            _ => Ok(value),
         };
     }
-    if held && is_data(types, from) {
-        // The new node would have to run the value's own end: stand-in for #279.
-        if has_end(types, from) {
-            return Err(ParseError::DyadTakesNode);
-        }
-        return Ok(build_new_node(store, types, value, from));
+    if holder != Holder::Nobody && is_data(types, from) {
+        return Ok(match holder {
+            _ if made || !has_end(types, from) => build_new_node(store, types, value, from),
+            Holder::Owner => {
+                let copy = super::copy::taken(store, types, value);
+                build_new_node(store, types, copy, from)
+            }
+            _ => node_of(store, types, value, from, types.dyad_),
+        });
     }
     if super::assign::box_takes(types, types.dyad_, value) {
         return Ok(value);
@@ -115,12 +138,13 @@ pub(crate) unsafe fn build_of_type(
     ty: DyadPtr,
     value: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // A value with an end of its own would need the new node to run it: stand-in for #279. A
-    // value that is a node itself: stand-in for #295.
-    if ty == types.dyad_ || !is_data(types, ty) || has_end(types, ty) {
+    // A value that is a node itself: stand-in for #295.
+    if ty == types.dyad_ || !is_data(types, ty) {
         return Err(ParseError::BadDyadType);
     }
     let landed = super::land(store, types, value, ty)?;
+    // The node ends what it holds, so it holds a copy of a value it would only borrow.
+    let landed = super::copy::taken(store, types, landed);
     Ok(build_new_node(store, types, landed, ty))
 }
 
@@ -141,7 +165,7 @@ unsafe fn is_data(types: &Core, t: DyadPtr) -> bool {
 ///
 /// # Safety
 /// `t` must be a type whose `place_layout` is a data read.
-unsafe fn has_end(types: &Core, t: DyadPtr) -> bool {
+pub(crate) unsafe fn has_end(types: &Core, t: DyadPtr) -> bool {
     let t = super::type_identity_of(types, t).unwrap_or(t);
     if numtype::is_pointer_type(t) {
         return !meta::destructor_of(t).is_null();
@@ -155,11 +179,39 @@ pub(crate) fn build_new_node(
     value: DyadPtr,
     from: DyadPtr,
 ) -> DyadPtr {
+    node_of(store, types, value, from, std::ptr::null_mut())
+}
+
+/// A new node of `from` holding `value`, which it borrows where `borrows` is non-null.
+fn node_of(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    from: DyadPtr,
+    borrows: DyadPtr,
+) -> DyadPtr {
     store.alloc_words(
         types.dyad_place.new_node,
-        &[value, from, types.dyad_place.new_node_leaf, types.dyad_],
+        &[value, from, borrows, types.dyad_place.new_node_leaf, types.dyad_],
     )
 }
+
+/// Whether the node `value` gives borrows the value it holds, on some path that hands it on:
+/// then the one that holds the node frees it without that value's end. Every such path borrows
+/// alike or ends nothing more than its bytes, since an `if` whose arms make a value in one and
+/// borrow one in another is refused.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn borrows(types: &Core, value: DyadPtr) -> bool {
+    super::drop_model::handed_through(types, value).into_iter().any(|node| {
+        dyad::ty(node) == types.dyad_place.new_node
+            && !(*(dyad::value(node) as *const DyadPtr).add(BORROWS)).is_null()
+    })
+}
+
+/// The slot of a new node's `borrows` mark.
+const BORROWS: usize = 2;
 
 /// The type of the node `value` makes, where that is known where it is written: `dyad (T, v)`'s
 /// `T`, which a `.type` on it reads through to (›A `dyad ?` place is transparent: a placeholder
@@ -230,7 +282,7 @@ unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     (*p, *p.add(1))
 }
 
-/// The read `node`'s two marks: whether it ends the node its value gives, one made there that no
+/// The read `node`'s two marks: whether it frees the node its value gives, one made there that no
 /// line's end ends, and whether that node lands `lossy`.
 ///
 /// # Safety
@@ -287,10 +339,21 @@ fn run_read(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Err(RunError::NullPointer);
         }
         let read = read_held(rt, held, into, lossy);
-        if ends && !rt.planned(value) {
-            end(rt, held as i64);
+        if !ends || rt.planned(value) {
+            return read;
         }
-        read
+        // What took the read holds the value it moves out of the node; a failed read leaves the
+        // value there, which ends with it, the fault staying the error shown.
+        match read {
+            Ok(v) => {
+                release(rt, held as i64);
+                Ok(v)
+            }
+            Err(fault) => {
+                let _ = end(rt, held as i64);
+                Err(fault)
+            }
+        }
     }
 }
 
@@ -350,7 +413,7 @@ fn lower_read(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
                 read = copy;
             }
             if ends {
-                lw.call_seed(compiled_end as *const () as usize, &[held])?;
+                lw.call_seed(compiled_release as *const () as usize, &[held])?;
             }
             Ok(read)
         })
@@ -384,15 +447,43 @@ unsafe fn copy(rt: &mut Runtime, held: DyadPtr) -> Result<i64, RunError> {
     let ty = dyad::ty(held);
     let carry = carry_of(rt.types(), ty).ok_or(RunError::NoWholeRead)?;
     let taken = load(carry, dyad::value(held));
-    make(rt, ty, carry, taken)
+    let node = make(rt, ty, carry, taken)?;
+    // Each part the value owns becomes a copy of its own (›`:=` decides nothing about copy or
+    // reference; the type's reading rule does‹ [[R107]]).
+    if let Err(e) = super::copy::deepen(rt, ty, dyad::value(node as usize as DyadPtr)) {
+        release(rt, node);
+        return Err(e);
+    }
+    Ok(node)
 }
 
-/// The end of what a `dyad ?` place held: the node it made is freed, a node the store holds
+/// The end of what a `dyad ?` place held: the node it made ends the value it holds as the
+/// value's type ends one, an owning pointer's block freed and a record's `free` run over its
+/// bytes, and is freed; a node the store holds is not.
+///
+/// # Safety
+/// `word` must be 0 or the address of a live node a `dyad ?` place held.
+pub(crate) unsafe fn end(rt: &mut Runtime, word: i64) -> Result<(), RunError> {
+    let held = word as usize as DyadPtr;
+    if !made(rt.store, held) {
+        return Ok(());
+    }
+    let ty = dyad::ty(held);
+    let carry = carry_of(rt.types(), ty).filter(|_| has_end(rt.types(), ty));
+    let ended = match carry {
+        Some(carry) => end_of_type(rt, ty, load(carry, dyad::value(held))),
+        None => Ok(()),
+    };
+    release(rt, word);
+    ended
+}
+
+/// The node a `dyad ?` place made is freed, its value moved out whole; a node the store holds
 /// is not.
 ///
 /// # Safety
 /// `word` must be 0 or the address of a live node a `dyad ?` place held.
-pub(crate) unsafe fn end(rt: &mut Runtime, word: i64) {
+pub(crate) unsafe fn release(rt: &mut Runtime, word: i64) {
     let held = word as usize as DyadPtr;
     if made(rt.store, held) {
         heap_free(held as *mut u8);
@@ -440,8 +531,16 @@ unsafe extern "C" fn compiled_copy(ctx: *mut crate::run::Context, held: DyadPtr)
 /// Called only by compiled code, with its context and `word` what a `dyad ?` place held.
 pub(crate) unsafe extern "C" fn compiled_end(ctx: *mut crate::run::Context, word: i64) -> i64 {
     // SAFETY: the caller's contract.
+    crate::run::interpret_step(ctx, |rt| unsafe { end(rt, word).map(|()| 0) })
+}
+
+/// # Safety
+/// Called only by compiled code, with its context and `word` a node a `dyad ?` place made, its
+/// value moved out.
+unsafe extern "C" fn compiled_release(ctx: *mut crate::run::Context, word: i64) -> i64 {
+    // SAFETY: the caller's contract.
     crate::run::interpret_step(ctx, |rt| unsafe {
-        end(rt, word);
+        release(rt, word);
         Ok(0)
     })
 }

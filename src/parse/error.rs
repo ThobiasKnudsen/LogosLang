@@ -231,7 +231,8 @@ pub enum ParseError {
     /// A field of a type without its type: `a := ?`, or `a` alone on its line.
     FieldNeedsType,
     /// A value lands in a `dyad ?` place that it can neither be held as nor moved whole into a
-    /// new node: text, an owning value, a record whose body fills `free`.
+    /// new node: one that is no node where nothing holds the place, or one with an end of its own
+    /// that a parameter would only borrow.
     DyadTakesNode,
     /// A line that waits for the run to parse it holds `:=`, `return`, `free` or `move`, whose
     /// checks the parse makes where they are written; carries the word.
@@ -240,10 +241,10 @@ pub enum ParseError {
     /// holds such a condition before it is parsed does not see it: through a bracket or a
     /// member's call.
     DyadReadEachPass,
-    /// A call that gives a `dyad`, which the pass runs as it parses the operator reading it,
-    /// stands after something its own line runs that the pass cannot run first: a part of a
-    /// quote, what stands before a branch, or a node whose operation is not built yet.
-    DyadCallAfterUnbuilt,
+    /// A point where the parse needs a value (a box read, a call for a type, a `-> dyad` call an
+    /// operator reads) stands after something its own line runs that the pass cannot run first:
+    /// a part of a quote, what stands before a branch, or a node whose operation is not built yet.
+    RunsBeforeUnbuilt,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,
@@ -263,10 +264,8 @@ pub enum ParseError {
     /// A scope's value or a `return` is `&x` of a name a scope it leaves holds: that
     /// scope's end frees the value under the address.
     AddressOfHeld,
-    /// `move b` where `b` borrows the node it names: only the owner can move it.
+    /// `move b` where `b` borrows the value with an end it names: only the owner can move it.
     MoveOfBorrow,
-    /// `move a` of a plain record: its bytes are not copied into a name yet. stand-in for #193
-    RecordMoveNotInSeed,
     /// `p@ = v` of a plain record whose type fills `free`. stand-in for #240
     HeldRecordThroughPointerNotInSeed,
     /// `move p.f` or `move p@` of a field or cell that owns nothing. stand-in for #66

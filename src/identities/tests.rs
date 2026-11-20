@@ -984,14 +984,14 @@ fn a_comparison_written_in_logos_ends_a_bare_condition() {
     assert_eq!(run_script(&format!("{types}x := i32 1, if x.type ≈ scope (10) else (20)")), 20);
 }
 
-/// Where a condition's bool cannot be known before its operator is built: a type standing
-/// right of an infix ranked outside the comparisons takes the `(` after it, as right of `+`.
+/// A type standing right of an infix ranked outside the comparisons takes the `(` after it, as
+/// right of `+`, so `i32 (10)`, no type, lands in the field `rhs := type ?`.
 #[test]
 fn a_type_right_of_an_infix_outside_the_comparisons_takes_its_bracket() {
     let plus_ranked = logos_comparison("type", "+.parse_rank");
     assert_eq!(
         script_parse_err(&format!("{plus_ranked}x := i32 1, if x.type ≈ i32 (10) else (20)")),
-        ParseError::NonBoolCondition
+        ParseError::BadDeclaredType
     );
     assert_eq!(
         run_script(&format!("{plus_ranked}x := i32 1, if (x.type ≈ i32) (10) else (20)")),
@@ -2337,10 +2337,10 @@ fn every_place_that_needs_a_type_now_answers_one_operand_alike() {
 
 #[test]
 fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
-    // An owning value would have two ends.
-    assert_eq!(parse_err("fn () -> dyad ( alloc 1 of i32 5 )"), ParseError::DyadTakesNode);
-    // A value that is no node lands in a new one, as `=` writes it into a `dyad ?` name.
+    // A value that is no node lands in a new one, as `=` writes it into a `dyad ?` name; one with
+    // an end of its own moves into it.
     for src in [
+        "fn () -> dyad ( alloc 1 of i32 5 )",
         "fn () -> dyad ( i32 5 )",
         "fn () -> dyad ( 5 )",
         "fn (q := dyad ?) -> dyad ( q )",
@@ -2350,6 +2350,7 @@ fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
         assert_eq!(parses(src), Ok(()), "{src}");
     }
     assert_eq!(run_script("f := fn () -> dyad ( i32 5 ), x := f(), x.type == i32"), 1);
+    assert_eq!(run_script("f := fn () -> dyad ( alloc 1 of i32 5 ), x := f(), x@"), 5);
     assert_eq!(run_script("f := fn () -> dyad ( i32 ), g := f(), x := g 5, x"), 5);
     assert_eq!(
         run_script("f := fn () -> dyad ( mut d := dyad ?, d = i64, d ),\nt := f(), x := t 9, x"),

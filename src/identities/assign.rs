@@ -47,6 +47,7 @@ pub(crate) fn read_target(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<(crate::parse::Cell, Option<crate::parse::SlotKind>), ParseError> {
     let types = p.types();
+    let at = tape.at(0).map(|c| c.start);
     // A lone `free` constructed on its own would read an operand to its
     // right, so `=` takes the keyword's use as the slot's name unconstructed.
     let target = match tape.at(-1) {
@@ -60,6 +61,11 @@ pub(crate) fn read_target(
             None => return Err(ParseError::MissingOperand),
         },
     };
+    // The `=` gives nothing, so all its line built before it is its place, reached when the `=`
+    // runs, after its right side.
+    if let Some(at) = at {
+        p.runs_inside(at);
+    }
     // SAFETY: `target` holds the reduced dyad of the cell to the left.
     let slot = unsafe { p.slot_of(target.dyad) };
     match slot {
@@ -278,7 +284,7 @@ pub(super) fn build_store(
                 && dyad::ty(lhs_d) == types.binding_
                 && super::drop_model::holds_dyad(types, lhs_d) =>
             {
-                super::land_held(store, types, rhs, place_type)?
+                super::land_held(store, types, rhs, place_type, super::dyad_place::Holder::Owner)?
             }
             None => super::land(store, types, rhs, place_type)?,
         }
