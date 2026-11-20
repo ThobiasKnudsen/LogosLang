@@ -273,7 +273,7 @@ pub enum ParseError {
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,
-    /// A `-> logos` call could not be resolved at parse time: its arguments
+    /// A `-> type` call could not be resolved at parse time: its arguments
     /// were not comptime-known, or it did not yield a type.
     NonComptimeTypeCall,
     /// An `immediate` whose value the graph cannot hold: a record or a run-time

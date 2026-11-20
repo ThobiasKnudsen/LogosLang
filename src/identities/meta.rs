@@ -491,15 +491,16 @@ pub(crate) unsafe fn extent_reader(id: DyadPtr) -> Option<ExtentFn> {
 }
 
 /// `None` where there is no record to read: no head yet (a type still being defined) or a
-/// node that is no type (a type is typed by the self-typed root). Every accessor below
-/// contracts on `Some`, so this is where a node that is not an identity is turned away.
+/// node that is no type. A type is typed by the self-typed root, or by a type whose values are
+/// types, as `logos` is by `language`. Every accessor below contracts on `Some`, so this is
+/// where a node that is not an identity is turned away.
 ///
 /// # Safety
 /// `id` must be a valid dyad from the store.
 pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     let v = dyad::head(id);
     let t = dyad::ty(id);
-    if v.is_null() || dyad::ty(t) != t {
+    if v.is_null() || (dyad::ty(t) != t && kind_of(t) != Some(TYPEREC_TAG)) {
         None
     } else {
         Some(*(v as *const u8))
