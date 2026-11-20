@@ -6594,6 +6594,26 @@ fn a_plain_record_moves_by_its_bytes() {
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
     }
+    // A record field stays where it is: a holder that fills `free` frees it with the rest, and
+    // one that does not owns nothing to move out.
+    let owns_nothing = "a field or cell that owns nothing is not in the seed yet";
+    for (holder, expect) in [
+        ("h := type ( mut b := bag ?, z := i32 ? )", owns_nothing),
+        ("h := type ( mut b := bag ?, static free = ( free b ) )", "fills its own `static free"),
+    ] {
+        for tail in [
+            "mut v := h ?, v.b = bag(1), w := move v.b, 1",
+            "f := fn () -> i32 ( mut v := h ?, v.b = bag(1), w := move v.b, 1 ), f.compile(), f()",
+        ] {
+            let (code, stdout, stderr) = run_line(&format!("{RECORD}, {holder}, {tail}"));
+            assert_eq!((code, stdout.as_str()), (Some(1), ""), "{tail}: stderr: {stderr}");
+            assert!(stderr.contains(expect), "{holder}, {tail}: stderr: {stderr}");
+        }
+    }
+    let tail = "h := type ( p := pt ?, z := i32 ? ), v := h(pt(1, 2), 3), w := move v.p, w.y";
+    let (code, _, stderr) = run_line(&format!("{pt}, {tail}"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains(owns_nothing), "stderr: {stderr}");
     let (echoes, stderr) =
         repl(format!("{RECORD}\na := bag(1)\nb := move a\nprint «mid»\n").as_bytes());
     assert_eq!(echoes, ["mid", "freed 1"], "stderr: {stderr}");
