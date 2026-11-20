@@ -50,7 +50,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
     let left_ = side(cx, "left");
     let right_ = side(cx, "right");
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::COMMA);
+    let record = meta::token_record(cx, meta::prec::COMMA, crate::parse::Assoc::Left, &[]);
     let comma = cx.store.alloc_head(cx.type_, record);
     cx.declare(",", comma);
 

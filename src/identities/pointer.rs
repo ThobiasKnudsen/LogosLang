@@ -32,7 +32,8 @@ pub(super) struct PointerIds {
 
 /// `deref` has no spelling: the parser builds deref nodes from postfix `@`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> PointerIds {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
+    let sides = &["lhs", "rhs"];
+    let record = meta::token_record(cx, meta::prec::TIGHT, crate::parse::Assoc::Left, sides);
     let at = cx.store.alloc_head(cx.type_, record);
     cx.declare("@", at);
     // A completed dyad to the left makes `@` a postfix deref; none makes it the type prefix.

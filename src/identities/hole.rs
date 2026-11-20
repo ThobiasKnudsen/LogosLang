@@ -45,7 +45,7 @@ pub(crate) unsafe fn default_in(node: DyadPtr) -> DyadPtr {
 }
 
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::HOLE);
+    let record = meta::token_record(cx, meta::prec::HOLE, crate::parse::Assoc::Left, &["lhs"]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("?", id);
     cx.metas.insert(id, |p, id, tape| p.construct_hole(id, tape));

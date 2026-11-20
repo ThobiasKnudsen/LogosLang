@@ -84,7 +84,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         op(cx, &["value", "k", "type", "binding", "fill", "owner", "op", "output_type"], run_load);
     cx.lower.insert(load, lower_load);
     let fill = {
-        let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+        let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, &[]);
         cx.store.alloc_head(cx.type_, record)
     };
     let (store, store_leaf) = op(cx, &["value", "k", "v", "type", "owner", "op"], run_store);

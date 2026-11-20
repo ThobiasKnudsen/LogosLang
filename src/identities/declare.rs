@@ -27,7 +27,8 @@ const DECL_DECLARED: usize = 2;
 /// The trie longest-matches `:=` over the binding read `:`.
 /// Returns `(declare identity, leaf, := token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DECLARE);
+    let sides = &["lhs", "rhs"];
+    let record = meta::token_record(cx, meta::prec::DECLARE, crate::parse::Assoc::Left, sides);
     let token = cx.store.alloc_head(cx.type_, record);
     cx.declare(":=", token);
     cx.metas.insert(token, |p, _id, tape| p.construct_decl(tape));
