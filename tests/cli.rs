@@ -1091,6 +1091,100 @@ fn a_static_member_is_read_through_a_node_and_through_the_type() {
 }
 
 #[test]
+fn a_static_function_called_on_no_value_uses_no_field() {
+    let t = "t := type ( n := i64 ?, static k := fn () -> i64 ( 1 ), \
+             static inc := fn (a := i64 ?) -> i64 ( a + 1 ), static j := fn () -> i64 ( k() + 1 ), \
+             static get := fn () -> i64 ( n ), static via := fn () -> i64 ( get() ), \
+             static held_k := fn (a := dyad ?) -> i64 ( a + k() ), \
+             static held_get := fn (a := dyad ?) -> i64 ( a + get() ) )";
+    for (tail, want) in [
+        ("t.k()", "1\n"),
+        ("t.inc(i64 5)", "6\n"),
+        ("t.j()", "2\n"),
+        // A line that waits for the run calls bare as any other line does.
+        ("t.held_k(i64 1)", "2\n"),
+        ("g := fn () -> i64 ( t.held_k(i64 1) ), g.compile(), g()", "2\n"),
+        ("v := t (3), g := fn () -> i64 ( v.held_get(i64 1) ), g.compile(), g()", "4\n"),
+        ("g := fn () -> i64 ( t.k() ), g()", "1\n"),
+        ("g := fn () -> i64 ( t.k() ), g.compile(), g()", "1\n"),
+        ("g := fn (b := i64 ?) -> i64 ( t.inc(b) ), g.compile(), g(i64 5)", "6\n"),
+        // By another name the call has no value either.
+        ("f := t.k, f()", "1\n"),
+        ("f := t.inc, g := fn () -> i64 ( f(i64 1) ), g.compile(), g()", "2\n"),
+        // A function that reads a field through a bare call reads it through a value as well.
+        ("v := t (3), v.via() + v.j()", "5\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{t}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+    // So is a bare call in a `static` member's value, made at the definition.
+    let (code, stdout, stderr) = run_line(
+        "t := type ( n := i64 ?, static k := fn () -> i64 ( 1 ), static c := k() + 1 ), t.c",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "2\n"), "stderr: {stderr}");
+    // One that reads or writes a field, itself or through a bare call, has no value to use. The
+    // refusal names the function as the call spells it, and shows the call through a value only
+    // where that is the member's own name.
+    let set = "s := type ( mut n := i64 ?, static set := fn () -> i64 ( n = 2, 0 ) )";
+    for (src, name, through) in [
+        (format!("{t}, t.get()"), "get", "`v.get(…)`"),
+        (format!("{t}, t.via()"), "via", "`v.via(…)`"),
+        (format!("{t}, t.held_get(i64 1)"), "held_get", "`v.held_get(…)`"),
+        (
+            format!("{t}, g := fn () -> i64 ( t.held_get(i64 1) ), g.compile(), g()"),
+            "held_get",
+            "`v.held_get(…)`",
+        ),
+        (format!("{t}, g := fn () -> i64 ( t.get() ), g()"), "get", "`v.get(…)`"),
+        (format!("{set}, s.set()"), "set", "`v.set(…)`"),
+        (format!("{t}, f := t.get, f()"), "f", "by the member that holds it"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        let expect =
+            format!("`{name}` works on a value of its type: call it through one, {through},");
+        assert!(stderr.contains(&expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_static_function_is_called_on_the_record_behind_a_pointer() {
+    let t = "u := type ( a := i64 ?, static s := fn () -> i64 ( a ) ), \
+             t := type ( mut n := i64 ?, inner := u ?, static k := fn () -> i64 ( 1 ), \
+             static get := fn () -> i64 ( n ), static bump := fn () -> i64 ( n = n + 10, n ) ), \
+             p := alloc 2 of t (i64 3, u (i64 7))";
+    for (tail, want) in [
+        ("p@.k()", "1\n"),
+        ("p@.get()", "3\n"),
+        ("(p + 1)@.get()", "3\n"),
+        ("p@.inner.s()", "7\n"),
+        ("g := fn (q := @t ?) -> i64 ( q@.get() + q@.inner.s() ), g.compile(), g(p)", "10\n"),
+        // The write reaches the record behind the pointer.
+        ("p@.bump(), p@.n", "13\n"),
+        ("g := fn (q := @t ?) -> i64 ( q@.bump(), q@.n ), g.compile(), g(p)", "13\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{t}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_static_member_holding_any_function_is_called_through_a_member_read() {
+    let t = "g := fn (a := i64 ?) -> i64 ( a * 2 ), t := type ( n := i64 ?, static h := g ), \
+             v := t (3)";
+    for (tail, want) in [
+        ("t.h(i64 4)", "8\n"),
+        ("v.h(i64 5)", "10\n"),
+        ("p := alloc 1 of t (i64 1), p@.h(i64 6)", "12\n"),
+        ("k := fn () -> i64 ( t.h(i64 4) ), k.compile(), k()", "8\n"),
+        ("k := fn () -> i64 ( w := t (1), w.h(i64 6) ), k.compile(), k()", "12\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{t}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_value_runs_its_type_s_parse_as_tape_0() {
     // The type builds the value and hands the cell on; the same parse then
     // reads the value as `tape[0]` and consumes the cell to its right.
@@ -7261,13 +7355,21 @@ fn a_bare_static_call_works_on_the_value_the_body_is_about() {
         let (code, stdout, stderr) = run_line(&format!("{inc}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
     }
-    // A parse has no value to hand one that reads a field; outside the type it is no name.
+    // A parse has no value to hand one that reads a field, itself or through a bare call;
+    // outside the type it is no name.
     for (src, expect) in [
         (
             "q := type ( n := u64 ?, static get := fn () -> u64 ( n ), static parse_rank = 60, \
              static parse = ( tape[0].type = q, tape[0].n = get(), tape.is_constructed[0] = true ) ), q"
                 .to_string(),
-            "reads no field",
+            "`get` works on a value of its type: call it through one, `v.get(…)`,",
+        ),
+        (
+            "q := type ( n := u64 ?, static get := fn () -> u64 ( n ), \
+             static via := fn () -> u64 ( get() ), static parse_rank = 60, \
+             static parse = ( tape[0].type = q, tape[0].n = via(), tape.is_constructed[0] = true ) ), q"
+                .to_string(),
+            "`via` works on a value of its type: call it through one, `v.via(…)`,",
         ),
         (format!("{COUNTED}, twice()"), "`twice` is not in scope"),
     ] {

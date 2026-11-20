@@ -18,6 +18,19 @@ struct Member {
     call: Option<Vec<DyadPtr>>,
 }
 
+/// What a `static` function called after a member read works on.
+#[derive(Clone, Copy)]
+enum Receiver {
+    /// The node the read reached, handed on as it stands.
+    Node(DyadPtr),
+    /// A value read through its type: a record laid out in bytes, in a frame or behind a
+    /// pointer, by the address of its bytes, any other value by a `dyad` view, as a `dyad ?`
+    /// parameter takes a node.
+    Value(DyadPtr),
+    /// No value: the call is through the type itself.
+    Nothing,
+}
+
 /// Whether what `p` gives is read whole, a scalar, a pointer, or bytes a record or a run-time
 /// rational keeps: an address of it can be handed out.
 ///
@@ -106,49 +119,117 @@ impl<'a> Parser<'a> {
     }
 
     /// A bare call of a `static` function that works on a value takes the value the calling
-    /// body is about (DESIGN ›There is no `this`‹): a `run`'s node, a `free`'s or `static`
-    /// function's own, or in a parse none, so only one that reads no field of its value is
-    /// called bare there.
+    /// body is about (›A bare call of a `static` function works on the value the calling body is
+    /// about‹ [[R238]]): a `run`'s node, a `free`'s or `static` function's own; anywhere else, a
+    /// parse included, the call has none ([`Parser::on_no_value`]). `cell` is the call's callee
+    /// as written.
     ///
     /// # Safety
     /// `callee` must be a reduced dyad from the store.
     pub(super) unsafe fn with_receiver(
         &mut self,
         callee: DyadPtr,
+        cell: &Cell,
         args: Vec<DyadPtr>,
     ) -> Result<Vec<DyadPtr>, ParseError> {
         let f = self.types.through(callee);
         if !self.takes_this(f) {
             return Ok(args);
         }
-        let name = || {
-            let spelled = if dyad::ty(callee) == self.types.binding_ {
-                Binding::spelling(callee)
-            } else {
-                String::new()
-            };
-            Box::new(spelled)
-        };
-        let bits = fn_receiver(self.types, f);
-        let writes = bits & RECEIVER_WRITES != 0;
         let receiver = match self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
-            Some(def) => {
-                if def.in_parse && bits & RECEIVER_READS != 0 {
-                    return Err(ParseError::StaticFnNeedsValue(name()));
-                }
-                def.wrote_receiver |= writes && !def.in_parse;
-                def.this_param
+            Some(def) if !def.in_parse => {
+                def.note_receiver_use(fn_receiver(self.types, f));
+                Some(def.this_param)
             }
-            None => match &self.cx.run_fields {
-                Some((ty, places)) => {
-                    crate::identities::this::build_pack(self.rt.store, self.types, *ty, places)
-                }
-                None => return Err(ParseError::StaticFnNeedsValue(name())),
-            },
+            Some(_) => None,
+            None => self.cx.run_fields.as_ref().map(|(ty, places)| {
+                crate::identities::this::build_pack(self.rt.store, self.types, *ty, places)
+            }),
+        };
+        let receiver = match receiver {
+            Some(value) => value,
+            None => self.on_no_value(f, cell.spelling(), self.is_member_name(cell))?,
         };
         let mut with = vec![receiver];
         with.extend(args);
         Ok(with)
+    }
+
+    /// What a call of the `static` function `f` works on where it has no value: through the type,
+    /// `t.k()`, by another name, `f := t.k, f()`, or bare from a parse (›A bare call of a `static`
+    /// function works on the value the calling body is about‹ [[R238]]). Only a function that
+    /// uses no field of its value is called so. `name` is the function as the call spells it,
+    /// `member` whether that is the name of the member holding it.
+    ///
+    /// # Safety
+    /// `f` must be a function node from the store.
+    unsafe fn on_no_value(
+        &mut self,
+        f: DyadPtr,
+        name: &str,
+        member: bool,
+    ) -> Result<DyadPtr, ParseError> {
+        if fn_receiver(self.types, f) != 0 {
+            let name = Box::new(name.to_string());
+            return Err(ParseError::StaticFnNeedsValue { name, member });
+        }
+        Ok(self.rt.store.alloc_head(self.types.dyad_, std::ptr::null_mut()))
+    }
+
+    /// The callee as written names a `static` member of a type being defined, so `v.name(…)`
+    /// reaches what it names; an alias, `f := t.k`, does not.
+    fn is_member_name(&self, cell: &Cell) -> bool {
+        let binding = cell.binding(self.types);
+        if binding.is_null() {
+            return false;
+        }
+        // SAFETY: a non-null cell binding is a binding dyad from the store.
+        let scope = unsafe { Binding::read(binding) }.scope;
+        self.cx.definitions.iter().any(|d| d.scope == scope)
+    }
+
+    /// `x.m(…)`, the call after a member read: what `m` holds, applied to the arguments. A
+    /// `static` function that works on a value takes the one the read reached first, meeting the
+    /// gates a write through `left` meets, or with none passes [`Parser::on_no_value`]; any other
+    /// function takes the arguments alone. `None` when `m` holds no function.
+    ///
+    /// # Safety
+    /// `member` and the arguments must be reduced dyads from the store.
+    unsafe fn call_member(
+        &mut self,
+        member: DyadPtr,
+        name: &str,
+        left: &Cell,
+        receiver: Receiver,
+        args: Vec<DyadPtr>,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        let types = self.types;
+        let f = types.through(member);
+        if f.is_null() || dyad::ty(f) != types.fn_type {
+            return Ok(None);
+        }
+        let mut with = Vec::with_capacity(args.len() + 1);
+        if self.takes_this(f) {
+            with.push(match receiver {
+                Receiver::Nothing => self.on_no_value(f, name, true)?,
+                Receiver::Node(node) => {
+                    self.check_receiver_write(left, member)?;
+                    node
+                }
+                Receiver::Value(value) => {
+                    self.check_receiver_write(left, member)?;
+                    if types.is_storage(value) || dyad::ty(value) == types.deref_ {
+                        crate::identities::by_copy::build_out(self.rt.store, types, value)
+                    } else {
+                        self.rt.store.alloc_head(types.dyad_, value.cast())
+                    }
+                }
+            });
+        }
+        with.extend(args);
+        // The call's result is no member: the path was the member's own.
+        self.cx.member_path.clear();
+        self.build_call(member, &with).map(Some)
     }
 
     /// The slot of the node being built that the field `f` names: `f`
@@ -362,13 +443,8 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         if let Some(args) = call {
-            if self.takes_this(member) {
-                self.check_receiver_write(&left, member)?;
-                let mut with_this = vec![lhs];
-                with_this.extend(args);
-                // The call's result is no member: the path was the member's own.
-                self.cx.member_path.clear();
-                return self.build_call(member, &with_this).map(|n| Some((n, 1)));
+            if let Some(call) = self.call_member(member, name, &left, Receiver::Node(lhs), args)? {
+                return Ok(Some((call, 1)));
             }
         }
         Ok(Some((member, 0)))
@@ -449,12 +525,11 @@ impl<'a> Parser<'a> {
                 }
                 let node = self.cx.definitions.last().expect("a parse body is open").this_param;
                 let member = self.this_field(name, nstart)?;
-                // `tape[0].f(…)`, a `static` function: called on that node.
                 if let Some(args) = call {
-                    if self.takes_this(member) {
-                        let mut with_node = vec![node];
-                        with_node.extend(args);
-                        return self.build_call(member, &with_node).map(|n| (n, 1));
+                    let called =
+                        self.call_member(member, name, &left, Receiver::Node(node), args)?;
+                    if let Some(call) = called {
+                        return Ok((call, 1));
                     }
                 }
                 return Ok((member, 0));
@@ -544,6 +619,14 @@ impl<'a> Parser<'a> {
                 return Ok((node, 0));
             }
             if crate::identities::is_type_value(self.types, lhs) {
+                if let Some(args) = call {
+                    if let Some((member, _)) = self.static_member_of(lhs, name) {
+                        let none = Receiver::Nothing;
+                        if let Some(call) = self.call_member(member, name, &left, none, args)? {
+                            return Ok((call, 1));
+                        }
+                    }
+                }
                 let n = self.logos_member(lhs, name, index)?;
                 return Ok((n, usize::from(name == "roles")));
             }
@@ -629,7 +712,7 @@ impl<'a> Parser<'a> {
                 Ok(found) => found,
                 Err(e) => {
                     let name = &self.cx.source[nstart..nstart + nlen];
-                    return self.static_member_read(pointee, name).map(|n| (n, 0)).ok_or(e);
+                    return self.static_member_access(lhs, &left, pointee, name, call)?.ok_or(e);
                 }
             };
             let types = self.types;
@@ -1535,8 +1618,8 @@ impl<'a> Parser<'a> {
     }
 
     /// `lhs.name` read as a `static` member of `logos`, the type `lhs` is read through: the
-    /// member, or, called, a `static` function that takes `lhs` as its receiver. `None` when
-    /// `logos` has no such member.
+    /// member, or, called, what it holds applied with `lhs` as the value. `None` when `logos` has
+    /// no such member.
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store and `logos` a type identity node.
@@ -1552,20 +1635,8 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         if let Some(args) = call {
-            if self.takes_this(member) {
-                self.check_receiver_write(left, member)?;
-                // A record laid out in bytes is handed on as the address of its bytes,
-                // any other value by a `dyad` view, as a `dyad ?` parameter takes a node.
-                let view = if self.types.is_storage(lhs) {
-                    let types = self.types;
-                    crate::identities::by_copy::build_out(self.rt.store, types, lhs)
-                } else {
-                    self.rt.store.alloc_head(self.types.dyad_, lhs.cast())
-                };
-                let mut with_this = vec![view];
-                with_this.extend(args);
-                self.cx.member_path.clear();
-                return self.build_call(member, &with_this).map(|n| Some((n, 1)));
+            if let Some(call) = self.call_member(member, name, left, Receiver::Value(lhs), args)? {
+                return Ok(Some((call, 1)));
             }
         }
         Ok(Some((member, 0)))

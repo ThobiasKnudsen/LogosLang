@@ -34,8 +34,9 @@ pub enum ParseError {
     StampOutsideParse,
     /// `tape[0].type = T` for a `T` that gives no type.
     StampNeedsType,
-    /// A `static` function that works on a value, called bare where no value is at hand.
-    StaticFnNeedsValue(Box<String>),
+    /// A `static` function that works on a value, called where no value is at hand: `name` as
+    /// the call spells it, `member` when that is the name of the member holding it.
+    StaticFnNeedsValue { name: Box<String>, member: bool },
     /// A slot word left of `=` where no type is being defined.
     SlotOutsideDefinition,
     /// `t.x` where `x` is a place per node, not stored with the type.

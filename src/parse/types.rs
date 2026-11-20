@@ -53,6 +53,19 @@ pub(super) struct OpenType {
     pub(super) self_type: DyadPtr,
 }
 
+impl OpenType {
+    /// The `static`, `run` or `free` body being read uses its value as [`RECEIVER_READS`] and
+    /// [`RECEIVER_WRITES`] in `bits` say: by a bare field, or by a bare call of a function that
+    /// uses its own (›A bare call of a `static` function works on the value the calling body is
+    /// about‹ [[R238]]). A parse's node is no value it uses.
+    pub(super) fn note_receiver_use(&mut self, bits: u64) {
+        if !self.in_parse {
+            self.read_receiver |= bits & RECEIVER_READS != 0;
+            self.wrote_receiver |= bits & RECEIVER_WRITES != 0;
+        }
+    }
+}
+
 /// The slot words a type body declares into its own scope, in `SlotKind`
 /// order (DESIGN ›A type body describes one level‹). `free` is not here: it is
 /// the statement keyword, which `=` takes as the slot's name.
