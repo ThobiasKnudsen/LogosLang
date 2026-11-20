@@ -1,0 +1,3 @@
+# A file that ends a `pub` name it imported: the name is dead for every importer of
+# owning_pub.logos from here on.
+import ./owning_pub.logos, free p

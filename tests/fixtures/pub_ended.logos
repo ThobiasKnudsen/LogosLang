@@ -1,0 +1,7 @@
+# `pub` names the file ends: an importer finds each dead, as the file does, and the
+# `pub c` declared again after its `free` alive.
+pub a := alloc 1 of i32 5, b := move a,
+pub c := alloc 1 of i32 6, free c,
+pub c := i32 7,
+r := type ( x := i32 ?, y := i32 ? ),
+pub q := r (5, 6), free q.x
