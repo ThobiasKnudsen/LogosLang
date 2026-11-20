@@ -299,9 +299,16 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::StampNeedsType => {
             "`tape[0].type = T` takes a type: a type's name, or a call that gives one".into()
         }
-        ParseError::StaticFnNeedsValue(name) => format!(
-            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `free` or `static` functions; through the type, or bare from a parse, it has no value, so only a function that uses no field is called there"
-        ),
+        ParseError::StaticFnNeedsValue { name, member } => {
+            let through = if *member {
+                format!("`v.{name}(…)`")
+            } else {
+                "by the member that holds it".to_string()
+            };
+            format!(
+                "`{name}` works on a value of its type: call it through one, {through}, or bare from that type's `run`, `free` or `static` functions; any other call has no value, so it takes only a function that uses no field"
+            )
+        }
         ParseError::FlagTakesBool => {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
         }

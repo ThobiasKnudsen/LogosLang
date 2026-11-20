@@ -799,9 +799,9 @@ impl<'a> Parser<'a> {
         {
             // SAFETY: `scope` is the bracket's node from the store.
             let args = unsafe { self.args_of(scope) };
-            let name = tape.at(0).map_or("", Cell::spelling);
+            let cell = *tape.at(0).expect("the callee's own cell");
             // SAFETY: `id` is the resolved callee, a reduced dyad.
-            let args = unsafe { self.with_receiver(id, name, args) }?;
+            let args = unsafe { self.with_receiver(id, &cell, args) }?;
             // SAFETY: `id` is the resolved callee and `args` reduced dyads.
             let node = unsafe { self.build_call(id, &args) }?;
             tape.remove(1);
