@@ -144,6 +144,22 @@ pub(crate) unsafe fn exprs_of<'a>(node: DyadPtr) -> Option<&'a [DyadPtr]> {
     }
 }
 
+/// The line a sequence's `lines` give their value from: the last that is no comment; `None` for
+/// none, null `lines` among them.
+///
+/// # Safety
+/// `lines` must be null or an `array` node of reduced dyads from the store.
+pub(crate) unsafe fn last_line(lines: DyadPtr) -> Option<DyadPtr> {
+    if lines.is_null() {
+        return None;
+    }
+    array::items(lines)
+        .iter()
+        .rev()
+        .find(|&&line| !super::numtype::is_comment_type(dyad::ty(line)))
+        .copied()
+}
+
 /// A closed sequence with `node`'s op and parent running `exprs` instead.
 ///
 /// # Safety

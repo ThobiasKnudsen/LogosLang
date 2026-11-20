@@ -2911,6 +2911,35 @@ fn repl(input: &[u8]) -> (Vec<String>, String) {
 }
 
 #[test]
+fn the_repl_echoes_a_line_as_the_command_line_does() {
+    // Whether a last value shows is one rule; what a type definition or a `fn` shows is
+    // ›A value is shown as the text its type's `print` slot gives back‹ [[R305]], so it is
+    // only compared here.
+    for (program, shown) in [
+        ("x := i32 5, x.type", 1),
+        ("i32", 1),
+        ("t := i32, t", 1),
+        ("mut a := type ?, a = i32, a", 1),
+        ("type ( a := i32 ? )", 1),
+        ("f := fn () -> i32 ( 1 ), f", 1),
+        ("x := i32 5", 0),
+        ("t := i32", 0),
+        ("f := fn () -> i32 ( 1 )", 0),
+        ("p := type (v := i32 ?)", 0),
+    ] {
+        let (code, stdout, stderr) = run_line(program);
+        assert_eq!(code, Some(0), "{program}: stderr: {stderr}");
+        let printed: Vec<&str> = stdout.lines().collect();
+        assert_eq!(printed.len(), shown, "{program}: {stdout}");
+        let (echoes, stderr) = repl(format!("{program}\n").as_bytes());
+        assert_eq!(echoes, printed, "{program}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl(b"x := i32 5\nx.type\ni32\nt := i32\nt\n");
+    assert_eq!(echoes, ["i32", "i32", "i32"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn the_repl_rolls_back_a_failed_lines_declarations() {
     let (echoes, stderr) =
         repl(b"b := )\nb := 5\nf := fn (v := i32 ?) -> i32 ( v )\ng := f(1,2)\ng := f(3)\ng + b\n");
@@ -3106,7 +3135,7 @@ fn an_else_if_chain_selects_the_matching_arm() {
 fn the_repl_binds_a_name_to_a_type() {
     let (echoes, stderr) =
         repl(b"t := i32\nx := t 7\nt(9)\nf := fn (v := t ?) -> t ( v + v )\nt\nf(x)\n");
-    assert_eq!(echoes, ["9", "14"], "stderr: {stderr}");
+    assert_eq!(echoes, ["9", "i32", "14"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
@@ -3827,6 +3856,58 @@ fn the_dyad_box_says_what_it_holds() {
 
     let (echoes, stderr) = repl(b"mut a := dyad ?\na = 5\na\na = i64 7\na.type == i64\na\n");
     assert_eq!(echoes, ["5", "true", "7"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_result_type_is_read_as_a_declaration_reads_its_type() {
+    for (src, expect) in [
+        ("mut t := type ?, t = i32, mk := fn () -> t ( 7 ), m := mk(), m.type", "i32\n"),
+        ("mut t := type ?, t = i32, mk := fn () -> t ( 7 ), mk.compile(), m := mk(), m + 1", "8\n"),
+        ("mut d := dyad ?, d = i32, mk := fn () -> d ( 7 ), mk() + 1", "8\n"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), expect, "{src}");
+    }
+
+    let (echoes, stderr) = repl(
+        b"mut t := type ?\nt = i32\nmk := fn () -> t ( 7 )\nm := mk()\nm.type == i32\nm + 1\n",
+    );
+    assert_eq!(echoes, ["true", "8"], "stderr: {stderr}");
+
+    for src in ["mk := fn () -> 5 ( 7 ), mk()", "mk := fn () -> 5 ( 7 ), mk.compile(), mk()"] {
+        let out = logos().arg(src).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{src}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("1:16: error: the declared or assigned type must be"),
+            "{src}: {stderr}"
+        );
+    }
+    let (echoes, stderr) = repl(b"mk2 := fn () -> 5 ( 7 )\nmk2()\n");
+    assert!(echoes.is_empty(), "echoes: {echoes:?}");
+    assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `mk2`"), "stderr: {stderr}");
+
+    let out = logos().args(["import", "tests/fixtures/hole_result_type.logos"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr
+            .contains("hole_result_type.logos:1:16: error: the declared or assigned type must be"),
+        "stderr: {stderr}"
+    );
+
+    let out = logos()
+        .arg("o := fn () -> i32 ( mut t := type ?, t = i32, mk := fn () -> t ( 7 ), m := mk(), m + 1 ), o()")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("1:62: error: which type this is is known only when"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -4890,8 +4971,9 @@ fn a_name_of_the_text_type_stands_as_the_type() {
     let (code, _, stderr) = run_line(&format!("{t}, (t 1 + 2»), 7"));
     assert_eq!(code, Some(1), "{stderr}");
     assert!(stderr.contains("1:24: error: unknown name `»`"), "{stderr}");
+    let (_, shown, _) = run_line(&format!("{t}, t"));
     let (echoes, stderr) = repl(format!("{t}\n7\nt\n8\n").as_bytes());
-    assert_eq!(echoes, ["7", "8"], "stderr: {stderr}");
+    assert_eq!(echoes, ["7", shown.trim_end(), "8"], "stderr: {stderr}");
 }
 
 /// ›Text literals are plain values; `#` is the one comment constructor‹ [[R160]]: a text node and

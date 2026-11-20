@@ -39,6 +39,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         &["condition", "then", "else", "then_ends", "else_ends", "condition_ends", "op"],
     );
     let if_ = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `if_` carries the record built above, which names both arms.
+    unsafe { meta::install_hands_on(if_, &["then", "else"], &[]) };
     cx.declare("if", if_);
     cx.metas.insert(if_, |p, id, tape| {
         let node = p.parse_if(id)?;
