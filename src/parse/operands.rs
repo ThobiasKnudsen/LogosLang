@@ -297,6 +297,44 @@ impl<'a> Parser<'a> {
         Ok(self.settled_type(d))
     }
 
+    /// `value` where `=` lands it: a box the pass has filled with a type stands for that type, as
+    /// `?` reads it (›A `type ?` place is a box, written any number of times‹ [[R291]]); a box
+    /// holding any other node was read through where it was lexed, and any other value stands
+    /// as it is.
+    pub(crate) fn held_type_or(&self, value: DyadPtr) -> DyadPtr {
+        // SAFETY: `value` is a reduced dyad from the store.
+        let place = unsafe { self.types.through(value) };
+        let held = self.settled_type(place);
+        // SAFETY: `held` is `place` or the node the place holds now.
+        match unsafe { crate::identities::type_identity_of(self.types, held) } {
+            Some(t) if held != place => t,
+            _ => value,
+        }
+    }
+
+    /// The type identity `operand` names, where a type is needed now: read as `?` reads the type
+    /// to its left, so a box the pass has filled, `type` or `dyad`, names what it holds; a place
+    /// or call whose type is known only at run is the checked error; anything else lands in `type`
+    /// as `=` lands a value in a `type ?` place, so a value that is no type is refused
+    /// (›A `type ?` place is a box, written any number of times‹ [[R291]]).
+    pub(crate) fn type_known_now(&mut self, operand: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        // SAFETY: `operand` is a reduced dyad from the store.
+        let read = self.settled_type(unsafe { types.through(operand) });
+        // A name with no node yet names no type.
+        if read.is_null() {
+            return Err(ParseError::BadDeclaredType);
+        }
+        // SAFETY: `read` is a reduced dyad from the store, and `type` a type node.
+        unsafe {
+            if crate::identities::dyad_place::known_only_at_run(types, read) {
+                return Err(ParseError::TypeKnownOnlyAtRun);
+            }
+            let landed = crate::identities::land(self.rt.store, types, read, types.type_)?;
+            crate::identities::type_identity_of(types, landed).ok_or(ParseError::TypeKnownOnlyAtRun)
+        }
+    }
+
     /// A tight extender's left context (`.`'s value, `@`'s pointer, `(`'s
     /// callee); `None` when the construct opens fresh.
     pub(crate) fn left_operand(

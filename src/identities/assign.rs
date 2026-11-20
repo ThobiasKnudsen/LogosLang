@@ -94,6 +94,7 @@ fn construct(
         return Ok(crate::parse::Constructed::Placed);
     }
     let value = p.parse_expression()?;
+    let value = p.held_type_or(value);
     // SAFETY: `target` is the reduced dyad of the cell to the left.
     let into_cell = unsafe { dyad::ty(target) } == types.tape.cell_type;
     let value = if into_cell {
