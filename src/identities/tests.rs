@@ -3085,7 +3085,7 @@ fn a_literal_into_a_pointer_parameter_is_rejected() {
     assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
 }
 
-/// Declare `point := logos (x := i32 ?, y := i32 ?)` in the root scope.
+/// Declare `point := type (mut x := i32 ?, y := i32 ?)` in the root scope.
 fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
