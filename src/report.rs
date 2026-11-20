@@ -72,13 +72,49 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::ArmsDiffer => {
-            "the arms of this `if` give different types: convert them to one type, \
-             as in `if c (i64 (i32 1)) else (i64 2)`"
+            "the arms of this `if`, or the lines that give this block its value, give different \
+             types: convert them to one type, as in `if c (i64 (i32 1)) else (i64 2)`"
                 .into()
         }
         ParseError::ArmsMakeAndBorrow => {
-            "make a value in every arm, or borrow in every arm: one arm of this `if` makes its \
-             value and another borrows one, so who owns it would be known only when it runs"
+            "make a value in every arm, or borrow in every arm: one arm of this `if`, or one line \
+             that gives this block its value, makes its value and another borrows one, so who \
+             owns it would be known only when it runs"
+                .into()
+        }
+        ParseError::LineAfterValue => {
+            "this line never runs: the line before it always gives its scope a value, which ends \
+             the scope; a value nobody wants is thrown away with `free`, as in `free (f())`"
+                .into()
+        }
+        ParseError::LineAfterLeave => {
+            "this line never runs: the line before it always leaves, with a `return` or an \
+             `error`"
+                .into()
+        }
+        ParseError::VoidBodyGives => {
+            "this line gives a value, and a `-> void` function gives none; a value nobody wants \
+             is thrown away with `free`, as in `free (f())`"
+                .into()
+        }
+        ParseError::KeptScopeGives => {
+            "this line gives a value, and a `{ … }` gives the scope itself; a value nobody wants \
+             is thrown away with `free`, as in `free (f())`"
+                .into()
+        }
+        ParseError::HeldGivenUnmoved => {
+            "this block gives a name it holds, and its end frees that name: give it with `move`, \
+             as in `if c (move a)`"
+                .into()
+        }
+        ParseError::HeldTakenOnTheWay => {
+            "a name a block holds moves out of it as the block's value here, and this line takes \
+             the value on the way: name it first, as in `y := if c (a) else (b)`, or write `move`"
+                .into()
+        }
+        ParseError::EndsWithoutValue => {
+            "this can end without giving a value, and a value is needed here: an `if` without \
+             `else` or a loop gives one only on some paths"
                 .into()
         }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
@@ -135,9 +171,18 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::HashmapShape => {
             "`hashmap` is followed by `K -> V`: a key type, `->`, a value type, each `type`, \
-             `dyad` or an integer type, and the value type also a map, `hashmap K2 -> V2`"
+             `dyad`, `string` or an integer type, and the value type also a map, `hashmap K2 -> V2`"
                 .into()
         }
+        ParseError::ScopeKeysAreText => {
+            "a `hashmap` that reads `{ … }` keys each entry by its name's spelling, so its key type \
+             is `string`: `hashmap string -> V { … }`"
+                .into()
+        }
+        ParseError::PatternIsNoKey(pattern) => format!(
+            "`{pattern}` is a pattern, which stands for many spellings, so it is no key of the \
+             `hashmap` that reads this `{{ … }}`"
+        ),
         ParseError::InsertTakesTape => {
             "`insert` splices a tape: give it a `lex «…»` fragment or a parsing_tape value".into()
         }
@@ -199,9 +244,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::DyadTakesNode => {
             "a `dyad ?` place does not take this value yet: it takes a node, or a value of a type \
              whose value moves whole, which it holds in a new node; a field, a cell and a `mut` \
-             parameter take only a node yet, and a parameter takes a value with an end of its own \
-             (an owning pointer, a record whose body fills `free`) only made or moved there, not \
-             one a name holds"
+             parameter take only a node yet"
                 .into()
         }
         ParseError::WaitingLineHolds(word) => format!(
@@ -218,9 +261,10 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::RunsBeforeUnbuilt => {
-            "the parse needs a value here (a box's, a call's for a type, or the node a call that \
-             gives a `dyad` gives), so what its line runs before it runs first; here something \
-             before it that runs cannot run first yet, such as a part of a quote or what stands \
+            "the parse needs a value here (a box's, a call's for a type, the node a call that gives \
+             a `dyad` gives, or what an import runs), so what its line runs before it runs first; \
+             here something before it that runs cannot run first yet, such as a part of a quote \
+             or what stands \
              before a branch; give the value a name on a line of its own first, as \
              `v := g(), k(h(), v + 1)`"
                 .into()
@@ -419,6 +463,11 @@ pub fn parse_message(e: &ParseError) -> String {
                  `static free = (…)`, which this type body does not fill"
             )
         }
+        ParseError::KeptEntry(name) => format!(
+            "`{name}` cannot be kept in this `{{ … }}`'s value: the seed keeps a name whose value \
+             moves whole into a field and has no `free` to run, as a number, a string, a map or a \
+             record does"
+        ),
         ParseError::OwnParameterNotInSeed => {
             "an `own` parameter, which takes its argument's ownership, is not in the seed yet".into()
         }

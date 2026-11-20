@@ -114,6 +114,23 @@ pub enum ParseError {
     /// One arm of an `if` whose value is used makes its value and another borrows one: who
     /// owns it would show only when it runs.
     ArmsMakeAndBorrow,
+    /// A line written after one that always gives its scope a value, which never runs.
+    LineAfterValue,
+    /// A line written after one that always leaves, a `return` or an `error`, which never runs.
+    LineAfterLeave,
+    /// A line of a `-> void` function's body gives a value.
+    VoidBodyGives,
+    /// A line of a `{ … }` gives a value, where the scope itself is the value.
+    KeptScopeGives,
+    /// A value is needed, and some path ends without giving one: a block one of whose lines
+    /// gives only on some paths, a loop.
+    EndsWithoutValue,
+    /// A line gives a name a block holds out of it, and a reader to its right takes the value on
+    /// the way, so the name has moved where nothing hands it on.
+    HeldTakenOnTheWay,
+    /// A line gives a name its block holds as the block's value through a construct the seed
+    /// does not move it out of, so the block's end would free it under the value.
+    HeldGivenUnmoved,
     /// A logical operator applied to a non-`bool` operand.
     NonBoolOperands,
     /// A value lands in a type that is not its own and is not known to hold every value of it.
@@ -164,6 +181,11 @@ pub enum ParseError {
     /// `hashmap` not followed by `K -> V`, or a key or value type whose values are
     /// not one word read by value.
     HashmapShape,
+    /// `hashmap K -> V { … }` with a key type other than `string`: each key is a name's spelling.
+    ScopeKeysAreText,
+    /// A pattern declared in the `{ … }` a `hashmap` reads, which stands for many spellings and so
+    /// is no key; carries its pattern.
+    PatternIsNoKey(Box<String>),
     /// A constructor edited the tape and returned with its own cell still
     /// unconstructed and still its own identity: neither a decline nor a
     /// construction. Carries the cell's spelling.
@@ -230,8 +252,9 @@ pub enum ParseError {
     /// member's call.
     DyadReadEachPass,
     /// A point where the parse needs a value (a box read, a call for a type, a `-> dyad` call an
-    /// operator reads) stands after something its own line runs that the pass cannot run first:
-    /// a part of a quote, what stands before a branch, or a node whose operation is not built yet.
+    /// operator reads, an import) stands after something its own line runs that the pass cannot
+    /// run first: a part of a quote, what stands before a branch, or a node whose operation is
+    /// not built yet.
     RunsBeforeUnbuilt,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
@@ -289,6 +312,9 @@ pub enum ParseError {
     /// A type body whose fields, named here, own what they hold, and no `static free = (…)` to
     /// free it.
     FieldsNeedFree(Vec<String>),
+    /// A name of a `{ … }` whose value its scope's end runs a teardown for, or that does not
+    /// move whole into a field; carries the name.
+    KeptEntry(Box<String>),
     /// `own @T ?` on a parameter, which would consume the caller's argument.
     OwnParameterNotInSeed,
     /// A `move` or `free` inside a loop or `fn` body names a place declared
@@ -303,4 +329,12 @@ pub enum ParseError {
     /// `move` or `free` of a name the run starts with (`i32`), which every section reads;
     /// carries the name.
     EndsPrimordialName(Box<String>),
+}
+
+impl ParseError {
+    /// A refusal from `Parser::type_known_now` of an operand that does name a type, which only
+    /// running gives: the program's run, or that of a part of its line that cannot run first.
+    pub(crate) fn type_given_by_running(&self) -> bool {
+        matches!(self, ParseError::TypeKnownOnlyAtRun | ParseError::RunsBeforeUnbuilt)
+    }
 }

@@ -201,16 +201,11 @@ pub(crate) unsafe fn value_type(
     node: DyadPtr,
 ) -> Result<DyadPtr, crate::parse::ParseError> {
     let d = types.through(node);
-    if !d.is_null() && types.storage_type(d).is_none() {
-        if dyad::ty(d) == types.if_ {
-            return super::if_mod::value_type(types, d);
-        }
-        // A block's value is its last line's, refused for that line's reason.
-        if dyad::ty(d) == types.scope {
-            if let Some(last) = crate::parse::last_sequence_expr(d) {
-                value_type(types, last)?;
-            }
-        }
+    if !d.is_null()
+        && types.storage_type(d).is_none()
+        && (dyad::ty(d) == types.if_ || dyad::ty(d) == types.scope)
+    {
+        return super::flow::value_type(types, d);
     }
     match output_type(types, node) {
         t if t == types.void_ => Err(crate::parse::ParseError::StatementAsValue),
@@ -414,7 +409,7 @@ unsafe fn call_tail(types: &Core, node: DyadPtr) -> Option<CallTail> {
         return None;
     }
     let body = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_BODY);
-    if body.is_null() || crate::parse::contains_return(types, body) {
+    if body.is_null() || super::flow::holds_return(types, body) {
         return None;
     }
     let body = types.through(body);
@@ -423,7 +418,13 @@ unsafe fn call_tail(types: &Core, node: DyadPtr) -> Option<CallTail> {
         if super::drop_model::any_held_somewhere(super::scope::exit_items(body)) {
             return None;
         }
-        let i = lines.iter().rposition(|&e| !numtype::is_comment_type(dyad::ty(e)))?;
+        // The one line that gives the body's value, every line before it giving none.
+        let i = lines
+            .iter()
+            .position(|&e| super::flow::of(types, e) != super::flow::Flow::STATEMENT)?;
+        if super::flow::of(types, lines[i]) != super::flow::Flow::VALUE {
+            return None;
+        }
         (types.through(lines[i]), Some(i))
     } else {
         (body, None)
@@ -544,18 +545,23 @@ mod tests {
              w := type ( y := i64 ? ),\n\
              q := w(7),\n\
              f := fn (n := i32 ?, b := dyad ?) -> i32 ( n ),\n\
-             true,\n\
-             5,\n\
-             «hi»,\n\
+             e7 := true,\n\
+             e8 := 5,\n\
+             e9 := «hi»,\n\
              # prose\n\
-             w.scope,\n\
-             i32 1 + i32 2,\n\
-             f(1, 2),\n\
+             e11 := w.scope,\n\
+             e12 := i32 1 + i32 2,\n\
+             e13 := f(1, 2),\n\
              ?",
         );
         let types = &core;
         // SAFETY: every node was just parsed into `_store`, which is alive.
         unsafe {
+            let exprs: Vec<DyadPtr> = exprs
+                .iter()
+                .enumerate()
+                .map(|(i, &e)| if matches!(i, 7..=9 | 11..=13) { declare::rhs_of(e) } else { e })
+                .collect();
             // The place is behind the binding's initializer store or construction.
             let declared = |i: usize| {
                 let d = declare::declared_of(exprs[i]);
@@ -727,20 +733,25 @@ mod tests {
              seven := fn () -> i32 ( 7 ),\n\
              early := fn (p := @i32 ?) -> i32 ( return p@ ),\n\
              kept := fn (p := @i32 ?) -> i32 ( q := alloc 1 of i32 2, p@ ),\n\
-             v.x,\n\
-             a@,\n\
-             get(a),\n\
-             seven(),\n\
-             early(a),\n\
-             kept(a),\n\
-             5,\n\
-             a + 1,\n\
-             v:lex_rank,\n\
+             e8 := v.x,\n\
+             e9 := a@,\n\
+             e10 := get(a),\n\
+             e11 := seven(),\n\
+             e12 := early(a),\n\
+             e13 := kept(a),\n\
+             e14 := 5,\n\
+             e15 := a + 1,\n\
+             e16 := v:lex_rank,\n\
              @i32 ?",
         );
         let types = &core;
         // SAFETY: every node was just parsed into `store`, which is alive.
         unsafe {
+            let exprs: Vec<DyadPtr> = exprs
+                .iter()
+                .enumerate()
+                .map(|(i, &e)| if (8..=16).contains(&i) { declare::rhs_of(e) } else { e })
+                .collect();
             let a = declare::binding_of(exprs[3]);
             assert_eq!(place_of(types, a), Some(Place::Itself), "a name");
             assert_eq!(place_of(types, exprs[8]), Some(Place::Itself), "a field path");

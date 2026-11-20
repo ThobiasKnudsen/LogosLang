@@ -9,8 +9,9 @@
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
+use super::drop_model::{teardown_of, teardown_of_type, Teardown};
 use super::read::{carry_of, Carry};
-use super::{array, meta, numtype, Cx};
+use super::{array, meta, Cx};
 use crate::binding::Binding;
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -68,21 +69,15 @@ pub(crate) unsafe fn needs_owner(types: &Core, ty: DyadPtr) -> bool {
 /// # Safety
 /// `ty` must be null or a type node from the store.
 unsafe fn owned(types: &Core, ty: DyadPtr) -> Option<Owned> {
-    if numtype::is_pointer_type(ty) {
-        return (!meta::destructor_of(ty).is_null()).then(|| Owned::Block(numtype::pointee_of(ty)));
-    }
     if super::hashmap::is_hashmap(types, ty) {
         return Some(Owned::Map(ty));
     }
-    if !meta::is_record_type(ty) || meta::instances_free_of(ty).is_null() {
-        return None;
-    }
-    if meta::is_node_valued(ty, types.fn_type) {
-        Some(Owned::Node(ty))
-    } else if super::this::is_plain(types, ty) {
-        Some(Owned::Record(ty))
-    } else {
-        None
+    match teardown_of_type(types, ty) {
+        Teardown::Block(pointee) => Some(Owned::Block(pointee)),
+        Teardown::Node(_) if meta::is_node_valued(ty, types.fn_type) => Some(Owned::Node(ty)),
+        Teardown::Node(_) => Some(Owned::Record(ty)),
+        // A `dyad ?` place copies the node it holds itself.
+        Teardown::Dyad | Teardown::Nothing => None,
     }
 }
 
@@ -139,9 +134,7 @@ unsafe fn fields<'a>(ty: DyadPtr) -> impl Iterator<Item = (DyadPtr, DyadPtr)> + 
 /// `value` must be a reduced dyad from the store.
 pub(crate) unsafe fn taken(store: &mut Store, types: &Core, value: DyadPtr) -> DyadPtr {
     let ty = super::read::output_type(types, value);
-    if owned(types, ty).is_none()
-        || super::drop_model::teardown_of(types, value) != super::drop_model::Teardown::Nothing
-    {
+    if owned(types, ty).is_none() || teardown_of(types, value) != Teardown::Nothing {
         return value;
     }
     super::mint::node(store, types, types.copy_, &[ty], ty, types.ops.copy_, &[value])

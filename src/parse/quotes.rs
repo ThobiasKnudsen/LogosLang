@@ -57,28 +57,29 @@ impl<'a> Parser<'a> {
         self.skip_whitespace();
         let source = self.cx.source;
         let start = self.cx.pos;
-        let path_text: String = if source[self.cx.pos..].starts_with('«') {
-            let r = self.token_at(start, false)?;
-            let s = self.cx.pos;
-            self.cx.pos += r.matched;
-            let node =
-                self.construct_leaf(r.identity, s, r.matched)?.ok_or(ParseError::ExpectedPath)?;
-            // SAFETY: the leaf just built is a string node.
-            String::from_utf8_lossy(unsafe { crate::identities::string::text(node) }).into_owned()
-        } else {
-            let bytes = source.as_bytes();
-            while self.cx.pos < bytes.len()
-                && !bytes[self.cx.pos].is_ascii_whitespace()
-                && bytes[self.cx.pos] != b','
-            {
-                self.cx.pos += 1;
+        let path_text: String = match self.raw_path_end(start) {
+            Some(end) => {
+                self.cx.pos = end;
+                source[start..end].to_string()
             }
-            source[start..self.cx.pos].to_string()
+            None => {
+                let r = self.token_at(start, false)?;
+                self.cx.pos += r.matched;
+                let node = self
+                    .construct_leaf(r.identity, start, r.matched)?
+                    .ok_or(ParseError::ExpectedPath)?;
+                // SAFETY: the leaf just built is a string node.
+                let text = unsafe { crate::identities::string::text(node) };
+                String::from_utf8_lossy(text).into_owned()
+            }
         };
         if path_text.is_empty() {
             self.cx.pos = start;
             return Err(ParseError::ExpectedPath);
         }
+        // The load runs the file now, so what stands before the `import` runs first.
+        let at = tape.at(0).map_or(start, |c| c.start);
+        self.run_first(tape, at)?;
         self.import_file(&path_text)?;
         let types = self.types;
         let path_node = crate::identities::string::build_text(
@@ -90,6 +91,17 @@ impl<'a> Parser<'a> {
         let node = self.rt.store.alloc_words(types.import_, &ops);
         tape.place(node);
         Ok(Constructed::Placed)
+    }
+
+    /// Where the path an `import` reads from `start` ends, where it is written raw: at whitespace,
+    /// a `,` or the text's end. `None` for a `«…»` string, which is one token.
+    pub(super) fn raw_path_end(&self, start: usize) -> Option<usize> {
+        let rest = &self.cx.source[start..];
+        if rest.starts_with('«') {
+            return None;
+        }
+        let len = rest.find(|c: char| c.is_ascii_whitespace() || c == ',').unwrap_or(rest.len());
+        Some(start + len)
     }
 
     /// Read the `«…»` to the right at discovery and place a `regex` node
@@ -222,7 +234,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A quote's `{…}`, a scope over its interior `from..to` (DESIGN ›`{ }` is text
-    /// interpolation‹): its value, or none when it has no tail and so adds no text. In a body
+    /// interpolation‹): its value, or none when it holds only prose and so adds no text. In a body
     /// lexed once its cells are the ones lexed with the quote; where the quote is read from the
     /// source they are lexed now. The source is cut at `to` so the scope ends there, and offsets
     /// stay those of the whole line.
@@ -234,8 +246,12 @@ impl<'a> Parser<'a> {
         let cuts = std::mem::take(&mut self.cx.cuts);
         let cuts_end = std::mem::replace(&mut self.cx.cuts_end, from);
         let parsed = self.parse_block(false, LinesEnd::TextEnd).map(|(scope, value)| {
-            // SAFETY: `scope` is the scope node just built.
-            unsafe { super::bodies::last_sequence_expr(scope) }.map(|_| value.dyad)
+            // SAFETY: `scope` is the scope node just built; its lines are reduced dyads.
+            let lines = unsafe { crate::identities::scope::exprs_of(scope) }.unwrap_or_default();
+            // SAFETY: as above.
+            let prose =
+                |&e: &DyadPtr| unsafe { crate::identities::numtype::is_comment_type(dyad::ty(e)) };
+            (!lines.iter().all(prose)).then_some(value.dyad)
         });
         (self.cx.cuts, self.cx.cuts_end) = (cuts, cuts_end);
         self.cx.source = whole;
@@ -329,7 +345,7 @@ impl<'a> Parser<'a> {
         // Its top level is a scope of its own, which lives as long as the program: what it
         // still holds at its end, and its `defer`s, join the program's exit.
         g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect("pushed by enter").open);
-        g.0.cx.open.push(OpenScope::default());
+        g.0.cx.open.push(OpenScope::top_level());
         let inner = g.0.run_imported(section);
         let inner_pos = g.0.cx.pos;
         let file = g.0.cx.open.pop().expect("pushed above");
@@ -338,7 +354,9 @@ impl<'a> Parser<'a> {
         } else {
             let program = g.0.cx.open.first_mut().expect("the program's scope is open");
             let from = program.lines + 1;
-            for item in file.exit.into_iter().filter(|h| h.end.is_none()) {
+            // A line that gave the file a value ended it: what its later lines hold never was.
+            let ran = file.reached_lines();
+            for item in file.exit.into_iter().filter(|h| h.end.is_none() && h.held_at(ran)) {
                 program.imported.insert(item.what);
                 program.exit.push(ExitItem { from, ..item });
             }

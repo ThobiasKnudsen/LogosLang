@@ -93,7 +93,8 @@ fn value_ends<'c>(types: &Core, before: impl IntoIterator<Item = &'c Cell>) -> b
     use crate::identities::meta;
     for cell in before {
         let id = cell.identity(types);
-        if cell.constructed || id == types.unknown || id == types.close_ || id == types.close_sq_ {
+        let closer = types.brackets().into_iter().any(|(_, close)| close == id);
+        if cell.constructed || id == types.unknown || closer {
             return true;
         }
         // SAFETY: a lexed cell's identity is a dyad from the store; `kind_of` turns away one
@@ -234,11 +235,7 @@ impl<'a> Parser<'a> {
             if dyad_box {
                 self.run_first(tape, cell.start)?;
             } else if self.is_box(id) {
-                // A `type ?` box read as a value reads its place when it runs, so only a use of
-                // the type it holds needs what stands before it: stand-in for #350.
-                if !self.ran_first(tape, cell.start)? {
-                    self.drain()?;
-                }
+                self.read_type_box(tape, id, cell.start)?;
             } else if matches!(kind, Read::Container(t) if !t.is_null()) {
                 self.drain()?;
             }
@@ -309,9 +306,10 @@ impl<'a> Parser<'a> {
     /// A place holding a type denotes the type it holds, since lexing a box's
     /// cell first ran everything before it (DESIGN ›A type is a comptime
     /// value‹); in a deferred body, or a frame slot, the place denotes itself,
-    /// except a slot of the call a held `type (…)` is being built in, which is live.
+    /// except a slot of the call a held `type (…)` is being built in, which is live; so does
+    /// a box read after a part of its line that cannot run first yet.
     pub(super) fn settled_type(&self, id: DyadPtr) -> DyadPtr {
-        if self.cx.runtime_depth > 0 {
+        if self.cx.runtime_depth > 0 || self.unsettled_at(id).is_some() {
             return id;
         }
         // SAFETY: `id` is null or a resolved dyad from the store; the read is of a place this parser allocated, eight bytes wide.
@@ -528,18 +526,14 @@ impl<'a> Parser<'a> {
         matches!(self.peek_token(), Some((id, _)) if self.is_closer(id))
     }
 
-    /// Each opener with the closer that ends its bracket, built, held or skipped alike
-    /// (DESIGN ›Every identity has a `parse_rank`, and `(` works in two steps‹).
-    fn brackets(&self) -> [(DyadPtr, DyadPtr); 2] {
-        [(self.types.open_, self.types.close_), (self.types.open_sq_, self.types.close_sq_)]
-    }
-
+    /// The closer that ends `opener`'s bracket, built, held or skipped alike (DESIGN ›Every
+    /// identity has a `parse_rank`, and `(` works in two steps‹).
     fn closer_of(&self, opener: DyadPtr) -> Option<DyadPtr> {
-        self.brackets().into_iter().find(|&(open, _)| open == opener).map(|(_, close)| close)
+        self.types.brackets().into_iter().find(|&(open, _)| open == opener).map(|(_, close)| close)
     }
 
     pub(super) fn is_closer(&self, id: DyadPtr) -> bool {
-        self.brackets().into_iter().any(|(_, close)| close == id)
+        self.types.brackets().into_iter().any(|(_, close)| close == id)
     }
 
     pub(super) fn is_opener(&self, id: DyadPtr) -> bool {
@@ -556,14 +550,15 @@ impl<'a> Parser<'a> {
     /// `lex_spelling` keeping whether the spelling is fresh: what a position
     /// that may hold a declaration or a use, `for`'s first cell, decides by.
     pub(super) fn lex_spelling_fresh(&mut self) -> Option<(usize, usize, bool)> {
+        fn no_spelling(text: &str) -> bool {
+            matches!(
+                text.as_bytes().first(),
+                Some(b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b'#') | None
+            ) || text.starts_with('«')
+        }
         if self.cx.feed.is_some() {
             let i = self.feed_index()?;
-            let spelling = self.cx.feed.as_ref()?.cells[i].spelling();
-            let no_spelling = matches!(
-                spelling.as_bytes().first(),
-                Some(b'(' | b')' | b'[' | b']' | b',' | b'#') | None
-            ) || spelling.starts_with('«');
-            if no_spelling {
+            if no_spelling(self.cx.feed.as_ref()?.cells[i].spelling()) {
                 return None;
             }
             let cell = self.feed_take()?;
@@ -573,9 +568,7 @@ impl<'a> Parser<'a> {
         let source = self.cx.source;
         let start = self.cx.pos;
         let rest = source.get(start..)?;
-        if matches!(rest.as_bytes().first(), Some(b'(' | b')' | b'[' | b']' | b',' | b'#') | None)
-            || rest.starts_with('«')
-        {
+        if no_spelling(rest) {
             return None;
         }
         let (r, _) = token(&self.cx.scopes, self.trie, rest, true, Left::Value).ok()?;

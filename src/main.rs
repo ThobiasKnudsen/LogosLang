@@ -9,6 +9,7 @@
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
+use seed::identities::dyad::DyadPtr;
 use seed::identities::Core;
 use seed::parse::{Imports, LinesEnd, ParseError, Parser, ScopeStack};
 use seed::regex_trie::RegexTrie;
@@ -62,15 +63,16 @@ fn help() -> String {
          \x20 logos import ./file.logos\n\
          \x20 logos 'import ./file.logos, main(«hello»)'\n\
          `import` loads a file: it runs top to bottom, and the importer\n\
-         reaches only its `pub` names. The line's tail value is printed.\n\
+         reaches only its `pub` names. The value of the first line that\n\
+         gives one is printed, and the lines after it never run.\n\
          There are no build or compile flags: the code itself decides what\n\
          compiles.\n",
         env!("CARGO_PKG_VERSION")
     )
 }
 
-/// Run the command line as one line of Logos source; its tail value prints at
-/// the end. Parse errors render with a
+/// Run the command line as one line of Logos source; the value its first line that gives one
+/// gave prints at the end. Parse errors render with a
 /// caret; run errors are message-only, nodes carrying no positions.
 fn run_line(source: &str) -> ExitCode {
     let path = "<command line>";
@@ -120,11 +122,12 @@ fn run_line(source: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// A line of the program read whole and run by the one pass: the text its tail shows, or
-/// none when the tail gives no value or there is none. The command line and the REPL both
-/// echo what this gives (›The command line is Logos source; the binary stays out of the
-/// way‹ [[R302]]). An error comes back rendered, what the line holds left for the caller to
-/// end.
+/// A line of the program read whole and run by the one pass: the text the value its first
+/// line that gives one gave shows, or none when no line gives one. The command line and the
+/// REPL both echo what this gives (›The command line is Logos source; the binary stays out of
+/// the way‹ [[R302]], ›A scope's value is what it evaluates to, and `return` is an optional early
+/// exit from the enclosing function‹ [[R207]]). An error comes back rendered, what the line holds
+/// left for the caller to end.
 fn run_program_line(
     p: &mut Parser,
     types: &Core,
@@ -138,33 +141,25 @@ fn run_program_line(
         }
         Err(e) => return Err(report::render(path, source, p.offset(), &report::parse_message(&e))),
     };
-    // Asked before the drain runs the tail, as a use is asked where it is written.
-    let tail = match tail {
-        // SAFETY: the tail is a line the parser built.
-        Some((cell, end)) => match unsafe { seed::identities::read::gives_value(types, cell.dyad) }
-        {
-            Ok(shown) => shown.then_some(cell.dyad),
-            Err(e) => return Err(report::render(path, source, end, &report::parse_message(&e))),
-        },
-        None => None,
-    };
-    // The tail is read after the root's own run and before the teardowns, which may free
+    // The value is read after the root's own run and before the teardowns, which may free
     // what it points at, and rendered before the pass's runtime goes: an unnamed result
     // lives in that runtime's scratch.
     let message = |e: ParseError| format!("{path}: {}", report::parse_message(&e));
-    let ran = p.finish().map_err(message)?;
-    let Some(node) = tail else {
-        p.end_tail().map_err(message)?;
-        return Ok(None);
-    };
-    let bits = match ran {
-        Some((last, bits)) if last == node => bits,
-        // A tail the pass never ran, a `[…]` line, runs now.
-        _ => {
-            p.end_tail().map_err(message)?;
+    let (node, bits) = match p.finish().map_err(message)? {
+        Some(given) => given,
+        None => match tail.map(|(cell, _)| cell.dyad) {
+            // A `[…]` last line, which the pass never runs, gives its value now.
             // SAFETY: `node` is a line the parser built.
-            unsafe { p.value_of(node) }.map_err(message)?
-        }
+            Some(node) if unsafe { p.gives_unrun(node) } => {
+                p.end_tail().map_err(message)?;
+                // SAFETY: as above.
+                (node, unsafe { p.value_of(node) }.map_err(message)?)
+            }
+            _ => {
+                p.end_tail().map_err(message)?;
+                return Ok(None);
+            }
+        },
     };
     // SAFETY: `node` is the parsed dyad whose value `bits` is.
     let shown = unsafe { seed::identities::display_value(types, node, bits) };
@@ -207,11 +202,13 @@ fn code_bytes(engine: &mut Engine, text: &str) -> usize {
     cells.iter().filter(|c| c.identity(&engine.core) != engine.core.hash_).map(|c| c.len).sum()
 }
 
-/// One persistent store, index and scope; each line a line of the program, its tail
-/// echoed; a line that fails reports, leaves no trace, and the loop continues.
+/// One persistent store, index and scope; each line a line of the program. A line that gives a
+/// value ends the session with it, as a program ends with its value; a line that fails reports,
+/// leaves no trace, and the loop continues.
 fn repl() -> ExitCode {
     println!(
-        "logos {} — each line is a line of the program, ctrl-d to exit",
+        "logos {} — each line is a line of the program, which ends at the first line that gives \
+         a value or at ctrl-d",
         env!("CARGO_PKG_VERSION")
     );
     let mut engine = Engine::new();
@@ -228,22 +225,14 @@ fn repl() -> ExitCode {
     loop {
         print!("» ");
         let _ = std::io::stdout().flush();
+        let session = scopes.current().expect("the session's scope is open");
         let line = match lines.next() {
             Some(Ok(line)) => line,
             _ => {
                 println!();
-                // The session is one scope, and its end runs what its kept lines hold and defer.
-                let session = scopes.current().expect("the session's scope is open");
-                let mut rt = Runtime::new(&engine.core, &mut engine.store);
-                // SAFETY: `session` is the session's scope node, its places in the program frame.
-                if let Err(e) = unsafe { seed::identities::run_scope_exit(&mut rt, session) } {
-                    eprintln!("<repl>: run error: {}", report::run_message(&e));
-                    return ExitCode::FAILURE;
-                }
-                return ExitCode::SUCCESS;
+                return end_session(&mut engine, session, None);
             }
         };
-        let session = scopes.current().expect("the session's scope is open");
         // SAFETY: `session` is the session's scope node.
         let kept = unsafe { seed::identities::scope_lines(session) };
         let types = &engine.core;
@@ -279,10 +268,12 @@ fn repl() -> ExitCode {
 
         match outcome {
             Ok(last) => {
-                if let Some(shown) = last {
-                    println!("{shown}");
-                }
                 scopes.commit();
+                // The session is one scope, and a line that gives a value ends it
+                // (›The command line is Logos source; the binary stays out of the way‹ [[R302]]).
+                if last.is_some() {
+                    return end_session(&mut engine, session, last);
+                }
             }
             // A failed line leaves no trace, or a typo would burn its name for the session
             // under the no-shadowing rule.
@@ -295,4 +286,19 @@ fn repl() -> ExitCode {
             }
         }
     }
+}
+
+/// The session's end, as `run_line`'s: what its kept lines hold and defer ends, last first,
+/// then the value that ended it shows.
+fn end_session(engine: &mut Engine, session: DyadPtr, shown: Option<String>) -> ExitCode {
+    let mut rt = Runtime::new(&engine.core, &mut engine.store);
+    // SAFETY: `session` is the session's scope node, its places in the program frame.
+    if let Err(e) = unsafe { seed::identities::run_scope_exit(&mut rt, session) } {
+        eprintln!("<repl>: run error: {}", report::run_message(&e));
+        return ExitCode::FAILURE;
+    }
+    if let Some(shown) = shown {
+        println!("{shown}");
+    }
+    ExitCode::SUCCESS
 }

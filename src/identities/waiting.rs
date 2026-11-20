@@ -75,18 +75,32 @@ pub(crate) unsafe fn set_into(types: &Core, node: DyadPtr, into: DyadPtr) {
     *ops.add(OWN) = if into == types.dyad_ { types.own_ } else { std::ptr::null_mut() };
 }
 
-/// Where what `value` gives, itself or a scope's last line, is a line held for the run, that line
-/// lands its value in `into` when it runs. Whether there was one.
+/// Where `value` ends in a line held for the run, itself, a block's last line or an `if`'s arm,
+/// that line lands its value in `into` when it runs. Whether such a line gives a value is known
+/// only when it runs, so where a value is needed the line that ends the block gives it. Whether
+/// there was one.
 ///
 /// # Safety
-/// `value` must be a reduced dyad from the store, parsed just now; `into` a type node.
+/// `value` must be null or a reduced dyad from the store, parsed just now; `into` a type node.
 pub(crate) unsafe fn lands_in(types: &Core, value: DyadPtr, into: DyadPtr) -> bool {
-    let tail = super::trailing_expr(types, value);
-    if tail.is_null() || dyad::ty(tail) != types.waiting.line {
+    if value.is_null() {
         return false;
     }
-    set_into(types, tail, into);
-    true
+    let ty = dyad::ty(value);
+    if ty == types.waiting.line {
+        set_into(types, value, into);
+        return true;
+    }
+    if ty == types.scope {
+        let lines = super::scope::exprs_of(value).unwrap_or_default();
+        let last = lines.iter().rev().find(|&&line| !super::flow::is_prose(types, line));
+        return last.is_some_and(|&line| lands_in(types, line, into));
+    }
+    if ty == types.if_ {
+        let (then, els) = super::if_mod::arm_slots(value);
+        return lands_in(types, *then, into) | lands_in(types, *els, into);
+    }
+    false
 }
 
 /// The parts [`build_line`] stored: text, line, scope, the open `fn` nodes, `into`.

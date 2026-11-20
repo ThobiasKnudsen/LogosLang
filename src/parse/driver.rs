@@ -4,6 +4,7 @@
 //! The segment driver: lex a segment whole, construct it highest parse_rank first, and
 //! hand out the items; which constructor a cell wakes and how a Logos constructor runs.
 
+use super::operands::Before;
 use super::*;
 use crate::dyad;
 
@@ -417,11 +418,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Usually `Trailing`; where the first leftover gives a type known only at run, the real
+    /// Usually `Trailing`; where the first leftover names a type only running gives, the real
     /// reason is that it could not say which type it is, so `a 5` never juxtaposed.
     pub(super) fn leftover_error(&mut self, first: DyadPtr) -> ParseError {
         match self.type_known_now(first) {
-            Err(ParseError::TypeKnownOnlyAtRun) => ParseError::TypeKnownOnlyAtRun,
+            Err(e) if e.type_given_by_running() => e,
             _ => ParseError::Trailing,
         }
     }
@@ -689,6 +690,16 @@ impl<'a> Parser<'a> {
         self.next_cell().map(|item| item.map(|c| c.dyad))
     }
 
+    /// Whether the cell at `tape`'s center starts the line being read: it stands on the line's own
+    /// tape, with nothing but comments to its left.
+    pub(crate) fn starts_line(&self, tape: &ParsingTape) -> bool {
+        std::ptr::eq(tape, self.cx.line_tape)
+            && (1..)
+                .map_while(|k| tape.at(-k))
+                // SAFETY: a cell on the tape holds a dyad from the store.
+                .all(|c| unsafe { crate::identities::numtype::is_comment_type(dyad::ty(c.dyad)) })
+    }
+
     /// [`Self::parse_next`] as the cell, its facts with it.
     pub(super) fn next_cell(&mut self) -> Option<Result<Cell, ParseError>> {
         loop {
@@ -734,6 +745,7 @@ impl<'a> Parser<'a> {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),
             };
+            self.cx.line_tape = &tape;
             let Built { items, before, after } = match self.construct_segment(&mut tape) {
                 Ok(built) => built,
                 Err(e) => return Some(Err(e)),
@@ -742,6 +754,10 @@ impl<'a> Parser<'a> {
             // `,` where nothing stands is purely for the reader.
             if matches!(boundary, Boundary::Comma) && !bare_branch {
                 self.consume_separator();
+            }
+            if items.is_empty() {
+                // A line its constructors took whole runs nothing.
+                self.cx.open.last_mut().expect("a line is read in an open scope").runs.clear();
             }
             if items.len() > 1 {
                 self.cx.pos = items[1].1;
@@ -799,12 +815,26 @@ impl<'a> Parser<'a> {
             // SAFETY: `id` is the resolved callee and `args` reduced dyads.
             let node = unsafe { self.build_call(id, &args) }?;
             tape.remove(1);
-            tape.place(node);
+            if self.stands_in_for_call(node) {
+                tape.set_dyad(0, node);
+            } else {
+                tape.place(node);
+            }
         } else {
             let value = self.stand_as_value(tape, id);
             tape.place(value);
         }
         Ok(Constructed::Placed)
+    }
+
+    /// Whether `node`, what a call built, is the type a call for a type gave where the pass runs
+    /// its line once parsed, which stands in for the call (›Inside a body, a `-> type` call may
+    /// take an argument known only at run‹ [[R296]]): handed on as its own unconstructed cell, it
+    /// reads what follows it as a name holding it does (›A name of a type with an instances'
+    /// `parse` wakes it, as the instance does, and so does any expression of the type‹ [[R230]]).
+    pub(super) fn stands_in_for_call(&self, node: DyadPtr) -> bool {
+        // SAFETY: `node` is a reduced dyad from the store.
+        self.in_pass_order() && unsafe { self.identity_head(node) }.is_some()
     }
 
     /// The scope's expressions in order (prose and teardown structure aside),
@@ -813,13 +843,14 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `scope` must be a node from the store.
-    pub(crate) unsafe fn args_of(&self, scope: DyadPtr) -> Vec<DyadPtr> {
+    pub(crate) unsafe fn args_of(&mut self, scope: DyadPtr) -> Vec<DyadPtr> {
         if dyad::ty(scope) != self.types.scope {
             return vec![scope];
         }
         let Some(items) = crate::identities::scope::exprs_of(scope) else {
             return vec![scope];
         };
+        self.rt.note_lines_read(scope);
         let defer_ = self.types.defer_;
         items
             .iter()
@@ -907,8 +938,14 @@ impl<'a> Parser<'a> {
         this: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        // A constructor runs now, by nature; what stands before it runs first.
-        self.drain()?;
+        // A constructor runs now, by nature, so what stands before it runs first, but its left
+        // operand, which it reads as written (›How a Logos constructor builds its node‹ [[R362]]).
+        // Where a part before it cannot run first yet, only the lines before its own run:
+        // stand-in for #371.
+        let from = tape.at(-1).or(tape.at(0)).map_or(self.cx.pos, |c| c.start);
+        if let Before::Waits(_) = self.ran_first(tape, from)? {
+            self.drain()?;
+        }
         // Its run is a call: a use of every outer name its body reads.
         if let Err(e) = self.check_call_reads(f) {
             if let Some(c) = tape.at(0) {
@@ -967,6 +1004,26 @@ impl<'a> Parser<'a> {
         };
         // SAFETY: `node` is a valid dyad in the store (the caller's contract).
         self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run(node) })
+    }
+
+    /// [`Parser::run_on_pass`] for a line of a scope: the value it gives the scope, `None`
+    /// where it goes on without one.
+    ///
+    /// # Safety
+    /// As [`Parser::run_on_pass`].
+    pub(super) unsafe fn run_line_on_pass(
+        &mut self,
+        node: DyadPtr,
+    ) -> Result<Option<i64>, crate::run::RunError> {
+        let host = crate::run::Host {
+            parser: (self as *mut Self).cast(),
+            lex_on: Self::lex_on,
+            mint: Self::mint_host,
+            construct: Self::construct_host,
+            parse_waiting: Self::parse_waiting_host,
+        };
+        // SAFETY: `node` is a valid dyad in the store (the caller's contract).
+        self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run_line(node) })
     }
 
     /// [`Parser::run_on_pass`] for a call whose record result is copied into `dest`.
@@ -1052,8 +1109,14 @@ impl<'a> Parser<'a> {
         }
         tape.center = tape.head;
         tape.sealed = true;
-        let built = self.construct_segment(&mut tape)?;
-        let items = self.hand_to_line(built);
+        // These cells stand on no line: what they run, the node that asked for them runs.
+        let depth = self.cx.open.len() - 1;
+        let runs = std::mem::take(&mut self.cx.open[depth].runs);
+        let built = self.construct_segment(&mut tape);
+        if let Some(open) = self.cx.open.get_mut(depth) {
+            open.runs = runs;
+        }
+        let items = self.hand_to_line(built?);
         self.one_of(items).map(|c| c.dyad)
     }
 

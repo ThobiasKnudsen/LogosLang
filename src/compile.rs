@@ -170,6 +170,17 @@ pub struct Lowerer<'a, 'f> {
     planned: HashMap<DyadPtr, Variable>,
     /// The nodes each line lowered so far made that nothing took, by its `Unwind::Line` id.
     lines: Vec<Vec<DyadPtr>>,
+    /// Where a value given now goes, innermost last: each scope, `if` or loop lowered as a value.
+    targets: Vec<Target>,
+}
+
+/// A scope, `if` or loop lowered as a value, which the values its lines, arms or body give pass
+/// out to: `done` takes the value, `at` is how much of the unwind stack lies outside it.
+#[derive(Clone, Copy)]
+struct Target {
+    at: usize,
+    done: Block,
+    ty: Option<types::Type>,
 }
 
 impl<'a> Lowerer<'a, '_> {
@@ -412,9 +423,8 @@ impl<'a> Lowerer<'a, '_> {
         Ok(())
     }
 
-    /// Lower the scope `node`'s `lines`, then its end, as its run does: a line stands at its
-    /// index, which a `return` in it ends the scope at. The value is the last line's that is
-    /// neither prose nor a `defer`.
+    /// Lower the scope `node`'s `lines` as a value, as its run does: the value is the one the
+    /// first of its lines that gives one gives, `None` for a scope of prose alone.
     ///
     /// # Safety
     /// `node` must be a scope node from the store and `lines` its reduced lines.
@@ -423,7 +433,27 @@ impl<'a> Lowerer<'a, '_> {
         node: DyadPtr,
         lines: &[DyadPtr],
     ) -> Result<Option<Value>, CompileError> {
-        let (defer_, at) = (self.types.defer_, self.unwind.len());
+        self.open_target();
+        let lowered = self.lower_scope_given(node, lines)?;
+        let value = self.close_target();
+        Ok(lowered.then_some(value))
+    }
+
+    /// Lower the scope `node`'s `lines`, then its end, as its run does: a line stands at its
+    /// index, which a `return` in it ends the scope at, and a value a line gives passes out to
+    /// the innermost target, ending the scope at that line (›A scope's value is what it
+    /// evaluates to, and `return` is an optional early exit from the enclosing function‹
+    /// [[R207]]). Whether a line was lowered, one of prose alone lowering nothing.
+    ///
+    /// # Safety
+    /// As [`Self::lower_scope`].
+    pub(crate) unsafe fn lower_scope_given(
+        &mut self,
+        node: DyadPtr,
+        lines: &[DyadPtr],
+    ) -> Result<bool, CompileError> {
+        use crate::identities::flow;
+        let at = self.unwind.len();
         let items = crate::identities::scope::exit_items(node);
         let open = |line| Unwind::Scope { items, line, failed: false, rest: false };
         self.unwind.push(open(0));
@@ -435,20 +465,135 @@ impl<'a> Lowerer<'a, '_> {
             self.planned.insert(made, var);
         }
         self.plans.push(plan);
-        let mut last = None;
+        let mut lowered = false;
+        let mut ended = false;
         for (line, &expr) in lines.iter().enumerate() {
-            let ty = dyad::ty(expr);
-            if crate::identities::numtype::is_comment_type(ty) || ty == defer_ {
+            if flow::is_prose(self.types, expr) {
                 continue;
             }
             self.unwind[at] = open(line);
-            last = Some(self.lower_line(expr)?);
+            lowered = true;
+            let flow = flow::of(self.types, expr);
+            if flow.gives {
+                self.lower_line_given(expr)?;
+            } else {
+                self.lower_line(expr)?;
+            }
+            if flow.ends_scope() {
+                ended = true;
+                break;
+            }
         }
-        self.unwind[at] = open(lines.len());
-        let ended = self.end_to(at);
+        // A scope that ended at a line has run its end on each way out of it.
+        let ended = if ended {
+            self.unwind.truncate(at);
+            Ok(())
+        } else {
+            self.unwind[at] = open(lines.len());
+            self.end_to(at)
+        };
         self.plans.pop();
         ended?;
-        Ok(last)
+        Ok(lowered)
+    }
+
+    /// A target for the values lowered from here on to pass out to, until
+    /// [`Self::close_target`].
+    pub(crate) fn open_target(&mut self) {
+        let done = self.builder.create_block();
+        // The outermost target is the function body's, whose value is the function's result,
+        // so a body every way out of which is a `return` still closes on a value of that type.
+        let ty = match (self.ret_dest, self.ret) {
+            _ if !self.targets.is_empty() => None,
+            (Some(_), _) => Some(types::I64),
+            (None, Some(nt)) => Some(nt.cranelift_type()),
+            (None, None) => None,
+        };
+        if let Some(ty) = ty {
+            self.builder.append_block_param(done, ty);
+        }
+        self.targets.push(Target { at: self.unwind.len(), done, ty });
+    }
+
+    /// The innermost target closes: the way that falls through it gives a zero, and the value
+    /// is what each way gave, unit where none gave one.
+    pub(crate) fn close_target(&mut self) -> Value {
+        let target = self.targets.pop().expect("a target closes after it opens");
+        match target.ty {
+            Some(ty) => {
+                let zero = self.zero_of(ty);
+                self.builder.ins().jump(target.done, &[zero.into()]);
+            }
+            None => {
+                self.builder.ins().jump(target.done, &[]);
+            }
+        }
+        self.builder.seal_block(target.done);
+        self.builder.switch_to_block(target.done);
+        match target.ty {
+            Some(_) => self.builder.block_params(target.done)[0],
+            None => self.const_i32(0),
+        }
+    }
+
+    /// `value` passes out to the innermost target, ending what is open inside it as a `return`
+    /// ends what it leaves; what follows is unreachable.
+    pub(crate) fn give(&mut self, value: Value) -> Result<(), CompileError> {
+        let Some(target) = self.targets.last_mut() else {
+            return Err(CompileError::Internal("a value is given outside every block"));
+        };
+        let ty = self.builder.func.dfg.value_type(value);
+        match target.ty {
+            None => {
+                self.builder.append_block_param(target.done, ty);
+                target.ty = Some(ty);
+            }
+            Some(had) if had != ty => {
+                return Err(CompileError::Internal("the values one block gives lower differently"))
+            }
+            Some(_) => {}
+        }
+        let (at, done) = (target.at, target.done);
+        let open = self.unwind.clone();
+        // Each scope the value passes out of ends after the line that gave it, which completed.
+        for u in &mut self.unwind[at..] {
+            if let Unwind::Scope { line, .. } = u {
+                *line += 1;
+            }
+        }
+        // SAFETY: what is open was opened by the lowering of scopes, arms, calls and lines.
+        let left = unsafe { self.end_to(at) };
+        self.unwind = open;
+        left?;
+        self.builder.ins().jump(done, &[value.into()]);
+        let after = self.builder.create_block();
+        self.builder.switch_to_block(after);
+        self.builder.seal_block(after);
+        Ok(())
+    }
+
+    /// Lower `node` where the value it gives passes out, as [`crate::identities::flow::run_line`]
+    /// runs it.
+    ///
+    /// # Safety
+    /// `node` must be null or a valid dyad from the store.
+    pub(crate) unsafe fn lower_given(&mut self, node: DyadPtr) -> Result<(), CompileError> {
+        if crate::stack::exhausted(crate::stack::limit()) {
+            return Err(CompileError::TooDeep);
+        }
+        crate::identities::flow::lower_line(self, node)
+    }
+
+    /// [`Self::lower_given`] as a line of its own, as [`Self::lower_line`].
+    ///
+    /// # Safety
+    /// As [`Self::lower_given`].
+    unsafe fn lower_line_given(&mut self, node: DyadPtr) -> Result<(), CompileError> {
+        let at = self.unwind.len();
+        self.unwind.push(Unwind::Line { id: self.lines.len(), count: 0 });
+        self.lines.push(Vec::new());
+        self.lower_given(node)?;
+        self.end_to(at)
     }
 
     /// Ends what is open above `at`, innermost first: its own end, or a `return` or fault
@@ -992,23 +1137,32 @@ impl<'a> Lowerer<'a, '_> {
         Ok(result)
     }
 
-    /// Each arm is lowered, then the places it frees at its end; the arm's value is the if's.
+    /// Each arm is lowered, then the places it frees at its end; the value an arm gives passes
+    /// out to the innermost target, as the `if`'s run hands it on. A null arm runs nothing.
     ///
     /// # Safety
-    /// `cond` and the arms must be valid dyads from the store, the ends held places.
-    pub unsafe fn lower_if(
+    /// `cond` and the arms must be null or valid dyads from the store, the ends held places.
+    pub unsafe fn lower_if_given(
         &mut self,
         cond: DyadPtr,
         condition_ends: &'a [DyadPtr],
         [(then, then_ends), (els, else_ends)]: [(DyadPtr, &'a [DyadPtr]); 2],
-    ) -> Result<Value, CompileError> {
+    ) -> Result<(), CompileError> {
         let c = self.lower_condition(cond, condition_ends)?;
-        // SAFETY: the arms and ends are the dyads the caller's contract covers.
-        self.branch(
-            c,
-            |s| unsafe { s.lower_arm(then, then_ends) },
-            |s| unsafe { s.lower_arm(els, else_ends) },
-        )
+        let then_b = self.builder.create_block();
+        let else_b = self.builder.create_block();
+        let merge_b = self.builder.create_block();
+        self.builder.ins().brif(c, then_b, &[], else_b, &[]);
+        self.builder.seal_block(then_b);
+        self.builder.seal_block(else_b);
+        for (block, arm, ends) in [(then_b, then, then_ends), (else_b, els, else_ends)] {
+            self.builder.switch_to_block(block);
+            self.lower_arm(arm, ends)?;
+            self.builder.ins().jump(merge_b, &[]);
+        }
+        self.builder.seal_block(merge_b);
+        self.builder.switch_to_block(merge_b);
+        Ok(())
     }
 
     /// An `if`'s condition, which frees `ends` only when a `return` leaves it: the arms free
@@ -1028,32 +1182,36 @@ impl<'a> Lowerer<'a, '_> {
         Ok(c)
     }
 
-    /// An arm and the places it frees at its end, or as a `return` leaves it.
+    /// An arm and the places it frees at its end, or as a `return` leaves it or a value it gives
+    /// passes out.
     ///
     /// # Safety
-    /// `arm` must be a valid dyad from the store, `ends` held places.
-    unsafe fn lower_arm(
-        &mut self,
-        arm: DyadPtr,
-        ends: &'a [DyadPtr],
-    ) -> Result<Value, CompileError> {
+    /// `arm` must be null or a valid dyad from the store, `ends` held places.
+    unsafe fn lower_arm(&mut self, arm: DyadPtr, ends: &'a [DyadPtr]) -> Result<(), CompileError> {
         let at = self.unwind.len();
         self.unwind.push(Unwind::Ends(ends));
-        let value = self.lower(arm)?;
-        self.end_to(at)?;
-        Ok(value)
+        self.lower_given(arm)?;
+        self.end_to(at)
     }
 
-    /// The header re-evaluates the condition, the body jumps back, and the
-    /// header seals only after that back-edge exists. Yields unit.
+    /// `lower` lowered as a value: what it gives passes out to a target of its own, whose value
+    /// is what was given, a zero where it fell through, unit where nothing could give.
+    pub(crate) fn lower_as_value(
+        &mut self,
+        lower: impl FnOnce(&mut Self) -> Result<(), CompileError>,
+    ) -> Result<Value, CompileError> {
+        self.open_target();
+        lower(self)?;
+        Ok(self.close_target())
+    }
+
+    /// The header re-evaluates the condition, the body jumps back, and the header seals only
+    /// after that back-edge exists; a value the body gives ends the loop and passes out to the
+    /// innermost target.
     ///
     /// # Safety
     /// `cond`/`body` must be valid dyads from the store.
-    pub unsafe fn lower_while(
-        &mut self,
-        cond: DyadPtr,
-        body: DyadPtr,
-    ) -> Result<Value, CompileError> {
+    pub unsafe fn lower_while(&mut self, cond: DyadPtr, body: DyadPtr) -> Result<(), CompileError> {
         let header = self.builder.create_block();
         let body_b = self.builder.create_block();
         let exit = self.builder.create_block();
@@ -1064,18 +1222,19 @@ impl<'a> Lowerer<'a, '_> {
         self.builder.ins().brif(c, body_b, &[], exit, &[]);
         self.builder.switch_to_block(body_b);
         self.builder.seal_block(body_b);
-        self.lower(body)?;
+        self.lower_given(body)?;
         self.builder.ins().jump(header, &[]);
         self.builder.seal_block(header);
         self.builder.switch_to_block(exit);
         self.builder.seal_block(exit);
-        Ok(self.const_i32(0))
+        Ok(())
     }
 
     /// The start goes into the counter, the end and step (default 1) are hoisted as SSA, a
     /// `step > 0` guard runs zero iterations otherwise, as interpreted; then read, compare
     /// `< end`, body, increment. A named counter is its binding's place; a nameless one
-    /// (`var` null) is an SSA variable of this function. Yields unit.
+    /// (`var` null) is an SSA variable of this function. A value the body gives ends the loop
+    /// and passes out to the innermost target.
     ///
     /// # Safety
     /// The parts must be valid dyads from the store; `step` may be null for the default.
@@ -1086,7 +1245,7 @@ impl<'a> Lowerer<'a, '_> {
         end: DyadPtr,
         step: DyadPtr,
         body: DyadPtr,
-    ) -> Result<Value, CompileError> {
+    ) -> Result<(), CompileError> {
         let Operand::Concrete(nt) = operand_of(self.types, start) else {
             return Err(CompileError::Internal("a loop's range is committed to one number type"));
         };
@@ -1141,7 +1300,7 @@ impl<'a> Lowerer<'a, '_> {
 
         self.builder.switch_to_block(body_b);
         self.builder.seal_block(body_b);
-        self.lower(body)?;
+        self.lower_given(body)?;
         let v2 = self.read_counter(var, nameless, ct)?;
         let inc = if nt.is_float() {
             self.builder.ins().fadd(v2, d)
@@ -1164,7 +1323,7 @@ impl<'a> Lowerer<'a, '_> {
         self.builder.seal_block(header);
         self.builder.switch_to_block(exit);
         self.builder.seal_block(exit);
-        Ok(self.const_i32(0))
+        Ok(())
     }
 
     /// # Safety
@@ -1197,37 +1356,6 @@ impl<'a> Lowerer<'a, '_> {
             }
             None => self.write_place(var, ct, value),
         }
-    }
-
-    /// A statement: both arms yield unit, so the merge always agrees; the arm the `if` gains
-    /// frees `else_ends`.
-    ///
-    /// # Safety
-    /// `cond`/`then` must be valid dyads from the store, the ends held places.
-    pub unsafe fn lower_if_stmt(
-        &mut self,
-        cond: DyadPtr,
-        condition_ends: &'a [DyadPtr],
-        then: DyadPtr,
-        then_ends: &'a [DyadPtr],
-        else_ends: &[DyadPtr],
-    ) -> Result<Value, CompileError> {
-        let c = self.lower_condition(cond, condition_ends)?;
-        self.branch(
-            c,
-            |s| {
-                // SAFETY: `then` and its ends are the dyads the caller's contract covers.
-                unsafe { s.lower_arm(then, then_ends) }?;
-                Ok(s.const_i32(0))
-            },
-            |s| {
-                for &place in else_ends.iter().rev() {
-                    // SAFETY: as above.
-                    unsafe { crate::identities::drop_model::lower_end_held(s, place) }?;
-                }
-                Ok(s.const_i32(0))
-            },
-        )
     }
 
     /// `return X` leaves the function from wherever it stands, freeing `ends` last first, then
@@ -1744,6 +1872,7 @@ unsafe fn build_pass(
                 plans: Vec::new(),
                 planned: HashMap::new(),
                 lines: Vec::new(),
+                targets: Vec::new(),
             };
             lw.lower(root)?
         };

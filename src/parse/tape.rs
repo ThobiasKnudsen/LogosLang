@@ -554,7 +554,14 @@ impl ParsingTape {
         cell.dyad = dyad;
         cell.constructed = true;
         cell.bracket = false;
-        cell.start = left.start;
-        cell.len = right.end().saturating_sub(left.start);
+        self.span_center(left.start, right.end());
+    }
+
+    /// The center cell, which took the cells around it, spans the source from `start` to `end`,
+    /// so a point after it that runs it first runs what they held.
+    pub fn span_center(&mut self, start: usize, end: usize) {
+        let cell = self.at_mut(0).expect("the construct's cell is at the center");
+        cell.start = start;
+        cell.len = end.saturating_sub(start);
     }
 }
