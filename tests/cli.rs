@@ -3660,6 +3660,7 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
         (format!("{}, p := alloc 1 of t (5), p@.n = 7", t("")), "`n` is not `mut`"),
         (format!("{}, p := alloc 1 of t (5), p@.n = 7", t("immut ")), "`n` is `immut`"),
         (format!("{}, mut v := t (5), q := &v, q@.n = 7", t("")), "`n` is not `mut`"),
+        (format!("{}, p := alloc 2 of t (5), (p + 1)@.n = 7", t("")), "`n` is not `mut`"),
         (
             format!("{}, f := fn (p := @t ?) -> i64 ( p@.n = 7, p@.n ), f.compile()", t("")),
             "`n` is not `mut`",
@@ -3675,6 +3676,7 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
     // The name holding the pointer grants nothing: the path starts at the `@`.
     for (src, want) in [
         (format!("{}, p := alloc 1 of t (5), p@.n = 7, p@.n", t("mut ")), "7\n"),
+        (format!("{}, p := alloc 2 of t (5), (p + 1)@.n = 7, (p + 1)@.n", t("mut ")), "7\n"),
         (format!("{}, p@.b.a = 7, p@.b.a", u("mut ", "mut ")), "7\n"),
         (format!("{}, p@.b.bump(), p@.b.a", u("mut ", "mut ")), "6\n"),
     ] {
