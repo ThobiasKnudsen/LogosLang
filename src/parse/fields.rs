@@ -106,36 +106,32 @@ impl<'a> Parser<'a> {
     }
 
     /// A bare call of a `static` function that works on a value takes the value the calling
-    /// body is about (DESIGN ›There is no `this`‹): a `run`'s node, a `free`'s or `static`
-    /// function's own, or in a parse none, so only one that reads no field of its value is
-    /// called bare there.
+    /// body is about (›A bare call of a `static` function works on the value the calling body is
+    /// about‹ [[R238]]): a `run`'s node, a `free`'s or `static` function's own, or in a parse
+    /// none, so only one that reads no field of its value is called bare there. `name` is the
+    /// callee as the call spells it.
     ///
     /// # Safety
     /// `callee` must be a reduced dyad from the store.
     pub(super) unsafe fn with_receiver(
         &mut self,
         callee: DyadPtr,
+        name: &str,
         args: Vec<DyadPtr>,
     ) -> Result<Vec<DyadPtr>, ParseError> {
         let f = self.types.through(callee);
         if !self.takes_this(f) {
             return Ok(args);
         }
-        let name = || {
-            let spelled = if dyad::ty(callee) == self.types.binding_ {
-                Binding::spelling(callee)
-            } else {
-                String::new()
-            };
-            Box::new(spelled)
-        };
+        let needs_value = || ParseError::StaticFnNeedsValue(Box::new(name.to_string()));
         let bits = fn_receiver(self.types, f);
-        let writes = bits & RECEIVER_WRITES != 0;
+        let (reads, writes) = (bits & RECEIVER_READS != 0, bits & RECEIVER_WRITES != 0);
         let receiver = match self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
             Some(def) => {
-                if def.in_parse && bits & RECEIVER_READS != 0 {
-                    return Err(ParseError::StaticFnNeedsValue(name()));
+                if def.in_parse && reads {
+                    return Err(needs_value());
                 }
+                def.read_receiver |= reads && !def.in_parse;
                 def.wrote_receiver |= writes && !def.in_parse;
                 def.this_param
             }
@@ -143,7 +139,7 @@ impl<'a> Parser<'a> {
                 Some((ty, places)) => {
                     crate::identities::this::build_pack(self.rt.store, self.types, *ty, places)
                 }
-                None => return Err(ParseError::StaticFnNeedsValue(name())),
+                None => return Err(needs_value()),
             },
         };
         let mut with = vec![receiver];
@@ -544,6 +540,11 @@ impl<'a> Parser<'a> {
                 return Ok((node, 0));
             }
             if crate::identities::is_type_value(self.types, lhs) {
+                if let Some(args) = call {
+                    if let Some(node) = self.call_through_type(lhs, name, args)? {
+                        return Ok((node, 1));
+                    }
+                }
                 let n = self.logos_member(lhs, name, index)?;
                 return Ok((n, usize::from(name == "roles")));
             }
@@ -1569,6 +1570,35 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(Some((member, 0)))
+    }
+
+    /// `t.k(…)`: a `static` function called through its type works on no value, so only one that
+    /// reads and writes no field of its value is called so (›A bare call of a `static` function
+    /// works on the value the calling body is about‹ [[R238]]). `None` when `logos` has no such
+    /// function.
+    ///
+    /// # Safety
+    /// `logos` must be a type identity node from the store.
+    unsafe fn call_through_type(
+        &mut self,
+        logos: DyadPtr,
+        name: &str,
+        args: Vec<DyadPtr>,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        let Some((member, _)) = self.static_member_of(logos, name) else {
+            return Ok(None);
+        };
+        let f = self.types.through(member);
+        if !self.takes_this(f) {
+            return Ok(None);
+        }
+        if fn_receiver(self.types, f) != 0 {
+            return Err(ParseError::StaticFnNeedsValue(Box::new(name.to_string())));
+        }
+        let none = self.rt.store.alloc_head(self.types.dyad_, std::ptr::null_mut());
+        let mut with_none = vec![none];
+        with_none.extend(args);
+        self.build_call(member, &with_none).map(Some)
     }
 
     /// The element type a type of node values built from a bracket holds; stand-in for #152.

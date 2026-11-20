@@ -1087,6 +1087,41 @@ fn a_static_member_is_read_through_a_node_and_through_the_type() {
 }
 
 #[test]
+fn a_static_function_called_through_the_type_works_on_no_value() {
+    let t = "t := type ( n := i64 ?, static k := fn () -> i64 ( 1 ), \
+             static inc := fn (a := i64 ?) -> i64 ( a + 1 ), static j := fn () -> i64 ( k() + 1 ), \
+             static get := fn () -> i64 ( n ), static via := fn () -> i64 ( get() ) )";
+    for (tail, want) in [
+        ("t.k()", "1\n"),
+        ("t.inc(i64 5)", "6\n"),
+        ("t.j()", "2\n"),
+        ("g := fn () -> i64 ( t.k() ), g()", "1\n"),
+        ("g := fn () -> i64 ( t.k() ), g.compile(), g()", "1\n"),
+        ("g := fn (b := i64 ?) -> i64 ( t.inc(b) ), g.compile(), g(i64 5)", "6\n"),
+        // A function that reads a field through a bare call reads it through a value as well.
+        ("v := t (3), v.via() + v.j()", "5\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{t}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+    // One that reads or writes a field, itself or through a bare call, has no value to use; the
+    // refusal names the function as the call spells it.
+    let set = "s := type ( mut n := i64 ?, static set := fn () -> i64 ( n = 2, 0 ) )";
+    for (src, name) in [
+        (format!("{t}, t.get()"), "get"),
+        (format!("{t}, t.via()"), "via"),
+        (format!("{t}, g := fn () -> i64 ( t.get() ), g()"), "get"),
+        (format!("{t}, f := t.get, f()"), "f"),
+        (format!("{set}, s.set()"), "set"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        let expect = format!("`{name}` works on a value of its type");
+        assert!(stderr.contains(&expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_value_runs_its_type_s_parse_as_tape_0() {
     // The type builds the value and hands the cell on; the same parse then
     // reads the value as `tape[0]` and consumes the cell to its right.
@@ -7206,13 +7241,21 @@ fn a_bare_static_call_works_on_the_value_the_body_is_about() {
         let (code, stdout, stderr) = run_line(&format!("{inc}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
     }
-    // A parse has no value to hand one that reads a field; outside the type it is no name.
+    // A parse has no value to hand one that reads a field, itself or through a bare call;
+    // outside the type it is no name.
     for (src, expect) in [
         (
             "q := type ( n := u64 ?, static get := fn () -> u64 ( n ), static parse_rank = 60, \
              static parse = ( tape[0].type = q, tape[0].n = get(), tape.is_constructed[0] = true ) ), q"
                 .to_string(),
-            "reads no field",
+            "`get` works on a value of its type",
+        ),
+        (
+            "q := type ( n := u64 ?, static get := fn () -> u64 ( n ), \
+             static via := fn () -> u64 ( get() ), static parse_rank = 60, \
+             static parse = ( tape[0].type = q, tape[0].n = via(), tape.is_constructed[0] = true ) ), q"
+                .to_string(),
+            "`via` works on a value of its type",
         ),
         (format!("{COUNTED}, twice()"), "`twice` is not in scope"),
     ] {

@@ -300,7 +300,7 @@ pub fn parse_message(e: &ParseError) -> String {
             "`tape[0].type = T` takes a type: a type's name, or a call that gives one".into()
         }
         ParseError::StaticFnNeedsValue(name) => format!(
-            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `free` or `static` functions; a parse calls bare only a function that reads no field"
+            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `free` or `static` functions; through the type, or bare from a parse, it has no value, so only a function that uses no field is called there"
         ),
         ParseError::FlagTakesBool => {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
