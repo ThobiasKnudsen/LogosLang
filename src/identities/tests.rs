@@ -2220,8 +2220,6 @@ fn a_type_returning_body_must_hand_back_a_type() {
 
 #[test]
 fn a_result_type_is_written_as_a_type_place_is() {
-    // A call over a hole or a value after `->` read it as a type; over a number it took the
-    // process down.
     for written in ["i32 ?", "@i32 ?", "f64 ?", "type ?", "dyad ?", "5", "1 + 2", "(5)"] {
         assert_eq!(
             parse_err(&format!("fn () -> {written} ( 7 )")),

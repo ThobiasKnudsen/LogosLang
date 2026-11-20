@@ -701,12 +701,10 @@ impl<'a> Parser<'a> {
         f
     }
 
-    /// The type `-> T` writes, read as `?` reads the type to its left and landed as `=` lands a
-    /// value in a `type ?` place: a box the pass has already filled names the type it holds, and
-    /// a value that is no type is refused. The function is built where it is written, so a type
-    /// known only when the program runs is refused too (›`fn` is not a primitive: a function is
-    /// a type in this same shape‹ [[R199]], ›A `type ?` place is a box, written any number of
-    /// times‹ [[R291]]). An error points at `start`, where the written type begins.
+    /// The type `-> T` names, read as `?` reads its left operand and landed as `=` lands a value
+    /// in a `type ?` place; the function is built here, so the type must be known now (›`fn` is
+    /// not a primitive: a function is a type in this same shape‹ [[R199]], ›A `type ?` place is a
+    /// box, written any number of times‹ [[R291]]).
     fn written_result_type(&mut self, out: Cell, start: usize) -> Result<DyadPtr, ParseError> {
         let read = self.operand_dyad(out)?;
         let types = self.types;

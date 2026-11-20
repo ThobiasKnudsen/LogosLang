@@ -3770,7 +3770,6 @@ fn a_result_type_is_read_as_a_declaration_reads_its_type() {
     );
     assert_eq!(echoes, ["true", "8"], "stderr: {stderr}");
 
-    // A call over a number written after `->` took the process down.
     for src in ["mk := fn () -> 5 ( 7 ), mk()", "mk := fn () -> 5 ( 7 ), mk.compile(), mk()"] {
         let out = logos().arg(src).output().unwrap();
         assert_eq!(out.status.code(), Some(1), "{src}");
