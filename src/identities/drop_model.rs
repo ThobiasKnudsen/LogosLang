@@ -136,8 +136,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 || super::this::is_plain(types, ty) && !meta::instances_free_of(ty).is_null()
         };
         // A name moves whatever it holds, but a name that only borrows a value with an end, a
-        // parameter's included, holds none. A field or cell moves only what it owns: stand-in
-        // for #66.
+        // parameter's included, holds none.
+        // A field or cell moves only what it owns: stand-in for #66.
         let name = ended.as_ref().filter(|e| e.is_name());
         // SAFETY: as above, and `name` holds the binding the resolver returned for it.
         let owner = unsafe {
