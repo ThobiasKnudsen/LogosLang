@@ -570,7 +570,7 @@ pub(crate) unsafe fn build_place_free(
     } else if is_owning_place(types, place) {
         build_block_free(p.store(), types, place)
     } else if p.is_owning_read(place) {
-        // An owning field reads a node of a type whose body fills `free`.
+        // An owning field reads a node or a record of a type whose body fills `free`.
         let free = meta::instances_free_of(super::read::output_type(types, place));
         build_instance_free(p.store(), types, place, free)
     } else if let Some(free) = cell_free(types, place) {
@@ -1000,9 +1000,9 @@ fn build_inert_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr 
     free_node(store, types, [place, std::ptr::null_mut(), types.ops.free_])
 }
 
-/// A node's `free` runs in the seed, and a cell's over a plain record, which hands its type's
-/// `free` its bytes' address as a value does. A cell's or field's free that empties a slot no
-/// frame holds keeps the function interpreted: stand-in for #164.
+/// A node's `free` runs in the seed, and a cell's or a frame field's over a plain record, which
+/// hands its type's `free` its bytes' address as a value does. A cell's or field's free that
+/// empties a slot no frame holds keeps the function interpreted: stand-in for #164.
 fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `free` node `[place, pointee, op]`, `[place, free, op]` or
     // `[value, free, op]`.
@@ -1015,8 +1015,14 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     let in_bytes = op == core.ops.instance_free_
         && unsafe { !holds_by_address(core, super::read::output_type(core, place)) };
     if op == core.ops.value_free_ || in_bytes {
-        // SAFETY: the value is a reduced dyad from the store.
-        let this = unsafe { lw.lower(place) }?;
+        // SAFETY: the value is a reduced dyad from the store, a frame's place among them.
+        let this = unsafe {
+            if in_bytes && core.is_storage(place) {
+                lw.place_addr(place)
+            } else {
+                lw.lower(place)
+            }
+        }?;
         if pointee.is_null() {
             return Ok(lw.const_i32(0));
         }

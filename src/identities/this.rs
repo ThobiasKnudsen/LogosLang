@@ -314,6 +314,22 @@ pub(crate) enum FieldPath {
     Unfollowed,
 }
 
+/// What `node` reads a field of, with the field's binding, null for a read built at run: a field
+/// read or a record's `field` place; `None` for any other node, a binding's own field (`x:f`)
+/// included.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn field_step(types: &Core, node: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
+    if is_field_read(types, node) {
+        Some((*(dyad::value(node) as *const DyadPtr), field_binding_of(types, node)))
+    } else if dyad::ty(node) == types.field_ && types.binding_field_of(node).is_none() {
+        Some(super::instance::field_parts(node))
+    } else {
+        None
+    }
+}
+
 /// The field path `node` is, read off the reads it is built of: each field read or record
 /// field steps to the value it reads into, until a name, the value `held` the parse read the
 /// name `root` as, or something else.
@@ -328,19 +344,12 @@ pub(crate) unsafe fn field_path(
 ) -> FieldPath {
     let mut fields = Vec::new();
     let mut at = node;
-    loop {
-        if is_field_read(types, at) {
-            fields.push(field_binding_of(types, at));
-            at = *(dyad::value(at) as *const DyadPtr);
-        } else if dyad::ty(at) == types.field_ && types.binding_field_of(at).is_none() {
-            let (record, field) = super::instance::field_parts(at);
-            fields.push(field);
-            at = record;
-        } else if dyad::ty(at) == types.deref_ && super::pointer::reads_folded_field(types, at) {
-            return FieldPath::Unfollowed;
-        } else {
-            break;
-        }
+    while let Some((into, field)) = field_step(types, at) {
+        fields.push(field);
+        at = into;
+    }
+    if dyad::ty(at) == types.deref_ && super::pointer::reads_folded_field(types, at) {
+        return FieldPath::Unfollowed;
     }
     if fields.is_empty() {
         return FieldPath::NoField;

@@ -84,20 +84,17 @@ unsafe fn owned(types: &Core, ty: DyadPtr) -> Option<Owned> {
     }
 }
 
-/// What field `binding` of type `ty` in a value of `owner` owns: an entry of a `{ … }` whatever
-/// the name it was held, a `dyad`'s node included (›`{ … }` outside text is a scope kept as a
-/// value, read with `.`‹ [[R374]]); any other field holding a node only with `own` on its binding
-/// (›A field may be `own t ?`, `t` a type whose body fills `static free`‹ [[R68]]).
+/// What field `binding` of type `ty` owns: an entry of a `{ … }` whatever the name it was held,
+/// a `dyad`'s node included (›`{ … }` outside text is a scope kept as a value, read with `.`‹
+/// [[R374]]); any other field holding a node only with `own` on its binding, one holding a record
+/// in its bytes always (›A field may be `own t ?`, `t` a type whose body fills `static free`‹
+/// [[R68]]).
 ///
 /// # Safety
-/// `owner` must be a record type node, `binding` one of its fields' binding dyads and `ty` that
-/// field's declared type, from the store.
-unsafe fn field_owned(
-    types: &Core,
-    owner: DyadPtr,
-    binding: DyadPtr,
-    ty: DyadPtr,
-) -> Option<Owned> {
+/// `binding` must be a field's binding dyad, laid out in its record type, and `ty` its declared
+/// type, from the store.
+unsafe fn field_owned(types: &Core, binding: DyadPtr, ty: DyadPtr) -> Option<Owned> {
+    let owner = Binding::read(binding).frame;
     if let Teardown::Entries(_) = teardown_of_type(types, owner) {
         return match teardown_of_type(types, ty) {
             Teardown::Dyad => Some(Owned::Dyad),
@@ -108,6 +105,27 @@ unsafe fn field_owned(
         Owned::Node(_) if !Binding::has_gate(binding, types.own_) => None,
         owned => Some(owned),
     }
+}
+
+/// Whether field `binding` holds a value its holder must free, as [`needs_owner`] says of a value.
+///
+/// # Safety
+/// `binding` must be a field's binding dyad from the store.
+pub(crate) unsafe fn field_needs_owner(types: &Core, binding: DyadPtr) -> bool {
+    !matches!(field_owned(types, binding, types.type_of(binding)), None | Some(Owned::Map(_)))
+}
+
+/// The bindings of the fields of the record type `ty` whose values its own `free` must free
+/// (›A type whose fields carry teardowns must write its own destructor‹ [[R59]]).
+///
+/// # Safety
+/// `ty` must be a record type node from the store.
+pub(crate) unsafe fn owning_fields<'a>(
+    types: &'a Core,
+    ty: DyadPtr,
+) -> impl Iterator<Item = DyadPtr> + 'a {
+    // SAFETY: each is a field's binding dyad from the store.
+    fields(ty).map(|(b, _)| b).filter(move |&b| unsafe { field_needs_owner(types, b) })
 }
 
 /// Each field of a value of the record type `ty`, with its binding and declared type.
@@ -169,7 +187,7 @@ unsafe fn deepen_as(rt: &mut Runtime, what: Owned, at: *mut u8) -> Result<(), Ru
         }
         Owned::Record(t) => {
             for (binding, field_ty) in fields(t) {
-                if let Some(what) = field_owned(rt.types(), t, binding, field_ty) {
+                if let Some(what) = field_owned(rt.types(), binding, field_ty) {
                     deepen_as(rt, what, at.add(Binding::read(binding).offset))?;
                 }
             }
@@ -226,7 +244,7 @@ unsafe fn copy_node(rt: &mut Runtime, ty: DyadPtr, node: DyadPtr) -> Result<Dyad
         if held.is_null() {
             continue;
         }
-        match field_owned(rt.types(), ty, binding, field_ty) {
+        match field_owned(rt.types(), binding, field_ty) {
             Some(Owned::Node(t)) => *slots.add(k) = copy_node(rt, t, held)?,
             Some(Owned::Block(_)) => {
                 let mut word = std::ptr::read_unaligned(dyad::value(held) as *const u64);

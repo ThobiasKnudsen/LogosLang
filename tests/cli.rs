@@ -6989,11 +6989,11 @@ fn a_plain_record_moves_by_its_bytes() {
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
     }
-    // A record field stays where it is: a holder that fills `free` frees it with the rest, and
-    // one that does not owns nothing to move out.
+    // A record field stays where it is: its holder fills `free`, which frees it with the rest,
+    // and a holder that does not is refused where it is defined.
     let owns_nothing = "a field or cell that owns nothing is not in the seed yet";
     for (holder, expect) in [
-        ("h := type ( mut b := bag ?, z := i32 ? )", owns_nothing),
+        ("h := type ( mut b := bag ?, z := i32 ? )", "the field `b` owns what it holds"),
         ("h := type ( mut b := bag ?, static free = ( free b ) )", "fills its own `static free"),
     ] {
         for tail in [
@@ -7012,6 +7012,49 @@ fn a_plain_record_moves_by_its_bytes() {
     let (echoes, stderr) =
         repl(format!("{RECORD}\na := bag(1)\nb := move a\nprint «mid»\n").as_bytes());
     assert_eq!(echoes, ["mid", "freed 1"], "stderr: {stderr}");
+}
+
+/// ›A type whose fields carry teardowns must write its own destructor‹ [[R59]]: a field that owns
+/// what it holds, an `own` field or a record whose type fills `free`, is refused at its type's
+/// definition unless the type fills `free`; that `free` frees it once, and `=` frees the record it
+/// displaces, on both tiers.
+#[test]
+fn a_type_frees_the_records_its_fields_hold() {
+    for (tail, expect) in [
+        ("h := type ( mut b := bag ?, z := i32 ? ), 1", "the field `b` owns what it holds"),
+        (
+            "h := type ( mut p := own @i32 ?, mut b := bag ? ), 1",
+            "the fields `p`, `b` own what they hold",
+        ),
+        (
+            "h := type ( mut b := bag ?, static free = ( free b ) ), k := type ( c := h ? ), 1",
+            "the field `c` owns what it holds",
+        ),
+        ("f := fn () -> i32 ( h := type ( b := bag ? ), 1 ), f()", "the field `b` owns"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+    // A record whose type fills no `free` gives its holder nothing to free.
+    let (code, stdout, stderr) = run_line(
+        "m := type ( k := i32 ? ), h := type ( b := m ?, z := i32 ? ), v := h(m(1), 2), v.z",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "2\n"), "stderr: {stderr}");
+    let h = "h := type ( mut b := bag ?, z := i32 ?, static free = ( print «h», free b ) )";
+    let body = "a := bag(1), mut v := h(a, 2), v.b = bag(3), v.b.n = 7, print «end»";
+    for (tail, printed) in [
+        ("a := bag(1), v := h(a, 2), print «end»".to_string(), "end\nh\nfreed 1\nfreed 1\n"),
+        (body.into(), "freed 1\nend\nh\nfreed 7\nfreed 1\n"),
+        (format!("f := fn () -> i32 ( {body}, 0 ), f()"), "freed 1\nend\nh\nfreed 7\nfreed 1\n0\n"),
+        (
+            format!("f := fn () -> i32 ( {body}, 0 ), f.compile(), f()"),
+            "freed 1\nend\nh\nfreed 7\nfreed 1\n0\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {h}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
 }
 
 /// DESIGN ›A value's teardown runs where its life ends; the ending identity reads the type's

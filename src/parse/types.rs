@@ -47,8 +47,6 @@ pub(super) struct OpenType {
     pub(super) block: (DyadPtr, Vec<DyadPtr>),
     /// From a `static free = (…)` line: the `fn` over the value an owner's teardown runs.
     instances_free: DyadPtr,
-    /// A field declared `own` over a node's type, whose teardown the type's free must write.
-    owns_node_field: bool,
     /// The type node being defined, its record written at the close: what its name means in its parse.
     pub(super) self_type: DyadPtr,
 }
@@ -448,9 +446,6 @@ impl<'a> Parser<'a> {
             }
             if owns_node {
                 self.add_gate(binding, self.types.own_)?;
-                if let Some(def) = self.cx.definitions.last_mut() {
-                    def.owns_node_field = true;
-                }
             }
             fields.push(field);
             bindings.push(binding);
@@ -724,7 +719,6 @@ impl<'a> Parser<'a> {
             wrote_receiver: false,
             block: (scope, Vec::new()),
             instances_free: std::ptr::null_mut(),
-            owns_node_field: false,
             self_type,
         });
         // A `fn` literal on a slot's right side must not claim the enclosing
@@ -789,20 +783,17 @@ impl<'a> Parser<'a> {
             // SAFETY: `node` was just built; `def.run_body` is the `lex` node the fill built.
             unsafe { crate::identities::meta::install_run_body(node, def.run_body) };
         }
-        // A type whose fields own what they point to writes the teardown that frees it
-        // (DESIGN ›A type whose fields carry teardowns must write its own destructor‹).
-        // SAFETY: `fields` is the block's array node, its items field dyads typed by a type node.
-        let owning_field = unsafe {
-            crate::identities::array::items(fields).iter().any(|&f| {
-                let ty = crate::identities::hole::type_in(f);
-                crate::identities::numtype::is_pointer_type(ty)
-                    && !crate::identities::meta::destructor_of(ty).is_null()
-            })
-        };
-        if (owning_field || def.owns_node_field) && def.instances_free.is_null() {
-            return Err(ParseError::OwningFieldNeedsFree);
-        }
-        if !def.instances_free.is_null() {
+        if def.instances_free.is_null() {
+            // SAFETY: `node` was just given its record layout; each field's binding is a binding dyad.
+            let unfreed: Vec<String> = unsafe {
+                crate::identities::copy::owning_fields(self.types, node)
+                    .map(|b| Binding::spelling(b))
+                    .collect()
+            };
+            if !unfreed.is_empty() {
+                return Err(ParseError::FieldsNeedFree(unfreed));
+            }
+        } else {
             // SAFETY: `node` was just built with a record layout; the free is the fill's fn.
             unsafe { crate::identities::meta::install_instances_free(node, def.instances_free) };
         }
