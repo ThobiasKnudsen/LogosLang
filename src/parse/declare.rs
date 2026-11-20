@@ -1067,14 +1067,11 @@ impl<'a> Parser<'a> {
     /// its line runs‹ [[R371]]). Without a bracket, `dyad` stands as its value.
     pub(crate) fn construct_dyad(
         &mut self,
-        id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let types = self.types;
         let Some(bracket) = self.cell_at(tape, 1)?.filter(|c| c.is_bracket()) else {
-            let value = self.stand_as_value(tape, id);
-            tape.place(value);
-            return Ok(Constructed::Placed);
+            return Ok(Constructed::Decline);
         };
         // SAFETY: the bracket cell holds a node from the store; its arguments are reduced dyads.
         let node = unsafe {

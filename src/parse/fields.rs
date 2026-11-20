@@ -969,9 +969,7 @@ impl<'a> Parser<'a> {
             cell.target = reached;
             cell.root = path_root;
         }
-        // Every read gives what the member holds, but `.type` hands its type on to nothing:
-        // stand-in for #393.
-        Ok(if type_word { Constructed::Placed } else { Constructed::Gave })
+        Ok(Constructed::Gave)
     }
 
     /// The comptime index a `[…]` cell carries when its interior is a

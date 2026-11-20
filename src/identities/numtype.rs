@@ -155,9 +155,7 @@ fn construct(
 ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
     let types = p.types();
     let Some(operand) = p.type_operand(tape, 1)? else {
-        let node = p.stand_as_value(tape, id);
-        tape.place(node);
-        return Ok(crate::parse::Constructed::Placed);
+        return Ok(crate::parse::Constructed::Decline);
     };
     let node = if let Some(taken) = super::lossy::taken(types, &operand) {
         tape.remove(1);

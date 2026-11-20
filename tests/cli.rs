@@ -4918,6 +4918,91 @@ fn a_bracket_holding_a_type_reads_what_follows_it_as_a_name_holding_the_type_doe
 }
 
 #[test]
+fn a_word_that_finds_nothing_to_its_right_stands_as_its_own_value() {
+    // Before a boundary, or an operator that reads to its left, each word that reads its own
+    // right side declines, its identity standing as its own value.
+    for word in [
+        "fn",
+        "if",
+        "while",
+        "for",
+        "defer",
+        "immediate",
+        "type",
+        "scope",
+        "dyad",
+        "print",
+        "lex",
+        "file",
+        "error",
+        "regex",
+        "import",
+        "logos",
+    ] {
+        for src in [format!("x := {word}, x == {word}"), format!("x := ({word}), x == {word}")] {
+            assert_eq!(line(&src), "true", "{src}");
+        }
+        assert_eq!(line(&format!("print «{{{word}}}»")), line(word), "{word}");
+    }
+    // `.type` hands the type on as a name holding it does, named or not, at top level and in a
+    // body on both tiers.
+    let a = "a := i32 5";
+    let f = "f := fn (a := i32 ?) -> i32 ( a + 1 )";
+    let c = "mut c := true";
+    let arms = ["(if c (i32 1) else (i64 2))", "(if c (u8 1) else (i32 2))"];
+    let if_named = format!("t := {}.type, t == {}.type", arms[0], arms[1]);
+    let if_unnamed = format!("{}.type == {}.type", arms[0], arms[1]);
+    for (defs, out, named, unnamed, want) in [
+        (a, "i32", "t := a.type, t 3", "a.type 3", "3"),
+        (f, "bool", "t := f.type, t == f.type", "f.type == f.type", "true"),
+        (f, "bool", "t := f.type, t == fn", "f.type == fn", "true"),
+        (f, "bool", "t := f.type, t == i32", "f.type == i32", "false"),
+        (c, "bool", if_named.as_str(), if_unnamed.as_str(), "true"),
+        (
+            c,
+            "bool",
+            "t := (if c (i32 1) else (i64 2)).type, t == if",
+            "(if c (i32 1) else (i64 2)).type == if",
+            "true",
+        ),
+    ] {
+        for body in [named, unnamed] {
+            let src = format!("{defs}, {body}");
+            assert_eq!(line(&src), want, "{src}");
+            for call in ["g()", "g.compile(), g()"] {
+                let src = format!("{defs}, g := fn () -> {out} ( {body} ), {call}");
+                assert_eq!(line(&src), want, "{src}");
+            }
+        }
+    }
+    // Standing alone, or in a quote, it shows as the word itself does.
+    for (src, word) in [
+        (format!("{f}, t := f.type, t"), "fn"),
+        (format!("{f}, t := f.type, print «{{t}}»"), "fn"),
+        (format!("{c}, t := (if c (i32 1) else (i64 2)).type, t"), "if"),
+        (format!("{c}, t := (if c (i32 1) else (i64 2)).type, print «{{t}}»"), "if"),
+    ] {
+        assert_eq!(line(&src), line(word), "{src}");
+    }
+    // Before the body of a complete condition, and after `->`, it stands; a `-` after it negates.
+    assert_eq!(line(&format!("{f}, if f.type == fn ( print «fn» )")), "fn");
+    assert_eq!(line(&format!("{f}, g := f, if g.type == f.type ( print «same» )")), "same");
+    assert_eq!(line(&format!("{f}, g := fn () -> f.type ( f ), h := g(), h.type == fn")), "true");
+    assert_eq!(line("mut x := i32 3, if -x < 0 ( print «neg» )"), "neg");
+    // Where its syntax has started, or something else stands to its right, it keeps its error.
+    for src in [
+        "fn (a := i32 ?) -> i32".to_string(),
+        "fn 3".into(),
+        "fn -> i32 ( 1 )".into(),
+        format!("{f}, t := f.type, t 3"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: {stderr}");
+        assert!(stderr.contains("expected a `(` here"), "{src}: {stderr}");
+    }
+}
+
+#[test]
 fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_once() {
     // Each point where the parse needs a value runs the earlier arguments first, each then
     // standing for the value it gave, and the call runs them no more.
@@ -5206,9 +5291,8 @@ fn immediate_runs_its_expression_as_it_parses_and_stands_as_the_value() {
     // A name of the body has no value while the body parses.
     let (_echoes, stderr) = repl(b"h := fn (x := i32 ?) -> i32 ( immediate x + 1 )\n");
     assert!(stderr.contains("made once"), "stderr: {stderr}");
-    let (echoes, stderr) = repl(b"immediate\nimmediate 2 + 3\n");
+    let (echoes, stderr) = repl(b"immediate 2 + 3\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
-    assert!(stderr.contains("nothing to evaluate here"), "stderr: {stderr}");
 }
 
 #[test]
@@ -6014,17 +6098,26 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         ),
         (format!("{mk}, y := i32 3, (y mk).a"), "3"),
         (format!("{mk}, f := fn (y := i32 ?) -> i32 ( (y mk).a ), f.compile(), f(3)"), "3"),
-        (format!("{mk}, y := i32 3, (y mk).type == pt"), "false"),
-        (
-            format!("{mk}, f := fn (y := i32 ?) -> bool ( (y mk).type == pt ), f.compile(), f(3)"),
-            "false",
-        ),
-        (format!("{mk}, y := i32 3, (y mk).type.tag"), "7"),
         (format!("{mk}, y := i32 3, (y mk).output_type == pt"), "true"),
     ] {
         let out = logos().arg(&src).output().unwrap();
         assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{src}");
+    }
+    // `mk` reads to its left, so held or handed on by `.type` it wakes with nothing there:
+    // stand-in for #402.
+    for src in [
+        format!("{mk}, t := mk, 1"),
+        format!("{mk}, mk.tag"),
+        format!("{mk}, y := i32 3, (y mk).type == pt"),
+        format!("{mk}, y := i32 3, (y mk).type.tag"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: {stderr}");
+        assert!(
+            stderr.contains("this gives nothing, and a value is needed here"),
+            "{src}: {stderr}"
+        );
     }
     // A field the node's type does not have is the error that says so, never a read of the
     // record the node gives when it runs.

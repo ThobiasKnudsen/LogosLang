@@ -25,6 +25,9 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // The pending `:=` binding is claimed so a self-call in the body
     // resolves the published signature.
     cx.metas.insert(cx.fn_type, |p, id, tape| {
+        if !p.finds_right_side(tape) {
+            return Ok(crate::parse::Constructed::Decline);
+        }
         // Claimed only when the literal is the only cell on the tape; elsewhere
         // suppressed around the parse so a deeper literal can still claim it.
         let node = if tape.len() == 1 {
