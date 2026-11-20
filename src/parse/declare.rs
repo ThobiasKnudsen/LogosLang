@@ -1005,7 +1005,11 @@ impl<'a> Parser<'a> {
             // A box the pass has not filled holds its type only when the program runs, and the
             // line does not wait for it: stand-in for #292.
             let ty = self.type_known_now(ty)?;
-            crate::identities::dyad_place::build_of_type(self.rt.store, types, ty, value)?
+            let node =
+                crate::identities::dyad_place::build_of_type(self.rt.store, types, ty, value)?;
+            // The node holds the value, and ends it with itself.
+            self.take(value);
+            node
         };
         tape.remove(1);
         tape.place(node);

@@ -829,8 +829,11 @@ impl<'a> Parser<'a> {
             }
         }
         // The last value, once its type is, and every `return`'s operand, which a `return` makes
-        // the call's value, are checked against the mark a call reads.
-        if output != self.types.void_ {
+        // the call's value, are checked against the mark a call reads. A `-> dyad` result is a
+        // new node its caller holds, which takes a value made in the body and a copy of one it
+        // borrows (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹
+        // [[R293]]).
+        if output != self.types.void_ && output != self.types.dyad_ {
             // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
             let marked =
                 unsafe { !(*(dyad::value(node) as *const DyadPtr).add(FN_OUTPUT_GATE)).is_null() };
@@ -1490,16 +1493,18 @@ impl<'a> Parser<'a> {
                 use crate::identities::drop_model::{
                     build_hold, param_holds, teardown_of, Teardown,
                 };
+                let written = args.clone();
                 crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
                 for (i, arg) in args.iter_mut().enumerate() {
                     // What the argument lands as, a new node a `dyad ?` parameter takes a value
-                    // in included.
+                    // in included, which takes the value written there with it.
                     if teardown_of(types, *arg) == Teardown::Nothing {
                         continue;
                     }
                     if !param_holds(types, callee, i) {
                         return Err(ParseError::UnboundOwningValue);
                     }
+                    self.take(written[i]);
                     self.take(*arg);
                     *arg = build_hold(self.rt.store, types, *arg);
                 }

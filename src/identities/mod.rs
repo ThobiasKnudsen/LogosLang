@@ -894,11 +894,11 @@ pub(crate) unsafe fn land_as(
     ty: DyadPtr,
     lossy: bool,
 ) -> Result<DyadPtr, ParseError> {
-    land_with(store, types, value, ty, Landing { lossy, held: false })
+    land_with(store, types, value, ty, Landing { lossy, holder: dyad_place::Holder::Nobody })
 }
 
-/// As [`land`], into a place whose holder ends what it takes: a `dyad ?` place takes a value
-/// that is no node in a new node of its own (›Holding is decided at the binding site,
+/// As [`land`], into a place `holder` holds, which ends what it takes: a `dyad ?` place takes a
+/// value that is no node in a new node of its own (›Holding is decided at the binding site,
 /// parameters included‹ [[R61]]).
 ///
 /// # Safety
@@ -908,14 +908,15 @@ pub(crate) unsafe fn land_held(
     types: &Core,
     value: DyadPtr,
     ty: DyadPtr,
+    holder: dyad_place::Holder,
 ) -> Result<DyadPtr, ParseError> {
-    land_with(store, types, value, ty, Landing { lossy: false, held: true })
+    land_with(store, types, value, ty, Landing { lossy: false, holder })
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Landing {
     lossy: bool,
-    held: bool,
+    holder: dyad_place::Holder,
 }
 
 /// # Safety
@@ -992,7 +993,7 @@ unsafe fn land_leaf(
             true
         }
         read::Read::Container(t) if t == types.dyad_ => {
-            return dyad_place::land(store, types, value, how.held);
+            return dyad_place::land(store, types, value, how.holder);
         }
         read::Read::Container(t) => node_value_output(types, value) == Some(t),
         read::Read::Rational => plain_number || rational::is_rational_value(types, value),
@@ -1302,7 +1303,7 @@ pub(crate) unsafe fn commit_call_args(
         if pty.is_null() {
             read::value_type(types, *arg)?;
         } else if drop_model::param_holds(types, callee, i) && !is_receiver(callee, i) {
-            *arg = land_held(store, types, *arg, pty)?;
+            *arg = land_held(store, types, *arg, pty, dyad_place::Holder::Call)?;
         } else {
             *arg = land(store, types, *arg, pty)?;
         }
@@ -1342,14 +1343,15 @@ pub(crate) unsafe fn commit_fn_body(
             return Ok(leaf);
         }
         refuse_statement(types, leaf)?;
-        // An `out` already hands back its bytes.
-        if dyad::ty(leaf) == types.by_copy.out {
+        // A record result is handed back as the address of its bytes, which the call copies; an
+        // `out` already hands them back.
+        let by_bytes = read::carry_of(types, output).and_then(read::Carry::bytes).is_some();
+        if by_bytes && dyad::ty(leaf) == types.by_copy.out {
             return Ok(leaf);
         }
         // The caller holds what the call gives.
-        let landed = land_held(store, types, leaf, output)?;
-        // A record result is handed back as the address of its bytes, which the call copies.
-        if read::carry_of(types, output).and_then(read::Carry::bytes).is_some() {
+        let landed = land_held(store, types, leaf, output, dyad_place::Holder::Owner)?;
+        if by_bytes {
             return Ok(by_copy::build_out(store, types, landed));
         }
         Ok(landed)

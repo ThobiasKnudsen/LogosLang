@@ -585,10 +585,19 @@ impl<'a> Parser<'a> {
                 return Ok(held);
             }
             let stood = dyad_place::stable(self.rt.store, types, held);
-            if stood != held {
-                dyad_place::end(&mut self.rt, held as i64);
+            if stood == held {
+                return Ok(stood);
             }
-            return Ok(stood);
+            dyad_place::release(&mut self.rt, held as i64);
+            // A value with an end of its own moved into the store's copy, which then stands as
+            // one its line made.
+            let ty = dyad::ty(stood);
+            return match read::carry_of(types, ty) {
+                Some(carry) if dyad_place::has_end(types, ty) => {
+                    Ok(self.stand_ran(ran::word_in(carry, stood), ty))
+                }
+                _ => Ok(stood),
+            };
         }
         let ends = teardown_of(types, node) != Teardown::Nothing;
         let layout = place_layout(types, out).map(|(r, _)| r);
@@ -602,7 +611,7 @@ impl<'a> Parser<'a> {
                 let held = self.run_on_pass(run).map_err(ParseError::Run)? as usize as DyadPtr;
                 let stood = dyad_place::stable(self.rt.store, types, held);
                 if stood != held {
-                    dyad_place::end(&mut self.rt, held as i64);
+                    dyad_place::release(&mut self.rt, held as i64);
                 }
                 (Some(stood), ran::word_in(carry, stood))
             }
@@ -610,20 +619,18 @@ impl<'a> Parser<'a> {
         self.take(node);
         match stood {
             Some(stood) if !ends => Ok(stood),
-            _ => {
-                let ran = ran::build(self.rt.store, types, word, ends, out);
-                if ends {
-                    self.rt.stand(ran);
-                    self.cx
-                        .open
-                        .last_mut()
-                        .expect("a line is read in an open scope")
-                        .stood
-                        .push(ran);
-                }
-                Ok(ran)
-            }
+            _ if ends => Ok(self.stand_ran(word, out)),
+            _ => Ok(ran::build(self.rt.store, types, word, false, out)),
         }
+    }
+
+    /// A `ran` node of `out` giving `word`, a value with an end of its own the pass ran early,
+    /// which what takes it, or its line's end, ends.
+    fn stand_ran(&mut self, word: i64, out: DyadPtr) -> DyadPtr {
+        let ran = crate::identities::ran::build(self.rt.store, self.types, word, true, out);
+        self.rt.stand(ran);
+        self.cx.open.last_mut().expect("a line is read in an open scope").stood.push(ran);
+        ran
     }
 
     /// Each item of the `[…]` `list` that runs runs, in order, and stands in its place for the

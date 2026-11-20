@@ -278,7 +278,7 @@ pub(super) fn build_store(
                 && dyad::ty(lhs_d) == types.binding_
                 && super::drop_model::holds_dyad(types, lhs_d) =>
             {
-                super::land_held(store, types, rhs, place_type)?
+                super::land_held(store, types, rhs, place_type, super::dyad_place::Holder::Owner)?
             }
             None => super::land(store, types, rhs, place_type)?,
         }
