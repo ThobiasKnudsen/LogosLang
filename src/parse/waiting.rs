@@ -289,13 +289,16 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if (id == types.fn_type || id == types.type_) && prev != Some(types.dot_) {
-                // `logos file «…»` reads the file as Logos where it is written: no body follows.
-                if id == types.type_ && self.next_identity() == Some(types.file) {
-                    found.needs += 1;
-                    (before_prev, prev) = (prev, Some(id));
-                    continue;
-                }
                 skipping = true;
+                continue;
+            }
+            // `logos file «…»` reads the file as Logos where it is written.
+            if id == types.logos
+                && prev != Some(types.dot_)
+                && self.next_identity() == Some(types.file)
+            {
+                found.needs += 1;
+                (before_prev, prev) = (prev, Some(id));
                 continue;
             }
             if self.ranked(id, prec::ADDRESS) {

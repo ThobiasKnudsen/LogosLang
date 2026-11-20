@@ -120,9 +120,9 @@ impl<'a> Parser<'a> {
 
     /// A bare call of a `static` function that works on a value takes the value the calling
     /// body is about (›A bare call of a `static` function works on the value the calling body is
-    /// about‹ [[R238]]): a `run`'s node, a `free`'s or `static` function's own; anywhere else, a
-    /// parse included, the call has none ([`Parser::on_no_value`]). `cell` is the call's callee
-    /// as written.
+    /// about‹ [[R238]]): a `run`'s node, a `free`'s or `static` function's own, the scope a `{ … }`
+    /// builds ([`Parser::open_scope_receiver`]); anywhere else, a parse included, the call has none
+    /// ([`Parser::on_no_value`]). `cell` is the call's callee as written.
     ///
     /// # Safety
     /// `callee` must be a reduced dyad from the store.
@@ -135,6 +135,11 @@ impl<'a> Parser<'a> {
         let f = self.types.through(callee);
         if !self.takes_this(f) {
             return Ok(args);
+        }
+        if let Some(receiver) = self.open_scope_receiver(f, cell)? {
+            let mut with = vec![receiver];
+            with.extend(args);
+            return Ok(with);
         }
         let receiver = match self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
             Some(def) if !def.in_parse => {
@@ -153,6 +158,46 @@ impl<'a> Parser<'a> {
         let mut with = vec![receiver];
         with.extend(args);
         Ok(with)
+    }
+
+    /// What a bare call of `f` hands on when `f` is a `fn` entry of a `{ … }` whose lines are still
+    /// being read; `None` for any other callee, and in an entry's own body, which hands on its
+    /// value. In the `{ … }`'s own lines the call is about the scope being built (›`{ … }` outside
+    /// text is a scope kept as a value, read with `.`‹ [[R374]]): it hands on no value, and each
+    /// field `f` reads is that name, where it lies. Inside a function those names lie in its frame,
+    /// which `f`'s own call cannot reach, as a nested function cannot read an outer one's local. A
+    /// function written in those lines may run once the names are gone, so a call from its body
+    /// has no value to hand on.
+    ///
+    /// # Safety
+    /// `f` must be a function node from the store.
+    unsafe fn open_scope_receiver(
+        &mut self,
+        f: DyadPtr,
+        cell: &Cell,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        let binding = cell.binding(self.types);
+        if binding.is_null() {
+            return Ok(None);
+        }
+        let scope = Binding::read(binding).scope;
+        let Some(kept) = self.open_kept(scope) else {
+            return Ok(None);
+        };
+        let (depth, in_program_frame) = (kept.depth, kept.in_program_frame);
+        let def = self.cx.definitions.last();
+        if def.is_some_and(|d| d.block.0 == scope && !d.this_param.is_null()) {
+            return Ok(None);
+        }
+        if fn_receiver(self.types, f) != 0 {
+            if depth != (self.cx.frames.len(), self.cx.definitions.len()) {
+                return self.on_no_value(f, cell.spelling(), false).map(Some);
+            }
+            if !in_program_frame {
+                return Err(ParseError::CapturedLocal);
+            }
+        }
+        Ok(Some(self.rt.store.alloc_head(self.types.dyad_, std::ptr::null_mut())))
     }
 
     /// What a call of the `static` function `f` works on where it has no value: through the type,
@@ -269,14 +314,15 @@ impl<'a> Parser<'a> {
         let in_parse = self.cx.definitions.last().is_some_and(|d| d.in_parse);
         let fill = if in_parse { self.types.this.fill } else { std::ptr::null_mut() };
         let owner = self.cx.definitions.last().expect("read inside a definition").self_type;
-        // SAFETY: the field is a declaration dyad, its type null or a type node.
+        // SAFETY: the field is a type's field declaration or a `{ … }`'s name, its type null or a
+        // type node.
         let node = unsafe {
             crate::identities::this::build_field_read(
                 self.rt.store,
                 self.types,
                 this,
                 k,
-                crate::identities::hole::type_in(items[index]),
+                self.types.type_of(items[index]),
                 binding,
                 fill,
                 owner,

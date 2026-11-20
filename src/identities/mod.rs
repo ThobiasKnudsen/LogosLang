@@ -56,8 +56,7 @@ mod immediate;
 pub mod import;
 pub(crate) mod instance;
 pub mod lex;
-#[path = "logos.rs"]
-mod logos_mod;
+mod logos;
 pub(crate) mod lossy;
 pub(crate) mod meta;
 pub(crate) mod mint;
@@ -80,6 +79,8 @@ pub(crate) mod string;
 mod subset;
 pub mod tape;
 pub mod this;
+#[path = "type.rs"]
+mod type_mod;
 pub(crate) mod waiting;
 #[path = "while.rs"]
 mod while_mod;
@@ -87,6 +88,8 @@ mod while_mod;
 pub struct Core {
     /// The root type, the one node whose type is itself.
     pub type_: DyadPtr,
+    /// The Logos language, a value of `language`.
+    pub logos: DyadPtr,
     pub scope: DyadPtr,
     /// The type of an item that ran in the pass and carries its result; never spelled.
     pub root_scope: DyadPtr,
@@ -228,7 +231,7 @@ pub struct Core {
 impl Core {
     pub fn build(store: &mut Store, trie: &mut RegexTrie) -> Core {
         // Foundations first; everything below references them.
-        let type_ = logos_mod::register_root(store);
+        let type_ = type_mod::register_root(store);
         let scope_ = scope::register(store, type_);
         let root_scope = scope::mint(store, scope_, std::ptr::null_mut());
         // `binding` and `string` are minted before the first declaration, which needs
@@ -284,7 +287,7 @@ impl Core {
         unsafe {
             dyad::set_head(type_, record);
         }
-        // The root's spelling and constructor come with `logos_mod::register_syntax` below.
+        // The root's spelling and constructor come with `type_mod::register_syntax` below.
         let record = meta::operand_record(
             &mut cx,
             meta::TUPLE_TAG,
@@ -347,7 +350,8 @@ impl Core {
         let colon_ = colon::register(&mut cx);
         let unknown = hole::register(&mut cx);
         cx.unknown = unknown;
-        let (sep_, left_, right_) = logos_mod::register_syntax(&mut cx);
+        let (sep_, left_, right_) = type_mod::register_syntax(&mut cx);
+        let logos = logos::register(&mut cx);
         let unknown_name = fresh::register(&mut cx);
         let instance::InstanceIds {
             construct: construct_,
@@ -453,6 +457,7 @@ impl Core {
         drop(extents);
         Core {
             type_,
+            logos,
             scope: scope_,
             array_,
             root_scope,

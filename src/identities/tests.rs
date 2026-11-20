@@ -401,7 +401,7 @@ fn parses_an_empty_record() {
     scopes.push(core.root_scope);
 
     let node = {
-        let mut p = Parser::new("logos ()", &mut store, &mut trie, &core, scopes);
+        let mut p = Parser::new("type ()", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
 
@@ -421,7 +421,7 @@ fn parses_a_record_with_typed_fields() {
 
     let node = {
         let mut p =
-            Parser::new("logos (x := i32 ?, y := i32 ?)", &mut store, &mut trie, &core, scopes);
+            Parser::new("type (x := i32 ?, y := i32 ?)", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
 
@@ -461,7 +461,7 @@ fn every_new_name_says_its_type() {
         "pt := type ( a := ? ), 0",
         "pt := type ( a ), 0",
         "pt := type ( a := i32 ?, mut b := ? ), 0",
-        "logos (t)",
+        "type (t)",
     ] {
         assert_eq!(script_parse_err(src), ParseError::FieldNeedsType, "{src}");
     }
@@ -476,14 +476,34 @@ fn every_new_name_says_its_type() {
 }
 
 #[test]
-fn bare_logos_without_parens_yields_the_classifier() {
+fn bare_type_without_parens_yields_the_classifier() {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+
+    let mut p = Parser::new("type", &mut store, &mut trie, &core, scopes);
+    let value = p.parse_expression().unwrap();
+    assert_eq!(unsafe { core.through(value) }, core.type_);
+}
+
+/// ›The ground is one identity, spelled `type`; `logos` is a language‹ [[R134]]
+#[test]
+fn logos_is_a_language_whose_bracket_is_the_plain_group() {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
 
     let mut p = Parser::new("logos", &mut store, &mut trie, &core, scopes);
     let value = p.parse_expression().unwrap();
-    assert_eq!(unsafe { core.through(value) }, core.type_);
+    unsafe {
+        assert_eq!(core.through(value), core.logos);
+        let language = dyad::ty(core.logos);
+        assert_ne!(language, core.type_);
+        assert_eq!(dyad::ty(language), core.type_);
+    }
+    assert_eq!(run_script("x := logos (1 + 2), x"), 3);
+    assert_eq!(run_script("f := fn () -> i32 ( logos (2) * 4 ), f.compile(), f()"), 8);
+    assert_eq!(run_script("if (logos.type == language) (1) else (0)"), 1);
 }
 
 #[test]
@@ -498,7 +518,7 @@ fn scopes_are_typed_scope() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     let node = {
-        let mut p = Parser::new("logos (x := i32 ?)", &mut store, &mut trie, &core, scopes);
+        let mut p = Parser::new("type (x := i32 ?)", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
     unsafe {
@@ -723,7 +743,7 @@ fn a_whole_file_runs_top_to_bottom_like_a_script() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     let mut p = Parser::new(
-        "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (a := i32 ?),\ndouble(21)",
+        "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := type (a := i32 ?),\ndouble(21)",
         &mut store,
         &mut trie,
         &core,
@@ -2129,7 +2149,7 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
     {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("holder := logos (r := @i32 ?)", &mut store, &mut trie, &core, s);
+        let mut p = Parser::new("holder := type (r := @i32 ?)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap();
     }
     let func = {
@@ -2604,7 +2624,7 @@ fn a_pointer_steps_by_whole_cells_both_tiers() {
         48
     );
     assert_eq!(
-        run_script("holder := logos (r := @i32 ?), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
+        run_script("holder := type (r := @i32 ?), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
         12
     );
     let walk = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), mut s := i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
@@ -2994,7 +3014,7 @@ fn a_type_returning_fn_compiles_and_serves_comptime_calls() {
     // This used to panic on the type root's record tag.
     assert_eq!(
         run_script(
-            "metatype := fn (i := i32 ?) -> logos ( if (i == 0) (i32) else (f64) ),\nmetatype.compile(),\nsame := metatype(0) == i32,\nother := metatype(1) == f64,\nif (same and other) (i64 1) else (i64 0)"
+            "metatype := fn (i := i32 ?) -> type ( if (i == 0) (i32) else (f64) ),\nmetatype.compile(),\nsame := metatype(0) == i32,\nother := metatype(1) == f64,\nif (same and other) (i64 1) else (i64 0)"
         ),
         1
     );
@@ -3026,7 +3046,7 @@ fn a_promoted_loop_matches_the_interpreter() {
 
 #[test]
 fn compile_is_reserved_only_on_fn_typed_values() {
-    assert_eq!(run_script("point := logos (compile := i32 ?),\np := point(7),\np.compile"), 7);
+    assert_eq!(run_script("point := type (compile := i32 ?),\np := point(7),\np.compile"), 7);
 }
 
 #[test]
@@ -3065,11 +3085,11 @@ fn a_literal_into_a_pointer_parameter_is_rejected() {
     assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
 }
 
-/// Declare `point := logos (x := i32 ?, y := i32 ?)` in the root scope.
+/// Declare `point := type (mut x := i32 ?, y := i32 ?)` in the root scope.
 fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
-    let mut p = Parser::new("point := logos (mut x := i32 ?, y := i32 ?)", store, trie, core, s);
+    let mut p = Parser::new("point := type (mut x := i32 ?, y := i32 ?)", store, trie, core, s);
     p.parse_expression().unwrap();
 }
 
@@ -3110,7 +3130,7 @@ fn record_fields_lay_out_mixed_widths() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "cell := logos (a := u8 ?, b := i64 ?, c := i32 ?)",
+            "cell := type (a := u8 ?, b := i64 ?, c := i32 ?)",
             &mut store,
             &mut trie,
             &core,
@@ -3788,7 +3808,7 @@ fn recursion_with_a_record_local_is_per_activation_both_tiers() {
     unsafe {
         assert_recursion_both_tiers(
             &[
-                "point := logos ( x := i32 ?, y := i32 ? )",
+                "point := type ( x := i32 ?, y := i32 ? )",
                 "h := fn (n := i32 ?) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (free (h(n - 1)), pt.x) )",
             ],
             "h",
@@ -4347,7 +4367,7 @@ fn a_lossy_conversion_reads_its_bracket_as_a_written_one_does() {
 fn malformed_casts_are_rejected() {
     assert_eq!(parse_err("i32()"), ParseError::BadCast);
     assert_eq!(parse_err("i32(1, 2)"), ParseError::BadCast);
-    assert_eq!(parse_err("i32(logos ())"), ParseError::TypeMismatch);
+    assert_eq!(parse_err("i32(type ())"), ParseError::TypeMismatch);
 }
 
 #[test]
@@ -4482,7 +4502,7 @@ fn plus_over_non_numeric_operands_is_unresolved() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
 
-    let mut p = Parser::new("logos () + 1", &mut store, &mut trie, &core, scopes);
+    let mut p = Parser::new("type () + 1", &mut store, &mut trie, &core, scopes);
     assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnsupportedOperands));
 }
 

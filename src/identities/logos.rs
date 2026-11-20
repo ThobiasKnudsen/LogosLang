@@ -1,62 +1,42 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `type`/`logos`: the one classifier, the `logos : logos` self-loop whose
-//! layout is the seed's only a-priori knowledge. `type ( body )` defines a
-//! type ([`crate::parse::Parser::parse_type_body`]); bare, it is the classifier as a value.
-//! DESIGN ›Substrate vocabulary‹
+//! `language`, the type whose values are languages, and `logos`, the Logos language:
+//! `logos : language : type`. Inside Logos code `logos (…)` is the plain group, and
+//! `logos file «…»` reads a file as Logos.
+//! ›The ground is one identity, spelled `type`; `logos` is a language‹ [[R134]]
 
 use super::{meta, Cx};
-use crate::dyad;
 use crate::dyad::DyadPtr;
-use crate::store::Store;
+use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
 
-pub(super) fn register_root(store: &mut Store) -> DyadPtr {
-    let logos_ = store.alloc_leaf(std::ptr::null_mut());
-    // SAFETY: `logos_` was just allocated; make it its own logos.
-    unsafe {
-        dyad::set_ty(logos_, logos_);
-    }
-    logos_
+/// Returns `logos`.
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+    // A language is an identity carrying a record, as a type is.
+    let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::INERT);
+    let language = cx.store.alloc_head(cx.type_, record);
+    cx.declare("language", language);
+    let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER);
+    let logos = cx.store.alloc_head(language, record);
+    cx.declare("logos", logos);
+    cx.metas.insert(logos, construct);
+    logos
 }
 
-/// Returns `,`, `left` and `right`, in that order.
-pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
-    // Spelled here, not in `register_root`: the trie and the root scope did not exist yet.
-    // `logos` is a transitional alias of `type` until the `language` identity exists.
-    cx.declare("type", cx.type_);
-    cx.declare("logos", cx.type_);
-    cx.metas.insert(cx.type_, |p, id, tape| {
-        // The bracket is read at discovery only; woken at a boundary (`-> type`)
-        // the classifier stands as itself.
-        if p.reads_own_bracket(tape) {
-            let node = p.parse_type_body(id)?;
-            tape.place(node);
-            return Ok(crate::parse::Constructed::Placed);
-        }
-        // `logos file «…»` reads the file as Logos; `type` reads it too while it is `logos`'s
-        // alias.
-        if let Some(scope) = p.construct_logos_file(tape)? {
-            tape.place(scope);
-            return Ok(crate::parse::Constructed::Placed);
-        }
-        Ok(crate::parse::Constructed::Decline)
-    });
-
-    // `left` and `right` carry a type's own record, not a delimiter's, so each
-    // stands as an operand.
-    let side = |cx: &mut Cx, name: &str| {
-        let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::INERT);
-        let id = cx.store.alloc_head(cx.type_, record);
-        cx.declare(name, id);
-        id
-    };
-    let left_ = side(cx, "left");
-    let right_ = side(cx, "right");
-
-    let record = meta::token_record(cx, meta::prec::COMMA, crate::parse::Assoc::Left, &[]);
-    let comma = cx.store.alloc_head(cx.type_, record);
-    cx.declare(",", comma);
-
-    (comma, left_, right_)
+fn construct(
+    p: &mut Parser,
+    _id: DyadPtr,
+    tape: &mut ParsingTape,
+) -> Result<Constructed, ParseError> {
+    if let Some(scope) = p.construct_logos_file(tape)? {
+        tape.place(scope);
+        return Ok(Constructed::Placed);
+    }
+    // The door leads into the scope it stands in, so the word goes and its bracket is read as
+    // Logos's own `(`, where `logos` stood.
+    if p.reads_own_bracket(tape) {
+        tape.remove(0);
+        return Ok(Constructed::Placed);
+    }
+    Ok(Constructed::Decline)
 }

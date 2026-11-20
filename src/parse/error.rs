@@ -273,7 +273,7 @@ pub enum ParseError {
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,
-    /// A `-> logos` call could not be resolved at parse time: its arguments
+    /// A `-> type` call could not be resolved at parse time: its arguments
     /// were not comptime-known, or it did not yield a type.
     NonComptimeTypeCall,
     /// An `immediate` whose value the graph cannot hold: a record or a run-time
@@ -329,6 +329,9 @@ pub enum ParseError {
     /// A name of a `{ … }` whose value its scope's end runs a teardown for, or that does not
     /// move whole into a field; carries the name.
     KeptEntry(Box<String>),
+    /// A name written above a `fn` of a `{ … }` that reads the value ends before the `}`, so the
+    /// value lays out no field where the `fn` reads it.
+    KeptReadEnded { name: Box<String>, reader: Box<String> },
     /// `own @T ?` on a parameter, which would consume the caller's argument.
     OwnParameterNotInSeed,
     /// A `move` or `free` inside a loop or `fn` body names a place declared

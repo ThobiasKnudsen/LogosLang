@@ -396,7 +396,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::NonComptimeTypeCall => {
-            "a `-> logos` call must be evaluable at parse time; \
+            "a `-> type` call must be evaluable at parse time; \
              its arguments must be comptime-known"
                 .into()
         }
@@ -490,6 +490,10 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::KeptEntry(name) => format!(
             "`{name}` cannot be kept in this `{{ … }}`'s value: the seed keeps a name whose value \
              moves whole into a field, as a number, a string, a map, a record or a pointer does"
+        ),
+        ParseError::KeptReadEnded { name, reader } => format!(
+            "`{reader}` reads the names written above it from this `{{ … }}`'s value, so they \
+             must last to its `}}`, and `{name}` ends before it"
         ),
         ParseError::OwnParameterNotInSeed => {
             "an `own` parameter, which takes its argument's ownership, is not in the seed yet".into()

@@ -29,7 +29,7 @@ pub struct ThisIds {
     /// `owner` the type whose value it is.
     pub slot: DyadPtr,
     pub slot_leaf: DyadPtr,
-    /// A field write: `[value, k, v, owner, op]`, storing `v`'s node into slot `k`.
+    /// A field write: `[value, k, v, owner, binding, op]`, storing `v`'s node into slot `k`.
     pub write: DyadPtr,
     pub write_leaf: DyadPtr,
     /// A read of a field typed by `build_field_read`: `[value, k, type, binding, fill, owner,
@@ -39,7 +39,8 @@ pub struct ThisIds {
     /// The mark a field read carries when the type's own `parse` built it: the constructor's
     /// fill of its fresh node, which `immut` alone vetoes.
     pub fill: DyadPtr,
-    /// A write there: `[value, k, v, type, owner, op]`, a node of `type` holding v's value.
+    /// A write there: `[value, k, v, type, owner, binding, op]`, a node of `type` holding v's
+    /// value.
     pub store: DyadPtr,
     pub store_leaf: DyadPtr,
     /// `[template, op]`: a new node of the template's type holding its slots, made per run.
@@ -79,7 +80,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     };
     let (slot, slot_leaf) =
         op(cx, &["value", "k", "binding", "fill", "owner", "op", "output_type"], run_slot);
-    let (write, write_leaf) = op(cx, &["value", "k", "v", "owner", "op"], run_write);
+    let (write, write_leaf) = op(cx, &["value", "k", "v", "owner", "binding", "op"], run_write);
     let (load, load_leaf) =
         op(cx, &["value", "k", "type", "binding", "fill", "owner", "op", "output_type"], run_load);
     cx.lower.insert(load, lower_load);
@@ -87,7 +88,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         let record = meta::token_record(cx, meta::prec::INERT, crate::parse::Assoc::Left, &[]);
         cx.store.alloc_head(cx.type_, record)
     };
-    let (store, store_leaf) = op(cx, &["value", "k", "v", "type", "owner", "op"], run_store);
+    let (store, store_leaf) =
+        op(cx, &["value", "k", "v", "type", "owner", "binding", "op"], run_store);
     let (copy, copy_leaf) = op(cx, &["this", "op", "output_type"], run_copy);
     // SAFETY: `copy` carries the record `op` built.
     unsafe { meta::mark_own(copy) };
@@ -380,10 +382,11 @@ pub(crate) unsafe fn build_write(
 ) -> Result<DyadPtr, crate::parse::ParseError> {
     let ops = dyad::value(read) as *const DyadPtr;
     let (this, k, owner) = (*ops, *ops.add(1), owner_of(types, read));
+    let binding = field_binding_of(types, read);
     let fill = is_fill(types, read);
     let write = |store: &mut Store, value: DyadPtr| {
         let value = if fill { super::place::build(store, types, value) } else { value };
-        act(store, types.this.write, types.this.write_leaf, &[this, k, value, owner])
+        act(store, types.this.write, types.this.write_leaf, &[this, k, value, owner, binding])
     };
     if let Some(ty) = load_type(types, read) {
         if meta::is_node_valued(ty, types.fn_type) {
@@ -405,13 +408,13 @@ pub(crate) unsafe fn build_write(
             if fill {
                 return Ok(write(store, value));
             }
-            let ops = [this, k, value, ty, owner];
+            let ops = [this, k, value, ty, owner, binding];
             return Ok(act(store, types.this.store, types.this.store_leaf, &ops));
         }
     }
     super::read::value_type(types, value)?;
     let value = super::place::build(store, types, value);
-    Ok(act(store, types.this.write, types.this.write_leaf, &[this, k, value, owner]))
+    Ok(act(store, types.this.write, types.this.write_leaf, &[this, k, value, owner, binding]))
 }
 
 /// `tape[0].f` in a parse that stamps a type it gets as it runs: `f` is looked up among that
@@ -538,14 +541,16 @@ pub(crate) unsafe fn is_plain(types: &Core, owner: DyadPtr) -> bool {
 }
 
 /// # Safety
-/// `ops` must be the operands of a field read or write, `owner` its owner type.
+/// `ops` must be the operands of a field read or write, `owner` its owner type and `name` its
+/// field's binding, null for one built at run.
 unsafe fn field_of(
     rt: &mut Runtime,
     ops: *const DyadPtr,
     owner: DyadPtr,
+    name: DyadPtr,
 ) -> Result<Field, RunError> {
     let this = rt.run(*ops)? as DyadPtr;
-    field_at(rt, this, ops, owner)
+    field_at(rt, this, ops, owner, name)
 }
 
 /// As [`field_of`], of the value `this` the read's first operand gave.
@@ -557,9 +562,10 @@ unsafe fn field_at(
     this: DyadPtr,
     ops: *const DyadPtr,
     owner: DyadPtr,
+    name: DyadPtr,
 ) -> Result<Field, RunError> {
     if this.is_null() {
-        return Err(RunError::NoThis);
+        return own_name(rt, ops, name);
     }
     if is_plain(rt.types(), owner) {
         let bytes = this as *mut u8;
@@ -581,6 +587,28 @@ unsafe fn field_at(
     Ok(Field::Slot(slots.add(k as usize), k as usize))
 }
 
+/// A field of no value: a bare call made in a `{ … }`'s own lines hands on none, being about the
+/// scope it builds, whose field `name` is that name itself, where it lies (›`{ … }` outside text
+/// is a scope kept as a value, read with `.`‹ [[R374]]). Any other field of no value is the
+/// checked error.
+///
+/// # Safety
+/// As [`field_of`].
+unsafe fn own_name(
+    rt: &mut Runtime,
+    ops: *const DyadPtr,
+    name: DyadPtr,
+) -> Result<Field, RunError> {
+    if name.is_null() || !rt.types().is_storage(name) {
+        return Err(RunError::NoThis);
+    }
+    let ty = rt.types().type_of(name);
+    let addr = rt.place_addr(name).ok_or(RunError::NoActivation)?;
+    let k = rt.run(*ops.add(1))?;
+    let index = usize::try_from(k).map_err(|_| RunError::BadIndex(k))?;
+    Ok(Field::Bytes(addr, ty, index))
+}
+
 /// Where the node a field holds is kept: a node's slot, or the word a plain record keeps for
 /// a `type` or `dyad` field, packed so at any offset; any other field of a plain record holds no
 /// node.
@@ -591,8 +619,9 @@ unsafe fn slot_of(
     rt: &mut Runtime,
     ops: *const DyadPtr,
     owner: DyadPtr,
+    name: DyadPtr,
 ) -> Result<(*mut DyadPtr, usize), RunError> {
-    match field_of(rt, ops, owner)? {
+    match field_of(rt, ops, owner, name)? {
         Field::Slot(slot, k) => Ok((slot, k)),
         Field::Bytes(addr, ty, k) if holds_node(rt.types(), ty) => Ok((addr.cast(), k)),
         Field::Bytes(..) => Err(RunError::NoThis),
@@ -608,8 +637,8 @@ pub(crate) unsafe fn pointer_bytes(
     rt: &mut Runtime,
     read: DyadPtr,
 ) -> Result<Option<*mut u8>, RunError> {
-    let owner = owner_of(rt.types(), read);
-    Ok(match field_of(rt, dyad::value(read) as *const DyadPtr, owner)? {
+    let (owner, name) = (owner_of(rt.types(), read), field_binding_of(rt.types(), read));
+    Ok(match field_of(rt, dyad::value(read) as *const DyadPtr, owner, name)? {
         Field::Bytes(bytes, ..) => Some(bytes),
         Field::Slot(slot, _) => (!(*slot).is_null()).then(|| dyad::value(*slot)),
     })
@@ -621,8 +650,8 @@ pub(crate) unsafe fn pointer_bytes(
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.
 pub(crate) unsafe fn field_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut u8, RunError> {
-    let owner = owner_of(rt.types(), read);
-    Ok(match field_of(rt, dyad::value(read) as *const DyadPtr, owner)? {
+    let (owner, name) = (owner_of(rt.types(), read), field_binding_of(rt.types(), read));
+    Ok(match field_of(rt, dyad::value(read) as *const DyadPtr, owner, name)? {
         Field::Slot(slot, _) => slot as *mut u8,
         Field::Bytes(bytes, ..) => bytes,
     })
@@ -633,8 +662,8 @@ pub(crate) unsafe fn field_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut 
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.
 pub(crate) unsafe fn held(rt: &mut Runtime, read: DyadPtr) -> Result<DyadPtr, RunError> {
-    let owner = owner_of(rt.types(), read);
-    let (slot, k) = slot_of(rt, dyad::value(read) as *const DyadPtr, owner)?;
+    let (owner, name) = (owner_of(rt.types(), read), field_binding_of(rt.types(), read));
+    let (slot, k) = slot_of(rt, dyad::value(read) as *const DyadPtr, owner, name)?;
     let held = slot.read_unaligned();
     if held.is_null() {
         return Err(RunError::UnfilledField(k));
@@ -668,7 +697,7 @@ unsafe fn load(rt: &mut Runtime, node: DyadPtr, this: DyadPtr) -> Result<i64, Ru
     let ops = dyad::value(node) as *const DyadPtr;
     let ty = *ops.add(2);
     let carry = carry_of(rt.types(), ty).ok_or(RunError::NoLayout(ty))?;
-    match field_at(rt, this, ops, *ops.add(5))? {
+    match field_at(rt, this, ops, *ops.add(5), *ops.add(3))? {
         Field::Bytes(addr, ..) => Ok(super::assign::load(carry, addr)),
         Field::Slot(slot, k) if (*slot).is_null() => Err(RunError::UnfilledField(k)),
         Field::Slot(slot, _)
@@ -722,7 +751,7 @@ fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let ops = dyad::value(node) as *const DyadPtr;
         let (value, ty) = (*ops.add(2), *ops.add(3));
         let carry = carry_of(rt.types(), ty).ok_or(RunError::NoLayout(ty))?;
-        match (field_of(rt, ops, *ops.add(4))?, carry) {
+        match (field_of(rt, ops, *ops.add(4), *ops.add(5))?, carry) {
             (Field::Bytes(addr, ..), _) => {
                 let taken = super::assign::take(rt, carry, value)?;
                 super::assign::put(carry, addr, taken);
@@ -742,7 +771,7 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_slot`; the value operand is a reduced dyad.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let (slot, _) = slot_of(rt, ops, *ops.add(3))?;
+        let (slot, _) = slot_of(rt, ops, *ops.add(3), *ops.add(4))?;
         let value = rt.run(*ops.add(2))? as DyadPtr;
         slot.write_unaligned(value);
         Ok(0)
