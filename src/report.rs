@@ -225,8 +225,9 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::RanValueNotHeld => {
             "what stands before a call that gives a `dyad` in its line runs first, and here its \
-             value cannot stand in its place yet: it is text, or it ends by more than its bytes; \
-             give that value a name on a line of its own first"
+             value cannot stand in its place yet: only a number, a pointer that owns nothing, a \
+             rational or a record whose body fills no `free` can; give that value a name on a \
+             line of its own first"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {

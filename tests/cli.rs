@@ -3622,6 +3622,16 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
+    // A name read before the call is read before the call writes it.
+    let writes = "mut n := i32 1, c := fn () -> dyad ( n = 5, i32 1 )";
+    for (src, want) in [
+        (format!("{writes}, n + c()"), "2"),
+        (format!("{writes}, n = n + c(), n"), "2"),
+        (format!("{writes}, x := n + c(), print «{{x}} {{n}}»"), "2 5"),
+        (format!("{writes}, f := fn () -> i32 ( n + c() ), f()"), "2"),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
     // What stands before the call cannot run first yet: an earlier argument (stand-in for #301),
     // a part of a quote, a node with no operation built yet; or it gives text.
     for (src, refusal) in [
@@ -3642,14 +3652,17 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
         assert!(stderr.contains(refusal), "{src}: {stderr}");
     }
     // A `while` condition that holds the call is held before it is parsed, so the call runs once
-    // each time the condition runs, at the top level and in a body.
+    // each time the condition runs, at the top level and in a body; a `[` in it is no body.
     let count = "mut n := i32 0, c := fn () -> dyad ( n = n + 1, i32 3 ), mut i := i32 0";
+    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
     for (src, want) in [
         (format!("{g}, mut i := i32 0, while i < g() ( i = i + 1 ), i"), "5"),
         (format!("{count}, while i < c() ( i = i + 1 ), n"), "4"),
         (format!("{count}, while c() > i ( i = i + 1 ), n"), "4"),
         (format!("{count}, while i < c() and i < 9 ( i = i + 1 ), n"), "4"),
         (format!("{count}, while (i < c()) ( i = i + 1 ), n"), "4"),
+        (format!("{array}, {count}, while c() > a[0] + i ( i = i + 1 ), n"), "3"),
+        (format!("{array}, {count}, while a[0] + i < c() ( i = i + 1 ), n"), "3"),
         (
             format!(
                 "{g}, f := fn () -> i32 ( mut i := i32 0, while i < g() ( i = i + 1 ), i ), f()"

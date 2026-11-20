@@ -415,8 +415,9 @@ impl<'a> Parser<'a> {
         }
         self.drain()?;
         for (handle, from, _) in standing {
-            let node = tape.cell_of(handle).dyad;
-            // SAFETY: a standing cell holds a node this parser built into its store.
+            let node = self.as_operand(*tape.cell_of(handle))?;
+            // SAFETY: a standing cell holds a node this parser built into its store, or names a
+            // binding the resolver found.
             let value = unsafe { self.ran_value(from, node)? };
             tape.stand_as_ran(handle, value);
             self.ran_through(tape, handle);
@@ -425,31 +426,41 @@ impl<'a> Parser<'a> {
     }
 
     /// The cells on `tape` before `at` that the line runs when it runs, each with its handle and
-    /// the source it spans, up to where the next cell starts: a node that runs, and a bracket's
-    /// scope, which runs its lines. A node whose operation is not built yet is none of them.
+    /// the source it spans, up to where the next cell starts.
     fn standing_runs(&self, tape: &ParsingTape, at: usize) -> Vec<(usize, usize, usize)> {
-        use crate::identities::read::{read_kind, Dispatch, Read};
-        let types = self.types;
         let cells: Vec<(usize, Cell)> = tape.iter().map(|(n, c)| (n, *c)).collect();
         let ends = cells.iter().skip(1).map(|(_, c)| c.start).chain(std::iter::once(usize::MAX));
         cells
             .iter()
             .zip(ends)
-            .filter(|((_, c), _)| {
-                // SAFETY: a constructed cell holds null or a node from the store.
-                c.constructed
-                    && c.start < at
-                    && !c.dyad.is_null()
-                    && unsafe {
-                        dyad::ty(c.dyad) == types.scope
-                            || matches!(
-                                read_kind(types, c.dyad),
-                                Read::Executable(Dispatch::Call(_) | Dispatch::Leaf(_))
-                            )
-                    }
-            })
+            .filter(|((_, c), _)| c.start < at && self.runs_standing(c))
             .map(|(&(n, c), end)| (n, c.start, end))
             .collect()
+    }
+
+    /// Whether the line runs `cell` when it runs: a node that runs, a bracket's scope, which runs
+    /// its lines, and a read of a place holding a number or a pointer, which a call after it may
+    /// write. A node whose operation is not built yet is none of them. An `=`'s target is not on
+    /// the tape its right side is read on (`construct_left`).
+    fn runs_standing(&self, cell: &Cell) -> bool {
+        use crate::identities::read::{read_kind, Dispatch, Read};
+        let types = self.types;
+        let node = if cell.constructed { cell.dyad } else { cell.binding(types) };
+        if node.is_null() {
+            return false;
+        }
+        // SAFETY: a constructed cell holds a node from the store, and a binding the resolver
+        // found is a binding dyad.
+        unsafe {
+            if dyad::ty(node) == types.scope {
+                return true;
+            }
+            match read_kind(types, node) {
+                Read::Executable(Dispatch::Call(_) | Dispatch::Leaf(_)) => true,
+                Read::Scalar(_) | Read::Pointer(_) => types.storage_type(node).is_some(),
+                _ => false,
+            }
+        }
     }
 
     /// The cell `handle` names ran: what its line had noted as running inside it, up to where the

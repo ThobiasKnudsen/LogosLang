@@ -143,7 +143,7 @@ impl<'a> Parser<'a> {
             }
             self.cx.pos = at + r.matched;
             if self.is_opener(id) {
-                if self.opens_body(prev) {
+                if id == types.open_ && self.opens_body(prev) {
                     return Ok((found.call_reads > 0).then_some(at));
                 }
                 self.scan_level(1, &mut found)?;
