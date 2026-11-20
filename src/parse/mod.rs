@@ -257,7 +257,12 @@ struct Entered<'p, 'a>(&'p mut Parser<'a>);
 impl Drop for Entered<'_, '_> {
     fn drop(&mut self) {
         let outer = self.0.outer.pop().expect("pushed by enter");
-        self.0.cx = outer;
+        let inner = std::mem::replace(&mut self.0.cx, outer);
+        // A value the sub-parse ran early stands in what it built, which may run after it.
+        let stood = inner.open.into_iter().flat_map(|mut o| o.take_stood());
+        let open = self.0.cx.open.last_mut().expect("the root scope is open");
+        open.stood.retain(|&n| self.0.rt.stands(n));
+        open.stood.extend(stood);
     }
 }
 

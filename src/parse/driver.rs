@@ -697,8 +697,8 @@ impl<'a> Parser<'a> {
             if let Some(item) = self.cx.queued.pop_front() {
                 // Where parse order is run order the item is pending: it runs
                 // when the pass needs a value, or when its scope or the call
-                // that takes it runs.
-                if self.cx.runtime_depth == 0 {
+                // that takes it runs. A loop's condition runs on every pass instead.
+                if self.cx.runtime_depth == 0 && !self.cx.each_pass {
                     let open = self.cx.open.last_mut().expect("the root scope is open");
                     open.unrun.push(UnrunLine::new(item.dyad, open.lines));
                 }

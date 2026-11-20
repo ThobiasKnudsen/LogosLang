@@ -218,16 +218,9 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::DyadCallAfterUnbuilt => {
             "a call that gives a `dyad` runs while its line is parsed, after what its line runs \
-             before it; here something before it that runs cannot run first yet, such as an \
-             earlier argument, a part of a quote, or what stands before a branch; give the \
-             call's value a name on a line of its own first, as `v := g(), k(h(), v + 1)`"
-                .into()
-        }
-        ParseError::RanValueNotHeld => {
-            "what stands before a call that gives a `dyad` in its line runs first, and here its \
-             value cannot stand in its place yet: only a number, a pointer that owns nothing, a \
-             rational or a record whose body fills no `free` can; give that value a name on a \
-             line of its own first"
+             before it; here something before it that runs cannot run first yet, such as a part \
+             of a quote or what stands before a branch; give the call's value a name on a line \
+             of its own first, as `v := g(), k(h(), v + 1)`"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {
@@ -570,6 +563,10 @@ pub fn run_message(e: &RunError) -> String {
         RunError::MintFailed(rendered) => format!("building this `type (…)` failed:\n{rendered}"),
         RunError::WaitFailed(rendered) => {
             format!("a line that reads a `dyad` value is parsed when it runs, and here it failed:\n{rendered}")
+        }
+        RunError::StoodTaken => {
+            "a value the pass ran early was read again after its line ended it or a call took it"
+                .into()
         }
         RunError::Lex(why) => format!("this text will not lex: {why}"),
         RunError::NoCaller => {

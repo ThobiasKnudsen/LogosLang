@@ -67,6 +67,7 @@ mod paren;
 pub(crate) mod place;
 pub(crate) mod pointer;
 pub mod print;
+pub(crate) mod ran;
 pub(crate) mod rational;
 mod regex_mod;
 #[path = "return.rs"]
@@ -186,6 +187,7 @@ pub struct Core {
     pub here: here::HereIds,
     pub dyad_place: dyad_place::DyadPlaceIds,
     pub waiting: waiting::WaitingIds,
+    pub ran: ran::RanIds,
     /// The identity of the cell a `[` lands, as `scope` is a `(`'s.
     pub square_brackets: DyadPtr,
     /// `array` of `dyad@`; a sequence's expression list lives behind one, never inline.
@@ -402,6 +404,7 @@ impl Core {
         let here = here::register(&mut cx, &callables);
         let dyad_place = dyad_place::register(&mut cx, &callables);
         let waiting = waiting::register(&mut cx, &callables);
+        let ran = ran::register(&mut cx, &callables);
         // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
         binding::register_type(
             &mut cx,
@@ -518,6 +521,7 @@ impl Core {
             here,
             dyad_place,
             waiting,
+            ran,
             square_brackets,
             callable_: callables.callable,
             convention_: callables.convention,

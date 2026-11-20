@@ -229,13 +229,9 @@ pub enum ParseError {
     /// member's call.
     DyadReadEachPass,
     /// A call that gives a `dyad`, which the pass runs as it parses the operator reading it,
-    /// stands after something its own line runs that the pass cannot run first: an earlier line
-    /// of an open argument list or `[…]`, a part of a quote, what stands before a branch, or a
-    /// node whose operation is not built yet.
+    /// stands after something its own line runs that the pass cannot run first: a part of a
+    /// quote, what stands before a branch, or a node whose operation is not built yet.
     DyadCallAfterUnbuilt,
-    /// What stands before a call that gives a `dyad` in its line runs first, and its value
-    /// cannot stand where it stood: it does not move whole, or it ends by more than its bytes.
-    RanValueNotHeld,
     /// A typed declaration of a non-numeric type: the declared-type storage
     /// for those is not in the seed yet.
     NonNumericDeclaredType,

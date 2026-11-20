@@ -753,6 +753,21 @@ pub(crate) unsafe fn end_line(
     }
 }
 
+/// The values the pass ran early that `nodes` stand for and nothing took end, last first: a
+/// line that never ran them, or never ran to its end, lets them go here. One that faults skips
+/// the rest.
+///
+/// # Safety
+/// `nodes` must be nodes from `ran::build` whose values are still live where nothing took them.
+pub(crate) unsafe fn end_stood(rt: &mut Runtime, nodes: &[DyadPtr]) -> Result<(), RunError> {
+    for &node in nodes.iter().rev() {
+        if rt.take_stood(node) {
+            end_value(rt, node, super::ran::word(node))?;
+        }
+    }
+    Ok(())
+}
+
 /// [`end_value`] compiled, for a value given as `this`: a call's held argument, or one a line
 /// holds to its end.
 ///
@@ -2354,6 +2369,25 @@ mod tests {
                 ) else ( tape[0] = bagged ), \
                 tape.is_constructed[0] = true \
             ) ),\n";
+
+    #[test]
+    fn a_value_the_pass_ran_early_ends_once() {
+        let defs = "p := fn () -> own @i32 ( alloc 1 of i32 5 ), g := fn () -> dyad ( i32 2 ), \
+                    k := fn (a := @i32 ?, b := i32 ?) -> i32 ( a@ + b ), \
+                    h := fn () -> i32 ( 1 ), k3 := fn (a := @i32 ?, b := i32 ?, c := i32 ?) -> i32 ( a@ + b + c )";
+        // Held by the call, or by the line where the callee holds nothing: freed once either way.
+        for (tail, want) in [
+            ("k(p(), g() + 1)", 8),
+            ("k3(p(), h(), immediate h())", 7),
+            ("x := k(p(), g() + 1), x", 8),
+            ("x := ( h(), k(p(), g() + 1) ), x", 8),
+            ("q := fn () -> i32 ( k(p(), g() + 1) ), q() + q()", 16),
+            ("q := fn () -> i32 ( k(p(), g() + 1) ), mut s := i32 0, for 0..20 ( s = s + q() ), s", 160),
+        ] {
+            assert_eq!(run_hosted(&format!("{defs}, {tail}")), (want, 0), "{tail}");
+        }
+        assert_eq!(run(&format!("{BAG}l := array bagged [bag (), bag ()], l[1].items[0]")), (4, 0));
+    }
 
     #[test]
     fn an_owning_field_frees_its_array_once_through_the_owner_s_free() {
