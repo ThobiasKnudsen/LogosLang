@@ -199,9 +199,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::DyadTakesNode => {
             "a `dyad ?` place does not take this value yet: it takes a node, or a value of a type \
              whose value moves whole, which it holds in a new node; a field, a cell and a `mut` \
-             parameter take only a node yet, and a parameter takes a value with an end of its own \
-             (an owning pointer, a record whose body fills `free`) only made or moved there, not \
-             one a name holds"
+             parameter take only a node yet"
                 .into()
         }
         ParseError::WaitingLineHolds(word) => format!(
