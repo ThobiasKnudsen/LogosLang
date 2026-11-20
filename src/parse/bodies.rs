@@ -143,6 +143,10 @@ pub(super) struct OpenScope {
     pub(super) runs: Vec<usize>,
     /// The same for the closed lines `unrun` does not hold, such as a condition's.
     closed_runs: Vec<usize>,
+    /// The `type ?` boxes read after a part of the line being parsed that runs and cannot run
+    /// first, each with where it was read: until the line closes, each stands for itself
+    /// (`Parser::unsettled_at`).
+    pub(super) unsettled: Vec<(DyadPtr, usize)>,
     /// The values the scope's closed lines made that nothing took: each line's end frees its
     /// own. The scope node's `held` slot once it closes.
     pub(super) held: Vec<DyadPtr>,
@@ -1897,6 +1901,7 @@ impl<'a> Parser<'a> {
         }
         // What the line made and nothing took is the line's to free at its end.
         let open = &mut self.cx.open[depth];
+        open.unsettled.clear();
         let made = std::mem::take(&mut open.made);
         let runs = std::mem::take(&mut open.runs);
         match open.unrun.last_mut().filter(|u| u.line == line) {
