@@ -20,7 +20,11 @@
 //! [50..58]   u64  mints: this type's mints made so far, an array, or 0
 //! [58..66]   u64  mint of: the type this one is a mint of, or 0
 //! [66]       u8   1 where the type's definition says a value of it is its node's address
-//! [67..]     payload, per kind:
+//! [67]       u8   where its nodes carry the `own` mark: `EVERY_NODE` here for every node, else
+//!                 the slot of each node that holds it, the `own` word or null; `NO_SLOT` nowhere
+//! [68]       u8   the slots whose node a node of this type hands on as its value, one bit each
+//! [69]       u8   the slots whose lines it hands on the last of, one bit each
+//! [70..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST/TOKEN   u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
 //!                                 none), then arity × `dyad@` role-name strings; a token's
@@ -79,7 +83,10 @@ const EXTENT_OFF: usize = 42;
 const MINTS_OFF: usize = 50;
 const MINT_OF_OFF: usize = 58;
 const NODE_VALUE_OFF: usize = 66;
-pub(crate) const PAYLOAD_OFF: usize = 67;
+const OWN_OFF: usize = 67;
+const HANDS_ON_OFF: usize = 68;
+const HANDS_ON_LINES_OFF: usize = 69;
+pub(crate) const PAYLOAD_OFF: usize = 70;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -179,6 +186,7 @@ fn roles_record(cx: &mut Cx, kind: u8, parse_rank: f64, assoc: Assoc, roles: &[&
     debug_assert!(!cx.string_.is_null(), "role names need the string logos registered");
     let mut blob = header(kind, assoc, parse_rank).to_vec();
     let slot_of = |name: &str| roles.iter().position(|&r| r == name).map_or(NO_SLOT, |i| i as u8);
+    blob[OWN_OFF] = slot_of("own");
     blob.extend_from_slice(&[roles.len() as u8, slot_of("op"), slot_of("output_type")]);
     for role in roles {
         let name = string::build_text(cx.store, cx.string_, role.as_bytes());
@@ -203,6 +211,10 @@ pub(crate) unsafe fn mint_record(
     debug_assert_eq!(kind, TUPLE_TAG, "a built-in's mint's nodes are fixed operand runs");
     let mut blob = header(kind, Assoc::Left, prec::INERT).to_vec();
     blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(origin as usize).to_ne_bytes());
+    // Its nodes carry the `own` mark and hand on what the origin's do.
+    let shared = OWN_OFF..PAYLOAD_OFF;
+    blob[shared.clone()]
+        .copy_from_slice(std::slice::from_raw_parts(dyad::head(origin).add(OWN_OFF), shared.len()));
     let arity = arity_of(origin);
     blob.extend_from_slice(&[arity as u8, NO_SLOT, NO_SLOT]);
     for i in 0..arity {
@@ -384,7 +396,8 @@ fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
         Assoc::Right => 1,
     };
     h[PREC_OFF..CTOR_OFF].copy_from_slice(&parse_rank.to_ne_bytes());
-    // The slots from CTOR_OFF on stay zero until their writers fill them.
+    h[OWN_OFF] = NO_SLOT;
+    // The other slots from CTOR_OFF on stay zero until their writers fill them.
     h
 }
 
@@ -528,7 +541,73 @@ pub(crate) unsafe fn value_is_node(id: DyadPtr, fn_type: DyadPtr) -> bool {
     *dyad::head(id).add(NODE_VALUE_OFF) != 0 || is_node_valued(id, fn_type)
 }
 
+/// Where a node of a type carries the `own` mark a type's `run` gets at its close: what the node
+/// gives is made for whoever takes it (›Three fail-closed ownership rules, and `-> own @T`‹
+/// [[R62]]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnMark {
+    Nowhere,
+    /// On the type's record, for every node.
+    Every,
+    /// In this slot of each node: the `own` word, or null.
+    Slot(usize),
+}
+
+/// # Safety
+/// `id` must carry a record.
+pub(crate) unsafe fn mark_own(id: DyadPtr) {
+    *dyad::head(id).add(OWN_OFF) = EVERY_NODE;
+}
+
+/// Safe on any node, as `kind_of` is.
+///
+/// # Safety
+/// `id` must be null or a valid dyad from the store.
+pub(crate) unsafe fn own_mark_of(id: DyadPtr) -> OwnMark {
+    if id.is_null() || kind_of(id).is_none() {
+        return OwnMark::Nowhere;
+    }
+    match *dyad::head(id).add(OWN_OFF) {
+        NO_SLOT => OwnMark::Nowhere,
+        EVERY_NODE => OwnMark::Every,
+        slot => OwnMark::Slot(slot as usize),
+    }
+}
+
+/// Says that a node of `id` hands on as its value what its operands `roles` give, every one
+/// alike, and of the lines its operands `lines` hold, the last's.
+///
+/// # Safety
+/// `id` must carry an operand record whose roles name each of `roles` and `lines`.
+pub(crate) unsafe fn install_hands_on(id: DyadPtr, roles: &[&str], lines: &[&str]) {
+    let bits = |names: &[&str]| {
+        names.iter().fold(0u8, |bits, name| {
+            let slot = (0..arity_of(id))
+                .find(|&i| crate::reflect::text_of(role_of(id, i)) == name.as_bytes())
+                .expect("the record names each role it hands on");
+            debug_assert!(slot < 8, "one bit per slot");
+            bits | 1 << slot
+        })
+    };
+    *dyad::head(id).add(HANDS_ON_OFF) = bits(roles);
+    *dyad::head(id).add(HANDS_ON_LINES_OFF) = bits(lines);
+}
+
+/// The slots of a node of `id` whose operands it hands on as its value, one bit each, as
+/// `(nodes, lines)`: those whose node it hands on, and those whose lines it hands on the last of.
+/// `(0, 0)` where it gives its own value. Safe on any node, as `kind_of` is.
+///
+/// # Safety
+/// `id` must be null or a valid dyad from the store.
+pub(crate) unsafe fn hands_on_of(id: DyadPtr) -> (u8, u8) {
+    if id.is_null() || kind_of(id).is_none() {
+        return (0, 0);
+    }
+    (*dyad::head(id).add(HANDS_ON_OFF), *dyad::head(id).add(HANDS_ON_LINES_OFF))
+}
+
 const NO_SLOT: u8 = u8::MAX;
+const EVERY_NODE: u8 = u8::MAX - 1;
 const OP_SLOT_OFF: usize = PAYLOAD_OFF + 1;
 const OUTPUT_SLOT_OFF: usize = PAYLOAD_OFF + 2;
 const ROLES_OFF: usize = PAYLOAD_OFF + 3;

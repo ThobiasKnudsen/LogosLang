@@ -89,6 +89,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     };
     let (store, store_leaf) = op(cx, &["value", "k", "v", "type", "owner", "op"], run_store);
     let (copy, copy_leaf) = op(cx, &["this", "op", "output_type"], run_copy);
+    // SAFETY: `copy` carries the record `op` built.
+    unsafe { meta::mark_own(copy) };
     cx.lower.insert(copy, lower_copy);
     let (pack, pack_leaf) = op(cx, &["type", "places", "op", "output_type"], run_pack);
     cx.lower.insert(pack, lower_pack);
