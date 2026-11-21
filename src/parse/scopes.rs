@@ -477,6 +477,38 @@ impl ScopeStack {
         self.pending.push(Pending { binding, endpoint: Endpoint::End });
     }
 
+    /// Where the ends written from here on begin, for [`ScopeStack::undo_ends`].
+    pub fn ends_mark(&self) -> usize {
+        self.journal.len()
+    }
+
+    /// The names of scopes still open that a `move` or `free` ended since `mark` are live again,
+    /// as rollback leaves them, and stay in the journal and the pending endpoints: the next arm
+    /// of an `if` starts from the names as they stood when the `if` began (›A binding is live
+    /// while its scope is open and it is not dead; it carries a range‹ [[R337]]). Returns each
+    /// such name once, with the node that ended it.
+    ///
+    /// # Safety
+    /// Every journalled binding must be a binding dyad from the store.
+    pub unsafe fn undo_ends(&mut self, mark: usize) -> Vec<(DyadPtr, DyadPtr)> {
+        let mut undone: Vec<(DyadPtr, DyadPtr)> = Vec::new();
+        for act in self.journal[mark..].iter().rev() {
+            let &Journal::Ended { binding, prev_end } = act else {
+                continue;
+            };
+            // SAFETY: the caller's contract.
+            if !self.is_open(unsafe { Binding::read(binding).scope }) {
+                continue;
+            }
+            // SAFETY: as above.
+            let node = unsafe { Binding::replace_end(binding, prev_end) };
+            if !undone.iter().any(|&(b, _)| b == binding) {
+                undone.push((binding, node));
+            }
+        }
+        undone
+    }
+
     /// Every endpoint pending for `scope` now points at `item`, the line as a
     /// whole: a `move` inside an `if` body ends the outer name at the `if`
     /// (DESIGN ›Name resolution is scope-filtered‹).

@@ -381,19 +381,30 @@ impl<'a> Parser<'a> {
         unsafe { self.cx.scopes.mark_dead(ended.binding, node) };
         // A borrow ends its name alone.
         // SAFETY: as above.
-        if !unsafe { self.name_holds(ended.binding) } {
-            return;
+        if unsafe { self.name_holds(ended.binding) } {
+            self.note_ended(ended.binding);
         }
-        let holder = self.holder_of(ended.binding).unwrap_or_else(|| {
+    }
+
+    /// The held `place` ended here: each scope from the one that holds it inward settles that
+    /// at its line's close, and the log tells an `if` which arm ended it. Two arms of an `if`
+    /// may each end it, so each line notes it once.
+    fn note_ended(&mut self, place: DyadPtr) {
+        let note = |list: &mut Vec<DyadPtr>| {
+            if !list.contains(&place) {
+                list.push(place);
+            }
+        };
+        let holder = self.holder_of(place).unwrap_or_else(|| {
             // An owner no open scope holds is an earlier REPL line's, whose items the
             // session's scope keeps: held from outside everything this line opened.
-            self.cx.open[0].ended_earlier.push(ended.binding);
+            note(&mut self.cx.open[0].ended_earlier);
             0
         });
         for open in &mut self.cx.open[holder..] {
-            open.ended.push(ended.binding);
+            note(&mut open.ended);
         }
-        self.cx.ended_log.push((ended.binding, holder));
+        self.cx.ended_log.push((place, holder));
     }
 
     /// The field path `ended` reaches an entry of a `{ … }` value an open scope holds: that entry
@@ -418,14 +429,7 @@ impl<'a> Parser<'a> {
                 None => instance::build_field(self.rt.store, self.types, place, field),
             };
         }
-        let holder = self.holder_of(place).unwrap_or_else(|| {
-            self.cx.open[0].ended_earlier.push(place);
-            0
-        });
-        for open in &mut self.cx.open[holder..] {
-            open.ended.push(place);
-        }
-        self.cx.ended_log.push((place, holder));
+        self.note_ended(place);
     }
 
     /// The place of entry `field` of `place` as an open scope holds it: the hold of a `{ … }`

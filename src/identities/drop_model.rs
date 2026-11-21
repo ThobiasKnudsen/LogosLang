@@ -2237,6 +2237,8 @@ mod tests {
             ("if (g() == 1) ( free a ) else ( free b )", vec![8, 7]),
             ("if (g() == 1) ( free b ) else ( c := move a, 0 )", vec![8, 7]),
             ("if (g() == 1) ( 0 ) else if (g() == 2) ( free a )", vec![7, 8]),
+            ("if (g() == 1) ( free a ) else ( free a )", vec![7, 8]),
+            ("if (g() == 1) ( free b, free a ) else ( c := move a, free b )", vec![8, 7]),
         ] {
             let (e, live) =
                 fault(&format!("{g}a := alloc 1 of i32 7,\nb := alloc 1 of i32 8,\n{tail},\n1"));
@@ -2543,6 +2545,50 @@ mod tests {
                 assert_eq!(run(&src), (1, 0), "c = {c}: {body}");
                 assert_eq!(free_log(), vec![7], "c = {c}: {body}: freed once");
             }
+        }
+    }
+
+    #[test]
+    fn each_arm_of_an_if_starts_from_the_names_as_they_stood_when_it_began() {
+        // What one arm ends the arms written after it still read and end, and an arm that ends
+        // the name gets nothing more for it at its end.
+        for (body, values) in [
+            ("if (c == 1) ( a@ ) else ( free a, i32 0 )", [0, 7, 0]),
+            ("if (c != 1) ( free a, i32 0 ) else ( a@ )", [0, 7, 0]),
+            ("if (c == 1) ( b := move a, b@ ) else ( free a, i32 0 )", [0, 7, 0]),
+            (
+                "if (c == 1) ( free a, i32 1 ) else if (c == 2) ( a@ ) else ( b := move a, b@ )",
+                [7, 1, 7],
+            ),
+            (
+                "if (c == 1) ( free a, i32 1 ) else if (a@ == 7) ( free a, i32 2 ) else ( i32 3 )",
+                [2, 1, 2],
+            ),
+            (
+                "if (c > 0) ( if (c == 1) ( free a, i32 1 ) else ( a@ ) ) else ( free a, i32 0 )",
+                [0, 1, 7],
+            ),
+        ] {
+            for (c, value) in values.into_iter().enumerate() {
+                let src = format!("a := alloc 1 of i32 7,\nc := i32 {c},\nx := {body},\nx");
+                assert_eq!(run(&src), (value, 0), "c = {c}: {body}");
+                assert_eq!(free_log(), vec![7], "c = {c}: {body}: freed once");
+            }
+        }
+        // The name is still live in the later arm, so a declaration there shadows it, and it is
+        // dead after the `if`, in its own line too.
+        let dead = || ParseError::Resolve(ResolveError::Dead("a".into()));
+        for (tail, refused) in [
+            (
+                "if (c == 1) ( b := move a, x := b@ ) else ( a := i32 3 )",
+                ParseError::Resolve(ResolveError::Shadowed("a".into())),
+            ),
+            ("if (c == 1) ( free a ) else ( free a ),\na@", dead()),
+            ("x := (if (c == 1) ( free a, i32 0 ) else ( i32 1 )) + a@", dead()),
+            ("if (c == 1) ( free a ) else if (c == 2) ( x := 2 ) else ( free a ),\na@", dead()),
+        ] {
+            let src = format!("a := alloc 1 of i32 7,\nc := i32 1,\n{tail}");
+            assert_eq!(parse_err(&src), refused, "{tail}");
         }
     }
 
