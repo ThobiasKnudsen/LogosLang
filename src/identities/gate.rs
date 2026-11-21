@@ -308,7 +308,7 @@ fn construct(
     value.constructed = true;
     // SAFETY: the cell's gates are null or a gate mint, and `id` is a gate word.
     let Some(mint) = (unsafe { joined(p.store(), types, value.gates, id) }) else {
-        return Err(ParseError::DoubleGate);
+        return Err(p.fail_at(word_at, ParseError::DoubleGate));
     };
     tape.place_gated(value, mint);
     Ok(Constructed::Placed)

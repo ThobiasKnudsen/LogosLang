@@ -4319,7 +4319,7 @@ fn a_gate_word_stands_right_of_the_declaration_and_gates_the_whole_value() {
         ("x := i32 5, x = 6", "`x` is not `mut`"),
         ("x := mut i32 5, y := x, y = 2", "`y` is not `mut`"),
         ("x := i32 5, y := x.type ?, y = 3", "`y` is not `mut`"),
-        ("x := mut mut i32 5", "this gate word already gates the value"),
+        ("x := mut mut i32 5", "1:6: error: this gate word already gates the value"),
         ("mut x := i32 5", "1:1: error: a gate word (`pub`, `mut`, `static`) gates the value"),
         ("y := i32 1, pub mut x := i32 5", "1:17: error: a gate word"),
         ("p := type ( pub v := i32 ? )", "it stands right of `:=`: `x := mut i32 5`"),
