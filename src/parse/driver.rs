@@ -1010,7 +1010,9 @@ impl<'a> Parser<'a> {
             Some(c) if c.constructed => Ok(c.dyad),
             _ => {
                 self.cx.pos = start;
-                Err(ParseError::CellLeftUnconstructed(Box::new(tape.spelling(0).unwrap_or("").to_string())))
+                Err(ParseError::CellLeftUnconstructed(Box::new(
+                    tape.spelling(0).unwrap_or("").to_string(),
+                )))
             }
         }
     }

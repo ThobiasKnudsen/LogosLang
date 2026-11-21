@@ -25,7 +25,7 @@ pub + := type (
         made = type (
             pub lhs := l ?,
             pub rhs := r ?,
-            static output_type := type l,
+            pub static output_type := type l,
             static run = ( lhs.type.add(lhs, rhs) )
         ),
         type_mint.keep(place, made),

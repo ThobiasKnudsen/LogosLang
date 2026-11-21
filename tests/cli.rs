@@ -266,9 +266,9 @@ fn the_repl_imports_once_per_session_and_keeps_pub_names() {
 
 #[test]
 fn a_value_reads_its_type_and_a_reached_node_its_operands() {
-    // `(x + x)` has arity 2, its operands: the type it gives back is its mint's.
+    // `(x * x)` has arity 2, its operands: the type it gives back is its mint's.
     let (echoes, stderr) = repl(
-        "x := i32 5\nprint «{x.type == i32}»\nb := x + x\nprint «{b:start.rhs.type.arity}»\n\
+        "x := i32 5\nprint «{x.type == i32}»\nb := x * x\nprint «{b:start.rhs.type.arity}»\n\
           print «{b:start.rhs.lhs.type == i32}»\nprint «{b:start.rhs.lhs}»\n\
           b:start.rhs.output_type == i32\n",
     );
@@ -1239,7 +1239,7 @@ fn the_array_chooser_stands_as_itself_before_a_type_with_no_instance_bytes() {
     let power =
         power.trim_end().rsplit_once('\n').unwrap().0.replace("file «", "file «identities/");
     for (src, said) in [
-        (format!("{array}, b := array + 1, b"), "this operator cannot compute over these operands"),
+        (format!("{array}, b := array + 1, b"), "`+` adds numbers, and this type is none"),
         (
             format!("{power} {array}, b := array ^ 2, b"),
             "the run body of `^` could not be constructed",
@@ -2148,7 +2148,7 @@ fn every_operator_applied_to_a_group_applies_to_each_member() {
 
 #[test]
 fn a_collection_member_demands_its_index_brackets() {
-    let (_echoes, stderr) = repl(b"+.roles(0)\n");
+    let (_echoes, stderr) = repl(b"*.roles(0)\n");
     assert!(stderr.contains("element access is `[…]`"), "stderr: {stderr}");
 }
 
@@ -2927,7 +2927,7 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
     for (src, refusal) in [
         ("f := fn (a := dyad ?) -> i64 ( a ), f(f64 2.5)", "these types do not match"),
         ("f := fn (a := dyad ?) -> i64 ( a ), f(1/2)", "no exact value"),
-        ("f := fn (a := dyad ?) -> i64 ( a + «x» ), f(i64 1)", "cannot compute"),
+        ("f := fn (a := dyad ?) -> i64 ( a + «x» ), f(i64 1)", "`+` adds numbers"),
         ("f := fn (a := dyad ?) -> i64 ( g(x := a + 1), 2 ), f(i64 2)", "cannot hold `:=` yet"),
         (
             "f := fn (a := dyad ?) -> i64 ( if a > 0 ( return 1 ), 2 ), f(i64 2)",
@@ -7580,22 +7580,30 @@ fn every_operation_is_typed_by_its_mint() {
 #[test]
 fn a_mint_is_named_through_its_operations_chooser() {
     let mut cases = Vec::new();
+    let f = |body: &str| format!("f := fn (x := i32 ?, y := i32 ?, w := i64 ?) -> bool ( {body} )");
+    for (body, want) in [
+        ("(x < y).type == <.mint(i32, i32)", "true\n"),
+        ("(-x).type == -.mint(i32)", "true\n"),
+        ("(&x).type == &.mint(i32)", "true\n"),
+        ("+.mint(i32, i32).output_type == i32", "true\n"),
+        ("<.mint(i64, i64).output_type == bool", "true\n"),
+        ("+.mint(i32, i32) == (x + x).type", "true\n"),
+    ] {
+        cases.push((format!("x := i32 3, y := i32 4, w := i64 5, {body}"), want));
+        cases.push((format!("{}, f(3, 4, 5)", f(body)), want));
+        cases.push((format!("{}, f.compile(), f(3, 4, 5)", f(body)), want));
+    }
+    // `+`'s chooser is written in Logos, a call the parse runs after what stands before it on its
+    // line; on a top-level line a node of an operation there cannot run first yet.
     for (body, want) in [
         ("(x + x).type == +.mint(i32, i32)", "true\n"),
         ("(x + x).type == +.mint(i64, i64)", "false\n"),
         ("(x + 1).type == +.mint(i32, i32)", "true\n"),
         ("(x + w).type == +.mint(i64, i64)", "true\n"),
         ("(x * y).type == +.mint(i32, i32)", "false\n"),
-        ("(x < y).type == <.mint(i32, i32)", "true\n"),
-        ("(-x).type == -.mint(i32)", "true\n"),
-        ("(&x).type == &.mint(i32)", "true\n"),
-        ("+.mint(i32, i32).output_type == i32", "true\n"),
-        ("<.mint(i64, i64).output_type == bool", "true\n"),
     ] {
-        cases.push((format!("x := i32 3, y := i32 4, w := i64 5, {body}"), want));
-        let f = format!("f := fn (x := i32 ?, y := i32 ?, w := i64 ?) -> bool ( {body} )");
-        cases.push((format!("{f}, f(3, 4, 5)"), want));
-        cases.push((format!("{f}, f.compile(), f(3, 4, 5)"), want));
+        cases.push((format!("{}, f(3, 4, 5)", f(body)), want));
+        cases.push((format!("{}, f.compile(), f(3, 4, 5)", f(body)), want));
     }
     // Named before any node of it is parsed, the mint is the one the parse then takes.
     cases.push((
@@ -7621,15 +7629,18 @@ fn a_mint_is_named_through_its_operations_chooser() {
     ));
     assert_runs(&cases);
     for src in [
-        "+.mint(i32, i64)",
+        "*.mint(i32, i64)",
         "%.mint(f64, f64)",
-        "+.mint(i32)",
-        "f := fn () -> bool ( +.mint(i32, i64) == +.mint(i64, i64) ), f.compile(), f()",
+        "*.mint(i32)",
+        "f := fn () -> bool ( *.mint(i32, i64) == *.mint(i64, i64) ), f.compile(), f()",
     ] {
         let (code, stdout, stderr) = run_line(src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains("has no mint for these field types"), "{src}: stderr: {stderr}");
     }
+    let (code, stdout, stderr) = run_line("+.mint(i32, i64)");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("`+` adds two values of one type"), "stderr: {stderr}");
 }
 
 #[test]
@@ -11690,7 +11701,7 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
     }
     // A comparison gives back a `bool`, which is no number and no `i32`.
     for (src, error) in [
-        ("x := i32 1, (x == 1) + 1", "this operator cannot compute over these operands"),
+        ("x := i32 1, (x == 1) + 1", "`+` adds numbers, and this type is none"),
         ("x := i32 1, mut a := i32 0, a = x == 1, a", "these types do not match"),
         ("x := i32 1, mut a := x == 1, a = i32 1, a", "these types do not match"),
         // A `return` gives its own line nothing.

@@ -26,6 +26,33 @@ unsafe fn minted(node: DyadPtr) -> (DyadPtr, Option<DyadPtr>, Option<DyadPtr>) {
     (mint::origin(m), mint::output_type_of(m), mint::operation_of(m))
 }
 
+/// What a node of `+`, written in identities/plus.logos, is: its mint, the type it gives back and
+/// the instruction its nodes jump to.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+unsafe fn added(core: &Core, node: DyadPtr) -> (DyadPtr, DyadPtr, Option<DyadPtr>) {
+    let m = dyad::ty(node);
+    (m, read::output_type(core, node), mint::operation_of(m))
+}
+
+/// What `+`'s parse raises where a side is no number.
+fn no_sum() -> ParseError {
+    ParseError::ConstructorFailed(Box::new(
+        "error.operands: `+` adds numbers, and this type is none".into(),
+    ))
+}
+
+/// `+.mint(t, t)`, the mint identities/plus.logos made for two values of `t`.
+///
+/// # Safety
+/// `t` must be a type node from the store.
+unsafe fn plus_mint(store: &mut Store, core: &Core, t: DyadPtr) -> DyadPtr {
+    let plus =
+        core.written.iter().find(|w| w.native == core.plus).expect("the seed writes `+`").written;
+    type_mint::mint_of(store, core, plus, &[t, t], |_| None).expect("`+` made its mint for `t`")
+}
+
 /// A binding dyad naming `identity`, for a name a test declares by hand, in the store
 /// like every binding, so its record is in the program frame.
 fn test_binding(store: &mut Store, binding_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
@@ -98,7 +125,8 @@ fn parses_a_equals_a_plus_one() {
         assert_eq!(core.through(*top), a);
         let sum = *top.add(1);
         let add = core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32);
-        assert_eq!(minted(sum), (core.plus, Some(core.i32_), Some(add)));
+        let mint = plus_mint(&mut store, &core, core.i32_);
+        assert_eq!(added(&core, sum), (mint, core.i32_, Some(add)));
         let sops = dyad::value(sum) as *const DyadPtr;
         assert_eq!(core.through(*sops), a);
         let one = *sops.add(1);
@@ -724,7 +752,8 @@ fn plus_is_abstract_and_resolves_to_a_concrete_op() {
     unsafe {
         let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
         let add = core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32);
-        assert_eq!(minted(body), (core.plus, Some(core.i32_), Some(add)));
+        let mint = plus_mint(&mut store, &core, core.i32_);
+        assert_eq!(added(&core, body), (mint, core.i32_, Some(add)));
     }
 
     let call = store.alloc_leaf(func);
@@ -1088,19 +1117,20 @@ fn an_operation_mints_once_per_set_of_field_types() {
         let add = |nt| core.ops.arith_leaf(numtype::ArithOp::Add, nt);
         // `2` converts to `i32` where it lands, so both lines are nodes of one mint.
         assert_eq!(dyad::ty(one), dyad::ty(two));
-        assert_eq!(minted(one), (core.plus, Some(core.i32_), Some(add(NumType::I32))));
+        let mint = plus_mint(&mut store, &core, core.i32_);
+        assert_eq!(added(&core, one), (mint, core.i32_, Some(add(NumType::I32))));
         // `x` lies inside `i64`: the mint is `+`'s for `i64`, its `lhs` the conversion of `x`.
         let i64_ = core.numtypes[NumType::I64 as usize];
-        assert_eq!(minted(wide), (core.plus, Some(i64_), Some(add(NumType::I64))));
+        let wide_mint = plus_mint(&mut store, &core, i64_);
+        assert_eq!(added(&core, wide), (wide_mint, i64_, Some(add(NumType::I64))));
         let conversion = minted(operands(wide).0);
         assert_eq!(conversion, (core.convert, Some(i64_), Some(core.ops.convert_)));
         assert_eq!(mint::key_of(dyad::ty(operands(wide).0)), Some(&[core.i32_, i64_][..]));
         assert_ne!(dyad::ty(one), dyad::ty(times));
-        // The node holds its operands and nothing else.
-        let m = dyad::ty(one);
-        assert_eq!(meta::arity_of(m), 2);
-        assert_eq!(meta::op_slot_of(m), None);
-        assert_eq!(meta::output_slot_of(m), None);
+        // The mint declares its operands as its fields, and nothing else.
+        assert_eq!(array::items(meta::record_fields_of(mint)).len(), 2);
+        assert_eq!(meta::op_slot_of(mint), None);
+        assert_eq!(meta::output_slot_of(mint), None);
     }
 }
 
@@ -1924,7 +1954,7 @@ fn a_string_literal_reads_as_its_node_address() {
         assert_eq!(read::read_kind(&core, node), read::Read::Node);
         assert_eq!(rt.run(node), Ok(node as i64));
     }
-    assert_eq!(parse_err("«a» + 1"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err("«a» + 1"), no_sum());
 }
 
 #[test]
@@ -2670,7 +2700,7 @@ fn a_pointer_steps_only_by_an_integer_on_its_right() {
     let defs = &["p := alloc 1 of i32 0", "q := alloc 1 of i32 0"];
     assert_eq!(parse_err_after(defs, "p * 2"), ParseError::UnsupportedOperands);
     assert_eq!(parse_err_after(defs, "p + q"), ParseError::UnsupportedOperands);
-    assert_eq!(parse_err_after(defs, "1 + p"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err_after(defs, "1 + p"), no_sum());
     assert_eq!(parse_err_after(defs, "p + f64 1"), ParseError::UnsupportedOperands);
     assert_eq!(parse_err_after(defs, "p + 1.5"), ParseError::UncomputableLiteral);
 }
@@ -3207,7 +3237,7 @@ fn construction_and_field_access_are_checked() {
     };
     check("point(1)", ParseError::CtorArity);
     check("point(1.5, 2)", ParseError::UncomputableLiteral);
-    check("point(1, 2) + 1", ParseError::UnsupportedOperands);
+    check("point(1, 2) + 1", no_sum());
     check("fn () -> i32 ( p := point(1, 2) )", ParseError::StatementAsValue);
     check(
         "( p := point(1, 2), p.z )",
@@ -3380,7 +3410,7 @@ fn a_type_read_reaches_roles_at_the_graph_level() {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
 
-    let mut p = Parser::new("+.roles[0]", &mut store, &mut trie, &core, s);
+    let mut p = Parser::new("*.roles[0]", &mut store, &mut trie, &core, s);
     let role = p.parse_expression().unwrap();
     // SAFETY: `role` is the role-name string node the read just yielded.
     unsafe {
@@ -4541,7 +4571,7 @@ fn plus_over_non_numeric_operands_is_unresolved() {
     scopes.push(core.root_scope);
 
     let mut p = Parser::new("type () + 1", &mut store, &mut trie, &core, scopes);
-    assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnsupportedOperands));
+    assert_eq!(p.parse_expression(), Err(no_sum()));
 }
 
 #[test]

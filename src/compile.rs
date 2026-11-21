@@ -261,11 +261,12 @@ impl<'a> Lowerer<'a, '_> {
                 Err(CompileError::NotLowerable(node))
             }
             // A mint is lowered by the rule of the type it is a mint of.
-            Read::Executable(Dispatch::Leaf(_)) => match self.lower.get(&mint::lowered_as(op)).copied()
-            {
-                Some(f) => f(self, node),
-                None => Err(CompileError::NotLowerable(op)),
-            },
+            Read::Executable(Dispatch::Leaf(_)) => {
+                match self.lower.get(&mint::lowered_as(op)).copied() {
+                    Some(f) => f(self, node),
+                    None => Err(CompileError::NotLowerable(op)),
+                }
+            }
             Read::Executable(Dispatch::None) => Err(CompileError::NotLowerable(op)),
             Read::Unit => Ok(self.const_i32(0)),
             Read::Identity | Read::Node => Ok(self.node_addr(node)),

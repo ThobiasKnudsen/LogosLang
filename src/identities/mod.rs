@@ -86,9 +86,9 @@ pub(crate) mod type_mint;
 mod type_mod;
 pub(crate) mod union;
 pub(crate) mod waiting;
-pub(crate) mod written;
 #[path = "while.rs"]
 mod while_mod;
+pub(crate) mod written;
 
 pub struct Core {
     /// The root type, the one node whose type is itself.

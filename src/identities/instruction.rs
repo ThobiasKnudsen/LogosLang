@@ -47,7 +47,8 @@ pub(super) fn register(
                 arith[o][n] = build(cx, type_, array_, family, t, leaf);
             }
         }
-        arith[o][RATIONAL] = build(cx, type_, array_, family, rational, ops.rational_arith_leaf(op));
+        arith[o][RATIONAL] =
+            build(cx, type_, array_, family, rational, ops.rational_arith_leaf(op));
     }
     Instructions { arith }
 }
@@ -121,7 +122,8 @@ pub(crate) unsafe fn named_by(types: &Core, spec: DyadPtr) -> Option<DyadPtr> {
             let a = types.through(a);
             a == p
                 || (dyad::ty(a) == types.binding_ && {
-                    let (a, p) = (super::binding::Binding::read(a), super::binding::Binding::read(p));
+                    let (a, p) =
+                        (super::binding::Binding::read(a), super::binding::Binding::read(p));
                     a.frame == p.frame && a.offset == p.offset
                 })
         });

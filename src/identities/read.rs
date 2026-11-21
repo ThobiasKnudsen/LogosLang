@@ -585,7 +585,7 @@ mod tests {
              e9 := «hi»,\n\
              # prose\n\
              e11 := w.scope,\n\
-             e12 := i32 1 + i32 2,\n\
+             e12 := x + i32 2,\n\
              e13 := f(1, 2),\n\
              ?",
         );
