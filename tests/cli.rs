@@ -1315,7 +1315,7 @@ fn a_value_runs_its_type_s_parse_as_tape_0() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{src}");
     }
     // A parse that says nothing for the value has declined, and the value stands as itself.
-    let q = "q := type ( size := i32 ?, static parse_rank = 61, static parse = ( \
+    let q = "q := type ( pub size := i32 ?, static parse_rank = 61, static parse = ( \
              if tape[0].type == type ( tape[0].type = q, tape[0].size = tape[1], tape.remove(1) ) ) )";
     assert_eq!(line(&format!("{q}, v := q i32 5, v.size")), "5");
     assert_eq!(line(&format!("{q}, f := fn () -> i32 ( (q i32 8).size ), f.compile(), f()")), "8");
@@ -5225,14 +5225,14 @@ fn a_parse_written_in_logos_that_finds_nothing_to_consume_declines() {
     let pt = "pt := type ( x := i32 ? )";
     let mk = |otherwise: &str| {
         format!(
-            "{pt}, mk := type ( a := i32 ?, output_type := type ?, static tag := i32 7, \
+            "{pt}, mk := type ( pub a := i32 ?, output_type := type ?, pub static tag := i32 7, \
              static run = ( pt(a) ), static parse = ( if tape[-1].type == i32 ( \
              tape[0].type = mk, tape[0].a = tape[-1], tape[0].output_type = pt, \
              tape.is_constructed[0] = true, tape.remove(-1) ){otherwise} ) )"
         )
     };
     let pre = format!(
-        "{pt}, mk := type ( static tag := i32 7, static parse = ( if tape[1].type == i32 ( \
+        "{pt}, mk := type ( pub static tag := i32 7, static parse = ( if tape[1].type == i32 ( \
          tape[0] = tape[1], tape.remove(1), tape.is_constructed[0] = true ) ) )"
     );
     let f = "f := fn (t := type ?) -> bool ( t == mk )";
