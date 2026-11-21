@@ -43,7 +43,8 @@ pub enum Shape {
         /// `@T` → `T`.
         pointee: DyadPtr,
     },
-    /// Fixed named operand slots: an operator or statement node, or an fn value.
+    /// Fixed named operand slots: an operator or statement node, an fn value, or a node a Logos
+    /// `parse` builds, one slot per field.
     Tuple {
         /// One per role in the type's record.
         slots: Vec<Slot>,
@@ -84,7 +85,7 @@ pub enum Shape {
         callee: DyadPtr,
         args: Vec<DyadPtr>,
     },
-    /// A value of a record type: each field at the offset its binding carries.
+    /// A value of a plain record type: each field at the offset its binding carries.
     Instance {
         /// Each field's declaration node and byte offset.
         fields: Vec<(DyadPtr, usize)>,
@@ -154,6 +155,18 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
     // Asked of the same rule execution uses, so reflection and the tiers never disagree.
     if matches!(read_kind(types, node), Read::Container(_)) {
         return Shape::Container;
+    }
+    // A plain record's value is its bytes; a node of any other record holds the node each field
+    // was filled with, one word per field.
+    if meta::is_record_type(logos) && !crate::identities::this::is_plain(types, logos) {
+        let value = dyad::value(node) as *const DyadPtr;
+        let bindings = crate::identities::array::items(meta::record_field_bindings_of(logos));
+        let slots = bindings
+            .iter()
+            .enumerate()
+            .map(|(k, &binding)| Slot { role: Binding::read(binding).name, node: *value.add(k) })
+            .collect();
+        return Shape::Tuple { slots };
     }
     if meta::is_record_type(logos) {
         return Shape::Instance {

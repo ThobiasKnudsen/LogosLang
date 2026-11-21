@@ -209,5 +209,10 @@ fn rebuild(store: &mut Store, node: DyadPtr, layout: Layout, words: &[DyadPtr]) 
     if layout != Layout::Tuple {
         words.push(std::ptr::null_mut());
     }
+    // SAFETY: a record `describe` reads slots of is not plain, so its node is laid out with
+    // the words after its fields.
+    if unsafe { meta::is_record_type(ty) } {
+        words.extend_from_slice(unsafe { super::run_body::tail_of(node) });
+    }
     store.alloc_words(ty, &words)
 }
