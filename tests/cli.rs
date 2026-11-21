@@ -3263,7 +3263,7 @@ fn a_map_is_copied_by_declaration_and_assignment() {
 #[test]
 fn a_map_given_by_an_expression_is_read_and_written_by_key() {
     let m =
-        "m := hashmap i32 -> hashmap i32 -> i32, mut r := hashmap i32 -> i32, r[1] = 7, m[2] = r";
+        "m := hashmap i32 -> hashmap i32 -> i32, r := mut hashmap i32 -> i32, r[1] = 7, m[2] = r";
     assert_runs(&[
         (format!("{m}, print «{{m[2][1]}}»"), "7\n"),
         (
@@ -3271,28 +3271,28 @@ fn a_map_given_by_an_expression_is_read_and_written_by_key() {
             "8 9 7\n",
         ),
         (
-            "m := hashmap i32 -> hashmap i32 -> i32, mut r := hashmap i32 -> i32, m[2] = r, \
+            "m := hashmap i32 -> hashmap i32 -> i32, r := mut hashmap i32 -> i32, m[2] = r, \
           m[2][1] = 7, m[2][1]"
                 .into(),
             "7\n",
         ),
         (
-            "pm := hashmap type -> hashmap type -> type, mut row := hashmap type -> type, \
+            "pm := hashmap type -> hashmap type -> type, row := mut hashmap type -> type, \
              row[i64] = f32, pm[i32] = row, print «{pm[i32][i64] == f32} {pm[i32][i8] == ?}»"
                 .into(),
             "true true\n",
         ),
         (
             "deep := hashmap i32 -> hashmap i32 -> hashmap i32 -> i32, \
-             mut b := hashmap i32 -> hashmap i32 -> i32, mut c := hashmap i32 -> i32, b[2] = c, \
+             b := mut hashmap i32 -> hashmap i32 -> i32, c := mut hashmap i32 -> i32, b[2] = c, \
              deep[1] = b, deep[1][2][3] = 9, deep[1][2][3]"
                 .into(),
             "9\n",
         ),
-        ("mut m := { pub mut h := hashmap u64 -> u64 }, (m.h)[0] = 5, (m.h)[0]".into(), "5\n"),
+        ("m := mut { h := pub mut hashmap u64 -> u64 }, (m.h)[0] = 5, (m.h)[0]".into(), "5\n"),
         (
             "f := fn (k := u64 ?) -> u64 ( m := hashmap u64 -> hashmap u64 -> u64, \
-             mut r := hashmap u64 -> u64, m[k] = r, m[k][k] = 8, m[k][k] ), f(2)"
+             r := mut hashmap u64 -> u64, m[k] = r, m[k][k] = 8, m[k][k] ), f(2)"
                 .into(),
             "8\n",
         ),
@@ -3312,7 +3312,7 @@ fn a_map_given_by_an_expression_is_read_and_written_by_key() {
         ("(hashmap i32 -> i32)[1] = 5", "this is not an assignable place"),
         ("(hashmap i32 -> i32)[1]", "the map holds no value at this key"),
         (
-            "mut e := hashmap u64 -> u64, mut d := dyad ?, d = e, (d)[0] = 5",
+            "e := mut hashmap u64 -> u64, d := mut dyad ?, d = e, (d)[0] = 5",
             "this is not an assignable place",
         ),
     ] {
@@ -3327,44 +3327,44 @@ fn a_map_given_by_an_expression_is_read_and_written_by_key() {
 /// included, at the top level and in a body, whose line waits for the run.
 #[test]
 fn a_map_a_dyad_place_holds_is_read_and_written_by_key() {
-    let e = "mut e := hashmap u64 -> u64";
+    let e = "e := mut hashmap u64 -> u64";
     assert_runs(&[
         (
-            "f := fn (a := dyad ?) -> u64 ( m := hashmap dyad -> hashmap u64 -> u64, mut n := m[a], \
+            "f := fn (a := dyad ?) -> u64 ( m := hashmap dyad -> hashmap u64 -> u64, n := mut m[a], \
              if n == ? ( n = hashmap u64 -> u64 ), n[0] = 5, n[0] ), f(i32)"
                 .into(),
             "5\n",
         ),
         (
-            "f := fn (a := dyad ?) -> u64 ( m := hashmap dyad -> hashmap u64 -> u64, mut n := m[a], \
+            "f := fn (a := dyad ?) -> u64 ( m := hashmap dyad -> hashmap u64 -> u64, n := mut m[a], \
              if n == ? ( n = hashmap u64 -> u64 ), n[0] = 5, m[a] = n, m[a][0] ), f(i32)"
                 .into(),
             "5\n",
         ),
-        (format!("{e}, mut n := dyad ?, n = e, n[0] = 5, n[1] = 6, print «{{n[0]}} {{n[1]}}»"), "5 6\n"),
+        (format!("{e}, n := mut dyad ?, n = e, n[0] = 5, n[1] = 6, print «{{n[0]}} {{n[1]}}»"), "5 6\n"),
         // The name holds a copy of its own, so the map it was written from keeps its value.
-        (format!("{e}, e[0] = 1, mut n := dyad ?, n = e, n[0] = 5, print «{{n[0]}} {{e[0]}}»"), "5 1\n"),
-        (format!("{e}, f := fn () -> u64 ( mut n := dyad ?, n = e, n[0] = 5, n[0] ), f()"), "5\n"),
+        (format!("{e}, e[0] = 1, n := mut dyad ?, n = e, n[0] = 5, print «{{n[0]}} {{e[0]}}»"), "5 1\n"),
+        (format!("{e}, f := fn () -> u64 ( n := mut dyad ?, n = e, n[0] = 5, n[0] ), f()"), "5\n"),
         (format!("{e}, e[0] = 7, f := fn (a := dyad ?) -> u64 ( a[0] ), f(e)"), "7\n"),
         (
             format!(
-                "{e}, f := fn (a := dyad ?) -> u64 ( mut n := a, mut i := u64 0, \
+                "{e}, f := fn (a := dyad ?) -> u64 ( n := mut a, i := mut u64 0, \
                  while i < 3 ( n[i] = i, i = i + 1 ), n[2] ), f(e)"
             ),
             "2\n",
         ),
         (
             format!(
-                "{e}, e[0] = 1, mut d := dyad ?, d = e, mut s := u64 0, \
+                "{e}, e[0] = 1, d := mut dyad ?, d = e, s := mut u64 0, \
                  while d[0] < 3 ( d[0] = d[0] + 1, s = s + 1 ), s"
             ),
             "2\n",
         ),
-        (format!("{e}, mut m := {{ pub mut d := dyad (e.type, e) }}, (m.d)[0] = 5, (m.d)[0]"), "5\n"),
+        (format!("{e}, m := mut {{ d := pub mut dyad (e.type, e) }}, (m.d)[0] = 5, (m.d)[0]"), "5\n"),
         // The right side runs first, so a map it puts in the `dyad` is the one written.
         (
             format!(
-                "{e}, mut d := dyad ?, d = e, mut o := hashmap u64 -> u64, o[1] = 4, \
+                "{e}, d := mut dyad ?, d = e, o := mut hashmap u64 -> u64, o[1] = 4, \
                  g := fn () -> u64 ( d = o, 5 ), d[0] = g(), print «{{d[0]}} {{d[1]}}»"
             ),
             "5 4\n",
@@ -3372,17 +3372,17 @@ fn a_map_a_dyad_place_holds_is_read_and_written_by_key() {
     ]);
     for (src, error) in [
         (
-            format!("{e}, mut d := dyad ?, d = e, g := fn () -> u64 ( d = i64 3, 5 ), d[0] = g()"),
+            format!("{e}, d := mut dyad ?, d = e, g := fn () -> u64 ( d = i64 3, 5 ), d[0] = g()"),
             "by the time it reached the `dyad` it held a node of another type",
         ),
-        (format!("{e}, mut n := dyad ?, n = e, n[0]"), "the map holds no value at this key"),
+        (format!("{e}, n := mut dyad ?, n = e, n[0]"), "the map holds no value at this key"),
         // The write lands in the map the name holds, never in the empty map every new one copies.
         (
-            "mut d := dyad ?, d = hashmap u64 -> u64, d[0] = 5, x := hashmap u64 -> u64, x[0]"
+            "d := mut dyad ?, d = hashmap u64 -> u64, d[0] = 5, x := hashmap u64 -> u64, x[0]"
                 .into(),
             "the map holds no value at this key",
         ),
-        ("mut d := dyad ?, d = i64 3, d[0]".into(), "expected one expression, found more"),
+        ("d := mut dyad ?, d = i64 3, d[0]".into(), "expected one expression, found more"),
         (
             "f := fn (a := dyad ?) -> u64 ( a[0] ), f(i64 3)".into(),
             "expected one expression, found more",
@@ -3395,7 +3395,7 @@ fn a_map_a_dyad_place_holds_is_read_and_written_by_key() {
     // An array a `dyad` name holds is still read and written through its own parse.
     let array = "import file «./identities/array.logos»";
     assert_runs(&[(
-        format!("{array}, f := fn (a := dyad ?) -> i32 ( mut n := a, n[1] = 9, n[1] ), f(array i32 [4, 5])"),
+        format!("{array}, f := fn (a := dyad ?) -> i32 ( n := mut a, n[1] = 9, n[1] ), f(array i32 [4, 5])"),
         "9\n",
     )]);
 }
