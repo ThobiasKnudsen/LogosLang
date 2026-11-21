@@ -1,8 +1,8 @@
 
 scope := type (
-    pub dyads := array dyad []
-    pub back := @scope ?       # the one it stands in, null at the arche
-    static parse = (
+    dyads := pub array dyad []
+    back := pub @scope ?       # the one it stands in, null at the arche
+    parse = (
 
     )
 )

@@ -1,5 +1,5 @@
 # a `name : logos` declaration works anywhere an expression can start, not only first
 x := i32 1,
-mut a := i32 ?,
+a := mut i32 ?,
 a = 9,
 print «{x + a}»

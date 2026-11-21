@@ -13,7 +13,7 @@ use super::{Core, Cx};
 use crate::dyad;
 
 /// One per name, never per identity: `x := type i32` binds a second name to i32's own
-/// dyad, so `pub x := type i32` gates what `x` points at through a gate node of its own,
+/// dyad, so `x := pub type i32` gates what `x` points at through a gate node of its own,
 /// never i32 itself.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
