@@ -3223,6 +3223,19 @@ fn a_map_given_by_an_expression_is_read_and_written_by_key() {
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains("this map is the unknown `?`"), "{src}: stderr: {stderr}");
     }
+    // A map nothing holds is read by key, and keeps nothing written into it.
+    for (src, error) in [
+        ("(hashmap i32 -> i32)[1] = 5", "this is not an assignable place"),
+        ("(hashmap i32 -> i32)[1]", "the map holds no value at this key"),
+        (
+            "mut e := hashmap u64 -> u64, mut d := dyad ?, d = e, (d)[0] = 5",
+            "this is not an assignable place",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
 }
 
 /// ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]: `[k]`
@@ -3279,6 +3292,12 @@ fn a_map_a_dyad_place_holds_is_read_and_written_by_key() {
             "by the time it reached the `dyad` it held a node of another type",
         ),
         (format!("{e}, mut n := dyad ?, n = e, n[0]"), "the map holds no value at this key"),
+        // The write lands in the map the name holds, never in the empty map every new one copies.
+        (
+            "mut d := dyad ?, d = hashmap u64 -> u64, d[0] = 5, x := hashmap u64 -> u64, x[0]"
+                .into(),
+            "the map holds no value at this key",
+        ),
         ("mut d := dyad ?, d = i64 3, d[0]".into(), "expected one expression, found more"),
         (
             "f := fn (a := dyad ?) -> u64 ( a[0] ), f(i64 3)".into(),

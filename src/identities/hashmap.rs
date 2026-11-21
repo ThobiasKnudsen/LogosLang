@@ -281,9 +281,15 @@ pub(crate) unsafe fn build_put(
     get: DyadPtr,
     value: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    let ops = dyad::value(get) as *const DyadPtr;
+    // A map nothing holds keeps no entry: a name, a field, another map's entry or what a `dyad`
+    // place holds does.
+    let map = types.through(*ops);
+    if super::read::place_of(types, map).is_none() && !super::dyad_place::is_reach(types, map) {
+        return Err(ParseError::BadAssignTarget);
+    }
     let v = super::read::output_type(types, get);
     let value = super::land(store, types, value, v)?;
-    let ops = dyad::value(get) as *const DyadPtr;
     let put = [*ops, *ops.add(1), value, v, types.hashmap.put_leaf];
     Ok(store.alloc_words(types.hashmap.put, &put))
 }
