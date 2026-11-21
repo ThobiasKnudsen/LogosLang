@@ -12398,7 +12398,7 @@ fn an_operation_s_mint_and_a_map_s_type_are_one_per_key_on_both_tiers() {
 /// at yet takes a `keep` from any program.
 #[test]
 fn a_place_keeps_one_mint_on_both_tiers() {
-    let refused = "a mint is already kept at this place";
+    let refused = "error.already_kept: a key's mint is made once";
     let place = "p := type_mint.step(type_mint.step(0, i32), i64)";
     let (code, stdout, stderr) = run_line(&format!(
         "{place}, type_mint.keep(p, i32), print «{{type_mint.kept(p) == i32}}», \
@@ -12420,6 +12420,9 @@ fn a_place_keeps_one_mint_on_both_tiers() {
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "src: {src}, stderr: {stderr}");
         assert!(stderr.contains(refused), "src: {src}, stderr: {stderr}");
     }
+    // The category is the keeper's file's own: a program declares the name for itself.
+    let (code, stdout, stderr) = run_line("error.already_kept := «mine», 0");
+    assert_eq!((code, stdout.as_str()), (Some(0), "0\n"), "stderr: {stderr}");
 }
 
 /// R383's rules (2) and (3): a writable `static` is never shared, so a type that holds one is

@@ -641,7 +641,7 @@ impl<'a> Parser<'a> {
     /// the file's binding record in the importer's scope that holds only its scope and line, so
     /// an end or a `lex_rank` written anywhere is the name's everywhere
     /// (›Importing is dropping the text there, wrapped in its own scope‹ [[R306]]).
-    fn publish(&mut self, pubs: &[(String, DyadPtr)]) -> Result<(), ParseError> {
+    pub(crate) fn publish(&mut self, pubs: &[(String, DyadPtr)]) -> Result<(), ParseError> {
         // A collision is the import's: reported where the import stands.
         let at = self.cx.pos;
         for (name, exported) in pubs {

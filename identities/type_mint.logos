@@ -9,6 +9,9 @@
 # (›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
 # gives it its identity‹ [[R383]]).
 
+# The kind of mistake the keeper refuses, a category of this file.
+error.already_kept := «a mint is kept at a place that already holds one»,
+
 pub type_mint := type (
     # A place's branch, by argument; the place one level down is the one entry of the map found.
     static branches := hashmap u64 -> hashmap type -> hashmap u64 -> u64,
@@ -61,7 +64,7 @@ pub type_mint := type (
 
     pub static kept := fn (at := u64 ?) -> type ( mints[at] ),
     pub static keep := fn (at := u64 ?, made := type ?) -> void (
-        if mints[at] != ? error «a mint is already kept at this place: a key's mint is made once»,
+        if mints[at] != ? error.already_kept «a key's mint is made once»,
         mints[at] = made
     )
 )
