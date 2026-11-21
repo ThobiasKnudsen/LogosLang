@@ -502,7 +502,7 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
     let types = p.types();
     // SAFETY: `hole` is the place `?` just built; its type is a type node.
     unsafe {
-        let ty = super::hole::type_in(hole);
+        let ty = super::hole::declared_type(types.unknown, hole);
         if meta::is_node_valued(ty, types.fn_type) && !meta::instances_free_of(ty).is_null() {
             return Ok(true);
         }

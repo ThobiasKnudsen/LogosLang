@@ -456,7 +456,14 @@ impl<'a> Parser<'a> {
                 return Err(self.untyped(start, relaxed));
             }
             let logos = if cell.hole {
+                // A type whose nodes run has no place for a field or a parameter: its `T ?` is an
+                // empty node, not a hole.
                 // SAFETY: `value` is the place `?` just built.
+                if !unsafe { self.types.is_hole(value) } {
+                    self.cx.pos = start;
+                    return Err(ParseError::BadDeclaredType);
+                }
+                // SAFETY: as above.
                 unsafe { crate::identities::hole::type_in(value) }
             } else {
                 // SAFETY: `value` is a reduced dyad just parsed.

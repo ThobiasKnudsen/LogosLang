@@ -982,6 +982,8 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("b := a, b[1]", "2"),
         ("t := array i32, mut x := t ?, x = [4, 5], x[1]", "5"),
         ("b := array f64 [i32 1, 2], b[0]", "1.0"),
+        // `array ?` is an empty node of `array`, and the place it declares runs nothing.
+        ("n := array ?", ""),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -1001,8 +1003,7 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("b := array array u8 [[1, 300]]", "an element does not fit the element type"),
         ("b := array f32 [i32 1]", "an element does not fit the element type"),
         ("a[f64 1.0]", "the index is not an integer"),
-        // `array ?` is an empty node of `array`, with nothing to run.
-        ("n := array ?", "was never written by its constructor"),
+        ("n := array ?, n", "`n` is read before it is written"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -9510,6 +9511,51 @@ fn a_type_alone_after_colon_equals_declares_a_place_of_it() {
         let (code, stdout, stderr) = run_line(src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains(&format!("{at}: error: {message}")), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›`?` is one value, the unknown; `key := T ?` declares without a value‹ [[R103]]: an empty place
+/// of a type that fills `run` has no value, so nothing runs until a write gives it one, and a read
+/// before then is refused (›Reading a place before its first write is refused at parse‹ [[R104]]).
+#[test]
+fn an_empty_place_of_a_type_with_a_run_runs_nothing() {
+    let pt = "pt := type ( x := i32 ?, static run = ( x ) )";
+    let mk = "pt := type ( x := i32 ? ), mk := type ( a := i32 ?, output_type := type ?, \
+              static tag := i32 7, static run = ( pt(a) ), static parse = ( \
+              if tape[-1].type == i32 ( tape[0].type = mk, tape[0].a = tape[-1], \
+              tape[0].output_type = pt, tape.is_constructed[0] = true, tape.remove(-1) ) ) )";
+    for (defs, body, out, want) in [
+        (pt, "t := pt ?, t.type == pt", "bool", "true"),
+        (pt, "t := pt, t.type == pt", "bool", "true"),
+        (pt, "t := pt ?, 0", "i32", "0"),
+        (mk, "t := mk, 0", "i32", "0"),
+        (mk, "t := mk ?, t.type == mk", "bool", "true"),
+    ] {
+        assert_eq!(line(&format!("{defs}, {body}")), want, "{defs}, {body}");
+        for call in ["g()", "g.compile(), g()"] {
+            let src = format!("{defs}, g := fn () -> {out} ( {body} ), {call}");
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    for (src, message) in [
+        (format!("{pt}, t := pt ?, t"), "`t` is read before it is written"),
+        (
+            format!("{pt}, g := fn () -> i32 ( t := pt ?, t ), g()"),
+            "`t` is read before it is written",
+        ),
+        (format!("{mk}, t := mk, t"), "`t` is read before it is written"),
+        (
+            format!("{pt}, f := fn (p := pt ?) -> i32 ( 0 )"),
+            "the declared or assigned type must be a type value",
+        ),
+        (
+            format!("{pt}, q := type ( p := pt ? )"),
+            "the declared or assigned type must be a type value",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(message), "{src}: stderr: {stderr}");
     }
 }
 
