@@ -443,8 +443,11 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
         assert_eq!((code, stdout.trim()), (Some(0), want), "{tail}: stderr: {stderr}");
     }
     for (tail, expect) in [
-        ("x := i32 2, x ^ -1", "a negative exponent of a whole number is not whole"),
-        ("x := f64 -8.0, x ^ 0.5", "a negative base has no real power"),
+        (
+            "x := i32 2, x ^ -1",
+            "error.not_whole: a negative exponent of a whole number is not whole",
+        ),
+        ("x := f64 -8.0, x ^ 0.5", "error.not_real: a negative base has no real power"),
     ] {
         let (code, _, stderr) = run_line(&format!("{body}\n{tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
