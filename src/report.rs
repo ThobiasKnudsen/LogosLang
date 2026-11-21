@@ -348,11 +348,6 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("no field `{name}` is declared above in the type body")
         }
         ParseError::NotAField(name) => format!("this value's type has no field `{name}`"),
-        ParseError::WriteThroughDyad => {
-            "what a `dyad` holds is read through it, but not written through it yet: write a \
-             whole new value into the `dyad`"
-                .into()
-        }
         ParseError::BareFieldInParse(name) => {
             format!("a parse writes and reads a field through its cell, `tape[0].{name}`, never bare")
         }
@@ -666,6 +661,11 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::NullPointer => "this pointer holds nothing yet".into(),
+        RunError::HeldNodeReplaced => {
+            "this line was read for the type of what its `dyad` held, but by the time it reached \
+             the `dyad` it held a node of another type"
+                .into()
+        }
         RunError::Parse(e) => parse_message(e),
         RunError::Return(_) => "`return` found no function to leave".into(),
         RunError::TooDeep => {

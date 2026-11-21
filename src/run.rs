@@ -105,6 +105,9 @@ pub enum RunError {
     Return(i64),
     /// A read or write through a pointer holding nothing.
     NullPointer,
+    /// A line built over the node a `dyad` place held found one of another type there when it
+    /// ran.
+    HeldNodeReplaced,
     /// `lex «…»` under a runtime with no lexer attached; only the parser attaches one.
     NoLexer,
     /// `lex «…»` met text nothing spells; the resolve error's sentence.

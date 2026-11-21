@@ -10574,22 +10574,94 @@ fn a_field_of_a_record_a_dyad_holds_is_read_through_it() {
         assert_eq!((code, out.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains(error), "{src}: stderr: {stderr}");
     }
-    // A write through what a `dyad` holds is refused, where it would land in the copy the line
-    // stands on: stand-in for #411.
-    let mpt =
-        "mpt := type ( mut x := i32 ?, y := i32 ?, static bump := fn () -> void ( x = x + 1 ) ), ";
-    for src in [
-        "mut d := dyad ?, d = mpt (1, 2), d.x = i32 5, d.x",
-        "d := dyad (mpt, mpt (1, 2)), d.x = i32 5",
-        "mut d := dyad ?, d = mpt (1, 2), d.bump(), d.x",
-        "mut m := { mut d := dyad (mpt, mpt (1, 2)) }, m.d.x = i32 5",
-        "f := fn (a := dyad ?) -> void ( a.x = i32 5 ), f(mpt (1, 2))",
-        "f := fn (a := dyad ?) -> void ( a.bump() ), f(mpt (1, 2))",
+}
+
+/// ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]: a field
+/// of a record a `dyad` place holds is written through it, by `=` and by a `static` function that
+/// writes its value, in the node the place holds when the line runs, as through a name of the
+/// record, and the write meets the gates `p.x = …` meets (›An access along a path needs every
+/// binding on the path to grant it‹ [[R122]]).
+#[test]
+fn a_write_through_what_a_dyad_holds_lands_in_the_node_it_holds() {
+    let pt = "pt := type ( mut x := i32 ?, y := i32 ?, \
+              static bump := fn () -> void ( x = x + 1 ), static get := fn () -> i32 ( x ) ), ";
+    let made = "dyad (pt, pt (1, 2))";
+    for (write, printed) in [
+        ("D.x = i32 5", "5 2"),
+        ("D.bump(), D.bump()", "3 2"),
+        ("D.x = D.x + D.y", "3 2"),
+        ("D.bump(), D.x = D.get() * 2", "4 2"),
     ] {
-        let src = format!("{mpt}{src}");
+        let at = |d: &str| format!("{}, print «{{{d}.x}} {{{d}.y}}»", write.replace('D', d));
+        for src in [
+            format!("mut p := pt (1, 2), {}", at("p")),
+            format!("mut d := dyad ?, d = pt (1, 2), {}", at("d")),
+            format!("mut d := {made}, {}", at("d")),
+            format!("mut m := {{ mut d := {made} }}, {}", at("m.d")),
+            format!("f := fn () -> void ( mut d := dyad ?, d = pt (1, 2), {} ), f()", at("d")),
+            format!("mut d := {made}, mut i := i32 0, while i < 1 ( {}, i = i + 1 )", at("d")),
+        ] {
+            let src = format!("{pt}{src}");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    for (src, printed) in [
+        // A record inside the record the `dyad` holds.
+        (
+            "ln := type ( mut a := pt ?, b := pt ? ), mut d := dyad (ln, ln (pt (1, 2), pt (3, 4))), \
+             d.a.x = i32 7, d.a.bump(), print «{d.a.x} {d.b.x}»",
+            "8 3\n",
+        ),
+        // The right side runs first, so a node it puts in the `dyad` is the one written, as `p`'s
+        // new value is.
+        (
+            "mut p := pt (1, 2), g := fn () -> i32 ( p = pt (9, 9), i32 3 ), p.x = g(), print «{p.x} {p.y}»",
+            "3 9\n",
+        ),
+        (
+            "mut d := dyad ?, d = pt (1, 2), g := fn () -> i32 ( d = pt (9, 9), i32 3 ), d.x = g(), \
+             print «{d.x} {d.y}»",
+            "3 9\n",
+        ),
+        // A copy of the node is a node of its own.
+        ("mut d := dyad ?, d = pt (1, 2), e := d, d.x = i32 9, print «{e.x} {d.x}»", "1 9\n"),
+        (
+            "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), mut d := dyad ?, \
+             d = bag (1), d.n = i32 5, print «end»",
+            "end\nfreed 5\n",
+        ),
+        // A compiled caller of a function whose line waits for the run.
+        (
+            "f := fn () -> i32 ( mut d := dyad ?, d = pt (1, 2), d.x = i32 5, d.x ), \
+             h := fn () -> i32 ( f() ), h.compile(), h()",
+            "5\n",
+        ),
+    ] {
+        let src = format!("{pt}{src}");
+        assert_eq!(run_line(&src), (Some(0), printed.into(), String::new()), "{src}");
+    }
+    // A write the gates refuse is refused where it is written, at the top level as the pass
+    // reaches it, in a body when the waiting line runs.
+    for (src, error) in [
+        (format!("d := {made}, d.x = i32 5"), "`d` is not `mut`"),
+        (format!("d := {made}, d.bump()"), "`d` is not `mut`"),
+        ("mut d := dyad ?, d = pt (1, 2), d.y = i32 5".into(), "`y` is not `mut`"),
+        (format!("m := {{ mut d := {made} }}, m.d.x = i32 5"), "`m` is not `mut`"),
+        (format!("mut m := {{ d := {made} }}, m.d.x = i32 5"), "`d` is not `mut`"),
+        ("f := fn (a := dyad ?) -> void ( a.x = i32 5 ), f(pt (1, 2))".into(), "`a` is not `mut`"),
+        ("f := fn (a := dyad ?) -> void ( a.bump() ), f(pt (1, 2))".into(), "`a` is not `mut`"),
+        // The line is read for the type the `dyad` held, so a node of another type its right
+        // side put there is not written.
+        (
+            "mut d := dyad ?, d = pt (1, 2), g := fn () -> i32 ( d = i64 4, i32 3 ), d.x = g()"
+                .into(),
+            "by the time it reached the `dyad` it held a node of another type",
+        ),
+    ] {
+        let src = format!("{pt}{src}");
         let (code, out, stderr) = run_line(&src);
         assert_eq!((code, out.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
-        assert!(stderr.contains("not written through it yet"), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
     }
 }
 

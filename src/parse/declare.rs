@@ -91,16 +91,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A write through `cell`, which stands for what a `dyad` place held where the parse read
-    /// the place through, is refused: the line stands on that node as it was read, so the write
-    /// would reach no place, stand-in for #411.
-    pub(super) fn check_held_write(cell: &Cell) -> Result<(), ParseError> {
-        if cell.held {
-            return Err(ParseError::WriteThroughDyad);
-        }
-        Ok(())
-    }
-
     /// A `static` function that writes a field of its value meets the gates `receiver.f = …`
     /// would (DESIGN ›There is no `this`‹).
     ///
@@ -115,7 +105,6 @@ impl<'a> Parser<'a> {
         if fn_receiver(self.types, f) & RECEIVER_WRITES == 0 {
             return Ok(());
         }
-        Self::check_held_write(receiver)?;
         let path = self.path_of(receiver);
         if !path.is_empty() {
             self.check_gates(&path)
