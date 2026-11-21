@@ -274,10 +274,13 @@ impl<'a> Parser<'a> {
     }
 
     /// `error`'s own parse (›Error values are in v0.1.0; an error names a category, which is a
-    /// scoped name‹ [[R143]]): `.X := «description»` to its right declares the category `X`, and
-    /// `.X «message»` raises it. Any other `.` is a read of `error` itself, left to `.`; anything
-    /// else to its right names no category (›There is no bare `error «…»`; `abort «…»` stops the
-    /// program; `alloc` returns `@T!`‹ [[R145]]).
+    /// scoped name‹ [[R143]]). A category is a name, the path `error.X` written as one word, so
+    /// the lex reads it as it reads every name, wherever it is in reach, and wakes this parse on
+    /// it: a `«message»` to its right raises it. Where the lex read `error` alone, `.X :=
+    /// «description»` declares the category, and `.X «message»` raises one declared since the
+    /// text was lexed, which only a held body's own can be. Any other `.` is a read of `error`
+    /// itself, left to `.`; anything else to its right names no category (›There is no bare
+    /// `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`‹ [[R145]]).
     pub(crate) fn construct_error(
         &mut self,
         tape: &mut ParsingTape,
@@ -286,7 +289,24 @@ impl<'a> Parser<'a> {
             return Ok(Constructed::Decline);
         }
         let after = self.cx.pos;
-        let word = tape.at(0).map_or(after, |cell| cell.start);
+        let cell = tape.at(0).copied();
+        let (word, end) = cell.map_or((after, after), |cell| (cell.start, cell.end()));
+        let lexed = cell.map_or(std::ptr::null_mut(), |cell| cell.binding(self.types));
+        // SAFETY: a cell's binding is null or a binding dyad from the store.
+        if unsafe { crate::identities::error::is_category(self.types, lexed) } {
+            if self.quote_follows() {
+                return self.raise(tape, lexed);
+            }
+            // SAFETY: as above, and not null.
+            let name = Box::new(unsafe { Binding::spelling(lexed) });
+            let declares = self.consume_token(self.types.declare_tok);
+            self.cx.pos = word;
+            return Err(if declares {
+                ParseError::CategoryDeclared(name)
+            } else {
+                ParseError::CategoryAlone(name)
+            });
+        }
         if !self.consume_token(self.types.dot_) {
             if !self.finds_right_side(tape) {
                 return Ok(Constructed::Decline);
@@ -300,22 +320,42 @@ impl<'a> Parser<'a> {
         }
         if let Some((at, len)) = self.lex_spelling() {
             let name = format!("error.{}", &self.cx.source[at..at + len]);
-            if self.consume_token(self.types.declare_tok) {
-                return self.declare_category(tape, &name, word);
-            }
-            self.skip_whitespace();
-            if self.cx.source[self.cx.pos..].starts_with('«') {
-                return self.raise(tape, &name, word);
+            let declares = self.consume_token(self.types.declare_tok);
+            if declares || self.quote_follows() {
+                // One word: a path written apart is no name the lex could read.
+                if at != end + 1 {
+                    self.cx.pos = word;
+                    return Err(ParseError::CategoryApart(Box::new(name)));
+                }
+                if declares {
+                    return self.declare_category(tape, &name, word);
+                }
+                let found = self.resolve_fresh(&name).ok().filter(|r| r.matched == name.len());
+                // SAFETY: a resolved binding is a binding dyad from the store.
+                return match found
+                    .map(|r| r.binding)
+                    .filter(|&b| unsafe { crate::identities::error::is_category(self.types, b) })
+                {
+                    Some(category) => self.raise(tape, category),
+                    None => {
+                        self.cx.pos = word;
+                        Err(ParseError::UnknownCategory(Box::new(name)))
+                    }
+                };
             }
         }
         self.cx.pos = after;
         Ok(Constructed::Decline)
     }
 
+    fn quote_follows(&mut self) -> bool {
+        self.skip_whitespace();
+        self.cx.source[self.cx.pos..].starts_with('«')
+    }
+
     /// `error.X := «description»`: the category is a name of the open scope, entered as every
-    /// name is, under its whole path. Its record holds the description, and a `lex_rank` under
-    /// every other, so no lex reads the path as one word and `error`'s parse alone reaches it.
-    /// The line takes no gate word: its record is not offered to one.
+    /// name is, under its whole path, and one more name `error` goes by, so a lex of it wakes
+    /// `error`'s parse. The line takes no gate word: its record is not offered to one.
     fn declare_category(
         &mut self,
         tape: &mut ParsingTape,
@@ -324,10 +364,13 @@ impl<'a> Parser<'a> {
     ) -> Result<Constructed, ParseError> {
         let description = self.quote_after("error.X :=")?;
         let scope = self.cx.scopes.current().expect("a line stands in an open scope");
-        let binding = self.mint_binding(description, scope, name.as_bytes());
-        // SAFETY: `binding` was minted by `Binding::alloc` just above.
-        unsafe { Binding::set_lex_rank(binding, f64::NEG_INFINITY) };
-        self.enter_binding(name, binding, at)?;
+        let binding = self.mint_binding(self.types.error.error, scope, name.as_bytes());
+        self.enter_binding(name, binding, at).map_err(|e| match e {
+            ParseError::Resolve(ResolveError::Shadowed(name)) => {
+                ParseError::CategoryDeclared(Box::new(name))
+            }
+            e => e,
+        })?;
         self.cx.last_declared = std::ptr::null_mut();
         let (store, types) = (&mut *self.rt.store, self.types);
         let node =
@@ -336,54 +379,12 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// A held body is only lexed where it is written, so no raise in it has met `error`'s parse:
-    /// each is checked here, against the categories in reach of the body, as a body built where
-    /// written checks its own. `cells` are the body's in source order, `base` where its text
-    /// starts in the source. A category the body declares is left to the body's construction.
-    pub(super) fn check_held_raises(
-        &mut self,
-        cells: &[Cell],
-        base: usize,
-    ) -> Result<(), ParseError> {
-        let types = self.types;
-        let is = |cell: &Cell, id: DyadPtr| cell.identity(types) == id;
-        // Each `error.X` of the body: its `error`, `X`, and the cell after. An `error` that is
-        // itself a member's name starts none.
-        let paths: Vec<(&Cell, &str, &Cell)> = cells
-            .windows(4)
-            .enumerate()
-            .filter(|&(i, w)| {
-                let member = i > 0 && is(&cells[i - 1], types.dot_);
-                !member && is(&w[0], types.error.error) && is(&w[1], types.dot_)
-            })
-            .map(|(_, w)| (&w[0], w[2].spelling(), &w[3]))
-            .collect();
-        let declares =
-            |x: &str| paths.iter().any(|&(_, y, next)| y == x && is(next, types.declare_tok));
-        for &(word, x, next) in &paths {
-            if !next.spelling().starts_with('«') || declares(x) {
-                continue;
-            }
-            let name = format!("error.{x}");
-            if self.cx.scopes.named(self.trie, &name).is_none() {
-                self.cx.pos = base + word.start;
-                return Err(ParseError::UnknownCategory(Box::new(name)));
-            }
-        }
-        Ok(())
-    }
-
-    /// `error.X «message»` over the category `name` a scope in reach declares.
+    /// `error.X «message»` over `category`, the record of a category in reach.
     fn raise(
         &mut self,
         tape: &mut ParsingTape,
-        name: &str,
-        at: usize,
+        category: DyadPtr,
     ) -> Result<Constructed, ParseError> {
-        let Some(category) = self.cx.scopes.named(self.trie, name) else {
-            self.cx.pos = at;
-            return Err(ParseError::UnknownCategory(Box::new(name.to_string())));
-        };
         let parts = self.interpolated_quote("error")?;
         let node = crate::identities::error::build(self.rt.store, self.types, &parts, category);
         tape.place(node);

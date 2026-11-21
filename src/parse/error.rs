@@ -202,6 +202,12 @@ pub enum ParseError {
     ErrorNeedsCategory,
     /// A raise over a category no open scope declares; carries the category as written.
     UnknownCategory(Box<String>),
+    /// `error.X :=` over a category in reach; carries the category.
+    CategoryDeclared(Box<String>),
+    /// A category standing where a value is read; carries the category.
+    CategoryAlone(Box<String>),
+    /// A category's path written with space inside it; carries the category.
+    CategoryApart(Box<String>),
     /// `lex «» := …`: a spelling of no text, which no lex could ever match.
     EmptySpelling,
     /// A `}` in a `print` quote with no `{` before it.

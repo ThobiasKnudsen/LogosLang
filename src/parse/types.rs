@@ -1176,7 +1176,6 @@ impl<'a> Parser<'a> {
                 let held = std::str::from_utf8(held).expect("copied from the source text");
                 let fragment = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held)
                     .map_err(ParseError::Resolve)?;
-                self.check_held_raises(&fragment.held_cells(), start - 1)?;
                 let cells = Box::into_raw(Box::new(fragment));
                 let body = crate::identities::run_body::build(self.rt.store, types, text, cells);
                 self.cx.definitions.last_mut().expect("checked above").run_body = body;

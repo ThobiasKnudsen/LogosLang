@@ -56,6 +56,17 @@ pub(crate) fn build(
     store.alloc_words(types.error.error, &[parts, types.error.leaf, types.void_, category])
 }
 
+/// Whether `binding` is a category's record: a name `error` goes by, spelled with its path, so a
+/// lex of it wakes `error`'s parse.
+///
+/// # Safety
+/// `binding` must be null or a binding dyad from the store.
+pub(crate) unsafe fn is_category(types: &Core, binding: DyadPtr) -> bool {
+    !binding.is_null()
+        && Binding::read(binding).dyad == types.error.error
+        && Binding::spelling(binding).starts_with("error.")
+}
+
 /// Whether a node of type `ty` ends the run where it runs: a raise or an `abort`.
 pub(crate) fn ends_run(types: &Core, ty: DyadPtr) -> bool {
     ty == types.error.error || ty == types.abort.abort

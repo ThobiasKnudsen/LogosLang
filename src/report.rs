@@ -204,6 +204,17 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::UnknownCategory(name) => {
             format!("unknown category `{name}`: declare it with `{name} := «description»`")
         }
+        ParseError::CategoryDeclared(name) => format!(
+            "the category `{name}` is already declared and still in scope: a category is \
+             declared once where it can be seen, and it lasts as long as its scope"
+        ),
+        ParseError::CategoryApart(name) => {
+            format!("a category's name is one word: write `{name}`, with no space inside it")
+        }
+        ParseError::CategoryAlone(name) => format!(
+            "`{name}` is a category, a name with no value to read: raise it with \
+             `{name} «message»`"
+        ),
         ParseError::EmptySpelling => {
             "a declared spelling must not be empty: no text could ever lex as it".into()
         }

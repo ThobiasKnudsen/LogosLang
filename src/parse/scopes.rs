@@ -444,9 +444,15 @@ impl ScopeStack {
         name: &str,
         binding: DyadPtr,
     ) -> Result<Option<DyadPtr>, ResolveError> {
-        // SAFETY: `binding` is a binding dyad from the store.
-        let rec = unsafe { Binding::read(binding) };
-        let keyed = self.keyed(trie, &rec.key(name));
+        // SAFETY: `binding` and every pointer the trie stores are binding dyads from the store.
+        let fields = |r: DyadPtr| unsafe { Binding::read(r) };
+        let rec = fields(binding);
+        let keyed = trie.bindings_for_key(&rec.key(name)).and_then(|bindings| {
+            bindings
+                .iter()
+                .copied()
+                .find(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())
+        });
         if keyed.is_some() || rec.pattern {
             return Ok(keyed);
         }
@@ -457,24 +463,6 @@ impl ScopeStack {
             }
             Err(e) => Err(e),
         }
-    }
-
-    /// The live binding entered under exactly `key`, in the innermost open scope that holds one.
-    fn keyed(&self, trie: &RegexTrie, key: &str) -> Option<DyadPtr> {
-        // SAFETY: every pointer the trie stores is a binding dyad from the store.
-        let fields = |r: DyadPtr| unsafe { Binding::read(r) };
-        trie.bindings_for_key(key)?
-            .iter()
-            .copied()
-            .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())
-            .max_by_key(|&r| self.position(fields(r).scope))
-    }
-
-    /// The live name whose whole spelling is `spelling`: what a reader that holds a name's text
-    /// asks, where `resolve` asks what a text starts with. A category, `error.X`, is reached
-    /// this way alone, since the lexer never reads its path as one word.
-    pub fn named(&self, trie: &RegexTrie, spelling: &str) -> Option<DyadPtr> {
-        self.keyed(trie, &Binding::name_key(spelling))
     }
 
     /// `node` is the provisional `end` until `settle_item` replaces it with

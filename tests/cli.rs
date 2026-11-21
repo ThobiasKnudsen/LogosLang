@@ -448,6 +448,11 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
             "error.not_whole: a negative exponent of a whole number is not whole",
         ),
         ("x := f64 -8.0, x ^ 0.5", "error.not_real: a negative base has no real power"),
+        // A whole exponent past `i64` is read as no whole one.
+        (
+            "x := i32 1, n := u64 9223372036854775807, m := n + n, x ^ m",
+            "error.needs_float: a fractional exponent needs a float result",
+        ),
     ] {
         let (code, _, stderr) = run_line(&format!("{body}\n{tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -6420,7 +6425,6 @@ fn a_raise_over_a_declared_category_is_a_fault_naming_it() {
     let mut cases = vec![
         (format!("{x}, error.x «msg»"), "", "error.x: msg"),
         (format!("{x}, n := i32 4, error.x «bad {{n}}»"), "", "error.x: bad 4"),
-        ("error . x := «d», error . x «spaced»".to_string(), "", "error.x: spaced"),
         // In a `run` body, over a category of the type's scope and over one of its own.
         (
             format!(
@@ -6497,7 +6501,11 @@ fn a_category_is_known_only_in_reach_of_its_declaration() {
     let unknown = |name: &str| {
         format!("unknown category `{name}`: declare it with `{name} := «description»`")
     };
-    let shadowed = "`error.x` is already declared and still in scope";
+    let shadowed = "the category `error.x` is already declared and still in scope: a category is \
+                    declared once where it can be seen, and it lasts as long as its scope";
+    let alone = "`error.x` is a category, a name with no value to read: raise it with \
+                 `error.x «message»`";
+    let apart = "a category's name is one word: write `error.x`, with no space inside it";
     for (src, message) in [
         ("error.x «msg»", unknown("error.x")),
         (
@@ -6509,20 +6517,18 @@ fn a_category_is_known_only_in_reach_of_its_declaration() {
             "f := fn () -> void ( error.late «early» ), error.late := «declared after», f()",
             unknown("error.late"),
         ),
-        // A body only lexed where it is written is checked there too.
-        (
-            "t := type ( static parse_rank = fn.parse_rank, static parse = ( error.late «x» ) ), \
-             error.late := «declared after», t",
-            unknown("error.late"),
-        ),
-        (
-            "probe := type ( v := i32 ?, static run = ( error.late «{v}» ), \
-             static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = probe, \
-             tape[0].v = 7, tape.is_constructed[0] = true ) ), error.late := «declared after», probe",
-            unknown("error.late"),
-        ),
+        // A name is its whole spelling: a longer or a shorter one is another.
+        ("error.x := «d», error.xy «longer»", unknown("error.xy")),
+        ("error.xy := «d», error.x «shorter»", unknown("error.x")),
         ("error.x := «d», error.x := «e», 0", shadowed.to_string()),
         ("error.x := «d», f := fn () -> i32 ( error.x := «e», 1 ), f()", shadowed.to_string()),
+        // A category is no value: nothing reads it, ends it or takes its address.
+        ("error.x := «d», error.x", alone.to_string()),
+        ("error.x := «d», y := error.x, 0", alone.to_string()),
+        ("error.x := «d», free error.x", alone.to_string()),
+        ("error.x := «d», error.x.type", alone.to_string()),
+        ("error . x := «d», 0", apart.to_string()),
+        ("error.x := «d», error . x «spaced»", apart.to_string()),
         ("error.x := 5, 0", "`error.X :=` must be followed by a «…» quote".to_string()),
         (
             "pub error.x := «d», 0",
@@ -6544,6 +6550,60 @@ fn a_category_is_known_only_in_reach_of_its_declaration() {
     }
     // Any other `.` after `error` is a read of `error` itself.
     assert_eq!(line("error.type"), "type");
+    // A scope that ended took its category with it, so the name is free again.
+    let (_, _, stderr) = run_line("( error.x := «d» ), error.x := «again», error.x «second»");
+    assert!(stderr.contains("run error: error.x: second"), "stderr: {stderr}");
+}
+
+/// ›Error values are in v0.1.0; an error names a category, which is a scoped name‹ [[R143]]: a
+/// category is found as every name is, so a body held where it is written and built later sees
+/// the categories a name there would see: those declared before it, and its own.
+#[test]
+fn a_held_body_sees_a_category_as_it_sees_a_name() {
+    let pick = "pick := fn (n := i32 ?) -> type ( if n == 1 (i64) else (i32) )";
+    let probe = "static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = probe, \
+                 tape[0].v = 7, tape.is_constructed[0] = true )";
+    // Each kind of held body, `USE` where it reads, and the line that builds it.
+    let bodies = [
+        (
+            format!("{pick}, f := fn (n := i32 ?) -> i32 ( mut u := pick(n), u = 5, if u > 3 ( USE ), 0 )"),
+            "f(1)",
+        ),
+        (
+            "mk := fn (t := type ?) -> type ( type ( static parse = ( if tape[1].type != void ( USE ), \
+             tape.is_constructed[0] = true ) ) )"
+                .to_string(),
+            "c := type mk(i32), c 5",
+        ),
+        (format!("probe := type ( v := i32 ?, static run = ( USE ), {probe} )"), "probe"),
+        (
+            "t := type ( static parse_rank = fn.parse_rank, static parse = ( USE ) )".to_string(),
+            "t",
+        ),
+    ];
+    for (body, build) in bodies {
+        // The ordinary name, then the category.
+        for (declare, reads, unknown) in [
+            ("late := i32 1", "print «seen {late}»", "unknown name `late`"),
+            ("error.late := «d»", "error.late «seen 1»", "unknown category `error.late`"),
+        ] {
+            let body = body.replace("USE", reads);
+            let after = format!("{body}, {declare}, {build}");
+            let (code, stdout, stderr) = run_line(&after);
+            assert_eq!((code, stdout.as_str()), (Some(1), ""), "{after}: stderr: {stderr}");
+            assert!(stderr.contains(&format!("error: {unknown}")), "{after}: stderr: {stderr}");
+            let before = format!("{declare}, {body}, {build}");
+            let (_, stdout, stderr) = run_line(&before);
+            assert!(format!("{stdout}{stderr}").contains("seen 1"), "{before}: stderr: {stderr}");
+            assert!(!stderr.contains("unknown"), "{before}: stderr: {stderr}");
+        }
+    }
+    // A held body's own category is one it sees, each time it is built.
+    let (_, _, stderr) = run_line(
+        "f := fn (a := dyad ?) -> void ( error.own := «its own», if a == 0 ( error.own «bad {a + 1}» ) ), \
+         f(i64 5), f(i32 0)",
+    );
+    assert!(stderr.contains("run error: error.own: bad 1"), "stderr: {stderr}");
 }
 
 /// ›There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`‹ [[R145]]:
@@ -6598,10 +6658,8 @@ fn two_files_that_name_a_category_alike_hold_two() {
         }
     }
     // A member name is read by its spelling: after a `.`, `error` wakes no parse of its own.
-    let (_, _, stderr) = run_line(
-        "error.not_found := «mine», h := logos file «tests/fixtures/category_http.logos», \
-         h.error.not_found «x»",
-    );
+    let (_, _, stderr) =
+        run_line("h := logos file «tests/fixtures/category_http.logos», h.error.not_found «x»");
     assert!(stderr.contains("the file has no `pub` name `error`"), "stderr: {stderr}");
 }
 
