@@ -12379,11 +12379,55 @@ fn an_array_element_lands_by_the_element_type() {
     ] {
         assert_eq!(run_line(&src), (Some(0), printed.to_string(), String::new()), "{src}");
     }
-    // Refused, not a crash.
-    let src = format!("{array}, pt := type ( a := i32 ?, b := i32 ? ), a := array pt [pt(1, 2)]");
-    let (code, _, stderr) = run_line(&src);
-    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-    assert!(stderr.contains("these types do not match"), "{src}: stderr: {stderr}");
+    // A line that already is a value of the element type is taken as it is: a record by its
+    // bytes, a `rational_number`, a pointer, made in the line or named.
+    let pt = "pt := type ( x := pub mut i32 ?, y := pub i32 ? )";
+    for (src, printed) in [
+        (
+            format!("{array}, {pt}, a := array pt [pt(1, 2), pt(3, 4)], print «{{a[0].x}} {{a[1].y}} {{a.size}}»"),
+            "1 4 2\n",
+        ),
+        (
+            format!("{array}, {pt}, p := mut pt(5, 6), a := array pt [p], p.x = 9, print «{{a[0].x}} {{p.x}}»"),
+            "5 9\n",
+        ),
+        (format!("{array}, {pt}, a := array (array pt) [[pt(1, 2)], [pt(3, 4), pt(5, 6)]], a[1][1].x"), "5\n"),
+        (format!("{array}, a := array rational_number [1/2, 3], print «{{a[0]}} {{a[1]}}»"), "1/2 3\n"),
+        (format!("{array}, x := i32 5, p := &x, a := array (@i32) [p], a[0]@"), "5\n"),
+    ] {
+        assert_eq!(run_line(&src), (Some(0), printed.to_string(), String::new()), "{src}");
+    }
+    // In a `fn` each line is evaluated where the call runs, before the array is made.
+    for compile in ["", "f.compile(), "] {
+        for (f, call, printed) in [
+            ("f := fn (n := i32 ?) -> i32 ( a := array pt [pt(n, 2), pt(3, n)], a[0].x + a[1].y )", "f(10)", "20"),
+            ("f := fn (n := i32 ?) -> i32 ( p := pt(n, 1), a := array pt [p], a[0].x )", "f(4)", "4"),
+            ("f := fn (n := i32 ?) -> i32 ( x := mut n, p := &x, a := array (@i32) [p], a[0]@ )", "f(6)", "6"),
+        ] {
+            let src = format!("{array}, {pt}, {f}, {compile}{call}");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    // An element whose type fills `free` is ended once, by the array; a named one is copied in
+    // (›A value owns what its elements hold and frees it‹ [[R226]]).
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let src = format!("{array}, {bag}, b := bag(7), a := array bag [b, bag(8)], print «end»");
+    assert_eq!(
+        run_line(&src),
+        (Some(0), "end\nfreed 7\nfreed 8\nfreed 7\n".to_string(), String::new()),
+        "{src}"
+    );
+    for compile in ["", "f.compile(), "] {
+        let src = format!(
+            "{array}, {bag}, f := fn (k := i32 ?) -> i32 ( b := bag(k), a := array bag [b, bag(k + 1)], a[1].n ), \
+             {compile}print «{{f(3)}}», print «end»"
+        );
+        assert_eq!(
+            run_line(&src),
+            (Some(0), "freed 3\nfreed 4\nfreed 3\n4\nend\n".to_string(), String::new()),
+            "{src}"
+        );
+    }
 }
 
 #[test]
