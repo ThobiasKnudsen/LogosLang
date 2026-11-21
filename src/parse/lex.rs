@@ -243,6 +243,7 @@ impl<'a> Parser<'a> {
                 if let Some(held) = self.read_through(id)? {
                     self.cx.each_pass_read |= self.cx.each_pass;
                     cell.dyad = held;
+                    cell.held = true;
                 }
             } else if self.is_live_call_slot(id) {
                 // The running call's slot is that call's value (DESIGN ›A type is a
