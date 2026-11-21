@@ -361,6 +361,19 @@ impl Binding {
         !gates.is_null() && super::array::items(gates).contains(&gate)
     }
 
+    /// The name's gates, in text order.
+    ///
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn gates(dyad: DyadPtr) -> Vec<DyadPtr> {
+        let gates = (*Self::shared(dyad)).gate;
+        if gates.is_null() {
+            Vec::new()
+        } else {
+            super::array::items(gates).to_vec()
+        }
+    }
+
     /// Put `gate` first: the words are read right to left, so first keeps text order.
     ///
     /// # Safety
@@ -445,7 +458,7 @@ pub(super) fn register_type(
     let mut fields = Vec::with_capacity(9);
     let mut bindings = Vec::with_capacity(9);
     // SAFETY: `dyad_ty` is the type node `Core::build` minted.
-    let at_dyad = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty) };
+    let at_dyad = unsafe { super::pointer::early_pointer_type(cx.store, cx.type_, dyad_ty) };
     // `name` is a place of type `string`: eight bytes holding the string node's address.
     let typed = [
         ("dyad", at_dyad),

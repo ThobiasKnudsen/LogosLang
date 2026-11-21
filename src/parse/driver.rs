@@ -988,16 +988,11 @@ impl<'a> Parser<'a> {
         parser.cell_at(tape, k).map(|_| ())
     }
 
-    /// With the lexer attached: a `lex «…»` inside what runs resolves against
-    /// the scopes open now and the index (DESIGN ›Text is the quote‹). The
-    /// parser reads neither while the runtime runs.
-    ///
-    /// # Safety
-    /// `node` must be a valid dyad this parser built into its store.
-    pub(super) unsafe fn run_on_pass(
-        &mut self,
-        node: DyadPtr,
-    ) -> Result<i64, crate::run::RunError> {
+    /// `f` over the runtime with this parser as its host: the lexer is attached, so a
+    /// `lex «…»` inside what runs resolves against the scopes open now and the index (DESIGN
+    /// ›Text is the quote‹), and what runs reaches the parser for a held `type (…)`, a
+    /// constructor and a waiting line. The parser reads neither while the runtime runs.
+    pub(super) fn hosted<R>(&mut self, f: impl FnOnce(&mut crate::run::Runtime) -> R) -> R {
         let host = crate::run::Host {
             parser: (self as *mut Self).cast(),
             lex_on: Self::lex_on,
@@ -1005,8 +1000,19 @@ impl<'a> Parser<'a> {
             construct: Self::construct_host,
             parse_waiting: Self::parse_waiting_host,
         };
+        self.rt.hosting(&self.cx.scopes, self.trie, Some(host), f)
+    }
+
+    /// `node` run on the pass, hosted ([`Parser::hosted`]).
+    ///
+    /// # Safety
+    /// `node` must be a valid dyad this parser built into its store.
+    pub(super) unsafe fn run_on_pass(
+        &mut self,
+        node: DyadPtr,
+    ) -> Result<i64, crate::run::RunError> {
         // SAFETY: `node` is a valid dyad in the store (the caller's contract).
-        self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run(node) })
+        self.hosted(|rt| unsafe { rt.run(node) })
     }
 
     /// [`Parser::run_on_pass`] for a line of a scope: the value it gives the scope, `None`
@@ -1018,15 +1024,8 @@ impl<'a> Parser<'a> {
         &mut self,
         node: DyadPtr,
     ) -> Result<Option<i64>, crate::run::RunError> {
-        let host = crate::run::Host {
-            parser: (self as *mut Self).cast(),
-            lex_on: Self::lex_on,
-            mint: Self::mint_host,
-            construct: Self::construct_host,
-            parse_waiting: Self::parse_waiting_host,
-        };
         // SAFETY: `node` is a valid dyad in the store (the caller's contract).
-        self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run_line(node) })
+        self.hosted(|rt| unsafe { rt.run_line(node) })
     }
 
     /// [`Parser::run_on_pass`] for a call whose record result is copied into `dest`.
@@ -1040,17 +1039,8 @@ impl<'a> Parser<'a> {
         node: DyadPtr,
         dest: *mut u8,
     ) -> Result<i64, crate::run::RunError> {
-        let host = crate::run::Host {
-            parser: (self as *mut Self).cast(),
-            lex_on: Self::lex_on,
-            mint: Self::mint_host,
-            construct: Self::construct_host,
-            parse_waiting: Self::parse_waiting_host,
-        };
         // SAFETY: the caller's contract.
-        self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe {
-            rt.apply_into(f, node, Some(dest))
-        })
+        self.hosted(|rt| unsafe { rt.apply_into(f, node, Some(dest)) })
     }
 
     /// The runtime's way back into the parser running it: build a held `type (…)`.

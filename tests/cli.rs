@@ -540,13 +540,14 @@ fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
 }
 
 /// A postfix operator `name` that mints as `array` does: `get_mint` builds one type per type `t`
-/// of the operand to its left, whose field `a` holds the operand, kept in a memo.
+/// of the operand to its left, whose field `a` holds the operand, kept by `type_mint`.
 fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
     format!(
-        "{name} := type ( static mints := hashmap type -> type, \
-         static get_mint := fn (t := type ?) -> type ( mut mint := type mints[t], \
+        "{name} := type ( \
+         static get_mint := fn (t := type ?) -> type ( \
+         place := type_mint.step(type_mint.step(0, {name}), t), mut mint := type type_mint.kept(place), \
          if mint != ? return mint, mint = type ( pub a := t ?, pub static output_type := {output}, \
-         static run = ( {run} ) ), mints[t] = mint, mint ), \
+         static run = ( {run} ) ), type_mint.keep(place, mint), mint ), \
          static parse_rank = *.parse_rank + 1, static associativity = left, \
          static parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1], \
          tape.is_constructed[0] = true, tape.remove(-1) ) )"
@@ -1313,11 +1314,12 @@ fn a_static_name_in_a_function_is_made_once_at_the_definition() {
 
 /// The power operator, minting through a function of its own by the base's type, on one line
 /// for the REPL.
-const POWER: &str = "^ := type ( static power_mints := hashmap type -> type, \
-    pub static get_mint := fn (l := type ?) -> type ( mut mint := type power_mints[l], if mint != ? return mint, \
+const POWER: &str = "^ := type ( \
+    pub static get_mint := fn (l := type ?) -> type ( place := type_mint.step(type_mint.step(0, ^), l), \
+    mut mint := type type_mint.kept(place), if mint != ? return mint, \
     mint = type ( pub lhs := l ?, pub rhs := i32 ?, static output_type := type l, \
     static run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ) ), \
-    power_mints[l] = mint, mint ), \
+    type_mint.keep(place, mint), mint ), \
     static parse_rank = *.parse_rank + 1, static associativity = right, \
     static parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].lhs = tape[-1], tape[0].rhs = tape[1], \
     tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
@@ -1859,7 +1861,9 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (&b"t := type (parse_rank := 5)\n"[..], "shadowed"),
         (b"g := type (static)\n", "followed by a declaration"),
         (b"f := fn (static a := i32 ?) -> void ( a )\n", "never on a parameter"),
-        (b"static parse_rank = 3\n", "unknown name"),
+        // A slot word is a name of a type body's lines, and `type_mint`'s body stands before
+        // every program.
+        (b"static parse_rank = 3\n", "`parse_rank` is not in scope here"),
         (b"t := type (share y := 3)\n", "unknown name `share`"),
         (b"d := i32 5\nfree = 3\n", "a line of the type body itself"),
         (b"t := type (static parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
@@ -3895,8 +3899,11 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
     assert!(stderr.contains("it holds something else"), "{src}: stderr: {stderr}");
 }
 
+/// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+/// gives it its identity‹ [[R383]]: the body is built at each call, and two builds of the same
+/// contents are one type.
 #[test]
-fn a_type_body_in_a_function_is_built_per_call() {
+fn a_type_body_in_a_function_is_built_per_call_and_minted_by_its_contents() {
     let (echoes, stderr) = repl(
         "mk := fn (t := type ?) -> type ( type ( pub static e := type t ) )\n\
           a := type mk(i32)\nb := type mk(f64)\nc := type mk(i32)\n\
@@ -3909,7 +3916,7 @@ fn a_type_body_in_a_function_is_built_per_call() {
     );
     assert_eq!(
         echoes,
-        ["true", "true", "false", "false", "true", "false", "true", "3.0"],
+        ["true", "true", "false", "true", "true", "false", "true", "3.0"],
         "stderr: {stderr}"
     );
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -12169,4 +12176,340 @@ fn a_tape_line_no_check_narrowed_is_checked_through_a_record_pointer() {
     let (code, _, stderr) = run_line(&src);
     assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
     assert!(stderr.contains("holds no literal or constant of it"), "{src}: stderr: {stderr}");
+}
+
+/// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+/// gives it its identity‹ [[R383]]: `type_mint` stands before every program, one key reaches one
+/// place however often it is walked, and a place keeps the mint it was given.
+#[test]
+fn type_mint_keeps_one_mint_per_key_on_both_tiers() {
+    let walk = |a: &str, b: &str| format!("type_mint.step(type_mint.step(0, {a}), {b})");
+    let mut cases = vec![(
+        format!(
+            "a := {}, b := {}, c := {}, d := type_mint.step(0, i32), print «{{a == b}} {{a == c}} {{a == d}}»",
+            walk("i32", "i64"),
+            walk("i32", "i64"),
+            walk("i64", "i32")
+        ),
+        "true false false\n",
+    )];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!(
+                "f := fn (t := type ?) -> bool ( p := {}, before := type type_mint.kept(p), \
+                 type_mint.keep(p, f64), after := type type_mint.kept({}), \
+                 before == ? and after == f64 ), {compile}f(i32)",
+                walk("bool", "t"),
+                walk("bool", "t")
+            ),
+            "true\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
+/// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+/// gives it its identity‹ [[R383]]: a type no name holds is its mint, found again by its fields'
+/// names, gates, types and defaults in order, by what its `static` members hold, and by its rank.
+#[test]
+fn a_type_no_name_holds_is_minted_by_its_contents_on_both_tiers() {
+    let two = |a: &str, b: &str| {
+        format!("a := fn () -> type ( type ( {a} ) ), b := fn () -> type ( type ( {b} ) )")
+    };
+    let mk = |body: &str| format!("mk := fn (t := type ?) -> type ( type ( {body} ) )");
+    let apart = "mk(i32) == mk(i32) and mk(i32) != mk(f64)";
+    let mut cases = Vec::new();
+    for (defs, body, want) in [
+        (two("v := f64 ?", "v := f64 ?"), "a() == b()", "true\n"),
+        (two("v := f64 ?", "w := f64 ?"), "a() == b()", "false\n"),
+        (two("v := f64 ?", "v := f32 ?"), "a() == b()", "false\n"),
+        (two("v := f64 ?", "pub v := f64 ?"), "a() == b()", "false\n"),
+        (two("v := f64 ?", "mut v := f64 ?"), "a() == b()", "false\n"),
+        (two("x := i32 ?, y := f64 ?", "y := f64 ?, x := i32 ?"), "a() == b()", "false\n"),
+        (two("n := u64 0", "n := u64 0"), "a() == b()", "true\n"),
+        (two("n := u64 0", "n := u64 1"), "a() == b()", "false\n"),
+        (two("static n := i32 3", "static n := i32 3"), "a() == b()", "true\n"),
+        (two("static n := i32 3", "static n := i32 4"), "a() == b()", "false\n"),
+        (
+            "mk := fn (n := i32 ?) -> type ( type ( static parse_rank = n ) )".to_string(),
+            "mk(3) == mk(3) and mk(3) != mk(4)",
+            "true\n",
+        ),
+        (mk("static e := type t"), apart, "true\n"),
+        (mk("a := t ?"), apart, "true\n"),
+        // A function's own types are read at the build, so they are contents too.
+        (mk("pub static get := fn (v := t ?) -> t ( v )"), apart, "true\n"),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            cases.push((format!("{defs}, g := fn () -> bool ( {body} ), {compile}g()"), want));
+        }
+    }
+    // A value of the type is made and read through any build of it.
+    cases.push((
+        "mk := fn () -> type ( type ( pub v := f64 ? ) ), k := fn (t := type ?) -> type ( t ), \
+         p := type k(mk()), q := type k(mk()), a := p(1.5), mut b := q(2.5), b = a, \
+         print «{a.type == b.type} {b.v}»"
+            .into(),
+        "true 1.5\n",
+    ));
+    assert_runs(&cases);
+}
+
+/// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+/// gives it its identity‹ [[R383]]: two names of one mint are two dyads that read the same, so
+/// `==` is true of them and of the types of their values, on both tiers, and their addresses
+/// tell them apart.
+#[test]
+fn two_names_of_one_mint_read_the_same_and_differ_by_address() {
+    let defs = "meters := type ( pub v := f64 ? ), seconds := type ( pub v := f64 ? ), \
+                feet := type ( pub w := f64 ? ), mk := fn () -> type ( type ( pub v := f64 ? ) )";
+    let mut cases = Vec::new();
+    for (body, want) in [
+        ("meters == seconds", "true\n"),
+        ("meters != seconds", "false\n"),
+        ("meters == feet", "false\n"),
+        ("meters(1.0).type == seconds(2.0).type", "true\n"),
+        ("mk() == meters and meters == mk()", "true\n"),
+        ("&meters == &seconds", "false\n"),
+        ("&meters == &meters and &i32 == &i32", "true\n"),
+        ("&meters != &seconds and &i32 != &i64", "true\n"),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            cases.push((format!("{defs}, g := fn () -> bool ( {body} ), {compile}g()"), want));
+        }
+    }
+    // A type handed over as a value compares by reading when the code runs.
+    for compile in ["", "g.compile(), "] {
+        cases.push((
+            format!(
+                "{defs}, g := fn (t := type ?, u := type ?) -> bool ( t == u ), \
+                 {compile}print «{{g(meters, seconds)}} {{g(meters, feet)}} {{g(i32, i32)}}»"
+            ),
+            "true false true\n",
+        ));
+    }
+    cases.extend([
+        // A value's type is its name's own dyad: a map keys the two names apart.
+        (
+            format!(
+                "{defs}, a := meters(1.0), b := seconds(2.0), mut m := hashmap type -> i32, \
+                 m[meters] = 1, m[seconds] = 2, print «{{m[a.type]}} {{m[b.type]}} {{a.v}} {{b.v}}»"
+            ),
+            "1 2 1.0 2.0\n",
+        ),
+        // An alias passes the identity through.
+        (
+            format!(
+                "{defs}, t := type meters, u := type i32, \
+                 print «{{t == meters}} {{u == i32}} {{&t == &meters}} {{&t == &seconds}}»"
+            ),
+            "true true true false\n",
+        ),
+        // A pointer type is minted by its pointee's own dyad.
+        (
+            format!(
+                "{defs}, k := fn (t := type ?) -> type ( t ), \
+                 g := fn () -> bool ( k(@meters) == k(@seconds) ), g()"
+            ),
+            "false\n",
+        ),
+        (
+            "f := fn (y := i32 ?) -> i32 ( y ), g := fn (y := i32 ?) -> i32 ( y ), \
+             print «{&f == &g} {&f == &f}»"
+                .to_string(),
+            "false true\n",
+        ),
+    ]);
+    assert_runs(&cases);
+}
+
+/// A place of one name's type takes no value of another name of the same mint, written as a
+/// conversion or not, until its type's `parse` says so ([[R383]], [[R155]]); a writable `static`
+/// keeps two types two.
+#[test]
+fn two_names_of_one_mint_do_not_convert_into_each_other() {
+    let defs = "meters := type ( pub v := f64 ? ), seconds := type ( pub v := f64 ? )";
+    for (rest, at) in [
+        ("mut a := meters(1.0), b := seconds(2.0), a = b, a.v", "1:118"),
+        ("b := seconds(2.0), a := meters (b), a.v", "1:106"),
+        ("f := fn (m := meters ?) -> f64 ( m.v ), f(seconds(2.0))", "1:127"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{defs}, {rest}"));
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{rest}: {stderr}");
+        assert!(stderr.contains(&format!("{at}: error: these types do not match")), "{stderr}");
+    }
+    assert_runs(&[(
+        "c1 := type ( pub static mut n := i32 0 ), c2 := type ( pub static mut n := i32 0 ), \
+         c1.n = 1, print «{c1 == c2} {c1.n} {c2.n}»"
+            .to_string(),
+        "false 1 0\n",
+    )]);
+}
+
+/// `@T` is minted through `type_mint` by its pointee, so every spelling of one pointer type is one
+/// type ([[R383]]).
+#[test]
+fn a_pointer_type_is_one_mint_per_pointee_on_both_tiers() {
+    let defs = "w := type ( v := i32 ? ), k := fn (t := type ?) -> type ( t )";
+    let mut cases = Vec::new();
+    for body in [
+        "k(@i32) == k(@i32) and k(@i32) != k(@f64)",
+        "k(@@i32) == k(@@i32) and k(@@i32) != k(@i32)",
+        "k(@w) == k(@w) and k(@w) != k(@i32)",
+    ] {
+        for compile in ["", "g.compile(), "] {
+            cases.push((format!("{defs}, g := fn () -> bool ( {body} ), {compile}g()"), "true\n"));
+        }
+    }
+    cases
+        .push(("x := i32 5, p := &x, q := &x, print «{p.type == q.type} {p@}»".into(), "true 5\n"));
+    assert_runs(&cases);
+}
+
+/// A built-in operation's mint for a set of field types and a map's type for a key and a value
+/// type are each one type, which `type_mint` keeps ([[R383]]).
+#[test]
+fn an_operation_s_mint_and_a_map_s_type_are_one_per_key_on_both_tiers() {
+    let defs = "x := i32 1, y := i32 2, z := f64 1.0, mut m := hashmap u64 -> i32, \
+                mut n := hashmap u64 -> i32, mut o := hashmap u64 -> i64";
+    let mut cases = Vec::new();
+    for body in [
+        "(x + x).type == (y + y).type and (x + x).type != (z + z).type",
+        "(x + x).type != (x - x).type and (x < y).type == (y < x).type",
+        "+.mint(i32, i32) == +.mint(i32, i32) and +.mint(i32, i32) != +.mint(f64, f64)",
+        "m.type == n.type and m.type != o.type",
+    ] {
+        for compile in ["", "g.compile(), "] {
+            cases.push((format!("{defs}, g := fn () -> bool ( {body} ), {compile}g()"), "true\n"));
+        }
+    }
+    // A map of maps is read back whole through its one type.
+    cases.push((
+        "mut outer := hashmap string -> hashmap u64 -> i32, mut inner := hashmap u64 -> i32, \
+         inner[1] = 7, outer[«a»] = inner, back := outer[«a»], print «{back[1]}»"
+            .into(),
+        "7\n",
+    ));
+    assert_runs(&cases);
+}
+
+/// A key's mint is made once: `type_mint` refuses a second `keep` at a place, a key of the seed's
+/// own among them, so no type already handed out is replaced ([[R383]]). A place nothing is kept
+/// at yet takes a `keep` from any program.
+#[test]
+fn a_place_keeps_one_mint_on_both_tiers() {
+    let refused = "error.already_kept: a key's mint is made once";
+    let place = "p := type_mint.step(type_mint.step(0, i32), i64)";
+    let (code, stdout, stderr) = run_line(&format!(
+        "{place}, type_mint.keep(p, i32), print «{{type_mint.kept(p) == i32}}», \
+         type_mint.keep(p, i64)"
+    ));
+    assert_eq!((code, stdout.as_str()), (Some(1), "true\n"), "stderr: {stderr}");
+    assert!(stderr.contains(refused), "stderr: {stderr}");
+    for src in [
+        format!(
+            "g := fn () -> bool ( {place}, type_mint.keep(p, i32), type_mint.keep(p, i64), true ), \
+             g.compile(), g()"
+        ),
+        "x := i32 1, y := x + x, \
+         p := type_mint.step(type_mint.step(type_mint.step(0, +), i32), i32), \
+         type_mint.keep(p, f64)"
+            .to_string(),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "src: {src}, stderr: {stderr}");
+        assert!(stderr.contains(refused), "src: {src}, stderr: {stderr}");
+    }
+    // The category is the keeper's file's own: a program declares the name for itself.
+    let (code, stdout, stderr) = run_line("error.already_kept := «mine», 0");
+    assert_eq!((code, stdout.as_str()), (Some(0), "0\n"), "stderr: {stderr}");
+}
+
+/// R383's rules (2) and (3): a writable `static` is never shared, so a type that holds one is
+/// found by no other build, and a body is the same only where it is written, so one `type ( … )`
+/// built again is one type and the same text written twice is two. A `static` that holds a float
+/// keeps its type apart until a rule says how a float is minted.
+#[test]
+fn a_writable_static_and_a_body_keep_types_apart() {
+    let k = "k := fn (t := type ?) -> type ( t )";
+    let body = "pub x := i32 ?, pub static twice := fn () -> i32 ( x * 2 )";
+    let run = "pub x := i32 ?, static run = ( x + 1 )";
+    let mut cases = vec![(
+        format!(
+            "a := fn () -> type ( type ( pub static mut n := i32 0 ) ), {k}, c1 := type k(a()), \
+             c2 := type k(a()), c1.n = 1, print «{{c1 == c2}} {{c1.n}} {{c2.n}}»"
+        ),
+        "false 1 0\n",
+    )];
+    for compile in ["", "g.compile(), "] {
+        for inside in [body, run] {
+            cases.push((
+                format!(
+                    "a := fn () -> type ( type ( {inside} ) ), b := fn () -> type ( type ( {inside} ) ), \
+                     g := fn () -> bool ( a() == a() and a() != b() ), {compile}g()"
+                ),
+                "true\n",
+            ));
+        }
+        cases.push((
+            format!(
+                "a := fn () -> type ( type ( static x := f64 0.0 ) ), \
+                 g := fn () -> bool ( a() == a() ), {compile}g()"
+            ),
+            "false\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
+/// A `static` line runs at each build, before the type is looked up, so a second build of one
+/// type runs it again; whether it should is open at [[R383]], and [[R297]] has the lines made at
+/// each build.
+#[test]
+fn a_static_line_runs_at_each_build_of_one_type() {
+    let src = |compile: &str| {
+        format!(
+            "bump := fn () -> i32 ( print «bump», 1 ), mk3 := fn (t := type ?) -> type ( \
+             type ( static e := type t, static g := bump() ) ), print «defined», \
+             same := fn () -> bool ( mk3(i32) == mk3(i32) ), {compile}print «{{same()}}»"
+        )
+    };
+    assert_runs(&[
+        (src(""), "defined\nbump\nbump\ntrue\n"),
+        (src("same.compile(), "), "defined\nbump\nbump\ntrue\n"),
+    ]);
+}
+
+/// ›`array` is a chooser‹ [[R223]]: `array` and `^` keep no memo of their own, and each still has
+/// one mint per key, kept by `type_mint`.
+#[test]
+fn array_and_power_keep_their_mints_in_type_mint() {
+    let array = "import file «./identities/array.logos»";
+    let mut cases = vec![
+        (format!("{array}, a := array i32 [1, 2], b := array i32 [3], a.type == b.type"), "true\n"),
+        (format!("{array}, (array i32) == (array i64)"), "false\n"),
+        (format!("{array}, array.get_mint(i32) == array.get_mint(i32)"), "true\n"),
+        (format!("{array}, k := type array array i32, k == array array i32"), "true\n"),
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!(
+                "{array}, f := fn () -> bool ( a := array i32 [1], b := array i32 [2, 3], \
+                 a.type == b.type ), {compile}f()"
+            ),
+            "true\n",
+        ));
+        cases.push((
+            format!(
+                "{POWER}, f := fn (x := i32 ?, w := i64 ?) -> bool ( \
+                 (x ^ 2).type == (x ^ 3).type and (x ^ 2).type != (w ^ 2).type ), {compile}f(3, 4)"
+            ),
+            "true\n",
+        ));
+    }
+    assert_runs(&cases);
+    for file in ["identities/array.logos", "identities/power.logos", "tests/fixtures/caret.logos"] {
+        let text = std::fs::read_to_string(file).expect(file);
+        assert!(!text.contains("hashmap"), "{file} keeps a memo of its own");
+    }
 }

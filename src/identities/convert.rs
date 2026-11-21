@@ -44,7 +44,7 @@ pub(crate) unsafe fn build_convert(
 }
 
 /// What `convert`'s mint over the field types `key`, the source and the target, gives back, the
-/// target, and runs.
+/// target, and runs; stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store.

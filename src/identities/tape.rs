@@ -101,7 +101,7 @@ pub(super) fn register(
 ) -> TapeIds {
     let scope = super::scope::mint(cx.store, scope_ty, std::ptr::null_mut());
     // SAFETY: `void_ty` is the type node `Core::build` minted.
-    let at_void = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, void_ty) };
+    let at_void = unsafe { super::pointer::early_pointer_type(cx.store, cx.type_, void_ty) };
     let cells = super::hole::build(cx.store, cx.unknown, at_void, std::ptr::null_mut());
     let binding = cx.declare_in(scope, "cells", cells);
     let fields = super::array::build(cx.store, array_ty, &[cells]);

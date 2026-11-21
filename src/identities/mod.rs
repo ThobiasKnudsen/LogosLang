@@ -80,6 +80,7 @@ pub(crate) mod string;
 mod subset;
 pub mod tape;
 pub mod this;
+pub(crate) mod type_mint;
 #[path = "type.rs"]
 mod type_mod;
 pub(crate) mod waiting;
@@ -183,6 +184,7 @@ pub struct Core {
     pub unknown_name: DyadPtr,
     pub tape: tape::TapeIds,
     pub hashmap: hashmap::HashmapIds,
+    pub type_mint: type_mint::Members,
     pub held_type: held_type::HeldTypeIds,
     pub this: this::ThisIds,
     pub place: place::PlaceIds,
@@ -404,7 +406,7 @@ impl Core {
             dm.of_,
         );
         let tape = tape::register(&mut cx, &callables, scope_, array_, void, pub_);
-        let hashmap = hashmap::register(&mut cx, &callables, array_);
+        let hashmap = hashmap::register(&mut cx, &callables);
         let held_type = held_type::register(&mut cx, &callables);
         let this = this::register(&mut cx, &callables);
         let place = place::register(&mut cx, &callables);
@@ -435,7 +437,7 @@ impl Core {
 
         // Every constructor, extent reader and chooser moves onto a callable leaf in its record;
         // the tables drop before any parsing runs.
-        let Cx { store, metas, extents, choosers, lower, .. } = cx;
+        let Cx { store, trie, metas, extents, choosers, lower, .. } = cx;
         // SAFETY: every key in `metas`, `extents` and `choosers` has its record built, and each
         // entry is a `ConstructFn`, an `ExtentFn` or a `ChooseFn`.
         unsafe {
@@ -470,7 +472,7 @@ impl Core {
         drop(metas);
         drop(extents);
         drop(choosers);
-        Core {
+        let mut core = Core {
             type_,
             logos,
             scope: scope_,
@@ -539,6 +541,7 @@ impl Core {
             unknown_name,
             tape,
             hashmap,
+            type_mint: type_mint::Members::unread(),
             held_type,
             this,
             place,
@@ -577,7 +580,10 @@ impl Core {
             declare_tok,
             ops: op_leaves,
             lower,
-        }
+        };
+        core.type_mint = type_mint::load(store, trie, &core);
+        type_mint::keep_early(store, &core);
+        core
     }
 
     /// Each opener with the closer that ends its bracket: `( )`, `[ ]` and `{ }`, one mechanism
@@ -1197,10 +1203,7 @@ pub(crate) unsafe fn copy_place(
     let t = read::output_type(types, value);
     let width = read::carry_of(types, t)?.width();
     if numtype::is_pointer_type(t) {
-        return Some((
-            pointer::make_pointer_type(store, types.type_, numtype::pointee_of(t)),
-            width,
-        ));
+        return Some((pointer::make_pointer_type(store, types, numtype::pointee_of(t)), width));
     }
     Some((t, width))
 }

@@ -2602,7 +2602,6 @@ fn address_of_what_has_no_address_is_refused() {
         "( x := 5, &x )",
         "( x := 1 + 2, &(x) )",
         "( &(i32 ?) )",
-        "( &i32 )",
         "( x := i32 3, &x:name )",
         "( m := hashmap i32 -> i32 ?, m[1] = 2, &(m[1]) )",
     ] {
@@ -2831,12 +2830,12 @@ fn compile_member_before_and_after_agree() {
 /// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol,
 /// minting through a function of its own by the base's type.
 const POW_TYPE: &str = "pw := type (\n\
-     static pw_mints := hashmap type -> type,\n\
      static get_mint := fn (l := type ?) -> type (\n\
-         mut mint := type pw_mints[l],\n\
+         place := type_mint.step(type_mint.step(0, pw), l),\n\
+         mut mint := type type_mint.kept(place),\n\
          if mint != ? return mint,\n\
          mint = type ( pub a := l ?, pub b := i32 ?, static output_type := type l, static run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ) ),\n\
-         pw_mints[l] = mint,\n\
+         type_mint.keep(place, mint),\n\
          mint\n\
      ),\n\
      static parse_rank = *.parse_rank + 1,\n\
@@ -4763,9 +4762,9 @@ fn a_static_member_is_read_through_its_type_or_a_value_only_when_it_is_pub() {
     // A function called through the type, a chooser as any other.
     let chooser = |gate: &str, call: &str| {
         format!(
-            "p := type ( static ms := hashmap type -> type, {gate}static get_mint := fn (l := type ?) \
-             -> type ( mut m := type ms[l], if m != ? return m, m = type ( pub v := l ? ), ms[l] = m, m ) ), \
-             {call}"
+            "p := type ( {gate}static get_mint := fn (l := type ?) -> type ( \
+             place := type_mint.step(type_mint.step(0, p), l), mut m := type type_mint.kept(place), \
+             if m != ? return m, m = type ( pub v := l ? ), type_mint.keep(place, m), m ) ), {call}"
         )
     };
     let twice = "p.get_mint(i32) == p.get_mint(i32)";

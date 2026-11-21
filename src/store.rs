@@ -76,6 +76,11 @@ pub struct Store {
     retired: Vec<Artifact>,
     /// Jumps into machine code in flight: a compiled frame is live only under one.
     live_jumps: u32,
+    /// The mints made before `type_mint` stands to keep them, each after its former and its
+    /// key: stand-in for #466.
+    early_mints: Vec<(DyadPtr, Box<[DyadPtr]>, DyadPtr)>,
+    /// The frame chunk a runtime made for one call into Logos left for the next such runtime.
+    frame_chunk: Option<Box<[u8]>>,
 }
 
 /// The store's size, counted by hand: malloc's own per-block overhead is left out.
@@ -140,7 +145,31 @@ impl Store {
             artifacts: HashMap::new(),
             retired: Vec::new(),
             live_jumps: 0,
+            early_mints: Vec::new(),
+            frame_chunk: None,
         }
+    }
+
+    pub(crate) fn take_frame_chunk(&mut self) -> Option<Box<[u8]>> {
+        self.frame_chunk.take()
+    }
+
+    pub(crate) fn keep_frame_chunk(&mut self, chunk: Box<[u8]>) {
+        self.frame_chunk = Some(chunk);
+    }
+
+    /// The mint made under `former` and `key` before `type_mint` stood.
+    pub(crate) fn early_mint(&self, former: DyadPtr, key: &[DyadPtr]) -> Option<DyadPtr> {
+        self.early_mints.iter().find(|(f, k, _)| *f == former && **k == *key).map(|&(_, _, m)| m)
+    }
+
+    pub(crate) fn note_early_mint(&mut self, former: DyadPtr, key: &[DyadPtr], mint: DyadPtr) {
+        self.early_mints.push((former, key.into(), mint));
+    }
+
+    /// Every early mint with its former and key, for `type_mint` to keep from here on.
+    pub(crate) fn take_early_mints(&mut self) -> Vec<(DyadPtr, Box<[DyadPtr]>, DyadPtr)> {
+        std::mem::take(&mut self.early_mints)
     }
 
     /// `fn_node` now owns `artifact`; the one it owned before is retired.

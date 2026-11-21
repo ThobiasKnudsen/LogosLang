@@ -392,7 +392,8 @@ pub(super) fn build_alloc(
 }
 
 /// What `alloc`'s mint over the field types `key`, the count's and the pointee, gives back and
-/// runs: the owning `@pointee`, made with the mint, so its nodes give one type.
+/// runs: the owning `@pointee`, made with the mint, so its nodes give one type;
+/// stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store.
@@ -410,7 +411,8 @@ unsafe fn choose_alloc(
     Some(super::mint::Made { output_type, op: types.ops.alloc_ })
 }
 
-/// What `move`'s mint over the field type `key` gives back, that type, and runs.
+/// What `move`'s mint over the field type `key` gives back, that type, and runs;
+/// stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold a type node from the store.

@@ -23,8 +23,6 @@ type Table = std::collections::HashMap<i64, i64>;
 #[derive(Debug, Clone, Copy)]
 pub struct HashmapIds {
     pub hashmap: DyadPtr,
-    /// The memo of mintings, an array of `K, V, mint` triples.
-    pub mints: DyadPtr,
     /// `m[k]`: `[map address, key, op]`.
     pub get: DyadPtr,
     pub get_leaf: DyadPtr,
@@ -45,12 +43,11 @@ pub struct HashmapIds {
     unknown_bytes: *mut u8,
 }
 
-pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> HashmapIds {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> HashmapIds {
     let record = meta::token_record(cx, meta::prec::TIGHT, crate::parse::Assoc::Left, &[]);
     let hashmap = cx.store.alloc_head(cx.type_, record);
     cx.declare("hashmap", hashmap);
     cx.metas.insert(hashmap, |p, _id, tape| construct(p, tape));
-    let mints = array::build(cx.store, array_ty, &[]);
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
         let record = meta::operand_record(
             cx,
@@ -83,7 +80,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
     let unknown_bytes = cx.store.alloc_bytes(&(cx.unknown as usize).to_ne_bytes());
     HashmapIds {
         hashmap,
-        mints,
         get,
         get_leaf,
         put,
@@ -223,34 +219,25 @@ fn param(p: &mut Parser, tape: &mut ParsingTape, offset: isize) -> Result<DyadPt
     }
 }
 
+/// `hashmap key -> value`, the one mint `type_mint` keeps under `hashmap` and the two types
+/// (›Every type is minted by its contents through `type_mint`; the name that holds a
+/// `type ( … )` gives it its identity‹ [[R383]]). `type_mint` is built from maps itself, so the
+/// map types its own file writes are made before it stands and handed to it.
+///
 /// # Safety
 /// `key` and `value` must be type identities from the store.
 unsafe fn mint(store: &mut Store, types: &Core, key: DyadPtr, value: DyadPtr) -> DyadPtr {
-    let memo = types.hashmap.mints;
-    if let Some([_, _, t]) =
-        array::items(memo).as_chunks::<3>().0.iter().find(|[k, v, _]| *k == key && *v == value)
-    {
-        return *t;
-    }
-    let scope = super::scope::mint(store, types.scope, std::ptr::null_mut());
-    let none = array::build(store, types.array_, &[]);
-    // The scope is its body too, so a map moves whole by its eight bytes, as a value of a
-    // type with a body does: into a name, and into another map.
-    let layout = meta::record_layout(
-        store,
-        scope,
-        none,
-        none,
-        8,
-        scope,
-        meta::prec::APPLY,
-        crate::parse::Assoc::Left,
-    );
-    let node = store.alloc_head(types.type_, layout);
-    for item in [key, value, node] {
-        array::push(store, memo, item);
-    }
-    node
+    let former = types.hashmap.hashmap;
+    let made = |store: &mut Store| {
+        let scope = super::scope::mint(store, types.scope, std::ptr::null_mut());
+        let none = array::build(store, types.array_, &[]);
+        // The scope is its body too, so a map moves whole by its eight bytes, as a value of a
+        // type with a body does: into a name, and into another map.
+        let record = meta::minted_record(store, former, &[key, value], scope, none, 8);
+        Some(store.alloc_head(types.type_, record))
+    };
+    super::type_mint::mint_of(store, types, former, &[key, value], made)
+        .expect("a map type is made")
 }
 
 /// The `(K, V)` a mint was built for, or `None` when `t` is no `hashmap` type.
@@ -258,12 +245,8 @@ unsafe fn mint(store: &mut Store, types: &Core, key: DyadPtr, value: DyadPtr) ->
 /// # Safety
 /// `t` must be null or a dyad from the store.
 unsafe fn params_of(types: &Core, t: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
-    array::items(types.hashmap.mints)
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .find(|[_, _, m]| *m == t)
-        .map(|&[k, v, _]| (k, v))
+    (meta::is_record_type(t) && meta::mint_of(t) == types.hashmap.hashmap)
+        .then(|| (meta::minted_argument_of(t, 0), meta::minted_argument_of(t, 1)))
 }
 
 /// # Safety

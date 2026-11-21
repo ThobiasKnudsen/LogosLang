@@ -217,6 +217,8 @@ unsafe fn node(
     mint::node(store, types, op, &key, &[lhs, rhs])
 }
 
+/// stand-in for #462
+///
 /// # Safety
 /// `key` must hold type nodes from the store, or null.
 unsafe fn choose<const FAMILY: u8, const OP: u8>(
@@ -233,7 +235,7 @@ unsafe fn choose<const FAMILY: u8, const OP: u8>(
 /// What `a`'s mint over the field types `key` gives back and runs: a number type over two of it,
 /// with no float remainder, since no machine one exists; a run-time rational over two; a pointer
 /// stepped by an `i64` count of bytes, giving the plain pointer to the same type (›A pointer
-/// steps by whole cells‹).
+/// steps by whole cells‹); stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store, or null.
@@ -251,7 +253,7 @@ unsafe fn choose_arith(
         if !matches!(a, ArithOp::Add | ArithOp::Sub) || r != i64_ {
             return None;
         }
-        let output = super::pointer::make_pointer_type(store, types.type_, numtype::pointee_of(l));
+        let output = super::pointer::make_pointer_type(store, types, numtype::pointee_of(l));
         (output, types.ops.arith_leaf(a, NumType::I64))
     } else if l == types.rational && r == types.rational {
         (types.rational, types.ops.rational_arith_leaf(a))
@@ -267,8 +269,8 @@ unsafe fn choose_arith(
 
 /// What `c`'s mint over the field types `key` runs, giving a `bool`: a comparison of two values
 /// of one number type or of two run-time rationals; and for `==` and `!=`, of a map and `?`, of
-/// two values of one other machine type (a `bool`), of two values read as the address of a node
-/// (a type, a dyad, text) and of two pointers.
+/// two types by reading, of two values of one other machine type (a `bool`), of two values read
+/// as the address of a node (a dyad, text) and of two pointers; stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store, or null.
@@ -291,6 +293,8 @@ unsafe fn choose_compare(types: &Core, c: CmpOp, key: &[DyadPtr]) -> Option<mint
         types.ops.cmp_leaf(c, nt)
     } else if !equality {
         return None;
+    } else if l == types.type_ && r == types.type_ {
+        types.ops.type_cmp_leaf(matches!(c, CmpOp::Eq))
     } else if let (true, Some((Read::Scalar(nt), _))) =
         (l == r, super::read::place_layout(types, l))
     {
@@ -400,9 +404,9 @@ unsafe fn rational_operands(types: &Core, lhs: DyadPtr, rhs: DyadPtr) -> Result<
     Ok(true)
 }
 
-/// Two identities compare by identity at parse (types are interned); two values that
-/// read as node addresses, or two pointers, compare those addresses at run. `None`
-/// hands the numeric rule the rest.
+/// Two identities compare by reading at parse, as two types do at run; two values that read as
+/// node addresses, or two pointers, compare those addresses at run. `None` hands the numeric
+/// rule the rest.
 fn build_identity_compare(
     store: &mut Store,
     types: &Core,
@@ -416,7 +420,10 @@ fn build_identity_compare(
         unsafe { (super::read::read_kind(types, lhs), super::read::read_kind(types, rhs)) };
     if l == Read::Identity && r == Read::Identity {
         // SAFETY: as above.
-        let same = unsafe { types.through(lhs) == types.through(rhs) };
+        let same = unsafe {
+            let (l, r) = (types.through(lhs), types.through(rhs));
+            l == r || (dyad::ty(l) == types.type_ && dyad::types_read_the_same(l, r))
+        };
         let truth = if matches!(c, CmpOp::Eq) { same } else { !same };
         return Ok(Some(bool_mod::literal_node(store, types.bool_, truth)));
     }
@@ -496,7 +503,7 @@ unsafe fn build_negate(
 }
 
 /// What negation's mint over the field type `key` gives back, that type, and runs: the negation
-/// of a number type or of a run-time rational.
+/// of a number type or of a run-time rational; stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store, or null.

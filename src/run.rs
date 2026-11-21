@@ -521,6 +521,21 @@ impl<'a> Runtime<'a> {
         }
     }
 
+    /// A runtime for one call into Logos, as the seed makes many of: its frames start in the
+    /// chunk the store keeps between them, which [`Runtime::leave_stack`] gives back.
+    pub(crate) fn for_a_call(types: &'a crate::Core, store: &'a mut crate::store::Store) -> Self {
+        let mut rt = Self::new(types, store);
+        rt.stack.chunks.extend(rt.store.take_frame_chunk());
+        rt
+    }
+
+    /// Leaves this runtime's first frame chunk with the store; no frame may be in flight.
+    pub(crate) fn leave_stack(&mut self) {
+        if let Some(chunk) = self.stack.chunks.drain(..).next() {
+            self.store.keep_frame_chunk(chunk);
+        }
+    }
+
     /// The lines of `bracket` are refused as a scope's unless a reader takes them as data
     /// before the line holding it ends (›A scope's value is what it evaluates to, and `return`
     /// is an optional early exit from the enclosing function‹ [[R207]]).

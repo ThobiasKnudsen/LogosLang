@@ -12,6 +12,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::numtype::NumType;
 use super::read::carry_of;
+use super::type_mint;
 use super::{assign, meta, mint, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -120,7 +121,8 @@ pub(crate) unsafe fn build_address(
     mint::node_of_any(store, types, ty, &[pointee], &[place, held])
 }
 
-/// What an address mint over the field type `key`, the pointee, gives back, `@pointee`, and runs.
+/// What an address mint over the field type `key`, the pointee, gives back, `@pointee`, and runs;
+/// stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold a type node from the store.
@@ -128,7 +130,7 @@ unsafe fn choose_address(store: &mut Store, types: &Core, key: &[DyadPtr]) -> Op
     let &[pointee] = key else {
         return None;
     };
-    let output_type = make_pointer_type(store, types.type_, pointee);
+    let output_type = make_pointer_type(store, types, pointee);
     Some(mint::Made { output_type, op: types.ops.addr_ })
 }
 
@@ -185,40 +187,58 @@ pub(crate) fn address_value(
     addr: DyadPtr,
 ) -> DyadPtr {
     // SAFETY: `pointee` is the type node the address was taken of.
-    let ty = unsafe { make_pointer_type(store, types.type_, pointee) };
+    let ty = unsafe { make_pointer_type(store, types, pointee) };
     store.alloc_blob(ty, &(addr as usize as u64).to_ne_bytes())
 }
 
-/// One node per pointee: the first mint is written into the pointee's record and every
-/// later `@pointee` reads it back, so two spellings of `@i32` are one type. A pointee
-/// carrying no record gets a fresh node; an owning pointer type is never interned.
+/// One node per pointee: `type_mint` keeps the mint under `@` and the pointee, so two spellings
+/// of `@i32` are one type (›Every type is minted by its contents through `type_mint`; the name
+/// that holds a `type ( … )` gives it its identity‹ [[R383]]). A pointee carrying no record gets
+/// a fresh node; an owning pointer type is never interned.
 ///
 /// # Safety
 /// `pointee` must be a type node from the store.
+///
+/// # Panics
+/// Where `type_mint`'s own functions fail: a defect of the seed.
 pub(crate) unsafe fn make_pointer_type(
+    store: &mut Store,
+    types: &Core,
+    pointee: DyadPtr,
+) -> DyadPtr {
+    let type_ = types.type_;
+    if super::meta::kind_of(pointee).is_none() {
+        return new_pointer_type(store, type_, pointee);
+    }
+    let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee));
+    type_mint::mint_of(store, types, types.at_, &[pointee], made).expect("a pointer type is made")
+}
+
+unsafe fn new_pointer_type(store: &mut Store, type_: DyadPtr, pointee: DyadPtr) -> DyadPtr {
+    let value = super::meta::pointer_record(store, pointee);
+    store.alloc_head(type_, value)
+}
+
+/// `@pointee` while the seed registers its identities, before `@` itself is one.
+///
+/// # Safety
+/// `pointee` must be a type node from the store.
+pub(super) unsafe fn early_pointer_type(
     store: &mut Store,
     type_: DyadPtr,
     pointee: DyadPtr,
 ) -> DyadPtr {
-    let interned = super::meta::kind_of(pointee).is_some();
-    if interned {
-        let known = super::meta::pointer_type_of(pointee);
-        if !known.is_null() {
-            return known;
-        }
+    if super::meta::kind_of(pointee).is_none() {
+        return new_pointer_type(store, type_, pointee);
     }
-    let value = super::meta::pointer_record(store, pointee);
-    let node = store.alloc_head(type_, value);
-    if interned {
-        super::meta::install_pointer_type(pointee, node);
-    }
-    node
+    let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee));
+    type_mint::early(store, std::ptr::null_mut(), &[pointee], made).expect("a pointer type is made")
 }
 
 /// `@dyad`, what a read of a cell, a line, a field, a name or a scope gives back.
 pub(crate) fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
     // SAFETY: `dyad_` is a type node `Core::build` minted.
-    unsafe { make_pointer_type(store, types.type_, types.dyad_) }
+    unsafe { make_pointer_type(store, types, types.dyad_) }
 }
 
 /// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,

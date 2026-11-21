@@ -57,6 +57,22 @@ pub unsafe fn set_ty(p: DyadPtr, t: DyadPtr) {
     (*p).ty = t;
 }
 
+/// Whether two types read the same, which is what `==` of two types asks: one dyad, or two
+/// dyads whose type word and value are the same, as two names of one mint are (›Every type is
+/// minted by its contents through `type_mint`; the name that holds a `type ( … )` gives it its
+/// identity‹ [[R383]]). A dyad that holds no value yet equals only itself.
+///
+/// # Safety
+/// `l` and `r` must each be null or a type node from the store.
+pub unsafe fn types_read_the_same(l: DyadPtr, r: DyadPtr) -> bool {
+    l == r
+        || (!l.is_null()
+            && !r.is_null()
+            && ty(l) == ty(r)
+            && !head(l).is_null()
+            && head(l) == head(r))
+}
+
 /// At application rank, so `dyad (…)` reads the bracket to its right and `dyad` alone is the type.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::DYAD_TAG, meta::prec::APPLY);
