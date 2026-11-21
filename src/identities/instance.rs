@@ -148,48 +148,6 @@ pub(crate) fn entry_gates(types: &Core) -> [DyadPtr; 3] {
     [types.mut_, types.immut_, types.pub_]
 }
 
-/// The record a `{ … }` whose names, each holding bytes, are `names` is a value of, once a
-/// `{ … }` of the same names, in the same order, of the same types and with the same gates was
-/// read: `{` keeps each such record it made, as `array` keeps its mints (›`array` is a chooser‹
-/// [[R223]]), so a shape is one type wherever it is written (›`{ … }` outside text is a scope kept
-/// as a value, read with `.`‹ [[R374]]).
-///
-/// # Safety
-/// `names` must be binding dyads from the store.
-pub(crate) unsafe fn shape_of(types: &Core, names: &[DyadPtr]) -> Option<DyadPtr> {
-    let made = meta::mints_of(types.open_curly_);
-    if made.is_null() {
-        return None;
-    }
-    let same = |field: DyadPtr, binding: DyadPtr, name: DyadPtr| {
-        super::hole::type_in(field) == types.type_of(name)
-            && Binding::spelling(binding) == Binding::spelling(name)
-            && entry_gates(types)
-                .iter()
-                .all(|&g| Binding::has_gate(binding, g) == Binding::has_gate(name, g))
-    };
-    super::array::items(made).iter().copied().find(|&ty| {
-        let fields = super::array::items(meta::record_fields_of(ty));
-        let bindings = super::array::items(meta::record_field_bindings_of(ty));
-        fields.len() == names.len()
-            && (0..names.len()).all(|i| same(fields[i], bindings[i], names[i]))
-    })
-}
-
-/// `ty`, the record a `{ … }` whose names each hold bytes laid out, kept by `{` for every
-/// `{ … }` of its shape ([`shape_of`]).
-///
-/// # Safety
-/// `ty` must be a record type node from the store.
-pub(crate) unsafe fn keep_shape(store: &mut Store, types: &Core, ty: DyadPtr) {
-    let mut made = meta::mints_of(types.open_curly_);
-    if made.is_null() {
-        made = super::array::build(store, types.array_, &[]);
-        meta::install_mints(types.open_curly_, made);
-    }
-    super::array::push(store, made, ty);
-}
-
 /// The record `line` makes a value of, when `line` makes a `{ … }`'s value.
 ///
 /// # Safety

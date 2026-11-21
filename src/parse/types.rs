@@ -4,6 +4,7 @@
 //! Type bodies: the field list, the slot fills and `static` members, a held `type (…)`
 //! built at its run, and a run type's specialization and comptime fold.
 
+use super::mints::KeyPart;
 use super::*;
 use crate::dyad;
 
@@ -199,8 +200,10 @@ impl<'a> Parser<'a> {
     /// its spelling, type and gates in written order, and the block of the `{ … }` that made it
     /// the record's body, so a name that holds none, a `fn` or a type, reads through the value as
     /// a `static` member does (›`{ … }` outside text is a scope kept as a value, read with `.`‹
-    /// [[R374]]). Where every name holds bytes, `{` makes one record per shape and finds it again
-    /// (`instance::shape_of`); a name that holds none is a type of its own (›`fn` is not a
+    /// [[R374]]). Where every name holds bytes, the record is the mint of its shape, the names'
+    /// spellings, gates and types in written order, which `type_mint` keeps (›Every type is minted
+    /// by its contents through `type_mint`; the name that holds a `type ( … )` gives it its
+    /// identity‹ [[R383]]); a name that holds none is a type of its own (›`fn` is not a
     /// primitive: a function is a type in this same shape‹ [[R199]]), and so is the record read
     /// through it, laid out on `kept.ty` when a `fn` written here needed it. A `fn` that read the
     /// value read its fields by their place among the names then, so those names must still be
@@ -236,11 +239,24 @@ impl<'a> Parser<'a> {
                 });
             }
         }
-        if !own {
-            if let Some(shape) = instance::shape_of(types, &names) {
+        let place = if own {
+            None
+        } else {
+            let mut key = Vec::with_capacity(names.len() * 2);
+            for &name in &names {
+                key.push(KeyPart::Name(Binding::spelling(name)));
+                let gates = instance::entry_gates(types);
+                key.extend(
+                    gates.into_iter().filter(|&g| Binding::has_gate(name, g)).map(KeyPart::Node),
+                );
+                key.push(KeyPart::Node(types.type_of(name)));
+            }
+            let place = self.mint_place(types.open_curly_, &key)?;
+            if let Some(shape) = self.mint_kept(place)? {
                 return Ok((shape, names));
             }
-        }
+            Some(place)
+        };
         let ty = if kept.ty.is_null() { self.rt.store.alloc_leaf(types.type_) } else { kept.ty };
         let field_scope = self.open_scope();
         let mut fields = Vec::with_capacity(names.len());
@@ -266,8 +282,8 @@ impl<'a> Parser<'a> {
         declared?;
         let fields = crate::identities::array::build(self.rt.store, types.array_, &fields);
         let record = self.record_node(ty, field_scope, fields, &bindings, scope);
-        if !own {
-            instance::keep_shape(self.rt.store, types, record);
+        if let Some(place) = place {
+            self.mint_keep(place, record)?;
         }
         Ok((record, names))
     }

@@ -183,6 +183,7 @@ pub struct Core {
     pub unknown_name: DyadPtr,
     pub tape: tape::TapeIds,
     pub hashmap: hashmap::HashmapIds,
+    pub type_mint: type_mint::Members,
     pub held_type: held_type::HeldTypeIds,
     pub this: this::ThisIds,
     pub place: place::PlaceIds,
@@ -468,7 +469,7 @@ impl Core {
         drop(metas);
         drop(extents);
         drop(choosers);
-        let core = Core {
+        let mut core = Core {
             type_,
             logos,
             scope: scope_,
@@ -537,6 +538,7 @@ impl Core {
             unknown_name,
             tape,
             hashmap,
+            type_mint: type_mint::Members::unread(),
             held_type,
             this,
             place,
@@ -575,7 +577,7 @@ impl Core {
             ops: op_leaves,
             lower,
         };
-        type_mint::load(store, trie, &core);
+        core.type_mint = type_mint::load(store, trie, &core);
         core
     }
 
