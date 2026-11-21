@@ -359,6 +359,41 @@ fn a_type_s_size_bytes_is_a_u64_for_records_numbers_and_pointers() {
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
+/// Every type with values answers the bytes one takes, and `void` and an operation, which have
+/// none of their own, answer `0` (›`.size_bytes` is a `u64`‹ [[R282]], ›`array` is a chooser‹
+/// [[R223]]).
+#[test]
+fn size_bytes_is_the_bytes_a_value_takes_and_zero_for_a_type_with_none() {
+    for (src, printed) in [
+        ("type.size_bytes", "8"),
+        ("dyad.size_bytes", "8"),
+        ("rational_number.size_bytes", "16"),
+        ("bool.size_bytes", "4"),
+        ("void.size_bytes", "0"),
+        ("(==).size_bytes", "0"),
+        ("(+).size_bytes", "0"),
+        ("e := type ( ), e.size_bytes", "0"),
+        ("f := fn (t := type ?) -> u64 ( t.size_bytes ), f(void)", "0"),
+        ("f := fn (t := type ?) -> u64 ( t.size_bytes ), f(type)", "8"),
+        ("f := fn () -> u64 ( type.size_bytes + void.size_bytes ), f.compile(), f()", "8"),
+        ("f := fn () -> u64 ( rational_number.size_bytes ), f.compile(), f()", "16"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+    }
+    // A type parameter's fields are read when the line runs, so its function stays interpreted
+    // (›A type known only when the program runs still works; what needs it is parsed when its line
+    // runs‹ [[R377]]).
+    let src = "f := fn (t := type ?) -> u64 ( t.size_bytes ), f.compile(), f(void)";
+    let out = logos().arg(src).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("compiled code cannot parse"),
+        "{src}: stderr: {stderr}"
+    );
+}
+
 #[test]
 fn the_power_demo_prints_nine() {
     let out = logos().arg("import file «identities/power.logos»").output().unwrap();
@@ -1046,6 +1081,70 @@ fn the_array_chooser_with_nothing_to_its_right_stands_as_itself() {
         !out.status.success() && stderr.contains("id after array is not a type"),
         "stderr: {stderr}"
     );
+}
+
+/// Before a type with no instance bytes, `void` or an operation, `array` takes nothing and stands
+/// as itself, so the operation takes it as its left side; a type with bytes, `type` among them, is
+/// its element type (›`array` is a chooser‹ [[R223]]).
+#[test]
+fn the_array_chooser_stands_as_itself_before_a_type_with_no_instance_bytes() {
+    let array = "import file «./identities/array.logos»";
+    let keep = "keep := type ( static parse_rank = 50, static associativity = left, \
+                static parse = ( tape[0] = tape[-1], tape.remove(-1) ) )";
+    for (tail, printed) in [
+        ("t := type array, t == array".to_string(), "true"),
+        ("b := array == array, b".to_string(), "true"),
+        ("t := type array, array == t".to_string(), "true"),
+        ("t := type array, t == i32".to_string(), "false"),
+        ("b := array != array, b".to_string(), "false"),
+        ("b := array == array i32, b".to_string(), "false"),
+        ("t := type array, g := fn () -> bool ( t == array ), g()".to_string(), "true"),
+        (
+            "t := type array, g := fn () -> bool ( t == array ), g.compile(), g()".to_string(),
+            "true",
+        ),
+        ("g := fn () -> bool ( array == array ), g.compile(), g()".to_string(), "true"),
+        ("f := fn (x := type ?) -> bool ( x == array ), f.compile(), f(array)".to_string(), "true"),
+        (format!("{keep}, t := type array keep, t == array"), "true"),
+        (
+            format!(
+                "{keep}, g := fn () -> bool ( t := type array keep, t == array ), g.compile(), g()"
+            ),
+            "true",
+        ),
+        ("a := array type [i32, i64], a[1]".to_string(), "i64"),
+        (
+            "f := fn () -> bool ( a := array type [i32, i64], a[0] == i32 ), f.compile(), f()"
+                .to_string(),
+            "true",
+        ),
+        ("a := array array i32 [[1, 2], [3]], a[1][0]".to_string(), "3"),
+    ] {
+        let src = format!("{array}, {tail}");
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+    }
+    // `array` stands aside, so each failure is the next word's, never `array`'s own.
+    let power = std::fs::read_to_string("identities/power.logos").unwrap();
+    let power =
+        power.trim_end().rsplit_once('\n').unwrap().0.replace("file «", "file «identities/");
+    for (src, said) in [
+        (format!("{array}, b := array + 1, b"), "this operator cannot compute over these operands"),
+        (
+            format!("{power} {array}, b := array ^ 2, b"),
+            "the run body of `^` could not be constructed",
+        ),
+        (format!("{array}, b := array void, b"), "expected one expression, found more"),
+        (
+            format!("{array}, e := type ( ), a := array e [e ?], 0"),
+            "expected one expression, found more",
+        ),
+    ] {
+        let out = logos().arg(&src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(said), "{src}: stderr: {stderr}");
+    }
 }
 
 /// `v := T ?` of a type whose values are nodes is a new empty node, filled field by field.

@@ -284,6 +284,23 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     }
 }
 
+/// The bytes a value of the type `t` takes, its `size_bytes` (›`.size_bytes` is a `u64`‹
+/// [[R282]]): a type laid out from its fields, their sum; any other type, the bytes a place of it
+/// takes; `void` and an operation, whose nodes are its mints', none (›`array` is a chooser‹
+/// [[R223]]). `None` for a type the seed holds no value of, a parse-only lexeme.
+///
+/// # Safety
+/// `t` must be a type identity node from the store.
+pub unsafe fn instance_bytes(types: &Core, t: DyadPtr) -> Option<u64> {
+    if meta::is_record_type(t) {
+        return Some(meta::record_size_of(t));
+    }
+    if let Some((_, width)) = place_layout(types, t) {
+        return Some(width as u64);
+    }
+    (numtype::is_void_type(t) || meta::chooser(t).is_some()).then_some(0)
+}
+
 /// How a whole value moves into a place and back out of one. Either way the write is the
 /// type's width of bytes through the place's address (DESIGN ›`=` sits beside `:=`, and returns
 /// nothing‹); the two differ in what a run of the value hands over.
