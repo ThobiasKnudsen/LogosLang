@@ -494,7 +494,7 @@ pub(super) fn register_type(
         scope,
         fields_arr,
         bindings,
-        (fields.len() * 8) as u64,
+        super::meta::Extent { size_bytes: (fields.len() * 8) as u64, align: 8 },
         std::ptr::null_mut(),
         super::meta::prec::APPLY,
         crate::parse::Assoc::Left,
