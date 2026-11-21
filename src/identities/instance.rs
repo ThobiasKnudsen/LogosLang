@@ -247,6 +247,10 @@ pub(crate) unsafe fn build_ctor(
     args: &[DyadPtr],
     holder: super::dyad_place::Holder,
 ) -> Result<DyadPtr, ParseError> {
+    // A union holds one member, which its fields in a row cannot say.
+    if super::union::is_union(types, record_logos) {
+        return Err(ParseError::UnionApplied);
+    }
     let places = places(types, record_logos).ok_or(ParseError::UnsupportedOperands)?;
     if args.len() != places.len() {
         return Err(ParseError::CtorArity);

@@ -312,6 +312,22 @@ fn record_blob(
     blob
 }
 
+/// [`record_layout`] of a type the former `former` mints, with the former in its header, which
+/// [`mint_of`] reads.
+pub(crate) fn formed_record(
+    store: &mut Store,
+    former: DyadPtr,
+    scope: DyadPtr,
+    fields: DyadPtr,
+    bindings: DyadPtr,
+    size_bytes: u64,
+    body: DyadPtr,
+) -> *mut u8 {
+    let mut blob = record_blob(scope, fields, bindings, size_bytes, body, prec::APPLY, Assoc::Left);
+    blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(former as usize).to_ne_bytes());
+    store.alloc_bytes(&blob)
+}
+
 /// Where a record type's payload ends.
 const RECORD_END: usize = PAYLOAD_OFF + 56;
 
