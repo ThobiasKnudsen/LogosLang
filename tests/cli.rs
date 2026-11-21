@@ -8460,6 +8460,13 @@ fn a_return_ends_what_each_scope_if_and_call_it_leaves_holds_compiled_or_not() {
             "print «got {g(1)}», print «got {g(2)}», print «got {g(0)}»",
             "freed 7\nfreed 8\ngot 5\nfreed 7\nsay 1\nfreed 8\ngot 9\nsay 2\nfreed 7\ngot 9\n",
         ),
+        // An else arm still reads what the then arm freed, and frees it on the `return`'s way out.
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(7), \
+             if (c == 1) ( free a ) else ( say(a.n), return 2 ), 9 )",
+            "print «got {g(1)}», print «got {g(0)}»",
+            "freed 7\ngot 9\nsay 7\nfreed 7\ngot 2\n",
+        ),
         // A condition the `return` leaves frees what either arm would have.
         (
             "g := fn (c := i32 ?) -> i32 ( a := bag(7), \

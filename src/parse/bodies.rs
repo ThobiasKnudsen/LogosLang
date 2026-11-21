@@ -1219,7 +1219,8 @@ impl<'a> Parser<'a> {
         let else_ends = not_in(&else_ended, &then_ended);
         let condition_ends = self.ended_outside(log_start..log_end, if_depth);
         // A `return` in the condition or the then arm leaves through the `if`, which frees
-        // these on its way; an else arm's `return` stands after what the then arm ended.
+        // these on its way, though its line may end them after it, in the else arm. An else
+        // arm's `return` stands after the then arm in the log, so its line never ends them.
         let returns = self.returns_from(returns_start);
         let (in_condition, in_then) = returns.split_at_mut(returns_then - returns_start);
         for r in in_condition {
