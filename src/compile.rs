@@ -271,7 +271,7 @@ impl<'a> Lowerer<'a, '_> {
             Read::Identity | Read::Node => Ok(self.node_addr(node)),
             // A view's value is the viewed node.
             Read::Address => Ok(self.node_addr(dyad::head(node).cast())),
-            Read::Container(_) => self.read_place(node, types::I64),
+            Read::Container(_) | Read::Behind(_) => self.read_place(node, types::I64),
             // A rational travels as the address of its sixteen bytes; only its steps refuse.
             Read::Rational => self.place_addr(node),
             Read::Scalar(nt) => self.read_place(node, nt.cranelift_type()),
@@ -1609,20 +1609,20 @@ unsafe fn compile_fn_body(
 }
 
 /// How the declared output travels in the container: not at all for `void`,
-/// as an address for a type value, a value that is its node's address, or a record's
-/// result slot, at its width for a scalar.
+/// as an address for a type value, a value that is its node's address, a record behind its
+/// pointer, or a record's result slot, at its width for a scalar.
 ///
 /// # Safety
 /// `out` must be a type node from the store.
 unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, CompileError> {
+    use crate::identities::read::{carry_of, place_kind, Carry, Read};
     if is_void_type(out) {
         Ok(None)
     } else if out == types.type_
         || out == types.dyad_
         || crate::identities::meta::value_is_node(out, types.fn_type)
-        || crate::identities::read::carry_of(types, out)
-            .and_then(crate::identities::read::Carry::bytes)
-            .is_some()
+        || matches!(place_kind(types, out), Read::Behind(_))
+        || carry_of(types, out).and_then(Carry::bytes).is_some()
     {
         Ok(Some(NumType::I64))
     } else if crate::identities::numtype::is_scalar_type(out) {

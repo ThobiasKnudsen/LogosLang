@@ -166,9 +166,9 @@ fn run_program_line(
     };
     // SAFETY: `node` is the parsed dyad whose value `bits` is.
     let shown = unsafe { seed::identities::display_value(types, node, bits) };
-    // The last line ends once its value is shown.
+    // The last line ends once its value is shown, or found to have no whole read.
     p.end_tail().map_err(message)?;
-    Ok(Some(shown))
+    shown.map(Some).map_err(|e| message(ParseError::Run(e)))
 }
 
 /// `LOGOS_STATS`: the store after the core, after the line, and their delta

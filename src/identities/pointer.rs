@@ -299,6 +299,21 @@ pub(crate) unsafe fn place_addr(rt: &mut Runtime, place: DyadPtr) -> Result<*mut
     rt.place_addr(place).ok_or(RunError::NoActivation)
 }
 
+/// [`place_addr`], `None` where the place is a field of a record that is not there, its place
+/// holding none (›`free` and `move` end a name; no drop flag‹ [[R60]]).
+///
+/// # Safety
+/// As [`place_addr`].
+pub(crate) unsafe fn held_place_addr(
+    rt: &mut Runtime,
+    place: DyadPtr,
+) -> Result<Option<*mut u8>, RunError> {
+    if super::this::is_field_read(rt.types(), place) {
+        return super::this::held_field_addr(rt, place);
+    }
+    place_addr(rt, place).map(Some)
+}
+
 /// [`place_addr`]'s compiled half, handing the address to `at`, which gives a value of `ct`: a
 /// dereference's only where its base is not null, as `lower_deref` reads. A field's has no
 /// lowering: stand-in for #164.

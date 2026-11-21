@@ -38,6 +38,10 @@ pub enum Read {
     Rational,
     /// A record instance place: read by field or by address, never whole.
     Aggregate,
+    /// Eight bytes holding the address of a record of this type kept behind a pointer of its
+    /// own, 0 once it is freed or moved or before it is written (›`free` and `move` end a name; no
+    /// drop flag‹ [[R60]]): the address is the value, its fields read through it.
+    Behind(DyadPtr),
     /// No whole-value read: an array, a callable, a convention, a parse-only identity.
     Opaque,
     /// Prose, or a `fn` literal standing as a statement: yields 0.
@@ -108,6 +112,9 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
                 } else {
                     Read::Executable(Dispatch::Call(spec))
                 }
+            } else if let Some((Read::Behind(t), _)) = place_layout(types, op) {
+                // A node holding a record behind its pointer holds the record's address.
+                Read::Behind(t)
             } else {
                 Read::Aggregate
             }
@@ -255,6 +262,9 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     if meta::value_is_node(t, types.fn_type) {
         return Some((Read::Container(t), 8));
     }
+    if let super::drop_model::Teardown::Behind(t) = super::drop_model::teardown_of_type(types, t) {
+        return Some((Read::Behind(t), 8));
+    }
     match kind {
         meta::FRACTION_TAG => Some((Read::Rational, 16)),
         k if k < VOID_TAG => {
@@ -315,7 +325,9 @@ impl Carry {
 pub unsafe fn carry_of(types: &Core, t: DyadPtr) -> Option<Carry> {
     match place_layout(types, t)? {
         (Read::Scalar(nt), _) => Some(Carry::Word(nt)),
-        (Read::Pointer(_) | Read::Container(_), _) => Some(Carry::Word(NumType::U64)),
+        (Read::Pointer(_) | Read::Container(_) | Read::Behind(_), _) => {
+            Some(Carry::Word(NumType::U64))
+        }
         (Read::Rational, width) => Some(Carry::Bytes(width)),
         (Read::Aggregate, width) => {
             let t = super::type_identity_of(types, t)?;

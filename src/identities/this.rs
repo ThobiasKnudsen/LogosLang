@@ -11,6 +11,7 @@
 //! which. Only the per-run copy lowers.
 
 use super::callable::{self, Callables};
+use super::drop_model::{teardown_of_type, Teardown};
 use super::read::{carry_of, place_layout, Carry, Read};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
@@ -61,6 +62,10 @@ pub struct ThisIds {
     /// A write there: `[cell, name, scope, v, op]`.
     pub named_write: DyadPtr,
     pub named_write_leaf: DyadPtr,
+    /// `[place, op, output_type]`: the address of the record a place keeps behind its pointer,
+    /// for a `static` function that writes it, a new block where the place holds none.
+    pub block: DyadPtr,
+    pub block_leaf: DyadPtr,
 }
 
 /// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
@@ -91,6 +96,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     };
     let (store, store_leaf) =
         op(cx, &["value", "k", "v", "type", "owner", "binding", "op"], run_store);
+    cx.lower.insert(store, lower_store);
     let (copy, copy_leaf) = op(cx, &["this", "op", "output_type"], run_copy);
     // SAFETY: `copy` carries the record `op` built.
     unsafe { meta::mark_own(copy) };
@@ -102,6 +108,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let (named, named_leaf) = op(cx, &["cell", "name", "scope", "op", "output_type"], run_named);
     let (named_write, named_write_leaf) =
         op(cx, &["cell", "name", "scope", "v", "op"], run_named_write);
+    let (block, block_leaf) = op(cx, &["place", "op", "output_type"], run_block);
+    cx.lower.insert(block, lower_block);
     ThisIds {
         slot,
         slot_leaf,
@@ -122,6 +130,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         named_leaf,
         named_write,
         named_write_leaf,
+        block,
+        block_leaf,
     }
 }
 
@@ -421,7 +431,9 @@ pub(crate) unsafe fn build_write(
         let yields_value = matches!(super::operand_of(types, value), super::Operand::Literal)
             || arms_differ
             || match place_layout(types, super::read::output_type(types, value)) {
-                Some((Read::Scalar(_) | Read::Rational | Read::Aggregate, _)) => true,
+                Some((Read::Scalar(_) | Read::Rational | Read::Aggregate | Read::Behind(_), _)) => {
+                    true
+                }
                 Some((Read::Pointer(p), _)) => p != types.dyad_,
                 _ => false,
             };
@@ -574,6 +586,16 @@ pub(crate) unsafe fn is_plain(types: &Core, owner: DyadPtr) -> bool {
         && !meta::is_node_valued(owner, types.fn_type)
 }
 
+/// A plain record kept in its place's own bytes: one whose type fills no `free`, a `{ … }`'s
+/// value included. One whose type fills `free` lives behind a pointer of its own (›`free` and
+/// `move` end a name; no drop flag‹ [[R60]]).
+///
+/// # Safety
+/// `t` must be null or a type node from the store.
+pub(crate) unsafe fn in_bytes(types: &Core, t: DyadPtr) -> bool {
+    is_plain(types, t) && !matches!(teardown_of_type(types, t), Teardown::Behind(_))
+}
+
 /// # Safety
 /// `ops` must be the operands of a field read or write, `owner` its owner type and `name` its
 /// field's binding, null for one built at run.
@@ -585,6 +607,67 @@ unsafe fn field_of(
 ) -> Result<Field, RunError> {
     let this = receiver(rt, *ops, owner)?;
     field_at(rt, this, ops, owner, name)
+}
+
+/// Where a place of a record kept behind its pointer keeps the record's address, 0 while it holds
+/// none (›`free` and `move` end a name; no drop flag‹ [[R60]]), with the record's type; `None` for
+/// any other value `this` gives.
+///
+/// # Safety
+/// `this` must be a reduced dyad from the store and `owner` a type node.
+unsafe fn behind_place(
+    rt: &mut Runtime,
+    this: DyadPtr,
+    owner: DyadPtr,
+) -> Result<Option<(*mut usize, DyadPtr)>, RunError> {
+    let this = rt.through(this);
+    let Teardown::Behind(t) = teardown_of_type(rt.types(), owner) else {
+        return Ok(None);
+    };
+    if super::read::place_of(rt.types(), this).is_none() {
+        return Ok(None);
+    }
+    super::pointer::place_addr(rt, this).map(|slot| Some((slot.cast(), t)))
+}
+
+/// [`field_of`] for a write: a place of a record kept behind its pointer that holds none yet takes
+/// a new block first, its other fields zero, so `mut a := bag ?` holds 0 until a write gives it a
+/// value.
+///
+/// # Safety
+/// As [`field_of`].
+unsafe fn field_to_write(
+    rt: &mut Runtime,
+    ops: *const DyadPtr,
+    owner: DyadPtr,
+    name: DyadPtr,
+) -> Result<Field, RunError> {
+    if let Some((slot, t)) = behind_place(rt, *ops, owner)? {
+        if slot.read_unaligned() == 0 {
+            let block = super::drop_model::new_behind(rt, t)?;
+            slot.write_unaligned(block as usize);
+        }
+    }
+    field_of(rt, ops, owner, name)
+}
+
+/// [`field_of`], `None` where a place of a record kept behind its pointer holds none: a field of
+/// a record that is not there holds nothing to free.
+///
+/// # Safety
+/// As [`field_of`].
+unsafe fn field_if_held(
+    rt: &mut Runtime,
+    ops: *const DyadPtr,
+    owner: DyadPtr,
+    name: DyadPtr,
+) -> Result<Option<Field>, RunError> {
+    if let Some((slot, _)) = behind_place(rt, *ops, owner)? {
+        if slot.read_unaligned() == 0 {
+            return Ok(None);
+        }
+    }
+    field_of(rt, ops, owner, name).map(Some)
 }
 
 /// The value a field read or write of `owner` works on, what its first operand `this` gives: a
@@ -671,9 +754,9 @@ unsafe fn own_name(
     Ok(Field::Bytes(addr, ty, index))
 }
 
-/// Where the node a field holds is kept: a node's slot, or the word a plain record keeps for
-/// a `type` or `dyad` field, packed so at any offset; any other field of a plain record holds no
-/// node.
+/// Where the node a field a write reaches holds is kept: a node's slot, or the word a plain
+/// record keeps for a `type` or `dyad` field, packed so at any offset; any other field of a plain
+/// record holds no node.
 ///
 /// # Safety
 /// As `field_of`.
@@ -683,8 +766,8 @@ unsafe fn slot_of(
     owner: DyadPtr,
     name: DyadPtr,
 ) -> Result<(*mut DyadPtr, usize), RunError> {
-    let this = receiver(rt, *ops, owner)?;
-    slot_at(rt, this, ops, owner, name)
+    let field = field_to_write(rt, ops, owner, name)?;
+    slot_in(rt, field)
 }
 
 /// As [`slot_of`], of the value `this` the read's first operand gave.
@@ -698,7 +781,14 @@ unsafe fn slot_at(
     owner: DyadPtr,
     name: DyadPtr,
 ) -> Result<(*mut DyadPtr, usize), RunError> {
-    match field_at(rt, this, ops, owner, name)? {
+    let field = field_at(rt, this, ops, owner, name)?;
+    slot_in(rt, field)
+}
+
+/// # Safety
+/// `field` must lie in a live value.
+unsafe fn slot_in(rt: &Runtime, field: Field) -> Result<(*mut DyadPtr, usize), RunError> {
+    match field {
         Field::Slot(slot, k) => Ok((slot, k)),
         Field::Bytes(addr, ty, k) if holds_node(rt.types(), ty) => Ok((addr.cast(), k)),
         Field::Bytes(..) => Err(RunError::NoThis),
@@ -706,7 +796,8 @@ unsafe fn slot_at(
 }
 
 /// Where a pointer field `read` reaches keeps its eight bytes: a plain record's own bytes, or
-/// the value of the node a slot holds; `None` while the slot is unwritten.
+/// the value of the node a slot holds; `None` while the slot is unwritten or the record is not
+/// there.
 ///
 /// # Safety
 /// `read` must be a node `is_field_read` accepts, of a pointer field.
@@ -715,9 +806,10 @@ pub(crate) unsafe fn pointer_bytes(
     read: DyadPtr,
 ) -> Result<Option<*mut u8>, RunError> {
     let (owner, name) = (owner_of(rt.types(), read), field_binding_of(rt.types(), read));
-    Ok(match field_of(rt, dyad::value(read) as *const DyadPtr, owner, name)? {
-        Field::Bytes(bytes, ..) => Some(bytes),
-        Field::Slot(slot, _) => (!(*slot).is_null()).then(|| dyad::value(*slot)),
+    Ok(match field_if_held(rt, dyad::value(read) as *const DyadPtr, owner, name)? {
+        None => None,
+        Some(Field::Bytes(bytes, ..)) => Some(bytes),
+        Some(Field::Slot(slot, _)) => (!(*slot).is_null()).then(|| dyad::value(*slot)),
     })
 }
 
@@ -732,6 +824,21 @@ pub(crate) unsafe fn field_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut 
         Field::Slot(slot, _) => slot as *mut u8,
         Field::Bytes(bytes, ..) => bytes,
     })
+}
+
+/// [`field_addr`], `None` where the record the field lies in is not there: its place holds none.
+///
+/// # Safety
+/// As [`field_addr`].
+pub(crate) unsafe fn held_field_addr(
+    rt: &mut Runtime,
+    read: DyadPtr,
+) -> Result<Option<*mut u8>, RunError> {
+    let (owner, name) = (owner_of(rt.types(), read), field_binding_of(rt.types(), read));
+    Ok(field_if_held(rt, dyad::value(read) as *const DyadPtr, owner, name)?.map(|f| match f {
+        Field::Slot(slot, _) => slot as *mut u8,
+        Field::Bytes(bytes, ..) => bytes,
+    }))
 }
 
 /// The node the field a read reaches holds; an unfilled one is the checked error.
@@ -866,7 +973,7 @@ fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             Carry::Bytes(_) if !is_plain(rt.types(), owner) => None,
             _ => Some(super::assign::take(rt, carry, value)?),
         };
-        match (field_of(rt, ops, owner, *ops.add(5))?, taken) {
+        match (field_to_write(rt, ops, owner, *ops.add(5))?, taken) {
             (Field::Bytes(addr, ..), Some(taken)) => super::assign::put(carry, addr, taken),
             (Field::Bytes(addr, ..), None) => {
                 super::assign::put(carry, addr, super::assign::take(rt, carry, value)?);
@@ -878,6 +985,160 @@ fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         Ok(0)
     }
+}
+
+/// The right side runs first, then the field is reached in a plain record's bytes as
+/// [`run_store`] reaches it: a name of the frame holding no record behind its pointer takes a new
+/// block first. A field of a node, or of a record behind a place no frame holds, keeps the
+/// function interpreted.
+fn lower_store(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a store node from `build_write`, `[this, k, value, type, owner, binding]`.
+    unsafe {
+        let ops = dyad::value(node) as *const DyadPtr;
+        let (this, value, ty) = (*ops, *ops.add(2), *ops.add(3));
+        let (owner, binding) = (*ops.add(4), *ops.add(5));
+        if binding.is_null() || !is_plain(lw.types(), owner) {
+            return Err(CompileError::NotLowerable(node));
+        }
+        let carry = carry_of(lw.types(), ty).ok_or(CompileError::NotLowerable(node))?;
+        let taken = super::assign::lower_take(lw, carry, value)?;
+        let base = match teardown_of_type(lw.types(), owner) {
+            Teardown::Behind(t) => {
+                let slot = lower_held_slot(lw, this)?;
+                let t = lw.node_addr(t);
+                lw.call_seed(compiled_held_block as *const () as usize, &[slot, t])?
+            }
+            _ => lower_receiver(lw, this, owner)?,
+        };
+        let offset = crate::binding::Binding::read(binding).offset as i64;
+        super::assign::lower_put(lw, carry, base, offset, taken);
+        Ok(lw.const_i32(0))
+    }
+}
+
+/// The receiver of a `static` function that writes it, `place` a name of a record kept behind its
+/// pointer: the function writes the record's fields, so a place that holds none takes a new block
+/// first, as a field write into it does.
+///
+/// # Safety
+/// `place` must be a reduced dyad from the store, a place [`receives_block`] accepts.
+pub(crate) unsafe fn build_block(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
+    let output = super::read::output_type(types, place);
+    node(store, types.this.block, types.this.block_leaf, &[place], output)
+}
+
+/// Whether `place` is a name, field or cell of a record kept behind its pointer, which a `static`
+/// function writing it reaches through [`build_block`].
+///
+/// # Safety
+/// `place` must be a reduced dyad from the store.
+pub(crate) unsafe fn receives_block(types: &Core, place: DyadPtr) -> bool {
+    let place = types.through(place);
+    let ty = super::read::output_type(types, place);
+    matches!(teardown_of_type(types, ty), Teardown::Behind(_))
+        && super::read::place_of(types, place).is_some()
+}
+
+fn run_block(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a block node from `build_block`.
+    unsafe {
+        let place = *(dyad::value(node) as *const DyadPtr);
+        let owner = super::read::output_type(rt.types(), place);
+        let (slot, t) = behind_place(rt, place, owner)?.ok_or(RunError::NoThis)?;
+        if slot.read_unaligned() == 0 {
+            let block = super::drop_model::new_behind(rt, t)?;
+            slot.write_unaligned(block as usize);
+        }
+        Ok(slot.read_unaligned() as i64)
+    }
+}
+
+/// The place is reached as [`lower_held_slot`] reaches it.
+fn lower_block(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a block node from `build_block`.
+    unsafe {
+        let place = *(dyad::value(node) as *const DyadPtr);
+        let ty = super::read::output_type(lw.types(), place);
+        let Teardown::Behind(t) = teardown_of_type(lw.types(), ty) else {
+            return Err(CompileError::NotLowerable(node));
+        };
+        let slot = lower_held_slot(lw, place)?;
+        let t = lw.node_addr(t);
+        lw.call_seed(compiled_held_block as *const () as usize, &[slot, t])
+    }
+}
+
+/// Where `place` keeps the word it holds, compiled, 0 where it is a field of a record behind its
+/// pointer that is not there: a name of the frame, or a field of a plain record reached through
+/// the place that keeps it. Any other place keeps the function interpreted.
+///
+/// # Safety
+/// `place` must be a reduced dyad from the store.
+pub(crate) unsafe fn lower_held_slot(
+    lw: &mut Lowerer,
+    place: DyadPtr,
+) -> Result<Value, CompileError> {
+    let place = lw.through(place);
+    if lw.types().is_storage(place) {
+        return lw.place_addr(place);
+    }
+    if dyad::ty(place) == lw.types().this.load {
+        let ops = dyad::value(place) as *const DyadPtr;
+        let (this, binding, owner) = (*ops, *ops.add(3), *ops.add(5));
+        if !binding.is_null() && is_plain(lw.types(), owner) {
+            let offset = crate::binding::Binding::read(binding).offset as i64;
+            if in_bytes(lw.types(), owner) {
+                let base = lower_receiver(lw, this, owner)?;
+                return Ok(lw.offset_addr(base, offset));
+            }
+            let outer = lower_held_slot(lw, this)?;
+            let offset = lw.const_i64(offset);
+            return lw.call_seed(compiled_field_slot as *const () as usize, &[outer, offset]);
+        }
+    }
+    Err(CompileError::NotLowerable(place))
+}
+
+/// # Safety
+/// Called only by compiled code, with `outer` 0 or the address of a place holding a record behind
+/// its pointer or 0, and `offset` a field's offset in that record.
+unsafe extern "C" fn compiled_field_slot(
+    _ctx: *mut crate::run::Context,
+    outer: *const usize,
+    offset: i64,
+) -> i64 {
+    if outer.is_null() {
+        return 0;
+    }
+    match outer.read_unaligned() {
+        0 => 0,
+        block => block as i64 + offset,
+    }
+}
+
+/// `slot` 0, a field of a record that is not there, is the fault a read through that record gives.
+///
+/// # Safety
+/// Called only by compiled code, with its context, 0 or the address of a place holding a record of
+/// `t` behind its pointer or 0, and `t` a type [`teardown_of_type`] answers [`Teardown::Behind`].
+unsafe extern "C" fn compiled_held_block(
+    ctx: *mut crate::run::Context,
+    slot: *mut usize,
+    t: DyadPtr,
+) -> i64 {
+    crate::run::interpret_step(ctx, |rt| {
+        if slot.is_null() {
+            return Err(RunError::NullPointer);
+        }
+        // SAFETY: the caller's contract.
+        unsafe {
+            if slot.read_unaligned() == 0 {
+                let block = super::drop_model::new_behind(rt, t)?;
+                slot.write_unaligned(block as usize);
+            }
+            Ok(slot.read_unaligned() as i64)
+        }
+    })
 }
 
 /// The value written is the right side's node, the operand as graph, never a number read out of
