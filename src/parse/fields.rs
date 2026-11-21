@@ -57,6 +57,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The gate read of `binding`, a member reached from the scope the line is read in
+    /// ([`crate::identities::gate::grants_read`]): outside the scope it is declared in, only a
+    /// `pub` name is read.
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store.
+    pub(crate) unsafe fn read_gate(&self, binding: DyadPtr) -> Result<(), ParseError> {
+        let from = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
+        if crate::identities::gate::grants_read(self.types, binding, from) {
+            return Ok(());
+        }
+        Err(ParseError::NotPub(Box::new(Binding::spelling(binding))))
+    }
+
     /// The innermost open definition with a value its body is about: a parse's node, a `free`'s
     /// or a `static` function's value.
     fn value_def(&self) -> Option<&OpenType> {
@@ -455,9 +469,14 @@ impl<'a> Parser<'a> {
             {
                 let mut fields = ScopeStack::new();
                 fields.push(meta::record_scope_of(ty));
-                fields.resolve(self.trie, name).ok().and_then(|r| {
-                    array::items(meta::record_fields_of(ty)).iter().position(|&f| f == r.identity)
-                })
+                let found = fields.resolve(self.trie, name).ok().and_then(|r| {
+                    let items = array::items(meta::record_fields_of(ty));
+                    Some((items.iter().position(|&f| f == r.identity)?, r.binding))
+                });
+                if let Some((_, binding)) = found {
+                    self.read_gate(binding)?;
+                }
+                found.map(|(i, _)| i)
             }
             _ => None,
         };
@@ -528,6 +547,7 @@ impl<'a> Parser<'a> {
             .ok()
             .and_then(|r| Some((items.iter().position(|&f| f == r.identity)?, r.binding)));
         if let Some((i, binding)) = found {
+            self.read_gate(binding)?;
             self.cx.member_path = self.field_path(&left, binding);
             let k = self.scalar_value(crate::identities::numtype::NumType::U64, i as i64);
             let ty = crate::identities::hole::type_in(items[i]);
@@ -543,7 +563,7 @@ impl<'a> Parser<'a> {
             );
             return Ok(Some((node, 0)));
         }
-        let Some(member) = self.static_member_read(t, name) else {
+        let Some(member) = self.static_member_read(t, name)? else {
             return Ok(None);
         };
         if let Some(args) = call {
@@ -632,9 +652,9 @@ impl<'a> Parser<'a> {
             // (DESIGN ›There is no `this`‹); `.dyads` is the cell's own.
             if name != "dyads" && self.is_node_cell(lhs) {
                 if self.cx.definitions.last().is_some_and(|d| d.stamps_at_run) {
-                    let types = self.types;
-                    let read =
-                        crate::identities::this::build_named(self.rt.store, types, lhs, name);
+                    let (types, store) = (self.types, &mut *self.rt.store);
+                    let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
+                    let read = crate::identities::this::build_named(store, types, lhs, name, scope);
                     return Ok((read, 0));
                 }
                 let node = self.cx.definitions.last().expect("a parse body is open").this_param;
@@ -750,7 +770,7 @@ impl<'a> Parser<'a> {
             match self.type_known_now(lhs) {
                 Ok(t) => {
                     if let Some(args) = call {
-                        if let Some((member, _)) = self.static_member_of(t, name) {
+                        if let Some(member) = self.static_member_read(t, name)? {
                             let none = Receiver::Nothing;
                             let called = self.call_member(tape, member, name, &left, none, args)?;
                             if let Some(call) = called {
@@ -1016,6 +1036,11 @@ impl<'a> Parser<'a> {
         let member = Member { start: nstart, len: nlen, index, key, call };
         // SAFETY: `lhs` is a reduced dyad off the tape.
         let access = unsafe { self.field_access_each(tape, lhs, left, member) };
+        // A member the gate read refuses is refused where its name is written.
+        let access = access.map_err(|e| match e {
+            ParseError::NotPub(_) => self.fail_at(nstart, e),
+            e => e,
+        });
         self.cx.member_root = std::ptr::null_mut();
         let path = std::mem::take(&mut self.cx.member_path);
         let (node, consumed) = access?;
@@ -1156,6 +1181,7 @@ impl<'a> Parser<'a> {
         if !fields.contains(&field) {
             return Err(ParseError::ExpectedField);
         }
+        self.read_gate(resolved.binding)?;
         Ok((field, Binding::read(resolved.binding).offset, resolved.binding))
     }
 
@@ -1756,7 +1782,7 @@ impl<'a> Parser<'a> {
                 .store
                 .alloc_head(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
             _ if self.static_member_of(logos, name).is_some() => {
-                Ok(self.static_member_read(logos, name).expect("found just above"))
+                Ok(self.static_member_read(logos, name)?.expect("found just above"))
             }
             _ if self.per_node_field_of(logos, name) => {
                 Err(ParseError::PerNodeThroughType(name.to_string()))
@@ -1767,14 +1793,21 @@ impl<'a> Parser<'a> {
 
     /// A `static` member of `logos`, one place stored with the type, read
     /// through the type or a node alike: the member's own gate decides a
-    /// write, since the place is no node's.
+    /// read and a write, since the place is no node's. `None` when `logos` has no such member.
     ///
     /// # Safety
     /// `logos` must be a type identity node from the store.
-    unsafe fn static_member_read(&mut self, logos: DyadPtr, name: &str) -> Option<DyadPtr> {
-        let (identity, binding) = self.static_member_of(logos, name)?;
+    unsafe fn static_member_read(
+        &mut self,
+        logos: DyadPtr,
+        name: &str,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        let Some((identity, binding)) = self.static_member_of(logos, name) else {
+            return Ok(None);
+        };
+        self.read_gate(binding)?;
         self.cx.member_path = vec![binding];
-        Some(identity)
+        Ok(Some(identity))
     }
 
     /// `lhs.name` read as a `static` member of `logos`, the type `lhs` is read through: the
@@ -1792,7 +1825,7 @@ impl<'a> Parser<'a> {
         name: &str,
         call: Option<Vec<DyadPtr>>,
     ) -> Result<Option<(DyadPtr, usize)>, ParseError> {
-        let Some(member) = self.static_member_read(logos, name) else {
+        let Some(member) = self.static_member_read(logos, name)? else {
             return Ok(None);
         };
         if let Some(args) = call {

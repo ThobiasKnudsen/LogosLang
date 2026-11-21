@@ -54,11 +54,11 @@ pub struct ThisIds {
     pub field_type: DyadPtr,
     pub field_type_leaf: DyadPtr,
     /// A field of the node `tape[0]` holds once the parse stamped a type it got as it ran:
-    /// `[cell, name, op, output_type]`, the field looked up by its name then, yielding the node
-    /// it holds.
+    /// `[cell, name, scope, op, output_type]`, the field looked up by its name then and read as
+    /// the gate read lets the parse's `scope` read it, yielding the node it holds.
     pub named: DyadPtr,
     pub named_leaf: DyadPtr,
-    /// A write there: `[cell, name, v, op]`.
+    /// A write there: `[cell, name, scope, v, op]`.
     pub named_write: DyadPtr,
     pub named_write_leaf: DyadPtr,
 }
@@ -99,8 +99,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     cx.lower.insert(pack, lower_pack);
     let (field_type, field_type_leaf) =
         op(cx, &["read", "op", "output_type"], super::tape::run_line_type);
-    let (named, named_leaf) = op(cx, &["cell", "name", "op", "output_type"], run_named);
-    let (named_write, named_write_leaf) = op(cx, &["cell", "name", "v", "op"], run_named_write);
+    let (named, named_leaf) = op(cx, &["cell", "name", "scope", "op", "output_type"], run_named);
+    let (named_write, named_write_leaf) =
+        op(cx, &["cell", "name", "scope", "v", "op"], run_named_write);
     ThisIds {
         slot,
         slot_leaf,
@@ -440,11 +441,18 @@ pub(crate) unsafe fn build_write(
 
 /// `tape[0].f` in a parse that stamps a type it gets as it runs: `f` is looked up among that
 /// type's fields when the read runs, and a type without it is the error that says so (›`x.type`
-/// reads the type word of the node a name or an expression stands for‹ [[R279]]).
-pub(crate) fn build_named(store: &mut Store, types: &Core, cell: DyadPtr, name: &str) -> DyadPtr {
+/// reads the type word of the node a name or an expression stands for‹ [[R279]]), as is a field
+/// the gate read does not let `scope`, where the read is written, reach.
+pub(crate) fn build_named(
+    store: &mut Store,
+    types: &Core,
+    cell: DyadPtr,
+    name: &str,
+    scope: DyadPtr,
+) -> DyadPtr {
     let name = super::string::build_text(store, types.string_, name.as_bytes());
     let output = super::pointer::at_dyad(store, types);
-    node(store, types.this.named, types.this.named_leaf, &[cell, name], output)
+    node(store, types.this.named, types.this.named_leaf, &[cell, name, scope], output)
 }
 
 /// # Safety
@@ -471,7 +479,8 @@ pub(crate) unsafe fn build_named_write(
     }
     let ops = dyad::value(read) as *const DyadPtr;
     let value = super::place::build(store, types, value);
-    Ok(act(store, types.this.named_write, types.this.named_write_leaf, &[*ops, *ops.add(1), value]))
+    let ops = [*ops, *ops.add(1), *ops.add(2), value];
+    Ok(act(store, types.this.named_write, types.this.named_write_leaf, &ops))
 }
 
 /// The index among `ty`'s fields of the one spelled `name` and its binding, resolved in the
@@ -505,6 +514,10 @@ unsafe fn named_slot(
     let Some((k, binding)) = field_named(rt, ty, name) else {
         return Err(RunError::NoFieldNamed(Box::new(name.to_string())));
     };
+    if !binding.is_null() && !super::gate::grants_read(rt.types(), binding, *ops.add(2)) {
+        let e = crate::parse::ParseError::NotPub(Box::new(name.to_string()));
+        return Err(RunError::Parse(Box::new(e)));
+    }
     if !binding.is_null() && crate::binding::Binding::has_gate(binding, rt.types().immut_) {
         let e = crate::parse::ParseError::Immutable(Box::new(name.to_string()));
         return Err(RunError::Parse(Box::new(e)));
@@ -529,7 +542,7 @@ fn run_named_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a named write from `build_named_write`, its value operand a place node.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let placed = rt.run(*ops.add(2))? as DyadPtr;
+        let placed = rt.run(*ops.add(3))? as DyadPtr;
         let (slot, _, declared) = named_slot(rt, ops)?;
         let types: *const Core = rt.types();
         let value = if reads_whole(&*types, declared) {

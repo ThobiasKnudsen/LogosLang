@@ -417,7 +417,7 @@ pub unsafe fn through(types: &Core, p: DyadPtr) -> DyadPtr {
 }
 
 /// Give the `binding` type its layout and spelling at the end of the build: its fields
-/// wait for `dyad`, `@`, and `array` to exist.
+/// wait for `dyad`, `@`, and `array` to exist. Each is read from outside, so each is `pub`.
 pub(super) fn register_type(
     cx: &mut Cx,
     scope_ty: DyadPtr,
@@ -425,6 +425,7 @@ pub(super) fn register_type(
     dyad_ty: DyadPtr,
     f64_ty: DyadPtr,
     u64_ty: DyadPtr,
+    pub_: DyadPtr,
 ) {
     let binding_ = cx.binding_;
     let scope = super::scope::mint(cx.store, scope_ty, std::ptr::null_mut());
@@ -448,7 +449,10 @@ pub(super) fn register_type(
         let field = super::hole::build(cx.store, cx.unknown, ty, std::ptr::null_mut());
         let binding = cx.declare_in(scope, name, field);
         // SAFETY: `binding` was just minted by `declare_in`; `binding_` is the type node.
-        unsafe { Binding::set_field_offset(binding, binding_, i * 8) };
+        unsafe {
+            Binding::set_field_offset(binding, binding_, i * 8);
+            Binding::add_gate(cx.store, array_ty, binding, pub_);
+        }
         fields.push(field);
         bindings.push(binding);
     }

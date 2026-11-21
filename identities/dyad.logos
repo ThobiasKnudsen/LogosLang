@@ -1,1 +1,1 @@
-dyad := type (type := @dyad ?, value := @void ?)
+dyad := type (pub type := @dyad ?, pub value := @void ?)

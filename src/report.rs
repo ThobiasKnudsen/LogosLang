@@ -187,6 +187,10 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::NoPubName(name) => {
             format!("the file has no `pub` name `{name}`: only its `pub` names are read")
         }
+        ParseError::NotPub(name) => format!(
+            "`{name}` is not `pub`, so it is read only inside the scope it is declared in: write \
+             `pub {name} := …` to read it from outside"
+        ),
         ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
         ParseError::ExpectedQuote(word) => format!("`{word}` must be followed by a «…» quote"),
         ParseError::EmptySpelling => {

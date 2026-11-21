@@ -113,7 +113,7 @@ fn construct(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, Pars
     }
     let filled = match next.filter(|c| c.constructed) {
         // SAFETY: a constructed cell holds a node from the store; `ty` is the mint just read.
-        Some(c) => unsafe { from_scope(p.store(), types, ty, c.dyad) }?,
+        Some(c) => unsafe { from_scope(p, ty, c.dyad, c.start) }?,
         None => None,
     };
     if let Some(filled) = filled {
@@ -128,17 +128,20 @@ fn construct(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, Pars
 
 /// `hashmap K -> V { … }` when `value` is a `{ … }`: each name the scope keeps is an entry, its
 /// spelling the key and its value converted into `V` (›`{ … }` outside text is a scope kept as a
-/// value, read with `.`‹ [[R374]]). The scope's last line makes the map in place of its record's
-/// value, so its lines still run first. `None` when `value` is no `{ … }`.
+/// value, read with `.`‹ [[R374]]). `hashmap` reads the scope from outside, so each name is one
+/// the gate read lets through, a `pub` one; one it refuses is refused at `at`, where the `{ … }`
+/// is written. The scope's last line makes the map in place of its record's value, so its lines
+/// still run first. `None` when `value` is no `{ … }`.
 ///
 /// # Safety
 /// `map_ty` must be a mint of `hashmap` and `value` a node from the store.
 unsafe fn from_scope(
-    store: &mut Store,
-    types: &Core,
+    p: &mut Parser,
     map_ty: DyadPtr,
     value: DyadPtr,
+    at: usize,
 ) -> Result<Option<DyadPtr>, ParseError> {
+    let types = p.types();
     let Some((names, line)) = super::instance::kept_value(types, value) else {
         return Ok(None);
     };
@@ -152,11 +155,13 @@ unsafe fn from_scope(
         if crate::binding::Binding::read(name).pattern {
             return Err(ParseError::PatternIsNoKey(Box::new(spelling)));
         }
+        p.read_gate(name).map_err(|e| p.fail_at(at, e))?;
+        let store = p.store();
         ops.push(super::string::build_text(store, types.string_, spelling.as_bytes()));
         ops.push(super::land(store, types, name, v)?);
     }
     ops.push(std::ptr::null_mut());
-    let map = store.alloc_words(types.hashmap.entries, &ops);
+    let map = p.store().alloc_words(types.hashmap.entries, &ops);
     if line == value {
         return Ok(Some(map));
     }

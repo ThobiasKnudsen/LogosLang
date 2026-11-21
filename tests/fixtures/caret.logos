@@ -10,8 +10,8 @@
         mut mint := power_mints[l],
         if mint != ? return mint,
         mint = type (
-            lhs := l ?,
-            rhs := i32 ?,
+            pub lhs := l ?,
+            pub rhs := i32 ?,
             static output_type := l,
             static run = (
                 mut r := output_type 1,
