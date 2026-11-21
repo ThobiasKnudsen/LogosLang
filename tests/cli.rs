@@ -496,7 +496,7 @@ fn a_member_the_tape_s_node_does_not_have_is_refused_as_a_name_s_is() {
 /// expression stands for‹ [[R279]]).
 #[test]
 fn a_parse_reads_the_name_and_type_a_line_of_its_bracket_declares() {
-    let members = "c := type ch ( pub mut i := i32, f := f64 )";
+    let members = "c := type ch ( i := pub mut i32, f := f64 )";
     for (body, tail, printed) in [
         ("print «{tape[1].dyads[0].lhs:name} {tape[1].dyads[1].lhs:name}»", members, "i f\n"),
         ("print «{tape[1].dyads[0].lhs.type} {tape[1].dyads[1].lhs.type}»", members, "i32 f64\n"),
