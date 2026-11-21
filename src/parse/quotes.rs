@@ -104,17 +104,14 @@ impl<'a> Parser<'a> {
         Ok(Reached { node, path, canon })
     }
 
-    /// The `file «…»` written after `word`, read as Logos: the file reached, and the section it
-    /// loaded into. Reading it runs it now, once per run, so it stands only where parse order and
-    /// run order coincide, and what stands before it on its line runs first.
+    /// The `file «…»` written after `logos` or `import`, read as Logos: the file reached, and the
+    /// section it loaded into. Its address, the one thing it reads, is plain text, so it always
+    /// runs in the pass, once per run, inside a body too; what stands before it runs first where
+    /// the pass runs its line, and in a body only the lines before the body's.
     fn read_logos_after(
         &mut self,
         tape: &mut ParsingTape,
-        word: &'static str,
     ) -> Result<(Reached, DyadPtr), ParseError> {
-        if self.cx.runtime_depth != 0 {
-            return Err(ParseError::LoadInRuntimeBody(word));
-        }
         let at = tape.at(0).map_or(self.cx.pos, |c| c.start);
         let file = self.types.file;
         let consumed = self.consume_token(file);
@@ -140,7 +137,7 @@ impl<'a> Parser<'a> {
             self.cx.pos = start;
             return Err(ParseError::ImportTakesFile);
         }
-        let (file, section) = self.read_logos_after(tape, "import")?;
+        let (file, section) = self.read_logos_after(tape)?;
         let names = self.imports.names_of(section).expect("a loaded section").to_vec();
         // SAFETY: each name is a binding dyad the file's pass built.
         let pubs: Vec<_> =
@@ -164,7 +161,7 @@ impl<'a> Parser<'a> {
             self.cx.pos = start;
             return Ok(None);
         }
-        let (_, section) = self.read_logos_after(tape, "logos")?;
+        let (_, section) = self.read_logos_after(tape)?;
         Ok(Some(self.reach(section)))
     }
 

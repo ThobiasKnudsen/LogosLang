@@ -95,9 +95,9 @@ struct Context<'a> {
     /// declarations get global storage; inside a function each local claims
     /// the next byte offset in the top frame.
     frames: Vec<OpenFn>,
-    /// How many deferred-or-repeated bodies enclose the position, where parse
-    /// order and run order do not coincide; comptime effects that rebind names
-    /// at parse are rejected while non-zero. Comptime-taken `if` branches do not count.
+    /// How many deferred-or-repeated bodies enclose the position, where parse order and run order
+    /// do not coincide, so a part runs in the pass only by [`Parser::runs_in_pass`]. Comptime-taken
+    /// `if` branches do not count.
     runtime_depth: u32,
     /// A `while` condition is being parsed, which runs again on every pass.
     each_pass: bool,
