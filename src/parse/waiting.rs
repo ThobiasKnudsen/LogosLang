@@ -439,7 +439,7 @@ impl<'a> Parser<'a> {
                         run_type = Some(chain);
                     }
                     run_write = crate::dyad::ty(id) == types.binding_
-                        && Binding::has_gate(id, types.waiting.line)
+                        && Binding::read(id).typed_at_run
                         && self.peek_token().is_some_and(|(next, _)| next == types.assign);
                 }
                 if prev != Some(types.dot_) && self.needs_value(id) {

@@ -142,12 +142,6 @@ pub(crate) unsafe fn kept_names(types: &Core, scope: DyadPtr) -> Vec<DyadPtr> {
         .collect()
 }
 
-/// The gates a `{ … }`'s name hands on to its field in the value, and so part of the `{ … }`'s
-/// shape.
-pub(crate) fn entry_gates(types: &Core) -> [DyadPtr; 3] {
-    [types.mut_, types.immut_, types.pub_]
-}
-
 /// The record `line` makes a value of, when `line` makes a `{ … }`'s value.
 ///
 /// # Safety

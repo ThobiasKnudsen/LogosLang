@@ -38,7 +38,7 @@ pub struct ThisIds {
     pub load: DyadPtr,
     pub load_leaf: DyadPtr,
     /// The mark a field read carries when the type's own `parse` built it: the constructor's
-    /// fill of its fresh node, which `immut` alone vetoes.
+    /// fill of its fresh node, which needs no `mut`.
     pub fill: DyadPtr,
     /// A write there: `[value, k, v, type, owner, binding, op]`, a node of `type` holding v's
     /// value.
@@ -528,10 +528,6 @@ unsafe fn named_slot(
     };
     if !binding.is_null() && !super::gate::grants_read(rt.types(), binding, *ops.add(2)) {
         let e = crate::parse::ParseError::NotPub(Box::new(name.to_string()));
-        return Err(RunError::Parse(Box::new(e)));
-    }
-    if !binding.is_null() && crate::binding::Binding::has_gate(binding, rt.types().immut_) {
-        let e = crate::parse::ParseError::Immutable(Box::new(name.to_string()));
         return Err(RunError::Parse(Box::new(e)));
     }
     let field = super::array::items(meta::record_fields_of(ty))[k];

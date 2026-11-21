@@ -164,8 +164,7 @@ pub enum ParseError {
     /// literals are uncommitted‹).
     /// Carries the literal's spelling.
     AssignToLiteral(Box<String>),
-    /// A gate word (`pub`) not followed by a declaration: a gate fills a
-    /// declare node's gate slot.
+    /// A gate word (`pub`) not followed by a declaration, whose name's value it gates.
     GateNeedsDeclaration,
     /// A declaration was gated twice (`pub pub x := …`).
     DoubleGate,
@@ -173,8 +172,6 @@ pub enum ParseError {
     NotMutable(Box<String>),
     /// `x:lex_rank = …` written outside the scope that declares `x`; carries the name.
     LexOutsideScope(Box<String>),
-    /// A write into a name or field declared `immut`; carries the name.
-    Immutable(Box<String>),
     /// A read of a name declared `T ?` before a sibling write filled it; carries the name.
     Unwritten(Box<String>),
     /// An `import` was not followed by the `file «…»` it reads.

@@ -1122,7 +1122,7 @@ impl<'a> Parser<'a> {
             // is a name of a `{ … }` that holds no bytes, which reads through its value.
             // SAFETY: as above; a binding's scope is a scope node from the store.
             let is_static = unsafe {
-                Binding::has_gate(binding, self.types.static_)
+                crate::identities::gate::name_has(self.types, binding, self.types.static_)
                     || !fields.is_storage()
                         && !fields.scope.is_null()
                         && crate::identities::instance::kept_line(self.types, fields.scope)

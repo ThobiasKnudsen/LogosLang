@@ -30,6 +30,7 @@
 //!                                 none), then arity × `dyad@` role-name strings; a token's
 //!                                 roles name the sides it stands between, never a slot
 //!              RECORD            see `RECORD_TAG`
+//!              GATE              see `GATE_TAG`
 //!            a mint's is its origin's, no op or output slot, then `[output_type, op, key]`,
 //!            the words its nodes share and the array of field types it was made for
 //! ```
@@ -70,6 +71,9 @@ pub(crate) const ARRAY_TAG: u8 = 22;
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Values are dyad views: the value IS the viewed node's address.
 pub(crate) const DYAD_TAG: u8 = 24;
+/// A gate mint's record: payload `[count: u8]`, then that many gate words, each a `dyad@`, in
+/// the one order a set of gates is kept in. A node typed by a gate mint is a gate node.
+pub(crate) const GATE_TAG: u8 = 25;
 
 const ASSOC_OFF: usize = 1;
 /// The parse_rank.
@@ -274,6 +278,26 @@ pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
     let mut blob = header(ADDR_TAG, Assoc::Left, prec::INERT).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
+}
+
+pub(crate) fn gate_record(store: &mut Store, gates: &[DyadPtr]) -> *mut u8 {
+    let mut blob = header(GATE_TAG, Assoc::Left, prec::INERT).to_vec();
+    blob.push(u8::try_from(gates.len()).expect("a gate mint holds a handful of gate words"));
+    for &gate in gates {
+        blob.extend_from_slice(&(gate as usize).to_ne_bytes());
+    }
+    store.alloc_bytes(&blob)
+}
+
+/// The gate words of the gate mint `id`, in the order its record keeps.
+///
+/// # Safety
+/// `id` must carry a `GATE_TAG` record.
+pub(crate) unsafe fn gates_of(id: DyadPtr) -> impl Iterator<Item = DyadPtr> {
+    let payload = dyad::head(id).add(PAYLOAD_OFF);
+    let words = payload.add(1) as *const DyadPtr;
+    // SAFETY: the record holds `count` words after its count byte.
+    (0..usize::from(*payload)).map(move |k| unsafe { words.add(k).read_unaligned() })
 }
 
 /// `bindings` is the array of the fields' bindings, in the order of `fields`.
