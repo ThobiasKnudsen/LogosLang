@@ -539,8 +539,8 @@ fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
     )
 }
 
-/// A postfix operator `name` that mints as `array` does: `get_mint` builds one type per type `t`
-/// of the operand to its left, whose field `a` holds the operand, kept by `type_mint`.
+/// A postfix operator `name` that mints through a function of its own: `get_mint` builds one type
+/// per type `t` of the operand to its left, whose field `a` holds the operand, kept by `type_mint`.
 fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
     format!(
         "{name} := type ( \
