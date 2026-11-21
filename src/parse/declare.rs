@@ -1086,7 +1086,7 @@ impl<'a> Parser<'a> {
 
     /// A new name, field or parameter written without its type, the checked error where it is
     /// written (DESIGN ›`?` is one value, the unknown; `key := T ?` declares without a value‹
-    /// [[R103]]); a field's error also names a function that builds the mints.
+    /// [[R103]]); a field's error also names the code that builds the mints.
     pub(super) fn untyped(&mut self, at: usize, field: bool) -> ParseError {
         self.cx.pos = at;
         if field {
