@@ -105,9 +105,9 @@ impl<'a> Parser<'a> {
     }
 
     /// The `file «…»` written after `logos` or `import`, read as Logos: the file reached, and the
-    /// section it loaded into. Its address is plain text, so it runs now, once per run, inside a
-    /// body too ([`Self::runs_in_pass`]); what stands before it runs first where the pass runs its
-    /// line, and in a body only the lines before the body's.
+    /// section it loaded into. Its address, the one thing it reads, is plain text, so it always
+    /// runs in the pass, once per run, inside a body too; what stands before it runs first where
+    /// the pass runs its line, and in a body only the lines before the body's.
     fn read_logos_after(
         &mut self,
         tape: &mut ParsingTape,

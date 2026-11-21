@@ -2348,9 +2348,9 @@ impl<'a> Parser<'a> {
     /// [[R288]]): outside a body it does, and inside one when everything it reads is known while
     /// the program is parsed, each of `reads` a type, a literal or the no value a call through a
     /// type works on; a part that reads a parameter or a local waits for the run. A file read as
-    /// Logos reads only its address, written as plain text, so it runs wherever it stands.
-    /// `immediate` and a `static` initializer ask for the pass where the parse would not need it
-    /// ([`Self::parse_in_pass`]).
+    /// Logos reads only its address, written as plain text, so it always runs in the pass and asks
+    /// nothing here. `immediate` and a `static` initializer ask for the pass where the parse would
+    /// not need it ([`Self::parse_in_pass`]).
     pub(super) fn runs_in_pass(&self, reads: &[DyadPtr]) -> bool {
         self.cx.runtime_depth == 0
             // SAFETY: each read is a reduced dyad from the store.
