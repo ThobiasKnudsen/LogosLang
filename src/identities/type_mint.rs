@@ -156,7 +156,7 @@ pub(crate) unsafe fn mint_of(
 
 /// As [`mint_of`] before `type_mint` stands, which is built from mints itself: the store lists
 /// each one, and [`keep_early`] hands the list over. `former` is null for `@`, whose identity is
-/// registered after the first pointer types are made: stand-in for #442's bootstrap.
+/// registered after the first pointer types are made: stand-in for #466.
 ///
 /// # Safety
 /// As [`mint_of`].
@@ -196,10 +196,16 @@ struct Keeper<'a> {
     rt: Runtime<'a>,
 }
 
+impl Drop for Keeper<'_> {
+    fn drop(&mut self) {
+        self.rt.leave_stack();
+    }
+}
+
 impl<'a> Keeper<'a> {
     fn over(store: &'a mut Store, types: &'a Core) -> Self {
         assert!(types.type_mint.is_read(), "a type is minted before `type_mint` stands");
-        Keeper { rt: Runtime::new(types, store) }
+        Keeper { rt: Runtime::for_a_call(types, store) }
     }
 
     /// `f`, a function of `type_mint`, called through the type as `type_mint.f(…)` is: the value

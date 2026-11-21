@@ -12102,6 +12102,35 @@ fn an_operation_s_mint_and_a_map_s_type_are_one_per_key_on_both_tiers() {
     assert_runs(&cases);
 }
 
+/// A key's mint is made once: `type_mint` refuses a second `keep` at a place, a key of the seed's
+/// own among them, so no type already handed out is replaced ([[R383]]). A place nothing is kept
+/// at yet takes a `keep` from any program.
+#[test]
+fn a_place_keeps_one_mint_on_both_tiers() {
+    let refused = "a mint is already kept at this place";
+    let place = "p := type_mint.step(type_mint.step(0, i32), i64)";
+    let (code, stdout, stderr) = run_line(&format!(
+        "{place}, type_mint.keep(p, i32), print «{{type_mint.kept(p) == i32}}», \
+         type_mint.keep(p, i64)"
+    ));
+    assert_eq!((code, stdout.as_str()), (Some(1), "true\n"), "stderr: {stderr}");
+    assert!(stderr.contains(refused), "stderr: {stderr}");
+    for src in [
+        format!(
+            "g := fn () -> bool ( {place}, type_mint.keep(p, i32), type_mint.keep(p, i64), true ), \
+             g.compile(), g()"
+        ),
+        "x := i32 1, y := x + x, \
+         p := type_mint.step(type_mint.step(type_mint.step(0, +), i32), i32), \
+         type_mint.keep(p, f64)"
+            .to_string(),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "src: {src}, stderr: {stderr}");
+        assert!(stderr.contains(refused), "src: {src}, stderr: {stderr}");
+    }
+}
+
 /// R383's rules (2) and (3): a writable `static` is never shared, so a type that holds one is
 /// found by no other build, and a body is the same only where it is written, so one `type ( … )`
 /// built again is one type and the same text written twice is two. A `static` that holds a float

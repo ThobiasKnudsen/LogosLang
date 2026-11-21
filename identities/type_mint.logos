@@ -4,7 +4,8 @@
 # and the walk starts at place 0 with the former as its first argument. A name in the key, as a
 # field's, is walked by its spelling, with `step_name`, and a whole number, as a rank or a value a
 # `static` holds, with `step_word`. `kept` gives the mint kept at a place, or `?`, and `keep` keeps
-# one there. The former builds its own mint where none is kept
+# one there, once: a place that holds a mint refuses another. The former builds its own mint where
+# none is kept
 # (›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
 # gives it its identity‹ [[R383]]).
 
@@ -59,5 +60,8 @@ pub type_mint := type (
     ),
 
     pub static kept := fn (at := u64 ?) -> type ( mints[at] ),
-    pub static keep := fn (at := u64 ?, made := type ?) -> void ( mints[at] = made )
+    pub static keep := fn (at := u64 ?, made := type ?) -> void (
+        if mints[at] != ? error «a mint is already kept at this place: a key's mint is made once»,
+        mints[at] = made
+    )
 )

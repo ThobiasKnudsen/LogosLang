@@ -77,8 +77,10 @@ pub struct Store {
     /// Jumps into machine code in flight: a compiled frame is live only under one.
     live_jumps: u32,
     /// The mints made before `type_mint` stands to keep them, each after its former and its
-    /// key: stand-in for #442's bootstrap.
+    /// key: stand-in for #466.
     early_mints: Vec<(DyadPtr, Box<[DyadPtr]>, DyadPtr)>,
+    /// The frame chunk a runtime made for one call into Logos left for the next such runtime.
+    frame_chunk: Option<Box<[u8]>>,
 }
 
 /// The store's size, counted by hand: malloc's own per-block overhead is left out.
@@ -144,7 +146,16 @@ impl Store {
             retired: Vec::new(),
             live_jumps: 0,
             early_mints: Vec::new(),
+            frame_chunk: None,
         }
+    }
+
+    pub(crate) fn take_frame_chunk(&mut self) -> Option<Box<[u8]>> {
+        self.frame_chunk.take()
+    }
+
+    pub(crate) fn keep_frame_chunk(&mut self, chunk: Box<[u8]>) {
+        self.frame_chunk = Some(chunk);
     }
 
     /// The mint made under `former` and `key` before `type_mint` stood.
