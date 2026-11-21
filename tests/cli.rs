@@ -9720,7 +9720,7 @@ fn a_result_whose_type_fills_free_hands_on_what_it_makes_and_a_copy_of_what_it_b
                     f.compile(), f()";
     let (code, stdout, stderr) = run_line(compiled);
     assert_eq!((code, stdout.trim()), (Some(0), "10"), "stderr: {stderr}");
-    let through = "p := alloc 1 of bag(1), g := fn (q := @bag ?) -> bag ( q@ ), \
+    let through = "p := alloc 1 of mut bag(1), g := fn (q := @ mut bag ?) -> bag ( q@ ), \
                    print «{g(p).n}», g(p).n = 5, print «{p@.n}», free p@, free p";
     let (code, stdout, stderr) = run_line(&format!("{RECORD}, {through}"));
     assert_eq!((code, stdout.as_str()), (Some(0), "1\n5\nfreed 5\n"), "stderr: {stderr}");

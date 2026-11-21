@@ -3463,9 +3463,10 @@ mod tests {
             parse_err(&format!("{u}q := alloc 1 of i32 7,\nv.p = q")),
             ParseError::NonOwningIntoOwning
         );
-        let (v, live) =
-            run("c := alloc 1 of own @i32 ?,\nc@ = alloc 1 of i32 4,\nc@ = alloc 1 of i32 5,\n\
-             x := c@@,\nfree c@,\nfree c,\nx");
+        let (v, live) = run(
+            "c := alloc 1 of mut own @i32 ?,\nc@ = alloc 1 of i32 4,\nc@ = alloc 1 of i32 5,\n\
+             x := c@@,\nfree c@,\nfree c,\nx",
+        );
         assert_eq!((v, live), (5, 0));
     }
 
