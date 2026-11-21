@@ -88,13 +88,21 @@ fn instances_constructor(
     out
 }
 
-/// The call a function value runs for the bracket to its right.
-fn application(
+/// The constructor a function's signature gives its values, the call defaults' `parse`: a
+/// function before a bracket is called with it (›`fn` is not a primitive: `fn (…) -> T` is a
+/// function's type, and its body the value‹ [[R199]]). The signature standing there itself, read
+/// as `f.input`, makes a value of its parameters, as a record type does.
+pub(crate) fn call_parse(
     p: &mut Parser,
     id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    p.construct_application(id, tape, Parser::build_fn_call)
+    // SAFETY: `id` is a resolved dyad from the store.
+    let build = match unsafe { p.identity_head(id) } {
+        Some(_) => Parser::build_instance,
+        None => Parser::build_fn_call,
+    };
+    p.construct_application(id, tape, build)
 }
 
 /// The constructor `type` gives a record type whose body fills no `parse`: `T (…)` makes a value
@@ -456,16 +464,32 @@ impl<'a> Parser<'a> {
     /// `parse` of the type of the value standing in the cell (›The constructors drive the tape‹
     /// [[R211]], ›No climbing: a type without a parse leaves its values inert‹ [[R214]]).
     pub(super) fn ctor_of(&self, id: DyadPtr) -> Option<ConstructFn> {
-        // SAFETY: `id` is a resolved dyad from the store.
-        unsafe {
-            if !id.is_null() && dyad::ty(id) == self.types.fn_type {
-                return Some(application);
-            }
-            if self.is_awake_instance(id) {
-                return Some(instances_constructor);
-            }
-            self.construct_of(self.identity_head(id)?)
+        if self.is_awake_instance(id) {
+            return Some(instances_constructor);
         }
+        // SAFETY: `id` is a resolved dyad from the store.
+        self.construct_of(unsafe { self.dispatch_record(id) }?)
+    }
+
+    /// The record whose slots decide a cell: an identity's own, or a function's signature.
+    ///
+    /// # Safety
+    /// `id` must be null or a dyad from the store.
+    unsafe fn dispatch_record(&self, id: DyadPtr) -> Option<DyadPtr> {
+        self.identity_head(id).or_else(|| self.signature_of(id))
+    }
+
+    /// A function value's signature, the record of its parameters, which the value holds where
+    /// its type would; stand-in for #474.
+    ///
+    /// # Safety
+    /// `id` must be null or a dyad from the store.
+    unsafe fn signature_of(&self, id: DyadPtr) -> Option<DyadPtr> {
+        if id.is_null() || dyad::ty(id) != self.types.fn_type {
+            return None;
+        }
+        let record = *(dyad::value(id) as *const DyadPtr).add(super::FN_INPUT);
+        (!record.is_null()).then_some(record)
     }
 
     /// `id` when it is an identity carrying a record, or `None` for null, a
@@ -524,8 +548,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The place of `id` on the one axis (its record's parse_rank), or
-    /// `prec::APPLY` for a cell that carries no record.
+    /// The place of `id` on the one axis, its record's `parse_rank`, or `prec::INERT` for a cell
+    /// that wakes nothing.
     pub(super) fn precedence_of_cell(&self, id: DyadPtr) -> f64 {
         if let Some(t) = self.awake_type(id) {
             // SAFETY: `awake_type` found `t` a record type.
@@ -533,9 +557,9 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `id` is null or a resolved dyad from the store.
         unsafe {
-            match self.identity_head(id) {
+            match self.dispatch_record(id) {
                 Some(id) => crate::identities::meta::parse_rank_of(id),
-                None => crate::identities::meta::prec::APPLY,
+                None => crate::identities::meta::prec::INERT,
             }
         }
     }
@@ -548,7 +572,7 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `id` is null or a resolved dyad from the store.
         unsafe {
-            match self.identity_head(id) {
+            match self.dispatch_record(id) {
                 Some(id) => crate::identities::meta::assoc_of(id),
                 None => Assoc::Left,
             }
