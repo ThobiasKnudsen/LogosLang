@@ -689,7 +689,7 @@ impl<'a> Parser<'a> {
         let own = !member.is_null()
             && found.matched == STATIC_FIELD.len()
             && Binding::read(member).scope == body
-            && Binding::has_gate(member, self.types.static_);
+            && crate::identities::gate::name_has(self.types, member, self.types.static_);
         if !own {
             return None;
         }
@@ -914,11 +914,13 @@ impl<'a> Parser<'a> {
         unsafe {
             let fields = crate::identities::meta::record_fields_of(input);
             for (&param, &binding) in crate::identities::array::items(fields).iter().zip(params) {
-                // Sized by the rule the argument block lays them out by (`by_copy::slots`).
+                // Sized by the rule the argument block lays them out by (`by_copy::slots`). The
+                // name's bytes are of the parameter's type as declared, its gate node with it.
                 let logos = crate::identities::hole::type_in(param);
                 let width = crate::identities::by_copy::place_width(self.types, logos);
+                let gated = crate::identities::hole::gated_type_in(param);
                 let frame = self.cx.frames.last_mut().expect("pushed above");
-                Binding::lay_out(binding, logos, node, frame.size);
+                Binding::lay_out(binding, gated, node, frame.size);
                 frame.size += width;
             }
         }

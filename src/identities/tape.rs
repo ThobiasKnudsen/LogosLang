@@ -97,7 +97,7 @@ pub(super) fn register(
     scope_ty: DyadPtr,
     array_ty: DyadPtr,
     void_ty: DyadPtr,
-    pub_: DyadPtr,
+    pub_mint: DyadPtr,
 ) -> TapeIds {
     let scope = super::scope::mint(cx.store, scope_ty, std::ptr::null_mut());
     // SAFETY: `void_ty` is the type node `Core::build` minted.
@@ -164,9 +164,9 @@ pub(super) fn register(
         ("remove", remove),
         ("recenter", recenter),
     ] {
-        let binding = cx.declare_in(scope, name, id);
-        // SAFETY: `binding` was just minted by `declare_in`.
-        unsafe { crate::binding::Binding::add_gate(cx.store, array_ty, binding, pub_) };
+        // SAFETY: `pub_mint` is a gate mint and `id` an identity just built.
+        let gated = unsafe { super::gate::over_node(cx.store, pub_mint, id) };
+        cx.declare_in(scope, name, gated);
     }
     TapeIds {
         parsing_tape,

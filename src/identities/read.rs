@@ -139,7 +139,11 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
         _ => {
             debug_assert!(matches!(
                 kind,
-                meta::ARRAY_TAG | meta::CALLABLE_TAG | meta::CONVENTION_TAG | meta::TOKEN_TAG
+                meta::ARRAY_TAG
+                    | meta::CALLABLE_TAG
+                    | meta::CONVENTION_TAG
+                    | meta::TOKEN_TAG
+                    | meta::GATE_TAG
             ));
             Read::Opaque
         }
@@ -718,10 +722,10 @@ mod tests {
             assert_eq!(core.type_of(field), core.i32_);
             // The binding type lays its own fields out, `frame` and `offset` among them.
             let fields = array::items(meta::record_fields_of(core.binding_));
-            assert_eq!(fields.len(), 9);
+            assert_eq!(fields.len(), 8);
             let mut scope = ScopeStack::new();
             scope.push(meta::record_scope_of(core.binding_));
-            for (name, at) in [("dyad", 0), ("lex_rank", 48), ("frame", 56), ("offset", 64)] {
+            for (name, at) in [("dyad", 0), ("lex_rank", 40), ("frame", 48), ("offset", 56)] {
                 let r = scope.resolve(&trie, name).unwrap();
                 assert_eq!(Binding::read(r.binding).offset, at, "{name}");
                 assert_eq!(Binding::read(r.binding).frame, core.binding_, "{name}");

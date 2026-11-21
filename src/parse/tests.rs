@@ -40,9 +40,19 @@ fn f(binding: DyadPtr) -> Binding {
     unsafe { Binding::read(binding) }
 }
 
-/// A distinct sentinel address per tag, never dereferenced.
+/// A distinct node per tag, the same one each time a test asks: a null type word and the tag,
+/// leaked, since a binding's read looks at the node its `dyad` word points at.
 fn dyad(tag: usize) -> DyadPtr {
-    std::ptr::without_provenance_mut(tag)
+    thread_local! {
+        static NODES: std::cell::RefCell<std::collections::HashMap<usize, usize>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    NODES.with(|nodes| {
+        *nodes
+            .borrow_mut()
+            .entry(tag)
+            .or_insert_with(|| Box::into_raw(Box::new([0usize, tag])) as usize)
+    }) as DyadPtr
 }
 
 fn dyad_cells(tags: &[usize]) -> Vec<Cell> {

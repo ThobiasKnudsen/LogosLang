@@ -467,7 +467,7 @@ pub(crate) unsafe fn only_borrows(types: &Core, holder: DyadPtr) -> bool {
     if Binding::read(holder).is_field() {
         !super::copy::field_needs_owner(types, holder)
     } else {
-        !Binding::has_gate(holder, types.own_)
+        !Binding::read(holder).holds
     }
 }
 
@@ -686,9 +686,7 @@ pub(crate) unsafe fn param_holds(types: &Core, callee: DyadPtr, i: usize) -> boo
     }
     let input = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_INPUT);
     let bindings = super::array::items(meta::record_field_bindings_of(input));
-    bindings
-        .get(i)
-        .is_some_and(|&b| !b.is_null() && !crate::binding::Binding::has_gate(b, types.mut_))
+    bindings.get(i).is_some_and(|&b| !b.is_null() && !super::gate::name_has(types, b, types.mut_))
 }
 
 /// An argument whose value the call holds, made or moved there: `[value, op, output_type]`.
