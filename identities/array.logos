@@ -72,9 +72,11 @@ pub array := type (
     static parse_rank = fn.parse_rank,
     static associativity = right,
     static parse = (
+        # With nothing to its right it touches nothing, and so stands as its own value
+        # (›`parse_rank` and `associativity` are data, and the only triggers‹ [[R215]]).
         if tape[1] == ? (
             tape.is_constructed[0] = true
-        ) else (
+        ) else if tape[1].type != void (
             if tape[1].type != type
                 error «id after array is not a type»,
             t := tape[1],
