@@ -88,12 +88,13 @@ fn instances_constructor(
     out
 }
 
+/// The call a function value runs for the bracket to its right.
 fn application(
     p: &mut Parser,
     id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    p.construct_application(id, tape)
+    p.construct_application(id, tape, Parser::build_fn_call)
 }
 
 /// The constructor `type` gives a record type whose body fills no `parse`: `T (…)` makes a value
@@ -105,7 +106,7 @@ pub(crate) fn derived_parse(
     id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    p.construct_application(id, tape)
+    p.construct_application(id, tape, Parser::build_instance)
 }
 
 impl<'a> Parser<'a> {
@@ -804,14 +805,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The constructor a `fn`, a record type, or a numeric type runs for the
-    /// bracket to its right (DESIGN ›`X (…)` is one spelling, and X's
-    /// constructor decides what the bracket is‹); without a `(` directly ahead
-    /// the identity stands as its own value.
+    /// The bracket to the right of `id`, read and handed to `build` with `id`: what a function
+    /// value's call and a record type's derived constructor share (›`X (…)` is one spelling, and
+    /// X's constructor decides what the bracket is‹ [[R270]]); without a `(` directly ahead the
+    /// identity stands as its own value.
     pub(crate) fn construct_application(
         &mut self,
         id: DyadPtr,
         tape: &mut ParsingTape,
+        build: unsafe fn(&mut Self, DyadPtr, &[DyadPtr]) -> Result<DyadPtr, ParseError>,
     ) -> Result<Constructed, ParseError> {
         // A type still being defined has no record yet: its name stands as itself, the
         // bracket to its right not in reach.
@@ -838,7 +840,7 @@ impl<'a> Parser<'a> {
                 self.run_first(tape, cell.start)?;
             }
             // SAFETY: `id` is the resolved callee and `args` reduced dyads.
-            let node = unsafe { self.build_call(id, &args) }?;
+            let node = unsafe { build(self, id, &args) }?;
             tape.remove(1);
             tape.place(node);
             return Ok(Constructed::Gave);
@@ -885,6 +887,33 @@ impl<'a> Parser<'a> {
         let mut tape = ParsingTape::new();
         // SAFETY: `self.cx.source` outlives the parse; `id` came from the index.
         tape.push(unsafe { Cell::lexed(id, self.cx.source, start, len) });
+        match construct(self, id, &mut tape)? {
+            Constructed::Placed | Constructed::Gave => {
+                Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad))
+            }
+            Constructed::Decline => Ok(None),
+        }
+    }
+
+    /// `id`'s constructor over the bracket a reader already read after `id`'s spelling, on a fresh
+    /// tape of the two: `cell` holds `id` as written, `start` and `len` its spelling. `Ok(None)`
+    /// where `id` has no constructor or it declined.
+    pub(super) fn construct_applied(
+        &mut self,
+        id: DyadPtr,
+        cell: DyadPtr,
+        (start, len): (usize, usize),
+        bracket: Cell,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        let Some(construct) = self.ctor_of(id) else {
+            return Ok(None);
+        };
+        let mut tape = ParsingTape::new();
+        // SAFETY: `self.cx.source` outlives the parse; `cell` is a dyad from the store.
+        tape.push(unsafe { Cell::lexed(cell, self.cx.source, start, len) });
+        let own = tape.mark();
+        tape.push(bracket);
+        tape.restore(own);
         match construct(self, id, &mut tape)? {
             Constructed::Placed | Constructed::Gave => {
                 Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad))
