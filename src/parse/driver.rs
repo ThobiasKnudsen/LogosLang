@@ -624,7 +624,9 @@ impl<'a> Parser<'a> {
             let reparsed =
                 built && self.awake_type(cell.dyad) == Some(unsafe { dyad::ty(cell.dyad) });
             let gave = matches!(outcome, Constructed::Gave);
-            if !same && !reparsed && !cell.bracket && self.wakes(cell.dyad, gave) {
+            // A value a gate word read whole has had its turn.
+            let gated = !gave && !cell.gates.is_null();
+            if !same && !reparsed && !gated && !cell.bracket && self.wakes(cell.dyad, gave) {
                 tape.set_constructed(0, false);
             }
             self.note_made(cell.dyad);
@@ -646,9 +648,11 @@ impl<'a> Parser<'a> {
             self.cx.pos = cell.start;
             return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));
         }
-        // The identity stands as its own value: the use of its name, its binding.
+        // The identity stands as its own value: the use of its name, its binding. A type read
+        // with its gates, `x.type`, stands with them.
         let value = self.stand_as_value(tape, id);
         tape.place(value);
+        tape.at_mut(0).expect("placed above").gates = cell.gates;
         Ok(())
     }
 

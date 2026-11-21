@@ -11,12 +11,12 @@
 error.unconstructed := «a cell is still unconstructed where its segment ends»
 
 ( := type (
-    static parse_rank = …
-    static associativity = left
-    static parse = (
+    parse_rank = …
+    associativity = left
+    parse = (
         body := array @dyad ()
-        mut first := 1
-        mut i := 1
+        first := mut 1
+        i := mut 1
         while true (
             cell := tape[i]
             if cell == lex «)»[0] or cell == lex «,»[0] (

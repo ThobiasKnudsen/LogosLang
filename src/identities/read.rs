@@ -648,10 +648,10 @@ mod tests {
     fn a_node_of_a_run_type_is_a_call_of_its_function_and_a_leafless_record_is_named() {
         let (mut store, _trie, core, exprs) = parse_seq(
             "pw := type (\n\
-                 a := i32 ?, b := i32 ?, static output_type := type i32, static run = ( a ),\n\
-                 static parse_rank = *.parse_rank + 1,\n\
-                 static associativity = right,\n\
-                 static parse = (\n\
+                 a := i32 ?, b := i32 ?, output_type := static type i32, run = ( a ),\n\
+                 parse_rank = *.parse_rank + 1,\n\
+                 associativity = right,\n\
+                 parse = (\n\
                      tape[0].type = pw, tape[0].a = tape[-1],\n\
                      tape[0].b = tape[1],\n\
                      tape.is_constructed[0] = true,\n\
@@ -765,8 +765,8 @@ mod tests {
     #[test]
     fn a_place_is_a_name_a_field_path_a_dereference_a_cell_or_a_call_that_ends_in_one() {
         let (mut store, _trie, core, exprs) = parse_seq(
-            "point := type ( pub x := i32 ?, y := i32 ? ),\n\
-             mut v := point (1, 2),\n\
+            "point := type ( x := pub i32 ?, y := i32 ? ),\n\
+             v := mut point (1, 2),\n\
              x := i32 1,\n\
              a := &x,\n\
              get := fn (p := @i32 ?) -> i32 ( p@ ),\n\
@@ -847,7 +847,7 @@ mod tests {
         }
         let (_store, _trie, core, exprs) = parse_seq(
             "w := type ( x := i64 ?, y := i64 ? ),\n\
-             c := type ( a := i32 ?, static run = ( a ) )",
+             c := type ( a := i32 ?, run = ( a ) )",
         );
         let types = &core;
         // SAFETY: the declared identities were just parsed.

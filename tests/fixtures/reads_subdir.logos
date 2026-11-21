@@ -1,4 +1,4 @@
 # Read by the command line, this file roots the project at its folder, which the file it reads
 # keeps.
 import file «subdir/reads_up.logos»,
-pub top := up + 1
+top := pub up + 1

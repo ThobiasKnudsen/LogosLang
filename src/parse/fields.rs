@@ -703,6 +703,18 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
             if name == "type" {
+                // A name's type is read with its gate node, a field's too (›`x.type` reads the
+                // type word of the node a name or an expression stands for‹ [[R279]]).
+                let named = match left.target.1 {
+                    field if field.is_null() => self.cx.member_root,
+                    field => field,
+                };
+                if !named.is_null() {
+                    let word = crate::identities::gate::word_of_name(self.types, named);
+                    if crate::identities::gate::is_node(word) {
+                        self.cx.member_gates = dyad::ty(word);
+                    }
+                }
                 return self.type_read(lhs).map(|t| (t, 0));
             }
             // A member the read of a tape node answers where it is written; any other one the
@@ -1129,6 +1141,7 @@ impl<'a> Parser<'a> {
         });
         self.cx.member_root = std::ptr::null_mut();
         let path = std::mem::take(&mut self.cx.member_path);
+        let gates = std::mem::replace(&mut self.cx.member_gates, std::ptr::null_mut());
         let (node, consumed) = access?;
         let end = tape.at(1 + consumed as isize).map_or(nstart + nlen, Cell::end);
         for _ in 0..(1 + consumed) {
@@ -1144,6 +1157,7 @@ impl<'a> Parser<'a> {
         tape.span_center(left.start, end);
         let cell = tape.at_mut(0).expect("placed above");
         cell.path = path;
+        cell.gates = gates;
         if plain && !through {
             cell.target = reached;
             cell.root = path_root;
@@ -1395,12 +1409,32 @@ impl<'a> Parser<'a> {
         };
         // SAFETY: `node` is a resolved dyad from the store.
         let addr = unsafe {
-            use crate::identities::read::place_node;
+            use crate::identities::read::{place_node, read_kind, Read};
             let types = self.types;
             if types.is_hole(node) {
                 return Err(ParseError::BadAddressOf);
             }
             match place_node(self.rt.store, types, node) {
+                // A name whose type is known only when the line runs holds its dyad then, and
+                // hands out that dyad's address as a name whose type the pass knows does
+                // ([[R377]]): the eight bytes of its place, read as an `@dyad`.
+                Some(place)
+                    if named
+                        && types.is_storage(place)
+                        && read_kind(types, place) == Read::Container(types.type_) =>
+                {
+                    self.check_capture(node)?;
+                    let at_dyad = crate::identities::pointer::at_dyad(self.rt.store, types);
+                    let held = crate::identities::pointer::build_address(
+                        self.rt.store,
+                        types,
+                        types.addr_,
+                        place,
+                        std::ptr::null_mut(),
+                        at_dyad,
+                    );
+                    crate::identities::pointer::build_deref(self.rt.store, types, held, at_dyad, 0)
+                }
                 Some(place) if types.is_storage(place) || dyad::ty(place) == types.deref_ => {
                     if !has_address(types, place) {
                         return Err(ParseError::BadAddressOf);
