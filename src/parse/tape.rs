@@ -38,20 +38,16 @@ pub struct Cell {
     pub root: DyadPtr,
     /// The valueless place `?` built, no declaration having taken it yet.
     pub hole: bool,
-    /// A hole `own` marked over a type whose body fills `free`: the name or field declared
-    /// with it owns the node written into it.
-    pub owning: bool,
     /// The value `type` made of what stood after it, `type i32` or `type ( … )`: a type held as a
     /// value of `type`, where any other cell that gives a type is that type with nothing after it.
     pub type_value: bool,
 }
 
 impl Cell {
-    const NO_FACTS: (DyadPtr, (DyadPtr, DyadPtr), DyadPtr, bool, bool, bool) = (
+    const NO_FACTS: (DyadPtr, (DyadPtr, DyadPtr), DyadPtr, bool, bool) = (
         std::ptr::null_mut(),
         (std::ptr::null_mut(), std::ptr::null_mut()),
         std::ptr::null_mut(),
-        false,
         false,
         false,
     );
@@ -61,13 +57,12 @@ impl Cell {
         self.target = from.target;
         self.root = from.root;
         self.hole = from.hole;
-        self.owning = from.owning;
         self.type_value = from.type_value;
     }
 
     /// The cell placed over `dyad`, its facts cleared.
     fn over(&mut self, dyad: DyadPtr) {
-        let (path, target, root, hole, owning, type_value) = Self::NO_FACTS;
+        let (path, target, root, hole, type_value) = Self::NO_FACTS;
         self.dyad = dyad;
         self.constructed = true;
         self.bracket = false;
@@ -75,7 +70,6 @@ impl Cell {
         self.target = target;
         self.root = root;
         self.hole = hole;
-        self.owning = owning;
         self.type_value = type_value;
     }
 }
@@ -85,7 +79,7 @@ impl Cell {
     /// `text` must outlive every read of the cell's spelling; `dyad` must be a
     /// dyad from the store.
     pub unsafe fn lexed(dyad: DyadPtr, text: &str, start: usize, len: usize) -> Self {
-        let (path, target, root, hole, owning, type_value) = Self::NO_FACTS;
+        let (path, target, root, hole, type_value) = Self::NO_FACTS;
         Cell {
             dyad,
             constructed: false,
@@ -97,7 +91,6 @@ impl Cell {
             target,
             root,
             hole,
-            owning,
             type_value,
         }
     }
@@ -105,7 +98,7 @@ impl Cell {
     /// # Safety
     /// `dyad` must be null or a dyad from the store.
     pub unsafe fn built(dyad: DyadPtr) -> Self {
-        let (path, target, root, hole, owning, type_value) = Self::NO_FACTS;
+        let (path, target, root, hole, type_value) = Self::NO_FACTS;
         Cell {
             dyad,
             constructed: true,
@@ -117,7 +110,6 @@ impl Cell {
             target,
             root,
             hole,
-            owning,
             type_value,
         }
     }

@@ -800,7 +800,7 @@ fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
         ),
         // Each call returns its own array: the second does not overwrite the first.
         (
-            "t := type array i32, g := fn (x := i32 ?) -> own t ( array i32 [x, x + 1] )",
+            "t := type array i32, g := fn (x := i32 ?) -> t ( array i32 [x, x + 1] )",
             "g",
             "a := g(5), b := g(9), a[0] + a[1] + b[1]",
             "21",
@@ -841,13 +841,13 @@ fn an_array_travels_as_its_address() {
         ("b := a, b.ptr@ = i32 9, b[0]", "9"),
         ("f := fn (p := array i32 ?) -> i32 ( p[0] = i32 9, 0 ), free (f(a)), a[0]", "9"),
         (
-            "t := type array i32, mk := fn (v := i32 ?) -> own t ( c := array i32 [v, 1], c ), \
+            "t := type array i32, mk := fn (v := i32 ?) -> t ( c := array i32 [v, 1], c ), \
              m := mk(3), n := mk(4), m[0] + n[0]",
             "7",
         ),
         // The return type stops before the body's bracket, so the mint takes no elements there.
-        ("mk := fn () -> own array i32 ( array i32 [1, 2] ), m := mk(), m[1]", "2"),
-        ("mk := fn (v := i32 ?) -> own array i32 ( array i32 [v, v + 1] ), m := mk(4), m[1]", "5"),
+        ("mk := fn () -> array i32 ( array i32 [1, 2] ), m := mk(), m[1]", "2"),
+        ("mk := fn (v := i32 ?) -> array i32 ( array i32 [v, v + 1] ), m := mk(4), m[1]", "5"),
         ("a", "dyad"),
         // One mint per element type, kept by the chooser across its calls.
         ("t := type array i32, u := type array i32, t == u", "true"),
@@ -873,7 +873,7 @@ fn an_array_travels_as_its_address() {
 #[test]
 fn a_call_result_takes_its_index_as_a_name_does() {
     let array = "import file «./identities/array.logos», a := array i32 [1, 2, 3], \
-                 mk := fn () -> own array i32 ( array i32 [1, 2] )";
+                 mk := fn () -> array i32 ( array i32 [1, 2] )";
     for (tail, printed) in [
         ("mk()[1]", "2"),
         ("mk().at(1)", "2"),
@@ -2534,7 +2534,7 @@ fn an_if_that_makes_a_dyad_in_one_arm_and_borrows_one_in_another_is_refused() {
         )
     };
     // A function's value lands in its result: a `dyad` read through into `-> i32` hands on a
-    // number, and into `-> bag` the bag its node held, which only `-> own bag` may.
+    // number, and into `-> bag` the bag its node held, which the caller then owns.
     for c in ["", "f.compile(), "] {
         for (tail, want) in [
             (
@@ -2548,12 +2548,12 @@ fn an_if_that_makes_a_dyad_in_one_arm_and_borrows_one_in_another_is_refused() {
             (format!("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) ), {c}f(i32 3)"), "3\n"),
             (format!("f := fn (m := i32 ?) -> i32 ( return dyad (i32, m) ), {c}f(i32 3)"), "3\n"),
             (
-                format!("f := fn () -> own bag ( dyad (bag, bag (6)) ), {c}x := f(), print «end»"),
+                format!("f := fn () -> bag ( dyad (bag, bag (6)) ), {c}x := f(), print «end»"),
                 "end\nfreed 6\n",
             ),
             (
                 format!(
-                    "f := fn () -> own bag ( return dyad (bag, bag (6)) ), {c}x := f(), print «end»"
+                    "f := fn () -> bag ( return dyad (bag, bag (6)) ), {c}x := f(), print «end»"
                 ),
                 "end\nfreed 6\n",
             ),
@@ -2564,15 +2564,10 @@ fn an_if_that_makes_a_dyad_in_one_arm_and_borrows_one_in_another_is_refused() {
             assert_eq!(stdout, want, "{src}");
         }
     }
-    for tail in [
-        "f := fn () -> bag ( dyad (bag, bag (6)) ), x := f(), print «end»",
-        "f := fn () -> bag ( return dyad (bag, bag (6)) ), x := f(), print «end»",
-    ] {
-        let src = format!("{bag}{tail}");
-        let (code, _, stderr) = run_line(&src);
-        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-        assert!(stderr.contains("hands on a value it made: write `-> own bag`"), "{src}: {stderr}");
-    }
+    let src = format!("{bag}f := fn () -> own bag ( dyad (bag, bag (6)) ), x := f()");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("`own` stands only before a pointer"), "{src}: {stderr}");
 }
 
 #[test]
@@ -5498,7 +5493,7 @@ fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_
     // An earlier argument with an end of its own stands in its place too, and the call that holds
     // it, or the line's end, ends it once.
     let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), \
-               mb := fn () -> own bag ( print «mb», bag(4) ), \
+               mb := fn () -> bag ( print «mb», bag(4) ), \
                kb := fn (a := bag ?, b := i32 ?, c := i32 ?) -> i32 ( b + c )";
     let gd = "gd := fn () -> dyad ( print «g», i32 2 )";
     let k2 = "k2 := fn (a := bag ?, b := i32 ?) -> i32 ( b )";
@@ -7678,7 +7673,7 @@ fn a_free_body_fills_the_values_free() {
     for (src, expect) in [
         ("x := type ( static free = 5 ), 1", "`static free = (…)`"),
         ("x := type ( mut p := own @i32 ? ), 1", "must be freed by the type's"),
-        ("x := type ( p := own i32 ? ), 1", "written over a pointer"),
+        ("x := type ( p := own i32 ? ), 1", "`own` stands only before a pointer"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
@@ -7740,11 +7735,11 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
         ),
         // The value given moves out: the caller's name is the owner.
         (
-            "mk := fn () -> own box ( a := box (9, 1), a ), \
+            "mk := fn () -> box ( a := box (9, 1), a ), \
              g := fn () -> i32 ( m := mk(), print «got», (m.p + 0)@ ), free (g()), print «after»",
             "got\nfree\nafter\n",
         ),
-        ("mk := fn () -> own box ( box (9, 1) ), m := mk(), print «got»", "got\nfree\n"),
+        ("mk := fn () -> box ( box (9, 1) ), m := mk(), print «got»", "got\nfree\n"),
         // A copy is its name's own: each name frees its own value. An argument borrows and frees
         // nothing: one free, by the owner.
         ("a := box (5, 1), b := a, print «copied»", "copied\nfree\nfree\n"),
@@ -7759,7 +7754,7 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
         ("a := box (7, 1), free a, print «after»", "free\nafter\n"),
         // A copy moves out as its name's last value: the callee frees its own as it returns.
         (
-            "mk := fn () -> own box ( a := box (9, 1), b := a, b ), m := mk(), print «got»",
+            "mk := fn () -> box ( a := box (9, 1), b := a, b ), m := mk(), print «got»",
             "free\ngot\nfree\n",
         ),
         // An `if` whose every arm makes or moves the value hands it on as either arm would.
@@ -7771,7 +7766,7 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
         ),
         ("c := true, free (if c (box (1, 2)) else (box (3, 4))), print «after»", "free\nafter\n"),
         (
-            "c := true, mk := fn () -> own box ( if c (box (1, 2)) else (box (3, 4)) ), m := mk(), \
+            "c := true, mk := fn () -> box ( if c (box (1, 2)) else (box (3, 4)) ), m := mk(), \
              print «got»",
             "got\nfree\n",
         ),
@@ -7787,7 +7782,7 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
             "f := fn (q := box ?) -> i32 ( c := move q, 1 ), a := box (7, 1), f(a)",
             "only its owner can",
         ),
-        ("mk := fn () -> box ( a := box (9, 1), b := a, b ), m := mk()", "write `-> own box`"),
+        ("mk := fn () -> own box ( box (9, 1) ), m := mk()", "`own` stands only before a pointer"),
     ] {
         let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -7819,7 +7814,7 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
         ),
         (
             format!(
-                "{BOX}, mk := fn () -> own box ( box (1, 2) ), f := fn (q := box ?) -> i32 ( 1 ), \
+                "{BOX}, mk := fn () -> box ( box (1, 2) ), f := fn (q := box ?) -> i32 ( 1 ), \
                  free (f(mk())), print «after»"
             ),
             "free\nafter\n",
@@ -8257,11 +8252,11 @@ fn a_plain_record_s_owner_runs_its_free_once() {
             "after\nfreed 9\n",
         ),
         // The last value moves out: the caller's name is the owner.
-        ("mk := fn () -> own bag ( bag(10) ), m := mk(), print «got»", "got\nfreed 10\n"),
-        ("mk := fn () -> own bag ( a := bag(11), a ), m := mk(), print «got»", "got\nfreed 11\n"),
+        ("mk := fn () -> bag ( bag(10) ), m := mk(), print «got»", "got\nfreed 10\n"),
+        ("mk := fn () -> bag ( a := bag(11), a ), m := mk(), print «got»", "got\nfreed 11\n"),
         // A copy moves out as its name's last value: the callee frees its own as it returns.
         (
-            "mk := fn () -> own bag ( a := bag(12), b := a, b ), m := mk(), print «got»",
+            "mk := fn () -> bag ( a := bag(12), b := a, b ), m := mk(), print «got»",
             "freed 12\ngot\nfreed 12\n",
         ),
         ("free (bag(16)), print «after»", "freed 16\nafter\n"),
@@ -8289,7 +8284,7 @@ fn a_plain_record_s_owner_runs_its_free_once() {
 #[test]
 fn a_block_moves_out_a_name_it_holds_on_the_paths_that_give_it() {
     let block = "x := ( a := bag(1), if c (a), bag(2) ), print «end»";
-    let f = "f := fn (c := bool ?) -> own bag ( a := bag(1), if c (a), bag(2) )";
+    let f = "f := fn (c := bool ?) -> bag ( a := bag(1), if c (a), bag(2) )";
     for (tail, printed) in [
         (format!("c := true, {block}"), "end\nfreed 1\n"),
         (format!("c := false, {block}"), "freed 1\nend\nfreed 2\n"),
@@ -8364,7 +8359,7 @@ fn a_plain_record_moves_by_its_bytes() {
             "end\nfreed 1\nfreed 1\nend\nfreed 3\nafter\n",
         ),
         (
-            "mk := fn () -> own bag ( a := bag(5), move a ), m := mk(), print «got»".into(),
+            "mk := fn () -> bag ( a := bag(5), move a ), m := mk(), print «got»".into(),
             "got\nfreed 5\n",
         ),
     ] {
@@ -8473,7 +8468,7 @@ fn a_type_frees_the_records_its_fields_hold() {
 /// reads, on both tiers.
 #[test]
 fn a_line_frees_at_its_end_what_it_made_that_nothing_took() {
-    let mk = "mk := fn (k := i32 ?) -> own bag ( bag(k) )";
+    let mk = "mk := fn (k := i32 ?) -> bag ( bag(k) )";
     for (tail, printed) in [
         ("free (bag(1)), print «after»".to_string(), "freed 1\nafter\n"),
         (
@@ -8545,9 +8540,9 @@ fn a_line_frees_at_its_end_what_it_made_that_nothing_took() {
 #[test]
 fn a_line_frees_what_it_made_where_it_ends() {
     let sized = BOX.replace("print «free»", "print «free {size}»");
-    let mk = "mk := fn () -> own boxed ( box (1, 2) )";
-    let two_three = "two := fn () -> own boxed ( box (1, 2) ), \
-                     three := fn () -> own boxed ( box (1, 2, 3) )";
+    let mk = "mk := fn () -> boxed ( box (1, 2) )";
+    let two_three = "two := fn () -> boxed ( box (1, 2) ), \
+                     three := fn () -> boxed ( box (1, 2, 3) )";
     let r = "r := fn (k := i32 ?) -> u64 ( if k > 0 ( return mk().size ), 0 )";
     let array = "import file «./identities/array.logos», a := array u64 [1, 2]";
     let w = "mut i := u64 0, while (mk().size > i) ( i = i + 1 )";
@@ -8620,8 +8615,8 @@ fn a_line_frees_what_it_made_where_it_ends() {
 #[test]
 fn what_a_part_the_pass_ran_early_made_ends_where_its_line_ends() {
     let sized = BOX.replace("print «free»", "print «free {size}»");
-    let defs = "two := fn () -> own boxed ( print «two», box (1, 2) ), \
-                three := fn () -> own boxed ( box (1, 2, 3) ), mut tt := type ?, tt = u64";
+    let defs = "two := fn () -> boxed ( print «two», box (1, 2) ), \
+                three := fn () -> boxed ( box (1, 2, 3) ), mut tt := type ?, tt = u64";
     let k = "p := fn () -> u64 ( print «p», 0 ), k := fn (a := u64 ?, b := u64 ?) -> u64 ( a + b )";
     let q = "q := type ( pub v := u64 ?, static parse_rank = 61, static parse = ( print «q», \
              tape[0].type = q, tape[0].v = tape[1].dyads[0], tape.remove(1), \
@@ -8939,21 +8934,21 @@ fn own_chain(result: &str, depth: usize) -> String {
 #[test]
 fn a_call_through_own_hands_on_its_made_value_at_any_depth() {
     for depth in [1, 10, 40] {
-        let tail = format!("{}, x := h{depth}(), print «after»", own_chain("own bag", depth));
+        let tail = format!("{}, x := h{depth}(), print «after»", own_chain("bag", depth));
         let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), "after\nfreed 1\n"), "stderr: {stderr}");
         let borrow = format!(
             "{}, y := bag(4), x := if (c == 1) (h{depth}()) else (y)",
-            own_chain("own bag", depth)
+            own_chain("bag", depth)
         );
         let (code, _, stderr) = run_line(&format!("{RECORD}, {borrow}"));
         assert_eq!(code, Some(1), "depth {depth}: stderr: {stderr}");
         assert!(stderr.contains("make a value in every arm"), "depth {depth}: {stderr}");
     }
-    let (code, _, stderr) = run_line(&format!("{RECORD}, {}", own_chain("bag", 1)));
+    let (code, _, stderr) = run_line(&format!("{RECORD}, {}", own_chain("own bag", 1)));
     assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("write `-> own bag`"), "{stderr}");
-    let compiled = "mk := fn () -> own bag ( bag(3) ), h := fn () -> i32 ( b := mk(), b.n ), \
+    assert!(stderr.contains("`own` stands only before a pointer"), "{stderr}");
+    let compiled = "mk := fn () -> bag ( bag(3) ), h := fn () -> i32 ( b := mk(), b.n ), \
                     h.compile(), h()";
     let (code, stdout, stderr) = run_line(&format!("{RECORD}, {compiled}"));
     assert_eq!((code, stdout.as_str()), (Some(0), "freed 3\n3\n"), "stderr: {stderr}");
@@ -8961,19 +8956,35 @@ fn a_call_through_own_hands_on_its_made_value_at_any_depth() {
 
 #[test]
 fn a_return_hands_on_its_value_as_the_last_line_does() {
-    let g = "g := bag(9), mk := fn (c := i32 ?) ->";
+    // Under a result whose type fills `free`, a borrow is handed back as its copy, from a `return`
+    // as from the last line, so the caller frees its own and `g` is freed once by its owner.
+    let g = "g := bag(9), mk := fn (c := i32 ?) -> bag";
+    for tail in [
+        format!("{g} ( if (c == 1) (return g), bag(4) ), x := mk(1), print «got {{x.n}}»"),
+        format!("{g} ( if (c == 1) (return bag(3)), g ), x := mk(2), print «got {{x.n}}»"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, "got 9\nfreed 9\nfreed 9\n", "{tail}");
+    }
+    // A pointer result says it with `own`: a borrow under it, or a made value without it, is
+    // refused, from a `return` as from the last line.
+    let p = "p := alloc 1 of i32 9, mk := fn (c := i32 ?) ->";
     for (tail, refused) in [
         (
-            format!("{g} own bag ( if (c == 1) (return g), bag(4) ), x := mk(1)"),
+            format!("{p} own @i32 ( if (c == 1) (return p), alloc 1 of i32 4 ), x := mk(1)"),
             "hands on a borrow",
         ),
-        (format!("{g} bag ( if (c == 1) (return bag(3)), g ), x := mk(1)"), "write `-> own bag`"),
+        (
+            format!("{p} @i32 ( if (c == 1) (return alloc 1 of i32 3), p ), x := mk(1)"),
+            "write `-> own @i32`",
+        ),
     ] {
-        let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        let (code, _, stderr) = run_line(&tail);
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains(refused), "{tail}: {stderr}");
     }
-    let made = "mk := fn (c := i32 ?) -> own bag ( if (c == 1) (return bag(3)), bag(4) ), \
+    let made = "mk := fn (c := i32 ?) -> bag ( if (c == 1) (return bag(3)), bag(4) ), \
                 x := mk(1), print «got»";
     let (code, stdout, stderr) = run_line(&format!("{RECORD}, {made}"));
     assert_eq!((code, stdout.as_str()), (Some(0), "got\nfreed 3\n"), "stderr: {stderr}");
@@ -8982,25 +8993,27 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
     for (src, printed) in [
         (
             format!(
-                "{RECORD}, mk := fn () -> own bag ( a := bag(1), b := bag(2), return a ), \
+                "{RECORD}, mk := fn () -> bag ( a := bag(1), b := bag(2), return a ), \
                  x := mk(), print «got {{x.n}}»"
             ),
             "freed 2\ngot 1\nfreed 1\n",
         ),
         (
-            format!("{BOX}, mk := fn () -> own box ( b := box (1, 2), return b ), w := mk(), print «after»"),
+            format!(
+                "{BOX}, mk := fn () -> box ( b := box (1, 2), return b ), w := mk(), print «after»"
+            ),
             "after\nfree\n",
         ),
         (
             format!(
-                "{BOX}, mk := fn () -> own box ( b := box (1, 2), return b ), mk.compile(), \
+                "{BOX}, mk := fn () -> box ( b := box (1, 2), return b ), mk.compile(), \
                  w := mk(), print «after»"
             ),
             "after\nfree\n",
         ),
         (
             format!(
-                "{BOX}, mk := fn (c := i32 ?) -> own box ( b := box (1, 2), \
+                "{BOX}, mk := fn (c := i32 ?) -> box ( b := box (1, 2), \
                  if (c == 1) (return b) else (print «no»), box (3, 4, 5) ), \
                  w := mk(1), print «{{w.size}}», v := mk(2), print «{{v.size}}»"
             ),
@@ -9013,12 +9026,12 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
     }
     for (src, refused) in [
         (
-            format!("{RECORD}, mk := fn () -> bag ( a := bag(1), return a ), x := mk()"),
-            "write `-> own bag`",
+            format!("{RECORD}, mk := fn () -> own bag ( a := bag(1), return a ), x := mk()"),
+            "`own` stands only before a pointer",
         ),
         (
             format!(
-                "{BOX}, mk := fn () -> own box ( b := box (1, 2), \
+                "{BOX}, mk := fn () -> box ( b := box (1, 2), \
                  for i in 0..3 ( if (i == 1) (return b) ), b ), w := mk()"
             ),
             "declared outside this loop",
@@ -9028,7 +9041,8 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains(refused), "{src}: {stderr}");
     }
-    // A type's `run` whose last value is made is marked `own`, and its `return` is held to it.
+    // A type's `run` whose result type fills `free` hands on what it makes, and a borrow its
+    // `return` hands on as its copy, as a function's does.
     let run = "g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, \
                static run = ( if (elements.dyads.size == 3) (return g), mut v := output_type ?, \
                v.p = mut alloc 1 of i32 ?, v.size = 1, move v ), \
@@ -9036,9 +9050,89 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
                static parse = ( tape[0].type = pk, tape[0].elements = tape[1], \
                tape[0].output_type = boxed, tape.remove(1), tape.is_constructed[0] = true ) ), \
                x := pk (7, 8, 9), print «{x.size}»";
-    let (code, _, stderr) = run_line(&format!("{BOX}, {run}"));
+    let (code, stdout, stderr) = run_line(&format!("{BOX}, {run}"));
+    assert_eq!((code, stdout.as_str()), (Some(0), "2\nfree\nfree\n"), "stderr: {stderr}");
+    // A `run` whose result is a pointer it makes is marked `own` at its close, and its `return`
+    // of a borrow is refused.
+    let pk = |run: &str| {
+        format!(
+            "q := alloc 1 of i32 4, pk := type ( elements := scope ?, output_type := type ?, \
+             static run = ( {run} ), \
+             static parse_rank = dyad.parse_rank, static associativity = left, \
+             static parse = ( tape[0].type = pk, tape[0].elements = tape[1], \
+             tape[0].output_type = @i32, tape.remove(1), tape.is_constructed[0] = true ) ), \
+             x := pk (7, 8, 9), x@"
+        )
+    };
+    let (code, stdout, stderr) = run_line(&pk("alloc 1 of i32 5"));
+    assert_eq!((code, stdout.as_str()), (Some(0), "5\n"), "stderr: {stderr}");
+    let (code, _, stderr) =
+        run_line(&pk("if (elements.dyads.size == 3) (return q), alloc 1 of i32 5"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("this `return` hands on a borrow"), "{stderr}");
+}
+
+#[test]
+fn a_result_whose_type_fills_free_hands_on_what_it_makes_and_a_copy_of_what_it_borrows() {
+    for c in ["", "f.compile(), "] {
+        for (tail, printed) in [
+            ("f := fn (b := bag ?) -> i32 ( b.n ), {c}a := bag(1), f(a)", "freed 1\n1\n"),
+            ("f := fn () -> bag ( bag(1) ), {c}x := f(), print «end»", "end\nfreed 1\n"),
+            (
+                "f := fn (b := bag ?) -> bag ( b ), {c}a := bag(1), x := f(a), print «end»",
+                "end\nfreed 1\nfreed 1\n",
+            ),
+            (
+                "f := fn (b := bag ?) -> bag ( b ), {c}a := bag(1), free (f(a)), print «end»",
+                "freed 1\nend\nfreed 1\n",
+            ),
+            (
+                "f := fn (b := bag ?) -> bag ( return b ), {c}a := bag(1), free (f(a)), \
+                 print «end»",
+                "freed 1\nend\nfreed 1\n",
+            ),
+            (
+                "x := { a := bag(1) }, f := fn () -> x.type ( { a := bag(2) } ), {c}y := f(), \
+                 print «end»",
+                "end\nfreed 2\nfreed 1\n",
+            ),
+            (
+                "x := { a := bag(1) }, f := fn () -> x.type ( x ), {c}y := f(), print «end»",
+                "end\nfreed 1\nfreed 1\n",
+            ),
+        ] {
+            let src = format!("{RECORD}, {}", tail.replace("{c}", c));
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+        }
+        let src = format!(
+            "import file «./identities/array.logos», t := type array i32, \
+             f := fn (q := t ?) -> t ( q ), {c}a := array i32 [1, 2], b := f(a), b[0] = 5, \
+             print «{{a[0]}} {{b[0]}}»"
+        );
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), "1 5\n"), "{src}: stderr: {stderr}");
+    }
+    // A call that ends in a dereference, where it stands as a place, is that place: nothing is
+    // copied, and a write reaches the element.
+    let arrays = "import file «./identities/array.logos», a := array array i32 [[1, 2], [3, 4]]";
+    for (tail, printed) in [
+        ("a[1][1] = 9, a[1][1]", "9"),
+        ("a[1].at(0) = 8, a[1][0]", "8"),
+        ("x := a[1], a[1][0] = 7, print «{x[0]} {a[1][0]}»", "3 7"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{arrays}, {tail}"));
+        assert_eq!((code, stdout.trim()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    let compiled = "import file «./identities/array.logos», f := fn () -> i32 ( \
+                    a := array array i32 [[1, 2], [3, 4]], a[1][1] = 9, a[1][1] + a[0][0] ), \
+                    f.compile(), f()";
+    let (code, stdout, stderr) = run_line(compiled);
+    assert_eq!((code, stdout.trim()), (Some(0), "10"), "stderr: {stderr}");
+    let through = "p := alloc 1 of bag(1), g := fn (q := @bag ?) -> bag ( q@ ), \
+                   print «{g(p).n}», g(p).n = 5, print «{p@.n}», free p@, free p";
+    let (code, stdout, stderr) = run_line(&format!("{RECORD}, {through}"));
+    assert_eq!((code, stdout.as_str()), (Some(0), "1\n5\nfreed 5\n"), "stderr: {stderr}");
 }
 
 #[test]
@@ -9604,7 +9698,6 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("l := array bagged [bag (), bag ()], print «made»", "made\nbag\nfree\nbag\nfree\n"),
         ("g := bag (), l := array bagged [move g], print «made»", "made\nbag\nfree\n"),
         ("g := bag (), l := array bagged [g], print «made»", "made\nbag\nfree\nbag\nfree\n"),
-        ("mut a := own box ?, a = box (3, 1), print «set»", "set\nfree\n"),
     ] {
         let (code, stdout, stderr) = run_line(&bag_line(tail));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
@@ -9629,9 +9722,11 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("f := fn (p := t ?) -> i32 ( g := bag (), g.items = move p, 1 )", "only its owner can"),
         ("nd := type ( mut items := t ? )", "must be freed by the type's `static free = (…)`"),
         ("g := bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
-        ("mk := fn () -> t ( array i32 [1] ), 1", "write `-> own t`"),
-        ("nd := type ( mut n := own i32 ? )", "or a type whose body fills `free`"),
-        ("f := fn (p := own t ?) -> i32 ( 1 )", "an `own` parameter"),
+        ("mk := fn () -> own t ( array i32 [1] ), 1", "`own` stands only before a pointer"),
+        ("nd := type ( mut n := own i32 ? )", "`own` stands only before a pointer"),
+        ("f := fn (p := own t ?) -> i32 ( 1 )", "`own` stands only before a pointer"),
+        ("nd := type ( mut items := own t ?, static free = ( free items ) )", "`own` stands only"),
+        ("mut a := own t ?, 1", "`own` stands only before a pointer"),
     ] {
         let (code, _, stderr) = run_line(&bag_line(tail));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -9673,17 +9768,17 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
         ("x := i32 5, a := array array i32 [[x, 2], [3, x]], a[1][1]", "5"),
         ("x := array i32 [7], a := array array i32 [[1], move x], a[1][0]", "7"),
         (
-            "mk := fn () -> own array array i32 ( array array i32 [[1, 2], [3, 4]] ), \
+            "mk := fn () -> array array i32 ( array array i32 [[1, 2], [3, 4]] ), \
              m := mk(), m[1][0]",
             "3",
         ),
         (
-            "mk := fn (v := i32 ?) -> own array array i32 ( array array i32 [[v, 2], [3, v + 1]] ), \
+            "mk := fn (v := i32 ?) -> array array i32 ( array array i32 [[v, 2], [3, v + 1]] ), \
              m := mk(4), n := mk(6), m[1][1] + n[1][1]",
             "12",
         ),
         (
-            "mk := fn (v := i32 ?) -> own array array i32 ( array array i32 [[v, 2], [3, v + 1]] ), \
+            "mk := fn (v := i32 ?) -> array array i32 ( array array i32 [[v, 2], [3, v + 1]] ), \
              mk.compile(), m := mk(4), m[1][1]",
             "5",
         ),
@@ -9697,7 +9792,7 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
              s = s + a[0][0] + a[1][0] ), s",
             "9",
         ),
-        ("mk := fn () -> own array array i32 ( array array i32 [[1, 2], [3, 4]] ), mk()[1][1]", "4"),
+        ("mk := fn () -> array array i32 ( array array i32 [[1, 2], [3, 4]] ), mk()[1][1]", "4"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
@@ -9804,16 +9899,17 @@ fn free_of_a_value_runs_it_and_frees_what_it_made() {
     for (tail, printed) in [
         ("free (box (1, 2)), print «after»", "free\nafter\n"),
         ("free box (1, 2), print «after»", "free\nafter\n"),
-        ("mk := fn () -> own boxed ( box (1, 2) ), free (mk()), print «after»", "free\nafter\n"),
+        ("mk := fn () -> boxed ( box (1, 2) ), free (mk()), print «after»", "free\nafter\n"),
         (
             "g := fn () -> i32 ( free (box (1, 2)), 7 ), g.compile(), print «before», free (g()), \
              print «after»",
             "before\nfree\nafter\n",
         ),
-        // A borrow's free is its owner's, at the owner's end.
+        // A borrow handed back under a result that fills `free` is its copy: `free` frees the
+        // copy, and `b`'s owner frees `b` at its end.
         (
             "b := box (1, 2), id := fn (q := boxed ?) -> boxed ( q ), free (id(b)), print «after»",
-            "after\nfree\n",
+            "free\nafter\nfree\n",
         ),
         ("f := fn () -> i32 ( print «ran», 7 ), free (f()), print «after»", "ran\nafter\n"),
     ] {
@@ -9882,19 +9978,14 @@ fn an_array_is_freed_by_its_owner_and_a_borrow_outliving_it_reads_nothing() {
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert_eq!(stdout.trim(), printed, "{tail}");
     }
-    // Until the borrow checker, a call's result may borrow the argument the call frees as it
-    // returns; the free emptied the array's pointer, so a read at the first cell is refused.
-    for (tail, expect) in [
-        ("free a, a[0]", "`a` is dead here"),
-        (
-            "f := fn (q := array i32 ?) -> array i32 ( q ), w := f(array i32 [1, 2]), w[0]",
-            "holds nothing",
-        ),
-    ] {
-        let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
-        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
-        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
-    }
+    let (code, _, stderr) = run_line(&format!("{array}, free a, a[0]"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`a` is dead here"), "stderr: {stderr}");
+    // A call's result that only borrows the argument the call frees as it returns is handed
+    // back as its copy, so it outlives the argument.
+    let tail = "f := fn (q := array i32 ?) -> array i32 ( q ), w := f(array i32 [1, 2]), w[0]";
+    let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
+    assert_eq!((code, stdout.trim()), (Some(0), "1"), "stderr: {stderr}");
 }
 
 /// A type with no `run` whose own `parse` builds its nodes.
