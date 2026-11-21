@@ -6489,9 +6489,9 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
           c.type == type\n",
     );
     assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
-    // Moving the center touches no cell, so a parse that only moves it has declined.
-    let (echoes, stderr) =
-        repl("r4 := type (static parse = ( tape.recenter(1) ))\nx := r4\nx == r4\n");
+    // Moving the center touches no cell, so a parse that only moves it has declined and `r4`
+    // stands as its own value.
+    let (echoes, stderr) = repl("r4 := type (static parse = ( tape.recenter(1) ))\nr4 == r4\n");
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     let src =
         b"r5 := type (static parse = ( tape[0] = tape.spelling[0] ))\nf := fn () -> void ( r5 )\n";
