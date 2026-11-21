@@ -76,9 +76,9 @@ pub struct Store {
     retired: Vec<Artifact>,
     /// Jumps into machine code in flight: a compiled frame is live only under one.
     live_jumps: u32,
-    /// The pointer types made before `type_mint` stands to keep them, each after its pointee:
-    /// stand-in for #442's bootstrap.
-    early_pointer_types: Vec<(DyadPtr, DyadPtr)>,
+    /// The mints made before `type_mint` stands to keep them, each after its former and its
+    /// key: stand-in for #442's bootstrap.
+    early_mints: Vec<(DyadPtr, Box<[DyadPtr]>, DyadPtr)>,
 }
 
 /// The store's size, counted by hand: malloc's own per-block overhead is left out.
@@ -143,22 +143,22 @@ impl Store {
             artifacts: HashMap::new(),
             retired: Vec::new(),
             live_jumps: 0,
-            early_pointer_types: Vec::new(),
+            early_mints: Vec::new(),
         }
     }
 
-    /// The pointer type to `pointee` made before `type_mint` stood.
-    pub(crate) fn early_pointer_type(&self, pointee: DyadPtr) -> Option<DyadPtr> {
-        self.early_pointer_types.iter().find(|&&(p, _)| p == pointee).map(|&(_, node)| node)
+    /// The mint made under `former` and `key` before `type_mint` stood.
+    pub(crate) fn early_mint(&self, former: DyadPtr, key: &[DyadPtr]) -> Option<DyadPtr> {
+        self.early_mints.iter().find(|(f, k, _)| *f == former && **k == *key).map(|&(_, _, m)| m)
     }
 
-    pub(crate) fn note_early_pointer_type(&mut self, pointee: DyadPtr, node: DyadPtr) {
-        self.early_pointer_types.push((pointee, node));
+    pub(crate) fn note_early_mint(&mut self, former: DyadPtr, key: &[DyadPtr], mint: DyadPtr) {
+        self.early_mints.push((former, key.into(), mint));
     }
 
-    /// Every early pointer type with its pointee, for `type_mint` to keep from here on.
-    pub(crate) fn take_early_pointer_types(&mut self) -> Vec<(DyadPtr, DyadPtr)> {
-        std::mem::take(&mut self.early_pointer_types)
+    /// Every early mint with its former and key, for `type_mint` to keep from here on.
+    pub(crate) fn take_early_mints(&mut self) -> Vec<(DyadPtr, Box<[DyadPtr]>, DyadPtr)> {
+        std::mem::take(&mut self.early_mints)
     }
 
     /// `fn_node` now owns `artifact`; the one it owned before is retired.

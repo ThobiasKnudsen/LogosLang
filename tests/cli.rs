@@ -12075,6 +12075,33 @@ fn a_pointer_type_is_one_mint_per_pointee_on_both_tiers() {
     assert_runs(&cases);
 }
 
+/// A built-in operation's mint for a set of field types and a map's type for a key and a value
+/// type are each one type, which `type_mint` keeps ([[R383]]).
+#[test]
+fn an_operation_s_mint_and_a_map_s_type_are_one_per_key_on_both_tiers() {
+    let defs = "x := i32 1, y := i32 2, z := f64 1.0, mut m := hashmap u64 -> i32, \
+                mut n := hashmap u64 -> i32, mut o := hashmap u64 -> i64";
+    let mut cases = Vec::new();
+    for body in [
+        "(x + x).type == (y + y).type and (x + x).type != (z + z).type",
+        "(x + x).type != (x - x).type and (x < y).type == (y < x).type",
+        "+.mint(i32, i32) == +.mint(i32, i32) and +.mint(i32, i32) != +.mint(f64, f64)",
+        "m.type == n.type and m.type != o.type",
+    ] {
+        for compile in ["", "g.compile(), "] {
+            cases.push((format!("{defs}, g := fn () -> bool ( {body} ), {compile}g()"), "true\n"));
+        }
+    }
+    // A map of maps is read back whole through its one type.
+    cases.push((
+        "mut outer := hashmap string -> hashmap u64 -> i32, mut inner := hashmap u64 -> i32, \
+         inner[1] = 7, outer[«a»] = inner, back := outer[«a»], print «{back[1]}»"
+            .into(),
+        "7\n",
+    ));
+    assert_runs(&cases);
+}
+
 /// R383's rules (2) and (3): a writable `static` is never shared, so a type that holds one is
 /// found by no other build, and a body is the same only where it is written, so one `type ( … )`
 /// built again is one type and the same text written twice is two. A `static` that holds a float

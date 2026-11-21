@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The built-in operations' mints: one per set of field types their parse chooses, made once by
-//! the operation's chooser and kept on the operation, and the one builder of their nodes. A
+//! the operation's chooser and kept by `type_mint`, and the one builder of their nodes. A
 //! node's type is its mint, and the mint holds what its nodes share: the type they give back,
 //! what they run and the field types it was made for. A Logos-written type mints through a
 //! function of its own. ›An operation mints through a chooser, one mint per set of operand
@@ -70,8 +70,9 @@ pub(crate) unsafe fn node_of_any(
         .expect("the operation's chooser makes a mint for every key of this length")
 }
 
-/// `origin`'s mint for the field types `key`, made by its chooser the first time and kept on
-/// `origin`; `None` where `origin` has no chooser or its chooser no mint for `key`.
+/// `origin`'s mint for the field types `key`, made by its chooser the first time and kept by
+/// `type_mint` under `origin` and `key`; `None` where `origin` has no chooser or its chooser no
+/// mint for `key`.
 ///
 /// # Safety
 /// `origin` must be a valid dyad and `key` type nodes or null, all from the store.
@@ -81,48 +82,20 @@ pub(crate) unsafe fn of(
     origin: DyadPtr,
     key: &[DyadPtr],
 ) -> Option<DyadPtr> {
-    if let Some(mint) = find(origin, key) {
-        return Some(mint);
-    }
-    let made = meta::chooser(origin)?(store, types, key)?;
-    Some(make(store, types, origin, key, made))
-}
-
-/// # Safety
-/// As [`of`], `origin` carrying a `TUPLE_TAG` operand record.
-unsafe fn make(
-    store: &mut Store,
-    types: &Core,
-    origin: DyadPtr,
-    key: &[DyadPtr],
-    made: Made,
-) -> DyadPtr {
-    let key = array::build(store, types.array_, key);
-    let record = meta::mint_record(store, origin, made.output_type, made.op, key);
-    let mint = store.alloc_head(types.type_, record);
-    let mut mints = meta::mints_of(origin);
-    if mints.is_null() {
-        mints = array::build(store, types.array_, &[]);
-        meta::install_mints(origin, mints);
-    }
-    array::push(store, mints, mint);
-    mint
-}
-
-/// # Safety
-/// `origin` must carry a record whose memo only `of` built and grew.
-unsafe fn find(origin: DyadPtr, key: &[DyadPtr]) -> Option<DyadPtr> {
-    let made = meta::mints_of(origin);
-    if made.is_null() {
-        return None;
-    }
-    array::items(made).iter().copied().find(|&mint| array::items(meta::mint_key_of(mint)) == key)
+    let chooser = meta::chooser(origin)?;
+    super::type_mint::mint_of(store, types, origin, key, |store| {
+        let made = chooser(store, types, key)?;
+        let key = array::build(store, types.array_, key);
+        let record = meta::mint_record(store, origin, made.output_type, made.op, key);
+        Some(store.alloc_head(types.type_, record))
+    })
 }
 
 /// # Safety
 /// `t` must be null or a valid dyad from the store.
 unsafe fn is_mint(t: DyadPtr) -> bool {
-    !t.is_null() && meta::kind_of(t).is_some() && !meta::mint_of(t).is_null()
+    // A built-in operation's mint is a run of operands; a map type is a record `hashmap` mints.
+    !t.is_null() && meta::kind_of(t) == Some(meta::TUPLE_TAG) && !meta::mint_of(t).is_null()
 }
 
 /// The type `t` is a mint of; `t` itself when it is no mint.

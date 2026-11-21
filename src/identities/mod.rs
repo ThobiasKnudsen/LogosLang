@@ -404,7 +404,7 @@ impl Core {
             dm.of_,
         );
         let tape = tape::register(&mut cx, &callables, scope_, array_, void, pub_);
-        let hashmap = hashmap::register(&mut cx, &callables, array_);
+        let hashmap = hashmap::register(&mut cx, &callables);
         let held_type = held_type::register(&mut cx, &callables);
         let this = this::register(&mut cx, &callables);
         let place = place::register(&mut cx, &callables);
@@ -578,7 +578,7 @@ impl Core {
             lower,
         };
         core.type_mint = type_mint::load(store, trie, &core);
-        pointer::keep_early(store, &core);
+        type_mint::keep_early(store, &core);
         core
     }
 

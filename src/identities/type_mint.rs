@@ -124,6 +124,72 @@ pub(crate) unsafe fn keep(
     Keeper::over(store, types).keep(place, made)
 }
 
+/// The mint under `former` and the nodes of `key`: the one kept, or the one `make` builds the
+/// first time, kept from then on; `None` where `make` builds none.
+///
+/// # Safety
+/// `former` and each node of `key` must be dyads from the store, or null, and `make` must give
+/// a type node from the store.
+///
+/// # Panics
+/// Where `type_mint`'s own functions fail: a defect of the seed.
+pub(crate) unsafe fn mint_of(
+    store: &mut Store,
+    types: &Core,
+    former: DyadPtr,
+    key: &[DyadPtr],
+    make: impl FnOnce(&mut Store) -> Option<DyadPtr>,
+) -> Option<DyadPtr> {
+    if !types.type_mint.is_read() {
+        let former = if former == types.at_ { std::ptr::null_mut() } else { former };
+        return early(store, former, key, make);
+    }
+    let parts: Vec<KeyPart> = key.iter().map(|&node| KeyPart::Node(node)).collect();
+    let (place, kept) = find(store, types, former, &parts).expect("`type_mint` walks a key");
+    if kept.is_some() {
+        return kept;
+    }
+    let mint = make(store)?;
+    keep(store, types, place, mint).expect("`type_mint` keeps a mint");
+    Some(mint)
+}
+
+/// As [`mint_of`] before `type_mint` stands, which is built from mints itself: the store lists
+/// each one, and [`keep_early`] hands the list over. `former` is null for `@`, whose identity is
+/// registered after the first pointer types are made: stand-in for #442's bootstrap.
+///
+/// # Safety
+/// As [`mint_of`].
+pub(crate) unsafe fn early(
+    store: &mut Store,
+    former: DyadPtr,
+    key: &[DyadPtr],
+    make: impl FnOnce(&mut Store) -> Option<DyadPtr>,
+) -> Option<DyadPtr> {
+    if let Some(mint) = store.early_mint(former, key) {
+        return Some(mint);
+    }
+    let mint = make(store)?;
+    store.note_early_mint(former, key, mint);
+    Some(mint)
+}
+
+/// Hands `type_mint`, once it stands, the mints the seed made before.
+///
+/// # Panics
+/// As [`mint_of`].
+pub(super) fn keep_early(store: &mut Store, types: &Core) {
+    for (former, key, mint) in store.take_early_mints() {
+        let former = if former.is_null() { types.at_ } else { former };
+        let parts: Vec<KeyPart> = key.iter().map(|&node| KeyPart::Node(node)).collect();
+        // SAFETY: `former`, the key's nodes and `mint` are what `early` noted.
+        unsafe {
+            let (place, _) = find(store, types, former, &parts).expect("`type_mint` walks a key");
+            keep(store, types, place, mint).expect("`type_mint` keeps a mint");
+        }
+    }
+}
+
 /// `type_mint` as the seed's formers call it, over a runtime of its own: its functions read and
 /// write only the places of their own type, so they need nothing of the run that asks.
 struct Keeper<'a> {

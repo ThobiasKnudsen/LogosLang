@@ -12,7 +12,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::numtype::NumType;
 use super::read::carry_of;
-use super::type_mint::{self, KeyPart};
+use super::type_mint;
 use super::{assign, meta, mint, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -205,20 +205,12 @@ pub(crate) unsafe fn make_pointer_type(
     types: &Core,
     pointee: DyadPtr,
 ) -> DyadPtr {
-    if !types.type_mint.is_read() {
-        return early_pointer_type(store, types.type_, pointee);
-    }
+    let type_ = types.type_;
     if super::meta::kind_of(pointee).is_none() {
-        return new_pointer_type(store, types.type_, pointee);
+        return new_pointer_type(store, type_, pointee);
     }
-    let key = [KeyPart::Node(pointee)];
-    let (place, kept) =
-        type_mint::find(store, types, types.at_, &key).expect("`type_mint` walks `@T`'s key");
-    kept.unwrap_or_else(|| {
-        let node = new_pointer_type(store, types.type_, pointee);
-        type_mint::keep(store, types, place, node).expect("`type_mint` keeps `@T`'s mint");
-        node
-    })
+    let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee));
+    type_mint::mint_of(store, types, types.at_, &[pointee], made).expect("a pointer type is made")
 }
 
 unsafe fn new_pointer_type(store: &mut Store, type_: DyadPtr, pointee: DyadPtr) -> DyadPtr {
@@ -226,8 +218,7 @@ unsafe fn new_pointer_type(store: &mut Store, type_: DyadPtr, pointee: DyadPtr) 
     store.alloc_head(type_, value)
 }
 
-/// `@pointee` before `type_mint` stands, which is built from pointer types itself: one node per
-/// pointee all the same, which [`keep_early`] hands over: stand-in for #442's bootstrap.
+/// `@pointee` while the seed registers its identities, before `@` itself is one.
 ///
 /// # Safety
 /// `pointee` must be a type node from the store.
@@ -239,25 +230,8 @@ pub(super) unsafe fn early_pointer_type(
     if super::meta::kind_of(pointee).is_none() {
         return new_pointer_type(store, type_, pointee);
     }
-    if let Some(known) = store.early_pointer_type(pointee) {
-        return known;
-    }
-    let node = new_pointer_type(store, type_, pointee);
-    store.note_early_pointer_type(pointee, node);
-    node
-}
-
-/// Hands `type_mint`, once it stands, the pointer types the seed made before.
-pub(super) fn keep_early(store: &mut Store, types: &Core) {
-    for (pointee, node) in store.take_early_pointer_types() {
-        let key = [KeyPart::Node(pointee)];
-        // SAFETY: `pointee` and `node` are type nodes `early_pointer_type` noted.
-        unsafe {
-            let (place, _) = type_mint::find(store, types, types.at_, &key)
-                .expect("`type_mint` walks `@T`'s key");
-            type_mint::keep(store, types, place, node).expect("`type_mint` keeps `@T`'s mint");
-        }
-    }
+    let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee));
+    type_mint::early(store, std::ptr::null_mut(), &[pointee], made).expect("a pointer type is made")
 }
 
 /// `@dyad`, what a read of a cell, a line, a field, a name or a scope gives back.

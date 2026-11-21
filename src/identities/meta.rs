@@ -16,16 +16,15 @@
 //! [26..34]   u64  run body: the lexed body a `run = (…)` line held, or 0
 //! [34..42]   u64  extent: a `seed-extent` callable leaf for a token that reads its own
 //!                 extent, or 0
-//! [42..50]   u64  mints: this type's mints made so far, an array, or 0
-//! [50..58]   u64  mint of: the type this one is a mint of, or 0
-//! [58..66]   u64  chooser: a `seed-choose` callable leaf that makes a built-in operation's mint
+//! [42..50]   u64  mint of: the type this one is a mint of, or 0
+//! [50..58]   u64  chooser: a `seed-choose` callable leaf that makes a built-in operation's mint
 //!                 for a set of field types, or 0
-//! [66]       u8   1 where the type's definition says a value of it is its node's address
-//! [67]       u8   where its nodes carry the `own` mark: `EVERY_NODE` here for every node, else
+//! [58]       u8   1 where the type's definition says a value of it is its node's address
+//! [59]       u8   where its nodes carry the `own` mark: `EVERY_NODE` here for every node, else
 //!                 the slot of each node that holds it, the `own` word or null; `NO_SLOT` nowhere
-//! [68]       u8   the slots whose node a node of this type hands on as its value, one bit each
-//! [69]       u8   the slots whose lines it hands on the last of, one bit each
-//! [70..]     payload, per kind:
+//! [60]       u8   the slots whose node a node of this type hands on as its value, one bit each
+//! [61]       u8   the slots whose lines it hands on the last of, one bit each
+//! [62..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST/TOKEN   u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
 //!                                 none), then arity × `dyad@` role-name strings; a token's
@@ -80,14 +79,13 @@ const DTOR_OFF: usize = 18;
 /// The lexed `run` body with its constructed functions.
 const RUN_BODY_OFF: usize = 26;
 const EXTENT_OFF: usize = 34;
-const MINTS_OFF: usize = 42;
-const MINT_OF_OFF: usize = 50;
-const CHOOSER_OFF: usize = 58;
-const NODE_VALUE_OFF: usize = 66;
-const OWN_OFF: usize = 67;
-const HANDS_ON_OFF: usize = 68;
-const HANDS_ON_LINES_OFF: usize = 69;
-pub(crate) const PAYLOAD_OFF: usize = 70;
+const MINT_OF_OFF: usize = 42;
+const CHOOSER_OFF: usize = 50;
+const NODE_VALUE_OFF: usize = 58;
+const OWN_OFF: usize = 59;
+const HANDS_ON_OFF: usize = 60;
+const HANDS_ON_LINES_OFF: usize = 61;
+pub(crate) const PAYLOAD_OFF: usize = 62;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -227,20 +225,6 @@ pub(crate) unsafe fn mint_record(
     store.alloc_bytes(&blob)
 }
 
-/// This type's mints made so far, an array; null while it has none.
-///
-/// # Safety
-/// As `parse_rank_of`.
-pub(crate) unsafe fn mints_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned(dyad::head(id).add(MINTS_OFF) as *const DyadPtr)
-}
-
-/// # Safety
-/// `id` must carry a record and `mints` must be an array node of its mints.
-pub(crate) unsafe fn install_mints(id: DyadPtr, mints: DyadPtr) {
-    std::ptr::write_unaligned(dyad::head(id).add(MINTS_OFF) as *mut DyadPtr, mints);
-}
-
 /// The type `id` is a mint of; null for a type that is no mint.
 ///
 /// # Safety
@@ -304,6 +288,19 @@ pub(crate) fn record_layout(
     parse_rank: f64,
     assoc: Assoc,
 ) -> *mut u8 {
+    let blob = record_blob(scope, fields, bindings, size_bytes, body, parse_rank, assoc);
+    store.alloc_bytes(&blob)
+}
+
+fn record_blob(
+    scope: DyadPtr,
+    fields: DyadPtr,
+    bindings: DyadPtr,
+    size_bytes: u64,
+    body: DyadPtr,
+    parse_rank: f64,
+    assoc: Assoc,
+) -> Vec<u8> {
     let mut blob = header(RECORD_TAG, assoc, parse_rank).to_vec();
     blob.extend_from_slice(&(scope as usize).to_ne_bytes());
     blob.extend_from_slice(&(fields as usize).to_ne_bytes());
@@ -312,7 +309,38 @@ pub(crate) fn record_layout(
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&(bindings as usize).to_ne_bytes());
+    blob
+}
+
+/// Where a record type's payload ends.
+const RECORD_END: usize = PAYLOAD_OFF + 56;
+
+/// The record of a type with no fields that `former` mints for `arguments`: as `record_layout`
+/// lays it, `scope` its body too, with the former in its header and the arguments after its
+/// payload, for [`minted_argument_of`].
+pub(crate) fn minted_record(
+    store: &mut Store,
+    former: DyadPtr,
+    arguments: &[DyadPtr],
+    scope: DyadPtr,
+    none: DyadPtr,
+    size_bytes: u64,
+) -> *mut u8 {
+    let mut blob = record_blob(scope, none, none, size_bytes, scope, prec::APPLY, Assoc::Left);
+    blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(former as usize).to_ne_bytes());
+    for &argument in arguments {
+        blob.extend_from_slice(&(argument as usize).to_ne_bytes());
+    }
     store.alloc_bytes(&blob)
+}
+
+/// The `k`th argument a record type was minted for.
+///
+/// # Safety
+/// `id` must carry a record [`minted_record`] laid, for more than `k` arguments.
+pub(crate) unsafe fn minted_argument_of(id: DyadPtr, k: usize) -> DyadPtr {
+    let at = RECORD_END + k * std::mem::size_of::<DyadPtr>();
+    std::ptr::read_unaligned(dyad::head(id).add(at) as *const DyadPtr)
 }
 
 /// Where a record type's field names are declared.
