@@ -157,7 +157,7 @@ impl<'a> Parser<'a> {
 
     /// What the tape holds where `lhs`, the cell at `tape[-1]`, is a read of a tape node or of
     /// its type word and `.name` is a member that read does not answer itself: the member is
-    /// that node's or that type's, read through its type as any value's is (›`x.type` reads the
+    /// that node's or that type's, the node read as a node a path reaches is (›`x.type` reads the
     /// type word of the node a name or an expression stands for‹ [[R279]]). It is known where
     /// the pass has reached the line, once what stands before the read has run, so a body's line
     /// reading it waits for the run (`waiting_line_end`) as one reading a `dyad` name does
@@ -182,7 +182,7 @@ impl<'a> Parser<'a> {
         self.run_first(tape, at)?;
         let held = crate::identities::tape::held_now(&mut self.rt, lhs).map_err(ParseError::Run)?;
         self.cx.each_pass_read |= self.cx.each_pass;
-        Ok(Some(held))
+        Ok(Some(self.path_operand(held)))
     }
 
     /// `tape[0].type = T`: a fresh node of `T` placed in the parse's own cell, from where its
