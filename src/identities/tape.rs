@@ -401,6 +401,42 @@ pub(crate) unsafe fn is_cell_read(types: &Core, node: DyadPtr) -> bool {
     dyad::ty(node) == types.tape.slot || dyad::ty(node) == types.tape.cell_value
 }
 
+/// A read of a node the tape holds, a cell or a line of one, plain or checked to hold a type:
+/// what a `.` after it reads a member of.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_node_read(types: &Core, node: DyadPtr) -> bool {
+    is_cell_read(types, node) || dyad::ty(node) == types.tape.cell_dyad_at
+}
+
+/// What answers `.name` after a read of a tape node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NodeMember {
+    /// The node's type word, read when the parse runs.
+    Type,
+    /// A bracket's lines.
+    Lines,
+    /// A field of the node the parse builds, reached through its own cell.
+    Own,
+    /// A member of the node the tape holds when the parse runs, read through its type: which
+    /// node that is is known only then, so the line reading it waits (›`x.type` reads the type
+    /// word of the node a name or an expression stands for‹ [[R279]], ›A type known only when the
+    /// program runs still works; what needs it is parsed when its line runs‹ [[R377]]).
+    Held,
+}
+
+/// The one decision the line scan and the member read share: what answers `.name` after a read
+/// of a tape node, `own` where the read is the parse's own cell.
+pub(crate) fn node_member(name: &str, own: bool) -> NodeMember {
+    match name {
+        "type" => NodeMember::Type,
+        "dyads" => NodeMember::Lines,
+        _ if own => NodeMember::Own,
+        _ => NodeMember::Held,
+    }
+}
+
 /// Which line of a cell a read names: none, a literal index, or the place an index is
 /// read from, one name in the check and the read naming one line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
