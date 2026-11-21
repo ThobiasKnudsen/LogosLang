@@ -10265,6 +10265,70 @@ fn a_fn_entry_of_a_curly_bracket_reads_its_sibling_names_through_the_value() {
     }
 }
 
+/// ›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]: an entry is an
+/// ordinary name, so a `dyad` entry, read through the value or named bare in a `fn` entry, reads
+/// through to the node it holds as a `dyad` name does (›A `dyad ?` place is transparent: a
+/// placeholder for a new node of any type‹ [[R293]]), at the top level and in a body, whose line
+/// waits for the run.
+#[test]
+fn a_dyad_entry_of_a_curly_bracket_reads_as_a_dyad_name_does() {
+    let reads = [
+        ("D + 1", "i32", "4"),
+        ("1 + D", "i32", "4"),
+        ("D + D", "i32", "6"),
+        ("D == 3", "bool", "true"),
+        ("D.type == i32", "bool", "true"),
+        ("if D > 2 (i32 1) else (i32 0)", "i32", "1"),
+        ("mut k := i32 0, while k < D ( k = k + 1 ), k", "i32", "3"),
+        ("x := D, x + 1", "i32", "4"),
+        ("mut x := dyad ?, x = D, x + 1", "i32", "4"),
+    ];
+    let dyad = "d := dyad (i32, 3)";
+    for (read, ty, printed) in reads {
+        let (name, entry) = (read.replace('D', "d"), read.replace('D', "m.d"));
+        for src in [
+            format!("{dyad}, {name}"),
+            format!("m := {{ {dyad} }}, {entry}"),
+            format!("m := {{ n := {{ {dyad} }} }}, {}", read.replace('D', "m.n.d")),
+            format!("m := {{ {dyad} }}, c := m, {}", read.replace('D', "c.d")),
+            format!("f := fn () -> {ty} ( {dyad}, {name} ), f()"),
+            format!("f := fn () -> {ty} ( m := {{ {dyad} }}, {entry} ), f()"),
+            format!("m := {{ {dyad} }}, f := fn () -> {ty} ( {entry} ), f()"),
+            format!("m := {{ {dyad}, f := fn () -> {ty} ( {name} ) }}, m.f()"),
+            format!("m := {{ {dyad}, f := fn () -> {ty} ( {name} ), b := f() }}, m.b"),
+        ] {
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    for src in [
+        "m := { d := dyad (i32, 3) }, print «{m.d + 1}»",
+        "m := { d := dyad (i32, 3), f := fn () -> void ( print «{d + 1}» ) }, m.f()",
+        "m := { d := dyad (i32, 3), g := fn () -> i32 ( d + 1 ), f := fn () -> i32 ( g() ) }, m.f()",
+    ] {
+        assert_eq!(run_line(src), (Some(0), "4\n".into(), String::new()), "{src}");
+    }
+    // An entry taken whole stays the place it is, as a name does.
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), ";
+    for (body, printed) in
+        [("free m.b, print «in»", "freed 7\nin\n"), ("e := move m.b, print «in»", "in\nfreed 7\n")]
+    {
+        let src =
+            format!("{bag}f := fn () -> void ( m := {{ b := dyad (bag, bag (7)) }}, {body} ), f()");
+        assert_eq!(run_line(&src), (Some(0), printed.into(), String::new()), "{src}");
+    }
+    let (echoes, stderr) = repl(b"m := { d := dyad (i32, 3) }\nm.d + 1\n");
+    assert_eq!(echoes, ["4"], "stderr: {stderr}");
+    // A function whose line waits for the run is not compiled, a `dyad` name's as an entry's.
+    for src in [
+        "d := dyad (i32, 3), f := fn () -> i32 ( d + 1 ), f.compile(), f()",
+        "m := { d := dyad (i32, 3), f := fn () -> i32 ( d + 1 ) }, m.f.compile(), m.f()",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("cannot be compiled yet"), "{src}: stderr: {stderr}");
+    }
+}
+
 /// ›A type body describes one level‹ [[R222]]: a field named bare in a `static` function, a `free`
 /// or a `fn` entry of a `{ … }` reads as the same field read through the value, on both tiers:
 /// text and a type as what they hold, a record's field with a `.`, and a write through it meets
