@@ -106,7 +106,9 @@ fn value_ends<'c>(types: &Core, before: impl IntoIterator<Item = &'c Cell>) -> b
         // that carries no record, and a record holds its rank and its constructor.
         let (kind, rank, parse) = unsafe {
             match (!id.is_null()).then(|| meta::kind_of(id)).flatten() {
-                Some(kind) => (kind, meta::parse_rank_of(id), meta::constructor_of(id)),
+                Some(kind) => {
+                    (kind, meta::parse_rank_of(id), meta::written_parse_of(id, types.fn_type))
+                }
                 None => return true,
             }
         };
