@@ -20,14 +20,14 @@ Every snippet in this section runs on today's seed. Try them with `logos '…'` 
 
 ```logos
 x := i32 5,      # declare x: a type followed by a value
-mut y := x + 1,  # declare y: the type is read from the value; mut lets = write it
+y := mut x + 1,  # declare y: the type is read from the value; mut lets = write it
 y = 7,
-mut z := i32 ?,  # declare with no value yet: ? is a hole
+z := mut i32 ?,  # declare with no value yet: ? is a hole
 z = 9,
 x + y + z        # 21
 ```
 
-`:=` declares and `=` writes a name declared `mut`. Writing `=` to a name that was never declared, or to one declared without `mut`, is an error, so a typo cannot create a variable and a name is only ever changed where its declaration says so. A name cannot be declared twice while the first is alive: there is no shadowing. `:=` copies, so after `y := x` a write to `y` leaves `x` alone. Left of `:=` stand the name and its gate words, `mut` and `pub`, nothing else: `x := i32 5` reads as "x is an i32 holding 5", and `mut x := i32 ?` as "x is an i32 with nothing in it yet, to be written".
+`:=` declares and `=` writes a name declared `mut`. Writing `=` to a name that was never declared, or to one declared without `mut`, is an error, so a typo cannot create a variable and a name is only ever changed where its declaration says so. A name cannot be declared twice while the first is alive: there is no shadowing. `:=` copies, so after `y := x` a write to `y` leaves `x` alone. Left of `:=` stands the name, nothing else, and right of it the value with the gate words that gate it, `mut` and `pub`: `x := i32 5` reads as "x is an i32 holding 5", and `x := mut i32 ?` as "x is a writable i32 with nothing in it yet". A copy takes none of them along: after `x := mut i32 5`, `y := x` is not `mut` and `y := mut x` is.
 
 ### The comma
 
@@ -62,9 +62,9 @@ fact(20)                       # 2432902008176640000
 ### Control flow
 
 ```logos
-mut s := i32 0,
+s := mut i32 0,
 for i in 0..5 ( if i % 2 == 0 ( s = s + i ) ),
-mut j := i32 0,
+j := mut i32 0,
 while j < 5 ( s = s + j, j = j + 1 ),
 if s > 10 (s) else (0)         # 16
 ```
@@ -79,7 +79,7 @@ p := point (3, 4),
 p.x + p.y                      # 7
 ```
 
-`type` is both the root of every type chain and the keyword that defines one. A type body describes one level: an unmarked member is a field of every value, a `static` one is stored once with the type and read as `point.member`, and the slot lines (`parse_rank`, `associativity`, `parse`, `run`, `free`) are stored once too, so they are filled with `static … = …`. A type with per-value fields is a record. A type whose members are all `static` is a namespace.
+`type` is both the root of every type chain and the keyword that defines one. A type body describes one level: an unmarked member is a field of every value, a `static` one is stored once with the type and read as `point.member`, and the slot lines (`parse_rank`, `associativity`, `parse`, `run`, `free`) are stored once too, so they are filled with `… = …`. A type with per-value fields is a record. A type whose members are all `static` is a namespace.
 
 ### Types are values
 
@@ -87,7 +87,7 @@ A function can return a type. The call runs during the pass, and the result is a
 
 ```logos
 pick := fn (i := i32 ?) -> type ( if (i == 0) (i32) else (f64) ),
-mut a := pick(1) ?,            # a is an f64 with no value yet
+a := mut pick(1) ?,            # a is an f64 with no value yet
 a = 2.5,
 pick(0) == i32                 # true
 ```
@@ -110,7 +110,7 @@ inner := ( c := alloc 1 of i32 100, c@ ),    # c is freed when its scope closes
 b@ + inner - 98                              # 42, then b is freed at program end
 ```
 
-`@T` is a pointer type, `p@` dereferences, `&x` takes an address. Locals live on the stack and go away with their scope. Heap memory is explicit: `alloc n of T v` returns an owning pointer to `n` cells (`alloc n` to `n` bytes) and inserts a visible `defer free` into the scope that owns it. Teardowns run last-in first-out at scope exit. `move` moves ownership by ending the old name at parse time, and `free x` runs the value's teardown and ends the name now; on a value with no teardown, `free n` only ends the name. A type whose body fills `static free = (…)` is torn down the same way: binding a new value of it (`a := array i32 [1, 2]`) inserts `defer free a`, `b := a` and `b = a` copy it deep, so each name owns and frees its own, `f(a)` borrows, and a function's last value moves out to the caller's name. An array of arrays owns its inner arrays and frees them with itself: `a := array array i32 [[1, 2], [3, 4]]` reads `a[1][0]` as 3, and a name in such a list puts a copy in, `array t [x]`, unless it is moved in, `array t [move x]`. A field owns its value when declared `own`, `mut items := own (array i32) ?`: the type's `free` must then `free items`, and `b.items[1]` reads the array through the field. Nothing is destroyed behind your back: every teardown is graph structure you can read. The borrow checker that will prove these uses safe is specified but not yet built, so pointers are unchecked today.
+`@T` is a pointer type, `p@` dereferences, `&x` takes an address. Locals live on the stack and go away with their scope. Heap memory is explicit: `alloc n of T v` returns an owning pointer to `n` cells (`alloc n` to `n` bytes) and inserts a visible `defer free` into the scope that owns it. Teardowns run last-in first-out at scope exit. `move` moves ownership by ending the old name at parse time, and `free x` runs the value's teardown and ends the name now; on a value with no teardown, `free n` only ends the name. A type whose body fills `free = (…)` is torn down the same way: binding a new value of it (`a := array i32 [1, 2]`) inserts `defer free a`, `b := a` and `b = a` copy it deep, so each name owns and frees its own, `f(a)` borrows, and a function's last value moves out to the caller's name. An array of arrays owns its inner arrays and frees them with itself: `a := array array i32 [[1, 2], [3, 4]]` reads `a[1][0]` as 3, and a name in such a list puts a copy in, `array t [x]`, unless it is moved in, `array t [move x]`. A field owns its value when declared `own`, `items := mut own (array i32) ?`: the type's `free` must then `free items`, and `b.items[1]` reads the array through the field. Nothing is destroyed behind your back: every teardown is graph structure you can read. The borrow checker that will prove these uses safe is specified but not yet built, so pointers are unchecked today.
 
 ### Comments and strings
 
@@ -120,8 +120,8 @@ b@ + inner - 98                              # 42, then b is freed at program en
 
 ```logos
 sum_to := fn (n := i64 ?) -> i64 (
-    mut i := i64 0,
-    mut s := i64 0,
+    i := mut i64 0,
+    s := mut i64 0,
     while i < n (
         s = s + i,
         i = i + 1
@@ -142,7 +142,7 @@ logos 'import file «./lib.logos», double(21)'    # ...and call something it ex
 logos '(logos file «./lib.logos»).double(21)'    # ...or read that one name, with no import
 ```
 
-A file is reached by `file` and its path written as text, relative to the folder of the file that reads it, so every file name is written the same way, `file «.hidden.logos»` too. `import` reads it as Logos and sets its `pub` names where the `import` stands; `logos file «…»` reads it the same way and gives its scope, whose `pub` names are read with `.`. There is no `main`: the top level is the program. A file read as Logos runs inside its own scope and sees only the built-in names and the files it reads itself, never its reader's, so it means the same thing wherever it is read. A file loads once per run, every reader sharing it, and a cycle is an error. A file exposes only the names it marks `pub`, spelled `pub name := …`; a name is written after its declaration only when declared `mut`, and `pub mut` does both. A file reaches only files inside its project's folder, the folder of the file the command line reads; the command line itself may name any path.
+A file is reached by `file` and its path written as text, relative to the folder of the file that reads it, so every file name is written the same way, `file «.hidden.logos»` too. `import` reads it as Logos and sets its `pub` names where the `import` stands; `logos file «…»` reads it the same way and gives its scope, whose `pub` names are read with `.`. There is no `main`: the top level is the program. A file read as Logos runs inside its own scope and sees only the built-in names and the files it reads itself, never its reader's, so it means the same thing wherever it is read. A file loads once per run, every reader sharing it, and a cycle is an error. A file exposes only the names it marks `pub`, spelled `name := pub …`; a name is written after its declaration only when declared `mut`, and `pub mut` does both. A file reaches only files inside its project's folder, the folder of the file the command line reads; the command line itself may name any path.
 
 ## Defining the language from inside
 
@@ -150,16 +150,16 @@ This is what the first public preview is built to show. An operator is a type wi
 
 ```logos
 ^ := type (
-    static get_mint := fn (l := type ?) -> type (  # builds the mint for a base of type l
+    get_mint := static fn (l := type ?) -> type (  # builds the mint for a base of type l
         place := type_mint.step(type_mint.step(0, ^), l),  # the key: `^`, then the base's type
-        mut mint := type type_mint.kept(place),    # `type` first holds the type, not a place of it
+        mint := mut type type_mint.kept(place),    # `type` first holds the type, not a place of it
         if mint != ? return mint,                  # each mint is built once
         mint = type (
             lhs := l ?,                            # the operands: one field per cell consumed
             rhs := i32 ?,
-            static output_type := type l,          # the result follows the base's type
-            static run = (                         # what every node computes, its fields by name
-                mut r := output_type 1,
+            output_type := static type l,          # the result follows the base's type
+            run = (                                # what every node computes, its fields by name
+                r := mut output_type 1,
                 for 0..rhs ( r = r * lhs ),
                 r
             )
@@ -167,9 +167,9 @@ This is what the first public preview is built to show. An operator is a type wi
         type_mint.keep(place, mint),
         mint
     ),
-    static parse_rank = *.parse_rank + 1,          # binds tighter than *
-    static associativity = right,
-    static parse = (                               # runs at every appearance of ^
+    parse_rank = *.parse_rank + 1,                 # binds tighter than *
+    associativity = right,
+    parse = (                                      # runs at every appearance of ^
         tape[0].type = get_mint(tape[-1].type),    # its own cell becomes a node of the mint
         tape[0].lhs = tape[-1],                    # filled by name
         tape[0].rhs = tape[1],
@@ -183,7 +183,7 @@ f.compile(),
 f(2)
 ```
 
-The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `tape[0].type = T` makes the constructor's own cell a new node of its type, whose fields it writes by name, `tape[0].lhs`, and once built the node runs and is never parsed again, while a value of the type that appears later, a name or a call's result, runs the same parse with that value as `tape[0]`, which is how `a[1]` reads an array; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape`, `run`, `free` and the type's `static` functions name the fields bare, and `static run = (…)` is lexed once where it is written and constructed once per mint `get_mint` builds, so `^` over i32 and over f64 is one definition. A type is minted only by a function written for it, as `get_mint` here and `array`'s own in identities/array.logos, and one identity keeps every mint, `type_mint` in identities/type_mint.logos: a key is walked one `step` per argument from place 0, `kept` gives the mint kept at the place reached, or `?`, and `keep` keeps one there.
+The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `tape[0].type = T` makes the constructor's own cell a new node of its type, whose fields it writes by name, `tape[0].lhs`, and once built the node runs and is never parsed again, while a value of the type that appears later, a name or a call's result, runs the same parse with that value as `tape[0]`, which is how `a[1]` reads an array; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape`, `run`, `free` and the type's `static` functions name the fields bare, and `run = (…)` is lexed once where it is written and constructed once per mint `get_mint` builds, so `^` over i32 and over f64 is one definition. A type is minted only by a function written for it, as `get_mint` here and `array`'s own in identities/array.logos, and one identity keeps every mint, `type_mint` in identities/type_mint.logos: a key is walked one `step` per argument from place 0, `kept` gives the mint kept at the place reached, or `?`, and `keep` keeps one there.
 
 ## What runs today, and what does not
 
@@ -198,11 +198,11 @@ The seed runs:
 - `alloc`, `move`, `free`, `defer`, `own` in a type, and raw pointers;
 - `.compile()` with a deoptimizing JIT;
 - `file «path»`, `import file «path»` and `logos file «path»`, the command line as source, and the REPL;
-- `pub`, `mut` and `static`, kept in the type of the value they gate: a name is written after its declaration only where it says `mut`, and a write along a field path needs `mut` on every step.
+- `pub`, `mut` and `static`, written before the value they gate (`x := mut i32 5`) and kept in its type: a name is written after its declaration only where it says `mut`, and a write along a field path needs `mut` on every step.
 
 Specified in the rules and not yet built:
 
-- **The rest of the gates.** The gate words written right of `:=` (`x := mut i32 5`), the write permission through pointers, and one read-or-write rule for visibility, borrowing, and reflection alike.
+- **The rest of the gates.** The write permission through pointers (`@ mut i32`) and in an array's elements (`array mut i32`), and one read-or-write rule for visibility, borrowing, and reflection alike.
 - **The borrow checker.** Many readers or one writer, checked per place, with lexical lifetimes.
 - **Error values.** `T!`, `try`, and `match`. Today every error is a fault that stops the run with one message.
 - **The rewriting engine.** Equality saturation over the graph: one engine for compiler optimization, computer algebra, and your own rewrites, driven by cost functions.

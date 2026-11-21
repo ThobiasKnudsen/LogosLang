@@ -1,4 +1,4 @@
 # A `pub` pattern, a `pub` literal spelling and a `pub` name with a rank of its own.
-pub regex «[0-9]+k» := type (),
-pub lex «@!» := i32 7,
-pub r := type (static lex_rank = 3)
+regex «[0-9]+k» := pub type (),
+lex «@!» := pub i32 7,
+r := pub type (lex_rank = 3)

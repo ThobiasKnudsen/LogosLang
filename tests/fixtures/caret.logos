@@ -5,16 +5,16 @@
 # declared it before its `:=`, and once declared it lexes glued to its
 # operands (`x^3`). The pinned demo itself is identities/power.logos.
 ^ := type (
-    static get_mint := fn (l := type ?) -> type (
+    get_mint := static fn (l := type ?) -> type (
         place := type_mint.step(type_mint.step(0, ^), l),
-        mut mint := type type_mint.kept(place),
+        mint := mut type type_mint.kept(place),
         if mint != ? return mint,
         mint = type (
-            pub lhs := l ?,
-            pub rhs := i32 ?,
-            static output_type := type l,
-            static run = (
-                mut r := output_type 1,
+            lhs := pub l ?,
+            rhs := pub i32 ?,
+            output_type := static type l,
+            run = (
+                r := mut output_type 1,
                 for 0..rhs ( r = r * lhs ),
                 r
             )
@@ -22,9 +22,9 @@
         type_mint.keep(place, mint),
         mint
     ),
-    static parse_rank = *.parse_rank + 1,
-    static associativity = right,
-    static parse = (
+    parse_rank = *.parse_rank + 1,
+    associativity = right,
+    parse = (
         tape[0].type = get_mint(tape[-1].type),
         tape[0].lhs = tape[-1],
         tape[0].rhs = tape[1],

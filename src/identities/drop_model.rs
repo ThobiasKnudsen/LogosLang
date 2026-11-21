@@ -1984,28 +1984,28 @@ mod tests {
     #[test]
     fn an_owning_place_takes_only_an_owning_value() {
         assert_eq!(
-            parse_err("x := i32 1, mut a := alloc 1 of i32 5, a = &x"),
+            parse_err("x := i32 1, a := mut alloc 1 of i32 5, a = &x"),
             ParseError::NonOwningIntoOwning
         );
         // A named owner is copied in: each name frees its own block.
         assert_eq!(
-            run("mut a := alloc 1 of i32 5, b := alloc 1 of i32 6, a = b, a@ = 9, b@"),
+            run("a := mut alloc 1 of i32 5, b := alloc 1 of i32 6, a = b, a@ = 9, b@"),
             (6, 0)
         );
         assert_eq!(free_log(), vec![5, 6, 9]);
-        assert_eq!(run("x := i32 1, mut p := &x, p = &x, p@").0, 1);
-        assert_eq!(run("mut a := alloc 1 of i32 5, a@ = 9, a@"), (9, 0));
+        assert_eq!(run("x := i32 1, p := mut &x, p = &x, p@").0, 1);
+        assert_eq!(run("a := mut alloc 1 of i32 5, a@ = 9, a@"), (9, 0));
 
         // `=` frees the block it displaces, after building the right side, before the write.
-        assert_eq!(run("mut a := alloc 1 of i32 5, a = alloc 1 of i32 6, a@"), (6, 0));
+        assert_eq!(run("a := mut alloc 1 of i32 5, a = alloc 1 of i32 6, a@"), (6, 0));
         assert_eq!(free_log(), vec![5, 6]);
-        assert_eq!(run("mut a := alloc 1 of i32 5, b := alloc 1 of i32 6, a = move b, a@"), (6, 0));
+        assert_eq!(run("a := mut alloc 1 of i32 5, b := alloc 1 of i32 6, a = move b, a@"), (6, 0));
         assert_eq!(free_log(), vec![5, 6]);
         // The right side may read what it displaces.
-        assert_eq!(run("mut a := alloc 1 of i32 5, a = alloc 1 of i32 (a@ + 1), a@"), (6, 0));
+        assert_eq!(run("a := mut alloc 1 of i32 5, a = alloc 1 of i32 (a@ + 1), a@"), (6, 0));
         // An owner never written frees nothing when the first value lands.
         assert_eq!(
-            run("mut a := own @i32 ?, a = alloc 1 of i32 5, a = alloc 1 of i32 7, a@"),
+            run("a := mut own @i32 ?, a = alloc 1 of i32 5, a = alloc 1 of i32 7, a@"),
             (7, 0)
         );
         assert_eq!(free_log(), vec![5, 7]);
@@ -2014,19 +2014,19 @@ mod tests {
     #[test]
     fn a_dyad_place_frees_the_node_a_write_made_for_it() {
         for src in [
-            "mut d := dyad ?, d = i64 5, 1",
-            "mut d := dyad ?, d = i64 5, d = f64 2.5, d = 7, 1",
-            "mut d := dyad ?, d = i32, d = i64 5, d = i32, 1",
-            "mut d := dyad ?, d = i64 5, free d, 1",
-            "mut d := dyad ?, d = i64 5, e := d, 1",
-            "mut d := dyad ?, d = i64 5, e := move d, 1",
-            "( mut d := dyad ?, d = i64 5 ), 1",
-            "mut d := dyad ?, for 0..3 ( d = i64 5 ), 1",
+            "d := mut dyad ?, d = i64 5, 1",
+            "d := mut dyad ?, d = i64 5, d = f64 2.5, d = 7, 1",
+            "d := mut dyad ?, d = i32, d = i64 5, d = i32, 1",
+            "d := mut dyad ?, d = i64 5, free d, 1",
+            "d := mut dyad ?, d = i64 5, e := d, 1",
+            "d := mut dyad ?, d = i64 5, e := move d, 1",
+            "( d := mut dyad ?, d = i64 5 ), 1",
+            "d := mut dyad ?, for 0..3 ( d = i64 5 ), 1",
             "f := fn (a := dyad ?) -> i32 ( 1 ), f(i64 42)",
             "f := fn (a := dyad ?) -> dyad ( a ), x := f(i64 42), 1",
             "f := fn (a := dyad ?) -> dyad ( a ), free (f(i64 42)), 1",
             "f := fn () -> dyad ( i32 5 ), free (f()), 1",
-            "f := fn () -> i32 ( mut d := dyad ?, d = i64 5, d = 1/2, 1 ), f()",
+            "f := fn () -> i32 ( d := mut dyad ?, d = i64 5, d = 1/2, 1 ), f()",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
             let compiled = src.replacen("), ", "), f.compile(), ", 1);
@@ -2039,14 +2039,14 @@ mod tests {
     #[test]
     fn a_dyad_place_ends_the_value_it_holds_with_its_node() {
         for src in [
-            "mut d := dyad ?, d = alloc 1 of i32 5, 1",
-            "mut d := dyad ?, d = alloc 1 of i32 5, d = alloc 1 of i32 6, 1",
-            "mut d := dyad ?, d = alloc 1 of i32 5, d = i64 7, 1",
-            "mut d := dyad ?, d = alloc 1 of i32 5, free d, 1",
-            "mut d := dyad ?, d = alloc 1 of i32 5, e := d, 1",
-            "mut d := dyad ?, d = alloc 1 of i32 5, e := move d, 1",
-            "p := alloc 1 of i32 5, mut d := dyad ?, d = p, 1",
-            "mut d := dyad ?, for 0..3 ( d = alloc 1 of i32 5 ), 1",
+            "d := mut dyad ?, d = alloc 1 of i32 5, 1",
+            "d := mut dyad ?, d = alloc 1 of i32 5, d = alloc 1 of i32 6, 1",
+            "d := mut dyad ?, d = alloc 1 of i32 5, d = i64 7, 1",
+            "d := mut dyad ?, d = alloc 1 of i32 5, free d, 1",
+            "d := mut dyad ?, d = alloc 1 of i32 5, e := d, 1",
+            "d := mut dyad ?, d = alloc 1 of i32 5, e := move d, 1",
+            "p := alloc 1 of i32 5, d := mut dyad ?, d = p, 1",
+            "d := mut dyad ?, for 0..3 ( d = alloc 1 of i32 5 ), 1",
             "f := fn (a := dyad ?) -> i32 ( 1 ), f(alloc 1 of i32 5)",
             "f := fn (a := dyad ?) -> dyad ( a ), x := f(alloc 1 of i32 5), 1",
             "f := fn () -> dyad ( alloc 1 of i32 5 ), x := f(), 1",
@@ -2084,7 +2084,7 @@ mod tests {
                     .into(),
                 5,
             ),
-            (format!("mut d := dyad ?, d = alloc 1 of i32 5, {f}, f(d)"), 1),
+            (format!("d := mut dyad ?, d = alloc 1 of i32 5, {f}, f(d)"), 1),
             ("p := alloc 1 of i32 5, f := fn (a := dyad ?) -> dyad ( a ), x := f(p), p@".into(), 5),
         ] {
             assert_eq!(run_hosted(&src), (want, 0), "{src}");
@@ -2104,7 +2104,7 @@ mod tests {
             "free (dyad (i32, 7)), 1",
             "d := dyad (i32, 7), free d, 1",
             "d := dyad (i32, 7), e := d, 1",
-            "mut d := dyad ?, d = dyad (i32, 7), d = dyad (i64, 8), 1",
+            "d := mut dyad ?, d = dyad (i32, 7), d = dyad (i64, 8), 1",
             "for 0..3 ( d := dyad (i32, 2) ), 1",
             "free (dyad (i32, 7) + 1), 1",
             "x := dyad (i32, 7) + dyad (i32, 1), 1",
@@ -2114,14 +2114,14 @@ mod tests {
             "g := fn () -> dyad ( i32 5 ), x := ( free (g()), g() + 1 ), 1",
             "g := fn () -> dyad ( i32 5 ), k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ), free (k(1, g() + 1)), 1",
             "q := fn (a := i32 ?) -> i32 ( a ), free (q(dyad (i32, 7))), 1",
-            "mut x := i32 ?, x = dyad (i32, 7), 1",
+            "x := mut i32 ?, x = dyad (i32, 7), 1",
             "x := i32 dyad (i32, 7), 1",
             "x := i32 lossy (dyad (f64, 5.5)), 1",
-            "for 0..3 ( mut x := i64 ?, x = dyad (i32, 2) ), 1",
+            "for 0..3 ( x := mut i64 ?, x = dyad (i32, 2) ), 1",
             "g := fn () -> dyad ( i32 5 ), q := fn (a := i32 ?) -> i32 ( a ), free (q(g())), 1",
-            "g := fn () -> dyad ( i32 5 ), mut x := i32 ?, x = g(), 1",
+            "g := fn () -> dyad ( i32 5 ), x := mut i32 ?, x = g(), 1",
             "g := fn () -> dyad ( i32 5 ), x := i64 (g()), 1",
-            "g := fn () -> dyad ( rational_number 1/2 ), mut x := rational_number ?, x = g(), 1",
+            "g := fn () -> dyad ( rational_number 1/2 ), x := mut rational_number ?, x = g(), 1",
             "g := fn () -> dyad ( i32 5 ), f := fn () -> i32 ( g() ), for 0..3 ( free (f()) ), 1",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
@@ -2134,7 +2134,7 @@ mod tests {
             ("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) * 1 )", "f(i32 1)"),
             ("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) )", "f(i32 1)"),
             ("f := fn (m := i32 ?) -> i32 ( return dyad (i32, m) )", "f(i32 1)"),
-            ("f := fn (m := i32 ?) -> i32 ( mut x := i32 ?, x = dyad (i32, m), x )", "f(i32 1)"),
+            ("f := fn (m := i32 ?) -> i32 ( x := mut i32 ?, x = dyad (i32, m), x )", "f(i32 1)"),
             (
                 "q := fn (a := i32 ?) -> i32 ( a ), f := fn (m := i32 ?) -> i32 ( q(dyad (i32, m)) )",
                 "f(i32 1)",
@@ -2153,12 +2153,12 @@ mod tests {
         for src in [
             "f := fn (a := dyad ?) -> i64 ( a ), free (f(i64 42)), 1",
             "f := fn (a := dyad ?) -> i64 ( a * 2 ), free (f(i64 21)), 1",
-            "f := fn (a := dyad ?) -> i64 ( mut d := dyad ?, d = a, d = d * 3, d ), free (f(i64 2)), 1",
+            "f := fn (a := dyad ?) -> i64 ( d := mut dyad ?, d = a, d = d * 3, d ), free (f(i64 2)), 1",
             "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() ), free (f()), 1",
-            "mut d := dyad ?, d = i64 5, for 0..3 ( d = d + 1 ), 1",
+            "d := mut dyad ?, d = i64 5, for 0..3 ( d = d + 1 ), 1",
             "f := fn (a := dyad ?) -> dyad ( a + 1 ), x := f(i64 1), 1",
             "f := fn (a := dyad ?) -> i64 ( if a > 0 ( f(i64 (a - 1)) + 1 ) else ( 0 ) ), free (f(i64 4)), 1",
-            "mut d := dyad ?, d = i64 1, g := fn (a := dyad ?) -> i64 ( a ), free (g(d)), 1",
+            "d := mut dyad ?, d = i64 1, g := fn (a := dyad ?) -> i64 ( a ), free (g(d)), 1",
             "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( g() + 1 ), free (f()), 1",
             "g := fn () -> dyad ( i64 6 ), f := fn () -> i64 ( 1 + g() * 2 ), for 0..3 ( free (f()) ), 1",
             "f := fn (a := dyad ?) -> void ( print «{a + 1}» ), f(i64 5), f(f64 2.5), 1",
@@ -2302,7 +2302,7 @@ mod tests {
     #[test]
     fn alloc_of_a_bare_count_is_that_many_zeroed_bytes() {
         assert_eq!(run("a := alloc 8,\na@"), (0, 0));
-        assert_eq!(run("mut a := alloc 8,\na@ = 200,\na@"), (200, 0));
+        assert_eq!(run("a := mut alloc 8,\na@ = 200,\na@"), (200, 0));
         // The count-less spelling is gone: `i32 2` is a count, so this is two bytes.
         assert_eq!(run("a := alloc i32 2,\na@"), (0, 0));
     }
@@ -2452,7 +2452,7 @@ mod tests {
         );
         // A field moves only what it owns.
         assert_eq!(
-            parse_err("p := type ( pub x := i32 ?, y := i32 ? ),\nq := p (1, 2),\nb := move q.x"),
+            parse_err("p := type ( x := pub i32 ?, y := i32 ? ),\nq := p (1, 2),\nb := move q.x"),
             ParseError::MoveOfUnownedPath
         );
     }
@@ -2502,7 +2502,7 @@ mod tests {
     #[test]
     fn a_write_after_move_is_refused() {
         assert_eq!(
-            parse_err("mut a := alloc 1 of i32 7,\nb := move a,\na = b"),
+            parse_err("a := mut alloc 1 of i32 7,\nb := move a,\na = b"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
@@ -2626,7 +2626,7 @@ mod tests {
         // The next pass would read a dead name.
         assert_eq!(
             parse_err(
-                "a := alloc 1 of i32 7,\nmut c := i32 1,\nwhile (c == 1) ( b := move a, c = 0 )"
+                "a := alloc 1 of i32 7,\nc := mut i32 1,\nwhile (c == 1) ( b := move a, c = 0 )"
             ),
             ParseError::MoveOfOuterName
         );
@@ -2641,12 +2641,12 @@ mod tests {
         // A `while` condition runs every pass as its body does.
         assert_eq!(
             parse_err(
-                "a := alloc 1 of i32 7,\nmut c := i32 0,\nwhile ((free a, c) < 2) ( c = c + 1 )"
+                "a := alloc 1 of i32 7,\nc := mut i32 0,\nwhile ((free a, c) < 2) ( c = c + 1 )"
             ),
             ParseError::MoveOfOuterName
         );
         // A range runs once, before the first pass.
-        assert_eq!(run("a := alloc 1 of i32 7,\nmut c := i32 0,\nfor i in 0..(free a, i32 3) ( c = c + 1 ),\nc"), (3, 0));
+        assert_eq!(run("a := alloc 1 of i32 7,\nc := mut i32 0,\nfor i in 0..(free a, i32 3) ( c = c + 1 ),\nc"), (3, 0));
     }
 
     #[test]
@@ -2680,28 +2680,24 @@ mod tests {
     }
 
     /// A record type that fills `free`, so its values live behind a pointer of their own.
-    const KEPT: &str = "r := type ( pub mut n := i32 ?, static free = ( print «freed {n}» ) ),\n";
+    const KEPT: &str = "r := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ),\n";
 
     #[test]
     fn a_record_behind_its_pointer_is_freed_once_and_never_leaks() {
-        let body = "a := r(1), b := a, free a, mut c := r ?, c.n = 2, b.n + c.n";
+        let body = "a := r(1), b := a, free a, c := mut r ?, c.n = 2, b.n + c.n";
         for (tail, want) in [
             ("a := r(1),\na.n".to_string(), 1),
             ("a := r(1),\nb := a,\nfree a,\nb.n".into(), 1),
             ("a := r(1),\nb := move a,\nb.n".into(), 1),
-            ("mut a := r ?,\n1".into(), 1),
-            ("mut a := r ?,\na = r(3),\na = r(4),\na.n".into(), 4),
-            ("mut a := r ?,\na.n = 7,\na.n".into(), 7),
+            ("a := mut r ?,\n1".into(), 1),
+            ("a := mut r ?,\na = r(3),\na = r(4),\na.n".into(), 4),
+            ("a := mut r ?,\na.n = 7,\na.n".into(), 7),
             ("p := alloc 1 of r(1),\nfree p@,\nfree p@,\n1".into(), 1),
             ("p := alloc 1 of r(1),\np@ = r(2),\nfree p@,\n1".into(), 1),
             ("free (r(1)),\n1".into(), 1),
             ("f := fn () -> own r ( r(2) ),\nx := f(),\nx.n".into(), 2),
             ("d := dyad (r, r(1)),\ne := d,\n1".into(), 1),
-            (
-                "h := type ( mut b := r ?, static free = ( free b ) ),\na := r(1),\nv := h(a),\n1"
-                    .into(),
-                1,
-            ),
+            ("h := type ( b := mut r ?, free = ( free b ) ),\na := r(1),\nv := h(a),\n1".into(), 1),
             (format!("f := fn () -> i32 ( {body} ),\nf()"), 3),
             (format!("f := fn () -> i32 ( {body} ),\nf.compile(),\nf()"), 3),
         ] {
@@ -2723,9 +2719,9 @@ mod tests {
     }
 
     /// `x`, a record with two owning fields, `p` holding 5 and `q` 6.
-    const PAIR: &str = "r := type ( pub mut p := own @i32 ?, pub mut q := own @i32 ?, \
-        static free = ( free p, free q ), static s := fn () -> i32 ( 2 ) ),\n\
-        mut x := r ?,\na := alloc 1 of i32 5,\nx.p = move a,\nb := alloc 1 of i32 6,\nx.q = move b,\n";
+    const PAIR: &str = "r := type ( p := pub mut own @i32 ?, q := pub mut own @i32 ?, \
+        free = ( free p, free q ), s := static fn () -> i32 ( 2 ) ),\n\
+        x := mut r ?,\na := alloc 1 of i32 5,\nx.p = move a,\nb := alloc 1 of i32 6,\nx.q = move b,\n";
 
     #[test]
     fn a_field_of_a_record_that_fills_free_is_never_ended_alone() {
@@ -2746,7 +2742,7 @@ mod tests {
 
     /// `q`, a record whose type fills no `free`, `x` holding 5 and `y` 6.
     const PLAIN: &str =
-        "r := type ( pub x := i32 ?, pub y := i32 ?, pub static s := fn () -> i32 ( 2 ) ),\n\
+        "r := type ( x := pub i32 ?, y := pub i32 ?, s := pub static fn () -> i32 ( 2 ) ),\n\
         q := r (5, 6),\n";
 
     #[test]
@@ -2783,16 +2779,16 @@ mod tests {
     /// whose run makes a new `bagged`, and `bag` with no bracket is `bagged`.
     const BAG: &str = "import file «./identities/array.logos», t := type array i32, \
         bagged := type ( \
-            pub mut items := t ?, \
-            static free = ( free items ), \
-            static parse_rank = dyad.parse_rank, \
-            static parse = ( tape.is_constructed[0] = true ) ), \
+            items := pub mut t ?, \
+            free = ( free items ), \
+            parse_rank = dyad.parse_rank, \
+            parse = ( tape.is_constructed[0] = true ) ), \
         bag := type ( \
             output_type := type ?, \
-            static run = ( mut v := output_type ?, v.items = array i32 [4, 5, 6], move v ), \
-            static parse_rank = dyad.parse_rank, \
-            static associativity = left, \
-            static parse = ( \
+            run = ( v := mut output_type ?, v.items = array i32 [4, 5, 6], move v ), \
+            parse_rank = dyad.parse_rank, \
+            associativity = left, \
+            parse = ( \
                 if tape[1].type == scope ( \
                     tape[0].type = bag, tape[0].output_type = bagged, tape.remove(1) \
                 ) else ( tape[0] = bagged ), \
@@ -2811,7 +2807,7 @@ mod tests {
             ("x := k(p(), g() + 1), x", 8),
             ("x := ( free (h()), k(p(), g() + 1) ), x", 8),
             ("q := fn () -> i32 ( k(p(), g() + 1) ), q() + q()", 16),
-            ("q := fn () -> i32 ( k(p(), g() + 1) ), mut s := i32 0, for 0..20 ( s = s + q() ), s", 160),
+            ("q := fn () -> i32 ( k(p(), g() + 1) ), s := mut i32 0, for 0..20 ( s = s + q() ), s", 160),
         ] {
             assert_eq!(run_hosted(&format!("{defs}, {tail}")), (want, 0), "{tail}");
         }
@@ -2826,7 +2822,7 @@ mod tests {
             ("f := fn () -> i32 ( b := bag (), b.items[2] ), f() + f()", 12),
             ("l := array bagged [bag (), bag ()], l[1].items[0]", 4),
             ("b := bag (), l := array bagged [move b], l[0].items.size", 3),
-            ("mut a := own t ?, a = array i32 [7], a[0]", 7),
+            ("a := mut own t ?, a = array i32 [7], a[0]", 7),
         ] {
             assert_eq!(run(&format!("{BAG}{tail}")), (want, 0), "{tail}");
         }
@@ -2834,38 +2830,38 @@ mod tests {
         for tail in [
             "b := bag (), x := array i32 [1], b.items = move x, b.items[0]",
             "b := bag (), b.items = array i32 [1], b.items[0]",
-            "mut a := own t ?, a = array i32 [5], a = array i32 [1], a[0]",
-            "mut a := array i32 [5], a = array i32 [a[0] - 4], a[0]",
+            "a := mut own t ?, a = array i32 [5], a = array i32 [1], a[0]",
+            "a := mut array i32 [5], a = array i32 [a[0] - 4], a[0]",
         ] {
             assert_eq!(run(&format!("{BAG}{tail}")), (1, 0), "{tail}");
         }
         // The count sees the array: a free that leaves the field alone leaks its one block.
-        let forgetful = BAG.replace("static free = ( free items )", "static free = ( free (0) )");
+        let forgetful = BAG.replace("free = ( free items )", "free = ( free (0) )");
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
     /// A plain record whose type fills `free`, kept behind its pointer, with a field of a node
     /// type and no word before it.
     const HELD: &str = "import file «./identities/array.logos», t := type array i32, \
-        held := type ( pub mut z := i32 ?, pub mut items := t ?, static free = ( free items ) ),\n";
+        held := type ( z := pub mut i32 ?, items := pub mut t ?, free = ( free items ) ),\n";
 
     #[test]
     fn a_field_whose_type_fills_free_owns_the_node_written_into_it() {
         let array = "import file «./identities/array.logos», t := type array i32, ";
         assert_eq!(
-            parse_err(&format!("{array}h := type ( pub mut items := t ? ), 0")),
+            parse_err(&format!("{array}h := type ( items := pub mut t ? ), 0")),
             ParseError::FieldsNeedFree(vec!["items".into()])
         );
         for (tail, want) in [
-            ("mut h := held ?, h.items = array i32 [1, 2], h.items[1]", 2),
-            ("mut h := held ?, h.z = i32 1, h.items = array i32 [1, 2], h.items[0] + h.z", 2),
+            ("h := mut held ?, h.items = array i32 [1, 2], h.items[1]", 2),
+            ("h := mut held ?, h.z = i32 1, h.items = array i32 [1, 2], h.items[0] + h.z", 2),
             // `=` frees the array it displaces.
-            ("mut h := held ?, h.items = array i32 [1, 2], h.items = array i32 [3], h.items[0]", 3),
-            ("mut h := held ?, x := array i32 [4], h.items = move x, h.items[0]", 4),
+            ("h := mut held ?, h.items = array i32 [1, 2], h.items = array i32 [3], h.items[0]", 3),
+            ("h := mut held ?, x := array i32 [4], h.items = move x, h.items[0]", 4),
             // A bare name is copied deep into it, so field and name each free their own array.
-            ("mut h := held ?, x := array i32 [4], h.items = x, h.items[0] = i32 5, x[0]", 4),
+            ("h := mut held ?, x := array i32 [4], h.items = x, h.items[0] = i32 5, x[0]", 4),
             (
-                "f := fn () -> i32 ( mut h := held ?, h.items = array i32 [1, 2], h.items[1] ), \
+                "f := fn () -> i32 ( h := mut held ?, h.items = array i32 [1, 2], h.items[1] ), \
                  f() + f()",
                 4,
             ),
@@ -2873,10 +2869,10 @@ mod tests {
             assert_eq!(run(&format!("{HELD}{tail}")), (want, 0), "{tail}");
         }
         // The count sees the array: a free that leaves the field alone leaks its one block.
-        let forgetful = HELD.replace("static free = ( free items )", "static free = ( free (0) )");
-        assert_eq!(run(&format!("{forgetful}mut h := held ?, h.items = array i32 [1], 1")), (1, 1));
+        let forgetful = HELD.replace("free = ( free items )", "free = ( free (0) )");
+        assert_eq!(run(&format!("{forgetful}h := mut held ?, h.items = array i32 [1], 1")), (1, 1));
         // A function writing such a field stays interpreted: stand-in for #164.
-        let compiled = "f := fn () -> i32 ( mut h := held ?, h.items = array i32 [1, 2], \
+        let compiled = "f := fn () -> i32 ( h := mut held ?, h.items = array i32 [1, 2], \
                         h.items[1] ), f.compile(), f()";
         let result = try_run(&format!("{HELD}{compiled}"));
         assert!(matches!(result, Err(RunError::CompileFailed(_))), "{result:?}");
@@ -2960,17 +2956,17 @@ mod tests {
             assert_eq!(live, 0, "{src}");
         }
         assert_eq!(
-            parse_err("f := fn (mut p := @i32 ?) -> i32 ( p@ ),\nf(alloc 1 of i32 5)"),
+            parse_err("f := fn (p := mut @i32 ?) -> i32 ( p@ ),\nf(alloc 1 of i32 5)"),
             ParseError::UnboundOwningValue
         );
     }
 
     #[test]
     fn an_own_hole_frees_what_is_written_into_it() {
-        assert_eq!(run("mut a := own @i32 ?,\na = alloc 1 of i32 5,\na@"), (5, 0));
+        assert_eq!(run("a := mut own @i32 ?,\na = alloc 1 of i32 5,\na@"), (5, 0));
         assert_eq!(free_log(), vec![5]);
-        assert_eq!(run("mut a := own @i32 ?,\n1"), (1, 0), "an unwritten owner frees nothing");
-        assert_eq!(run("mut a := own @i32 ?,\nb := alloc 1 of i32 6,\na = b,\na@"), (6, 0));
+        assert_eq!(run("a := mut own @i32 ?,\n1"), (1, 0), "an unwritten owner frees nothing");
+        assert_eq!(run("a := mut own @i32 ?,\nb := alloc 1 of i32 6,\na = b,\na@"), (6, 0));
         assert_eq!(free_log(), vec![6, 6]);
         assert_eq!(parse_err("a := own i32 ?"), ParseError::OwnNeedsPointer);
         assert_eq!(
@@ -2991,11 +2987,11 @@ mod tests {
             ParseError::Resolve(ResolveError::Unknown("drop".into()))
         );
         assert_eq!(
-            parse_err("t := type ( a := i32 ?, static drop = ( 0 ) ),\n1"),
+            parse_err("t := type ( a := i32 ?, drop = ( 0 ) ),\n1"),
             ParseError::NoSuchSlot("drop".into())
         );
         assert_eq!(
-            run("import file «./identities/array.logos», mut x := array i32 [1], y := move x, free y, 0"),
+            run("import file «./identities/array.logos», x := mut array i32 [1], y := move x, free y, 0"),
             (0, 0)
         );
     }
@@ -3018,7 +3014,7 @@ mod tests {
             try_run("n := i32 0 - 1,\nfree (alloc n of i32 1),\n1"),
             Err(RunError::BadCount(-1))
         ));
-        let counted = "mut n := i32 0,\nf := fn () -> i32 ( n = n + 1, n ),\n";
+        let counted = "n := mut i32 0,\nf := fn () -> i32 ( n = n + 1, n ),\n";
         for tail in [
             "free (f()),\nn",
             "free f(),\nn",
@@ -3139,8 +3135,8 @@ mod tests {
             "g := fn (n := i32 ?, q := @i32 ?) -> @i32 \
              ( if (n == 0) (q) else (if (n == 1) (alloc 1 of i32 5) else (g(n - 1, q))) )",
             // A `dyad` ends the node it holds, so it makes or borrows as a pointer does.
-            "mut d := dyad ?,\nd = i32 5,\nx := if (c == 1) (dyad (i32, 6)) else (d),\n1",
-            "mut d := dyad ?,\nd = i32 5,\nfree (if (c == 1) (d) else (dyad (i32, 6))),\n1",
+            "d := mut dyad ?,\nd = i32 5,\nx := if (c == 1) (dyad (i32, 6)) else (d),\n1",
+            "d := mut dyad ?,\nd = i32 5,\nfree (if (c == 1) (d) else (dyad (i32, 6))),\n1",
         ] {
             assert_eq!(parse_err(&format!("{c}{src}")), ParseError::ArmsMakeAndBorrow, "{src}");
         }
@@ -3317,19 +3313,19 @@ mod tests {
         // Calling a function is a use of each outer name its body reads, at the call.
         assert_eq!(
             parse_err(
-                "mut n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nfree (climb()),\nfree n,\nclimb()"
+                "n := mut i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nfree (climb()),\nfree n,\nclimb()"
             ),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
         assert_eq!(
             parse_err(
-                "mut n := i32 0,\nclimb := fn () -> i32 ( n ),\nfree n,\nmut n := i32 10,\nclimb()"
+                "n := mut i32 0,\nclimb := fn () -> i32 ( n ),\nfree n,\nn := mut i32 10,\nclimb()"
             ),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
         let (v, live) = run(
-            "mut n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nfree (climb()),\nfree n,\n\
-             mut n := i32 10,\nclimb2 := fn () -> i32 ( n = n + 1, n ),\nclimb2()",
+            "n := mut i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nfree (climb()),\nfree n,\n\
+             n := mut i32 10,\nclimb2 := fn () -> i32 ( n = n + 1, n ),\nclimb2()",
         );
         assert_eq!(v, 11);
         assert_eq!(live, 0);
@@ -3372,10 +3368,10 @@ mod tests {
     fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                a := i32 ?, b := i32 ?, output_type := type ?, static run = ( a * b * n ),\n\
-                static parse_rank = *.parse_rank + 1,\n\
-                static associativity = right,\n\
-                static parse = (\n\
+                a := i32 ?, b := i32 ?, output_type := type ?, run = ( a * b * n ),\n\
+                parse_rank = *.parse_rank + 1,\n\
+                associativity = right,\n\
+                parse = (\n\
                     tape[0].type = ^, tape[0].a = tape[-1],\n\
                     tape[0].b = tape[1],\n\
                     tape[0].output_type = i32,\n\
@@ -3410,7 +3406,7 @@ mod tests {
     #[test]
     fn a_loop_body_frees_every_iteration() {
         let (_v, live) =
-            run("mut i := i32 0,\nwhile (i < 3) ( p := alloc 1 of i32 5, i = i + 1 ),\ni");
+            run("i := mut i32 0,\nwhile (i < 3) ( p := alloc 1 of i32 5, i = i + 1 ),\ni");
         assert_eq!(live, 0, "no allocation outlives its iteration");
         assert_eq!(free_log().len(), 3, "one free per iteration");
     }

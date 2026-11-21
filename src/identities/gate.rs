@@ -27,7 +27,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let mut_ = word(cx, "mut", meta::prec::GATE);
     cx.metas.insert(mut_, construct);
     let static_ = word(cx, "static", meta::prec::GATE);
-    cx.metas.insert(static_, outside_block);
+    cx.metas.insert(static_, construct);
     let former = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::INERT);
     let gate_ = cx.store.alloc_head(cx.type_, former);
     (pub_, mut_, static_, gate_)
@@ -279,29 +279,11 @@ pub(crate) unsafe fn words_of(mint: DyadPtr) -> Vec<DyadPtr> {
     }
 }
 
-/// A type body's reader takes the word at a line's start, and a member's declaration the one
-/// that opens its value; before a declaration anywhere else on a body line it stands for
-/// nothing.
-fn outside_block(
-    p: &mut crate::parse::Parser,
-    id: DyadPtr,
-    tape: &mut crate::parse::ParsingTape,
-) -> Result<Constructed, ParseError> {
-    let declare_ = p.types().declare_;
-    let declares = tape.at(1).is_some_and(|c| {
-        // SAFETY: a constructed cell holds null or a reduced dyad from the store.
-        c.constructed && !c.dyad.is_null() && unsafe { dyad::ty(c.dyad) } == declare_
-    });
-    if p.in_type_body_lines() && declares {
-        return Err(ParseError::StaticMisplaced);
-    }
-    construct(p, id, tape)
-}
-
 /// A gate word reads the whole value to its right, everything there having reduced to one
 /// value before it, and gives it with `id` among the gates of its type (›A gate word reads the
-/// whole value to its right and gives it with its type gated‹ [[R102]]). Before a declaration
-/// it marks the name declared: stand-in for #440.
+/// whole value to its right and gives it with its type gated‹ [[R102]]). A declaration or any
+/// other line that gives nothing is no value to gate (›Left of `:=` stands one name (or
+/// regex), and nothing else‹ [[R101]]); a place is one, whatever its type.
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
@@ -310,29 +292,20 @@ fn construct(
     let Some(&right) = tape.at(1) else {
         return Err(ParseError::MissingOperand);
     };
+    let word_at = tape.at(0).map_or(right.start, |word| word.start);
     let inner = p.take_right(tape)?;
     let types = p.types();
     // SAFETY: `inner` is a reduced dyad just parsed.
-    if unsafe { dyad::ty(inner) } == types.declare_ {
-        p.gate_declared(id)?;
-        tape.place(inner);
-        return Ok(Constructed::Placed);
-    }
-    // A gate over a line that gives nothing would mark nothing.
-    // SAFETY: as above.
-    if unsafe { super::read::output_type(types, inner) } == types.void_ {
-        return Err(ParseError::GateNeedsDeclaration);
+    let gives_nothing = unsafe {
+        dyad::ty(inner) == types.declare_
+            || !right.hole && super::read::output_type(types, inner) == types.void_
+    };
+    if gives_nothing {
+        return Err(p.fail_at(word_at, ParseError::GateNeedsValue));
     }
     let mut value = right;
     value.dyad = inner;
     value.constructed = true;
-    // `mut alloc …` gives a pointer that may be written through; it carries no mark, since
-    // no write through `@` is checked yet: stand-in for #33.
-    // SAFETY: as above.
-    if id == types.mut_ && unsafe { super::mint::origin(dyad::ty(inner)) } == types.alloc_ {
-        tape.place_gated(value, value.gates);
-        return Ok(Constructed::Placed);
-    }
     // SAFETY: the cell's gates are null or a gate mint, and `id` is a gate word.
     let Some(mint) = (unsafe { joined(p.store(), types, value.gates, id) }) else {
         return Err(ParseError::DoubleGate);

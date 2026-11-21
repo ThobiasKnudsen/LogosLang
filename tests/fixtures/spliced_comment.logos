@@ -1,4 +1,4 @@
 # a `#` spliced at a segment boundary, read through like a written one
-h := type (static parse_rank = *.parse_rank + 1, static parse = ( tape.insert(1, lex «* 2 #»), tape.remove(0) )),
-pub ten := 5 h,
+h := type (parse_rank = *.parse_rank + 1, parse = ( tape.insert(1, lex «* 2 #»), tape.remove(0) )),
+ten := pub 5 h,
 5 h

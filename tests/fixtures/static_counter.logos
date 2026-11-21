@@ -1,4 +1,4 @@
 # one `static` counter every importer reaches: the file loads once per run
 print «loaded»,
-static pub mut count := i32 0,
-pub bump := fn () -> i32 ( count = count + 1, count )
+count := static pub mut i32 0,
+bump := pub fn () -> i32 ( count = count + 1, count )

@@ -9,15 +9,6 @@ use crate::dyad;
 use crate::identities::drop_model::{teardown_of, teardown_of_type, ExitItem, Teardown};
 
 impl<'a> Parser<'a> {
-    /// A gate word marks the declaration that just reduced to its right.
-    pub(crate) fn gate_declared(&mut self, gate: DyadPtr) -> Result<(), ParseError> {
-        let binding = self.cx.last_declared;
-        if binding.is_null() {
-            return Err(ParseError::GateNeedsDeclaration);
-        }
-        self.add_gate(binding, gate)
-    }
-
     /// A write into a name is granted by its own binding, and into a place reached by a path by
     /// every binding along it; the constructor's fill of its fresh node is granted; a write of a
     /// name's `lex_rank` is decided by the scope it is written from; a place reached no such way
@@ -169,20 +160,6 @@ impl<'a> Parser<'a> {
         if let Some(def) = self.cx.definitions.last_mut() {
             def.wrote_receiver |= !def.in_parse && !this.is_null() && this == def.this_param;
         }
-    }
-
-    /// A gate word written left of the name moves into the type of the name's value, once:
-    /// stand-in for #440, whose gate words stand right of `:=`.
-    pub(crate) fn add_gate(&mut self, binding: DyadPtr, gate: DyadPtr) -> Result<(), ParseError> {
-        use crate::identities::gate::{add_to_name, name_has};
-        // SAFETY: `binding` is a binding dyad from the store, and `gate` a gate word.
-        unsafe {
-            if name_has(self.types, binding, gate) {
-                return Err(ParseError::DoubleGate);
-            }
-            add_to_name(self.rt.store, self.types, binding, gate);
-        }
-        Ok(())
     }
 
     pub(super) fn mint_binding(
@@ -771,7 +748,7 @@ impl<'a> Parser<'a> {
         Ok((root, field.binding))
     }
 
-    /// `name := value`, or `static name := value`: one place for every context
+    /// `name := value`, or `name := static value`: one place for every context
     /// that reaches the line, every call of the function around it and every
     /// pass of the loop around it, its value made once here at the definition;
     /// the line itself then only names it.
@@ -779,7 +756,13 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if !self.marked_static(tape) {
+        // A type body's member is made as its line is read, with the type.
+        let member = self
+            .cx
+            .definitions
+            .last()
+            .is_some_and(|def| self.cx.scopes.current() == Some(def.scope));
+        if member || !self.static_ahead() {
             return self.declare_here(tape);
         }
         let built = self.parse_in_pass(|p| p.declare_here(tape));
@@ -834,65 +817,82 @@ impl<'a> Parser<'a> {
         binding
     }
 
-    /// A type body's own lines, where a line fills a slot.
-    pub(crate) fn in_type_body_lines(&self) -> bool {
-        self.cx.definitions.last().is_some_and(|def| self.cx.scopes.current() == Some(def.scope))
-    }
-
     /// The gates of the value the name `binding` took, written before it, are the gates of the
     /// name's type (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹
     /// [[R381]]).
-    pub(super) fn gate_name(&mut self, binding: DyadPtr, mint: DyadPtr) -> Result<(), ParseError> {
-        // SAFETY: a cell's gates are null or a gate mint.
-        for gate in unsafe { crate::identities::gate::words_of(mint) } {
-            self.add_gate(binding, gate)?;
+    pub(super) fn gate_name(&mut self, binding: DyadPtr, mint: DyadPtr) {
+        use crate::identities::gate::{add_to_name, words_of};
+        // SAFETY: a cell's gates are null or a gate mint, and `binding` is a binding dyad from
+        // the store.
+        unsafe {
+            for gate in words_of(mint) {
+                add_to_name(self.rt.store, self.types, binding, gate);
+            }
         }
-        Ok(())
     }
 
-    /// The gate words that open the value at the cursor include `static`; nothing is consumed.
-    pub(super) fn static_ahead(&mut self) -> bool {
+    /// Whether the cell at the center is the first of the value being read, only gate words
+    /// standing before it.
+    pub(crate) fn opens_value(&self, tape: &ParsingTape) -> bool {
+        let mut k = -1;
+        while let Some(cell) = tape.at(k) {
+            if cell.constructed || !self.is_gate_word(cell.identity(self.types)) {
+                return false;
+            }
+            k -= 1;
+        }
+        true
+    }
+
+    /// The gate words that open the value at the cursor, as written, and where they end; nothing
+    /// is consumed.
+    fn gates_ahead(&mut self) -> (Vec<DyadPtr>, usize) {
         let at = self.cx.pos;
-        let found = loop {
+        let (mut words, mut end) = (Vec::new(), at);
+        loop {
             let word = self.lex_spelling().and_then(|(start, len)| {
                 let source = self.cx.source;
                 self.cx.scopes.resolve(self.trie, &source[start..start + len]).ok()
             });
             match word.map(|r| r.identity) {
-                Some(id) if id == self.types.static_ => break true,
-                Some(id) if self.is_gate_word(id) => {}
-                _ => break false,
+                Some(id) if self.is_gate_word(id) => {
+                    words.push(id);
+                    end = self.cx.pos;
+                }
+                _ => break,
             }
-        };
+        }
         self.cx.pos = at;
-        found
+        (words, end)
     }
 
-    /// The gate words of the name being declared include `static`: those that open its value,
-    /// or those written left of it.
-    fn marked_static(&mut self, tape: &ParsingTape) -> bool {
-        if self.static_ahead() {
-            return true;
-        }
-        let t = self.types;
-        let mut k = -2;
-        while let Some(cell) = tape.at(k) {
-            if cell.constructed {
-                return false;
-            }
-            let id = cell.identity(t);
-            if id == t.static_ {
-                return true;
-            }
-            if !self.is_gate_word(id) {
-                return false;
-            }
-            k -= 1;
-        }
-        false
+    /// The gate words that open the value at the cursor include `static`; nothing is consumed.
+    pub(super) fn static_ahead(&mut self) -> bool {
+        self.gates_ahead().0.contains(&self.types.static_)
     }
 
-    /// A word written left of the name a `:=` declares.
+    /// The value of the `:=` at the cursor where it waits for the run, held from after the gate
+    /// words that open it, which gate the place the run fills, and whether it is a place with
+    /// no value; `None`, the cursor where it was, for a value parsed here.
+    fn waiting_gated(&mut self) -> Result<Option<(Cell, bool)>, ParseError> {
+        let at = self.cx.pos;
+        let (words, after) = self.gates_ahead();
+        self.cx.pos = after;
+        let Some((mut held, hole)) = self.waiting_value()? else {
+            self.cx.pos = at;
+            return Ok(None);
+        };
+        for gate in words {
+            // SAFETY: a cell's gates are null or a gate mint, and `gate` is a gate word.
+            let joined = unsafe {
+                crate::identities::gate::joined(self.rt.store, self.types, held.gates, gate)
+            };
+            held.gates = joined.ok_or_else(|| self.fail_at(at, ParseError::DoubleGate))?;
+        }
+        Ok(Some((held, hole)))
+    }
+
+    /// A word that gates the value to its right.
     pub(super) fn is_gate_word(&self, id: DyadPtr) -> bool {
         let t = self.types;
         [t.static_, t.mut_, t.pub_].contains(&id)
@@ -951,7 +951,7 @@ impl<'a> Parser<'a> {
         self.cx.filling.push(binding);
         self.cx.filling_at.push(self.cx.pos);
         let (mut typed_at_run, mut unwritten) = (false, false);
-        let value = self.waiting_value().and_then(|held| match held {
+        let value = self.waiting_gated().and_then(|held| match held {
             Some((held, hole)) => {
                 (typed_at_run, unwritten) = (true, hole);
                 Ok(held)
@@ -969,7 +969,7 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `binding` is the binding just declared; `value` a reduced dyad from the store.
         let declared = unsafe { self.land_at_binding(binding, value, cell.hole, cell.owning) }?;
-        self.gate_name(binding, cell.gates)?;
+        self.gate_name(binding, cell.gates);
         // A place whose type its line gives when it runs keeps that type, which a write converts
         // into ([`Self::land_in_run_type`]); one laid out then holds no value until a write fills
         // it, as one declared `T ?` does.

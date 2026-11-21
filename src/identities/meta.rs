@@ -416,7 +416,7 @@ pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
 
 const INSTANCES_FREE_OFF: usize = PAYLOAD_OFF + 32;
 
-/// The `fn` a `static free = (…)` line filled, over the one unnamed value parameter; null where the type
+/// The `fn` a `free = (…)` line filled, over the one unnamed value parameter; null where the type
 /// body fills none.
 ///
 /// # Safety

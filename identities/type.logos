@@ -11,15 +11,15 @@
 error.expected_open := «a word that reads a bracket is not followed by one»
 
 type := type (
-    pub parse_rank := f64 ?
-    pub associativity := type ?
-    pub parse := parse ?
-    pub run := run ?
-    pub free := free ?
+    parse_rank := pub f64 ?
+    associativity := pub type ?
+    parse := pub parse ?
+    run := pub run ?
+    free := pub free ?
 
-    static parse_rank = f64 2.0
-    static associativity = left
-    static parse = (
+    parse_rank = f64 2.0
+    associativity = left
+    parse = (
         if tape[1] != lex «(»[0]
             error.expected_open «type must be followed by (»
         tape[0].type = type

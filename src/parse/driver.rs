@@ -624,7 +624,9 @@ impl<'a> Parser<'a> {
             let reparsed =
                 built && self.awake_type(cell.dyad) == Some(unsafe { dyad::ty(cell.dyad) });
             let gave = matches!(outcome, Constructed::Gave);
-            if !same && !reparsed && !cell.bracket && self.wakes(cell.dyad, gave) {
+            // A value a gate word read whole has had its turn.
+            let gated = !gave && !cell.gates.is_null();
+            if !same && !reparsed && !gated && !cell.bracket && self.wakes(cell.dyad, gave) {
                 tape.set_constructed(0, false);
             }
             self.note_made(cell.dyad);

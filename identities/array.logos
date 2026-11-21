@@ -11,37 +11,37 @@ error.not_a_type := «what stands after `array` is no type»,
 error.not_a_list := «an array's list is not written in square brackets»,
 error.element_type := «an element does not fit its array's element type»,
 
-pub array := type (
+array := pub type (
     # The mint fills a `parse`, which cannot be written inside `array`'s own: stand-in for #458.
-    pub static get_mint := fn (t := type ?) -> type (
+    get_mint := pub static fn (t := type ?) -> type (
         place := type_mint.step(type_mint.step(0, array), t),
-        mut mint := type type_mint.kept(place),
+        mint := mut type type_mint.kept(place),
         if mint != ? return mint,
         mint = type (
-            pub static element_type := type t,
-            pub mut ptr := own @element_type ?,
-            pub mut size := u64 0,
-            pub static size_bytes := fn () -> u64 (size * element_type.size_bytes),
+            element_type := pub static type t,
+            ptr := pub mut own @element_type ?,
+            size := pub mut u64 0,
+            size_bytes := pub static fn () -> u64 (size * element_type.size_bytes),
 
-            static free = (
+            free = (
                 for i in 0..size ( free (ptr + i)@ ),
                 free ptr
             ),
 
-            pub static at := fn (index := u64 ?) -> element_type (
+            at := pub static fn (index := u64 ?) -> element_type (
                 if index >= size error.index_out_of_range «the index is at or past the array's size»,
                 (ptr + index)@
             ),
-            static at_signed := fn (index := i64 ?) -> element_type (
+            at_signed := static fn (index := i64 ?) -> element_type (
                 if index < 0 or u64 lossy (index) >= size
                     error.index_out_of_range «the index is negative or at or past the array's size»,
                 (ptr + index)@
             ),
 
             # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
-            static parse_rank = dyad.parse_rank,
-            static associativity = left,
-            static parse = (
+            parse_rank = dyad.parse_rank,
+            associativity = left,
+            parse = (
                 if tape[0].type != type and tape[1].type == square_brackets (
                     # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
                     if tape[1].dyads[0].type ⊆ tape[0].size.type (
@@ -64,13 +64,13 @@ pub array := type (
     ),
 
     # The parse asks through a call, so the branch it guards is built where it is written: stand-in for #455.
-    static bytes_of := fn (t := type ?) -> u64 ( t.size_bytes ),
+    bytes_of := static fn (t := type ?) -> u64 ( t.size_bytes ),
 
     elements := square_brackets ?,
     output_type := type ?,
 
-    static run = (
-        mut v := output_type ?,
+    run = (
+        v := mut output_type ?,
         v.ptr = mut alloc elements.dyads.size of v.element_type ?,
         # size counts only written elements, so a failed `=` leaves free nothing unwritten to walk.
         for i in 0..elements.dyads.size (
@@ -81,9 +81,9 @@ pub array := type (
     ),
 
     # Above application, so it takes its element type before anything else reads it.
-    static parse_rank = fn.parse_rank,
-    static associativity = right,
-    static parse = (
+    parse_rank = fn.parse_rank,
+    associativity = right,
+    parse = (
         # Nothing to its right (`tape[1]` is `void`), or a type with no instance bytes, as `void` and an
         # operation such as `==` are: no branch builds, so `array` touches nothing and stands as its own
         # value (›`array` is a chooser‹ [[R223]]).
