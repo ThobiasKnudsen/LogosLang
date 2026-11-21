@@ -389,7 +389,7 @@ impl<'a> Parser<'a> {
         }
         // The call's result is no member: the path was the member's own.
         self.cx.member_path.clear();
-        self.build_call(member, &with).map(Some)
+        self.build_fn_call(member, &with).map(Some)
     }
 
     /// The slot of the node being built that the field `f` names: `f`
@@ -816,13 +816,16 @@ impl<'a> Parser<'a> {
                 if let Some(member) = self.file_member(node, name) {
                     let member = member.inspect_err(|_| self.cx.pos = nstart)?;
                     let callee = self.types.through(member);
-                    let Some(args) = call.filter(|_| self.is_identity_node(callee)) else {
+                    let bracket = tape.at(2).filter(|c| c.is_bracket()).copied();
+                    let Some(bracket) = bracket.filter(|_| self.is_identity_node(callee)) else {
                         return Ok((member, 0));
                     };
                     if self.in_pass_order() && self.returns_type(callee) {
                         self.run_first(tape, left.start)?;
                     }
-                    return self.build_call(callee, &args).map(|call| (call, 1));
+                    let applied =
+                        self.construct_applied(callee, member, (nstart, nlen), bracket)?;
+                    return Ok(applied.map_or((member, 0), |node| (node, 1)));
                 }
                 if let Some(read) = self.reached_member(node, name, index, key.is_some())? {
                     return Ok(read);

@@ -188,9 +188,11 @@ unsafe fn lay_out_fields(
 }
 
 impl<'a> Parser<'a> {
-    /// `( field-list )` as a record node whose value is a `RECORD_TAG` record
-    /// holding the scope, the `fields` array and the packed `size_bytes`. Fresh
-    /// field names are read raw, which is why the list has its own sub-parse.
+    /// A function's `( field-list )` as a record node whose value is a `RECORD_TAG` record
+    /// holding the scope, the `fields` array and the packed `size_bytes`, and the call as its
+    /// constructor (›`fn` is not a primitive: `fn (…) -> T` is a function's type, and its body
+    /// the value‹ [[R199]]). Fresh field names are read raw, which is why the list has its own
+    /// sub-parse.
     pub fn parse_record(&mut self) -> Result<DyadPtr, ParseError> {
         self.parse_record_taking(None).map(|(input, _)| input)
     }
@@ -203,12 +205,17 @@ impl<'a> Parser<'a> {
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         let (scope, fields_arr, bindings) = self.parse_field_list(leading)?;
         let input = self.rt.store.alloc_leaf(self.types.type_);
-        Ok((self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
+        let call = self.types.call_parse;
+        Ok((
+            self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut(), call),
+            bindings,
+        ))
     }
 
     /// `input`, a type node with no record yet, made the record node over a field list: its
     /// fields laid out onto their bindings, then the record holding the scope, the fields, their
-    /// bindings, their total and `body`, the scope its `static` members are read in, null for none.
+    /// bindings, their total and `body`, the scope its `static` members are read in, null for none,
+    /// and `parse` in its constructor slot.
     fn record_node(
         &mut self,
         input: DyadPtr,
@@ -216,6 +223,7 @@ impl<'a> Parser<'a> {
         fields: DyadPtr,
         bindings: &[DyadPtr],
         body: DyadPtr,
+        parse: DyadPtr,
     ) -> DyadPtr {
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         let extent = unsafe { lay_out_fields(self.types, input, fields, bindings) };
@@ -229,6 +237,7 @@ impl<'a> Parser<'a> {
             body,
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
+            parse,
         );
         // SAFETY: `input` was minted above with no record; nothing reads one until now.
         unsafe { dyad::set_head(input, record.cast()) };
@@ -309,7 +318,8 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         declared?;
         let fields = crate::identities::array::build(self.rt.store, types.array_, &fields);
-        let record = self.record_node(ty, field_scope, fields, &bindings, scope);
+        let record =
+            self.record_node(ty, field_scope, fields, &bindings, scope, types.derived_parse);
         if let Some(place) = place {
             type_mint::keep(self.rt.store, types, place, record).map_err(ParseError::Run)?;
         }
@@ -398,6 +408,7 @@ impl<'a> Parser<'a> {
                         bindings,
                         extent,
                         body,
+                        types.derived_parse,
                     );
                     dyad::set_head(mint, record.cast());
                     type_mint::keep(self.rt.store, types, place, mint).map_err(ParseError::Run)?;
@@ -945,6 +956,7 @@ impl<'a> Parser<'a> {
             scope,
             def.parse_rank,
             def.assoc,
+            self.types.derived_parse,
         );
         let node = def.self_type;
         // SAFETY: `node` was minted at the open with no record; nothing reads one until now.
@@ -1582,7 +1594,11 @@ impl<'a> Parser<'a> {
         declared?;
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         let input = self.rt.store.alloc_leaf(self.types.type_);
-        Ok((self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
+        let call = self.types.call_parse;
+        Ok((
+            self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut(), call),
+            bindings,
+        ))
     }
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN

@@ -235,7 +235,8 @@ unsafe fn mint(store: &mut Store, types: &Core, key: DyadPtr, value: DyadPtr) ->
         // type with a body does: into a name, and into another map. Those bytes are one pointer,
         // aligned as one.
         let extent = meta::Extent { size_bytes: 8, align: 8 };
-        let record = meta::minted_record(store, former, &[key, value], scope, none, extent);
+        let parse = types.derived_parse;
+        let record = meta::minted_record(store, former, &[key, value], scope, none, extent, parse);
         Some(store.alloc_head(types.type_, record))
     };
     super::type_mint::mint_of(store, types, former, &[key, value], made)
