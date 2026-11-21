@@ -1056,9 +1056,7 @@ unsafe fn land_leaf(
             }
             from == ty
         }
-        read::Read::Pointer(pointee) => {
-            numtype::is_pointer_type(from) && same_type(pointee, numtype::pointee_of(from))
-        }
+        read::Read::Pointer(_) => numtype::is_pointer_type(from) && pointer::lands_in(from, ty),
         read::Read::Container(t) if t == types.type_ => {
             if !assign::box_takes(types, t, value) {
                 return Err(ParseError::BadDeclaredType);
@@ -1194,7 +1192,8 @@ pub(crate) unsafe fn message_type_name(types: &Core, node: DyadPtr) -> String {
 
 /// The place type and byte width a value is copied into, by a declaration or `alloc`: the type
 /// of what it gives at that type's width, a pointer as a plain `@pointee` place, the borrow,
-/// whatever the value's own pointer type. `None` for a value no place holds whole, and for a
+/// whatever the value's own pointer type, the gates under it kept. `None` for a value no place
+/// holds whole, and for a
 /// plain number, which stays the literal it is until a typed place molds it.
 ///
 /// # Safety
@@ -1210,7 +1209,8 @@ pub(crate) unsafe fn copy_place(
     let t = read::output_type(types, value);
     let width = read::carry_of(types, t)?.width();
     if numtype::is_pointer_type(t) {
-        return Some((pointer::make_pointer_type(store, types, numtype::pointee_of(t)), width));
+        let pointee = numtype::gated_pointee_of(t);
+        return Some((pointer::make_pointer_type(store, types, pointee), width));
     }
     Some((t, width))
 }
@@ -1226,7 +1226,7 @@ pub(crate) fn build_init(
     assign::build_store(store, types, types.assign, place, value)
 }
 
-/// Same type, not same node: an owning `@T` and the plain `@T` name one pointee.
+/// Same type, not same node: an owning `@T` and the plain `@T` name one pointee, gates and all.
 ///
 /// # Safety
 /// `a`/`b` must be null or type nodes from the store.
@@ -1234,7 +1234,7 @@ pub(crate) unsafe fn same_type(a: DyadPtr, b: DyadPtr) -> bool {
     a == b
         || (numtype::is_pointer_type(a)
             && numtype::is_pointer_type(b)
-            && same_type(numtype::pointee_of(a), numtype::pointee_of(b)))
+            && same_type(numtype::gated_pointee_of(a), numtype::gated_pointee_of(b)))
 }
 
 /// Render a run result through `node`'s static type, so `5.5` and `true` print as such. A record

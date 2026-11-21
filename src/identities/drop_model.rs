@@ -75,18 +75,18 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             return Err(ParseError::MissingOperand);
         }
         let count = p.take_right(tape)?;
-        let init = if p.marker_right(tape, of_) {
+        let (gates, init) = if p.marker_right(tape, of_) {
             tape.remove(1);
-            Some(p.take_right(tape)?)
+            (p.take_gate_words(tape)?, Some(p.take_right(tape)?))
         } else {
-            None
+            (Vec::new(), None)
         };
         // The cells keep the value in their bytes, so the block holds it, not the line.
         if let Some(init) = init {
             p.take(init);
         }
         let types = p.types();
-        let node = build_alloc(p.store(), types, count, init)?;
+        let node = build_alloc(p.store(), types, count, init, &gates)?;
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)
     });
@@ -340,12 +340,16 @@ pub(crate) unsafe fn heap_free(ptr: *mut u8) {
 /// The pointee is the value's own type (`alloc 2 of i32 5` allocates two `i32`), `u8` with
 /// no value; the count must be an integer, a plain number landing in `u64` (›Explicit heap:
 /// `alloc n` and `alloc n of T v`‹ [[R56]]). Each cell is the place the value is copied into, as
-/// a declaration's is; a value no place holds whole is rejected.
+/// a declaration's is; a value no place holds whole is rejected. `gates`, the gate words written
+/// after `of`, gate the type the pointer points at: `alloc 1 of mut i32 5` is a `@ mut i32`
+/// (›A pointer points at a gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut` before a
+/// pointer gates the pointer itself‹ [[R382]]).
 pub(super) fn build_alloc(
     store: &mut Store,
     types: &Core,
     count: DyadPtr,
     init: Option<DyadPtr>,
+    gates: &[DyadPtr],
 ) -> Result<DyadPtr, ParseError> {
     use crate::identities::Operand;
     // SAFETY: `count` and `init` are reduced dyads just parsed.
@@ -384,8 +388,15 @@ pub(super) fn build_alloc(
             init
         }
     };
-    // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store.
+    // SAFETY: `count` is a reduced dyad and `pointee` a type node with no gate, both from the
+    // store; `gates` are gate words.
     unsafe {
+        let pointee = if gates.is_empty() {
+            pointee
+        } else {
+            let mint = super::gate::mint_of(store, types, gates);
+            super::gate::over(store, types, mint, pointee)
+        };
         let key = [super::read::output_type(types, count), pointee];
         super::mint::node(store, types, types.alloc_, &key, &[count, init])
     }
@@ -537,7 +548,7 @@ unsafe fn owning_pointer(
     Ok(super::pointer::make_owning_pointer_type(
         store,
         types.type_,
-        numtype::pointee_of(ty),
+        numtype::gated_pointee_of(ty),
         types.ops.teardown_,
     ))
 }
@@ -1739,6 +1750,7 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let Some(&[count_type, pointee]) = super::mint::key_of(dyad::ty(node)) else {
             unreachable!("an `alloc` is typed by its mint for its count's type and pointee");
         };
+        let pointee = super::gate::under(pointee);
         let count = rt.run(*slots.add(ALLOC_COUNT))?;
         // A `u64` count past `i64::MAX` comes back as a negative word.
         if count < 0 && numtype::of_type_node(count_type).is_signed_int() {
@@ -1989,12 +2001,12 @@ mod tests {
         );
         // A named owner is copied in: each name frees its own block.
         assert_eq!(
-            run("a := mut alloc 1 of i32 5, b := alloc 1 of i32 6, a = b, a@ = 9, b@"),
+            run("a := mut alloc 1 of mut i32 5, b := alloc 1 of mut i32 6, a = b, a@ = 9, b@"),
             (6, 0)
         );
         assert_eq!(free_log(), vec![5, 6, 9]);
         assert_eq!(run("x := i32 1, p := mut &x, p = &x, p@").0, 1);
-        assert_eq!(run("a := mut alloc 1 of i32 5, a@ = 9, a@"), (9, 0));
+        assert_eq!(run("a := alloc 1 of mut i32 5, a@ = 9, a@"), (9, 0));
 
         // `=` frees the block it displaces, after building the right side, before the write.
         assert_eq!(run("a := mut alloc 1 of i32 5, a = alloc 1 of i32 6, a@"), (6, 0));
@@ -2295,14 +2307,16 @@ mod tests {
     #[test]
     fn alloc_counts_its_cells_and_fills_them_from_the_value() {
         assert_eq!(run("n := i32 3,\na := alloc n of i32 7,\na@"), (7, 0));
-        assert_eq!(run("a := alloc 2 of i32 ?,\na@ = 4,\na@"), (4, 0));
+        assert_eq!(run("a := alloc 2 of mut i32 ?,\na@ = 4,\na@"), (4, 0));
         assert_eq!(run("a := alloc 0 of i32 1,\n9"), (9, 0));
     }
 
     #[test]
     fn alloc_of_a_bare_count_is_that_many_zeroed_bytes() {
         assert_eq!(run("a := alloc 8,\na@"), (0, 0));
-        assert_eq!(run("a := mut alloc 8,\na@ = 200,\na@"), (200, 0));
+        // An `@u8` is read through only; bytes to write are `alloc n of mut u8 0`.
+        assert_eq!(parse_err("a := mut alloc 8,\na@ = 200,\n1"), ParseError::PointeeNotMutable);
+        assert_eq!(run("a := alloc 8 of mut u8 0,\na@ = 200,\na@"), (200, 0));
         // The count-less spelling is gone: `i32 2` is a count, so this is two bytes.
         assert_eq!(run("a := alloc i32 2,\na@"), (0, 0));
     }
@@ -2693,7 +2707,7 @@ mod tests {
             ("a := mut r ?,\na = r(3),\na = r(4),\na.n".into(), 4),
             ("a := mut r ?,\na.n = 7,\na.n".into(), 7),
             ("p := alloc 1 of r(1),\nfree p@,\nfree p@,\n1".into(), 1),
-            ("p := alloc 1 of r(1),\np@ = r(2),\nfree p@,\n1".into(), 1),
+            ("p := alloc 1 of mut r(1),\np@ = r(2),\nfree p@,\n1".into(), 1),
             ("free (r(1)),\n1".into(), 1),
             ("f := fn () -> own r ( r(2) ),\nx := f(),\nx.n".into(), 2),
             ("d := dyad (r, r(1)),\ne := d,\n1".into(), 1),

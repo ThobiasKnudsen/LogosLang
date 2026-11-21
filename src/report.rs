@@ -162,6 +162,9 @@ pub fn parse_message(e: &ParseError) -> String {
             "a gate word (`pub`, `mut`, `static`) gates the value to its right, so it stands right of `:=`: `x := mut i32 5`".into()
         }
         ParseError::DoubleGate => "this gate word already gates the value".into(),
+        ParseError::PointeeNotMutable => {
+            "this pointer points at a value that is not `mut`: a write through `@` needs a `@ mut T`, as `&a` of `a := mut i32 5` or `alloc 1 of mut i32 5` gives".into()
+        }
         ParseError::Unwritten(name) => format!(
             "`{name}` is read before it is written: give it a value with `{name} = …` in the same block first"
         ),

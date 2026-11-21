@@ -1439,7 +1439,7 @@ impl<'a> Parser<'a> {
                     if !has_address(types, place) {
                         return Err(ParseError::BadAddressOf);
                     }
-                    let pointee = crate::identities::read::output_type(types, place);
+                    let pointee = self.address_pointee(&cell, operand, place);
                     self.place_address(types.amp_, place, node, pointee)?
                 }
                 // A node's field, a map entry, a tape cell: a place with no address to hand out.
@@ -1496,6 +1496,35 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// What `&` of a place points at: the place's type with the gates of the name or field that
+    /// holds it, or of the pointer it is read through, keeping `mut` only where `=` into the place
+    /// is granted (›A pointer points at a gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut`
+    /// before a pointer gates the pointer itself‹ [[R382]], ›An access along a path needs every
+    /// gate on the path to grant it‹ [[R122]]).
+    ///
+    /// # Safety
+    /// `operand` must be `cell`'s reduced dyad and `place` the frame's place or deref node it
+    /// reads.
+    unsafe fn address_pointee(&mut self, cell: &Cell, operand: DyadPtr, place: DyadPtr) -> DyadPtr {
+        use crate::identities::{gate, pointer};
+        let types = self.types;
+        let name = if dyad::ty(operand) == types.binding_ {
+            operand
+        } else {
+            self.path_of(cell).last().copied().unwrap_or(std::ptr::null_mut())
+        };
+        let leaf = pointer::gated_place_type(types, name, place);
+        if !gate::has(leaf, types.mut_) || self.check_write(cell).is_ok() {
+            return leaf;
+        }
+        let gates: Vec<_> = gate::set_of(leaf).into_iter().filter(|&g| g != types.mut_).collect();
+        if gates.is_empty() {
+            return gate::under(leaf);
+        }
+        let mint = gate::mint_of(self.rt.store, types, &gates);
+        gate::over(self.rt.store, types, mint, gate::under(leaf))
+    }
+
     /// `&` of a value nothing names: the value lands in an unspelled name of the open scope, as
     /// `:=` lands it, which holds it to the scope's end, and `&` hands out that name's address
     /// (DESIGN ›Holding is decided at the binding site, parameters included‹ [[R61]]).
@@ -1545,11 +1574,13 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let mut depth = 1usize;
-        while matches!(self.cell_at(tape, 1)?, Some(c) if !c.constructed && self.cell_identity(&c) == self.types.at_)
-        {
+        // One gate set per `@`, gating what that `@` points at: `@ mut @ i32` is a pointer to a
+        // writable `@i32` (›A pointer points at a gated type: `&a` of a `mut i32` is
+        // `@ mut i32`, and `mut` before a pointer gates the pointer itself‹ [[R382]]).
+        let mut levels = vec![self.take_gate_words(tape)?];
+        while self.marker_right(tape, self.types.at_) {
             tape.remove(1);
-            depth += 1;
+            levels.push(self.take_gate_words(tape)?);
         }
         let Some(cell) = self.cell_at(tape, 1)? else {
             return Err(ParseError::UnsupportedOperands);
@@ -1561,14 +1592,41 @@ impl<'a> Parser<'a> {
         }
         tape.remove(1);
         let mut logos = base;
-        for _ in 0..depth {
-            // SAFETY: `logos` is the base type node, or the pointer type minted in the previous round.
+        for gates in levels.iter().rev() {
+            use crate::identities::{gate, pointer};
+            // SAFETY: `logos` is the base type node, or the pointer type minted in the previous
+            // round; `gates` are gate words.
             logos = unsafe {
-                crate::identities::pointer::make_pointer_type(self.rt.store, self.types, logos)
+                if !gates.is_empty() {
+                    let mint = gate::mint_of(self.rt.store, self.types, gates);
+                    logos = gate::over(self.rt.store, self.types, mint, gate::under(logos));
+                }
+                pointer::make_pointer_type(self.rt.store, self.types, logos)
             };
         }
         tape.place(logos);
         Ok(Constructed::Placed)
+    }
+
+    /// The gate words right of the center, taken off the tape: the gates of what a pointer points
+    /// at, read by the word before them, `@` or `alloc`'s `of`, which builds before they would.
+    pub(crate) fn take_gate_words(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Vec<DyadPtr>, ParseError> {
+        let mut gates = Vec::new();
+        while let Some(c) = self.cell_at(tape, 1)? {
+            let id = self.cell_identity(&c);
+            if c.constructed || !self.is_gate_word(id) {
+                break;
+            }
+            if gates.contains(&id) {
+                return Err(self.fail_at(c.start, ParseError::DoubleGate));
+            }
+            gates.push(id);
+            tape.remove(1);
+        }
+        Ok(gates)
     }
 
     /// `:`'s constructor (DESIGN ›The dyad's read surface‹): a field of the

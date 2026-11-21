@@ -207,7 +207,8 @@ pub(crate) unsafe fn make_pointer_type(
     pointee: DyadPtr,
 ) -> DyadPtr {
     let type_ = types.type_;
-    if super::meta::kind_of(pointee).is_none() {
+    // A gated pointee is one node per gated type already, kept by `type_mint`.
+    if super::meta::kind_of(pointee).is_none() && !super::gate::is_node(pointee) {
         return new_pointer_type(store, type_, pointee);
     }
     let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee));
@@ -296,6 +297,65 @@ pub(crate) unsafe fn reads_folded_field(types: &Core, node: DyadPtr) -> bool {
     }
     let record = super::numtype::pointee_of(target);
     !record.is_null() && record != pointee && meta::is_record_type(record)
+}
+
+/// The type of `place` with its gates, what `&place` points at: the gated type of `name`, the
+/// name `place` was read from, or what the pointer a dereference reads through points at. A
+/// place reached any other way, a field read through a dereference among them, gives its type
+/// with no gate.
+///
+/// # Safety
+/// `name` must be null or a binding dyad, and `place` a frame's place or a deref node, from the
+/// store.
+pub(crate) unsafe fn gated_place_type(types: &Core, name: DyadPtr, place: DyadPtr) -> DyadPtr {
+    let plain = super::read::output_type(types, place);
+    let gated = if !name.is_null() {
+        super::gate::word_of_name(types, name)
+    } else if dyad::ty(place) == types.deref_ && !reads_folded_field(types, place) {
+        let target = super::read::output_type(types, deref_parts(place).0);
+        if super::numtype::is_pointer_type(target) {
+            super::numtype::gated_pointee_of(target)
+        } else {
+            plain
+        }
+    } else {
+        plain
+    };
+    if super::gate::under(gated) == plain {
+        gated
+    } else {
+        plain
+    }
+}
+
+/// Whether a value of the pointer type `from` lands in a place of the pointer type `to`: both
+/// point at one type, and what `to` points at has no gate that what `from` points at lacks, so
+/// a pointer drops a gate under it, written or not, and never gains one (›A pointer points at a
+/// gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut` before a pointer gates the pointer
+/// itself‹ [[R382]], ›A type's `parse` decides what converts into it; unwritten, a value converts
+/// only into a type that holds it exactly‹ [[R155]]).
+///
+/// # Safety
+/// `from` and `to` must be pointer type nodes from the store.
+pub(crate) unsafe fn lands_in(from: DyadPtr, to: DyadPtr) -> bool {
+    use super::{gate, numtype::gated_pointee_of};
+    let (from, to) = (gated_pointee_of(from), gated_pointee_of(to));
+    // A gate further down stays: through a `@ mut @ i32` made of a `@ mut @ mut i32`, a `@i32`
+    // could be stored where a `@ mut i32` is read.
+    super::same_type(gate::under(from), gate::under(to))
+        && gate::set_of(to).into_iter().all(|g| gate::has(from, g))
+}
+
+/// Whether a write through the dereference `node` is granted: what its pointer points at is
+/// `mut` (›A pointer points at a gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut`
+/// before a pointer gates the pointer itself‹ [[R382]]).
+///
+/// # Safety
+/// `node` must be a deref node from `build_deref`.
+pub(crate) unsafe fn writes_through(types: &Core, node: DyadPtr) -> bool {
+    let target = super::read::output_type(types, deref_parts(node).0);
+    super::numtype::is_pointer_type(target)
+        && super::gate::has(super::numtype::gated_pointee_of(target), types.mut_)
 }
 
 /// Where a place's bytes lie: a dereference's cell, its base checked as `run_deref` checks it;

@@ -502,7 +502,14 @@ pub unsafe fn call_place(store: &mut Store, types: &Core, call: CallTail) -> Dya
     };
     let fields = dyad::value(call.callee) as *const DyadPtr;
     let mut record: Vec<DyadPtr> = (0..FN_SLOTS).map(|k| *fields.add(k)).collect();
-    record[FN_OUTPUT] = super::pointer::make_pointer_type(store, types, pointee);
+    // The address keeps the gates of what it points at, so `&` and `=` of the place read them.
+    let target = output_type(types, address);
+    let gated = match super::numtype::is_pointer_type(target) {
+        true => super::numtype::gated_pointee_of(target),
+        false => pointee,
+    };
+    let gated = if super::gate::under(gated) == pointee { gated } else { pointee };
+    record[FN_OUTPUT] = super::pointer::make_pointer_type(store, types, gated);
     record[FN_BODY] = body;
     record[FN_BCODE] = std::ptr::null_mut();
     record[FN_OUTPUT_GATE] = std::ptr::null_mut();

@@ -253,7 +253,7 @@ unsafe fn choose_arith(
         if !matches!(a, ArithOp::Add | ArithOp::Sub) || r != i64_ {
             return None;
         }
-        let output = super::pointer::make_pointer_type(store, types, numtype::pointee_of(l));
+        let output = super::pointer::make_pointer_type(store, types, numtype::gated_pointee_of(l));
         (output, types.ops.arith_leaf(a, NumType::I64))
     } else if l == types.rational && r == types.rational {
         (types.rational, types.ops.rational_arith_leaf(a))

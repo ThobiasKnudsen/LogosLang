@@ -110,7 +110,8 @@ pub(crate) unsafe fn build_member(
     let tag = store.alloc_blob(u64_ty, &(at as u64 + 1).to_ne_bytes());
     let writes = store.alloc_blob(u64_ty, &u64::from(writes).to_ne_bytes());
     let member_type = hole::type_in(member);
-    let room_type = pointer::make_pointer_type(store, types, member_type);
+    // The room is written as the member is, by its gates.
+    let room_type = pointer::make_pointer_type(store, types, hole::gated_type_in(member));
     let ops = [base, union, tag, writes, types.union.leaf, room_type];
     let room = store.alloc_words(types.union.member, &ops);
     pointer::build_deref(store, types, room, member_type, 0)

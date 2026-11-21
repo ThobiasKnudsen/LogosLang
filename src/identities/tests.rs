@@ -1137,7 +1137,8 @@ fn a_write_through_a_pointer_or_a_call_place_is_a_node_of_the_mint_a_name_writes
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let src = "x := mut i32 0, a := alloc 2 of i32 3, get := fn (p := @i32 ?) -> i32 ( p@ ), \
+    let src =
+        "x := mut i32 0, a := alloc 2 of mut i32 3, get := fn (p := @ mut i32 ?) -> i32 ( p@ ), \
                x = 9, a@ = 4, (a + 1)@ = 5, get(a) = 6";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
     let root = p.parse_sequence().unwrap();
@@ -2067,7 +2068,7 @@ fn pointers_mutate_caller_state_through_calls_both_tiers() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "incr := fn (p := @i32 ?) -> void ( p@ = p@ + 1 )",
+            "incr := fn (p := @ mut i32 ?) -> void ( p@ = p@ + 1 )",
             &mut store,
             &mut trie,
             &core,
@@ -2124,7 +2125,7 @@ fn pointer_chains_and_field_pointers_work_both_tiers() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn () -> i32 ( pt := point(3, 4), q := &pt, q@.x = q@.x + 10, fp := &pt.y, fp@ = fp@ + 1, pp := &q, pp@@.x + pt.y )",
+            "fn () -> i32 ( pt := mut point(3, 4), q := &pt, q@.x = q@.x + 10, fp := &pt.y, fp@ = fp@ + 1, pp := &q, pp@@.x + pt.y )",
             &mut store,
             &mut trie,
             &core,
@@ -2522,7 +2523,7 @@ fn a_read_or_write_through_an_unwritten_pointer_is_refused_at_parse() {
 
     assert_eq!(run_script("c := i32 7, q := &c, q@"), 7);
     assert_eq!(
-        run_script("f := fn () -> i32 ( c := i32 1, q := &c, q@ = 9, c ), f.compile(), f()"),
+        run_script("f := fn () -> i32 ( c := mut i32 1, q := &c, q@ = 9, c ), f.compile(), f()"),
         9
     );
 }
@@ -2530,22 +2531,26 @@ fn a_read_or_write_through_an_unwritten_pointer_is_refused_at_parse() {
 #[test]
 fn address_of_a_parameter_works_both_tiers() {
     diff_typed_call("fn (a := i32 ?) -> i32 ( q := &a, q@ )", "f(7)", 7);
-    diff_typed_call("fn (a := i32 ?) -> i32 ( q := &a, q@ = 5, a )", "f(7)", 5);
+    diff_typed_call("fn (a := mut i32 ?) -> i32 ( q := &a, q@ = 5, a )", "f(7)", 5);
 }
 
 #[test]
 fn address_of_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
     for (f, args, expect) in [
-        ("f := fn (a := @i32 ?) -> i32 ( q := &(a@), q@ = 5, a@ )", "x := mut i32 3, f(&x)", 5),
         (
-            "point := type ( x := i32 ?, y := pub i32 ? ), \
-             f := fn (p := @point ?) -> i32 ( q := &(p@.y), q@ = 9, p@.y )",
+            "f := fn (a := @ mut i32 ?) -> i32 ( q := &(a@), q@ = 5, a@ )",
+            "x := mut i32 3, f(&x)",
+            5,
+        ),
+        (
+            "point := type ( x := i32 ?, y := pub mut i32 ? ), \
+             f := fn (p := @ mut point ?) -> i32 ( q := &(p@.y), q@ = 9, p@.y )",
             "v := mut point (1, 2), f(&v)",
             9,
         ),
         (
-            "get := fn (p := @i32 ?) -> i32 ( p@ ), \
-             f := fn (a := @i32 ?) -> i32 ( q := &(get(a)), q@ = 4, a@ )",
+            "get := fn (p := @ mut i32 ?) -> i32 ( p@ ), \
+             f := fn (a := @ mut i32 ?) -> i32 ( q := &(get(a)), q@ = 4, a@ )",
             "x := mut i32 3, f(&x)",
             4,
         ),
@@ -2554,22 +2559,32 @@ fn address_of_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
             assert_eq!(run_script(&format!("{f}, {compile}{args}")), expect, "{f} / {compile}");
         }
     }
-    assert_eq!(run_script("a := alloc 1 of i32 3, p := &(a@), p@ = 7, a@"), 7);
+    assert_eq!(run_script("a := alloc 1 of mut i32 3, p := &(a@), p@ = 7, a@"), 7);
+    // `&` keeps `mut` only where `=` into the place is granted: a `mut` field of a value read
+    // through an `@point`, of a name that is not `mut`, of a pointer at an `i32`.
+    for src in [
+        "point := type ( y := pub mut i32 ? ), f := fn (p := @point ?) -> i32 ( q := &(p@.y), q@ = 9, 1 )",
+        "point := type ( y := pub mut i32 ? ), v := point (2), q := &v.y, q@ = 9, 1",
+        "get := fn (p := @i32 ?) -> i32 ( p@ ), f := fn (a := @i32 ?) -> i32 ( q := &(get(a)), q@ = 4, 1 )",
+        "x := i32 3, q := &x, q@ = 4, 1",
+    ] {
+        assert_eq!(script_parse_err(src), ParseError::PointeeNotMutable, "{src}");
+    }
 }
 
 #[test]
 fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
     for (f, args, expect) in [
-        ("f := fn (a := @i32 ?) -> i32 ( a@ = 4, a@ )", "x := mut i32 1, f(&x)", 4),
+        ("f := fn (a := @ mut i32 ?) -> i32 ( a@ = 4, a@ )", "x := mut i32 1, f(&x)", 4),
         (
             "point := type ( x := pub i32 ?, y := pub mut i32 ? ), \
-             f := fn (p := @point ?) -> i32 ( p@.y = 9, p@ = point(5, p@.y), p@.x + p@.y )",
+             f := fn (p := @ mut point ?) -> i32 ( p@.y = 9, p@ = point(5, p@.y), p@.x + p@.y )",
             "v := mut point (1, 2), f(&v)",
             14,
         ),
         (
-            "get := fn (p := @i32 ?) -> i32 ( p@ ), \
-             f := fn (a := @i32 ?) -> i32 ( get(a) = 7, a@ )",
+            "get := fn (p := @ mut i32 ?) -> i32 ( p@ ), \
+             f := fn (a := @ mut i32 ?) -> i32 ( get(a) = 7, a@ )",
             "x := mut i32 3, f(&x)",
             7,
         ),
@@ -2581,7 +2596,7 @@ fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers(
     // The base is checked before the write, as a read through it checks it.
     for compile in ["", "f.compile(), "] {
         let src = format!(
-            "f := fn (q := @@i32 ?) -> i32 ( q@@ = 7, 1 ), {compile}p := alloc 1 of @i32 ?, f(p)"
+            "f := fn (q := @@ mut i32 ?) -> i32 ( q@@ = 7, 1 ), {compile}p := alloc 1 of @ mut i32 ?, f(p)"
         );
         let got = run_script_result(&src);
         assert!(matches!(got, Err(crate::run::RunError::NullPointer)), "{src}: {got:?}");
@@ -2590,7 +2605,7 @@ fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers(
 
 #[test]
 fn a_cell_that_owns_takes_only_a_value_just_made_or_moved() {
-    let made = "q := alloc 1 of own @i32 ?, a := alloc 1 of i32 5";
+    let made = "q := alloc 1 of mut own @i32 ?, a := alloc 1 of i32 5";
     assert_eq!(parse_err(&format!("( {made}, q@ = a )")), ParseError::NonOwningIntoOwning);
     assert_eq!(run_script(&format!("{made}, q@ = move a, q@@")), 5);
 }
@@ -2624,7 +2639,7 @@ fn address_of_a_value_nothing_names_holds_it_both_tiers() {
         // A call that ends in a `return` is no place: `&` holds a copy of what it gives.
         (
             "get := fn (p := @i32 ?) -> i32 ( return p@ ), \
-             g := fn (a := @i32 ?) -> i32 ( p := &(get(a)), p@ = 9, a@ )",
+             g := fn (a := @ mut i32 ?) -> i32 ( p := &(get(a)), a@ = 9, p@ )",
             "x := mut i32 3, g(&x)",
             3,
         ),
@@ -2641,26 +2656,30 @@ fn address_of_a_value_nothing_names_holds_it_both_tiers() {
 fn a_pointer_steps_by_whole_cells_both_tiers() {
     // Cell k of the span `alloc n of T v` made is `(p + k)@`, for any cell width.
     assert_eq!(
-        run_script("a := alloc 3 of i32 7, b := a + 1, b@ = 9, (a + 2)@ = 11, a@ + (a + 1)@ * 10 + (b + 1)@ * 100 + (b - 1)@ * 1000"),
+        run_script("a := alloc 3 of mut i32 7, b := a + 1, b@ = 9, (a + 2)@ = 11, a@ + (a + 1)@ * 10 + (b + 1)@ * 100 + (b - 1)@ * 1000"),
         8197
     );
     assert_eq!(
-        run_script("a := alloc 4 of i64 3, k := i32 3, (a + k)@ = 40, i := u8 1, (a + i)@ = 5, (a + 3)@ + (a + 1)@ + (a + 2)@"),
+        run_script("a := alloc 4 of mut i64 3, k := i32 3, (a + k)@ = 40, i := u8 1, (a + i)@ = 5, (a + 3)@ + (a + 1)@ + (a + 2)@"),
         48
     );
     assert_eq!(
-        run_script("holder := type (r := pub @i32 ?), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
+        run_script("holder := type (r := pub @ mut i32 ?), a := alloc 3 of mut i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
         12
     );
-    let walk = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), s := mut i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
-    assert_eq!(run_script(&format!("{walk}, a := alloc 4 of i32 0, f(a, 4)")), 60);
-    assert_eq!(run_script(&format!("{walk}, f.compile(), a := alloc 4 of i32 0, f(a, 4)")), 60);
+    let walk = "f := fn (p := @ mut i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), s := mut i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
+    assert_eq!(run_script(&format!("{walk}, a := alloc 4 of mut i32 0, f(a, 4)")), 60);
+    assert_eq!(run_script(&format!("{walk}, f.compile(), a := alloc 4 of mut i32 0, f(a, 4)")), 60);
     // A step of any integer type counts cells: an unsigned one too.
-    let step = "f := fn (p := @i32 ?, k := u64 ?, j := u8 ?) -> i32 ( (p + k)@ = 9, (p + 2 - j)@ )";
-    assert_eq!(run_script(&format!("{step}, a := alloc 3 of i32 7, f(a, 1, 1)")), 9);
-    assert_eq!(run_script(&format!("{step}, f.compile(), a := alloc 3 of i32 7, f(a, 1, 1)")), 9);
+    let step =
+        "f := fn (p := @ mut i32 ?, k := u64 ?, j := u8 ?) -> i32 ( (p + k)@ = 9, (p + 2 - j)@ )";
+    assert_eq!(run_script(&format!("{step}, a := alloc 3 of mut i32 7, f(a, 1, 1)")), 9);
     assert_eq!(
-        run_script("a := alloc 3 of i32 7, (a + (u64 1))@ = 9, b := a + 2, (b - (u8 1))@"),
+        run_script(&format!("{step}, f.compile(), a := alloc 3 of mut i32 7, f(a, 1, 1)")),
+        9
+    );
+    assert_eq!(
+        run_script("a := alloc 3 of mut i32 7, (a + (u64 1))@ = 9, b := a + 2, (b - (u8 1))@"),
         9
     );
 }
@@ -3051,7 +3070,7 @@ fn compile_member_on_four_params_compiles_and_runs() {
 #[test]
 fn an_addressed_local_stays_in_memory_under_promotion() {
     // A promoted `a` would return the stale 5.
-    diff_typed_call("fn (x := i64 ?) -> i64 ( a := i64 5, p := &a, p@ = 7, a + x )", "f(1)", 8);
+    diff_typed_call("fn (x := i64 ?) -> i64 ( a := mut i64 5, p := &a, p@ = 7, a + x )", "f(1)", 8);
 }
 
 #[test]
@@ -3091,7 +3110,7 @@ fn a_literal_into_a_pointer_parameter_is_rejected() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "f := fn (p := @i32 ?) -> void ( p@ = 1 )",
+            "f := fn (p := @ mut i32 ?) -> void ( p@ = 1 )",
             &mut store,
             &mut trie,
             &core,
@@ -3105,12 +3124,12 @@ fn a_literal_into_a_pointer_parameter_is_rejected() {
     assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
 }
 
-/// Declare `point := type (x := mut i32 ?, y := i32 ?)` in the root scope.
+/// Declare `point := type (x := pub mut i32 ?, y := pub mut i32 ?)` in the root scope.
 fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p =
-        Parser::new("point := type (x := pub mut i32 ?, y := pub i32 ?)", store, trie, core, s);
+        Parser::new("point := type (x := pub mut i32 ?, y := pub mut i32 ?)", store, trie, core, s);
     p.parse_expression().unwrap();
 }
 
@@ -3970,7 +3989,7 @@ fn assignment_converts_only_into_a_type_that_holds_the_value() {
 
 #[test]
 fn assignment_rejects_pointer_type_mismatches() {
-    let defs = &["x := i32 7", "y := f64 2.5", "p := mut &x", "b := mut i32 2"];
+    let defs = &["x := mut i32 7", "y := f64 2.5", "p := mut &x", "b := mut i32 2"];
     assert_eq!(parse_err_after(defs, "p = &y"), ParseError::TypeMismatch);
     assert_eq!(parse_err_after(defs, "p = b"), ParseError::TypeMismatch);
     assert_eq!(parse_err_after(defs, "b = p"), ParseError::TypeMismatch);
@@ -4604,7 +4623,7 @@ fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_plac
         "n := mut u64 0, n = tape[1].dyads[0], tape[0].v = n",
         "n := mut u64 ?, n = tape[1].dyads[0], tape[0].v = n",
         "r := mut pt ?, r.b = 0, r.a = tape[1].dyads[0], tape[0].v = r.a",
-        "p := alloc 1 of u64 0, p@ = tape[1].dyads[0], tape[0].v = p@",
+        "p := alloc 1 of mut u64 0, p@ = tape[1].dyads[0], tape[0].v = p@",
         "n := mut u64 0, p := &n, p@ = tape[1].dyads[0], tape[0].v = n",
         "id := fn (k := u64 ?) -> u64 ( k ), n := mut u64 0, n = id(tape[1].dyads[0]), \
          tape[0].v = n",
@@ -4640,7 +4659,7 @@ fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_plac
 #[test]
 fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     // A `bool` takes `true` and `false`, and no number lies inside it.
-    for (place, read) in [("b := mut bool ?, b", "b"), ("p := alloc 1 of bool ?, p@", "p@")] {
+    for (place, read) in [("b := mut bool ?, b", "b"), ("p := alloc 1 of mut bool ?, p@", "p@")] {
         let q = tape_line_q(&format!(
             "{place} = tape[1].dyads[0], if {read} ( tape[0].v = 1 ) else ( tape[0].v = 2 )"
         ));
@@ -4671,9 +4690,9 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     // Any other place refuses the line where the parse body is read, by name as through a pointer.
     for (place, err) in [
         ("r := mut rational_number ?, r", ParseError::TypeMismatch),
-        ("p := alloc 1 of rational_number 0, p@", ParseError::TypeMismatch),
-        ("p := alloc 1 of dyad ?, p@", ParseError::DyadTakesNode),
-        ("p := alloc 1 of @u64 ?, p@", ParseError::TypeMismatch),
+        ("p := alloc 1 of mut rational_number 0, p@", ParseError::TypeMismatch),
+        ("p := alloc 1 of mut dyad ?, p@", ParseError::DyadTakesNode),
+        ("p := alloc 1 of mut @u64 ?, p@", ParseError::TypeMismatch),
     ] {
         let q = tape_line_q(&format!("{place} = tape[1].dyads[0], tape[0].v = 1"));
         assert_eq!(script_parse_err(&format!("{q}, 7")), err, "{place}");
@@ -4688,7 +4707,7 @@ fn a_tape_line_no_check_narrowed_is_checked_where_a_type_is_wanted_when_the_pars
     for (line, write) in [("tape[1].dyads[0]", "q [{}]"), ("tape[1]", "q {}")] {
         for place in [
             format!("t := mut type ?, t = {line}, tape[0].v = g(t)"),
-            format!("p := alloc 1 of type ?, p@ = {line}, tape[0].v = g(p@)"),
+            format!("p := alloc 1 of mut type ?, p@ = {line}, tape[0].v = g(p@)"),
             format!("n := mut u64 0, n = g({line}), tape[0].v = n"),
         ] {
             let q = format!("{g}{}", tape_line_q(&place));

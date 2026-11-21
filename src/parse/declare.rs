@@ -31,8 +31,32 @@ impl<'a> Parser<'a> {
             if target.path.is_null() && dyad::ty(node) == self.types.binding_ {
                 return self.check_gates(&[node]);
             }
+            self.check_gates(&self.path_of(target))?;
+            self.check_through_pointer(node)
         }
-        self.check_gates(&self.path_of(target))
+    }
+
+    /// A write into a place a path reaches from a dereference, `p@ = …` or `p@.f.g = …`, is
+    /// granted by what the pointer points at, as each field after it grants its own step
+    /// (›An access along a path needs every gate on the path to grant it‹ [[R122]]).
+    ///
+    /// # Safety
+    /// `node` must be null or a reduced dyad from the store.
+    unsafe fn check_through_pointer(&self, node: DyadPtr) -> Result<(), ParseError> {
+        use crate::identities::{pointer, this};
+        let types = self.types;
+        let mut at = node;
+        while !at.is_null() {
+            if dyad::ty(at) == types.deref_ {
+                if pointer::writes_through(types, at) {
+                    return Ok(());
+                }
+                return Err(ParseError::PointeeNotMutable);
+            }
+            let Some((into, _)) = this::field_step(types, at) else { break };
+            at = into;
+        }
+        Ok(())
     }
 
     /// A write at a name's lex level, admitted from the scope that declares it and the scopes
@@ -135,12 +159,11 @@ impl<'a> Parser<'a> {
         }
         let path = self.path_of(receiver);
         if !path.is_empty() {
-            self.check_gates(&path)
+            self.check_gates(&path)?;
         } else if !self.cx.member_root.is_null() {
-            self.check_gates(&[self.cx.member_root])
-        } else {
-            Ok(())
+            self.check_gates(&[self.cx.member_root])?;
         }
+        self.check_through_pointer(receiver.dyad)
     }
 
     /// `=` over a field of the value a `static` function is reading.
@@ -1207,12 +1230,15 @@ impl<'a> Parser<'a> {
                     }
                     init
                 }
-            } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {
-                // An owning value lands in a place of an owning `@pointee`, which the scope holds.
+            } else if let Teardown::Block(_) = teardown_of(self.types, value) {
+                // An owning value lands in a place of an owning `@pointee`, which the scope holds,
+                // the gates under the pointer kept.
+                let ty = crate::identities::read::output_type(self.types, value);
+                let ty = crate::identities::type_identity_of(self.types, ty).unwrap_or(ty);
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
                     self.rt.store,
                     self.types.type_,
-                    pointee,
+                    crate::identities::numtype::gated_pointee_of(ty),
                     self.types.ops.teardown_,
                 );
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
