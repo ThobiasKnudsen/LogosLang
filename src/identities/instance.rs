@@ -142,26 +142,94 @@ pub(crate) unsafe fn kept_names(types: &Core, scope: DyadPtr) -> Vec<DyadPtr> {
         .collect()
 }
 
-/// The scope a `{ … }` value keeps and the line that makes the value, when `node` is one: the
-/// block, or its one line, whose last line constructs a value of the record the block is the
-/// body of.
+/// The gates a `{ … }`'s name hands on to its field in the value, and so part of the `{ … }`'s
+/// shape.
+pub(crate) fn entry_gates(types: &Core) -> [DyadPtr; 3] {
+    [types.mut_, types.immut_, types.pub_]
+}
+
+/// The record a `{ … }` whose names, each holding bytes, are `names` is a value of, once a
+/// `{ … }` of the same names, in the same order, of the same types and with the same gates was
+/// read: `{` keeps each such record it made, as `array` keeps its mints (›`array` is a chooser‹
+/// [[R223]]), so a shape is one type wherever it is written (›`{ … }` outside text is a scope kept
+/// as a value, read with `.`‹ [[R374]]).
 ///
 /// # Safety
-/// `node` must be a node from the store.
-pub(crate) unsafe fn kept_scope(types: &Core, node: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
-    // The parse adds the line that makes a `{ … }`'s value after every line written in it.
-    let made_line = |scope: DyadPtr| super::scope::exprs_of(scope)?.last().copied();
-    let line = if dyad::ty(node) == types.scope { made_line(node)? } else { node };
+/// `names` must be binding dyads from the store.
+pub(crate) unsafe fn shape_of(types: &Core, names: &[DyadPtr]) -> Option<DyadPtr> {
+    let made = meta::mints_of(types.open_curly_);
+    if made.is_null() {
+        return None;
+    }
+    let same = |field: DyadPtr, binding: DyadPtr, name: DyadPtr| {
+        super::hole::type_in(field) == types.type_of(name)
+            && Binding::spelling(binding) == Binding::spelling(name)
+            && entry_gates(types)
+                .iter()
+                .all(|&g| Binding::has_gate(binding, g) == Binding::has_gate(name, g))
+    };
+    super::array::items(made).iter().copied().find(|&ty| {
+        let fields = super::array::items(meta::record_fields_of(ty));
+        let bindings = super::array::items(meta::record_field_bindings_of(ty));
+        fields.len() == names.len()
+            && (0..names.len()).all(|i| same(fields[i], bindings[i], names[i]))
+    })
+}
+
+/// `ty`, the record a `{ … }` whose names each hold bytes laid out, kept by `{` for every
+/// `{ … }` of its shape ([`shape_of`]).
+///
+/// # Safety
+/// `ty` must be a record type node from the store.
+pub(crate) unsafe fn keep_shape(store: &mut Store, types: &Core, ty: DyadPtr) {
+    let mut made = meta::mints_of(types.open_curly_);
+    if made.is_null() {
+        made = super::array::build(store, types.array_, &[]);
+        meta::install_mints(types.open_curly_, made);
+    }
+    super::array::push(store, made, ty);
+}
+
+/// The record `line` makes a value of, when `line` makes a `{ … }`'s value.
+///
+/// # Safety
+/// `line` must be a node from the store.
+unsafe fn made_by(types: &Core, line: DyadPtr) -> Option<DyadPtr> {
     if dyad::ty(line) != types.construct_ {
         return None;
     }
-    let body = meta::record_body_of(*(dyad::value(line) as *const DyadPtr).add(1));
-    let kept = !body.is_null() && dyad::ty(body) == types.scope && made_line(body) == Some(line);
-    kept.then_some((body, line))
+    let ty = *(dyad::value(line) as *const DyadPtr).add(1);
+    keeps_scope(types, ty).then_some(ty)
 }
 
-/// Whether `ty` is the record a `{ … }` lays out: its body is the scope it keeps, whose last line
-/// makes a value of `ty`.
+/// The line that makes a `{ … }`'s value, when `scope` is that `{ … }`'s block: the parse adds it
+/// after every line written there.
+///
+/// # Safety
+/// `scope` must be a node from the store.
+pub(crate) unsafe fn kept_line(types: &Core, scope: DyadPtr) -> Option<DyadPtr> {
+    if dyad::ty(scope) != types.scope {
+        return None;
+    }
+    let kept_as = super::scope::kept_as(scope);
+    let line = super::scope::exprs_of(scope)?.last().copied()?;
+    (!kept_as.is_null() && made_by(types, line) == Some(kept_as)).then_some(line)
+}
+
+/// The names a `{ … }` value keeps and the line that makes the value, when `node` is one: the
+/// block, or that line alone, an empty `{ }`'s, which keeps no name.
+///
+/// # Safety
+/// `node` must be a node from the store.
+pub(crate) unsafe fn kept_value(types: &Core, node: DyadPtr) -> Option<(Vec<DyadPtr>, DyadPtr)> {
+    if dyad::ty(node) == types.scope {
+        return kept_line(types, node).map(|line| (kept_names(types, node), line));
+    }
+    made_by(types, node).map(|_| (Vec::new(), node))
+}
+
+/// Whether `ty` is a record a `{ … }` lays out: its body is the block of the `{ … }` that made
+/// it, kept as a value of `ty`.
 ///
 /// # Safety
 /// `ty` must be null or a valid dyad from the store.
@@ -170,10 +238,7 @@ pub(crate) unsafe fn keeps_scope(types: &Core, ty: DyadPtr) -> bool {
         return false;
     }
     let body = meta::record_body_of(ty);
-    !body.is_null()
-        && dyad::ty(body) == types.scope
-        && kept_scope(types, body)
-            .is_some_and(|(_, line)| *(dyad::value(line) as *const DyadPtr).add(1) == ty)
+    !body.is_null() && dyad::ty(body) == types.scope && super::scope::kept_as(body) == ty
 }
 
 /// The record's storage and the field's binding a `field` place was built over.

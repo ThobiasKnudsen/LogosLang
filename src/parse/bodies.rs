@@ -230,12 +230,12 @@ pub(super) struct OpenScope {
     pub(super) kept: Option<KeptValue>,
 }
 
-/// The value a `{ … }` makes, while its lines are read: the record its names lay out, minted at
-/// the `{` so that a `fn` written in it reads its sibling names through the value it is reached
-/// by, as a `static` function reads its value's fields (›A type body describes one level‹
-/// [[R222]]).
+/// The value a `{ … }` makes, while its lines are read: the record a `fn` written in it reads its
+/// sibling names through, as a `static` function reads its value's fields (›A type body describes
+/// one level‹ [[R222]]).
 pub(super) struct KeptValue {
-    /// The record type, laid out when the `}` closes it.
+    /// The record type, made when a `fn` written here first needs it and laid out when the `}`
+    /// closes it; null until then.
     pub(super) ty: DyadPtr,
     /// Each `fn` written here that reads the value, with the names it read them among, in
     /// field order: the record's first fields must still be those names when it is laid out.
@@ -832,17 +832,22 @@ impl<'a> Parser<'a> {
     /// The `{ … }` a `fn` declared as `binding` is written in, as the definition its body is read
     /// in (›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]): the innermost
     /// open scope is that `{ … }`'s own.
-    fn kept_entry(&self, binding: DyadPtr) -> Option<OpenType> {
-        let open = self.cx.open.last()?;
-        let (kept, scope) = (open.kept.as_ref()?, open.scope?);
+    fn kept_entry(&mut self, binding: DyadPtr) -> Option<OpenType> {
+        let scope = self.cx.open.last()?.scope?;
         if binding.is_null() || self.cx.scopes.current() != Some(scope) {
             return None;
         }
+        let types = self.types;
+        let kept = self.cx.open.last_mut()?.kept.as_mut()?;
+        if kept.ty.is_null() {
+            kept.ty = self.rt.store.alloc_leaf(types.type_);
+        }
+        let ty = kept.ty;
         // SAFETY: `scope` is the open `{ … }`'s block node, its closed lines reduced dyads.
-        let names = unsafe { crate::identities::instance::kept_names(self.types, scope) };
+        let names = unsafe { crate::identities::instance::kept_names(types, scope) };
         // SAFETY: a kept name is a binding dyad from the store.
-        let fields = names.into_iter().filter(|&name| unsafe { self.types.is_storage(name) });
-        Some(OpenType::kept(scope, fields.collect(), kept.ty))
+        let fields = names.into_iter().filter(|&name| unsafe { types.is_storage(name) });
+        Some(OpenType::kept(scope, fields.collect(), ty))
     }
 
     /// The `{ … }` whose block is `scope`, while its lines are read.
@@ -1991,7 +1996,7 @@ impl<'a> Parser<'a> {
             && matches!(value, BlockValue::Used | BlockValue::Body)
             && lines == Lines::Own;
         let kept = (lines == Lines::Kept).then(|| KeptValue {
-            ty: self.rt.store.alloc_leaf(self.types.type_),
+            ty: std::ptr::null_mut(),
             readers: Vec::new(),
             depth: (self.cx.frames.len(), self.cx.definitions.len()),
             in_program_frame: self.in_program_frame(),
@@ -2170,6 +2175,7 @@ impl<'a> Parser<'a> {
         let open = self.cx.open.len() - 1;
         let kept = self.cx.open[open].kept.take().expect("a `{ … }`'s lines make its value");
         let (record, names) = self.kept_record(scope, kept)?;
+        crate::identities::scope::set_kept_as(scope, record);
         let types = self.types;
         let made_at = self.cx.open[open].lines;
         let mut entries = Vec::with_capacity(names.len());

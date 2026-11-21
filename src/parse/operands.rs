@@ -1125,7 +1125,7 @@ impl<'a> Parser<'a> {
                 Binding::has_gate(binding, self.types.static_)
                     || !fields.is_storage()
                         && !fields.scope.is_null()
-                        && crate::identities::instance::kept_scope(self.types, fields.scope)
+                        && crate::identities::instance::kept_line(self.types, fields.scope)
                             .is_some()
             };
             if !is_static
