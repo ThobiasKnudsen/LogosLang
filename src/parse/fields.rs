@@ -1526,18 +1526,13 @@ impl<'a> Parser<'a> {
         let record = Binding::alloc(
             self.rt.store,
             types.binding_,
-            Binding::new(types.binding_, types.root_scope, std::ptr::null_mut()),
+            Binding {
+                over: binding,
+                ..Binding::new(types.binding_, types.root_scope, std::ptr::null_mut())
+            },
         );
         Binding::lay_out(record, types.binding_, types.root_scope, offset);
         record
-    }
-
-    /// The binding whose record `record` lies over: [`Parser::binding_record_place`]'s inverse.
-    ///
-    /// # Safety
-    /// `record` must be a place `binding_record_place` laid out.
-    pub(super) unsafe fn binding_of_record_place(&self, record: DyadPtr) -> DyadPtr {
-        dyad::of_value(self.rt.store.arena_base().add(Binding::read(record).offset))
     }
 
     /// A pointer-typed literal with its own eight bytes of storage, read at

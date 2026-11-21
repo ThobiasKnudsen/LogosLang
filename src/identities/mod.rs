@@ -639,6 +639,21 @@ impl Core {
         (self.type_of(record) == self.binding_).then_some(field)
     }
 
+    /// `x`'s binding when `p` is an `x:f` read; `None` for any other node, a field read of a
+    /// value of type `binding` included.
+    ///
+    /// # Safety
+    /// As `frame_of`.
+    pub(crate) unsafe fn binding_read_of(&self, p: DyadPtr) -> Option<DyadPtr> {
+        self.binding_field_of(p)?;
+        let (record, _) = instance::field_parts(p);
+        if dyad::ty(record) != self.binding_ {
+            return None;
+        }
+        let over = Binding::read(record).over;
+        (!over.is_null()).then_some(over)
+    }
+
     /// The type of what a reduced operand denotes: its storage's declared type, or the
     /// type slot of the dyad it names or is.
     ///

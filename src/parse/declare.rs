@@ -26,11 +26,12 @@ impl<'a> Parser<'a> {
         use crate::identities::this;
         let node = target.dyad;
         // SAFETY: `target` holds a reduced dyad from the store and a null or `array` path; a
-        // fill's binding is a binding dyad; a `lex_rank` read is a field of a record place.
+        // fill's binding and an `x:f` read's are binding dyads.
         unsafe {
-            if crate::identities::read::is_lex_rank_field(self.types, node) {
-                let (record, _) = crate::identities::instance::field_parts(node);
-                return self.check_lex_write(self.binding_of_record_place(record));
+            if let Some(binding) = self.types.binding_read_of(node) {
+                if crate::identities::read::is_lex_rank_field(self.types, node) {
+                    return self.check_lex_write(binding);
+                }
             }
             if this::is_field_read(self.types, node) && this::is_fill(self.types, node) {
                 let binding = this::field_binding_of(self.types, node);

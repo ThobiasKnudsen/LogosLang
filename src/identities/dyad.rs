@@ -37,14 +37,6 @@ pub unsafe fn value(p: DyadPtr) -> *mut u8 {
     (p as *mut u8).add(std::mem::size_of::<Dyad>())
 }
 
-/// The node whose value bytes begin at `bytes`: [`value`]'s inverse.
-///
-/// # Safety
-/// `bytes` must be what [`value`] gave for a valid dyad from the store.
-pub unsafe fn of_value(bytes: *mut u8) -> DyadPtr {
-    bytes.sub(std::mem::size_of::<Dyad>()) as DyadPtr
-}
-
 /// The one address a head node holds: a type's record, another node, a table.
 ///
 /// # Safety
