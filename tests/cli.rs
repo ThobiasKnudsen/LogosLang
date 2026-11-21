@@ -745,6 +745,102 @@ fn a_fresh_spelling_on_the_tape_is_a_node_of_type_unknown_name() {
     assert!(stderr.contains("this node is not a scope"), "stderr: {stderr}");
 }
 
+/// A multiplication written in Logos: its parse mints from `tape[-1].type` and `tape[1].type`
+/// and takes both sides through `tape[k]`.
+const TIMES: &str = "⊗ := type ( \
+    static get_mint := fn (l := type ?, r := type ?) -> type ( \
+    place := type_mint.step(type_mint.step(type_mint.step(0, ⊗), l), r), \
+    mut mint := type type_mint.kept(place), if mint != ? return mint, \
+    mint = type ( pub lhs := l ?, pub rhs := r ?, static output_type := type l, \
+    static run = ( lhs * rhs ) ), type_mint.keep(place, mint), mint ), \
+    static parse_rank = *.parse_rank, \
+    static parse = ( tape[0].type = get_mint(tape[-1].type, tape[1].type), tape[0].lhs = tape[-1], \
+    tape[0].rhs = tape[1], tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
+
+/// A parse written in Logos reads its operands through `tape[k]` and `tape[k].type` as a built-in
+/// operation reads them: a dead name is refused (›A dead name takes nothing until `:=` redeclares
+/// it‹ [[R72]]) and noted as a read of the function it is read in, a `dyad` is read through to the
+/// node it gives (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹
+/// [[R293]]), and a value refused anywhere is refused, so `⊗` gives what `*` gives, on both tiers.
+#[test]
+fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
+    let dead = "`n` is dead here: it was moved or freed above";
+    let mut cases = vec![
+        ("n := i32 5, free n, x := n OP n".to_owned(), Err(dead)),
+        ("x := dyad (i32, 7) OP dyad (i32, 7), x".to_owned(), Ok("49\n")),
+        ("g := fn () -> dyad ( i32 5 ), x := g() OP g(), x".to_owned(), Ok("25\n")),
+        (
+            "g := fn () -> dyad ( print «g», i32 2 ), h := fn () -> i32 ( print «h», 1 ), h() OP g()"
+                .to_owned(),
+            Ok("h\ng\n2\n"),
+        ),
+        (
+            "c := true, x := (if c (i32 1) else (i64 2)) OP i32 1".to_owned(),
+            Err("the arms of this `if`"),
+        ),
+        ("n := i32 2, f := fn () -> i32 ( n OP i32 3 ), free n, f()".to_owned(), Err(dead)),
+        ("f := fn () -> i32 ( n := i32 5, free n, n OP n ), 0".to_owned(), Err(dead)),
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!("f := fn () -> i32 ( dyad (i32, 7) OP dyad (i32, 7) ), {compile}f()"),
+            Ok("49\n"),
+        ));
+    }
+    for (tail, want) in &cases {
+        for src in [format!("{TIMES}, {}", tail.replace("OP", "⊗")), tail.replace("OP", "*")] {
+            let (code, stdout, stderr) = run_line(&src);
+            match want {
+                Ok(out) => {
+                    assert_eq!((code, stdout.as_str()), (Some(0), *out), "{src}: stderr: {stderr}")
+                }
+                Err(message) => {
+                    assert_eq!(code, Some(1), "{src}: stdout: {stdout}");
+                    assert!(stderr.contains(message), "{src}: stderr: {stderr}");
+                }
+            }
+        }
+    }
+}
+
+/// What gives no value is the reader's to decide (›A `tape[k]` read past the lexed frontier lexes
+/// on demand for every constructor‹ [[R231]]): a parse written in Logos reads a side that gives
+/// nothing as `void` and a spelling no live name has as `unknown_name`, while a dead name is
+/// refused wherever the parse reads it, `tape[k]` too.
+#[test]
+fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
+    let k = |body: &str, operand: &str| {
+        format!(
+            "c := true, k := type ( static parse = ( {body}, tape.remove(1), \
+             tape.is_constructed[0] = true ) ), k {operand}"
+        )
+    };
+    let is = |t: &str| format!("print «{{tape[1].type == {t}}}»");
+    for (operand, t) in
+        [("(print «a»)", "void"), ("(if c (i32 1))", "void"), ("zz", "unknown_name")]
+    {
+        let (code, stdout, stderr) = run_line(&k(&is(t), operand));
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(0), "true\ntype\n"),
+            "{operand}: stderr: {stderr}"
+        );
+    }
+    let takes = "k := type ( a := i32 ?, static output_type := type i32, static run = ( a ), \
+                 static parse_rank = 60, static parse = ( tape[0].type = k, tape[0].a = tape[1], \
+                 tape.remove(1), tape.is_constructed[0] = true ) ), n := i32 2, \
+                 f := fn () -> i32 ( k n )";
+    let (code, stdout, stderr) = run_line(&format!("{takes}, f()"));
+    assert_eq!((code, stdout.as_str()), (Some(0), "2\n"), "stderr: {stderr}");
+    for src in
+        [format!("n := i32 5, free n, {}", k(&is("i32"), "n")), format!("{takes}, free n, f()")]
+    {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains("`n` is dead here"), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
     let q = |ty: &str, body: &str| {

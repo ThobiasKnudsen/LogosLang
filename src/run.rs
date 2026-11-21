@@ -489,6 +489,14 @@ pub(crate) struct Host {
     /// Parses a line that waits for the run (`identities::waiting`) over the nodes its `dyad`
     /// names hold now, yielding the node to run.
     pub(crate) parse_waiting: unsafe fn(*mut (), DyadPtr) -> Result<i64, RunError>,
+    /// Reads the cell `k` right of a tape's center, or its type, as the parse reads what an
+    /// operation takes, yielding the node it stands for.
+    pub(crate) read_tape: unsafe fn(
+        *mut (),
+        *mut crate::parse::ParsingTape,
+        isize,
+        crate::parse::TapeRead,
+    ) -> Result<i64, RunError>,
 }
 
 /// Puts back the lexer a [`Runtime::hosting`] call found, by return or by unwinding.
@@ -660,6 +668,25 @@ impl<'a> Runtime<'a> {
         // `hosting` for exactly this call; `ctor_tape` is the tape it handed the running
         // constructor, alive until that constructor's run returns.
         (host.lex_on)(host.parser, tape, k).map_err(|e| RunError::Parse(Box::new(e)))
+    }
+
+    /// What the cell `k` of `tape` stands for, read by the parser running the pass as `read`
+    /// says, when `tape` is the one the running constructor was handed; `None` for any other.
+    ///
+    /// # Safety
+    /// `tape` must be a live `ParsingTape`.
+    pub(crate) unsafe fn read_on_tape(
+        &mut self,
+        tape: *mut crate::parse::ParsingTape,
+        k: isize,
+        read: crate::parse::TapeRead,
+    ) -> Result<Option<DyadPtr>, RunError> {
+        if self.ctor_tape != Some(tape) {
+            return Ok(None);
+        }
+        let Some(host) = self.lexer.and_then(|l| l.host) else { return Ok(None) };
+        // SAFETY: as `reach`.
+        (host.read_tape)(host.parser, tape, k, read).map(|p| Some(p as usize as DyadPtr))
     }
 
     /// Construct `ty` applied to `value` through the parser running the pass.

@@ -33,6 +33,7 @@ pub use driver::*;
 pub use error::*;
 pub use lex::lex_fragment;
 pub(crate) use lex::*;
+pub(crate) use operands::TapeRead;
 pub use quotes::*;
 pub use scopes::*;
 pub use tape::*;

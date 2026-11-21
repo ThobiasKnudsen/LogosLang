@@ -979,9 +979,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A Logos constructor's read past the frontier: the driver lexes on, as for a
-    /// built-in reader (DESIGN ›The scope's constructor is the driver‹), in the sub-parse the
-    /// tape was handed out in: a read made while a line of the constructor is parsed as it runs
-    /// lexes the tape's source, not that line's.
+    /// built-in reader (DESIGN ›The scope's constructor is the driver‹).
     ///
     /// # Safety
     /// `parser` must be the parser hosting the run, and `tape` the tape it handed the
@@ -989,16 +987,39 @@ impl<'a> Parser<'a> {
     unsafe fn lex_on(parser: *mut (), tape: *mut ParsingTape, k: isize) -> Result<(), ParseError> {
         // SAFETY: as this function's own contract.
         let (parser, tape) = unsafe { (&mut *(parser as *mut Self), &mut *tape) };
-        match parser.tape_hosts.last().copied().filter(|&at| at < parser.outer.len()) {
-            Some(at) => TapeHost::new(parser, at).0.cell_at(tape, k).map(|_| ()),
-            None => parser.cell_at(tape, k).map(|_| ()),
+        parser.on_tape_host(|p| p.cell_at(tape, k).map(|_| ()))
+    }
+
+    /// A Logos constructor's `tape[k]` or `tape[k].type` ([`Parser::read_tape`]).
+    ///
+    /// # Safety
+    /// As `lex_on`.
+    unsafe fn read_tape_host(
+        parser: *mut (),
+        tape: *mut ParsingTape,
+        k: isize,
+        read: TapeRead,
+    ) -> Result<i64, crate::run::RunError> {
+        // SAFETY: as this function's own contract.
+        let (parser, tape) = unsafe { (&mut *(parser as *mut Self), &mut *tape) };
+        let node = parser.on_tape_host(|p| p.read_tape(tape, k, read));
+        node.map(|d| d as i64).map_err(|e| crate::run::RunError::Parse(Box::new(e)))
+    }
+
+    /// `f` in the sub-parse the running constructor's tape was handed out in: a read made while
+    /// a line of the constructor is parsed as it runs reads the tape's source, not that line's.
+    fn on_tape_host<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        match self.tape_hosts.last().copied().filter(|&at| at < self.outer.len()) {
+            Some(at) => f(&mut *TapeHost::new(self, at).0),
+            None => f(self),
         }
     }
 
     /// `f` over the runtime with this parser as its host: the lexer is attached, so a
     /// `lex «…»` inside what runs resolves against the scopes open now and the index (DESIGN
     /// ›Text is the quote‹), and what runs reaches the parser for a held `type (…)`, a
-    /// constructor and a waiting line. The parser reads neither while the runtime runs.
+    /// constructor, a waiting line and a read of a constructor's tape. The parser reads neither
+    /// while the runtime runs.
     pub(super) fn hosted<R>(&mut self, f: impl FnOnce(&mut crate::run::Runtime) -> R) -> R {
         let host = crate::run::Host {
             parser: (self as *mut Self).cast(),
@@ -1006,6 +1027,7 @@ impl<'a> Parser<'a> {
             mint: Self::mint_host,
             construct: Self::construct_host,
             parse_waiting: Self::parse_waiting_host,
+            read_tape: Self::read_tape_host,
         };
         self.rt.hosting(&self.cx.scopes, self.trie, Some(host), f)
     }
