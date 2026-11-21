@@ -479,16 +479,26 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `t` must be a record type from the store.
     unsafe fn reads_whole(&self, t: DyadPtr, name: &str) -> bool {
+        self.field_type(t, name)
+            .is_some_and(|ty| crate::identities::this::reads_whole(self.types, ty))
+    }
+
+    /// The declared type of `t`'s field `name`, resolved in the record's own scope alone; `None`
+    /// where `t` is no record or has no such field.
+    ///
+    /// # Safety
+    /// `t` must be null or a valid dyad from the store.
+    pub(super) unsafe fn field_type(&self, t: DyadPtr, name: &str) -> Option<DyadPtr> {
         use crate::identities::{array, meta};
+        if t.is_null() || !meta::is_record_type(t) {
+            return None;
+        }
         let mut fields = ScopeStack::new();
         fields.push(meta::record_scope_of(t));
-        fields.resolve(self.trie, name).ok().is_some_and(|r| {
-            array::items(meta::record_fields_of(t)).contains(&r.identity)
-                && crate::identities::this::reads_whole(
-                    self.types,
-                    crate::identities::hole::type_in(r.identity),
-                )
-        })
+        let field = fields.resolve(self.trie, name).ok()?.identity;
+        array::items(meta::record_fields_of(t))
+            .contains(&field)
+            .then(|| crate::identities::hole::type_in(field))
     }
 
     /// `lhs.f` where `lhs` yields a value of `t` only when the program runs, a place of the

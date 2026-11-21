@@ -416,11 +416,13 @@ impl<'a> Parser<'a> {
     /// in its place (›A `dyad ?` place is transparent: a placeholder for a new node of any
     /// type‹ [[R293]]). Where that node's type is known where the operand is written, it is read
     /// at that type each time the line runs (`dyad_place::read_through`, which every landing in a
-    /// typed place reads it by too). A call whose node's type is known only at run runs now,
-    /// where the pass has reached its line (the top level, or a body's line parsed when it runs),
-    /// after what stands before it ([`Self::run_before`]), and its cell stands for the node it
-    /// gave, as a `dyad` name read there does; a body's line holding one waits for the run
-    /// (`waiting_line_end`), and so does a `while` condition holding one (`hold_condition`).
+    /// typed place reads it by too). An entry of a `{ … }` a field path reaches is read as a
+    /// `dyad` name is where the lexer meets it ([`Self::held_now`]). A call whose node's type is
+    /// known only at run runs now, where the pass has reached its line (the top level, or a
+    /// body's line parsed when it runs), after what stands before it ([`Self::run_before`]), and
+    /// its cell stands for the node it gave, as a `dyad` name read there does; a body's line
+    /// holding either waits for the run (`waiting_line_end`), and so does a `while` condition
+    /// holding one (`hold_condition`).
     pub(super) fn read_through_value(
         &mut self,
         tape: &mut ParsingTape,
@@ -438,6 +440,12 @@ impl<'a> Parser<'a> {
             let unknown = std::ptr::null_mut();
             let read = dyad_place::read_through(self.rt.store, types, operand, unknown, false);
             if let Some(node) = read {
+                return Ok(node);
+            }
+            if self.in_pass_order() && self.is_dyad_place(operand) {
+                self.run_first(tape, at)?;
+                let Some(node) = self.held_now(operand)? else { return Ok(operand) };
+                self.cx.each_pass_read |= self.cx.each_pass;
                 return Ok(node);
             }
             let call = matches!(

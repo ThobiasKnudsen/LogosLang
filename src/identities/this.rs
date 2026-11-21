@@ -336,6 +336,23 @@ pub(crate) unsafe fn field_step(types: &Core, node: DyadPtr) -> Option<(DyadPtr,
     }
 }
 
+/// Whether `read` reaches its value through names alone: each field read or record field steps
+/// to what it reads into, down to a name or the parameter holding the value a body is about, so
+/// running `read` runs nothing but reads.
+///
+/// # Safety
+/// `read` must be a reduced dyad from the store.
+pub(crate) unsafe fn reached_by_name(types: &Core, read: DyadPtr) -> bool {
+    let mut at = read;
+    while !at.is_null() {
+        match field_step(types, at) {
+            Some((into, _)) => at = into,
+            None => return at != read && dyad::ty(at) == types.binding_,
+        }
+    }
+    false
+}
+
 /// The field path `node` is, read off the reads it is built of: each field read or record
 /// field steps to the value it reads into, until a name, the value `held` the parse read the
 /// name `root` as, or something else.
