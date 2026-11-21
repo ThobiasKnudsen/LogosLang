@@ -37,6 +37,11 @@ pub struct DyadPlaceIds {
     /// node lands in `into` as in `into lossy (…)`.
     pub read: DyadPtr,
     pub read_leaf: DyadPtr,
+    /// `[place, type, op, output_type]`: the record of `type` the `dyad` place `place` holds,
+    /// reached through the place each time the line runs: a plain record's bytes, which lie in the
+    /// node, and a record whose values are nodes, that node.
+    pub reach: DyadPtr,
+    pub reach_leaf: DyadPtr,
 }
 
 /// No spelling: the landing in a `dyad ?` place builds the new node, a read of a `dyad` value
@@ -64,7 +69,16 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DyadPlaceIds {
     let read = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(read, lower_read);
     let read_leaf = callable::mint_native(cx.store, cs.callable, run_read, cs.seed_native);
-    DyadPlaceIds { new_node, new_node_leaf, read, read_leaf }
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        Assoc::Left,
+        &["place", "type", "op", "output_type"],
+    );
+    let reach = cx.store.alloc_head(cx.type_, record);
+    let reach_leaf = callable::mint_native(cx.store, cs.callable, run_reach, cs.seed_native);
+    DyadPlaceIds { new_node, new_node_leaf, read, read_leaf, reach, reach_leaf }
 }
 
 /// Who ends what a `dyad ?` place takes (›Holding is decided at the binding site, parameters
@@ -285,7 +299,7 @@ pub(crate) unsafe fn read_through(
 }
 
 /// # Safety
-/// `node` must be a node from [`build_new_node`] or [`read_through`].
+/// `node` must be a node from [`build_new_node`], [`read_through`] or [`build_reach`].
 unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     let p = dyad::value(node) as *const DyadPtr;
     (*p, *p.add(1))
@@ -322,6 +336,49 @@ pub(crate) unsafe fn stable(store: &mut Store, types: &Core, held: DyadPtr) -> D
     };
     let bytes = std::slice::from_raw_parts(dyad::value(held) as *const u8, carry.width());
     store.alloc_blob(ty, bytes)
+}
+
+/// What `.` reads a member of over `place`, a `dyad` place the parse read as `held` ([`stable`]):
+/// a record the place holds is reached through the place each time the line runs, so a field
+/// written through it, by `=` or by a `static` function, is written in the node the place holds
+/// then (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]);
+/// any other node, which has no field to write, is read as `held`.
+///
+/// # Safety
+/// `place` must be a reduced dyad from the store and `held` a node from the store.
+pub(crate) unsafe fn build_reach(
+    store: &mut Store,
+    types: &Core,
+    place: DyadPtr,
+    held: DyadPtr,
+) -> DyadPtr {
+    let ty = dyad::ty(held);
+    let plain = super::this::is_plain(types, ty) && carry_of(types, ty).is_some();
+    if !plain && !meta::is_node_valued(ty, types.fn_type) {
+        return held;
+    }
+    let ids = types.dyad_place;
+    store.alloc_words(ids.reach, &[place, ty, ids.reach_leaf, ty])
+}
+
+/// The line is built for a node of its `type`, so a node of another type, which a write into the
+/// place put there while the line ran, is refused, never read or written by that type's layout.
+fn run_reach(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a node from `build_reach`; a `dyad` place gives a node's address or 0.
+    unsafe {
+        let (place, ty) = parts(node);
+        let held = rt.run(place)? as usize as DyadPtr;
+        if held.is_null() {
+            return Err(RunError::NullPointer);
+        }
+        if dyad::ty(held) != ty {
+            return Err(RunError::HeldNodeReplaced);
+        }
+        if super::this::is_plain(rt.types(), ty) {
+            return Ok(dyad::value(held) as i64);
+        }
+        Ok(held as i64)
+    }
 }
 
 fn run_new_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

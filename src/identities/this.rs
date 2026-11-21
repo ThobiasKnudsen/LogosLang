@@ -570,8 +570,36 @@ unsafe fn field_of(
     owner: DyadPtr,
     name: DyadPtr,
 ) -> Result<Field, RunError> {
-    let this = rt.run(*ops)? as DyadPtr;
+    let this = receiver(rt, *ops, owner)?;
     field_at(rt, this, ops, owner, name)
+}
+
+/// The value a field read or write of `owner` works on, what its first operand `this` gives: a
+/// plain record's bytes by their address, as every whole read of a record hands them, so a record
+/// that lies in a node's own bytes is read where it lies; any other value as it runs.
+///
+/// # Safety
+/// `this` must be a reduced dyad from the store and `owner` a type node.
+unsafe fn receiver(rt: &mut Runtime, this: DyadPtr, owner: DyadPtr) -> Result<DyadPtr, RunError> {
+    if is_plain(rt.types(), owner) {
+        return super::by_copy::record_addr(rt, this).map(<*mut u8>::cast);
+    }
+    Ok(rt.run(this)? as DyadPtr)
+}
+
+/// [`receiver`]'s compiled half.
+///
+/// # Safety
+/// As [`receiver`].
+unsafe fn lower_receiver(
+    lw: &mut Lowerer,
+    this: DyadPtr,
+    owner: DyadPtr,
+) -> Result<Value, CompileError> {
+    if is_plain(lw.types(), owner) {
+        return super::by_copy::lower_record_addr(lw, this);
+    }
+    lw.lower(this)
 }
 
 /// As [`field_of`], of the value `this` the read's first operand gave.
@@ -642,7 +670,7 @@ unsafe fn slot_of(
     owner: DyadPtr,
     name: DyadPtr,
 ) -> Result<(*mut DyadPtr, usize), RunError> {
-    let this = rt.run(*ops)? as DyadPtr;
+    let this = receiver(rt, *ops, owner)?;
     slot_at(rt, this, ops, owner, name)
 }
 
@@ -698,7 +726,8 @@ pub(crate) unsafe fn field_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut 
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.
 pub(crate) unsafe fn held(rt: &mut Runtime, read: DyadPtr) -> Result<DyadPtr, RunError> {
-    let this = rt.run(*(dyad::value(read) as *const DyadPtr))? as DyadPtr;
+    let owner = owner_of(rt.types(), read);
+    let this = receiver(rt, *(dyad::value(read) as *const DyadPtr), owner)?;
     held_at(rt, read, this)
 }
 
@@ -726,7 +755,8 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower_slot(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a slot node from `build_slot`, its receiver its first operand.
     unsafe {
-        let this = lw.lower(*(dyad::value(node) as *const DyadPtr))?;
+        let owner = owner_of(lw.types(), node);
+        let this = lower_receiver(lw, *(dyad::value(node) as *const DyadPtr), owner)?;
         let read = lw.node_addr(node);
         lw.call_seed(compiled_slot as *const () as usize, &[read, this])
     }
@@ -744,7 +774,8 @@ unsafe extern "C" fn compiled_slot(ctx: *mut crate::run::Context, read: DyadPtr,
 fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a load node from `build_load`, its receiver its first operand.
     unsafe {
-        let this = rt.run(*(dyad::value(node) as *const DyadPtr))? as DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
+        let this = receiver(rt, *ops, *ops.add(5))?;
         load(rt, node, this)
     }
 }
@@ -789,7 +820,7 @@ fn lower_load(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             Some(Carry::Bytes(_)) => None,
             None => return Err(CompileError::NotLowerable(node)),
         };
-        let this = lw.lower(*ops)?;
+        let this = lower_receiver(lw, *ops, *ops.add(5))?;
         let read = lw.node_addr(node);
         let bits = lw.call_seed(compiled_load as *const () as usize, &[read, this])?;
         Ok(match nt {
@@ -808,35 +839,42 @@ unsafe extern "C" fn compiled_load(ctx: *mut crate::run::Context, read: DyadPtr,
 
 /// Into a plain record's bytes, the value itself. Into a slot, a number or pointer as a fresh
 /// node of the field's type holding it, the way a literal holds its own; a value moved by its
-/// bytes as the right side's node, which a read of the field takes it from.
+/// bytes as the right side's node, which a read of the field takes it from. The right side runs
+/// before the field is reached (›`=` sits beside `:=`, and returns nothing‹ [[R277]]), so one that
+/// replaces the node a `dyad` the path goes through holds is written into the node held then.
 fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_load`; the type operand is a type node a whole value of which moves.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let (value, ty) = (*ops.add(2), *ops.add(3));
+        let (value, ty, owner) = (*ops.add(2), *ops.add(3), *ops.add(4));
         let carry = carry_of(rt.types(), ty).ok_or(RunError::NoLayout(ty))?;
-        match (field_of(rt, ops, *ops.add(4), *ops.add(5))?, carry) {
-            (Field::Bytes(addr, ..), _) => {
-                let taken = super::assign::take(rt, carry, value)?;
-                super::assign::put(carry, addr, taken);
+        // A value moved by its bytes into a node's slot is its node, which runs nothing here.
+        let taken = match carry {
+            Carry::Bytes(_) if !is_plain(rt.types(), owner) => None,
+            _ => Some(super::assign::take(rt, carry, value)?),
+        };
+        match (field_of(rt, ops, owner, *ops.add(5))?, taken) {
+            (Field::Bytes(addr, ..), Some(taken)) => super::assign::put(carry, addr, taken),
+            (Field::Bytes(addr, ..), None) => {
+                super::assign::put(carry, addr, super::assign::take(rt, carry, value)?);
             }
-            (Field::Slot(slot, _), Carry::Bytes(_)) => *slot = value,
-            (Field::Slot(slot, _), Carry::Word(_)) => {
-                let bits = rt.run(value)?;
+            (Field::Slot(slot, _), Some(bits)) if matches!(carry, Carry::Word(_)) => {
                 *slot = rt.store().alloc_blob(ty, &bits.to_ne_bytes()[..carry.width()]);
             }
+            (Field::Slot(slot, _), _) => *slot = value,
         }
         Ok(0)
     }
 }
 
-/// The value written is the right side's node, the operand as graph, never a number read out of it.
+/// The value written is the right side's node, the operand as graph, never a number read out of
+/// it, run before the field is reached, as [`run_store`] runs it.
 fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_slot`; the value operand is a reduced dyad.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let (slot, _) = slot_of(rt, ops, *ops.add(3), *ops.add(4))?;
         let value = rt.run(*ops.add(2))? as DyadPtr;
+        let (slot, _) = slot_of(rt, ops, *ops.add(3), *ops.add(4))?;
         slot.write_unaligned(value);
         Ok(0)
     }

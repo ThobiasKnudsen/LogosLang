@@ -316,8 +316,12 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"c := type (static run = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("`static run = (…)`"), "stderr: {stderr}");
-    let (echoes, stderr) = repl("x := 1\np := type (x := i32 ?)\nq := p(2)\nprint «{q.x}»\nx\n");
-    assert_eq!(echoes, ["2", "1"], "stderr: {stderr}");
+    let (echoes, stderr) = repl("x := 1\np := type (x := i32 ?)\nx\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+    assert!(
+        stderr.contains("<repl>:1:12: error: `x` is already declared and still in scope"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -6095,7 +6099,7 @@ fn a_scope_is_read_by_path_and_reading_runs_nothing() {
           m.dyads\n",
     );
     assert_eq!(stderr.matches("this read does not fit the node's type").count(), 2, "{stderr}");
-    assert!(stderr.contains("this operator cannot compute over these operands"), "{stderr}");
+    assert!(stderr.contains("this value's type has no field `dyads`"), "{stderr}");
 }
 
 #[test]
@@ -6184,7 +6188,7 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         let out = logos().arg(format!("{power}, {tail}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success() && out.stdout.is_empty(), "{tail}: {stderr}");
-        assert!(stderr.contains("cannot compute"), "{tail}: {stderr}");
+        assert!(stderr.contains("this value's type has no field `lhs`"), "{tail}: {stderr}");
     }
     // `&x` is typed by `&`'s mint, not by the `@i32` it gives; `y mk` is typed `mk`, not by the
     // record its `run` gives, which a copy carries.
@@ -6346,7 +6350,7 @@ fn a_pointer_type_applies_to_any_type() {
     // A scope's link up is `.back`; `.scope` on a scope is a field it does not have.
     let (_echoes, stderr) = repl(b"mut p := @dyad ?\np = here.scope\np.scope\nhere.scope.scope\n");
     assert_eq!(
-        stderr.matches("this operator cannot compute over these operands").count(),
+        stderr.matches("this value's type has no field `scope`").count(),
         2,
         "stderr: {stderr}"
     );
@@ -8948,11 +8952,6 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
             "1:60: error: a nested function cannot use an outer function's local or parameter",
         ),
         (inc("k := fn () -> i32 ( a ), k() + 1"), "a nested function cannot use an outer function's local"),
-        // Refused at the use, not at the declaration: stand-in for #408.
-        (
-            format!("{t}static h := fn () -> i32 ( k := fn (x := i32 ?) -> i32 ( x ), k(3) ) ), v := t (5), v.h()"),
-            "a nested function cannot use an outer function's local or parameter",
-        ),
         (
             format!("{t}static h := fn () -> i32 ( static c := x, c ) ), v := t (5), v.h()"),
             "1:171: error: a value made once, where it is written (`static`, `immediate`), cannot use a name",
@@ -8961,6 +8960,91 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A type body describes one level‹ [[R222]]: Logos has no shadowing, so no name declared
+/// inside a type body spells one of its fields.
+#[test]
+fn a_name_declared_inside_a_type_body_reuses_none_of_its_fields() {
+    let t = "t := type ( x := i32 ?, ";
+    for compile in ["", "v.h.compile(), "] {
+        let src = format!(
+            "{t}static h := fn (y := i32 ?) -> i32 ( x + y ) ), v := t (5), {compile}v.h(3)"
+        );
+        assert_eq!(run_line(&src), (Some(0), "8\n".to_string(), String::new()), "{src}");
+    }
+    for (rest, at) in [
+        ("static h := fn (x := i32 ?) -> i32 ( x ) ), v := t (5), v.h(3)", "1:41"),
+        ("static h := fn (x := i32 ?) -> i32 ( x ) ), v := t (5), v.h.compile(), v.h(3)", "1:41"),
+        ("static h := fn () -> i32 ( x := i32 4, x ) ), v := t (5), v.h()", "1:52"),
+        ("static h := fn () -> i32 ( k := fn (x := i32 ?) -> i32 ( x ), k(3) ) ), v := t (5), v.h()", "1:61"),
+        ("static h := fn () -> i32 ( for x in 0..3 ( ), 1 ) ), v := t (5), v.h()", "1:56"),
+        ("static h := fn () -> i32 ( if true ( x := i32 3, x ) else ( 4 ) ) ), v := t (5), v.h()", "1:62"),
+        ("static free = ( x := i32 3 ) ), v := t (5)", "1:41"),
+        ("static x := i32 1 )", "1:32"),
+        ("static u := type ( y := i32 ?, static k := fn (x := i32 ?) -> i32 ( x + y ) ) )", "1:72"),
+    ] {
+        let src = format!("{t}{rest}");
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        let expect = format!("{at}: error: `x` is already declared and still in scope");
+        assert!(stderr.contains(&expect), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›Fields are read with a dot outside their scope‹ [[R234]]: no shadowing, fields included, so a
+/// field reuses no name live where it is declared, above or below it in the body around it
+/// (›Every name of a scope is seen from anywhere in it; written order counts in four cases only‹
+/// [[R372]]). A body's slot words are its own, and types side by side share no fields. A
+/// `type (…)` in a body that runs later is refused where it is written, called or not, as a
+/// nested `fn` is.
+#[test]
+fn a_field_reuses_no_name_live_where_it_is_declared() {
+    for (src, at) in [
+        ("x := i32 1, t := type ( x := i32 ? )", "<command line>:1:25"),
+        ("t := type ( x := i32 ?, static u := type ( x := i32 ? ) )", "<command line>:1:44"),
+        ("t := type ( static x := i32 1, x := i32 ? )", "<command line>:1:32"),
+        (
+            "t := type ( x := i32 ?, static h := fn () -> type ( type ( x := i32 ? ) ) ), v := t (5), v.h()",
+            "<command line>:1:60",
+        ),
+        (
+            "t := type ( static h := fn () -> type ( type ( x := i32 ? ) ), x := i32 ? ), v := t (5), v.h()",
+            "type body:1:3",
+        ),
+        ("f := fn () -> i32 ( x := i32 1, t := type ( x := i32 ? ), 2 ), f()", "<command line>:1:45"),
+        ("f := fn () -> i32 ( x := i32 1, t := type ( x := i32 ? ), 2 ), 3", "<command line>:1:45"),
+        ("f := fn (x := i32 ?) -> i32 ( t := type ( x := i32 ? ), 2 ), 3", "<command line>:1:43"),
+        ("for 0..3 ( x := i32 1, t := type ( x := i32 ? ) )", "<command line>:1:36"),
+        (
+            "f := fn () -> i32 ( x := i32 1, t := type ( a := i32 ?, static h := fn (x := i32 ?) -> i32 ( x ) ), 2 ), 3",
+            "<command line>:1:73",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        let expect = format!("{at}: error: `x` is already declared and still in scope");
+        assert!(stderr.contains(&expect), "{src}: stderr: {stderr}");
+    }
+    for (src, out) in [
+        (
+            "t := type ( a := i32 ? ), u := type ( a := i32 ? ), f := fn (a := i32 ?) -> i32 ( a ), print «{f(2)}»",
+            "2\n",
+        ),
+        (
+            "t := type ( a := i32 ?, static u := type ( b := i32 ?, static parse_rank = 60 ), \
+             static parse_rank = 61 ), print «{t.parse_rank} {t.u.parse_rank}»",
+            "61.0 60.0\n",
+        ),
+        (
+            "t := type ( a := i32 ?, static k := fn () -> type ( type ( b := i32 ? ) ) ), v := t (5), \
+             w := v.k(), print «{v.a}»",
+            "5\n",
+        ),
+        ("f := fn () -> i32 ( x := i32 1, free x, t := type ( x := i32 ? ), 2 ), print «{f()}»", "2\n"),
+    ] {
+        assert_eq!(run_line(src), (Some(0), out.to_string(), String::new()), "{src}");
     }
 }
 
@@ -10605,6 +10689,196 @@ fn a_dyad_entry_of_a_curly_bracket_reads_as_a_dyad_name_does() {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains("is parsed only when it runs"), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]: a field
+/// of a record a `dyad` holds is read through it, as through a name of the record (›Reading a path
+/// runs nothing‹ [[R273]]), for a `dyad` name, an entry of a `{ … }`, a parameter, a `-> dyad`
+/// call and `dyad (T, v)`, at the top level and in a body, whose line waits for the run.
+#[test]
+fn a_field_of_a_record_a_dyad_holds_is_read_through_it() {
+    let pt = "pt := type ( x := i32 ?, y := i32 ? ), ";
+    let made = "dyad (pt, pt (1, 2))";
+    for (read, printed) in
+        [("D.x", "1"), ("D.y + 1", "3"), ("D.x + D.y", "3"), ("D.y == 2", "true")]
+    {
+        let ty = if printed == "true" { "bool" } else { "i32" };
+        let at = |d: &str| read.replace('D', d);
+        for src in [
+            format!("p := pt (1, 2), {}", at("p")),
+            format!("mut d := dyad ?, d = pt (1, 2), {}", at("d")),
+            format!("d := {made}, {}", at("d")),
+            format!("m := {{ d := {made} }}, {}", at("m.d")),
+            format!("f := fn () -> dyad ( pt (1, 2) ), {}", at("f()")),
+            at(made),
+            format!("f := fn (a := dyad ?) -> {ty} ( {} ), f(pt (1, 2))", at("a")),
+            format!("f := fn () -> {ty} ( d := {made}, {} ), f()", at("d")),
+            format!("m := {{ d := {made}, f := fn () -> {ty} ( {} ) }}, m.f()", at("d")),
+            format!("f := fn () -> dyad ( pt (1, 2) ), g := fn () -> {ty} ( {} ), g()", at("f()")),
+        ] {
+            let src = format!("{pt}{src}");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    for (src, printed) in [
+        (format!("d := {made}, print «{{d.x}} {{d.y}}»"), "1 2"),
+        ("f := fn (a := dyad ?) -> void ( print «{a.x}» ), f(pt (4, 2))".into(), "4"),
+        (
+            "ln := type ( a := pt ?, b := pt ? ), d := dyad (ln, ln (pt (1, 2), pt (3, 4))), d.b.x"
+                .into(),
+            "3",
+        ),
+        // The read is of the node the place holds when its line runs.
+        ("mut d := dyad ?, d = pt (1, 2), e := d.x, d = pt (7, 8), print «{e} {d.x}»".into(), "1 7"),
+        // Compiled where a `dyad` read compiles: `dyad (T, v)` in the body, and a caller of a
+        // function whose line waits for the run.
+        ("g := fn (m := i32 ?) -> i32 ( dyad (pt, pt (m, 2)).y + m ), g.compile(), g(i32 7)".into(), "9"),
+        (
+            "f := fn (a := dyad ?) -> i32 ( a.x ), h := fn () -> i32 ( f(pt (1, 2)) ), h.compile(), h()"
+                .into(),
+            "1",
+        ),
+    ] {
+        let src = format!("{pt}{src}");
+        assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    // A field the held node's type lacks is refused where the read is parsed, as through a name:
+    // at the top level as the pass reaches it, in a body when the waiting line runs.
+    for (src, error) in [
+        ("n := i64 5, n.x", "this value's type has no field `x`"),
+        ("mut d := dyad ?, d = i64 5, d.x", "this value's type has no field `x`"),
+        ("mut d := dyad ?, d = «hi», d.x", "this value's type has no field `x`"),
+        ("f := fn (a := dyad ?) -> i32 ( a.x ), f(i64 5)", "this value's type has no field `x`"),
+        ("p := pt (1, 2), p.z", "unknown name `z`"),
+        ("d := dyad (pt, pt (1, 2)), d.z", "unknown name `z`"),
+        ("f := fn (a := dyad ?) -> i32 ( a.z ), f(pt (1, 2))", "unknown name `z`"),
+    ] {
+        let src = format!("{pt}{src}");
+        let (code, out, stderr) = run_line(&src);
+        assert_eq!((code, out.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]: a field
+/// of a record a `dyad` place holds is written through it, by `=` and by a `static` function that
+/// writes its value, in the node the place holds when the line runs, as through a name of the
+/// record, and the write meets the gates `p.x = …` meets (›An access along a path needs every
+/// binding on the path to grant it‹ [[R122]]).
+#[test]
+fn a_write_through_what_a_dyad_holds_lands_in_the_node_it_holds() {
+    let pt = "pt := type ( mut x := i32 ?, y := i32 ?, \
+              static bump := fn () -> void ( x = x + 1 ), static get := fn () -> i32 ( x ) ), ";
+    let made = "dyad (pt, pt (1, 2))";
+    for (write, printed) in [
+        ("D.x = i32 5", "5 2"),
+        ("D.bump(), D.bump()", "3 2"),
+        ("D.x = D.x + D.y", "3 2"),
+        ("D.bump(), D.x = D.get() * 2", "4 2"),
+    ] {
+        let at = |d: &str| format!("{}, print «{{{d}.x}} {{{d}.y}}»", write.replace('D', d));
+        for src in [
+            format!("mut p := pt (1, 2), {}", at("p")),
+            format!("mut d := dyad ?, d = pt (1, 2), {}", at("d")),
+            format!("mut d := {made}, {}", at("d")),
+            format!("mut m := {{ mut d := {made} }}, {}", at("m.d")),
+            format!("f := fn () -> void ( mut d := dyad ?, d = pt (1, 2), {} ), f()", at("d")),
+            format!("mut d := {made}, mut i := i32 0, while i < 1 ( {}, i = i + 1 )", at("d")),
+        ] {
+            let src = format!("{pt}{src}");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    for (src, printed) in [
+        // A record inside the record the `dyad` holds.
+        (
+            "ln := type ( mut a := pt ?, b := pt ? ), mut d := dyad (ln, ln (pt (1, 2), pt (3, 4))), \
+             d.a.x = i32 7, d.a.bump(), print «{d.a.x} {d.b.x}»",
+            "8 3\n",
+        ),
+        // The right side runs first, so a node it puts in the `dyad` is the one written, as `p`'s
+        // new value is.
+        (
+            "mut p := pt (1, 2), g := fn () -> i32 ( p = pt (9, 9), i32 3 ), p.x = g(), print «{p.x} {p.y}»",
+            "3 9\n",
+        ),
+        (
+            "mut d := dyad ?, d = pt (1, 2), g := fn () -> i32 ( d = pt (9, 9), i32 3 ), d.x = g(), \
+             print «{d.x} {d.y}»",
+            "3 9\n",
+        ),
+        // A copy of the node is a node of its own.
+        ("mut d := dyad ?, d = pt (1, 2), e := d, d.x = i32 9, print «{e.x} {d.x}»", "1 9\n"),
+        (
+            "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), mut d := dyad ?, \
+             d = bag (1), d.n = i32 5, print «end»",
+            "end\nfreed 5\n",
+        ),
+        // A compiled caller of a function whose line waits for the run.
+        (
+            "f := fn () -> i32 ( mut d := dyad ?, d = pt (1, 2), d.x = i32 5, d.x ), \
+             h := fn () -> i32 ( f() ), h.compile(), h()",
+            "5\n",
+        ),
+    ] {
+        let src = format!("{pt}{src}");
+        assert_eq!(run_line(&src), (Some(0), printed.into(), String::new()), "{src}");
+    }
+    // A write the gates refuse is refused where it is written, at the top level as the pass
+    // reaches it, in a body when the waiting line runs.
+    for (src, error) in [
+        (format!("d := {made}, d.x = i32 5"), "`d` is not `mut`"),
+        (format!("d := {made}, d.bump()"), "`d` is not `mut`"),
+        ("mut d := dyad ?, d = pt (1, 2), d.y = i32 5".into(), "`y` is not `mut`"),
+        (format!("m := {{ mut d := {made} }}, m.d.x = i32 5"), "`m` is not `mut`"),
+        (format!("mut m := {{ d := {made} }}, m.d.x = i32 5"), "`d` is not `mut`"),
+        ("f := fn (a := dyad ?) -> void ( a.x = i32 5 ), f(pt (1, 2))".into(), "`a` is not `mut`"),
+        ("f := fn (a := dyad ?) -> void ( a.bump() ), f(pt (1, 2))".into(), "`a` is not `mut`"),
+        // The line is read for the type the `dyad` held, so a node of another type its right
+        // side put there is not written.
+        (
+            "mut d := dyad ?, d = pt (1, 2), g := fn () -> i32 ( d = i64 4, i32 3 ), d.x = g()"
+                .into(),
+            "by the time it reached the `dyad` it held a node of another type",
+        ),
+    ] {
+        let src = format!("{pt}{src}");
+        let (code, out, stderr) = run_line(&src);
+        assert_eq!((code, out.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+    // A record whose values are nodes its own `parse` builds is reached through the place too.
+    let q = "q := type ( mut x := i32 ?, y := i32 ?, static parse_rank = 60, static parse = ( \
+             tape[0].type = q, tape[0].x = tape[1], tape[0].y = tape[2], \
+             tape.is_constructed[0] = true, tape.remove(2), tape.remove(1) ), \
+             static bump := fn () -> void ( x = x + 1 ) ), ";
+    for src in [
+        "mut p := q 5 6, p.x = i32 7, p.bump(), print «{p.x} {p.y}»",
+        "mut d := dyad ?, d = q 5 6, d.x = i32 7, d.bump(), print «{d.x} {d.y}»",
+        "f := fn () -> void ( mut d := dyad ?, d = q 5 6, d.x = i32 7, d.bump(), print «{d.x} {d.y}» ), \
+         f()",
+    ] {
+        let src = format!("{q}{src}");
+        assert_eq!(run_line(&src), (Some(0), "8 6\n".into(), String::new()), "{src}");
+    }
+    let src = format!(
+        "{q}mut d := dyad ?, d = q 5 6, g := fn () -> i32 ( d = q 9 9, i32 3 ), d.x = g(), \
+         print «{{d.x}} {{d.y}}»"
+    );
+    assert_eq!(run_line(&src), (Some(0), "3 9\n".into(), String::new()), "{src}");
+    for (src, error) in [
+        ("d := dyad ?, d = q 5 6, d.x = i32 7", "`d` is not `mut`"),
+        ("mut d := dyad ?, d = q 5 6, d.y = i32 7", "`y` is not `mut`"),
+        (
+            "mut d := dyad ?, d = q 5 6, g := fn () -> i32 ( d = i64 4, i32 3 ), d.x = g()",
+            "by the time it reached the `dyad` it held a node of another type",
+        ),
+    ] {
+        let src = format!("{q}{src}");
+        let (code, out, stderr) = run_line(&src);
+        assert_eq!((code, out.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
     }
 }
 

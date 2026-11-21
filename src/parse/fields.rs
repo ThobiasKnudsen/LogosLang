@@ -528,6 +528,7 @@ impl<'a> Parser<'a> {
             .ok()
             .and_then(|r| Some((items.iter().position(|&f| f == r.identity)?, r.binding)));
         if let Some((i, binding)) = found {
+            self.cx.member_path = self.field_path(&left, binding);
             let k = self.scalar_value(crate::identities::numtype::NumType::U64, i as i64);
             let ty = crate::identities::hole::type_in(items[i]);
             let node = this::build_field_read(
@@ -873,12 +874,13 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::ExpectedField);
             }
         }
-        let record_logos = self.types.type_of(lhs);
-        if record_logos.is_null()
-            || !crate::identities::meta::is_record_type(record_logos)
-            || (!storage && self.types.is_hole(lhs))
-        {
+        if !storage && self.types.is_hole(lhs) {
             return Err(ParseError::UnsupportedOperands);
+        }
+        let record_logos = self.types.type_of(lhs);
+        if record_logos.is_null() || !crate::identities::meta::is_record_type(record_logos) {
+            let name = Box::new(self.cx.source[nstart..nstart + nlen].to_string());
+            return Err(self.fail_at(nstart, ParseError::NotAField(name)));
         }
         let (_, _, binding) = match self.resolve_field(record_logos, nstart, nlen) {
             Ok(found) => found,
@@ -963,11 +965,22 @@ impl<'a> Parser<'a> {
         // SAFETY: a constructed cell's dyad is a dyad from the store.
         let named = woke.filter(|&d| unsafe { dyad::ty(d) } == self.types.binding_).unwrap_or(root);
         let path_root = if named.is_null() { left.root } else { named };
-        // SAFETY: `named` and the left cell's root are null or binding dyads; `lhs` a reduced
+        // A `dyad` name stands as its place, which the read below goes through, not as the node
+        // `operand_dyad` settled it to.
+        // SAFETY: `named` is null or a binding dyad from the store.
+        let place = unsafe {
+            let place = self.types.through(named);
+            if !named.is_null() && self.is_dyad_place(place) {
+                place
+            } else {
+                lhs
+            }
+        };
+        // SAFETY: `named` and the left cell's root are null or binding dyads; `place` a reduced
         // dyad off the tape.
         let reached = match unsafe {
             let member = &source[nstart..nstart + nlen];
-            self.check_name_field(named, left.root, lhs, member, writes, dotted)
+            self.check_name_field(named, left.root, place, member, writes, dotted)
         } {
             Ok(reached) => reached,
             Err(e) => {
@@ -977,18 +990,28 @@ impl<'a> Parser<'a> {
         };
         self.cx.member_root = root;
         self.cx.member_path.clear();
-        // `.type` reads the type of the node a `dyad` no name holds gives.
-        let type_word = &source[nstart..nstart + nlen] == "type";
-        let lhs = if type_word {
-            match self.read_through_value(tape, -1, lhs) {
-                Ok(lhs) => lhs,
-                Err(e) => {
-                    self.cx.member_root = std::ptr::null_mut();
-                    return Err(e);
+        // A member of a `dyad` value is the member of the node it holds, `.type` included, and a
+        // record a `dyad` place holds is reached through the place each time the line runs, so
+        // it is written in place (›A `dyad ?` place is transparent: a placeholder for a new node
+        // of any type‹ [[R293]]). A place read through to nothing stands as `lhs`.
+        let read = self.read_through_value(tape, -1, place).map(|read| {
+            // SAFETY: `place` is a reduced dyad off the tape, and a `read` other than it a node.
+            unsafe {
+                if read == place {
+                    return lhs;
                 }
+                if !self.is_dyad_place(place) {
+                    return read;
+                }
+                crate::identities::dyad_place::build_reach(self.rt.store, self.types, place, read)
             }
-        } else {
-            lhs
+        });
+        let (lhs, through) = match read {
+            Ok(read) => (read, read != lhs),
+            Err(e) => {
+                self.cx.member_root = std::ptr::null_mut();
+                return Err(e);
+            }
         };
         let member = Member { start: nstart, len: nlen, index, key, call };
         // SAFETY: `lhs` is a reduced dyad off the tape.
@@ -1010,7 +1033,7 @@ impl<'a> Parser<'a> {
         tape.span_center(left.start, end);
         let cell = tape.at_mut(0).expect("placed above");
         cell.path = path;
-        if plain {
+        if plain && !through {
             cell.target = reached;
             cell.root = path_root;
         }
