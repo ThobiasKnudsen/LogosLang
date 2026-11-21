@@ -382,6 +382,16 @@ fn size_bytes_is_the_bytes_a_value_takes_and_zero_for_a_type_with_none() {
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
     }
+    // A type parameter's fields are read when the line runs, so its function stays interpreted
+    // (›A type known only when the program runs still works; what needs it is parsed when its line
+    // runs‹ [[R377]]).
+    let src = "f := fn (t := type ?) -> u64 ( t.size_bytes ), f.compile(), f(void)";
+    let out = logos().arg(src).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("compiled code cannot parse"),
+        "{src}: stderr: {stderr}"
+    );
 }
 
 #[test]
