@@ -1696,12 +1696,15 @@ fn run_teardown(rt: &mut Runtime, place: DyadPtr) -> Result<i64, RunError> {
         if ptr.is_null() {
             return Ok(0);
         }
-        // Tests observe teardown order (LIFO) by the value each freed block held.
+        // Tests observe teardown order (LIFO) by the value each freed block held, a word wide.
         #[cfg(test)]
         {
-            let pointee = numtype::pointee_of(super::read::output_type(rt.types(), place));
-            let held = numtype::read_scalar(pointee, ptr);
-            FREE_LOG.with(|log| log.borrow_mut().push(held));
+            use super::read::{carry_of, output_type, Carry};
+            let pointee = numtype::pointee_of(output_type(rt.types(), place));
+            if let Some(Carry::Word(nt)) = carry_of(rt.types(), pointee) {
+                let held = numtype::read_scalar_nt(nt, ptr);
+                FREE_LOG.with(|log| log.borrow_mut().push(held));
+            }
         }
         heap_free(ptr);
         rt.note_free();

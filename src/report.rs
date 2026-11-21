@@ -586,7 +586,7 @@ pub fn run_message(e: &RunError) -> String {
         }
         RunError::NotAConstant(ty) => format!(
             "this is read as `{ty}`, but it holds no literal or constant of it: \
-             while the parse runs, only a constant is read as its number"
+             while the parse runs, only a constant is read as its value"
         ),
         RunError::CellNotANode => {
             "this cell was checked against a type, but the tape changed since and it holds no value of it"
