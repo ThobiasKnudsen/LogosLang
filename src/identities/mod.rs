@@ -79,6 +79,7 @@ pub(crate) mod string;
 mod subset;
 pub mod tape;
 pub mod this;
+mod type_mint;
 #[path = "type.rs"]
 mod type_mod;
 pub(crate) mod waiting;
@@ -432,7 +433,7 @@ impl Core {
 
         // Every constructor, extent reader and chooser moves onto a callable leaf in its record;
         // the tables drop before any parsing runs.
-        let Cx { store, metas, extents, choosers, lower, .. } = cx;
+        let Cx { store, trie, metas, extents, choosers, lower, .. } = cx;
         // SAFETY: every key in `metas`, `extents` and `choosers` has its record built, and each
         // entry is a `ConstructFn`, an `ExtentFn` or a `ChooseFn`.
         unsafe {
@@ -467,7 +468,7 @@ impl Core {
         drop(metas);
         drop(extents);
         drop(choosers);
-        Core {
+        let core = Core {
             type_,
             logos,
             scope: scope_,
@@ -573,7 +574,9 @@ impl Core {
             declare_tok,
             ops: op_leaves,
             lower,
-        }
+        };
+        type_mint::load(store, trie, &core);
+        core
     }
 
     /// Each opener with the closer that ends its bracket: `( )`, `[ ]` and `{ }`, one mechanism

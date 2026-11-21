@@ -1,12 +1,14 @@
 # The array collection, written in ordinary Logos. `array` takes the element type and leaves the type
 # of its values, `array i32`, minted once per element type, whose parse reads an index. Before a `[…]`
 # it builds an `array` node instead, whose run makes a new value of that type each time it is evaluated
-# (DESIGN ›An array expression is a node of `array`, and its run makes the value‹).
+# (DESIGN ›An array expression is a node of `array`, and its run makes the value‹). `type_mint` keeps
+# the mints, under the key `array` and the element type (›`array` is a chooser‹ [[R223]]).
 
 pub array := type (
-    static array_mints := hashmap type -> type,
+    # The mint fills a `parse`, which cannot be written inside `array`'s own: stand-in for #458.
     pub static get_mint := fn (t := type ?) -> type (
-        mut mint := type array_mints[t],
+        place := type_mint.step(type_mint.step(0, array), t),
+        mut mint := type type_mint.kept(place),
         if mint != ? return mint,
         mint = type (
             pub static element_type := type t,
@@ -50,7 +52,7 @@ pub array := type (
                 tape.is_constructed[0] = true
             )
         ),
-        array_mints[t] = mint,
+        type_mint.keep(place, mint),
         mint
     ),
 

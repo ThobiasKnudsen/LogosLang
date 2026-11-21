@@ -150,10 +150,10 @@ This is what the first public preview is built to show. An operator is a type wi
 
 ```logos
 ^ := type (
-    static power_mints := hashmap type -> type,    # each mint once built, by the base's type
     static get_mint := fn (l := type ?) -> type (  # builds the mint for a base of type l
-        mut mint := type power_mints[l],           # `type` first holds the type, not a place of it
-        if mint != ? return mint,
+        place := type_mint.step(type_mint.step(0, ^), l),  # the key: `^`, then the base's type
+        mut mint := type type_mint.kept(place),    # `type` first holds the type, not a place of it
+        if mint != ? return mint,                  # each mint is built once
         mint = type (
             lhs := l ?,                            # the operands: one field per cell consumed
             rhs := i32 ?,
@@ -164,7 +164,7 @@ This is what the first public preview is built to show. An operator is a type wi
                 r
             )
         ),
-        power_mints[l] = mint,
+        type_mint.keep(place, mint),
         mint
     ),
     static parse_rank = *.parse_rank + 1,          # binds tighter than *
@@ -183,7 +183,7 @@ f.compile(),
 f(2)
 ```
 
-The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `tape[0].type = T` makes the constructor's own cell a new node of its type, whose fields it writes by name, `tape[0].lhs`, and once built the node runs and is never parsed again, while a value of the type that appears later, a name or a call's result, runs the same parse with that value as `tape[0]`, which is how `a[1]` reads an array; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape`, `run`, `free` and the type's `static` functions name the fields bare, and `static run = (…)` is lexed once where it is written and constructed once per mint `get_mint` builds, so `^` over i32 and over f64 is one definition. A type is minted only by a function written for it, as `get_mint` here and `array`'s own in identities/array.logos.
+The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `tape[0].type = T` makes the constructor's own cell a new node of its type, whose fields it writes by name, `tape[0].lhs`, and once built the node runs and is never parsed again, while a value of the type that appears later, a name or a call's result, runs the same parse with that value as `tape[0]`, which is how `a[1]` reads an array; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape`, `run`, `free` and the type's `static` functions name the fields bare, and `static run = (…)` is lexed once where it is written and constructed once per mint `get_mint` builds, so `^` over i32 and over f64 is one definition. A type is minted only by a function written for it, as `get_mint` here and `array`'s own in identities/array.logos, and one identity keeps every mint, `type_mint` in identities/type_mint.logos: a key is walked one `step` per argument from place 0, `kept` gives the mint kept at the place reached, or `?`, and `keep` keeps one there.
 
 ## What runs today, and what does not
 

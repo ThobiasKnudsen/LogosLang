@@ -532,13 +532,14 @@ fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
 }
 
 /// A postfix operator `name` that mints as `array` does: `get_mint` builds one type per type `t`
-/// of the operand to its left, whose field `a` holds the operand, kept in a memo.
+/// of the operand to its left, whose field `a` holds the operand, kept by `type_mint`.
 fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
     format!(
-        "{name} := type ( static mints := hashmap type -> type, \
-         static get_mint := fn (t := type ?) -> type ( mut mint := type mints[t], \
+        "{name} := type ( \
+         static get_mint := fn (t := type ?) -> type ( \
+         place := type_mint.step(type_mint.step(0, {name}), t), mut mint := type type_mint.kept(place), \
          if mint != ? return mint, mint = type ( pub a := t ?, pub static output_type := {output}, \
-         static run = ( {run} ) ), mints[t] = mint, mint ), \
+         static run = ( {run} ) ), type_mint.keep(place, mint), mint ), \
          static parse_rank = *.parse_rank + 1, static associativity = left, \
          static parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1], \
          tape.is_constructed[0] = true, tape.remove(-1) ) )"
@@ -1293,11 +1294,12 @@ fn a_static_name_in_a_function_is_made_once_at_the_definition() {
 
 /// The power operator, minting through a function of its own by the base's type, on one line
 /// for the REPL.
-const POWER: &str = "^ := type ( static power_mints := hashmap type -> type, \
-    pub static get_mint := fn (l := type ?) -> type ( mut mint := type power_mints[l], if mint != ? return mint, \
+const POWER: &str = "^ := type ( \
+    pub static get_mint := fn (l := type ?) -> type ( place := type_mint.step(type_mint.step(0, ^), l), \
+    mut mint := type type_mint.kept(place), if mint != ? return mint, \
     mint = type ( pub lhs := l ?, pub rhs := i32 ?, static output_type := type l, \
     static run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ) ), \
-    power_mints[l] = mint, mint ), \
+    type_mint.keep(place, mint), mint ), \
     static parse_rank = *.parse_rank + 1, static associativity = right, \
     static parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].lhs = tape[-1], tape[0].rhs = tape[1], \
     tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
@@ -1839,7 +1841,9 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (&b"t := type (parse_rank := 5)\n"[..], "shadowed"),
         (b"g := type (static)\n", "followed by a declaration"),
         (b"f := fn (static a := i32 ?) -> void ( a )\n", "never on a parameter"),
-        (b"static parse_rank = 3\n", "unknown name"),
+        // A slot word is a name of a type body's lines, and `type_mint`'s body stands before
+        // every program.
+        (b"static parse_rank = 3\n", "`parse_rank` is not in scope here"),
         (b"t := type (share y := 3)\n", "unknown name `share`"),
         (b"d := i32 5\nfree = 3\n", "a line of the type body itself"),
         (b"t := type (static parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
@@ -11878,4 +11882,68 @@ fn a_tape_line_no_check_narrowed_is_checked_through_a_record_pointer() {
     let (code, _, stderr) = run_line(&src);
     assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
     assert!(stderr.contains("holds no literal or constant of it"), "{src}: stderr: {stderr}");
+}
+
+/// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+/// gives it its identity‹ [[R383]]: `type_mint` stands before every program, one key reaches one
+/// place however often it is walked, and a place keeps the mint it was given.
+#[test]
+fn type_mint_keeps_one_mint_per_key_on_both_tiers() {
+    let walk = |a: &str, b: &str| format!("type_mint.step(type_mint.step(0, {a}), {b})");
+    let mut cases = vec![(
+        format!(
+            "a := {}, b := {}, c := {}, d := type_mint.step(0, i32), print «{{a == b}} {{a == c}} {{a == d}}»",
+            walk("i32", "i64"),
+            walk("i32", "i64"),
+            walk("i64", "i32")
+        ),
+        "true false false\n",
+    )];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!(
+                "f := fn (t := type ?) -> bool ( p := {}, before := type type_mint.kept(p), \
+                 type_mint.keep(p, f64), after := type type_mint.kept({}), \
+                 before == ? and after == f64 ), {compile}f(i32)",
+                walk("bool", "t"),
+                walk("bool", "t")
+            ),
+            "true\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
+/// ›`array` is a chooser‹ [[R223]]: `array` and `^` keep no memo of their own, and each still has
+/// one mint per key, kept by `type_mint`.
+#[test]
+fn array_and_power_keep_their_mints_in_type_mint() {
+    let array = "import file «./identities/array.logos»";
+    let mut cases = vec![
+        (format!("{array}, a := array i32 [1, 2], b := array i32 [3], a.type == b.type"), "true\n"),
+        (format!("{array}, (array i32) == (array i64)"), "false\n"),
+        (format!("{array}, array.get_mint(i32) == array.get_mint(i32)"), "true\n"),
+        (format!("{array}, k := type array array i32, k == array array i32"), "true\n"),
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!(
+                "{array}, f := fn () -> bool ( a := array i32 [1], b := array i32 [2, 3], \
+                 a.type == b.type ), {compile}f()"
+            ),
+            "true\n",
+        ));
+        cases.push((
+            format!(
+                "{POWER}, f := fn (x := i32 ?, w := i64 ?) -> bool ( \
+                 (x ^ 2).type == (x ^ 3).type and (x ^ 2).type != (w ^ 2).type ), {compile}f(3, 4)"
+            ),
+            "true\n",
+        ));
+    }
+    assert_runs(&cases);
+    for file in ["identities/array.logos", "identities/power.logos", "tests/fixtures/caret.logos"] {
+        let text = std::fs::read_to_string(file).expect(file);
+        assert!(!text.contains("hashmap"), "{file} keeps a memo of its own");
+    }
 }

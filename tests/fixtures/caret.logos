@@ -5,9 +5,9 @@
 # declared it before its `:=`, and once declared it lexes glued to its
 # operands (`x^3`). The pinned demo itself is identities/power.logos.
 ^ := type (
-    static power_mints := hashmap type -> type,
     static get_mint := fn (l := type ?) -> type (
-        mut mint := type power_mints[l],
+        place := type_mint.step(type_mint.step(0, ^), l),
+        mut mint := type type_mint.kept(place),
         if mint != ? return mint,
         mint = type (
             pub lhs := l ?,
@@ -19,7 +19,7 @@
                 r
             )
         ),
-        power_mints[l] = mint,
+        type_mint.keep(place, mint),
         mint
     ),
     static parse_rank = *.parse_rank + 1,
