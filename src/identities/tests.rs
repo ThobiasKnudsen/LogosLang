@@ -4670,16 +4670,29 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
             "{field}"
         );
     }
-    // Any other place refuses the line where the parse body is read, by name as through a pointer.
-    for (place, err) in [
-        ("r := mut rational_number ?, r", ParseError::TypeMismatch),
-        ("p := alloc 1 of rational_number 0, p@", ParseError::TypeMismatch),
-        ("p := alloc 1 of dyad ?, p@", ParseError::DyadTakesNode),
-        ("p := alloc 1 of @u64 ?, p@", ParseError::TypeMismatch),
-    ] {
+    // A `rational_number` place and a pointer's are decided when the parse runs, as a number's is,
+    // by name as through a pointer: a constant of the type is taken as it is, and a name is no
+    // constant.
+    for place in ["r := mut rational_number ?, r", "p := alloc 1 of rational_number 0, p@"] {
         let q = tape_line_q(&format!("{place} = tape[1].dyads[0], tape[0].v = 1"));
-        assert_eq!(script_parse_err(&format!("{q}, 7")), err, "{place}");
+        assert_eq!(run_script(&format!("{q}, x := q [1/2], x.v")), 1, "{place}");
+        let src = format!("{q}, m := u64 3, x := q [m]");
+        assert!(
+            matches!(script_parse_err(&src), ParseError::ConstructorFailed(e)
+                if e.contains("but it holds no literal or constant")),
+            "{place}: q [m]"
+        );
     }
+    let q = tape_line_q("p := alloc 1 of @u64 ?, p@ = tape[1].dyads[0], tape[0].v = 1");
+    assert!(
+        matches!(script_parse_err(&format!("{q}, n := u64 3, x := q [&n]")),
+            ParseError::ConstructorFailed(e)
+                if e.contains("this is read as `@u64`, but it holds no literal or constant")),
+        "p@ of @u64"
+    );
+    // A `dyad` place holds the line itself, which the parse body's line refuses where it is read.
+    let q = tape_line_q("p := alloc 1 of dyad ?, p@ = tape[1].dyads[0], tape[0].v = 1");
+    assert_eq!(script_parse_err(&format!("{q}, 7")), ParseError::DyadTakesNode);
 }
 
 #[test]
