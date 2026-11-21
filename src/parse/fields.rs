@@ -750,6 +750,9 @@ impl<'a> Parser<'a> {
             match self.type_known_now(lhs) {
                 Ok(t) => {
                     if let Some(args) = call {
+                        if let Some(mint) = self.chosen_mint(t, name, &args)? {
+                            return Ok((mint, 1));
+                        }
                         if let Some((member, _)) = self.static_member_of(t, name) {
                             let none = Receiver::Nothing;
                             let called = self.call_member(tape, member, name, &left, none, args)?;
@@ -1699,6 +1702,10 @@ impl<'a> Parser<'a> {
         if meta::kind_of(logos).is_none() {
             return Err(ParseError::BadReflectRead);
         }
+        // A built-in mint's `static` member, read through the mint as through its nodes.
+        if let Some(field) = crate::identities::mint::static_field(logos, name) {
+            return Ok(self.path_operand(field));
+        }
         let operand_kind = matches!(meta::kind_of(logos), Some(meta::TUPLE_TAG | meta::LIST_TAG));
         match name {
             "arity" if operand_kind => {
@@ -1730,6 +1737,10 @@ impl<'a> Parser<'a> {
                     return Ok(c);
                 }
                 Ok(self.rt.store.alloc_head(self.types.dyad_, c as *mut u8))
+            }
+            // A built-in operation's chooser, a native leaf read as `.parse` reads one.
+            _ if name == crate::identities::mint::MEMBER && !meta::chooser_of(logos).is_null() => {
+                Ok(self.rt.store.alloc_head(self.types.dyad_, meta::chooser_of(logos) as *mut u8))
             }
             // The held body is no function until a node's field types construct
             // it, so it is read through a view, as `.parse` reads a native leaf.
@@ -1763,6 +1774,27 @@ impl<'a> Parser<'a> {
             }
             _ => Err(ParseError::BadReflectRead),
         }
+    }
+
+    /// `t.mint(T, …)`: the built-in operation `t`'s mint for the field types its arguments name,
+    /// which `t`'s chooser makes where none is made yet (›An operation is defined for its operand
+    /// types by its mint, named through the operation's chooser‹ [[R312]]). `None` where `t` has
+    /// no chooser or `name` is another member.
+    ///
+    /// # Safety
+    /// `t` must be a type identity node and `args` reduced dyads, all from the store.
+    unsafe fn chosen_mint(
+        &mut self,
+        t: DyadPtr,
+        name: &str,
+        args: &[DyadPtr],
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        use crate::identities::{meta, mint};
+        if name != mint::MEMBER || meta::chooser(t).is_none() {
+            return Ok(None);
+        }
+        let key = args.iter().map(|&a| self.type_known_now(a)).collect::<Result<Vec<_>, _>>()?;
+        mint::of(self.rt.store, self.types, t, &key).map(Some).ok_or(ParseError::NoMint)
     }
 
     /// A `static` member of `logos`, one place stored with the type, read
