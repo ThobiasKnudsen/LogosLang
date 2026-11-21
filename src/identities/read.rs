@@ -230,14 +230,21 @@ pub(crate) unsafe fn value_type(
 /// # Safety
 /// `node` must be a reduced dyad from the store.
 pub unsafe fn gives_value(types: &Core, node: DyadPtr) -> Result<bool, crate::parse::ParseError> {
-    use crate::parse::ParseError;
     match value_type(types, node) {
         Ok(_) => Ok(true),
-        Err(
-            ParseError::StatementAsValue | ParseError::MissingElse | ParseError::ArmGivesNothing,
-        ) => Ok(false),
+        Err(e) if gives_nothing(&e) => Ok(false),
         Err(e) => Err(e),
     }
+}
+
+/// Whether `e`, from [`value_type`], says that the node gives nothing, where any other error
+/// refuses a value it gives.
+pub(crate) fn gives_nothing(e: &crate::parse::ParseError) -> bool {
+    use crate::parse::ParseError;
+    matches!(
+        e,
+        ParseError::StatementAsValue | ParseError::MissingElse | ParseError::ArmGivesNothing
+    )
 }
 
 /// How storage declared `t` reads: at the type's own layout, or as the eight-byte
