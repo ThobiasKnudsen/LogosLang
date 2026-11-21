@@ -3996,6 +3996,31 @@ fn assignment_rejects_pointer_type_mismatches() {
     assert_eq!(parse_err_after(defs, "p@ = y"), ParseError::TypeMismatch);
 }
 
+/// ›A pointer points at a gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut` before a
+/// pointer gates the pointer itself‹ [[R382]]: a pointer drops a gate of what it points at as it
+/// lands, never gains one, and below that a gate is part of the pointer's type.
+#[test]
+fn a_pointer_lands_where_it_drops_a_gate_and_never_where_it_gains_one() {
+    let defs = &[
+        "a := mut i32 5",
+        "b := i32 6",
+        "pa := mut &a",
+        "read := fn (p := @i32 ?) -> i32 ( p@ )",
+        "write := fn (p := @ mut i32 ?) -> i32 ( p@ = 9, p@ )",
+        "deep := fn (pp := @ mut @i32 ?) -> i32 ( 1 )",
+        "top := fn (pp := @ @ mut i32 ?) -> i32 ( pp@@ = 7, 1 )",
+    ];
+    assert_eq!(parse_err_after(defs, "write(&b)"), ParseError::TypeMismatch);
+    // Through a `@ mut @i32` made of `&pa`, an `@i32` could be stored where `pa`'s `@ mut i32`
+    // is read and written through.
+    assert_eq!(parse_err_after(defs, "deep(&pa)"), ParseError::TypeMismatch);
+    let all = defs.join(", ");
+    for compile in ["", "read.compile(), write.compile(), top.compile(), "] {
+        let src = format!("{all}, {compile}read(&a) * 100 + write(&a) * 10 + top(&pa) + a");
+        assert_eq!(run_script(&src), 5 * 100 + 9 * 10 + 1 + 7, "{src}");
+    }
+}
+
 #[test]
 fn assignment_accepts_a_matching_pointer_and_rewires() {
     let (mut store, mut trie, core) = new_core();
