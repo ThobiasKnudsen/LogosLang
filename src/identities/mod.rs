@@ -251,6 +251,7 @@ impl Core {
             unknown: std::ptr::null_mut(),
             metas: HashMap::new(),
             extents: HashMap::new(),
+            choosers: HashMap::new(),
             lower: HashMap::new(),
         };
         let mut numtypes: [DyadPtr; 10] = [std::ptr::null_mut(); 10];
@@ -429,11 +430,11 @@ impl Core {
         );
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
-        // Every constructor and extent reader moves onto a callable leaf in its record; the
-        // tables drop before any parsing runs.
-        let Cx { store, metas, extents, lower, .. } = cx;
-        // SAFETY: every key in `metas` and `extents` has its record built, and each entry is a
-        // `ConstructFn` or an `ExtentFn`.
+        // Every constructor, extent reader and chooser moves onto a callable leaf in its record;
+        // the tables drop before any parsing runs.
+        let Cx { store, metas, extents, choosers, lower, .. } = cx;
+        // SAFETY: every key in `metas`, `extents` and `choosers` has its record built, and each
+        // entry is a `ConstructFn`, an `ExtentFn` or a `ChooseFn`.
         unsafe {
             for (&id, &construct) in &metas {
                 let leaf = callable::mint(
@@ -453,9 +454,19 @@ impl Core {
                 );
                 meta::install_extent(id, leaf);
             }
+            for (&id, &choose) in &choosers {
+                let leaf = callable::mint(
+                    store,
+                    callables.callable,
+                    choose as usize,
+                    callables.seed_choose,
+                );
+                meta::install_chooser(id, leaf);
+            }
         }
         drop(metas);
         drop(extents);
+        drop(choosers);
         Core {
             type_,
             logos,
@@ -707,6 +718,7 @@ pub(crate) struct Cx<'a> {
     unknown: DyadPtr,
     metas: HashMap<DyadPtr, ConstructFn>,
     extents: HashMap<DyadPtr, crate::parse::ExtentFn>,
+    choosers: HashMap<DyadPtr, mint::ChooseFn>,
     lower: LowerTable,
 }
 

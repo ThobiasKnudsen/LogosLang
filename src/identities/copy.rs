@@ -30,8 +30,20 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     // SAFETY: `copy` carries the record built above.
     unsafe { meta::mark_own(copy) };
     cx.lower.insert(copy, lower);
+    cx.choosers.insert(copy, choose);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (copy, leaf)
+}
+
+/// What `copy`'s mint over the field type `key` gives back, that type, and runs.
+///
+/// # Safety
+/// `key` must hold a type node from the store.
+unsafe fn choose(_: &mut Store, types: &Core, key: &[DyadPtr]) -> Option<super::mint::Made> {
+    let &[t] = key else {
+        return None;
+    };
+    Some(super::mint::Made { output_type: t, op: types.ops.copy_ })
 }
 
 /// What a value owns beyond its own bytes, which its copy copies too.
@@ -150,7 +162,7 @@ pub(crate) unsafe fn taken(store: &mut Store, types: &Core, value: DyadPtr) -> D
     if owned(types, ty).is_none() || teardown_of(types, value) != Teardown::Nothing {
         return value;
     }
-    super::mint::node(store, types, types.copy_, &[ty], ty, types.ops.copy_, &[value])
+    super::mint::node_of_any(store, types, types.copy_, &[ty], &[value])
 }
 
 /// The place at `at` holds a value of `ty` copied bit for bit; each part the value owns becomes a

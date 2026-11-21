@@ -58,6 +58,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> PointerIds {
     cx.declare("&", amp);
     cx.metas.insert(amp, |p, _id, tape| p.construct_address_of(tape));
     cx.lower.insert(amp, lower_addr);
+    cx.choosers.insert(amp, choose_address);
 
     let record = meta::operand_record(
         cx,
@@ -75,6 +76,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> PointerIds {
     let record = address_record(cx, meta::prec::INERT, Assoc::Left);
     let addr = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(addr, lower_addr);
+    cx.choosers.insert(addr, choose_address);
     let addr_leaf = callable::mint_native(cx.store, cs.callable, run_addr, cs.seed_native);
 
     PointerIds { deref, amp, addr, deref_leaf, addr_leaf, at }
@@ -115,8 +117,19 @@ pub(crate) unsafe fn build_address(
     held: DyadPtr,
     pointee: DyadPtr,
 ) -> DyadPtr {
-    let output = make_pointer_type(store, types.type_, pointee);
-    mint::node(store, types, ty, &[pointee], output, types.ops.addr_, &[place, held])
+    mint::node_of_any(store, types, ty, &[pointee], &[place, held])
+}
+
+/// What an address mint over the field type `key`, the pointee, gives back, `@pointee`, and runs.
+///
+/// # Safety
+/// `key` must hold a type node from the store.
+unsafe fn choose_address(store: &mut Store, types: &Core, key: &[DyadPtr]) -> Option<mint::Made> {
+    let &[pointee] = key else {
+        return None;
+    };
+    let output_type = make_pointer_type(store, types.type_, pointee);
+    Some(mint::Made { output_type, op: types.ops.addr_ })
 }
 
 /// The place whose address `node` hands out when it runs the address operation, `&x`'s or an

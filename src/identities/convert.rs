@@ -26,6 +26,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::INERT, Assoc::Left, &["operand"]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(id, lower);
+    cx.choosers.insert(id, choose);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)
 }
@@ -39,7 +40,19 @@ pub(crate) unsafe fn build_convert(
     from: DyadPtr,
     to: DyadPtr,
 ) -> DyadPtr {
-    mint::node(store, types, types.convert, &[from, to], to, types.ops.convert_, &[operand])
+    mint::node_of_any(store, types, types.convert, &[from, to], &[operand])
+}
+
+/// What `convert`'s mint over the field types `key`, the source and the target, gives back, the
+/// target, and runs.
+///
+/// # Safety
+/// `key` must hold type nodes from the store.
+unsafe fn choose(_: &mut Store, types: &Core, key: &[DyadPtr]) -> Option<mint::Made> {
+    let &[_, to] = key else {
+        return None;
+    };
+    Some(mint::Made { output_type: to, op: types.ops.convert_ })
 }
 
 /// `(operand, from, to)`.

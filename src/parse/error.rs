@@ -233,6 +233,8 @@ pub enum ParseError {
     /// on a view, or a read whose honest answer is undefined (a null
     /// constructor slot).
     BadReflectRead,
+    /// `op.mint(T, …)` over field types `op`'s chooser makes no mint for.
+    NoMint,
     /// A collection member (`.roles`) without its `[index]`: the
     /// bare collection as a first-class value waits for the array type.
     ExpectedIndexBracket,
