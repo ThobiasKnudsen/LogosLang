@@ -96,6 +96,18 @@ fn application(
     p.construct_application(id, tape)
 }
 
+/// The constructor `type` gives a record type whose body fills no `parse`: `T (…)` makes a value
+/// of `T` from the bracket's values, positional in order (›`X (…)` is one spelling, and X's
+/// constructor decides what the bracket is‹ [[R270]], ›Plain data and hand-written types are one
+/// identity, `type`‹ [[R209]]).
+pub(crate) fn derived_parse(
+    p: &mut Parser,
+    id: DyadPtr,
+    tape: &mut ParsingTape,
+) -> Result<Constructed, ParseError> {
+    p.construct_application(id, tape)
+}
+
 impl<'a> Parser<'a> {
     /// Every cell up to the next `,`, `)`, or the end of input, none consumed,
     /// constructing at discovery each cell whose identity sits at or above `(`
@@ -439,9 +451,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `None` for an inert cell (a value, a delimiter). The identity's own
-    /// slot first; failing that, its type's `static` instance constructor,
-    /// application (DESIGN ›The constructor is a field‹).
+    /// `None` for an inert cell (a value, a delimiter): an identity's constructor slot, or the
+    /// `parse` of the type of the value standing in the cell (›The constructors drive the tape‹
+    /// [[R211]], ›No climbing: a type without a parse leaves its values inert‹ [[R214]]).
     pub(super) fn ctor_of(&self, id: DyadPtr) -> Option<ConstructFn> {
         // SAFETY: `id` is a resolved dyad from the store.
         unsafe {
@@ -451,13 +463,7 @@ impl<'a> Parser<'a> {
             if self.is_awake_instance(id) {
                 return Some(instances_constructor);
             }
-            let id = self.identity_head(id)?;
-            // A record type runs the constructor its body filled, or the
-            // derived one: application, the instance construction.
-            if crate::identities::meta::is_record_type(id) {
-                return self.construct_of(id).or(Some(application));
-            }
-            self.construct_of(id)
+            self.construct_of(self.identity_head(id)?)
         }
     }
 
@@ -502,7 +508,10 @@ impl<'a> Parser<'a> {
                 return None;
             }
             let ty = dyad::ty(id);
-            let wakes = |t: DyadPtr| meta::is_record_type(t) && !meta::constructor_of(t).is_null();
+            let fn_type = self.types.fn_type;
+            let wakes = |t: DyadPtr| {
+                meta::is_record_type(t) && !meta::written_parse_of(t, fn_type).is_null()
+            };
             // A node of a type with a run stands for the value its run yields.
             if wakes(ty) && meta::run_body_of(ty).is_null() {
                 return Some(ty);
@@ -680,13 +689,12 @@ impl<'a> Parser<'a> {
 
     /// A `fn` node in the constructor slot: judged by the flag alone.
     pub(super) fn is_logos_ctor(&self, id: DyadPtr) -> bool {
-        // SAFETY: `id` is a resolved dyad from the store; the slot is read only where a record head exists.
+        use crate::identities::meta;
         self.is_awake_instance(id)
+            // SAFETY: `id` is a resolved dyad from the store; the slot is read only where a record head exists.
             || unsafe {
-                !id.is_null() && crate::identities::meta::is_record_type(id) && {
-                    let leaf = crate::identities::meta::constructor_of(id);
-                    !leaf.is_null() && dyad::ty(leaf) == self.types.fn_type
-                }
+                meta::is_record_type(id)
+                    && !meta::written_parse_of(id, self.types.fn_type).is_null()
             }
     }
 

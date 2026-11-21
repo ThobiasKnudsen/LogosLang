@@ -203,6 +203,7 @@ impl<'a> Parser<'a> {
             body,
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
+            self.types.derived_parse,
         );
         // SAFETY: `input` was minted above with no record; nothing reads one until now.
         unsafe { dyad::set_head(input, record.cast()) };
@@ -372,6 +373,7 @@ impl<'a> Parser<'a> {
                         bindings,
                         size_bytes,
                         body,
+                        types.derived_parse,
                     );
                     dyad::set_head(mint, record.cast());
                     type_mint::keep(self.rt.store, types, place, mint).map_err(ParseError::Run)?;
@@ -958,6 +960,7 @@ impl<'a> Parser<'a> {
             scope,
             def.parse_rank,
             def.assoc,
+            self.types.derived_parse,
         );
         let node = def.self_type;
         // SAFETY: `node` was minted at the open with no record; nothing reads one until now.

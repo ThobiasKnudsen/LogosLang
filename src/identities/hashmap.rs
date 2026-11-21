@@ -233,7 +233,8 @@ unsafe fn mint(store: &mut Store, types: &Core, key: DyadPtr, value: DyadPtr) ->
         let none = array::build(store, types.array_, &[]);
         // The scope is its body too, so a map moves whole by its eight bytes, as a value of a
         // type with a body does: into a name, and into another map.
-        let record = meta::minted_record(store, former, &[key, value], scope, none, 8);
+        let record =
+            meta::minted_record(store, former, &[key, value], scope, none, 8, types.derived_parse);
         Some(store.alloc_head(types.type_, record))
     };
     super::type_mint::mint_of(store, types, former, &[key, value], made)

@@ -486,6 +486,7 @@ pub(super) fn register_type(
         std::ptr::null_mut(),
         super::meta::prec::APPLY,
         crate::parse::Assoc::Left,
+        cx.derived_parse,
     );
     // SAFETY: `binding_` is the type node minted at the head of the build.
     unsafe { dyad::set_head(binding_, layout) };

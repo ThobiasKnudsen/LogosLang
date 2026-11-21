@@ -11,7 +11,8 @@
 //! [0]        u8   kind: the type-tag namespace (see below)
 //! [1]        u8   associativity (0 left-to-right, 1 right-to-left)
 //! [2..10]    f64  parse_rank
-//! [10..18]   u64  constructor: a `seed-parse` callable leaf, or 0
+//! [10..18]   u64  constructor: a `seed-parse` callable leaf, the `fn` a type body's `parse`
+//!                 filled, or 0; every record type has one, `type`'s derived one by default
 //! [18..26]   u64  destructor: the owning pointer's teardown, else 0
 //! [26..34]   u64  run body: the lexed body a `run = (…)` line held, or 0
 //! [34..42]   u64  extent: a `seed-extent` callable leaf for a token that reads its own
@@ -300,7 +301,8 @@ pub(crate) unsafe fn gates_of(id: DyadPtr) -> impl Iterator<Item = DyadPtr> {
     (0..usize::from(*payload)).map(move |k| unsafe { words.add(k).read_unaligned() })
 }
 
-/// `bindings` is the array of the fields' bindings, in the order of `fields`.
+/// `bindings` is the array of the fields' bindings, in the order of `fields`; `parse` the
+/// constructor a type body that fills none runs, `type`'s derived one.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn record_layout(
     store: &mut Store,
@@ -311,11 +313,13 @@ pub(crate) fn record_layout(
     body: DyadPtr,
     parse_rank: f64,
     assoc: Assoc,
+    parse: DyadPtr,
 ) -> *mut u8 {
-    let blob = record_blob(scope, fields, bindings, size_bytes, body, parse_rank, assoc);
+    let blob = record_blob(scope, fields, bindings, size_bytes, body, parse_rank, assoc, parse);
     store.alloc_bytes(&blob)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_blob(
     scope: DyadPtr,
     fields: DyadPtr,
@@ -324,8 +328,11 @@ fn record_blob(
     body: DyadPtr,
     parse_rank: f64,
     assoc: Assoc,
+    parse: DyadPtr,
 ) -> Vec<u8> {
+    debug_assert!(!parse.is_null(), "every record type has a constructor");
     let mut blob = header(RECORD_TAG, assoc, parse_rank).to_vec();
+    blob[CTOR_OFF..DTOR_OFF].copy_from_slice(&(parse as usize).to_ne_bytes());
     blob.extend_from_slice(&(scope as usize).to_ne_bytes());
     blob.extend_from_slice(&(fields as usize).to_ne_bytes());
     blob.extend_from_slice(&size_bytes.to_ne_bytes());
@@ -338,6 +345,7 @@ fn record_blob(
 
 /// [`record_layout`] of a type the former `former` mints, with the former in its header, which
 /// [`mint_of`] reads.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn formed_record(
     store: &mut Store,
     former: DyadPtr,
@@ -346,8 +354,10 @@ pub(crate) fn formed_record(
     bindings: DyadPtr,
     size_bytes: u64,
     body: DyadPtr,
+    parse: DyadPtr,
 ) -> *mut u8 {
-    let mut blob = record_blob(scope, fields, bindings, size_bytes, body, prec::APPLY, Assoc::Left);
+    let mut blob =
+        record_blob(scope, fields, bindings, size_bytes, body, prec::APPLY, Assoc::Left, parse);
     blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(former as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }
@@ -365,8 +375,10 @@ pub(crate) fn minted_record(
     scope: DyadPtr,
     none: DyadPtr,
     size_bytes: u64,
+    parse: DyadPtr,
 ) -> *mut u8 {
-    let mut blob = record_blob(scope, none, none, size_bytes, scope, prec::APPLY, Assoc::Left);
+    let mut blob =
+        record_blob(scope, none, none, size_bytes, scope, prec::APPLY, Assoc::Left, parse);
     blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(former as usize).to_ne_bytes());
     for &argument in arguments {
         blob.extend_from_slice(&(argument as usize).to_ne_bytes());
@@ -476,6 +488,20 @@ fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
 /// As `parse_rank_of`.
 pub(crate) unsafe fn constructor_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned(dyad::head(id).add(CTOR_OFF) as *const DyadPtr)
+}
+
+/// The `fn` a type body's `parse` filled the constructor slot with; null where the slot holds a
+/// native leaf or nothing.
+///
+/// # Safety
+/// `id` must carry a record; `fn_type` is the `fn` identity.
+pub(crate) unsafe fn written_parse_of(id: DyadPtr, fn_type: DyadPtr) -> DyadPtr {
+    let parse = constructor_of(id);
+    if !parse.is_null() && dyad::ty(parse) == fn_type {
+        parse
+    } else {
+        std::ptr::null_mut()
+    }
 }
 
 /// Null on every identity but an owning pointer type; never faked with a no-op.
@@ -608,11 +634,7 @@ pub(crate) unsafe fn is_record_type(id: DyadPtr) -> bool {
 /// # Safety
 /// `id` must be null or a valid dyad from the store; `fn_type` the `fn` identity.
 pub(crate) unsafe fn is_node_valued(id: DyadPtr, fn_type: DyadPtr) -> bool {
-    if !is_record_type(id) || !run_body_of(id).is_null() {
-        return false;
-    }
-    let ctor = constructor_of(id);
-    !ctor.is_null() && dyad::ty(ctor) == fn_type
+    is_record_type(id) && run_body_of(id).is_null() && !written_parse_of(id, fn_type).is_null()
 }
 
 /// Whether a value of `id` is its node's address, eight bytes in a place: the type's definition
