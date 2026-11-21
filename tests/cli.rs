@@ -6346,17 +6346,18 @@ fn a_text_node_and_a_place_of_text_read_as_the_node() {
 
 #[test]
 fn abort_ends_the_run_with_its_message() {
-    let out = logos()
-        .arg(
-            "f := fn (x := i32 ?) -> i32 ( if (x > 2) (abort «too big: {x}») else (x) ), \
-             print «{f(1)}», free (f(5)), print «never»",
-        )
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1), "a plain failure exit, not a signal");
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("run error: too big: 5"), "stderr: {stderr}");
+    // On both tiers, each scope it leaves ended as at its end.
+    for compile in ["", "f.compile(), "] {
+        let (code, stdout, stderr) = run_line(&format!(
+            "bag := type ( pub mut n := i32 ?, static free = ( print «freed {{n}}» ) ), \
+             f := fn (x := i32 ?) -> i32 ( b := bag(x), defer print «bye», \
+             if (x > 2) (abort «too big: {{x}}») else (x) ), \
+             {compile}print «{{f(1)}}», free (f(5)), print «never»"
+        ));
+        assert_eq!(code, Some(1), "{compile}a plain failure exit, not a signal");
+        assert_eq!(stdout, "bye\nfreed 1\n1\nbye\nfreed 5\n", "{compile}stderr: {stderr}");
+        assert!(stderr.contains("run error: too big: 5"), "{compile}stderr: {stderr}");
+    }
 
     let out = logos().arg("t := type (static parse = (abort «not here»)), t").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
@@ -6389,6 +6390,14 @@ fn abort_and_a_raise_read_braces_exactly_as_print_does() {
             run_line(&format!("{category}, {word} «{{1 < 2}} {{f64 5.5}} \\{{x\\}}»"));
         assert!(stderr.contains(&format!("run error: {shown}true 5.5 {{x}}")), "{word}: {stderr}");
 
+        let (_, _, stderr) = run_line(&format!(
+            "{category}, f := fn (i := i32 ?, n := i32 ?) -> i32 ( if (i >= n) \
+             ({word} «{{i}} is past {{n - 1}}, {{1 < 2}} {{f64 5.5}} \\{{x\\}}») else (i) ), \
+             f.compile(), f(4, 3)"
+        ));
+        let compiled = format!("run error: {shown}4 is past 2, true 5.5 {{x}}");
+        assert!(stderr.contains(&compiled), "{word}: {stderr}");
+
         for (quote, message) in [
             ("«{x»", "this `{` has no `}`"),
             ("«x}»", "this `}` closes no `{`"),
@@ -6412,6 +6421,17 @@ fn a_raise_over_a_declared_category_is_a_fault_naming_it() {
         (format!("{x}, error.x «msg»"), "", "error.x: msg"),
         (format!("{x}, n := i32 4, error.x «bad {{n}}»"), "", "error.x: bad 4"),
         ("error . x := «d», error . x «spaced»".to_string(), "", "error.x: spaced"),
+        // In a `run` body, over a category of the type's scope and over one of its own.
+        (
+            format!(
+                "{x}, probe := type ( v := i32 ?, \
+                 static run = ( error.own := «its own», if v == 0 ( error.own «zero» ), error.x «{{v}}» ), \
+                 static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = probe, \
+                 tape[0].v = 7, tape.is_constructed[0] = true ) ), probe"
+            ),
+            "",
+            "error.x: 7",
+        ),
         ("error.not := «d», error.not «a word's spelling»".to_string(), "", "error.not: a word's"),
         (
             format!("{x}, f := fn (a := dyad ?) -> void ( error.x «bad {{a + 1}}» ), f(i64 5)"),
@@ -6487,6 +6507,18 @@ fn a_category_is_known_only_in_reach_of_its_declaration() {
         ("( error.x := «d» ), error.x «out of its bracket»", unknown("error.x")),
         (
             "f := fn () -> void ( error.late «early» ), error.late := «declared after», f()",
+            unknown("error.late"),
+        ),
+        // A body only lexed where it is written is checked there too.
+        (
+            "t := type ( static parse_rank = fn.parse_rank, static parse = ( error.late «x» ) ), \
+             error.late := «declared after», t",
+            unknown("error.late"),
+        ),
+        (
+            "probe := type ( v := i32 ?, static run = ( error.late «{v}» ), \
+             static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = probe, \
+             tape[0].v = 7, tape.is_constructed[0] = true ) ), error.late := «declared after», probe",
             unknown("error.late"),
         ),
         ("error.x := «d», error.x := «e», 0", shadowed.to_string()),

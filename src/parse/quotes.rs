@@ -336,6 +336,43 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
+    /// A held body is only lexed where it is written, so no raise in it has met `error`'s parse:
+    /// each is checked here, against the categories in reach of the body, as a body built where
+    /// written checks its own. `cells` are the body's in source order, `base` where its text
+    /// starts in the source. A category the body declares is left to the body's construction.
+    pub(super) fn check_held_raises(
+        &mut self,
+        cells: &[Cell],
+        base: usize,
+    ) -> Result<(), ParseError> {
+        let types = self.types;
+        let is = |cell: &Cell, id: DyadPtr| cell.identity(types) == id;
+        // Each `error.X` of the body: its `error`, `X`, and the cell after. An `error` that is
+        // itself a member's name starts none.
+        let paths: Vec<(&Cell, &str, &Cell)> = cells
+            .windows(4)
+            .enumerate()
+            .filter(|&(i, w)| {
+                let member = i > 0 && is(&cells[i - 1], types.dot_);
+                !member && is(&w[0], types.error.error) && is(&w[1], types.dot_)
+            })
+            .map(|(_, w)| (&w[0], w[2].spelling(), &w[3]))
+            .collect();
+        let declares =
+            |x: &str| paths.iter().any(|&(_, y, next)| y == x && is(next, types.declare_tok));
+        for &(word, x, next) in &paths {
+            if !next.spelling().starts_with('«') || declares(x) {
+                continue;
+            }
+            let name = format!("error.{x}");
+            if self.cx.scopes.named(self.trie, &name).is_none() {
+                self.cx.pos = base + word.start;
+                return Err(ParseError::UnknownCategory(Box::new(name)));
+            }
+        }
+        Ok(())
+    }
+
     /// `error.X «message»` over the category `name` a scope in reach declares.
     fn raise(
         &mut self,
