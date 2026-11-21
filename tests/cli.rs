@@ -10663,6 +10663,38 @@ fn a_write_through_what_a_dyad_holds_lands_in_the_node_it_holds() {
         assert_eq!((code, out.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains(error), "{src}: stderr: {stderr}");
     }
+    // A record whose values are nodes its own `parse` builds is reached through the place too.
+    let q = "q := type ( mut x := i32 ?, y := i32 ?, static parse_rank = 60, static parse = ( \
+             tape[0].type = q, tape[0].x = tape[1], tape[0].y = tape[2], \
+             tape.is_constructed[0] = true, tape.remove(2), tape.remove(1) ), \
+             static bump := fn () -> void ( x = x + 1 ) ), ";
+    for src in [
+        "mut p := q 5 6, p.x = i32 7, p.bump(), print «{p.x} {p.y}»",
+        "mut d := dyad ?, d = q 5 6, d.x = i32 7, d.bump(), print «{d.x} {d.y}»",
+        "f := fn () -> void ( mut d := dyad ?, d = q 5 6, d.x = i32 7, d.bump(), print «{d.x} {d.y}» ), \
+         f()",
+    ] {
+        let src = format!("{q}{src}");
+        assert_eq!(run_line(&src), (Some(0), "8 6\n".into(), String::new()), "{src}");
+    }
+    let src = format!(
+        "{q}mut d := dyad ?, d = q 5 6, g := fn () -> i32 ( d = q 9 9, i32 3 ), d.x = g(), \
+         print «{{d.x}} {{d.y}}»"
+    );
+    assert_eq!(run_line(&src), (Some(0), "3 9\n".into(), String::new()), "{src}");
+    for (src, error) in [
+        ("d := dyad ?, d = q 5 6, d.x = i32 7", "`d` is not `mut`"),
+        ("mut d := dyad ?, d = q 5 6, d.y = i32 7", "`y` is not `mut`"),
+        (
+            "mut d := dyad ?, d = q 5 6, g := fn () -> i32 ( d = i64 4, i32 3 ), d.x = g()",
+            "by the time it reached the `dyad` it held a node of another type",
+        ),
+    ] {
+        let src = format!("{q}{src}");
+        let (code, out, stderr) = run_line(&src);
+        assert_eq!((code, out.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
 }
 
 /// ›A type body describes one level‹ [[R222]]: a field named bare in a `static` function, a `free`

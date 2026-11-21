@@ -37,8 +37,9 @@ pub struct DyadPlaceIds {
     /// node lands in `into` as in `into lossy (…)`.
     pub read: DyadPtr,
     pub read_leaf: DyadPtr,
-    /// `[place, type, op, output_type]`: the bytes of the record of `type` the node the `dyad`
-    /// place `place` holds lies in, reached through the place each time the line runs.
+    /// `[place, type, op, output_type]`: the record of `type` the `dyad` place `place` holds,
+    /// reached through the place each time the line runs: a plain record's bytes, which lie in the
+    /// node, and a record whose values are nodes, that node.
     pub reach: DyadPtr,
     pub reach_leaf: DyadPtr,
 }
@@ -320,10 +321,10 @@ pub(crate) unsafe fn stable(store: &mut Store, types: &Core, held: DyadPtr) -> D
 }
 
 /// What `.` reads a member of over `place`, a `dyad` place the parse read as `held` ([`stable`]):
-/// a record lying in the bytes of the node the place holds is reached through the place each time
-/// the line runs, so a field written through it, by `=` or by a `static` function, is written in
-/// the node the place holds then (›A `dyad ?` place is transparent: a placeholder for a new node
-/// of any type‹ [[R293]]); any other node is read as `held`.
+/// a record the place holds is reached through the place each time the line runs, so a field
+/// written through it, by `=` or by a `static` function, is written in the node the place holds
+/// then (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]);
+/// any other node, which has no field to write, is read as `held`.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store and `held` a node from the store.
@@ -334,7 +335,8 @@ pub(crate) unsafe fn build_reach(
     held: DyadPtr,
 ) -> DyadPtr {
     let ty = dyad::ty(held);
-    if !super::this::is_plain(types, ty) || carry_of(types, ty).is_none() {
+    let plain = super::this::is_plain(types, ty) && carry_of(types, ty).is_some();
+    if !plain && !meta::is_node_valued(ty, types.fn_type) {
         return held;
     }
     let ids = types.dyad_place;
@@ -354,7 +356,10 @@ fn run_reach(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if dyad::ty(held) != ty {
             return Err(RunError::HeldNodeReplaced);
         }
-        Ok(dyad::value(held) as i64)
+        if super::this::is_plain(rt.types(), ty) {
+            return Ok(dyad::value(held) as i64);
+        }
+        Ok(held as i64)
     }
 }
 
