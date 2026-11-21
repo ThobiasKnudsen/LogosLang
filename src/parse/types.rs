@@ -144,6 +144,22 @@ enum FieldList {
     TypeBody,
 }
 
+/// The name that gives a formed type its identity: its binding, and for a name declared in a held
+/// body while it is built, that body's held node and where the name's value starts in its text.
+#[derive(Clone, Copy)]
+struct OwnName {
+    binding: DyadPtr,
+    written: Option<(DyadPtr, usize)>,
+}
+
+impl OwnName {
+    const NONE: OwnName = OwnName { binding: std::ptr::null_mut(), written: None };
+
+    fn is_none(&self) -> bool {
+        self.binding.is_null()
+    }
+}
+
 /// Each field's offset inside a value of `ty`, packed in order at the width a place of its type
 /// takes, written onto the field's binding; the fields' total, the type's `size_bytes`.
 /// DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹.
@@ -319,7 +335,7 @@ impl<'a> Parser<'a> {
         if !self.at_open() {
             return Err(ParseError::UnionNeedsMembers);
         }
-        let named = !self.name_given(&["type", "union"]).is_null();
+        let own_name = self.name_given(&["type", "union"]);
         let opened_at = self.cx.pos;
         self.expect_open()?;
         let depth = self.cx.scopes.depth();
@@ -378,11 +394,7 @@ impl<'a> Parser<'a> {
                     mint
                 }
             };
-            if named {
-                self.rt.store.alloc_head(types.type_, dyad::head(mint))
-            } else {
-                mint
-            }
+            self.named_type(own_name, mint, std::ptr::null_mut())?
         };
         tape.place(node);
         Ok(Constructed::Placed)
@@ -830,11 +842,30 @@ impl<'a> Parser<'a> {
     /// One body for one level (DESIGN ›A type body describes one level‹): its
     /// lines fill the type's slots, declare its values' fields, and declare
     /// its `static` members; every other line must be prose, since nothing runs a type body later.
+    /// In a body that runs later it is held, and built by the same code each time its node runs.
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
-        if self.cx.runtime_depth > 0 {
-            return self.hold_type_body();
-        }
         let own_name = self.name_given(&["type"]);
+        if self.cx.runtime_depth > 0 {
+            return self.hold_type_body(own_name.binding);
+        }
+        let node = self.rt.store.alloc_leaf(id);
+        if !own_name.is_none() {
+            // The body's lines name the type they are building (DESIGN ›An unknown spelling is
+            // a node of type `unknown_name`; `:=` makes the binding, and the node comes with
+            // the value‹ [[R251]]).
+            // SAFETY: the binding is the one `:=` is filling, live for the whole drive.
+            unsafe { Binding::set_dyad(own_name.binding, node) };
+        }
+        self.build_type_body(node, own_name)
+    }
+
+    /// Builds the type body at the cursor into `self_type`, a type node with no record yet, for
+    /// `own_name`, none where no name holds the type.
+    fn build_type_body(
+        &mut self,
+        self_type: DyadPtr,
+        own_name: OwnName,
+    ) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
         let opened_at = self.cx.pos;
         let depth = self.cx.scopes.depth();
@@ -870,14 +901,6 @@ impl<'a> Parser<'a> {
             crate::identities::meta::prec::INERT,
         );
         let free_marker = self.rt.store.alloc_head(self.types.type_, head);
-        let self_type = self.rt.store.alloc_leaf(id);
-        if !own_name.is_null() {
-            // The body's lines name the type they are building (DESIGN ›An unknown spelling is
-            // a node of type `unknown_name`; `:=` makes the binding, and the node comes with
-            // the value‹ [[R251]]).
-            // SAFETY: `own_name` is the binding `:=` is filling, live for the whole drive.
-            unsafe { Binding::set_dyad(own_name, self_type) };
-        }
         // The fields' scope stands below the type's own, so the body's lines are read in the
         // type's scope with its fields open around them.
         let field_scope = self.open_scope();
@@ -1003,16 +1026,16 @@ impl<'a> Parser<'a> {
                     mint
                 }
             };
-            Ok(self.named_type(node, mint, own_name))
+            self.named_type(own_name, mint, node)
         }
     }
 
     /// The name that gives the type being read here its identity: the name of the declaration
     /// whose whole right side up to the cursor is `words`, the former's own spelling with `type`
-    /// before it where the former gives a type; null where no declaration holds it so (›Every
+    /// before it where the former gives a type; none where no declaration holds it so (›Every
     /// type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
     /// gives it its identity‹ [[R383]]).
-    fn name_given(&self, words: &[&str]) -> DyadPtr {
+    fn name_given(&self, words: &[&str]) -> OwnName {
         match (self.cx.filling.last(), self.cx.filling_at.last()) {
             (Some(&binding), Some(&at))
                 if self
@@ -1021,9 +1044,10 @@ impl<'a> Parser<'a> {
                     .get(at..self.cx.pos)
                     .is_some_and(|t| t.split_whitespace().eq(words.iter().copied())) =>
             {
-                binding
+                let written = (!self.cx.held.is_null()).then_some((self.cx.held, at));
+                OwnName { binding, written }
             }
-            _ => std::ptr::null_mut(),
+            _ => OwnName::NONE,
         }
     }
 
@@ -1033,26 +1057,54 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `node` must be a type node carrying its record.
-    unsafe fn mint_of(&mut self, node: DyadPtr, own_name: DyadPtr) -> DyadPtr {
-        if own_name.is_null() {
+    unsafe fn mint_of(&mut self, node: DyadPtr, own_name: OwnName) -> DyadPtr {
+        if own_name.is_none() {
             return node;
         }
         self.rt.store.alloc_head(self.types.type_, dyad::head(node))
     }
 
-    /// What a `type ( … )` gives where its contents are the mint `mint`: the mint, or for the
-    /// name that holds it the name's own dyad `node` over the mint's record, which a value's
-    /// type word then points at (›Every type is minted by its contents through `type_mint`; the
-    /// name that holds a `type ( … )` gives it its identity‹ [[R383]]).
+    /// What a formed type gives where its contents are the mint `mint`: the mint, or for the
+    /// name that holds it the name's own dyad over the mint's record, which a value's type word
+    /// then points at. A written name has one dyad per mint, which `type_mint` keeps under where
+    /// the name is written, so a body that runs again finds it again; the first build makes it,
+    /// of `node` where the builder has a dyad for the name already (›Every type is minted by its
+    /// contents through `type_mint`; the name that holds a `type ( … )` gives it its identity‹
+    /// [[R383]]).
     ///
     /// # Safety
-    /// `node` and `mint` must be type nodes carrying a record, of the same contents.
-    unsafe fn named_type(&mut self, node: DyadPtr, mint: DyadPtr, own_name: DyadPtr) -> DyadPtr {
-        if own_name.is_null() {
-            return mint;
+    /// `mint` must be a type node carrying a record, `own_name`'s binding a binding dyad, and
+    /// `node` null or a type node of the mint's contents.
+    unsafe fn named_type(
+        &mut self,
+        own_name: OwnName,
+        mint: DyadPtr,
+        node: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
+        if own_name.is_none() {
+            return Ok(mint);
         }
-        dyad::set_head(node, dyad::head(mint));
-        node
+        let types = self.types;
+        // A held body makes its names' bindings again at each build, so a name written in one is
+        // found by the held node and the place in its text.
+        let (former, key) = match own_name.written {
+            Some((held, at)) => (held, vec![KeyPart::Word(at as u64), KeyPart::Node(mint)]),
+            None => (own_name.binding, vec![KeyPart::Node(mint)]),
+        };
+        let (place, kept) =
+            type_mint::find(self.rt.store, types, former, &key).map_err(ParseError::Run)?;
+        if let Some(named) = kept {
+            return Ok(named);
+        }
+        let record = dyad::head(mint);
+        let named = if node.is_null() {
+            self.rt.store.alloc_head(types.type_, record)
+        } else {
+            dyad::set_head(node, record);
+            node
+        };
+        type_mint::keep(self.rt.store, types, place, named).map_err(ParseError::Run)?;
+        Ok(named)
     }
 
     /// The contents of the `type ( … )` body just built, as its key in `type_mint` after the
@@ -1167,8 +1219,9 @@ impl<'a> Parser<'a> {
     }
 
     /// A `type (…)` in a body that runs later reads that run's values, so it is
-    /// lexed now and built each time it runs (DESIGN ›Deferral is authored‹).
-    fn hold_type_body(&mut self) -> Result<DyadPtr, ParseError> {
+    /// lexed now and built each time it runs (DESIGN ›Deferral is authored‹), for `own_name`,
+    /// the name its declaration gives the type, or null.
+    fn hold_type_body(&mut self, own_name: DyadPtr) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         let (start, len) = self.body_text_extent()?;
         let source = self.cx.source;
@@ -1186,7 +1239,15 @@ impl<'a> Parser<'a> {
         let cells = Box::into_raw(Box::new(fragment));
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
         let frames: Vec<DyadPtr> = self.cx.frames.iter().map(|f| f.frame).collect();
-        Ok(crate::identities::held_type::build(self.rt.store, types, text, cells, scope, &frames))
+        Ok(crate::identities::held_type::build(
+            self.rt.store,
+            types,
+            text,
+            cells,
+            scope,
+            &frames,
+            own_name,
+        ))
     }
 
     /// A name a held body declares, written left of a `:=` on any line of it, is refused where
@@ -1227,12 +1288,13 @@ impl<'a> Parser<'a> {
         &mut self,
         node: DyadPtr,
     ) -> Result<DyadPtr, crate::run::RunError> {
-        let (text, cells, scope, open_fns) = crate::identities::held_type::parts(node);
-        let bytes = crate::identities::string::text(text);
+        let held = crate::identities::held_type::parts(node);
+        let open_fns = held.frames;
+        let bytes = crate::identities::string::text(held.text);
         let text: &'a str = std::str::from_utf8(bytes).expect("copied from the source text");
-        let cells = (*cells).held_cells();
+        let cells = (*held.cells).held_cells();
         let mut chain = Vec::new();
-        let mut at = scope;
+        let mut at = held.scope;
         while !at.is_null() {
             chain.push(at);
             at = crate::identities::scope::parent_of(at);
@@ -1264,9 +1326,10 @@ impl<'a> Parser<'a> {
             feed: Some(Feed { cells, next: 0, base_depth, in_run_order: true }),
             ..Context::nested(&self.cx, text, nested)
         };
-        let type_ = self.types.type_;
+        let self_type = self.rt.store.alloc_leaf(self.types.type_);
         let g = self.enter(cx);
-        let built = g.0.parse_type_body(type_);
+        let own_name = OwnName { binding: held.name, written: None };
+        let built = g.0.build_type_body(self_type, own_name);
         let built_pos = g.0.cx.pos;
         drop(g);
 
