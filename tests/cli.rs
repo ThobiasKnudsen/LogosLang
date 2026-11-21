@@ -8779,6 +8779,91 @@ fn a_bare_static_call_works_on_the_value_the_body_is_about() {
     }
 }
 
+/// ›A bare call of a `static` function works on the value the calling body is about‹ [[R238]]: a
+/// function written inside a body about a value, or a value made once in it, is about none, so a
+/// bare call there takes only a function that uses no field.
+#[test]
+fn a_function_written_inside_a_body_about_a_value_is_about_none() {
+    let t = "t := type ( mut x := i32 ?, static f := fn () -> i32 ( x ), \
+             static g := fn () -> i32 ( 3 ), static set := fn () -> void ( x = 9 ), ";
+    let inc = |run: &str| {
+        format!(
+            "inc := type ( a := i32 ?, output_type := type ?, static twice := fn () -> i32 ( a * 2 ), \
+             static three := fn () -> i32 ( 3 ), static run = ( {run} ), \
+             static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = inc, \
+             tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
+             tape.remove(-1) ) ), f := fn (y := i32 ?) -> i32 ( y inc ), f(5)"
+        )
+    };
+    for compile in ["", "v.h.compile(), "] {
+        for (h, printed) in [
+            ("static h := fn () -> i32 ( k := fn () -> i32 ( g() ), k() + f() ) )", "8"),
+            ("static h := fn () -> i32 ( static c := g(), c + x ) )", "8"),
+        ] {
+            let src = format!("{t}{h}, v := t (5), {compile}v.h()");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+        let src = format!(
+            "v := {{ a := i32 7, g := fn () -> i32 ( 3 ), \
+             h := fn () -> i32 ( k := fn () -> i32 ( g() ), k() + a ) }}, {compile}v.h()"
+        );
+        assert_eq!(run_line(&src), (Some(0), "10\n".to_string(), String::new()), "{src}");
+    }
+    let src = inc("k := fn () -> i32 ( three() ), k() + a");
+    assert_eq!(run_line(&src), (Some(0), "8\n".to_string(), String::new()), "{src}");
+    for (src, expect) in [
+        (
+            format!("{t}static h := fn () -> i32 ( k := fn () -> i32 ( f() ), k() ) ), v := t (5), v.h()"),
+            "`f` works on a value of its type: call it through one, `v.f(…)`,",
+        ),
+        (
+            format!("{t}static h := fn () -> i32 ( k := fn () -> void ( set() ), x ) ), mut v := t (5), v.h()"),
+            "`set` works on a value of its type",
+        ),
+        (
+            format!("{t}static h := fn () -> i32 ( static c := f(), c ) ), v := t (5), v.h()"),
+            "`f` works on a value of its type",
+        ),
+        (
+            format!("{t}static free = ( k := fn () -> i32 ( f() ), print «{{k()}}» ) ), v := t (5)"),
+            "`f` works on a value of its type",
+        ),
+        (
+            "m := { a := i32 7, f := fn () -> i32 ( a ), h := fn () -> i32 ( k := fn () -> i32 ( f() ), k() ) }, m.h()"
+                .to_string(),
+            "`f` works on a value of its type: call it through one, by the member that holds it,",
+        ),
+        (inc("k := fn () -> i32 ( twice() ), k() + 1"), "`twice` works on a value of its type"),
+        // A field named bare there is the outer body's parameter, refused as its locals are.
+        (
+            format!("{t}static h := fn () -> i32 ( k := fn () -> i32 ( x ), k() ) ), v := t (5), v.h()"),
+            "1:179: error: a nested function cannot use an outer function's local or parameter",
+        ),
+        (
+            format!("{t}static free = ( k := fn () -> i32 ( x ), print «{{k()}}» ) ), v := t (5)"),
+            "a nested function cannot use an outer function's local or parameter",
+        ),
+        (
+            "m := { a := i32 7, h := fn () -> i32 ( k := fn () -> i32 ( a ), k() ) }, m.h()".to_string(),
+            "1:60: error: a nested function cannot use an outer function's local or parameter",
+        ),
+        (inc("k := fn () -> i32 ( a ), k() + 1"), "a nested function cannot use an outer function's local"),
+        // Refused at the use, not at the declaration: stand-in for #408.
+        (
+            format!("{t}static h := fn () -> i32 ( k := fn (x := i32 ?) -> i32 ( x ), k(3) ) ), v := t (5), v.h()"),
+            "a nested function cannot use an outer function's local or parameter",
+        ),
+        (
+            format!("{t}static h := fn () -> i32 ( static c := x, c ) ), v := t (5), v.h()"),
+            "1:171: error: a value made once, where it is written (`static`, `immediate`), cannot use a name",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_parse_stamps_its_own_cell_before_it_writes_a_field() {
     for (src, expect) in [

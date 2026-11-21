@@ -57,21 +57,52 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Inside a `free` or a `static` function a field of the value is named bare (DESIGN
-    /// ›There is no `this`‹); fields come first, so an outer name never stands in for one.
-    /// Inside a parse the same name is the checked error, the field going through `tape[0]`.
-    pub(super) fn names_own_field(&self, cell: &Cell) -> bool {
-        let Some(def) = self.cx.definitions.last() else {
-            return false;
+    /// The innermost open definition with a value its body is about: a parse's node, a `free`'s
+    /// or a `static` function's value.
+    fn value_def(&self) -> Option<&OpenType> {
+        self.cx.definitions.last().filter(|d| !d.this_param.is_null())
+    }
+
+    /// Whether the line being read reaches `def`'s value: a parameter of the body it is about, so
+    /// reached as that body's locals are.
+    fn reach_value(&self, def: &OpenType) -> Result<(), ParseError> {
+        // SAFETY: `this_param` is a parameter's binding dyad from the store, laid out in its frame.
+        self.reach_frame(unsafe { Binding::read(def.this_param) }.frame)
+    }
+
+    /// The open definition while the line being read is about its value. A function written
+    /// inside that body, or a value made once in it, is about none (›A bare call of a `static`
+    /// function works on the value the calling body is about‹ [[R238]]).
+    pub(super) fn about_value(&self) -> Option<&OpenType> {
+        self.value_def().filter(|d| self.reach_value(d).is_ok())
+    }
+
+    pub(super) fn about_value_mut(&mut self) -> Option<&mut OpenType> {
+        self.about_value()?;
+        self.cx.definitions.last_mut()
+    }
+
+    /// Whether `cell` names a field of the value a `free` or a `static` function is about, named
+    /// bare (DESIGN ›There is no `this`‹); fields come first, so an outer name never stands in for
+    /// one. Where the line does not reach the value it is refused as the body's locals are, and
+    /// inside a parse, whose fields go through `tape[0]`.
+    pub(super) fn names_own_field(&self, cell: &Cell) -> Result<bool, ParseError> {
+        let Some(def) = self.value_def() else {
+            return Ok(false);
         };
-        if def.this_param.is_null() {
-            return false;
-        }
         let mut fields = ScopeStack::new();
         fields.push(def.block.0);
-        fields
+        let named = fields
             .resolve(self.trie, cell.spelling())
-            .is_ok_and(|r| r.matched == cell.len && def.block.1.contains(&r.identity))
+            .is_ok_and(|r| r.matched == cell.len && def.block.1.contains(&r.identity));
+        if !named {
+            return Ok(false);
+        }
+        self.reach_value(def)?;
+        if def.in_parse {
+            return Err(ParseError::BareFieldInParse(Box::new(cell.spelling().to_string())));
+        }
+        Ok(true)
     }
 
     /// `tape[0]` inside a parse body: the cell the parse was woken on, holding its node.
@@ -141,15 +172,20 @@ impl<'a> Parser<'a> {
             with.extend(args);
             return Ok(with);
         }
-        let receiver = match self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
+        let bits = fn_receiver(self.types, f);
+        let receiver = match self.about_value_mut() {
             Some(def) if !def.in_parse => {
-                def.note_receiver_use(fn_receiver(self.types, f));
+                def.note_receiver_use(bits);
                 Some(def.this_param)
             }
             Some(_) => None,
-            None => self.cx.run_fields.as_ref().map(|(ty, places)| {
-                crate::identities::this::build_pack(self.rt.store, self.types, *ty, places)
-            }),
+            None => {
+                let here =
+                    self.cx.run_fields.as_ref().is_some_and(|r| self.reach_frame(r.2).is_ok());
+                self.cx.run_fields.as_ref().filter(|_| here).map(|(ty, places, _)| {
+                    crate::identities::this::build_pack(self.rt.store, self.types, *ty, places)
+                })
+            }
         };
         let receiver = match receiver {
             Some(value) => value,
@@ -185,8 +221,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         let (depth, in_program_frame) = (kept.depth, kept.in_program_frame);
-        let def = self.cx.definitions.last();
-        if def.is_some_and(|d| d.block.0 == scope && !d.this_param.is_null()) {
+        if self.about_value().is_some_and(|d| d.block.0 == scope) {
             return Ok(None);
         }
         if fn_receiver(self.types, f) != 0 {

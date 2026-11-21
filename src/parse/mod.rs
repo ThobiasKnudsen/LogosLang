@@ -88,8 +88,9 @@ struct Context<'a> {
     /// The bindings the member read under construction reaches, root first: what `.` writes
     /// onto the cell it places, for the write it may be the target of.
     member_path: Vec<DyadPtr>,
-    /// The type and field parameters of the run body being constructed.
-    run_fields: Option<(DyadPtr, Vec<DyadPtr>)>,
+    /// The type and field parameters of the run body being constructed, and the `fn` node whose
+    /// frame they lie in.
+    run_fields: Option<(DyadPtr, Vec<DyadPtr>, DyadPtr)>,
     /// Open function frames, innermost last: empty at top level, where
     /// declarations get global storage; inside a function each local claims
     /// the next byte offset in the top frame.

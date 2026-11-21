@@ -57,7 +57,7 @@ pub(crate) struct HeldLine {
     cut: usize,
     kept: Kept,
     definitions: Vec<OpenType>,
-    run_fields: Option<(DyadPtr, Vec<DyadPtr>)>,
+    run_fields: Option<(DyadPtr, Vec<DyadPtr>, DyadPtr)>,
 }
 
 impl<'a> Parser<'a> {
@@ -512,8 +512,8 @@ impl<'a> Parser<'a> {
     /// field read, or written where `=` follows it, and a bare call of a `static` function that
     /// writes mark a `static` function's receiver (›A `static` function writes the value it is
     /// called on, and respects `mut`‹ [[R239]]); in a parse, a stamp, `.type =`, has the node's
-    /// later fields read by name, since the type it stamps is known only at run, and a bare field
-    /// is refused, as on any line of a parse.
+    /// later fields read by name, since the type it stamps is known only at run. A bare field is
+    /// refused where [`Parser::names_own_field`] refuses it.
     fn note_held_use(&mut self, cells: &[Cell], k: usize) -> Result<bool, ParseError> {
         let types = self.types;
         let cell = &cells[k];
@@ -528,10 +528,7 @@ impl<'a> Parser<'a> {
             }
             return Ok(false);
         }
-        let field = self.names_own_field(cell);
-        if field && in_parse {
-            return Err(ParseError::BareFieldInParse(Box::new(cell.spelling().to_string())));
-        }
+        let field = self.names_own_field(cell)?;
         let bits = if field {
             RECEIVER_READS | (u64::from(next == Some(types.assign)) * RECEIVER_WRITES)
         } else if next == Some(types.open_) {
@@ -547,7 +544,7 @@ impl<'a> Parser<'a> {
         } else {
             0
         };
-        if let Some(def) = self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
+        if let Some(def) = self.about_value_mut() {
             def.note_receiver_use(bits);
         }
         Ok(field)

@@ -139,13 +139,15 @@ impl<'a> Parser<'a> {
         let Some((mut cell, start)) = self.lex_cell(tape)? else {
             return Ok(Some(Boundary::Eof));
         };
-        if !cell.constructed && !self.after_tight_read(tape) && self.names_own_field(&cell) {
-            if self.cx.definitions.last().is_some_and(|d| d.in_parse) {
+        if !cell.constructed && !self.after_tight_read(tape) {
+            let field = self.names_own_field(&cell);
+            if field.is_err() {
                 self.cx.pos = start;
-                return Err(ParseError::BareFieldInParse(Box::new(cell.spelling().to_string())));
             }
-            // Left unbuilt, as a name is, so a value whose type has a parse wakes it: `items[1]`.
-            cell.dyad = self.this_field(cell.spelling(), start)?;
+            if field? {
+                // Left unbuilt, as a name is, so a value whose type has a parse wakes it: `items[1]`.
+                cell.dyad = self.this_field(cell.spelling(), start)?;
+            }
         }
         let id = self.cell_identity(&cell);
         if !cell.constructed {

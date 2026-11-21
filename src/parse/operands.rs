@@ -1014,15 +1014,22 @@ impl<'a> Parser<'a> {
     /// `node` must be a resolved dyad from the store.
     pub(super) unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
         let node = self.types.through(node);
-        if let Some((crate::binding::Frame::Call(f), _)) = self.types.frame_of(node) {
-            if let Some(at) = self.cx.once_at {
-                if self.cx.frames[..at].iter().any(|open| open.frame == f) {
-                    return Err(ParseError::OnceReadsUnmade);
-                }
+        match self.types.frame_of(node) {
+            Some((crate::binding::Frame::Call(f), _)) => self.reach_frame(f),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether the line being read reaches the frame of the function `f`: only from `f`'s own
+    /// body, in a call of it, which a value made once at its definition is not.
+    pub(super) fn reach_frame(&self, f: DyadPtr) -> Result<(), ParseError> {
+        if let Some(at) = self.cx.once_at {
+            if self.cx.frames[..at].iter().any(|open| open.frame == f) {
+                return Err(ParseError::OnceReadsUnmade);
             }
-            if self.cx.frames.last().is_none_or(|open| open.frame != f) {
-                return Err(ParseError::CapturedLocal);
-            }
+        }
+        if self.cx.frames.last().is_none_or(|open| open.frame != f) {
+            return Err(ParseError::CapturedLocal);
         }
         Ok(())
     }
