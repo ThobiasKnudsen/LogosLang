@@ -852,10 +852,37 @@ impl<'a> Parser<'a> {
         for cell in fragment.inner.iter_mut().filter(|c| outer_slot(c)) {
             cell.dyad = crate::identities::fresh::node(self.rt.store, types, cell.spelling());
         }
+        self.refuse_held_shadowing(&fragment.held_cells(), start - 1)?;
         let cells = Box::into_raw(Box::new(fragment));
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
         let frames: Vec<DyadPtr> = self.cx.frames.iter().map(|f| f.frame).collect();
         Ok(crate::identities::held_type::build(self.rt.store, types, text, cells, scope, &frames))
+    }
+
+    /// A name a held body declares, written left of a `:=` on any line of it, is refused where
+    /// the body is written when its cell lexed to a live name of that spelling, as a nested
+    /// `fn`'s is: the names are in the text (›Fields are read with a dot outside their scope‹
+    /// [[R234]]). `at` is where the held text starts in the source.
+    fn refuse_held_shadowing(&mut self, cells: &[Cell], at: usize) -> Result<(), ParseError> {
+        let types = self.types;
+        for (k, cell) in cells.iter().enumerate() {
+            let declared = cells
+                .get(k + 1)
+                .is_some_and(|c| !c.constructed && self.cell_identity(c) == types.declare_tok);
+            let member = k.checked_sub(1).is_some_and(|j| self.is_unbuilt_tight_read(&cells[j]));
+            let binding = cell.binding(types);
+            if !declared || member || binding.is_null() {
+                continue;
+            }
+            // A literal, `5`, matches a pattern identity and names nothing.
+            // SAFETY: a lexed cell's binding is a binding dyad from the store.
+            if unsafe { Binding::spelling(binding) } != cell.spelling() {
+                continue;
+            }
+            self.cx.pos = at + cell.start;
+            return Err(ParseError::Resolve(ResolveError::Shadowed(cell.spelling().to_string())));
+        }
+        Ok(())
     }
 
     /// Build the held `type (…)` `node` now, inside the run that reached it: its

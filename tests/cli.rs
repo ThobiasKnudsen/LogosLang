@@ -8896,7 +8896,9 @@ fn a_name_declared_inside_a_type_body_reuses_none_of_its_fields() {
 /// ›Fields are read with a dot outside their scope‹ [[R234]]: no shadowing, fields included, so a
 /// field reuses no name live where it is declared, above or below it in the body around it
 /// (›Every name of a scope is seen from anywhere in it; written order counts in four cases only‹
-/// [[R372]]). A body's slot words are its own, and types side by side share no fields.
+/// [[R372]]). A body's slot words are its own, and types side by side share no fields. A
+/// `type (…)` in a body that runs later is refused where it is written, called or not, as a
+/// nested `fn` is.
 #[test]
 fn a_field_reuses_no_name_live_where_it_is_declared() {
     for (src, at) in [
@@ -8905,13 +8907,20 @@ fn a_field_reuses_no_name_live_where_it_is_declared() {
         ("t := type ( static x := i32 1, x := i32 ? )", "<command line>:1:32"),
         (
             "t := type ( x := i32 ?, static h := fn () -> type ( type ( x := i32 ? ) ) ), v := t (5), v.h()",
-            "type body:1:3",
+            "<command line>:1:60",
         ),
         (
             "t := type ( static h := fn () -> type ( type ( x := i32 ? ) ), x := i32 ? ), v := t (5), v.h()",
             "type body:1:3",
         ),
-        ("f := fn () -> i32 ( x := i32 1, t := type ( x := i32 ? ), 2 ), f()", "type body:1:3"),
+        ("f := fn () -> i32 ( x := i32 1, t := type ( x := i32 ? ), 2 ), f()", "<command line>:1:45"),
+        ("f := fn () -> i32 ( x := i32 1, t := type ( x := i32 ? ), 2 ), 3", "<command line>:1:45"),
+        ("f := fn (x := i32 ?) -> i32 ( t := type ( x := i32 ? ), 2 ), 3", "<command line>:1:43"),
+        ("for 0..3 ( x := i32 1, t := type ( x := i32 ? ) )", "<command line>:1:36"),
+        (
+            "f := fn () -> i32 ( x := i32 1, t := type ( a := i32 ?, static h := fn (x := i32 ?) -> i32 ( x ) ), 2 ), 3",
+            "<command line>:1:73",
+        ),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
@@ -8933,6 +8942,7 @@ fn a_field_reuses_no_name_live_where_it_is_declared() {
              w := v.k(), print «{v.a}»",
             "5\n",
         ),
+        ("f := fn () -> i32 ( x := i32 1, free x, t := type ( x := i32 ? ), 2 ), print «{f()}»", "2\n"),
     ] {
         assert_eq!(run_line(src), (Some(0), out.to_string(), String::new()), "{src}");
     }
