@@ -13220,9 +13220,9 @@ fn a_name_in_a_body_holds_one_dyad_per_mint_found_again_at_the_next_run() {
     for compile in ["", "f.compile(), g.compile(), "] {
         cases.push((
             format!(
-                "f := fn () -> bool ( a := type union ( pub mut i := i32 ), \
-                 b := type union ( pub mut i := i32 ), &a == &b ), \
-                 g := fn () -> bool ( a := type union ( pub mut i := i32 ), &a == &a ), \
+                "f := fn () -> bool ( a := type union ( mut i := i32 ), \
+                 b := type union ( mut i := i32 ), &a == &b ), \
+                 g := fn () -> bool ( a := type union ( mut i := i32 ), &a == &a ), \
                  {compile}print «{{f()}} {{g()}}»"
             ),
             "false true\n",
