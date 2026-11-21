@@ -5,7 +5,7 @@
 
 pub array := type (
     static array_mints := hashmap type -> type,
-    static get_mint := fn (t := type ?) -> type (
+    pub static get_mint := fn (t := type ?) -> type (
         mut mint := array_mints[t],
         if mint != ? return mint,
         mint = type (

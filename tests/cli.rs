@@ -1144,7 +1144,7 @@ fn a_static_name_in_a_function_is_made_once_at_the_definition() {
 /// The power operator, minting through a function of its own by the base's type, on one line
 /// for the REPL.
 const POWER: &str = "^ := type ( static power_mints := hashmap type -> type, \
-    static get_mint := fn (l := type ?) -> type ( mut mint := power_mints[l], if mint != ? return mint, \
+    pub static get_mint := fn (l := type ?) -> type ( mut mint := power_mints[l], if mint != ? return mint, \
     mint = type ( pub lhs := l ?, pub rhs := i32 ?, static output_type := l, \
     static run = ( mut r := output_type 1, for 0..rhs ( r = r * lhs ), r ) ), \
     power_mints[l] = mint, mint ), \
