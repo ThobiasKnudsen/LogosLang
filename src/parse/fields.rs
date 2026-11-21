@@ -1526,7 +1526,7 @@ impl<'a> Parser<'a> {
             // The binding is a value of type `binding` laid out in the store's arena, the
             // program frame: its field is a place read through two bindings, as `p.x` is.
             let (_, _, field_binding) = self.resolve_field(types.binding_, nstart, nlen)?;
-            let record = self.binding_record_place(lhs);
+            let record = self.binding_record_place(lhs, Binding::read(field_binding).offset);
             return Ok(crate::identities::instance::build_field(
                 self.rt.store,
                 types,
@@ -1569,14 +1569,16 @@ impl<'a> Parser<'a> {
         Ok(self.rt.store.alloc_head(types.dyad_, node.cast()))
     }
 
-    /// The binding's own record as storage: a spelling-less binding over the record's
-    /// bytes, which lie in the store's arena, the program frame.
+    /// The binding's own record as storage for its field at `field`: a spelling-less binding over
+    /// the bytes of the record that holds that field, which lie in the store's arena, the program
+    /// frame.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store, its record in the store's arena.
-    unsafe fn binding_record_place(&mut self, binding: DyadPtr) -> DyadPtr {
+    unsafe fn binding_record_place(&mut self, binding: DyadPtr, field: usize) -> DyadPtr {
         let types = self.types;
-        let offset = (dyad::value(binding) as usize) - (self.rt.store.arena_base() as usize);
+        let holder = Binding::holder(binding, field);
+        let offset = (dyad::value(holder) as usize) - (self.rt.store.arena_base() as usize);
         let record = Binding::alloc(
             self.rt.store,
             types.binding_,
