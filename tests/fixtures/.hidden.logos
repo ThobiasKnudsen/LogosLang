@@ -1,2 +1,2 @@
 # A file whose name starts with `.`: its address is text, so it is reached as any file is.
-pub h := i32 5
+h := pub i32 5

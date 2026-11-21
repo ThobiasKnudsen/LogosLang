@@ -28,9 +28,9 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
         if !p.finds_right_side(tape) {
             return Ok(crate::parse::Constructed::Decline);
         }
-        // Claimed only when the literal is the only cell on the tape; elsewhere
-        // suppressed around the parse so a deeper literal can still claim it.
-        let node = if tape.len() == 1 {
+        // Claimed only when the literal is the whole value, the gate words that gate it aside;
+        // elsewhere suppressed around the parse so a deeper literal can still claim it.
+        let node = if p.opens_value(tape) {
             let binding = p.take_pending_binding();
             // SAFETY: `binding` is null or the binding `:=` handed over.
             unsafe { p.parse_fn(id, binding) }?

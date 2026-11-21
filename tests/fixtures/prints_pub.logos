@@ -1,3 +1,3 @@
 # A file whose top level prints, so where it is read shows in the output, with one `pub` name.
 print «imp»,
-pub v := i32 2
+v := pub i32 2
