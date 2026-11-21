@@ -64,7 +64,12 @@ pub(crate) fn lex_token<'c>(
     if start >= bytes.len() {
         return Ok(None);
     }
-    let left = if !value_ends(types, before) {
+    let mut before = before.into_iter().peekable();
+    let after_dot =
+        before.peek().is_some_and(|c| !c.constructed && c.identity(types) == types.dot_);
+    let left = if after_dot {
+        Left::Member
+    } else if !value_ends(types, before) {
         Left::Nothing
     } else if start > 0 && bytes[start - 1].is_ascii_whitespace() {
         Left::SpacedValue
@@ -627,7 +632,8 @@ impl<'a> Parser<'a> {
         if no_spelling(rest) {
             return None;
         }
-        let (r, _) = token(&self.cx.scopes, self.trie, rest, true, Left::Value).ok()?;
+        let left = if self.cx.member_asleep { Left::Member } else { Left::Value };
+        let (r, _) = token(&self.cx.scopes, self.trie, rest, true, left).ok()?;
         self.cx.pos = start + r.matched;
         Some((start, r.matched, r.fresh))
     }

@@ -52,7 +52,7 @@ pub(crate) enum Piece {
     Text(Vec<u8>),
     /// A `{…}` the quote opened itself: the byte range of its interior.
     Scope(Range<usize>),
-    /// A `}` that closes nothing: text in a plain string, the error in `print` and `error`.
+    /// A `}` that closes nothing: text in a plain string, the error in `print`, `abort` and a raise.
     StrayClose(usize),
 }
 

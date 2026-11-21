@@ -953,8 +953,8 @@ fn an_if_condition_is_its_first_complete_expression() {
         ParseError::NonBoolCondition
     );
     // Bare bodies on their own lines, as identities/array.logos writes them.
-    assert_eq!(run_script("x := i32 1,\nif not x.type == i32\n    error «not i32»,\n5"), 5);
-    assert!(run_script_result("x := i32 1,\nif x.type == i32\n    error «is i32»,\n5").is_err());
+    assert_eq!(run_script("x := i32 1,\nif not x.type == i32\n    abort «not i32»,\n5"), 5);
+    assert!(run_script_result("x := i32 1,\nif x.type == i32\n    abort «is i32»,\n5").is_err());
     // A bare branch is a scope, as a bracket is.
     assert!(matches!(script_parse_err("x := i32 1, if x == 1 y := 2, y"), ParseError::Resolve(_)));
     assert_eq!(script_parse_err("if 1 == 1 else 2"), ParseError::Empty);
@@ -1424,7 +1424,7 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         ("x := if c (i32 1) else if c (2) else (3)", ParseError::ArmsDiffer),
         ("x := if c (return 1) else (i32 2)", ParseError::ArmGivesNothing),
         ("x := if c (i32 1) else (mut y := i32 2, y = 3)", ParseError::ArmGivesNothing),
-        ("x := if c (1) else (error «no»)", ParseError::ArmGivesNothing),
+        ("x := if c (1) else (abort «no»)", ParseError::ArmGivesNothing),
         // An arm that gives nothing decides before a sibling whose arms differ, either order.
         ("x := if c (if c (i32 1) else (i64 2)) else (print «b»)", ParseError::ArmGivesNothing),
         ("x := if c (print «b») else (if c (i32 1) else (i64 2))", ParseError::ArmGivesNothing),
@@ -2841,7 +2841,7 @@ const POW_TYPE: &str = "pw := type (\n\
      static parse_rank = *.parse_rank + 1,\n\
      static associativity = right,\n\
      static parse = (\n\
-         if tape[-1].type == void error «pw takes a left operand»,\n\
+         if tape[-1].type == void abort «pw takes a left operand»,\n\
          tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1],\n\
          tape[0].b = tape[1],\n\
          tape.is_constructed[0] = true,\n\

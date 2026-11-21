@@ -36,6 +36,8 @@ pub enum Left {
     Value,
     /// A value, then whitespace before the token.
     SpacedValue,
+    /// A `.` that reads a member: the token is the member's name, which holds no `.` itself.
+    Member,
 }
 
 impl Left {
@@ -44,7 +46,7 @@ impl Left {
     fn takes_none(self, after: Option<&u8>) -> bool {
         match self {
             Left::Nothing => true,
-            Left::Value => false,
+            Left::Value | Left::Member => false,
             Left::SpacedValue => !after.is_some_and(u8::is_ascii_whitespace),
         }
     }
@@ -313,7 +315,8 @@ impl ScopeStack {
             let cuts_word =
                 m.matched < bytes.len() && word(bytes[m.matched - 1]) && word(bytes[m.matched]);
             let fresh = crate::identities::fresh::is_fresh_key(m.regex_key);
-            if m.matched == 0 || cuts_word || (fresh && !include_fresh) {
+            let spans_path = left == Left::Member && bytes[..m.matched].contains(&b'.');
+            if m.matched == 0 || cuts_word || spans_path || (fresh && !include_fresh) {
                 continue;
             }
             // At the frontier "range covers the point" is exactly "not dead".

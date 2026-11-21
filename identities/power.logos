@@ -17,6 +17,11 @@
 import file «ln.logos»,
 import file «exp.logos»,
 
+# The powers no result type holds, each a category of this file.
+error.not_whole := «a power of a whole number is not whole»,
+error.not_real := «a power is no real number»,
+error.needs_float := «a power needs a float result»,
+
 ^ := type (
     pub static get_mint := fn (l := type ?, r := type ?) -> type (
         place := type_mint.step(type_mint.step(type_mint.step(0, ^), l), r),
@@ -43,7 +48,7 @@ import file «exp.logos»,
                     mut factor := if output_type == rational_number (output_type(lhs)) else (output_type lossy (lhs)),
                     if times < 0 (
                         if not (output_type == (f64 or f32 or rational_number))
-                            error «a negative exponent of a whole number is not whole: write the base as a float»,
+                            error.not_whole «a negative exponent of a whole number is not whole: write the base as a float»,
                         factor = output_type 1 / factor,
                         times = 0 - times
                     ),
@@ -53,13 +58,13 @@ import file «exp.logos»,
                 ) else if (output_type == (f64 or f32)) (
                     real_base := f64 lossy (lhs),
                     if real_base < 0.0
-                        error «a negative base has no real power for a fractional exponent»,
+                        error.not_real «a negative base has no real power for a fractional exponent»,
                     if real_base == 0.0
                         output_type 0
                     else
                         output_type lossy (exp(f64 lossy (rhs) * ln(real_base)))
                 ) else
-                    error «a fractional exponent needs a float result»
+                    error.needs_float «a fractional exponent needs a float result»
             )
         ),
         type_mint.keep(place, mint),

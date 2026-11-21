@@ -443,8 +443,16 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
         assert_eq!((code, stdout.trim()), (Some(0), want), "{tail}: stderr: {stderr}");
     }
     for (tail, expect) in [
-        ("x := i32 2, x ^ -1", "a negative exponent of a whole number is not whole"),
-        ("x := f64 -8.0, x ^ 0.5", "a negative base has no real power"),
+        (
+            "x := i32 2, x ^ -1",
+            "error.not_whole: a negative exponent of a whole number is not whole",
+        ),
+        ("x := f64 -8.0, x ^ 0.5", "error.not_real: a negative base has no real power"),
+        // A whole exponent past `i64` is read as no whole one.
+        (
+            "x := i32 1, n := u64 9223372036854775807, m := n + n, x ^ m",
+            "error.needs_float: a fractional exponent needs a float result",
+        ),
     ] {
         let (code, _, stderr) = run_line(&format!("{body}\n{tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -613,7 +621,7 @@ fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
 fn a_chooser_hands_its_cell_to_a_type_minted_at_run() {
     let src = "mk := fn (t := type ?) -> type ( type ( static parse = ( tape.is_constructed[0] = true ) ) ), \
                c := type ( static parse_rank = fn.parse_rank, static associativity = right, static parse = ( \
-                 if tape[1].type != type error «no», t := type tape[1], tape[0] = mk(t), tape.remove(1) ) ), \
+                 if tape[1].type != type abort «no», t := type tape[1], tape[0] = mk(t), tape.remove(1) ) ), \
                x := type c i32, x";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -651,17 +659,17 @@ fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
         )
     };
     for (src, expect) in [
-        (q("u64", "if not tape[1].dyads[0].type ⊆ u64 error «no», tape[0].v = tape[1].dyads[0] + 1") + ", x := q [5], x.v", "6"),
+        (q("u64", "if not tape[1].dyads[0].type ⊆ u64 abort «no», tape[0].v = tape[1].dyads[0] + 1") + ", x := q [5], x.v", "6"),
         (q("i32", "if tape[1].dyads[1].type == i32 ( tape[0].v = tape[1].dyads[1] * 2 ) else ( tape[0].v = i32 0 )") + ", x := q [5, i32 7], x.v", "14"),
         (q("u8", "if tape[1].dyads[0].type ⊆ u8 ( tape[0].v = tape[1].dyads[0] ) else ( tape[0].v = u8 1 )") + ", x := q [300], x.v", "1"),
-        (q("i32", "mut s := i32 0, for i in 0..tape[1].dyads.size ( if not tape[1].dyads[i].type ⊆ i32 error «no», s = s + tape[1].dyads[i] ), tape[0].v = s") + ", x := q [4, 5, 6], x.v", "15"),
-        (q("u64", "if not tape[1].type ⊆ u64 error «no», tape[0].v = tape[1] * 3") + ", x := q 5, x.v", "15"),
+        (q("i32", "mut s := i32 0, for i in 0..tape[1].dyads.size ( if not tape[1].dyads[i].type ⊆ i32 abort «no», s = s + tape[1].dyads[i] ), tape[0].v = s") + ", x := q [4, 5, 6], x.v", "15"),
+        (q("u64", "if not tape[1].type ⊆ u64 abort «no», tape[0].v = tape[1] * 3") + ", x := q 5, x.v", "15"),
         // A line that is no constant is the line itself, read when the field is.
         (
             "y := i32 3, ".to_owned()
                 + &q(
                     "i32",
-                    "if not tape[1].dyads[0].type ⊆ i32 error «no», tape[0].v = tape[1].dyads[0]",
+                    "if not tape[1].dyads[0].type ⊆ i32 abort «no», tape[0].v = tape[1].dyads[0]",
                 )
                 + ", x := q [y], x.v",
             "3",
@@ -674,7 +682,7 @@ fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
     // A literal that does not fit fails the check.
     let src = q(
         "u64",
-        "if not tape[1].dyads[0].type ⊆ u64 error «not a u64», tape[0].v = tape[1].dyads[0]",
+        "if not tape[1].dyads[0].type ⊆ u64 abort «not a u64», tape[0].v = tape[1].dyads[0]",
     ) + ", x := q [-5]";
     let out = logos().arg(&src).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -693,7 +701,7 @@ fn a_typed_field_read_through_a_name_gives_its_value_on_both_tiers() {
     let f = |ty: &str, body: &str, read: &str| {
         format!("{}, f := fn () -> {ty} ( x := q [5], {read} )", q(ty, body))
     };
-    let checked = "if not tape[1].dyads[0].type ⊆ u64 error «no», tape[0].v = tape[1].dyads[0] + 1";
+    let checked = "if not tape[1].dyads[0].type ⊆ u64 abort «no», tape[0].v = tape[1].dyads[0] + 1";
     for (src, want) in [
         (f("u64", checked, "x.v"), "6"),
         (f("u64", "tape[0].v = 5 + 1", "x.v + x.v"), "12"),
@@ -725,7 +733,7 @@ fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
              static parse_rank = 61, static parse = ( \
                if tape[0].type == type ( tape[0].type = q, tape[0].n = tape[1], tape.remove(1) ) \
                else ( if tape[1].type == square_brackets ( \
-                 if not tape[1].dyads[0].type ⊆ u64 error «no», \
+                 if not tape[1].dyads[0].type ⊆ u64 abort «no», \
                  tape[0] = tape[0].get(tape[1].dyads[0]), tape.remove(1) ) ), \
                tape.is_constructed[0] = true ) ), x := q u64 10, y := q u64 20";
     for (tail, expect) in [
@@ -815,7 +823,10 @@ fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
         format!("{array}, f := fn () -> i32 ( c := array i32 [1, 2], c[5] ), f.compile(), f()");
     let out = logos().arg(&src).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success() && stderr.contains("index out of range"), "stderr: {stderr}");
+    assert!(
+        !out.status.success() && stderr.contains("error.index_out_of_range"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -882,7 +893,10 @@ fn a_call_result_takes_its_index_as_a_name_does() {
     }
     let out = logos().arg(format!("{array}, mk()[2]")).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success() && stderr.contains("index out of range"), "stderr: {stderr}");
+    assert!(
+        !out.status.success() && stderr.contains("error.index_out_of_range"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -1026,10 +1040,10 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{tail}");
     }
     for (tail, expect) in [
-        ("a[3]", "index out of range"),
-        ("i := u64 3, a[i]", "index out of range"),
-        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f(3)", "index out of range"),
-        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f.compile(), f(5)", "index out of range"),
+        ("a[3]", "error.index_out_of_range"),
+        ("i := u64 3, a[i]", "error.index_out_of_range"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f(3)", "error.index_out_of_range"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f.compile(), f(5)", "error.index_out_of_range"),
         ("a[-1]", "the index type is not within the size type"),
         ("a[1.5]", "the index type is not within the size type"),
         ("b := array u8 [1, 300]", "an element does not fit the element type"),
@@ -1183,12 +1197,15 @@ fn an_index_of_any_integer_type_reads_inside_the_array() {
     }
     // A negative value is out of range when the read or the write runs; a literal one at parse.
     for (tail, expect) in [
-        ("i := i32 0 - 1, a[i]", "index out of range"),
-        ("i := i32 0 - 1, a[i] = 4", "index out of range"),
-        ("i := i32 3, a[i]", "index out of range"),
-        ("f := fn (i := i32 ?) -> i32 ( a[i] ), f(0 - 1)", "index out of range"),
-        ("f := fn (i := i32 ?) -> i32 ( a[i] ), f.compile(), f(0 - 1)", "index out of range"),
-        ("f := fn (i := i64 ?) -> void ( a[i] = 1 ), f.compile(), f(0 - 2)", "index out of range"),
+        ("i := i32 0 - 1, a[i]", "error.index_out_of_range"),
+        ("i := i32 0 - 1, a[i] = 4", "error.index_out_of_range"),
+        ("i := i32 3, a[i]", "error.index_out_of_range"),
+        ("f := fn (i := i32 ?) -> i32 ( a[i] ), f(0 - 1)", "error.index_out_of_range"),
+        ("f := fn (i := i32 ?) -> i32 ( a[i] ), f.compile(), f(0 - 1)", "error.index_out_of_range"),
+        (
+            "f := fn (i := i64 ?) -> void ( a[i] = 1 ), f.compile(), f(0 - 2)",
+            "error.index_out_of_range",
+        ),
         ("a[-1]", "the index type is not within the size type"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
@@ -1243,14 +1260,17 @@ fn an_array_element_is_written_where_the_read_finds_it() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{tail}");
     }
     for (tail, expect) in [
-        ("a[3] = 1", "index out of range"),
-        ("i := u64 3, a[i] = 1", "index out of range"),
-        ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f(3)", "index out of range"),
-        ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f.compile(), f(5)", "index out of range"),
+        ("a[3] = 1", "error.index_out_of_range"),
+        ("i := u64 3, a[i] = 1", "error.index_out_of_range"),
+        ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f(3)", "error.index_out_of_range"),
+        (
+            "f := fn (i := u64 ?) -> void ( a[i] = 6 ), f.compile(), f(5)",
+            "error.index_out_of_range",
+        ),
         (
             "f := fn (i := u64 ?) -> i32 ( c := array i32 [1, 2], c[i] = 9, c[i] ), \
              f.compile(), f(2)",
-            "index out of range",
+            "error.index_out_of_range",
         ),
         ("a[0] = i64 4", "these types do not match"),
         ("x := u32 3, a[0] = x", "these types do not match"),
@@ -2198,7 +2218,7 @@ fn an_integer_lies_inside_a_float_that_holds_every_value_of_it() {
 #[test]
 fn a_line_checked_against_a_float_reads_as_that_float() {
     let q = "q := type ( static parse_rank = 60, static parse = ( \
-             if (not tape[1].type ⊆ f64) (error «not within f64»), \
+             if (not tape[1].type ⊆ f64) (abort «not within f64»), \
              print «{tape[1] + 0.5}», tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) )";
     let out = logos().args([&format!("{q}, q (i32 3)")]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -3012,7 +3032,7 @@ fn a_quote_part_of_a_body_that_reads_a_dyad_value_gives_it_when_it_runs() {
         assert_eq!(line(src), want, "{src}");
     }
     let (code, _, stderr) =
-        run_line("f := fn (a := dyad ?) -> void ( error «bad {a + 1}» ), f(i64 5)");
+        run_line("f := fn (a := dyad ?) -> void ( abort «bad {a + 1}» ), f(i64 5)");
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("bad 6"), "stderr: {stderr}");
     // A part that gives nothing is refused when its line is parsed, as it runs.
@@ -3036,7 +3056,7 @@ fn inclusion_the_design_leaves_open_is_a_checked_error() {
 fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
     let q = "q := type ( static size := u64 0, static parse_rank = 60, static parse = ( \
              if (not tape[1].type ⊆ tape[0].size.type) \
-             (error «the index type is not within the size type»), \
+             (abort «the index type is not within the size type»), \
              tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) )";
     let out = logos().args([&format!("{q}, q (u32 3)")]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -3250,7 +3270,7 @@ fn an_inclusion_ends_a_bare_if_condition_as_a_comparison_does() {
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "inside\noutside\n7\n");
     let src =
-        "y := i8 3, if not y.type ⊆ u64\n    error «the index type is not within the size type»";
+        "y := i8 3, if not y.type ⊆ u64\n    abort «the index type is not within the size type»";
     let out = logos().args([src]).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -3289,7 +3309,7 @@ fn a_condition_ending_in_a_member_ends_before_its_body() {
 fn a_quote_shows_a_name_read_through_a_path() {
     let src = "g := ( a := i32 1, b := a + 1, b ), s := g:start.rhs, \
                print «{s.dyads[0].lhs:name} and {s.dyads[1].rhs.lhs:name}», \
-               error «no {s.dyads[0].lhs:name}»";
+               abort «no {s.dyads[0].lhs:name}»";
     let out = logos().args([src]).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout), "a and a\n");
     assert!(String::from_utf8_lossy(&out.stderr).contains("no a"), "{out:?}");
@@ -3636,13 +3656,13 @@ fn a_repl_line_that_faults_keeps_the_end_of_what_it_ended() {
     // Its run freed the value, before the fault or as the fault left: the session neither
     // reads it nor frees it again.
     let (echoes, stderr) =
-        repl(b"a := alloc 1 of i32 5\n( free a, error \xc2\xabx\xc2\xbb )\na@\n");
+        repl(b"a := alloc 1 of i32 5\n( free a, abort \xc2\xabx\xc2\xbb )\na@\n");
     assert!(echoes.is_empty(), "{echoes:?} stderr: {stderr}");
     assert!(stderr.contains("`a` is dead here"), "stderr: {stderr}");
     let lines = BOX.replacen("), box := ", ")\nbox := ", 1);
-    let g = "g := fn () -> i32 ( error «x» )\nc := i32 1";
+    let g = "g := fn () -> i32 ( abort «x» )\nc := i32 1";
     for tail in
-        ["( free a, error «x» )", "if (c == 1) ( free (g()), free a )", "if (g() == 1) ( free a )"]
+        ["( free a, abort «x» )", "if (c == 1) ( free (g()), free a )", "if (g() == 1) ( free a )"]
     {
         let (echoes, stderr) =
             repl(format!("{lines}\n{g}\na := box (1, 2)\n{tail}\na.size\n").as_bytes());
@@ -3661,7 +3681,7 @@ fn a_failed_repl_line_keeps_the_ends_its_pass_ran() {
     // A parse error after the pass ran the `free` keeps the name ended; a fault the pass
     // meets before the `free` ran leaves it to the session.
     let bag = "bag := type ( pub mut n := i32 ?, static free = ( print «freed {n}» ) )";
-    let fns = "g := fn () -> i32 ( error «x» )\nh := fn () -> i32 ( 1 )";
+    let fns = "g := fn () -> i32 ( abort «x» )\nh := fn () -> i32 ( 1 )";
     let (echoes, stderr) = repl(
         format!("{bag}\n{fns}\n")
             + "a := bag(1)\n( free a, n := immediate h(), nosuch )\na.n\n\
@@ -3675,7 +3695,7 @@ fn a_failed_repl_line_keeps_the_ends_its_pass_ran() {
 fn a_fault_in_the_pass_frees_what_a_nested_line_ended_once() {
     // The scope that holds the name decides, from the lines the pass ran.
     let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), \
-               g := fn () -> i32 ( error «x» ), h := fn () -> i32 ( 1 ), a := bag(1)";
+               g := fn () -> i32 ( abort «x» ), h := fn () -> i32 ( 1 ), a := bag(1)";
     for tail in [
         "x := ( free a, n := immediate g(), 1 )",
         "y := g(), x := ( m := i32 1, free a, n := immediate h(), 1 )",
@@ -3830,7 +3850,7 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
     let tail = "tape.remove(1), tape.is_constructed[0] = true ) )";
     // After a raising `!=` check, for the rest of the scope; inside an `==` branch.
     for (check, arg) in [
-        ("if tape[1].type != type error «no», t := type tape[1], print «{g(t) == i64}»,", "i64"),
+        ("if tape[1].type != type abort «no», t := type tape[1], print «{g(t) == i64}»,", "i64"),
         ("if tape[1].type == type ( print «{g(tape[1]) == i64}» ),", "i64"),
         ("if tape[1].type != type ( print «no» ) else print «{g(tape[1]) == u8}»,", "u8"),
     ] {
@@ -3845,7 +3865,7 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
     // a type passes, and anything else is refused where it is written.
     let unchecked = "u := type g(tape[1]), print «{u == i32}»,";
     let outside = "if tape[1].type == type print «x», u := type g(tape[1]), print «{u == i32}»,";
-    let edited = "if tape[1].type != type error «no», tape.remove(1), u := type g(tape[1]),";
+    let edited = "if tape[1].type != type abort «no», tape.remove(1), u := type g(tape[1]),";
     for (body, arg, refused) in [
         (unchecked, "i32", None),
         (outside, "i32", None),
@@ -3870,7 +3890,7 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
     // A loop edits the tape after the read was checked: the read checks again when it runs.
     let src = format!(
         "{g}, r := type ( static parse_rank = fn.parse_rank, static parse = ( \
-         if tape[1].type != type error «no», mut i := i32 0, \
+         if tape[1].type != type abort «no», mut i := i32 0, \
          while i < 2 ( u := type g(tape[1]), tape.remove(1), i = i + 1 ), \
          tape.is_constructed[0] = true ) ), r i32 [1]"
     );
@@ -4495,7 +4515,7 @@ fn a_return_hands_the_call_its_operand_as_the_last_line_does() {
             "1 2\n",
         ),
         (
-            "f := fn (c := bool ?) -> i32 ( return if c (error «no») else (i32 2) ), print «{f(false)}»",
+            "f := fn (c := bool ?) -> i32 ( return if c (abort «no») else (i32 2) ), print «{f(false)}»",
             "2\n",
         ),
     ] {
@@ -4544,12 +4564,14 @@ fn the_echo_reads_the_tail_value_as_any_use_does() {
 
 #[test]
 fn an_arm_that_gives_nothing_is_refused_whatever_it_ends_in() {
-    for arm in ["error «no»", "print «b»"] {
+    for arm in ["abort «no»", "print «b»"] {
         let (code, stdout, stderr) = run_line(&format!("c := true, x := if c (1) else ({arm}), x"));
         assert_eq!(code, Some(1), "{arm}");
         assert_eq!(stdout, "", "{arm}");
         assert!(
-            stderr.contains("this arm gives nothing (a statement, a `return` or an `error`"),
+            stderr.contains(
+                "this arm gives nothing (a statement, a `return`, an `error` or an `abort`"
+            ),
             "{arm}: stderr: {stderr}"
         );
     }
@@ -4849,7 +4871,7 @@ fn an_element_has_an_address_and_taking_it_checks_the_index() {
     ] {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-        assert!(stderr.contains("index out of range"), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("error.index_out_of_range"), "{src}: stderr: {stderr}");
     }
     let (echoes, stderr) = repl(b"a := alloc 1 of i32 3\np := &(a@)\np@ = 9\na@\n");
     assert_eq!(echoes, ["9"], "stderr: {stderr}");
@@ -5027,7 +5049,7 @@ fn an_operator_reads_through_a_dyad_no_name_holds() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
-    let (code, stdout, stderr) = run_line(&format!("{calls}, error «{{h()}} {{g() + 1}}»"));
+    let (code, stdout, stderr) = run_line(&format!("{calls}, abort «{{h()}} {{g() + 1}}»"));
     assert_eq!((code, stdout.as_str()), (Some(1), "h\ng\n"), "stderr: {stderr}");
     assert!(stderr.contains("1 3"), "stderr: {stderr}");
     // A name read before the call is read before the call writes it.
@@ -5322,6 +5344,7 @@ fn a_word_that_finds_nothing_to_its_right_stands_as_its_own_value() {
         "lex",
         "file",
         "error",
+        "abort",
         "regex",
         "import",
         "logos",
@@ -5426,7 +5449,7 @@ fn a_parse_written_in_logos_that_finds_nothing_to_consume_declines() {
             assert_eq!(line(&src), "3", "{src}");
         }
     }
-    let fails = mk(" else ( error «mk takes an i32 to its left» )");
+    let fails = mk(" else ( abort «mk takes an i32 to its left» )");
     assert_eq!(line(&format!("{fails}, y := i32 3, (y mk).a")), "3");
     for src in [format!("{fails}, {f}, f(mk)"), format!("{fails}, y := f64 3.0, y mk")] {
         let (code, _, stderr) = run_line(&src);
@@ -5936,7 +5959,7 @@ fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
     // The escapes are applied before the pattern is read, so `5\.k` is no longer its spelling.
     let (_, _, stderr) = run_line("regex «[0-9]+\\\\.k» := type (), (5\\.k).type == type");
     assert!(stderr.contains("1:34: error: unknown name `\\`"), "{stderr}");
-    let (_, _, stderr) = run_line("error «{«a»}»");
+    let (_, _, stderr) = run_line("abort «{«a»}»");
     assert!(stderr.contains("run error: a"), "{stderr}");
     // The quote holds `a «b» c` whole.
     let (code, stdout, stderr) = run_line("s := «a «b» c», print «{s}»");
@@ -6214,7 +6237,7 @@ fn a_body_lexed_once_holds_the_scopes_of_its_quotes() {
         assert_eq!(code, Some(0), "{src}: {stderr}");
         assert!(stdout.starts_with(printed), "{src}: {stdout} {stderr}");
     }
-    let (_, _, stderr) = run_line(&run_body("error «a is {a}»"));
+    let (_, _, stderr) = run_line(&run_body("abort «a is {a}»"));
     assert!(stderr.contains("run error: a is 3"), "{stderr}");
 }
 
@@ -6334,56 +6357,324 @@ fn a_text_node_and_a_place_of_text_read_as_the_node() {
 }
 
 #[test]
-fn error_aborts_the_run_with_its_message() {
-    let out = logos()
-        .arg(
-            "f := fn (x := i32 ?) -> i32 ( if (x > 2) (error «too big: {x}») else (x) ), \
-             print «{f(1)}», free (f(5)), print «never»",
-        )
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1), "a plain failure exit, not a signal");
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("run error: too big: 5"), "stderr: {stderr}");
+fn abort_ends_the_run_with_its_message() {
+    // On both tiers, each scope it leaves ended as at its end.
+    for compile in ["", "f.compile(), "] {
+        let (code, stdout, stderr) = run_line(&format!(
+            "bag := type ( pub mut n := i32 ?, static free = ( print «freed {{n}}» ) ), \
+             f := fn (x := i32 ?) -> i32 ( b := bag(x), defer print «bye», \
+             if (x > 2) (abort «too big: {{x}}») else (x) ), \
+             {compile}print «{{f(1)}}», free (f(5)), print «never»"
+        ));
+        assert_eq!(code, Some(1), "{compile}a plain failure exit, not a signal");
+        assert_eq!(stdout, "bye\nfreed 1\n1\nbye\nfreed 5\n", "{compile}stderr: {stderr}");
+        assert!(stderr.contains("run error: too big: 5"), "{compile}stderr: {stderr}");
+    }
 
-    let out = logos().arg("t := type (static parse = (error «not here»)), t").output().unwrap();
+    let out = logos().arg("t := type (static parse = (abort «not here»)), t").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("not here"), "stderr: {stderr}");
 
-    let (echoes, stderr) = repl("error «boom»\nerror 5\n1 + 1\n".as_bytes());
+    let (echoes, stderr) = repl("abort «boom»\nabort 5\n1 + 1\n".as_bytes());
     assert_eq!(echoes, ["2"], "stderr: {stderr}");
     assert!(stderr.contains("run error: boom"), "stderr: {stderr}");
-    assert!(stderr.contains("`error` must be followed by a «…» quote"), "stderr: {stderr}");
+    assert!(stderr.contains("`abort` must be followed by a «…» quote"), "stderr: {stderr}");
 }
 
 #[test]
-fn error_interpolates_braces_exactly_as_print_does() {
-    let out = logos()
-        .arg(
-            "n := 3, f := fn (i := i32 ?) -> i32 ( if (i >= n) (error «index {i} is past {n - 1}») else (i) ), \
-             free (f(1)), f(4)",
-        )
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("run error: index 4 is past 2"), "stderr: {stderr}");
+fn abort_and_a_raise_read_braces_exactly_as_print_does() {
+    // ›`error.X «…»` reads `{…}` exactly as `print «…»` does‹ [[R147]], and `abort «…»` with it.
+    let category = "error.past := «an index past the end»";
+    for (word, shown) in [("abort", ""), ("error.past", "error.past: ")] {
+        let (code, _, stderr) = run_line(&format!(
+            "{category}, n := 3, \
+             f := fn (i := i32 ?) -> i32 ( if (i >= n) ({word} «index {{i}} is past {{n - 1}}») else (i) ), \
+             free (f(1)), f(4)"
+        ));
+        assert_eq!(code, Some(1), "{word}");
+        assert!(
+            stderr.contains(&format!("run error: {shown}index 4 is past 2")),
+            "{word}: {stderr}"
+        );
 
-    let out = logos().arg("error «{1 < 2} {f64 5.5} \\{x\\}»").output().unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("run error: true 5.5 {x}"), "stderr: {stderr}");
+        let (_, _, stderr) =
+            run_line(&format!("{category}, {word} «{{1 < 2}} {{f64 5.5}} \\{{x\\}}»"));
+        assert!(stderr.contains(&format!("run error: {shown}true 5.5 {{x}}")), "{word}: {stderr}");
 
-    for (src, message) in [
-        ("error «{x»", "this `{` has no `}`"),
-        ("error «x}»", "this `}` closes no `{`"),
-        ("error «{nope}»", "unknown name `nope`"),
-    ] {
-        let out = logos().arg(src).output().unwrap();
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains(message), "{src}: {stderr}");
+        let (_, _, stderr) = run_line(&format!(
+            "{category}, f := fn (i := i32 ?, n := i32 ?) -> i32 ( if (i >= n) \
+             ({word} «{{i}} is past {{n - 1}}, {{1 < 2}} {{f64 5.5}} \\{{x\\}}») else (i) ), \
+             f.compile(), f(4, 3)"
+        ));
+        let compiled = format!("run error: {shown}4 is past 2, true 5.5 {{x}}");
+        assert!(stderr.contains(&compiled), "{word}: {stderr}");
+
+        for (quote, message) in [
+            ("«{x»", "this `{` has no `}`"),
+            ("«x}»", "this `}` closes no `{`"),
+            ("«{nope}»", "unknown name `nope`"),
+        ] {
+            let (_, _, stderr) = run_line(&format!("{category}, {word} {quote}"));
+            assert!(stderr.contains(message), "{word} {quote}: {stderr}");
+        }
     }
+}
+
+/// ›Error values are in v0.1.0; an error names a category, which is a scoped name‹ [[R143]] and
+/// ›A raise is `error.X «message»`; the error value is an array with one element per hop‹
+/// [[R144]]: a raise over a declared category is a fault that names it, while nothing takes an
+/// error value, on both tiers, each scope it leaves ended as at its end.
+#[test]
+fn a_raise_over_a_declared_category_is_a_fault_naming_it() {
+    let x = "error.x := «a description»";
+    let bag = "bag := type ( pub mut n := i32 ?, static free = ( print «freed {n}» ) )";
+    let mut cases = vec![
+        (format!("{x}, error.x «msg»"), "", "error.x: msg"),
+        (format!("{x}, n := i32 4, error.x «bad {{n}}»"), "", "error.x: bad 4"),
+        // In a `run` body, over a category of the type's scope and over one of its own.
+        (
+            format!(
+                "{x}, probe := type ( v := i32 ?, \
+                 static run = ( error.own := «its own», if v == 0 ( error.own «zero» ), error.x «{{v}}» ), \
+                 static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = probe, \
+                 tape[0].v = 7, tape.is_constructed[0] = true ) ), probe"
+            ),
+            "",
+            "error.x: 7",
+        ),
+        ("error.not := «d», error.not «a word's spelling»".to_string(), "", "error.not: a word's"),
+        (
+            format!("{x}, f := fn (a := dyad ?) -> void ( error.x «bad {{a + 1}}» ), f(i64 5)"),
+            "",
+            "error.x: bad 6",
+        ),
+        (
+            format!("{x}, {bag}, b := bag(3), defer print «bye», error.x «stop {{b.n}}»"),
+            "bye\nfreed 3\n",
+            "error.x: stop 3",
+        ),
+    ];
+    for compile in ["", "f.compile(), "] {
+        for (f, call, stdout, error) in [
+            ("f := fn (n := i32 ?) -> i32 ( if n == 0 ( error.x «zero {n}» ), n )", "f(0)", "", "error.x: zero 0"),
+            (
+                "f := fn (n := i32 ?) -> i32 ( error.y := «inner», if n == 0 ( error.y «zero {n}» ), n )",
+                "f(0)",
+                "",
+                "error.y: zero 0",
+            ),
+            (
+                "f := fn (c := bool ?) -> i32 ( if c (error.x «no») else (i32 2) )",
+                "print «{f(false)}», f(true)",
+                "2\n",
+                "error.x: no",
+            ),
+            (
+                "f := fn (k := i32 ?) -> i32 ( b := bag(4), defer print «bye», \
+                 for i in 0..3 ( if i == k ( error.x «at {i}» ) ), k )",
+                "f(1)",
+                "bye\nfreed 4\n",
+                "error.x: at 1",
+            ),
+        ] {
+            cases.push((format!("{x}, {bag}, {f}, {compile}{call}"), stdout, error));
+        }
+        let runs = format!(
+            "{x}, f := fn (n := i32 ?) -> i32 ( if n == 0 ( error.x «zero» ), n ), {compile}f(2)"
+        );
+        assert_eq!(line(&runs), "2", "{runs}");
+    }
+    for (src, stdout, error) in cases {
+        let (code, out, stderr) = run_line(&src);
+        assert_eq!((code, out.as_str()), (Some(1), stdout), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("run error: {error}")), "{src}: stderr: {stderr}");
+    }
+    // A failed REPL line takes its category back, as it does every name it declared.
+    let (echoes, stderr) = repl(
+        "error.x := «d», abort «boom»\nerror.x «again»\nerror.x := «d»\nerror.x «now»\n1 + 1\n",
+    );
+    assert_eq!(echoes, ["2"], "stderr: {stderr}");
+    for message in ["run error: boom", "unknown category `error.x`", "run error: error.x: now"] {
+        assert!(stderr.contains(message), "{message}: stderr: {stderr}");
+    }
+}
+
+/// R143: «An unknown category in a raise is the checked error», a category being a name of the
+/// scope its declaration stands in, declared once in reach; its line is a declaration that takes
+/// a description and no gate word.
+#[test]
+fn a_category_is_known_only_in_reach_of_its_declaration() {
+    let unknown = |name: &str| {
+        format!("unknown category `{name}`: declare it with `{name} := «description»`")
+    };
+    let shadowed = "the category `error.x` is already declared and still in scope: a category is \
+                    declared once where it can be seen, and it lasts as long as its scope";
+    let alone = "`error.x` is a category, a name with no value to read: raise it with \
+                 `error.x «message»`";
+    let apart = "a category's name is one word: write `error.x`, with no space inside it";
+    for (src, message) in [
+        ("error.x «msg»", unknown("error.x")),
+        (
+            "f := fn (n := i32 ?) -> i32 ( error.y := «inner», n ), free (f(1)), error.y «out»",
+            unknown("error.y"),
+        ),
+        ("( error.x := «d» ), error.x «out of its bracket»", unknown("error.x")),
+        (
+            "f := fn () -> void ( error.late «early» ), error.late := «declared after», f()",
+            unknown("error.late"),
+        ),
+        // A name is its whole spelling: a longer or a shorter one is another.
+        ("error.x := «d», error.xy «longer»", unknown("error.xy")),
+        ("error.xy := «d», error.x «shorter»", unknown("error.x")),
+        ("error.x := «d», error.x := «e», 0", shadowed.to_string()),
+        ("error.x := «d», f := fn () -> i32 ( error.x := «e», 1 ), f()", shadowed.to_string()),
+        // A category is no value: nothing reads it, ends it or takes its address.
+        ("error.x := «d», error.x", alone.to_string()),
+        ("error.x := «d», y := error.x, 0", alone.to_string()),
+        ("error.x := «d», free error.x", alone.to_string()),
+        ("error.x := «d», error.x.type", alone.to_string()),
+        ("error . x := «d», 0", apart.to_string()),
+        ("error.x := «d», error . x «spaced»", apart.to_string()),
+        ("error.x := 5, 0", "`error.X :=` must be followed by a «…» quote".to_string()),
+        (
+            "pub error.x := «d», 0",
+            "a gate word (`pub`, `mut`, `immut`, `static`) must be followed by a declaration".to_string(),
+        ),
+        (
+            "error.x := «d», y := error.x «boom», 0",
+            "this gives nothing, and a value is needed here".to_string(),
+        ),
+        (
+            "error.x := «d», f := fn () -> i32 ( error.x «boom», 1 ), f()",
+            "this line never runs: the line before it always leaves, with a `return`, an `error` or an `abort`"
+                .to_string(),
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("error: {message}")), "{src}: stderr: {stderr}");
+    }
+    // Any other `.` after `error` is a read of `error` itself.
+    assert_eq!(line("error.type"), "type");
+    // A scope that ended took its category with it, so the name is free again.
+    let (_, _, stderr) = run_line("( error.x := «d» ), error.x := «again», error.x «second»");
+    assert!(stderr.contains("run error: error.x: second"), "stderr: {stderr}");
+}
+
+/// ›Error values are in v0.1.0; an error names a category, which is a scoped name‹ [[R143]]: a
+/// category is found as every name is, so a body held where it is written and built later sees
+/// the categories a name there would see: those declared before it, and its own.
+#[test]
+fn a_held_body_sees_a_category_as_it_sees_a_name() {
+    let pick = "pick := fn (n := i32 ?) -> type ( if n == 1 (i64) else (i32) )";
+    let probe = "static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = probe, \
+                 tape[0].v = 7, tape.is_constructed[0] = true )";
+    // Each kind of held body, `USE` where it reads, and the line that builds it.
+    let bodies = [
+        (
+            format!("{pick}, f := fn (n := i32 ?) -> i32 ( mut u := pick(n), u = 5, if u > 3 ( USE ), 0 )"),
+            "f(1)",
+        ),
+        (
+            "mk := fn (t := type ?) -> type ( type ( static parse = ( if tape[1].type != void ( USE ), \
+             tape.is_constructed[0] = true ) ) )"
+                .to_string(),
+            "c := type mk(i32), c 5",
+        ),
+        (format!("probe := type ( v := i32 ?, static run = ( USE ), {probe} )"), "probe"),
+        (
+            "t := type ( static parse_rank = fn.parse_rank, static parse = ( USE ) )".to_string(),
+            "t",
+        ),
+    ];
+    for (body, build) in bodies {
+        // The ordinary name, then the category.
+        for (declare, reads, unknown) in [
+            ("late := i32 1", "print «seen {late}»", "unknown name `late`"),
+            ("error.late := «d»", "error.late «seen 1»", "unknown category `error.late`"),
+        ] {
+            let body = body.replace("USE", reads);
+            let after = format!("{body}, {declare}, {build}");
+            let (code, stdout, stderr) = run_line(&after);
+            assert_eq!((code, stdout.as_str()), (Some(1), ""), "{after}: stderr: {stderr}");
+            assert!(stderr.contains(&format!("error: {unknown}")), "{after}: stderr: {stderr}");
+            let before = format!("{declare}, {body}, {build}");
+            let (_, stdout, stderr) = run_line(&before);
+            assert!(format!("{stdout}{stderr}").contains("seen 1"), "{before}: stderr: {stderr}");
+            assert!(!stderr.contains("unknown"), "{before}: stderr: {stderr}");
+        }
+    }
+    // A held body's own category is one it sees, each time it is built.
+    let (_, _, stderr) = run_line(
+        "f := fn (a := dyad ?) -> void ( error.own := «its own», if a == 0 ( error.own «bad {a + 1}» ) ), \
+         f(i64 5), f(i32 0)",
+    );
+    assert!(stderr.contains("run error: error.own: bad 1"), "stderr: {stderr}");
+}
+
+/// ›There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`‹ [[R145]]:
+/// «Every error carries a category», so `error` followed by anything but a category is refused
+/// where it is written, run or not.
+#[test]
+fn a_bare_error_is_refused_where_it_is_written() {
+    for (src, at) in [
+        ("error «msg»", "1:1"),
+        ("error 5", "1:1"),
+        ("error. := «d», 0", "1:1"),
+        ("f := fn () -> i32 ( error «boom» ), 0", "1:21"),
+        ("x := i32 2, if x == 1 ( error «one» ), 0", "1:25"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        let message = format!(
+            "<command line>:{at}: error: an error needs a category: write `error.x «…»` over a category \
+             declared with `error.x := «description»`, or `abort «…»` to stop the program"
+        );
+        assert!(stderr.contains(&message), "{src}: stderr: {stderr}");
+    }
+}
+
+/// R143: «`error.X` declared in two libraries are two identities […]; categories live in the
+/// declaring library's scope, never in one global set.»
+#[test]
+fn two_files_that_name_a_category_alike_hold_two() {
+    let both = "import file «tests/fixtures/category_http.logos», \
+                import file «tests/fixtures/category_fs.logos»";
+    let not_found = "unknown category `error.not_found`";
+    for compile in ["", "fetch.compile(), open.compile(), "] {
+        for (tail, stdout, error) in [
+            (
+                "print «{open(3)} {fetch(200)}», fetch(404)",
+                "3 200\n",
+                "run error: error.not_found: http 404",
+            ),
+            ("open(-1)", "", "run error: error.not_found: fs -1"),
+            // The importer reaches neither, a category being no `pub` name, and may name its own.
+            ("error.not_found «mine»", "", not_found),
+            (
+                "error.not_found := «my own», free (fetch(200)), error.not_found «mine»",
+                "",
+                "run error: error.not_found: mine",
+            ),
+        ] {
+            let src = format!("{both}, {compile}{tail}");
+            let (code, out, stderr) = run_line(&src);
+            assert_eq!((code, out.as_str()), (Some(1), stdout), "{src}: stderr: {stderr}");
+            assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+        }
+    }
+    // A member name is read by its spelling: after a `.`, `error` wakes no parse of its own, and
+    // a member's name holds no `.`, so a category in reach is not read there either.
+    for mine in ["", "error.not_found := «mine», "] {
+        let (_, _, stderr) = run_line(&format!(
+            "{mine}h := logos file «tests/fixtures/category_http.logos», h.error.not_found «x»"
+        ));
+        assert!(stderr.contains("the file has no `pub` name `error`"), "{mine}stderr: {stderr}");
+    }
+    let (_, _, stderr) =
+        run_line("error.x := «d», pt := type ( pub a := i32 ? ), p := pt(1), p.error.x");
+    assert!(stderr.contains("`error` is not in scope here"), "stderr: {stderr}");
 }
 
 #[test]
@@ -6984,7 +7275,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         (
             "q := type ( v := u64 ?, static output_type := type u64, static run = ( v ), \
              static parse_rank = 61, static parse = ( tape[0].type = q, \
-             if not tape[1].dyads[0].type ⊆ u64 error «no», tape[0].v = tape[1].dyads[0] + 1, \
+             if not tape[1].dyads[0].type ⊆ u64 abort «no», tape[0].v = tape[1].dyads[0] + 1, \
              tape.remove(1), tape.is_constructed[0] = true ) ), q [5]"
                 .to_string(),
             "6",
@@ -7122,7 +7413,7 @@ box := type ( \
     static parse = ( \
         if tape[1].type == scope ( \
             for i in 0..tape[1].dyads.size ( \
-                if not (tape[1].dyads[i].type ⊆ i32) error «not an i32» \
+                if not (tape[1].dyads[i].type ⊆ i32) abort «not an i32» \
             ), \
             tape[0].type = box, \
             tape[0].elements = tape[1], \
@@ -7265,10 +7556,10 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
         assert_eq!(stdout, printed, "{src}");
     }
     // A fault in the callee, or in a later argument, ends what the call holds, on either tier.
-    let raise = "f := fn (q := box ?) -> i32 ( error «boom» )";
+    let raise = "f := fn (q := box ?) -> i32 ( abort «boom» )";
     let nan = "f := fn (q := box ?, x := f64 ?) -> i32 ( i32 lossy (x) ), f.compile()";
     let later =
-        "f2 := fn (q := box ?, n := i32 ?) -> i32 ( 1 ), g := fn () -> i32 ( error «boom» )";
+        "f2 := fn (q := box ?, n := i32 ?) -> i32 ( 1 ), g := fn () -> i32 ( abort «boom» )";
     for (tail, expect) in [
         (format!("{later}, f2(box (1, 2), g())"), "boom"),
         (format!("{later}, b := box (1, 2), f2(move b, g())"), "boom"),
@@ -7343,28 +7634,28 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
     let array = "import file «./identities/array.logos»";
     for (tail, printed, error) in [
         (
-            "f := fn () -> i32 ( a := box (1, 2), defer print «bye», error «stop» ), f()",
+            "f := fn () -> i32 ( a := box (1, 2), defer print «bye», abort «stop» ), f()",
             "bye\nfree\n",
             "stop",
         ),
-        ("a := box (1, 2), defer print «bye», error «stop»", "bye\nfree\n", "stop"),
+        ("a := box (1, 2), defer print «bye», abort «stop»", "bye\nfree\n", "stop"),
         // Only what was declared before the fault ends.
-        ("a := box (1, 2), error «stop», b := box (3, 4), print «never»", "free\n", "stop"),
+        ("a := box (1, 2), abort «stop», b := box (3, 4), print «never»", "free\n", "stop"),
         // The arm that did not move the name frees it on the fault's way out.
         (
-            "c := i32 0, a := box (1, 2), if (c == 1) ( b := move a ) else ( error «stop» ), 1",
+            "c := i32 0, a := box (1, 2), if (c == 1) ( b := move a ) else ( abort «stop» ), 1",
             "free\n",
             "stop",
         ),
-        ("f := fn () -> i32 ( ( a := box (1, 2), error «in» ) ), f()", "free\n", "in"),
+        ("f := fn () -> i32 ( ( a := box (1, 2), abort «in» ) ), f()", "free\n", "in"),
         // Lines the pass ran early, in a block the fault unwinds.
         (
-            "g := fn () -> i32 ( error «stop» ), x := ( a := box (1, 2), n := immediate g(), 1 ), 1",
+            "g := fn () -> i32 ( abort «stop» ), x := ( a := box (1, 2), n := immediate g(), 1 ), 1",
             "free\n",
             "stop",
         ),
         (
-            "g := fn () -> i32 ( error «stop» ), \
+            "g := fn () -> i32 ( abort «stop» ), \
              x := ( a := box (1, 2), free a, n := immediate g(), 1 ), 1",
             "free\n",
             "stop",
@@ -7373,7 +7664,7 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
             "f := fn (n := i32 ?) -> i32 ( a := box (1, 2), b := array i32 [1, 2], b[n] ), \
              f.compile(), f(5)",
             "free\n",
-            "index out of range",
+            "error.index_out_of_range",
         ),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
@@ -7387,7 +7678,7 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
     // The stopped function's `defer` runs, the line after the fault does not.
     let (echoes, stderr) = repl(
         "p := alloc 1 of i32 5\n\
-         g := fn () -> i32 ( error «stop» )\n\
+         g := fn () -> i32 ( abort «stop» )\n\
          f := fn () -> i32 ( defer (p@ = p@ + 100), free (g()), p@ = 9, 1 )\n\
          f()\n\
          p@\n"
@@ -7400,7 +7691,7 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
 #[test]
 fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
     let nan = "a float that is not a number (NaN)";
-    let range = "index out of range";
+    let range = "error.index_out_of_range";
     let checked = "import file «./identities/array.logos», \
          h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
          bag := type ( mut v := f64 ?, static free = ( print «freed {h(v)}» ) ), z := f64 0.0";
@@ -7460,7 +7751,7 @@ fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
 #[test]
 fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
     let nan = "a float that is not a number (NaN)";
-    let range = "index out of range";
+    let range = "error.index_out_of_range";
     let checked = "import file «./identities/array.logos», \
          h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
          bag := type ( mut v := f64 ?, static free = ( print «freed {h(v)}» ) ), z := f64 0.0";
@@ -7589,7 +7880,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         // A node the failing line ended and did not reach is freed, one it reached is not.
         (
             format!(
-                "{BOX}, f := fn () -> i32 ( error «stop» ), \
+                "{BOX}, f := fn () -> i32 ( abort «stop» ), \
                  g := fn () -> i32 ( a := box (1, 2), x := f() + (free a, i32 1), x )"
             ),
             "print «before», g()",
@@ -7598,7 +7889,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         ),
         (
             format!(
-                "{BOX}, f := fn () -> i32 ( error «stop» ), \
+                "{BOX}, f := fn () -> i32 ( abort «stop» ), \
                  g := fn () -> i32 ( a := box (1, 2), x := (free a, i32 1) + f(), x )"
             ),
             "print «before», g()",
@@ -8018,7 +8309,7 @@ fn a_line_frees_what_it_made_where_it_ends() {
     ] {
         let (code, stdout, stderr) = run_line(&format!("{sized}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(1), "free 2\n"), "{tail}: stderr: {stderr}");
-        assert!(stderr.contains("index out of range"), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("error.index_out_of_range"), "{tail}: stderr: {stderr}");
     }
 }
 
@@ -8067,7 +8358,7 @@ fn what_a_part_the_pass_ran_early_made_ends_where_its_line_ends() {
     ] {
         let (code, stdout, stderr) = run_line(&format!("{sized}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(1), "two\nfree 2\n"), "{tail}: stderr: {stderr}");
-        assert!(stderr.contains("index out of range"), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("error.index_out_of_range"), "{tail}: stderr: {stderr}");
     }
 }
 
@@ -8233,7 +8524,7 @@ fn free_of_a_cell_runs_the_free_of_the_record_it_holds() {
 /// place never written frees nothing, and a copy is a block of its own, on both tiers.
 #[test]
 fn a_value_whose_type_fills_free_lives_behind_a_pointer() {
-    let g = "g := fn () -> i32 ( error «stop» ), k := fn (q := @bag ?) -> i32 ( q@.n )";
+    let g = "g := fn () -> i32 ( abort «stop» ), k := fn (q := @bag ?) -> i32 ( q@.n )";
     let fails = "f := fn () -> i32 ( a := bag(1), x := ( free a, g() ), x )";
     let mut faults = vec![
         (format!("{g}, a := bag(1), x := immediate ( free a, g() ), 1"), "freed 1\n"),
@@ -8748,7 +9039,7 @@ fn a_defer_holds_no_return_and_gives_no_value() {
 
 #[test]
 fn a_line_that_fails_frees_a_node_it_ended_and_did_not_reach() {
-    let g = "g := fn () -> i32 ( error «stop» )";
+    let g = "g := fn () -> i32 ( abort «stop» )";
     for line in [
         "x := g() + (free a, i32 1)",
         "x := (free a, i32 1) + g()",
@@ -9190,7 +9481,7 @@ fn free_of_an_element_runs_its_free_there_and_the_array_skips_it() {
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stdout: {stdout}");
-        assert!(stderr.contains("index out of range"), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("error.index_out_of_range"), "{tail}: stderr: {stderr}");
     }
     for (tail, printed) in [
         ("a := array i32 [1, 2], free (a[0]), a[0]", "1\n"),
@@ -11082,8 +11373,8 @@ fn a_failed_repl_line_leaves_no_trace() {
     let bag = "bag := type ( pub mut n := i32 ?, static free = ( print «freed {n}» ) )";
     let (echoes, stderr) = repl(
         format!("{bag}\n")
-            + "c := bag(7), error «boom»\nc\nk := bag(1)\nfree k, error «x»\n\
-               m := bag(2)\nerror «y», free m\nprint «{m.n}»\n",
+            + "c := bag(7), abort «boom»\nc\nk := bag(1)\nfree k, abort «x»\n\
+               m := bag(2)\nabort «y», free m\nprint «{m.n}»\n",
     );
     assert_eq!(echoes, ["freed 7", "freed 1", "2", "freed 2"], "stderr: {stderr}");
     assert!(stderr.contains("<repl>: run error: boom"), "stderr: {stderr}");
@@ -11099,35 +11390,35 @@ fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
     // Neither a fault, a failed parse after the import, nor a `free` the line parsed and never
     // ran ends the file: the session does, once.
     for failing in [
-        format!("{held}, error «boom»"),
+        format!("{held}, abort «boom»"),
         format!("{held}, zz"),
-        format!("{held}, error «boom», free h"),
+        format!("{held}, abort «boom», free h"),
         format!("{held}, free h, zz"),
     ] {
         let (echoes, stderr) = repl(format!("{failing}\n{held}\n") + "print «{h.n}»\n");
         assert_eq!(echoes, ["9", "freed 9"], "{failing}: stderr: {stderr}");
     }
     // A `free` the line ran before its fault ended the value there.
-    let (echoes, stderr) = repl(format!("{held}, free h, error «boom»\n1\n").as_bytes());
+    let (echoes, stderr) = repl(format!("{held}, free h, abort «boom»\n1\n").as_bytes());
     assert_eq!(echoes, ["freed 9", "1"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        "import file «./tests/fixtures/owning_pub.logos», error «boom»\n\
+        "import file «./tests/fixtures/owning_pub.logos», abort «boom»\n\
           import file «./tests/fixtures/owning_pub.logos», p@\n",
     );
     assert_eq!(echoes, ["7"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        "import file «./tests/fixtures/counter.logos», error «boom»\n\
+        "import file «./tests/fixtures/counter.logos», abort «boom»\n\
           import file «./tests/fixtures/counter.logos»\nc@\n",
     );
     assert_eq!(echoes, ["1"], "stderr: {stderr}");
     // The line's own holds still end at its fault, and the names it published roll back.
     let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
-    let line_holds = format!("c := bag(1), {held}, d := bag(2), error «boom»");
+    let line_holds = format!("c := bag(1), {held}, d := bag(2), abort «boom»");
     let (echoes, stderr) = repl(format!("{bag}\n{line_holds}\nh.n\n").as_bytes());
     assert_eq!(echoes, ["freed 2", "freed 1", "freed 9"], "stderr: {stderr}");
     assert!(stderr.contains("`h` is not in scope here"), "stderr: {stderr}");
     // On the command line the run ends at the fault, and the file with it.
-    let (code, stdout, _) = run_line("import file «./tests/fixtures/deferring.logos», error «x»");
+    let (code, stdout, _) = run_line("import file «./tests/fixtures/deferring.logos», abort «x»");
     assert_eq!((code, stdout.as_str()), (Some(1), "file ends\n"));
 }
 
@@ -11149,7 +11440,7 @@ fn a_quote_s_braces_are_a_scope_whose_text_is_its_tail() {
     ] {
         assert_eq!(run_line(src), (Some(0), printed.to_string(), String::new()), "{src:?}");
     }
-    for (src, message) in [("error «a{ y := 2, y }b»", "a2b"), ("error «a{ # «c» }b»", "ab")]
+    for (src, message) in [("abort «a{ y := 2, y }b»", "a2b"), ("abort «a{ # «c» }b»", "ab")]
     {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}");
@@ -11291,7 +11582,7 @@ fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
         }
         // A fault inside the bracket ends the entries made before it.
         let src = format!(
-            "{bag}g := fn () -> i32 ( error «stop» ), \
+            "{bag}g := fn () -> i32 ( abort «stop» ), \
              f := fn () -> i32 ( m := {{ b := bag (1), x := g(), c := bag (2) }}, 0 ), {c}f()"
         );
         let out = logos().arg(&src).output().unwrap();

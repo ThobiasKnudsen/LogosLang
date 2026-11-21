@@ -60,19 +60,38 @@ fn write_line(mut line: Vec<u8>) -> Result<i64, RunError> {
     Ok(0)
 }
 
-/// The text of a `print` or `error` node, each `{…}` run here.
+/// The text of a node that shows a quote (`print`, `abort`, a raise), each `{…}` run here.
 pub(crate) fn render(rt: &mut Runtime, node: DyadPtr) -> Result<Vec<u8>, RunError> {
     let types: *const Core = rt.types();
-    // SAFETY: `node` is a `print` or `error` node from the store; the runtime borrows the core,
+    // SAFETY: `node` is a node whose first slot is its parts; the runtime borrows the core,
     // so running a part leaves it where it is.
     unsafe { compose(&*types, node, |part| rt.run(part)) }
 }
 
-/// The text of a `print` or `error` node on either tier: each part, a text run or a `{…}`,
+/// The text of such a node in compiled code, which ran each part itself: `values` holds one
+/// container per part, in order.
+///
+/// # Safety
+/// `node` must be a node whose first slot is its parts, `values` a block of one container per
+/// part.
+pub(crate) unsafe fn render_compiled(
+    rt: &Runtime,
+    node: DyadPtr,
+    values: *const i64,
+) -> Result<Vec<u8>, RunError> {
+    let mut next = values;
+    compose(rt.types(), node, |_| {
+        let bits = *next;
+        next = next.add(1);
+        Ok(bits)
+    })
+}
+
+/// The text of a node that shows a quote on either tier: each part, a text run or a `{…}`,
 /// shown as the echo shows the container `value` gives for it, in order.
 ///
 /// # Safety
-/// `node` must be a `print` or `error` node from the store.
+/// `node` must be a node whose first slot is its parts.
 unsafe fn compose(
     types: &Core,
     node: DyadPtr,
@@ -89,26 +108,39 @@ unsafe fn compose(
 /// The text runs and the `{…}` expressions, in the order written: the array `build` made.
 ///
 /// # Safety
-/// `node` must be a `print` or `error` node from the store.
+/// `node` must be a node whose first slot is its parts.
 unsafe fn parts_of<'a>(node: DyadPtr) -> &'a [DyadPtr] {
     super::array::items(*(dyad::value(node) as *const DyadPtr))
 }
 
-/// Each part runs in the compiled frame, its value in a block; the text is made and written
-/// by calling back into the seed.
+/// What compiled code calls with a node that shows a quote and the block of its parts' values.
+pub(crate) type ShowEntry =
+    unsafe extern "C" fn(*mut crate::run::Context, DyadPtr, *const i64) -> i64;
+
+/// Each part runs in the compiled frame, its value in a block; the text is made, and shown or
+/// raised, by calling back into the seed at `entry`.
+///
+/// # Safety
+/// `node` must be a node whose first slot is its parts, each a reduced dyad.
+pub(crate) unsafe fn lower_shown(
+    lw: &mut Lowerer,
+    node: DyadPtr,
+    entry: ShowEntry,
+) -> Result<Value, CompileError> {
+    let mut values = Vec::new();
+    for &part in parts_of(node) {
+        let v = lw.lower(part)?;
+        values.push(lw.container(part, v));
+    }
+    let values = lw.spill(&values);
+    let node = lw.node_addr(node);
+    lw.call_seed(entry as usize, &[node, values])?;
+    Ok(lw.const_i32(0))
+}
+
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `print` node `build` made; its parts are reduced dyads.
-    unsafe {
-        let mut values = Vec::new();
-        for &part in parts_of(node) {
-            let v = lw.lower(part)?;
-            values.push(lw.container(part, v));
-        }
-        let values = lw.spill(&values);
-        let node = lw.node_addr(node);
-        lw.call_seed(compiled_print as *const () as usize, &[node, values])?;
-    }
-    Ok(lw.const_i32(0))
+    unsafe { lower_shown(lw, node, compiled_print) }
 }
 
 /// # Safety
@@ -119,16 +151,6 @@ unsafe extern "C" fn compiled_print(
     node: DyadPtr,
     values: *const i64,
 ) -> i64 {
-    crate::run::interpret_step(ctx, |rt| {
-        let mut next = values;
-        // SAFETY: as above; `compose` asks for one container per part.
-        let line = unsafe {
-            compose(rt.types(), node, |_| {
-                let bits = *next;
-                next = next.add(1);
-                Ok(bits)
-            })
-        }?;
-        write_line(line)
-    })
+    // SAFETY: the caller's contract is `render_compiled`'s.
+    crate::run::interpret_step(ctx, |rt| write_line(unsafe { render_compiled(rt, node, values) }?))
 }

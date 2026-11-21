@@ -2223,14 +2223,14 @@ mod tests {
     #[test]
     fn a_fault_ends_what_every_scope_it_leaves_holds() {
         let f = "f := fn (k := i32 ?) -> i32 ( p := alloc 1 of i32 7, \
-                 ( q := alloc 1 of i32 8, if (k == 1) (error «stop») ), 0 ),\n";
+                 ( q := alloc 1 of i32 8, if (k == 1) (abort «stop») ), 0 ),\n";
         let (e, live) = fault(&format!("{f}f(1)"));
-        assert!(matches!(e, RunError::Raised(_)), "{e:?}");
+        assert!(matches!(e, RunError::Aborted(_)), "{e:?}");
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![8, 7], "the inner scope's first");
         // Only what was declared before the fault ends.
         let (_, live) = fault(
-            "k := i32 1,\np := alloc 1 of i32 7,\nif (k == 1) (error «stop»),\nq := alloc 1 of i32 8,\n1",
+            "k := i32 1,\np := alloc 1 of i32 7,\nif (k == 1) (abort «stop»),\nq := alloc 1 of i32 8,\n1",
         );
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![7]);
@@ -2240,7 +2240,7 @@ mod tests {
     fn a_fault_in_an_if_s_condition_ends_what_its_arms_end() {
         // Neither arm runs, so the `if` frees what either would have, last declared first;
         // then the scope's end frees what it still holds.
-        let g = "g := fn () -> i32 ( error «stop» ),\n";
+        let g = "g := fn () -> i32 ( abort «stop» ),\n";
         for (tail, freed) in [
             ("if (g() == 1) ( free a )", vec![7, 8]),
             ("if (g() == 1) ( free a ) else ( free b )", vec![8, 7]),
@@ -2251,7 +2251,7 @@ mod tests {
         ] {
             let (e, live) =
                 fault(&format!("{g}a := alloc 1 of i32 7,\nb := alloc 1 of i32 8,\n{tail},\n1"));
-            assert!(matches!(e, RunError::Raised(_)), "{tail}: {e:?}");
+            assert!(matches!(e, RunError::Aborted(_)), "{tail}: {e:?}");
             assert_eq!(live, 0, "{tail}");
             assert_eq!(free_log(), freed, "{tail}");
         }
@@ -2261,7 +2261,7 @@ mod tests {
     fn a_line_that_fails_frees_what_it_ended_and_did_not_reach() {
         // Before its `free` or `move` the place is not NULL and the failing line's cleanup
         // frees it; after, it is NULL and nothing frees it twice.
-        let g = "g := fn () -> i32 ( error «stop» ),\n";
+        let g = "g := fn () -> i32 ( abort «stop» ),\n";
         for line in [
             "x := g() + (free a, i32 1)",
             "x := (free a, i32 1) + g()",
@@ -2275,7 +2275,7 @@ mod tests {
                 format!("{g}a := alloc 1 of i32 7,\n{line},\n1"),
             ] {
                 let (e, live) = fault(&src);
-                assert!(matches!(e, RunError::Raised(_)), "{src}: {e:?}");
+                assert!(matches!(e, RunError::Aborted(_)), "{src}: {e:?}");
                 assert_eq!(live, 0, "{src}");
                 assert_eq!(free_log(), vec![7], "{src}");
             }
@@ -2709,7 +2709,7 @@ mod tests {
         ] {
             assert_eq!(run(&format!("{KEPT}{tail}")), (want, 0), "{tail}");
         }
-        let g = "g := fn () -> i32 ( error «stop» ),\nk := fn (q := @r ?) -> i32 ( q@.n ),\n";
+        let g = "g := fn () -> i32 ( abort «stop» ),\nk := fn (q := @r ?) -> i32 ( q@.n ),\n";
         for body in [
             "a := r(1), x := ( free a, g() ), x",
             "x := k(&r(3)) + g(), x",
@@ -2718,7 +2718,7 @@ mod tests {
         ] {
             for c in ["", "f.compile(),\n"] {
                 let (e, live) = fault(&format!("{KEPT}{g}f := fn () -> i32 ( {body} ),\n{c}f()"));
-                assert!(matches!(e, RunError::Raised(_)), "{body} {c}{e:?}");
+                assert!(matches!(e, RunError::Aborted(_)), "{body} {c}{e:?}");
                 assert_eq!(live, 0, "{body} {c}");
             }
         }
@@ -2950,15 +2950,15 @@ mod tests {
         assert_eq!(free_log(), Vec::<i64>::new(), "the call frees it, not `a`'s end");
         assert_eq!(run(&format!("{f}a := alloc 1 of i32 7,\nf(a) + a@")), (14, 0));
         assert_eq!(free_log(), vec![7], "a borrow: `a`'s end frees it, once");
-        let raise = "g := fn () -> i32 ( error «stop» ),\n";
+        let raise = "g := fn () -> i32 ( abort «stop» ),\n";
         let f2 = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( p@ ),\n";
         for src in [
-            "f := fn (p := @i32 ?) -> i32 ( error «stop» ),\nf(alloc 1 of i32 5)".to_string(),
+            "f := fn (p := @i32 ?) -> i32 ( abort «stop» ),\nf(alloc 1 of i32 5)".to_string(),
             format!("{raise}{f2}f(alloc 1 of i32 5, g())"),
             format!("{raise}{f2}a := alloc 1 of i32 6,\nf(move a, g())"),
         ] {
             let (e, live) = fault(&src);
-            assert!(matches!(e, RunError::Raised(_)), "{src}: {e:?}");
+            assert!(matches!(e, RunError::Aborted(_)), "{src}: {e:?}");
             assert_eq!(live, 0, "{src}");
         }
         assert_eq!(

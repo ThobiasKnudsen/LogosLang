@@ -3,4 +3,4 @@
 r := type ( mut n := i32 ?, static free = ( print «freed» ) ),
 a := r(1),
 defer print «file cleanup»,
-error «file stops»
+abort «file stops»

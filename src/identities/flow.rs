@@ -27,7 +27,7 @@ pub(crate) struct Flow {
 impl Flow {
     pub(crate) const STATEMENT: Flow = Flow { gives: false, falls: true };
     pub(crate) const VALUE: Flow = Flow { gives: true, falls: false };
-    /// A `return` or an `error`: every path leaves.
+    /// A `return`, a raise or an `abort`: every path leaves.
     pub(crate) const LEAVES: Flow = Flow { gives: false, falls: false };
 
     /// Every path ends the scope, so a line written after it never runs.
@@ -80,6 +80,11 @@ pub(crate) unsafe fn walk(
     flow_of(types, slot, Some(given))
 }
 
+/// Whether a node of type `ty` always leaves where it runs: a `return`, a raise or an `abort`.
+fn leaves(types: &Core, ty: DyadPtr) -> bool {
+    ty == types.return_ || super::error::ends_run(types, ty)
+}
+
 /// [`walk`]; with no `given`, a closed block's lines are read once and kept, never walked again
 /// (›Reading a program takes time in step with its size; no walk runs once per path‹ [[R170]]).
 ///
@@ -95,7 +100,7 @@ unsafe fn flow_of(
         return Ok(Flow::STATEMENT);
     }
     let ty = dyad::ty(node);
-    if ty == types.return_ || ty == types.error.error {
+    if leaves(types, ty) {
         return Ok(Flow::LEAVES);
     }
     match passing(types, node) {
@@ -331,7 +336,7 @@ unsafe fn given_read(types: &Core, node: DyadPtr) -> Result<(Flow, Option<ValueR
 }
 
 /// A node that gives a value as itself, or an arm of an `if` used as a value, read as a value: a
-/// `return` or an `error` gives none.
+/// `return`, a raise or an `abort` gives none.
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
@@ -341,7 +346,7 @@ unsafe fn arm_read(types: &Core, node: DyadPtr) -> Result<ValueRead, ParseError>
         if ty == types.if_ || ty == types.scope {
             return value_read(types, node);
         }
-        if ty == types.return_ || ty == types.error.error {
+        if leaves(types, ty) {
             return Err(ParseError::StatementAsValue);
         }
     }
