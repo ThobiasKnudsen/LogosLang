@@ -282,8 +282,8 @@ pub fn parse_message(e: &ParseError) -> String {
             "a name needs a type: write it, or `dyad ?` for one whose type changes".into()
         }
         ParseError::FieldNeedsType => {
-            "a field needs a type: write it, write `dyad ?` for one whose type changes, or write a \
-             function that builds the mints, as `array` does"
+            "a field needs a type: write it, write `dyad ?` for one whose type changes, or build \
+             the mints in code written for them, as `array`'s parse does"
                 .into()
         }
         ParseError::DyadTakesNode => {

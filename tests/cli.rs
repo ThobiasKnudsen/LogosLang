@@ -10851,7 +10851,7 @@ fn a_fields_type_reads_its_declared_type() {
 fn a_new_name_without_its_type_is_refused_where_it_is_written() {
     let name = "a name needs a type: write it, or `dyad ?` for one whose type changes";
     let field = "a field needs a type: write it, write `dyad ?` for one whose type changes, or \
-                 write a function that builds the mints, as `array` does";
+                 build the mints in code written for them, as `array`'s parse does";
     for (src, at, message) in [
         ("x := mut ?, x = i32 5, x", "1:1", name),
         ("f := fn () -> i32 ( x := mut ?, x = i32 5, x ), f.compile(), f()", "1:21", name),
