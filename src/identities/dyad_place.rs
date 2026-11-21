@@ -364,6 +364,14 @@ pub(crate) unsafe fn build_reach(
     store.alloc_words(ids.reach, &[place, ty, ids.reach_leaf, ty])
 }
 
+/// Whether `node` is what [`build_reach`] built: what a `dyad` place holds, reached through it.
+///
+/// # Safety
+/// `node` must be a dyad from the store.
+pub(crate) unsafe fn is_reach(types: &Core, node: DyadPtr) -> bool {
+    dyad::ty(node) == types.dyad_place.reach
+}
+
 /// The line is built for a node of its `type`, so a node of another type, which a write into the
 /// place put there while the line ran, is refused, never read or written by that type's layout.
 fn run_reach(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
