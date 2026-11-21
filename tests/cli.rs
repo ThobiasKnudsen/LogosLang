@@ -10439,6 +10439,8 @@ fn two_curly_brackets_of_one_shape_are_one_type() {
             ("x := { a := i32 1 }, y := { a := i64 1 }, print «{x.type == y.type}»", "false"),
             ("x := { a := k }, y := { b := k }, print «{x.type == y.type}»", "false"),
             ("x := { mut a := k }, y := { a := k }, print «{x.type == y.type}»", "false"),
+            ("x := { pub a := k }, y := { a := k }, print «{x.type == y.type}»", "false"),
+            ("mut m := { pub a := k }, m = { pub a := i32 2 }, print «{m.a}»", "2"),
             (
                 "x := { a := i32 1, g := fn () -> i32 ( a ) }, y := { a := k, g := fn () -> i32 ( a ) }, \
                  print «{x.type == y.type} {x.g() + y.g()}»",
@@ -10470,6 +10472,7 @@ fn two_curly_brackets_of_one_shape_are_one_type() {
     for src in [
         "mut m := { mut a := i32 1 }, m = { a := i32 2 }",
         "mut m := { a := i32 1 }, m = { mut a := i32 2 }",
+        "mut m := { pub a := i32 1 }, m = { a := i32 2 }",
         "mut m := { a := i32 1, b := i32 2 }, m = { b := i32 2, a := i32 1 }",
         "mut m := { a := i32 1 }, m = { a := i64 2 }",
         "mut m := { a := i32 1, g := fn () -> i32 ( a ) }, m = { a := i32 2, g := fn () -> i32 ( a ) }",
