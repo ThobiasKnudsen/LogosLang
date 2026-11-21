@@ -201,34 +201,39 @@ impl Binding {
         }
     }
 
+    /// The fields a copy holds itself, by offset, each a pointer; every other field is its
+    /// origin's.
+    const OWN: [usize; 3] = [
+        std::mem::offset_of!(Binding, scope),
+        std::mem::offset_of!(Binding, start),
+        std::mem::offset_of!(Binding, origin),
+    ];
+
     /// A copy, never a reference: a reference minted from the raw pointer would alias
-    /// whatever reference a caller up the chain still holds. A copy's own `scope` and `start`,
-    /// and its origin's every other field, as [`Binding::holder`] places them.
+    /// whatever reference a caller up the chain still holds. Each field from the record that
+    /// holds it ([`Binding::holder`]).
     ///
     /// # Safety
     /// `dyad` must be a binding dyad from the store (its type the `binding` identity, its
     /// value from `Binding::alloc`).
     pub unsafe fn read(dyad: DyadPtr) -> Binding {
-        let own = std::ptr::read(Self::fields(dyad));
-        if own.origin.is_null() {
-            return own;
+        let own = Self::fields(dyad);
+        let mut rec = std::ptr::read(Self::shared(dyad));
+        let into = std::ptr::addr_of_mut!(rec) as *mut u8;
+        for offset in Self::OWN {
+            *(into.add(offset) as *mut DyadPtr) =
+                *((own as *const u8).add(offset) as *const DyadPtr);
         }
-        Binding {
-            scope: own.scope,
-            start: own.start,
-            origin: own.origin,
-            ..std::ptr::read(Self::fields(own.origin))
-        }
+        rec
     }
 
-    /// The record whose bytes hold the field at `offset` of the name `dyad`: a copy its own
-    /// `scope` and `start`, its origin every other field, as [`Binding::read`] reads them.
+    /// The record whose bytes hold the field at `offset` of the name `dyad`: the copy's own for
+    /// the fields it holds itself, its origin's for every other.
     ///
     /// # Safety
     /// As `Binding::read`.
     pub unsafe fn holder(dyad: DyadPtr, offset: usize) -> DyadPtr {
-        let own = [std::mem::offset_of!(Binding, scope), std::mem::offset_of!(Binding, start)];
-        if own.contains(&offset) {
+        if Self::OWN.contains(&offset) {
             dyad
         } else {
             Self::origin_of(dyad)
@@ -243,7 +248,7 @@ impl Binding {
         dyad::value(dyad) as *mut Binding
     }
 
-    /// The raw place of every field but `scope` and `start`: the origin's.
+    /// The raw place of every field a copy does not hold itself: the origin's.
     ///
     /// # Safety
     /// As `Binding::read`.
