@@ -3,7 +3,8 @@
 
 //! `type`: the one classifier, the `type : type` self-loop whose layout is the seed's only
 //! a-priori knowledge. `type ( body )` defines a type
-//! ([`crate::parse::Parser::parse_type_body`]); bare, it is the classifier as a value.
+//! ([`crate::parse::Parser::parse_type_body`]), `type T` holds the type `T`
+//! ([`crate::parse::Parser::construct_type_value`]); bare, it is the classifier as a value.
 //! ›The ground is one identity, spelled `type`; `logos` is a language‹ [[R134]]
 
 use super::{meta, Cx};
@@ -32,7 +33,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
             tape.place(node);
             return Ok(crate::parse::Constructed::Placed);
         }
-        Ok(crate::parse::Constructed::Decline)
+        p.construct_type_value(id, tape)
     });
 
     // `left` and `right` carry a type's own record, not a delimiter's, so each

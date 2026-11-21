@@ -21,7 +21,7 @@ metatype := fn (i := i32 ?) -> type (
 # integer out: it compiles like any other, and the comptime evaluation of the
 # metatype(2) call below jumps to the installed machine code.
 metatype.compile(),
-b := type,
+b := type type,
 t := metatype(2),
 mut a := t ?,
 a = if (t == i32) (9)

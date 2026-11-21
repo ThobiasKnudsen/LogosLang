@@ -648,7 +648,7 @@ impl<'a> Parser<'a> {
         }
         // The identity stands as its own value: the use of its name, its binding.
         let value = self.stand_as_value(tape, id);
-        tape.place(value);
+        tape.place_named(value);
         Ok(())
     }
 
