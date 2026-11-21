@@ -978,17 +978,14 @@ impl<'a> Parser<'a> {
         // The member is read by its spelling at the offset it was lexed at, so a
         // keyword there (`.type`, `.error`) reads as a name and never wakes.
         self.cx.member_asleep = true;
-        let m = self.cell_at(tape, 1);
+        let member = self.cell_at(tape, 1).map(|m| {
+            let save = std::mem::replace(&mut self.cx.pos, m?.start);
+            let member = self.lex_spelling();
+            self.cx.pos = save;
+            member
+        });
         self.cx.member_asleep = false;
-        let Some(m) = m? else {
-            return Err(ParseError::ExpectedField);
-        };
-        let mstart = m.start;
-        let save = self.cx.pos;
-        self.cx.pos = mstart;
-        let member = self.lex_spelling();
-        self.cx.pos = save;
-        let Some((nstart, nlen)) = member else {
+        let Some((nstart, nlen)) = member? else {
             return Err(ParseError::ExpectedField);
         };
         // The optional `[i]` or `(…)` after the member, lexed on demand; a

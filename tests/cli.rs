@@ -6657,10 +6657,17 @@ fn two_files_that_name_a_category_alike_hold_two() {
             assert!(stderr.contains(error), "{src}: stderr: {stderr}");
         }
     }
-    // A member name is read by its spelling: after a `.`, `error` wakes no parse of its own.
+    // A member name is read by its spelling: after a `.`, `error` wakes no parse of its own, and
+    // a member's name holds no `.`, so a category in reach is not read there either.
+    for mine in ["", "error.not_found := «mine», "] {
+        let (_, _, stderr) = run_line(&format!(
+            "{mine}h := logos file «tests/fixtures/category_http.logos», h.error.not_found «x»"
+        ));
+        assert!(stderr.contains("the file has no `pub` name `error`"), "{mine}stderr: {stderr}");
+    }
     let (_, _, stderr) =
-        run_line("h := logos file «tests/fixtures/category_http.logos», h.error.not_found «x»");
-    assert!(stderr.contains("the file has no `pub` name `error`"), "stderr: {stderr}");
+        run_line("error.x := «d», pt := type ( pub a := i32 ? ), p := pt(1), p.error.x");
+    assert!(stderr.contains("`error` is not in scope here"), "stderr: {stderr}");
 }
 
 #[test]
