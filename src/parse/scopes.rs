@@ -312,10 +312,10 @@ impl ScopeStack {
                 continue;
             }
             // At the frontier "range covers the point" is exactly "not dead".
-            // Two live bindings of one spelling are a field's or a slot word's,
-            // declared against their siblings alone: the innermost open
-            // scope's wins (DESIGN ›The constructor is a field‹). Two in one scope are the
-            // spelling's two identities, and what stands left of it picks one.
+            // Two live bindings of one spelling are one declared against its siblings alone
+            // (`declare_field`): the innermost open scope's wins (›Slot words are known only
+            // inside a type body‹ [[R220]]). Two in one scope are the spelling's two
+            // identities, and what stands left of it picks one.
             let live = || {
                 m.bindings
                     .iter()
@@ -396,6 +396,22 @@ impl ScopeStack {
         binding: DyadPtr,
     ) -> Result<(), ResolveError> {
         let scope = self.current().expect("declare needs an open scope");
+        // SAFETY: the caller's contract.
+        unsafe { self.declare_in(trie, name, binding, scope) }
+    }
+
+    /// `declare` into `scope`, an open scope that need not be the innermost: a type body's fields
+    /// are declared from its lines.
+    ///
+    /// # Safety
+    /// As [`ScopeStack::declare`].
+    pub unsafe fn declare_in(
+        &mut self,
+        trie: &mut RegexTrie,
+        name: &str,
+        binding: DyadPtr,
+        scope: DyadPtr,
+    ) -> Result<(), ResolveError> {
         if self.live(trie, name, binding)?.is_some() {
             return Err(ResolveError::Shadowed(name.to_string()));
         }
@@ -497,9 +513,11 @@ impl ScopeStack {
         }
     }
 
-    /// Checked against its siblings alone (DESIGN ›The constructor is a
-    /// field‹): a live binding of the spelling in an enclosing scope stands
-    /// beside it, both live until this scope closes.
+    /// Checked against its siblings alone: a live binding of the spelling in an enclosing scope
+    /// stands beside it, both live until this scope closes. Only a name that spells one already
+    /// live on purpose is declared so: a type body's slot words (›Slot words are known only inside
+    /// a type body‹ [[R220]]), a kept record's mirror of the names it holds, a run's `output_type`
+    /// over the member.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store; this writes its `scope`.
@@ -523,9 +541,8 @@ impl ScopeStack {
         Ok(())
     }
 
-    /// The sibling check, run too across a type body's two scopes: its
-    /// `static` members live in the body's, its fields in the list's.
-    pub fn declared_in(
+    /// A live binding of `name` declared in `scope` itself.
+    fn declared_in(
         &self,
         trie: &RegexTrie,
         name: &str,

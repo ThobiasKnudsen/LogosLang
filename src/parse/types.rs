@@ -161,7 +161,7 @@ impl<'a> Parser<'a> {
         &mut self,
         leading: Option<DyadPtr>,
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
-        let (scope, fields_arr, bindings) = self.parse_field_list(false, leading)?;
+        let (scope, fields_arr, bindings) = self.parse_field_list(leading)?;
         let input = self.rt.store.alloc_leaf(self.types.type_);
         Ok((self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
     }
@@ -268,22 +268,14 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// A `fn`'s parameter list checks each name against every open scope, since
-    /// the body reopens the list's scope; a type body's fields against their
-    /// siblings alone (`relaxed`), where the list is the body itself, its
-    /// slot fills, `static` members and prose among the fields (DESIGN ›A type
-    /// body describes one level‹).
-    /// Also the fields' bindings in order, the leading one's spelling-less; their offsets
-    /// are the caller's to write once the record node exists.
+    /// A `fn`'s parameter list, in a scope of its own that the body reopens. Also the fields'
+    /// bindings in order, the leading one's spelling-less; their offsets are the caller's to write
+    /// once the record node exists.
     fn parse_field_list(
         &mut self,
-        relaxed: bool,
         leading: Option<DyadPtr>,
     ) -> Result<(DyadPtr, DyadPtr, Vec<DyadPtr>), ParseError> {
-        if !relaxed {
-            self.expect_open()?;
-        }
-        // Field names are declared into the record's own scope.
+        self.expect_open()?;
         let scope = self.open_scope();
 
         let mut fields = Vec::new();
@@ -298,17 +290,18 @@ impl<'a> Parser<'a> {
             fields.push(field);
             bindings.push(self.mint_binding(field, scope, b""));
         }
-        let lines = self.field_lines(relaxed, scope, &mut fields, &mut bindings);
-
+        let lines = self.field_lines(false, scope, &mut fields, &mut bindings);
         self.cx.scopes.pop();
         lines?;
-        if !relaxed {
-            self.expect_close()?;
-        }
+        self.expect_close()?;
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         Ok((scope, fields_arr, bindings))
     }
 
+    /// The lines of a parameter list, or with `relaxed` of a type body (DESIGN ›A type body
+    /// describes one level‹): its fields among its slot fills, `static` members and prose. Each
+    /// name is declared into `scope`, below the type's own in a type body, against every name open
+    /// there.
     fn field_lines(
         &mut self,
         relaxed: bool,
@@ -477,19 +470,8 @@ impl<'a> Parser<'a> {
                 crate::identities::hole::build(self.rt.store, self.types.unknown, logos, default);
             // The field's name is not stored on the record: declaring it puts
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
-            let binding = if relaxed {
-                // One block, one no-shadowing rule: a field is checked against
-                // the `static` members too, which live in the type's own scope.
-                let body =
-                    self.cx.definitions.last().expect("a relaxed field list is a type body").scope;
-                if self.cx.scopes.declared_in(self.trie, name, body).map_err(ParseError::Resolve)? {
-                    self.cx.pos = start;
-                    return Err(ParseError::Resolve(ResolveError::Shadowed(name.to_string())));
-                }
-                self.declare_field_name(name, field, start)?
-            } else {
-                self.declare_name(name, field, start)?
-            };
+            let binding = self.mint_binding(field, scope, name.as_bytes());
+            self.enter_binding_in(scope, name, binding, start)?;
             if let Some(gate) = gate {
                 self.add_gate(binding, gate)?;
             }
@@ -529,12 +511,10 @@ impl<'a> Parser<'a> {
             }
         }
         self.cx.pos = word_at;
-        let field_scope = self.cx.scopes.pop().expect("the field list's scope is open");
         self.cx.last_declared = std::ptr::null_mut();
         let outer_member = self.cx.member_fn_depth.replace(self.cx.frames.len());
         let items = self.static_line();
         self.cx.member_fn_depth = outer_member;
-        self.cx.scopes.push(field_scope);
         // The line's one declaration, a member or a slot fill, with its prose
         // lifted out beside it; anything else is not what `static` marks.
         let mut declared = None;
@@ -555,25 +535,12 @@ impl<'a> Parser<'a> {
             self.cx.pos = at;
             return Err(ParseError::StaticNeedsDeclaration);
         };
-        {
-            // SAFETY: a declaration that fills no slot is `:=`'s, its lhs the binding.
-            let name = unsafe { Binding::spelling(crate::identities::declare::binding_of(item)) };
-            if self
-                .cx
-                .scopes
-                .declared_in(self.trie, &name, field_scope)
-                .map_err(ParseError::Resolve)?
-            {
-                self.cx.pos = at;
-                return Err(ParseError::Resolve(ResolveError::Shadowed(name)));
-            }
-            let binding = self.cx.last_declared;
-            if binding.is_null() {
-                self.cx.pos = at;
-                return Err(ParseError::StaticNeedsDeclaration);
-            }
-            self.add_gate(binding, self.types.static_)?;
+        let binding = self.cx.last_declared;
+        if binding.is_null() {
+            self.cx.pos = at;
+            return Err(ParseError::StaticNeedsDeclaration);
         }
+        self.add_gate(binding, self.types.static_)?;
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.cx.scopes.settle_item(body, item) };
         Ok(())
@@ -599,9 +566,7 @@ impl<'a> Parser<'a> {
     fn slot_line(&mut self, start: usize) -> Result<(), ParseError> {
         let body = self.cx.definitions.last().expect("a slot line is in a type body").scope;
         self.cx.pos = start;
-        let field_scope = self.cx.scopes.pop().expect("the field list's scope is open");
         let items = self.static_line();
-        self.cx.scopes.push(field_scope);
         let mut filled = false;
         for item in items? {
             // SAFETY: `item` is a reduced dyad just parsed.
@@ -749,6 +714,9 @@ impl<'a> Parser<'a> {
             // SAFETY: `own_name` is the binding `:=` is filling, live for the whole drive.
             unsafe { Binding::set_dyad(own_name, self_type) };
         }
+        // The fields' scope stands below the type's own, so the body's lines are read in the
+        // type's scope with its fields open around them.
+        let field_scope = self.open_scope();
         let scope = self.open_scope();
         self.cx.definitions.push(OpenType {
             scope,
@@ -766,7 +734,7 @@ impl<'a> Parser<'a> {
             stamps_at_run: false,
             read_receiver: false,
             wrote_receiver: false,
-            block: (scope, Vec::new()),
+            block: (field_scope, Vec::new()),
             instances_free: std::ptr::null_mut(),
             self_type,
         });
@@ -779,8 +747,11 @@ impl<'a> Parser<'a> {
         let outer = self.drain();
         self.cx.open.push(OpenScope::default());
         let saved_depth = std::mem::replace(&mut self.cx.runtime_depth, 0);
-        let lines = outer.and_then(|_| self.parse_field_list(true, None)).and_then(|layout| {
-            self.drain().map(|_| layout).map_err(|e| match e {
+        let (mut fields, mut bindings) = (Vec::new(), Vec::new());
+        let lines =
+            outer.and_then(|_| self.field_lines(true, field_scope, &mut fields, &mut bindings));
+        let lines = lines.and_then(|()| {
+            self.drain().map_err(|e| match e {
                 ParseError::Run(r) => {
                     ParseError::TypeBodyFailed(Box::new(crate::report::run_message(&r)))
                 }
@@ -794,11 +765,12 @@ impl<'a> Parser<'a> {
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
         }
-        let (field_scope, fields, bindings) = lines?;
+        lines?;
         if !held.is_empty() {
             return Err(ParseError::DeferInTypeBody);
         }
         self.expect_close()?;
+        let fields = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         // SAFETY: the bindings were just minted for these fields; `def.self_type` is the type node.
         let size_bytes = unsafe { lay_out_fields(self.types, def.self_type, fields, &bindings) };
         let bindings = crate::identities::array::build(self.rt.store, self.types.array_, &bindings);

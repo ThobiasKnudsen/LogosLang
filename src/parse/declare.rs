@@ -205,8 +205,20 @@ impl<'a> Parser<'a> {
         binding: DyadPtr,
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
+        let scope = self.cx.scopes.current().expect("declare needs an open scope");
+        self.enter_binding_in(scope, spelling, binding, at)
+    }
+
+    /// `enter_binding` into `scope`, an open scope that need not be the innermost.
+    pub(super) fn enter_binding_in(
+        &mut self,
+        scope: DyadPtr,
+        spelling: &str,
+        binding: DyadPtr,
+        at: usize,
+    ) -> Result<DyadPtr, ParseError> {
         // SAFETY: the caller hands a binding dyad from the store.
-        if let Err(e) = unsafe { self.cx.scopes.declare(self.trie, spelling, binding) } {
+        if let Err(e) = unsafe { self.cx.scopes.declare_in(self.trie, spelling, binding, scope) } {
             self.cx.pos = at;
             return Err(ParseError::Resolve(e));
         }
