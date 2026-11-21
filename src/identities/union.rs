@@ -86,7 +86,8 @@ pub(crate) unsafe fn is_union(types: &Core, t: DyadPtr) -> bool {
 }
 
 /// Every member's place in a value of the union `ty`, the room after the tag, written onto the
-/// member's binding; the tag and the room of the largest member, the union's `size_bytes`.
+/// member's binding; the tag and the room of the largest member, the union's `size_bytes`, and
+/// the widest member's alignment, the union's, as C aligns a union.
 ///
 /// # Safety
 /// `ty` must be a type node from the store, `members` its member holes and `bindings` their
@@ -96,13 +97,15 @@ pub(crate) unsafe fn lay_out(
     ty: DyadPtr,
     members: &[DyadPtr],
     bindings: &[DyadPtr],
-) -> u64 {
-    let mut room = 0;
+) -> meta::Extent {
+    let (mut room, mut align) = (0, 1);
     for (&member, &binding) in members.iter().zip(bindings) {
         Binding::set_field_offset(binding, ty, TAG_BYTES);
-        room = room.max(super::by_copy::place_width(types, hole::type_in(member)));
+        let t = hole::type_in(member);
+        room = room.max(super::by_copy::place_width(types, t));
+        align = align.max(super::read::place_align(types, t));
     }
-    (TAG_BYTES + room) as u64
+    meta::Extent { size_bytes: (TAG_BYTES + room) as u64, align }
 }
 
 /// The place of the member `member` of the union value `value`, of the union type `union`: a

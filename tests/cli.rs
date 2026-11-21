@@ -353,7 +353,7 @@ fn a_type_s_size_bytes_is_a_u64_for_records_numbers_and_pointers() {
           n := u64 3\nprint «{n * i32.size_bytes}»\n\
           p := type (a := i32 ?, b := i64 ?)\nn * p.size_bytes\n",
     );
-    assert_eq!(echoes, ["4", "1", "8", "12", "36"], "stderr: {stderr}");
+    assert_eq!(echoes, ["4", "1", "8", "12", "48"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
@@ -6766,7 +6766,7 @@ fn a_union_holds_the_member_written_last() {
                 "{pt}, u := type union ( p := mut pt, i := mut i32 ), v := mut u ?, \
                  v.p = pt(1, 2.5), v.p.a = 9, print «{{v.p.a}} {{v.p.b}} {{u.size_bytes}}»"
             ),
-            "9 2.5 13",
+            "9 2.5 17",
         ),
         (
             "u := type union ( s := mut string, q := mut @i32 ), x := i32 4, v := mut u ?, \
@@ -6781,7 +6781,7 @@ fn a_union_holds_the_member_written_last() {
                  t.i = 4, x := mut r ?, x.k = 1, x.n = t, print «{{x.n.i}}», x.n.f = 2.5, \
                  print «{{x.n.f}} {{x.k}} {{r.size_bytes}}»"
             ),
-            "4\n2.5 1 13",
+            "4\n2.5 1 16",
         ),
         (
             format!(
@@ -11693,28 +11693,29 @@ fn a_record_written_through_a_pointer_frees_the_one_it_displaces() {
 
 /// DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹: a
 /// field takes the bytes a place of its type takes, sixteen for a `rational_number` and a
-/// record's own size for a record, so writing one never reaches the next, and `size_bytes` is
-/// their sum, packed.
+/// record's own size for a record, so writing one never reaches the next; each starts at its
+/// alignment and `size_bytes` is rounded up to the widest, as C lays out a struct (›Every name of
+/// a scope is seen from anywhere in it; written order counts in four cases only‹ [[R372]]).
 #[test]
 fn a_field_takes_the_width_a_place_of_its_type_takes() {
     let ab = "pt := type ( a := pub mut rational_number ?, b := pub mut i32 ? )";
     let get = "f := fn (p := pt ?) -> rational_number ( p.a )";
     let mut cases = vec![
-        ("pt := type ( a := rational_number ?, b := i32 ? ), pt.size_bytes".to_string(), "20\n"),
+        ("pt := type ( a := rational_number ?, b := i32 ? ), pt.size_bytes".to_string(), "24\n"),
         (
             "q := type ( x := i64 ?, y := i64 ? ), pt := type ( a := q ?, b := i32 ? ), pt.size_bytes"
                 .to_string(),
-            "20\n",
+            "24\n",
         ),
         (
             "pt := type ( c := i32 ?, a := rational_number ?, b := i32 ? ), pt.size_bytes".to_string(),
-            "24\n",
+            "32\n",
         ),
         (
             "pt := type ( a := pub i8 ?, b := pub i64 ?, c := pub i16 ? ), p := pt(1, 2, 3), \
              print «{p.a} {p.b} {p.c} {pt.size_bytes}»"
                 .to_string(),
-            "1 2 3 11\n",
+            "1 2 3 24\n",
         ),
         (format!("{ab}, v := mut pt ?, v.b = 7, v.a = rational_number 1/2, v.b"), "7\n"),
         (format!("{ab}, v := mut pt ?, v.a = rational_number 1/2, v.b = 7, v.a"), "1/2\n"),
@@ -11785,6 +11786,59 @@ fn a_field_takes_the_width_a_place_of_its_type_takes() {
                  v.b = 7, v.a = rational_number 1/2, f(&v)"
             ),
             "1/2\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
+/// ›Every name of a scope is seen from anywhere in it; written order counts in four cases only‹
+/// [[R372]], ›`.size_bytes` is a `u64`‹ [[R282]]: plain fields lie as C lays out a struct, each at
+/// its alignment, a record's being its widest field's, and `size_bytes` is rounded up to it; both
+/// tiers read and write the fields where the layout put them.
+#[test]
+fn plain_fields_lie_as_c_lays_out_a_struct() {
+    let inner = "inner := type ( a := pub mut u8, b := pub mut i64 )";
+    let mut cases = vec![
+        ("pt := type ( i := mut i32, f := mut f64 ), pt.size_bytes".to_string(), "16\n"),
+        (
+            "pt := type ( i := mut i32, f := mut f64 ), g := fn () -> u64 ( pt.size_bytes ), \
+             g.compile(), g()"
+                .to_string(),
+            "16\n",
+        ),
+        ("q := type ( a := mut u8, b := mut i64, c := mut u8 ), q.size_bytes".to_string(), "24\n"),
+        (
+            format!(
+                "{inner}, outer := type ( c := mut u8, d := inner ? ), \
+                 print «{{inner.size_bytes}} {{outer.size_bytes}}»"
+            ),
+            "16 24\n",
+        ),
+        (
+            "h := type ( a := mut u8, b := mut u16 ), outer := type ( c := mut u8, d := h ? ), \
+             print «{h.size_bytes} {outer.size_bytes}»"
+                .to_string(),
+            "4 6\n",
+        ),
+        ("e := type ( ), e.size_bytes".to_string(), "0\n"),
+        ("pt := type ( a := u8 ?, m := hashmap i32 -> i32 ? ), pt.size_bytes".to_string(), "16\n"),
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!(
+                "pt := type ( a := pub mut u8, b := pub mut i64, c := pub mut u8 ), \
+                 f := fn () -> i64 ( p := mut pt ?, p.a = 1, p.b = 20, p.c = 3, p.a + p.b + p.c ), \
+                 {compile}f()"
+            ),
+            "24\n",
+        ));
+        cases.push((
+            format!(
+                "{inner}, outer := type ( c := pub mut u8, d := pub mut inner ? ), \
+                 f := fn () -> i64 ( o := mut outer ?, o.c = 7, o.d = inner(1, 30), \
+                 o.c + o.d.a + o.d.b ), {compile}f()"
+            ),
+            "38\n",
         ));
     }
     assert_runs(&cases);

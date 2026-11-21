@@ -111,7 +111,7 @@ pub(super) fn register(
         scope,
         fields,
         bindings,
-        8,
+        meta::Extent { size_bytes: 8, align: 8 },
         std::ptr::null_mut(),
         meta::prec::APPLY,
         crate::parse::Assoc::Left,

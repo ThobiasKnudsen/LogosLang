@@ -160,21 +160,31 @@ impl OwnName {
     }
 }
 
-/// Each field's offset inside a value of `ty`, packed in order at the width a place of its type
-/// takes, written onto the field's binding; the fields' total, the type's `size_bytes`.
-/// DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹.
+/// Each field's offset inside a value of `ty`, written onto the field's binding: in written order,
+/// each at the next byte its type's alignment allows, as C lays out a struct; the size rounded up
+/// to the widest field's alignment, which is the record's (›Every name of a scope is seen from
+/// anywhere in it; written order counts in four cases only‹ [[R372]], ›`.size_bytes` is a
+/// `u64`‹ [[R282]]).
 ///
 /// # Safety
 /// `ty` must be a type node from the store, `fields` its field array and `bindings` the
 /// fields' bindings in the same order.
-unsafe fn lay_out_fields(types: &Core, ty: DyadPtr, fields: DyadPtr, bindings: &[DyadPtr]) -> u64 {
-    let mut offset = 0;
+unsafe fn lay_out_fields(
+    types: &Core,
+    ty: DyadPtr,
+    fields: DyadPtr,
+    bindings: &[DyadPtr],
+) -> crate::identities::meta::Extent {
+    let (mut offset, mut align) = (0usize, 1);
     for (&field, &binding) in crate::identities::array::items(fields).iter().zip(bindings) {
+        let t = crate::identities::hole::type_in(field);
+        let field_align = crate::identities::read::place_align(types, t);
+        offset = offset.next_multiple_of(field_align);
         Binding::set_field_offset(binding, ty, offset);
-        offset +=
-            crate::identities::by_copy::place_width(types, crate::identities::hole::type_in(field));
+        offset += crate::identities::by_copy::place_width(types, t);
+        align = align.max(field_align);
     }
-    offset as u64
+    crate::identities::meta::Extent { size_bytes: offset.next_multiple_of(align) as u64, align }
 }
 
 impl<'a> Parser<'a> {
@@ -208,14 +218,14 @@ impl<'a> Parser<'a> {
         body: DyadPtr,
     ) -> DyadPtr {
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
-        let size_bytes = unsafe { lay_out_fields(self.types, input, fields, bindings) };
+        let extent = unsafe { lay_out_fields(self.types, input, fields, bindings) };
         let bindings = crate::identities::array::build(self.rt.store, self.types.array_, bindings);
         let record = crate::identities::meta::record_layout(
             self.rt.store,
             scope,
             fields,
             bindings,
-            size_bytes,
+            extent,
             body,
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
@@ -374,7 +384,7 @@ impl<'a> Parser<'a> {
                 Some(mint) => mint,
                 None => {
                     let mint = self.rt.store.alloc_leaf(types.type_);
-                    let size_bytes =
+                    let extent =
                         crate::identities::union::lay_out(types, mint, &members, &bindings);
                     let members =
                         crate::identities::array::build(self.rt.store, types.array_, &members);
@@ -386,7 +396,7 @@ impl<'a> Parser<'a> {
                         scope,
                         members,
                         bindings,
-                        size_bytes,
+                        extent,
                         body,
                     );
                     dyad::set_head(mint, record.cast());
@@ -924,14 +934,14 @@ impl<'a> Parser<'a> {
         let contents = unsafe { self.type_contents(&def, &fields, &bindings, opened_at) };
         let fields = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         // SAFETY: the bindings were just minted for these fields; `def.self_type` is the type node.
-        let size_bytes = unsafe { lay_out_fields(self.types, def.self_type, fields, &bindings) };
+        let extent = unsafe { lay_out_fields(self.types, def.self_type, fields, &bindings) };
         let bindings = crate::identities::array::build(self.rt.store, self.types.array_, &bindings);
         let layout = crate::identities::meta::record_layout(
             self.rt.store,
             field_scope,
             fields,
             bindings,
-            size_bytes,
+            extent,
             scope,
             def.parse_rank,
             def.assoc,
