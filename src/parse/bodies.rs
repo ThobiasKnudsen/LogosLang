@@ -533,7 +533,9 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let text = crate::identities::run_body::text_of(held);
         let cells = (*crate::identities::run_body::cells_of(held)).held_cells();
-        let mut chain = Vec::new();
+        // The type's own scope over what encloses its fields', whose names the run's parameters
+        // are.
+        let mut chain = vec![crate::identities::meta::record_body_of(ty)];
         let mut scope =
             crate::identities::scope::parent_of(crate::identities::meta::record_scope_of(ty));
         while !scope.is_null() {
@@ -625,8 +627,9 @@ impl<'a> Parser<'a> {
         self.cx.run_fields = Some((ty, places.clone(), spec));
         let param_scope = crate::identities::meta::record_scope_of(input);
         self.cx.scopes.push(param_scope);
+        let mut names_now = places.clone();
         let declared = match (output_name, output_field) {
-            (Some(n), Some(i)) => self.declare_name(n, key[i], 0).map(|_| ()),
+            (Some(n), Some(i)) => self.declare_name(n, key[i], 0).map(|b| names_now[i] = b),
             _ => Ok(()),
         };
         let declared = declared.and_then(|()| match static_output {
@@ -635,6 +638,17 @@ impl<'a> Parser<'a> {
         });
         self.cx.scopes.pop();
         declared?;
+        // The body was lexed where it is written, among the fields: a cell bound to a field now
+        // names the parameter that stands for it.
+        let field_bindings =
+            crate::identities::array::items(crate::identities::meta::record_field_bindings_of(ty));
+        if let Some(feed) = self.cx.feed.as_mut() {
+            for cell in &mut feed.cells {
+                if let Some(i) = field_bindings.iter().position(|&f| f == cell.dyad) {
+                    cell.dyad = names_now[i];
+                }
+            }
+        }
         self.fn_over_body(types.fn_type, input, &places, output, None, spec, std::ptr::null_mut())
     }
 

@@ -54,7 +54,6 @@ pub array := type (
         mint
     ),
 
-    element_type := type ?,
     elements := square_brackets ?,
     output_type := type ?,
 
@@ -92,7 +91,6 @@ pub array := type (
                     )
                 ),
                 tape[0].type = array,
-                tape[0].element_type = t,
                 tape[0].elements = tape[2],
                 tape[0].output_type = mint,
                 tape.is_constructed[0] = true,

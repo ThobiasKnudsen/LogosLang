@@ -316,8 +316,12 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"c := type (static run = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("`static run = (…)`"), "stderr: {stderr}");
-    let (echoes, stderr) = repl("x := 1\np := type (x := i32 ?)\nq := p(2)\nprint «{q.x}»\nx\n");
-    assert_eq!(echoes, ["2", "1"], "stderr: {stderr}");
+    let (echoes, stderr) = repl("x := 1\np := type (x := i32 ?)\nx\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+    assert!(
+        stderr.contains("<repl>:1:12: error: `x` is already declared and still in scope"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -8886,6 +8890,51 @@ fn a_name_declared_inside_a_type_body_reuses_none_of_its_fields() {
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         let expect = format!("{at}: error: `x` is already declared and still in scope");
         assert!(stderr.contains(&expect), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›Fields are read with a dot outside their scope‹ [[R234]]: no shadowing, fields included, so a
+/// field reuses no name live where it is declared, above or below it in the body around it
+/// (›Every name of a scope is seen from anywhere in it; written order counts in four cases only‹
+/// [[R372]]). A body's slot words are its own, and types side by side share no fields.
+#[test]
+fn a_field_reuses_no_name_live_where_it_is_declared() {
+    for (src, at) in [
+        ("x := i32 1, t := type ( x := i32 ? )", "<command line>:1:25"),
+        ("t := type ( x := i32 ?, static u := type ( x := i32 ? ) )", "<command line>:1:44"),
+        ("t := type ( static x := i32 1, x := i32 ? )", "<command line>:1:32"),
+        (
+            "t := type ( x := i32 ?, static h := fn () -> type ( type ( x := i32 ? ) ) ), v := t (5), v.h()",
+            "type body:1:3",
+        ),
+        (
+            "t := type ( static h := fn () -> type ( type ( x := i32 ? ) ), x := i32 ? ), v := t (5), v.h()",
+            "type body:1:3",
+        ),
+        ("f := fn () -> i32 ( x := i32 1, t := type ( x := i32 ? ), 2 ), f()", "type body:1:3"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        let expect = format!("{at}: error: `x` is already declared and still in scope");
+        assert!(stderr.contains(&expect), "{src}: stderr: {stderr}");
+    }
+    for (src, out) in [
+        (
+            "t := type ( a := i32 ? ), u := type ( a := i32 ? ), f := fn (a := i32 ?) -> i32 ( a ), print «{f(2)}»",
+            "2\n",
+        ),
+        (
+            "t := type ( a := i32 ?, static u := type ( b := i32 ?, static parse_rank = 60 ), \
+             static parse_rank = 61 ), print «{t.parse_rank} {t.u.parse_rank}»",
+            "61.0 60.0\n",
+        ),
+        (
+            "t := type ( a := i32 ?, static k := fn () -> type ( type ( b := i32 ? ) ) ), v := t (5), \
+             w := v.k(), print «{v.a}»",
+            "5\n",
+        ),
+    ] {
+        assert_eq!(run_line(src), (Some(0), out.to_string(), String::new()), "{src}");
     }
 }
 

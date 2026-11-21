@@ -547,9 +547,10 @@ impl<'a> Parser<'a> {
         Ok(unsafe { Cell::built(node) })
     }
 
-    /// Whether `cells[k]`, a cell of a held line, names a field of the value its body is about,
-    /// so it is no outer name. What the line's parse notes on the open definition is noted here,
-    /// since the body's callers and its later lines read it before the line first runs: a bare
+    /// Whether `cells[k]`, a cell of a held line, is no outer name: a member spelled after `.` or
+    /// `:`, or a field of the value its body is about. What the line's parse notes on the open
+    /// definition is noted here, since the body's callers and its later lines read it before the
+    /// line first runs: a bare
     /// field read, or written where `=` follows it, and a bare call of a `static` function that
     /// writes mark a `static` function's receiver (›A `static` function writes the value it is
     /// called on, and respects `mut`‹ [[R239]]); in a parse, a stamp, `.type =`, has the node's
@@ -567,7 +568,7 @@ impl<'a> Parser<'a> {
             if in_parse && cell.spelling() == "type" && next == Some(types.assign) {
                 self.cx.definitions.last_mut().expect("a parse is open").stamps_at_run = true;
             }
-            return Ok(false);
+            return Ok(true);
         }
         let field = self.names_own_field(cell)?;
         let bits = if field {
