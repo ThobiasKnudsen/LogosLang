@@ -407,17 +407,16 @@ fn sticky_quotient(num: i64, den: i64, digits: usize) -> (i64, i32) {
 
 /// The value to the right (`Parser::type_operand`): `rational_number 1` hands the literal on
 /// as a run-time value, its bytes the value's; `rational_number r` passes a rational value as it
-/// is, and a value of any other type is refused, as it is where it lands in a rational place. With
-/// no value to the right the type stands as itself.
-fn convert(
-    p: &mut Parser,
-    _id: DyadPtr,
-    tape: &mut ParsingTape,
-) -> Result<Constructed, ParseError> {
+/// is; `?` makes its valueless place; a value of any other type is refused, as it is where it
+/// lands in a rational place. With no value to the right the type stands as itself.
+fn convert(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
     let types = p.types();
     let Some(operand) = p.type_operand(tape, 1)? else {
         return Ok(Constructed::Decline);
     };
+    if p.takes_unknown(tape, &operand, id)? {
+        return Ok(Constructed::Placed);
+    }
     let value = p.as_operand(operand)?;
     // SAFETY: `value` is a reduced dyad from the store.
     let node = unsafe {

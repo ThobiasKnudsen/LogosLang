@@ -2467,6 +2467,21 @@ fn the_unknown_is_one_value_a_type_or_dyad_place_holds() {
     assert_eq!(script_parse_err("x := i32 5, x == ?"), ParseError::UnsupportedOperands);
 }
 
+/// `?` reads nothing off the identity to its left: one still to take its turn, ranked with the
+/// number types or not, takes `?` as its operand and decides what it is there.
+#[test]
+fn the_identity_that_takes_the_unknown_decides_what_it_is() {
+    let q = "q := type ( v := u64 ?, static parse_rank = i32.parse_rank, static parse = ( \
+             tape[0].type = q, if tape[1] == ? ( tape[0].v = 1 ) else ( tape[0].v = 2 ), \
+             tape.remove(1), tape.is_constructed[0] = true ) ),\n";
+    assert_eq!(run_script(&format!("{q}x := q ?, x.v")), 1);
+    assert_eq!(run_script(&format!("{q}x := q 5, x.v")), 2);
+    assert_eq!(run_script("mut x := i32 ?, x = 5, x"), 5);
+    assert_eq!(run_script("T := i64, mut x := T ?, x = 5, x"), 5);
+    assert_eq!(run_script("f := fn () -> i32 ( mut x := i32 ?, x = 4, x ), f.compile(), f()"), 4);
+    assert_eq!(run_script("mut r := rational_number ?, r = 1/4, r * 4"), 1);
+}
+
 #[test]
 fn a_valueless_place_is_read_only_after_a_sibling_write() {
     let unwritten = |name: &str| ParseError::Unwritten(Box::new(name.into()));
