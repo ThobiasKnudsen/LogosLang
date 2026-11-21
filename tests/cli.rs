@@ -5496,6 +5496,20 @@ fn an_imported_pub_spelling_is_keyed_and_ranked_as_the_file_declared_it() {
 }
 
 #[test]
+fn a_lex_rank_written_on_an_imported_name_is_the_name_s_wherever_it_is_imported() {
+    // ›Importing is dropping the text there, wrapped in its own scope‹ [[R306]]
+    let lib = "import file «tests/fixtures/lib_pub.logos»";
+    for write in [
+        "double:lex_rank = 7",
+        "f := fn () -> void ( double:lex_rank = 7 ), f()",
+        "f := fn () -> void ( double:lex_rank = 7 ), f.compile(), f()",
+    ] {
+        assert_eq!(line(&format!("( {lib}, {write} ), {lib}, double:lex_rank")), "7.0", "{write}");
+    }
+    assert_eq!(line(&format!("( {lib}, k := i32 1, double:scope == k:scope )")), "true");
+}
+
+#[test]
 fn an_import_tail_runs_once() {
     assert_eq!(line("import file «./tests/fixtures/counter.logos», c@"), "1");
     // An import is a statement: nothing echoes, and the second import runs nothing.
