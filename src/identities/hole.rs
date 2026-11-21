@@ -22,11 +22,21 @@ pub(crate) unsafe fn is_hole(unknown: DyadPtr, node: DyadPtr) -> bool {
     !node.is_null() && dyad::ty(node) == unknown
 }
 
-/// The type a hole stands for; null for a bracket parameter's slot.
+/// The type a hole stands for, read as the type its gates stand over; null for a bracket
+/// parameter's slot (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹
+/// [[R381]]).
 ///
 /// # Safety
 /// `node` must be a hole built by [`build`].
 pub(crate) unsafe fn type_in(node: DyadPtr) -> DyadPtr {
+    super::gate::under(gated_type_in(node))
+}
+
+/// The type a hole stands for as it was declared: a gate node where the field is gated.
+///
+/// # Safety
+/// As [`type_in`].
+pub(crate) unsafe fn gated_type_in(node: DyadPtr) -> DyadPtr {
     *(dyad::value(node) as *const DyadPtr)
 }
 

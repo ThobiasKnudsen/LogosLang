@@ -198,11 +198,11 @@ The seed runs:
 - `alloc`, `move`, `free`, `defer`, `own` in a type, and raw pointers;
 - `.compile()` with a deoptimizing JIT;
 - `file «path»`, `import file «path»` and `logos file «path»`, the command line as source, and the REPL;
-- `pub`, `mut` and `static` on a name's binding: a name is written after its declaration only where it says `mut`, and a write along a field path needs `mut` on every step.
+- `pub`, `mut` and `static`, kept in the type of the value they gate: a name is written after its declaration only where it says `mut`, and a write along a field path needs `mut` on every step.
 
 Specified in the rules and not yet built:
 
-- **The rest of the gates.** Gates in the value's type (`x := mut i32 5`), the write permission through pointers, and one read-or-write rule for visibility, borrowing, and reflection alike.
+- **The rest of the gates.** The gate words written right of `:=` (`x := mut i32 5`), the write permission through pointers, and one read-or-write rule for visibility, borrowing, and reflection alike.
 - **The borrow checker.** Many readers or one writer, checked per place, with lexical lifetimes.
 - **Error values.** `T!`, `try`, and `match`. Today every error is a fault that stops the run with one message.
 - **The rewriting engine.** Equality saturation over the graph: one engine for compiler optimization, computer algebra, and your own rewrites, driven by cost functions.

@@ -1,8 +1,8 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Declarations: `:=`, `?`, `dyad`, the binding and its gates, what a write must be
-//! granted by, ownership marks, and the unwritten-fields rule.
+//! Declarations: `:=`, `?`, `dyad`, the binding, what a write must be granted by, ownership
+//! marks, and the unwritten-fields rule.
 
 use super::*;
 use crate::dyad;
@@ -120,7 +120,7 @@ impl<'a> Parser<'a> {
         for &binding in path {
             // SAFETY: the path holds binding dyads from the store.
             unsafe {
-                if !Binding::has_gate(binding, self.types.mut_) {
+                if !crate::identities::gate::name_has(self.types, binding, self.types.mut_) {
                     return Err(ParseError::NotMutable(Box::new(Binding::spelling(binding))));
                 }
             }
@@ -171,14 +171,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Add `gate` to a name's binding, once.
+    /// A gate word written left of the name moves into the type of the name's value, once:
+    /// stand-in for #440, whose gate words stand right of `:=`.
     pub(crate) fn add_gate(&mut self, binding: DyadPtr, gate: DyadPtr) -> Result<(), ParseError> {
-        // SAFETY: `binding` is a binding dyad from the store.
+        use crate::identities::gate::{add_to_name, name_has};
+        // SAFETY: `binding` is a binding dyad from the store, and `gate` a gate word.
         unsafe {
-            if Binding::has_gate(binding, gate) {
+            if name_has(self.types, binding, gate) {
                 return Err(ParseError::DoubleGate);
             }
-            Binding::add_gate(self.rt.store, self.types.array_, binding, gate);
+            add_to_name(self.rt.store, self.types, binding, gate);
         }
         Ok(())
     }
@@ -196,9 +198,9 @@ impl<'a> Parser<'a> {
         Binding::alloc(self.rt.store, self.types.binding_, rec)
     }
 
-    /// One binding per declared name, a dyad of type `binding` (DESIGN ›`mut` is
-    /// a gate on the binding‹); an error is reported at `at`, the name's own
-    /// offset, so the caret lands on the name.
+    /// One binding per declared name, a dyad of type `binding` (›One binding per declared
+    /// name‹ [[R119]]); an error is reported at `at`, the name's own offset, so the caret lands
+    /// on the name.
     pub(crate) fn declare_name(
         &mut self,
         name: &str,

@@ -245,14 +245,11 @@ impl<'a> Parser<'a> {
         let place = if own {
             None
         } else {
+            // A name's type as it stands, its gate node with it, is its entry's.
             let mut key = Vec::with_capacity(names.len() * 2);
             for &name in &names {
                 key.push(KeyPart::Name(Binding::spelling(name)));
-                let gates = instance::entry_gates(types);
-                key.extend(
-                    gates.into_iter().filter(|&g| Binding::has_gate(name, g)).map(KeyPart::Node),
-                );
-                key.push(KeyPart::Node(types.type_of(name)));
+                key.push(KeyPart::Node(Binding::gated(name)));
             }
             let (place, kept) = type_mint::find(self.rt.store, types, types.open_curly_, &key)
                 .map_err(ParseError::Run)?;
@@ -266,18 +263,9 @@ impl<'a> Parser<'a> {
         let mut fields = Vec::with_capacity(names.len());
         let mut bindings = Vec::with_capacity(names.len());
         let declared = names.iter().try_for_each(|&name| {
-            let field = hole::build(
-                self.rt.store,
-                types.unknown,
-                types.type_of(name),
-                std::ptr::null_mut(),
-            );
+            let gated = Binding::gated(name);
+            let field = hole::build(self.rt.store, types.unknown, gated, std::ptr::null_mut());
             let binding = self.declare_field_name(&Binding::spelling(name), field, self.cx.pos)?;
-            for gate in instance::entry_gates(types) {
-                if Binding::has_gate(name, gate) {
-                    self.add_gate(binding, gate)?;
-                }
-            }
             fields.push(field);
             bindings.push(binding);
             Ok(())
@@ -952,10 +940,9 @@ impl<'a> Parser<'a> {
         use crate::identities::{hole, meta, numtype, scope};
         let types = self.types;
         let gates = |binding: DyadPtr| {
+            use crate::identities::gate::{set_of, word_of_name};
             // SAFETY: `binding` is a binding dyad of the body just built.
-            let mut gates = unsafe { Binding::gates(binding) };
-            gates.sort();
-            gates.into_iter().map(KeyPart::Node)
+            unsafe { set_of(word_of_name(types, binding)) }.into_iter().map(KeyPart::Node)
         };
         // SAFETY: `ty` is a type node and `at` a place of it.
         let whole = |ty: DyadPtr, at: *const u8| match unsafe { place_layout(types, ty) } {
@@ -975,10 +962,10 @@ impl<'a> Parser<'a> {
         };
         let mut key = Vec::new();
         for (&field, &binding) in fields.iter().zip(bindings) {
+            // A field's type as it was declared, its gate node with it.
             let ty = hole::type_in(field);
             key.push(KeyPart::Name(Binding::spelling(binding)));
-            key.extend(gates(binding));
-            key.push(KeyPart::Node(ty));
+            key.push(KeyPart::Node(hole::gated_type_in(field)));
             let default = hole::default_in(field);
             if !default.is_null() {
                 key.push(whole(ty, dyad::value(default))?);
@@ -987,7 +974,7 @@ impl<'a> Parser<'a> {
         let mut written_here =
             !def.ctor.is_null() || !def.run_body.is_null() || !def.instances_free.is_null();
         for &binding in &def.statics {
-            if Binding::has_gate(binding, types.mut_) {
+            if crate::identities::gate::name_has(types, binding, types.mut_) {
                 return None;
             }
             key.push(KeyPart::Name(Binding::spelling(binding)));

@@ -165,10 +165,12 @@ pub struct Core {
     pub hold_: DyadPtr,
     /// The copy a place that holds its value takes of a value it would only borrow.
     pub copy_: DyadPtr,
-    /// The gate word; its constructor fills the declare node's gate slot.
+    /// The gate words; each stands in the record of the gate mints that hold it.
     pub pub_: DyadPtr,
     pub mut_: DyadPtr,
     pub static_: DyadPtr,
+    /// The type of the gate mints, and the former `type_mint` keeps them under.
+    pub gate_: DyadPtr,
     /// Its node is the trace of the load; running it does nothing.
     pub import_: DyadPtr,
     pub file: DyadPtr,
@@ -346,7 +348,9 @@ impl Core {
         op_leaves.return_ = return_leaf;
         let (declare_, declare_leaf, declare_tok) = declare::register(&mut cx, &callables);
         op_leaves.declare_ = declare_leaf;
-        let (pub_, mut_, static_) = gate::register(&mut cx);
+        let (pub_, mut_, static_, gate_) = gate::register(&mut cx);
+        // SAFETY: `gate_` is the former `gate::register` gave, and `pub_` a gate word.
+        let pub_mint = unsafe { gate::early_mint(cx.store, gate_, &[pub_]) };
         let (import_, import_leaf) = import::register(&mut cx, &callables);
         op_leaves.import_ = import_leaf;
         let file = file::register(&mut cx);
@@ -404,7 +408,7 @@ impl Core {
             dm.hold_,
             dm.of_,
         );
-        let tape = tape::register(&mut cx, &callables, scope_, array_, void, pub_);
+        let tape = tape::register(&mut cx, &callables, scope_, array_, void, pub_mint);
         let hashmap = hashmap::register(&mut cx, &callables);
         let held_type = held_type::register(&mut cx, &callables);
         let this = this::register(&mut cx, &callables);
@@ -430,7 +434,7 @@ impl Core {
             dyad_,
             numtypes[NumType::F64 as usize],
             numtypes[NumType::U64 as usize],
-            pub_,
+            pub_mint,
         );
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
@@ -530,6 +534,7 @@ impl Core {
             pub_,
             mut_,
             static_,
+            gate_,
             import_,
             file,
             dyad_,

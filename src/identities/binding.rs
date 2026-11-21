@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! A `binding`: one per declared name, the trie entry itself. The dyad the name
-//! denotes, the scope it was declared in, its range of life, its gate set, its
-//! spelling and its lex rank. Not the `static`-member record a type carries (`meta`).
+//! denotes, the scope it was declared in, its range of life, its spelling and its lex
+//! rank. Not the `static`-member record a type carries (`meta`).
 //! `#[repr(C)]`, so the `binding` type's field offsets are the struct's.
 
 use crate::dyad::DyadPtr;
@@ -13,10 +13,15 @@ use super::{Core, Cx};
 use crate::dyad;
 
 /// One per name, never per identity: `x := type i32` binds a second name to i32's own
-/// dyad, and a binding shared through the dyad would let `pub x := type i32` gate i32 itself.
+/// dyad, so `pub x := type i32` gates what `x` points at through a gate node of its own,
+/// never i32 itself.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Binding {
+    /// What the name stands for: the type of its bytes for a name laid out in a frame, a
+    /// field's `?` node, else the node it denotes. In the record itself this word may point
+    /// at a gate node over that ([`super::gate`]); [`Binding::read`] gives what stands under
+    /// it, and [`Binding::gated`] the word as it stands.
     pub dyad: DyadPtr,
     /// The enclosing scope, not the declaration node: a dyad has no parent pointer, and
     /// keying by scope makes liveness an O(1) test against the open scopes.
@@ -27,8 +32,6 @@ pub struct Binding {
     /// The body item holding the `move` or `free` that made the name dead (the node itself
     /// while that item is still parsing); null while the name is alive.
     pub end: DyadPtr,
-    /// The gate words on the name in text order, an `array` node; null while none.
-    pub gate: DyadPtr,
     /// The spelling as a string node; a pattern identity's pattern text. Null only on a
     /// binding a test builds by hand.
     pub name: DyadPtr,
@@ -87,7 +90,6 @@ impl Binding {
             scope,
             start: std::ptr::null_mut(),
             end: std::ptr::null_mut(),
-            gate: std::ptr::null_mut(),
             name,
             lex_rank: 0.0,
             frame: std::ptr::null_mut(),
@@ -243,7 +245,16 @@ impl Binding {
             *(into.add(offset) as *mut DyadPtr) =
                 *((own as *const u8).add(offset) as *const DyadPtr);
         }
+        rec.dyad = super::gate::under(rec.dyad);
         rec
+    }
+
+    /// The `dyad` word as the record holds it: a gate node where the name's value is gated.
+    ///
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn gated(dyad: DyadPtr) -> DyadPtr {
+        (*Self::shared(dyad)).dyad
     }
 
     /// The record whose bytes hold the field at `offset` of the name `dyad`: the copy's own for
@@ -362,7 +373,7 @@ impl Binding {
     }
 
     /// # Safety
-    /// As `add_gate`; `path` a binding dyad from the store.
+    /// As `Binding::read`; `array_ty` the `array` identity, `path` a binding dyad from the store.
     pub unsafe fn add_path(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, path: DyadPtr) {
         let paths = (*Self::shared(dyad)).paths;
         let mut items =
@@ -381,54 +392,6 @@ impl Binding {
             && super::array::items(paths)
                 .iter()
                 .any(|&p| !(*Self::shared(p)).end.is_null() || Self::has_ended_path(p))
-    }
-
-    /// # Safety
-    /// As `Binding::read`; `gate` an identity from the store.
-    pub unsafe fn has_gate(dyad: DyadPtr, gate: DyadPtr) -> bool {
-        let gates = (*Self::shared(dyad)).gate;
-        !gates.is_null() && super::array::items(gates).contains(&gate)
-    }
-
-    /// The name's gates, in text order.
-    ///
-    /// # Safety
-    /// As `Binding::read`.
-    pub unsafe fn gates(dyad: DyadPtr) -> Vec<DyadPtr> {
-        let gates = (*Self::shared(dyad)).gate;
-        if gates.is_null() {
-            Vec::new()
-        } else {
-            super::array::items(gates).to_vec()
-        }
-    }
-
-    /// Put `gate` first: the words are read right to left, so first keeps text order.
-    ///
-    /// # Safety
-    /// As `Binding::read`; `array_ty` the `array` identity, `gate` an identity from the store.
-    pub unsafe fn add_gate(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, gate: DyadPtr) {
-        let gates = (*Self::shared(dyad)).gate;
-        let mut items =
-            if gates.is_null() { Vec::new() } else { super::array::items(gates).to_vec() };
-        items.insert(0, gate);
-        (*Self::shared(dyad)).gate = super::array::build(store, array_ty, &items);
-    }
-
-    /// # Safety
-    /// As `add_gate`.
-    pub unsafe fn remove_gate(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, gate: DyadPtr) {
-        let gates = (*Self::shared(dyad)).gate;
-        if gates.is_null() {
-            return;
-        }
-        let items: Vec<DyadPtr> =
-            super::array::items(gates).iter().copied().filter(|&g| g != gate).collect();
-        (*Self::shared(dyad)).gate = if items.is_empty() {
-            std::ptr::null_mut()
-        } else {
-            super::array::build(store, array_ty, &items)
-        };
     }
 
     /// # Safety
@@ -472,7 +435,8 @@ pub unsafe fn through(types: &Core, p: DyadPtr) -> DyadPtr {
 }
 
 /// Give the `binding` type its layout and spelling at the end of the build: its fields
-/// wait for `dyad`, `@`, and `array` to exist. Each is read from outside, so each is `pub`.
+/// wait for `dyad`, `@`, and `array` to exist. Each is read from outside, so each is `pub`,
+/// its type a gate node of the gate mint `pub_mint`.
 pub(super) fn register_type(
     cx: &mut Cx,
     scope_ty: DyadPtr,
@@ -480,12 +444,12 @@ pub(super) fn register_type(
     dyad_ty: DyadPtr,
     f64_ty: DyadPtr,
     u64_ty: DyadPtr,
-    pub_: DyadPtr,
+    pub_mint: DyadPtr,
 ) {
     let binding_ = cx.binding_;
     let scope = super::scope::mint(cx.store, scope_ty, std::ptr::null_mut());
-    let mut fields = Vec::with_capacity(9);
-    let mut bindings = Vec::with_capacity(9);
+    let mut fields = Vec::with_capacity(8);
+    let mut bindings = Vec::with_capacity(8);
     // SAFETY: `dyad_ty` is the type node `Core::build` minted.
     let at_dyad = unsafe { super::pointer::early_pointer_type(cx.store, cx.type_, dyad_ty) };
     // `name` is a place of type `string`: eight bytes holding the string node's address.
@@ -494,20 +458,18 @@ pub(super) fn register_type(
         ("scope", at_dyad),
         ("start", at_dyad),
         ("end", at_dyad),
-        ("gate", at_dyad),
         ("name", cx.string_),
         ("lex_rank", f64_ty),
         ("frame", at_dyad),
         ("offset", u64_ty),
     ];
     for (i, (name, ty)) in typed.into_iter().enumerate() {
-        let field = super::hole::build(cx.store, cx.unknown, ty, std::ptr::null_mut());
+        // SAFETY: `pub_mint` is a gate mint and `ty` a type node.
+        let gated = unsafe { super::gate::early_over(cx.store, pub_mint, ty) };
+        let field = super::hole::build(cx.store, cx.unknown, gated, std::ptr::null_mut());
         let binding = cx.declare_in(scope, name, field);
         // SAFETY: `binding` was just minted by `declare_in`; `binding_` is the type node.
-        unsafe {
-            Binding::set_field_offset(binding, binding_, i * 8);
-            Binding::add_gate(cx.store, array_ty, binding, pub_);
-        }
+        unsafe { Binding::set_field_offset(binding, binding_, i * 8) };
         fields.push(field);
         bindings.push(binding);
     }

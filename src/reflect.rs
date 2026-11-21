@@ -100,16 +100,15 @@ pub enum Shape {
         /// Null on every identity but the owning pointer.
         destructor: DyadPtr,
     },
-    /// A name's binding: the dyad it names, its scope, its range, its gate set, and for a
-    /// name laid out in a frame the frame and offset its bytes are at, `dyad` then the
-    /// declared type. A use of a name stores one, so a walker follows `dyad` to the value.
+    /// A name's binding: the dyad it names, its scope, its range, and for a name laid out in
+    /// a frame the frame and offset its bytes are at, `dyad` then the declared type. A use of
+    /// a name stores one, so a walker follows `dyad` to the value.
     /// DESIGN ›The dyad's read surface‹.
     Binding {
         dyad: DyadPtr,
         scope: DyadPtr,
         start: DyadPtr,
         end: DyadPtr,
-        gate: DyadPtr,
         frame: DyadPtr,
         offset: usize,
     },
@@ -148,7 +147,6 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
             scope: f.scope,
             start: f.start,
             end: f.end,
-            gate: f.gate,
             frame: f.frame,
             offset: f.offset,
         };
@@ -258,7 +256,7 @@ mod tests {
             let Shape::Tuple { slots } = describe(types, roots[1]) else {
                 panic!("an application should be a tuple");
             };
-            let Shape::Binding { dyad, scope, start, end, gate, frame, .. } =
+            let Shape::Binding { dyad, scope, start, end, frame, .. } =
                 describe(types, slots[0].node)
             else {
                 panic!("a named operand should be its binding");
@@ -268,7 +266,7 @@ mod tests {
             assert_eq!(frame, core.root_scope);
             assert_eq!(scope, core.root_scope);
             // Top level has no body array, so `start` stays null; `end` null is alive.
-            assert!(start.is_null() && end.is_null() && gate.is_null());
+            assert!(start.is_null() && end.is_null());
             assert_eq!(types.through(slots[0].node), slots[0].node);
             assert_eq!(read_kind(types, slots[0].node), Read::Scalar(NumType::I32));
             let mut rt = crate::run::Runtime::new(types, &mut store);

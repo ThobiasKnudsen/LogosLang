@@ -164,8 +164,7 @@ pub enum ParseError {
     /// literals are uncommitted‹).
     /// Carries the literal's spelling.
     AssignToLiteral(Box<String>),
-    /// A gate word (`pub`) not followed by a declaration: a gate fills a
-    /// declare node's gate slot.
+    /// A gate word (`pub`) not followed by a declaration, whose name's value it gates.
     GateNeedsDeclaration,
     /// A declaration was gated twice (`pub pub x := …`).
     DoubleGate,

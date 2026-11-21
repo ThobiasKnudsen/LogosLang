@@ -4270,18 +4270,28 @@ fn a_line_starting_with_a_dash_is_source_not_a_flag() {
 }
 
 #[test]
-fn the_binding_read_answers_scope_range_and_gate() {
+fn the_binding_read_answers_scope_and_range_and_holds_no_gate() {
     let (echoes, stderr) = repl(
-        "x := i32 5\nprint «{x:end}»\nprint «{x:gate}»\nprint «{x:scope}»\n\
+        "x := i32 5\nprint «{x:end}»\nprint «{x:scope}»\n\
           at_read := (x + x):scope\nprint «{at_read}»\n\
           y := type i32\nprint «{y.type == type}»\ny == i32\n",
     );
-    assert_eq!(echoes.len(), 6, "stderr: {stderr}");
-    assert_eq!(&echoes[..2], ["0", "0"], "end and gate are null");
-    assert_ne!(echoes[2], "0", "x was declared somewhere");
-    assert_eq!(echoes[2], echoes[3], "a constructed node's :scope is the scope open at the read");
-    assert_eq!(&echoes[4..], ["true", "true"], "an alias is its own binding over the same dyad");
+    assert_eq!(echoes.len(), 5, "stderr: {stderr}");
+    assert_eq!(echoes[0], "0", "end is null");
+    assert_ne!(echoes[1], "0", "x was declared somewhere");
+    assert_eq!(echoes[1], echoes[2], "a constructed node's :scope is the scope open at the read");
+    assert_eq!(&echoes[3..], ["true", "true"], "an alias is its own binding over the same dyad");
     assert!(stderr.is_empty(), "stderr: {stderr}");
+    // ›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]
+    for (line, want) in [
+        ("pub mut x := i32 5, x:gate", "unknown name `gate`"),
+        ("mut x := i32 5, x:mut", "`mut` is not in scope here"),
+        ("pub x := i32 5, x:pub", "`pub` is not in scope here"),
+    ] {
+        let (code, _, stderr) = run_line(line);
+        assert_eq!(code, Some(1), "{line}: stderr: {stderr}");
+        assert!(stderr.contains(want), "{line}: stderr: {stderr}");
+    }
 }
 
 #[test]

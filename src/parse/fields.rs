@@ -1619,7 +1619,7 @@ impl<'a> Parser<'a> {
         use crate::identities::{declare, read};
         let types = self.types;
         if !root.is_null() {
-            if Binding::has_gate(root, types.mut_) {
+            if crate::identities::gate::name_has(types, root, types.mut_) {
                 return None;
             }
             let start = Binding::read(root).start;
