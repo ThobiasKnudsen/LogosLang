@@ -492,6 +492,59 @@ fn a_member_the_tape_s_node_does_not_have_is_refused_as_a_name_s_is() {
     }
 }
 
+/// A line of the bracket a parse takes is read as its node, as a line a path reaches is: a `:=`
+/// line's `lhs` is the binding it declares, read with `:` and `.` as the name is (›A `:=` node's
+/// fields are `lhs` and `rhs`‹ [[R274]], ›`x.type` reads the type word of the node a name or an
+/// expression stands for‹ [[R279]]).
+#[test]
+fn a_parse_reads_the_name_and_type_a_line_of_its_bracket_declares() {
+    let members = "c := type ch ( pub mut i := i32, f := f64 )";
+    for (body, tail, printed) in [
+        ("print «{tape[1].dyads[0].lhs:name} {tape[1].dyads[1].lhs:name}»", members, "i f\n"),
+        ("print «{tape[1].dyads[0].lhs.type} {tape[1].dyads[1].lhs.type}»", members, "i32 f64\n"),
+        (
+            "print «{(tape[1].dyads[0].lhs.type) == i32} {(tape[1].dyads[1].lhs.type) == i32}»",
+            members,
+            "true false\n",
+        ),
+        (
+            "for k in 0..tape[1].dyads.size ( print «{tape[1].dyads[k].lhs:name}» )",
+            members,
+            "i\nf\n",
+        ),
+        // The bracket the tape holds when the line runs, after an earlier line's edit.
+        (
+            "tape.remove(1), print «{tape[1].dyads[1].lhs:name}»",
+            "c := type ch i32 ( k := u8, m := u8 )",
+            "m\n",
+        ),
+        // The parse runs where its line is parsed, on either tier.
+        (
+            "print «{tape[1].dyads[1].lhs:name} {tape[1].dyads[1].lhs.type}»",
+            "g := fn () -> i32 ( c := type ch ( i := i32, j := f64 ), 5 ), g()",
+            "j f64\n5\n",
+        ),
+        (
+            "print «{tape[1].dyads[1].lhs:name} {tape[1].dyads[1].lhs.type}»",
+            "g := fn () -> i32 ( c := type ch ( i := i32, j := f64 ), 5 ), g.compile(), g()",
+            "j f64\n5\n",
+        ),
+    ] {
+        let src = format!("{}, {tail}", tape_reader(body));
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+    let read = tape_reader("print «{tape[1].dyads[0].nope}»");
+    for src in [
+        format!("{read}, {members}"),
+        "g := ( a := i32 1, b := f64 2.0, a ), print «{g:start.rhs.dyads[0].nope}»".to_string(),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        let refused = stderr.contains("this value's type has no field `nope`");
+        assert!(code != Some(0) && refused, "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn the_power_demo_prints_nine() {
     let out = logos().arg("import file «identities/power.logos»").output().unwrap();
