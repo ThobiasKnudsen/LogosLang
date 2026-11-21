@@ -12857,14 +12857,15 @@ fn a_static_line_runs_at_each_build_of_one_type() {
 }
 
 /// ›`array` is a chooser‹ [[R223]]: `array` and `^` keep no memo of their own, and each still has
-/// one mint per key, kept by `type_mint`.
+/// one mint per key, kept by `type_mint`; `array`'s parse makes its mint itself, with no minting
+/// function beside it.
 #[test]
 fn array_and_power_keep_their_mints_in_type_mint() {
     let array = "import file «./identities/array.logos»";
     let mut cases = vec![
         (format!("{array}, a := array i32 [1, 2], b := array i32 [3], a.type == b.type"), "true\n"),
         (format!("{array}, (array i32) == (array i64)"), "false\n"),
-        (format!("{array}, array.get_mint(i32) == array.get_mint(i32)"), "true\n"),
+        (format!("{array}, (array i32) == (array i32)"), "true\n"),
         (format!("{array}, k := type array array i32, k == array array i32"), "true\n"),
     ];
     for compile in ["", "f.compile(), "] {
@@ -12888,4 +12889,7 @@ fn array_and_power_keep_their_mints_in_type_mint() {
         let text = std::fs::read_to_string(file).expect(file);
         assert!(!text.contains("hashmap"), "{file} keeps a memo of its own");
     }
+    let (code, _, stderr) = run_line(&format!("{array}, array.get_mint(i32)"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("get_mint"), "stderr: {stderr}");
 }
