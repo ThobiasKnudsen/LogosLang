@@ -41,13 +41,17 @@ pub struct Cell {
     /// A hole `own` marked over a type whose body fills `free`: the name or field declared
     /// with it owns the node written into it.
     pub owning: bool,
+    /// The cell stands for the node a `dyad` place held where the parse read the place through,
+    /// or for a field of that node: what the line stands on, which no write reaches.
+    pub held: bool,
 }
 
 impl Cell {
-    const NO_FACTS: (DyadPtr, (DyadPtr, DyadPtr), DyadPtr, bool, bool) = (
+    const NO_FACTS: (DyadPtr, (DyadPtr, DyadPtr), DyadPtr, bool, bool, bool) = (
         std::ptr::null_mut(),
         (std::ptr::null_mut(), std::ptr::null_mut()),
         std::ptr::null_mut(),
+        false,
         false,
         false,
     );
@@ -58,11 +62,12 @@ impl Cell {
         self.root = from.root;
         self.hole = from.hole;
         self.owning = from.owning;
+        self.held = from.held;
     }
 
     /// The cell placed over `dyad`, its facts cleared.
     fn over(&mut self, dyad: DyadPtr) {
-        let (path, target, root, hole, owning) = Self::NO_FACTS;
+        let (path, target, root, hole, owning, held) = Self::NO_FACTS;
         self.dyad = dyad;
         self.constructed = true;
         self.bracket = false;
@@ -71,6 +76,7 @@ impl Cell {
         self.root = root;
         self.hole = hole;
         self.owning = owning;
+        self.held = held;
     }
 }
 
@@ -79,7 +85,7 @@ impl Cell {
     /// `text` must outlive every read of the cell's spelling; `dyad` must be a
     /// dyad from the store.
     pub unsafe fn lexed(dyad: DyadPtr, text: &str, start: usize, len: usize) -> Self {
-        let (path, target, root, hole, owning) = Self::NO_FACTS;
+        let (path, target, root, hole, owning, held) = Self::NO_FACTS;
         Cell {
             dyad,
             constructed: false,
@@ -92,13 +98,14 @@ impl Cell {
             root,
             hole,
             owning,
+            held,
         }
     }
 
     /// # Safety
     /// `dyad` must be null or a dyad from the store.
     pub unsafe fn built(dyad: DyadPtr) -> Self {
-        let (path, target, root, hole, owning) = Self::NO_FACTS;
+        let (path, target, root, hole, owning, held) = Self::NO_FACTS;
         Cell {
             dyad,
             constructed: true,
@@ -111,6 +118,7 @@ impl Cell {
             root,
             hole,
             owning,
+            held,
         }
     }
 

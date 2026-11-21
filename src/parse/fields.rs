@@ -873,12 +873,13 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::ExpectedField);
             }
         }
-        let record_logos = self.types.type_of(lhs);
-        if record_logos.is_null()
-            || !crate::identities::meta::is_record_type(record_logos)
-            || (!storage && self.types.is_hole(lhs))
-        {
+        if !storage && self.types.is_hole(lhs) {
             return Err(ParseError::UnsupportedOperands);
+        }
+        let record_logos = self.types.type_of(lhs);
+        if record_logos.is_null() || !crate::identities::meta::is_record_type(record_logos) {
+            let name = Box::new(self.cx.source[nstart..nstart + nlen].to_string());
+            return Err(self.fail_at(nstart, ParseError::NotAField(name)));
         }
         let (_, _, binding) = match self.resolve_field(record_logos, nstart, nlen) {
             Ok(found) => found,
@@ -921,7 +922,7 @@ impl<'a> Parser<'a> {
         // The left is read as it stands: an identity's fields are read off the
         // token before its own constructor wakes (DESIGN ›Text is the quote‹),
         // so a callable to the left is the identity itself, not a call in waiting.
-        let Some(left) = tape.at(-1).copied() else {
+        let Some(mut left) = tape.at(-1).copied() else {
             return Err(ParseError::MissingOperand);
         };
         let (lhs, root) = (self.operand_dyad(left)?, left.binding(self.types));
@@ -977,18 +978,21 @@ impl<'a> Parser<'a> {
         };
         self.cx.member_root = root;
         self.cx.member_path.clear();
-        // `.type` reads the type of the node a `dyad` no name holds gives.
-        let type_word = &source[nstart..nstart + nlen] == "type";
-        let lhs = if type_word {
-            match self.read_through_value(tape, -1, lhs) {
-                Ok(lhs) => lhs,
-                Err(e) => {
-                    self.cx.member_root = std::ptr::null_mut();
-                    return Err(e);
-                }
+        // A member of a `dyad` value is the member of the node it holds, `.type` included (›A
+        // `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]).
+        let read = self.read_through_value(tape, -1, lhs).and_then(|read| {
+            left.held |= read != lhs;
+            if writes {
+                Self::check_held_write(&left).map_err(|e| self.fail_at(nstart, e))?;
             }
-        } else {
-            lhs
+            Ok(read)
+        });
+        let lhs = match read {
+            Ok(read) => read,
+            Err(e) => {
+                self.cx.member_root = std::ptr::null_mut();
+                return Err(e);
+            }
         };
         let member = Member { start: nstart, len: nlen, index, key, call };
         // SAFETY: `lhs` is a reduced dyad off the tape.
@@ -1010,7 +1014,9 @@ impl<'a> Parser<'a> {
         tape.span_center(left.start, end);
         let cell = tape.at_mut(0).expect("placed above");
         cell.path = path;
-        if plain {
+        // A call's result is a value of its own.
+        cell.held = left.held && bracket.is_none();
+        if plain && !left.held {
             cell.target = reached;
             cell.root = path_root;
         }

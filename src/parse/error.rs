@@ -74,6 +74,11 @@ pub enum ParseError {
     RunBodyFailed { name: String, rendered: String },
     /// `tape[0].f` naming no field declared above; carries `f`.
     NoSuchField(Box<String>),
+    /// `v.f` over a value whose type lays out no fields; carries `f`.
+    NotAField(Box<String>),
+    /// A write through what a `dyad` place held where the parse read the place through: a field
+    /// `=` or a `static` function that writes its value.
+    WriteThroughDyad,
     /// `tape.is_constructed[k] = v` with a `v` that is no bool.
     FlagTakesBool,
     /// An operator lacked a reduced operand on one side.

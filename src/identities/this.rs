@@ -570,8 +570,36 @@ unsafe fn field_of(
     owner: DyadPtr,
     name: DyadPtr,
 ) -> Result<Field, RunError> {
-    let this = rt.run(*ops)? as DyadPtr;
+    let this = receiver(rt, *ops, owner)?;
     field_at(rt, this, ops, owner, name)
+}
+
+/// The value a field read or write of `owner` works on, what its first operand `this` gives: a
+/// plain record's bytes by their address, as every whole read of a record hands them, so a record
+/// that lies in a node's own bytes is read where it lies; any other value as it runs.
+///
+/// # Safety
+/// `this` must be a reduced dyad from the store and `owner` a type node.
+unsafe fn receiver(rt: &mut Runtime, this: DyadPtr, owner: DyadPtr) -> Result<DyadPtr, RunError> {
+    if is_plain(rt.types(), owner) {
+        return super::by_copy::record_addr(rt, this).map(<*mut u8>::cast);
+    }
+    Ok(rt.run(this)? as DyadPtr)
+}
+
+/// [`receiver`]'s compiled half.
+///
+/// # Safety
+/// As [`receiver`].
+unsafe fn lower_receiver(
+    lw: &mut Lowerer,
+    this: DyadPtr,
+    owner: DyadPtr,
+) -> Result<Value, CompileError> {
+    if is_plain(lw.types(), owner) {
+        return super::by_copy::lower_record_addr(lw, this);
+    }
+    lw.lower(this)
 }
 
 /// As [`field_of`], of the value `this` the read's first operand gave.
@@ -642,7 +670,7 @@ unsafe fn slot_of(
     owner: DyadPtr,
     name: DyadPtr,
 ) -> Result<(*mut DyadPtr, usize), RunError> {
-    let this = rt.run(*ops)? as DyadPtr;
+    let this = receiver(rt, *ops, owner)?;
     slot_at(rt, this, ops, owner, name)
 }
 
@@ -698,7 +726,8 @@ pub(crate) unsafe fn field_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut 
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.
 pub(crate) unsafe fn held(rt: &mut Runtime, read: DyadPtr) -> Result<DyadPtr, RunError> {
-    let this = rt.run(*(dyad::value(read) as *const DyadPtr))? as DyadPtr;
+    let owner = owner_of(rt.types(), read);
+    let this = receiver(rt, *(dyad::value(read) as *const DyadPtr), owner)?;
     held_at(rt, read, this)
 }
 
@@ -726,7 +755,8 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower_slot(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a slot node from `build_slot`, its receiver its first operand.
     unsafe {
-        let this = lw.lower(*(dyad::value(node) as *const DyadPtr))?;
+        let owner = owner_of(lw.types(), node);
+        let this = lower_receiver(lw, *(dyad::value(node) as *const DyadPtr), owner)?;
         let read = lw.node_addr(node);
         lw.call_seed(compiled_slot as *const () as usize, &[read, this])
     }
@@ -744,7 +774,8 @@ unsafe extern "C" fn compiled_slot(ctx: *mut crate::run::Context, read: DyadPtr,
 fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a load node from `build_load`, its receiver its first operand.
     unsafe {
-        let this = rt.run(*(dyad::value(node) as *const DyadPtr))? as DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
+        let this = receiver(rt, *ops, *ops.add(5))?;
         load(rt, node, this)
     }
 }
@@ -789,7 +820,7 @@ fn lower_load(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             Some(Carry::Bytes(_)) => None,
             None => return Err(CompileError::NotLowerable(node)),
         };
-        let this = lw.lower(*ops)?;
+        let this = lower_receiver(lw, *ops, *ops.add(5))?;
         let read = lw.node_addr(node);
         let bits = lw.call_seed(compiled_load as *const () as usize, &[read, this])?;
         Ok(match nt {

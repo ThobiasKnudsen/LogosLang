@@ -347,6 +347,12 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::NoSuchField(name) => {
             format!("no field `{name}` is declared above in the type body")
         }
+        ParseError::NotAField(name) => format!("this value's type has no field `{name}`"),
+        ParseError::WriteThroughDyad => {
+            "what a `dyad` holds is read through it, but not written through it yet: write a \
+             whole new value into the `dyad`"
+                .into()
+        }
         ParseError::BareFieldInParse(name) => {
             format!("a parse writes and reads a field through its cell, `tape[0].{name}`, never bare")
         }
