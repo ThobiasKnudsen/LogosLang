@@ -165,6 +165,15 @@ pub(crate) unsafe fn taken(store: &mut Store, types: &Core, value: DyadPtr) -> D
     super::mint::node_of_any(store, types, types.copy_, &[ty], &[value])
 }
 
+/// The value a `copy` node copies; `None` for any other node.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn copied(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    (super::mint::operation_of(dyad::ty(node)) == Some(types.ops.copy_))
+        .then(|| *(dyad::value(node) as *const DyadPtr))
+}
+
 /// The place at `at` holds a value of `ty` copied bit for bit; each part the value owns becomes a
 /// copy of its own, a NULL owner staying NULL.
 ///

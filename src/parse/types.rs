@@ -593,7 +593,6 @@ impl<'a> Parser<'a> {
                 }
             }
             let value = cell.dyad;
-            let owns_node = cell.owning;
             if self.is_bare_unknown(&cell) {
                 return Err(self.untyped(start, relaxed));
             }
@@ -634,7 +633,7 @@ impl<'a> Parser<'a> {
                 crate::identities::numtype::is_pointer_type(logos)
                     && !crate::identities::meta::destructor_of(logos).is_null()
             };
-            if list == FieldList::Parameters && (owning || owns_node) {
+            if list == FieldList::Parameters && owning {
                 self.cx.pos = start;
                 return Err(ParseError::OwnParameterNotInSeed);
             }
@@ -652,10 +651,6 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::PubParameter);
             }
             self.gate_name(binding, cell.gates);
-            if owns_node {
-                // SAFETY: `binding` is the binding just made.
-                unsafe { Binding::set_holds(binding) };
-            }
             fields.push(field);
             bindings.push(binding);
             if !self.consume_separator() {
