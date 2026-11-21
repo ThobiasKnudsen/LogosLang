@@ -873,7 +873,7 @@ impl<'a> Parser<'a> {
                 self.cx.pos = cell.start;
                 return Err(ParseError::EndsPrimordialName(Box::new(cell.spelling().into())));
             }
-            if self.cx.scopes.crosses_barrier(scope) {
+            if self.ends_outer_name(scope, binding) {
                 self.cx.pos = cell.start;
                 return Err(ParseError::MoveOfOuterName);
             }
@@ -932,7 +932,7 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `binding` and the path's fields are binding dyads from the store.
         unsafe {
-            if self.cx.scopes.crosses_barrier(Binding::read(binding).scope) {
+            if self.ends_outer_name(Binding::read(binding).scope, binding) {
                 return Err(self.fail_at(at, ParseError::MoveOfOuterName));
             }
             if owns && path_borrows(self.types, binding, &path) {
@@ -1040,6 +1040,23 @@ impl<'a> Parser<'a> {
             return Err(ParseError::CapturedLocal);
         }
         Ok(())
+    }
+
+    /// Whether a `move` or `free` here of `binding`, which `scope` holds, ends a name declared
+    /// outside the loop or function body around it, so the next pass or call would find it dead:
+    /// a name of a scope opened before that body, or a file's name, whose place the file keeps
+    /// for the run however an `import` in the body set it there.
+    pub(super) fn ends_outer_name(&self, scope: DyadPtr, binding: DyadPtr) -> bool {
+        if self.cx.scopes.crosses_barrier(scope) {
+            return true;
+        }
+        // SAFETY: a non-null `binding` is a binding dyad from the store, and so is its origin.
+        let file = !binding.is_null()
+            && self
+                .imports
+                .sections
+                .contains(&unsafe { Binding::read(Binding::origin_of(binding)) }.scope);
+        file && self.cx.scopes.in_barrier()
     }
 
     /// A value made once (`static`, `immediate`) runs at parse, where a name of the
