@@ -3050,7 +3050,7 @@ mod tests {
                 "{src}"
             );
         }
-        assert_eq!(run("t := i32,\nfree t,\nx := i32 4,\nx"), (4, 0));
+        assert_eq!(run("t := type i32,\nfree t,\nx := i32 4,\nx"), (4, 0));
     }
 
     #[test]

@@ -12,8 +12,8 @@ use crate::store::Store;
 use super::{Core, Cx};
 use crate::dyad;
 
-/// One per name, never per identity: `x := i32` binds a second name to i32's own
-/// dyad, and a binding shared through the dyad would let `x := pub i32` gate i32 itself.
+/// One per name, never per identity: `x := type i32` binds a second name to i32's own
+/// dyad, and a binding shared through the dyad would let `pub x := type i32` gate i32 itself.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Binding {

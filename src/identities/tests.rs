@@ -2336,7 +2336,9 @@ fn a_result_type_is_written_as_a_type_place_is() {
     for tail in ["", "mk.compile(), "] {
         for written in ["i32", "(i32)", "t"] {
             assert_eq!(
-                run_script(&format!("t := i32, mk := fn () -> {written} ( 7 ),\n{tail}mk() + 1")),
+                run_script(&format!(
+                    "t := type i32, mk := fn () -> {written} ( 7 ),\n{tail}mk() + 1"
+                )),
                 8,
                 "-> {written}, {tail}"
             );
@@ -2482,7 +2484,7 @@ fn the_identity_that_takes_the_unknown_decides_what_it_is() {
     assert_eq!(run_script(&format!("{q}x := q ?, x.v")), 1);
     assert_eq!(run_script(&format!("{q}x := q 5, x.v")), 2);
     assert_eq!(run_script("mut x := i32 ?, x = 5, x"), 5);
-    assert_eq!(run_script("T := i64, mut x := T ?, x = 5, x"), 5);
+    assert_eq!(run_script("T := type i64, mut x := T ?, x = 5, x"), 5);
     assert_eq!(run_script("f := fn () -> i32 ( mut x := i32 ?, x = 4, x ), f.compile(), f()"), 4);
     assert_eq!(run_script("mut r := rational_number ?, r = 1/4, r * 4"), 1);
 }
@@ -4789,7 +4791,7 @@ fn a_hashmap_takes_only_the_pub_entries_of_a_scope() {
 fn a_parse_that_stamps_another_type_writes_only_its_pub_fields() {
     let src = |gate: &str, stamp: &str| {
         format!(
-            "box := type ( {gate}v := i32 ?, static output_type := i32, static run = ( v + 1 ) ), \
+            "box := type ( {gate}v := i32 ?, static output_type := type i32, static run = ( v + 1 ) ), \
              get := fn () -> type ( box ), \
              wrap := type ( static parse_rank = *.parse_rank + 1, static parse = ( \
              tape[0].type = {stamp}, tape[0].v = tape[-1], tape.is_constructed[0] = true, \
