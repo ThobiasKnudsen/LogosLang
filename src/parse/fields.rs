@@ -976,20 +976,16 @@ impl<'a> Parser<'a> {
         };
         let (lhs, root) = (self.operand_dyad(left)?, left.binding(self.types));
         // The member is read by its spelling at the offset it was lexed at, so a
-        // keyword there (`.type`) reads as a name.
-        let this_read = self.is_node_cell(lhs);
-        self.cx.member_asleep = this_read;
-        let m = self.cell_at(tape, 1);
+        // keyword there (`.type`, `.error`) reads as a name and never wakes.
+        self.cx.member_asleep = true;
+        let member = self.cell_at(tape, 1).map(|m| {
+            let save = std::mem::replace(&mut self.cx.pos, m?.start);
+            let member = self.lex_spelling();
+            self.cx.pos = save;
+            member
+        });
         self.cx.member_asleep = false;
-        let Some(m) = m? else {
-            return Err(ParseError::ExpectedField);
-        };
-        let mstart = m.start;
-        let save = self.cx.pos;
-        self.cx.pos = mstart;
-        let member = self.lex_spelling();
-        self.cx.pos = save;
-        let Some((nstart, nlen)) = member else {
+        let Some((nstart, nlen)) = member? else {
             return Err(ParseError::ExpectedField);
         };
         // The optional `[i]` or `(…)` after the member, lexed on demand; a

@@ -267,7 +267,7 @@ impl OpenScope {
         self.given_at.map_or(self.lines, |at| at + 1)
     }
 
-    /// A quote's parts, read by `print` or `error`.
+    /// A quote's parts, read by `print`, `abort` or a raise.
     pub(super) fn quote() -> Self {
         OpenScope { quote: Some(Vec::new()), ..OpenScope::default() }
     }
@@ -1199,7 +1199,8 @@ impl<'a> Parser<'a> {
         // A `!=` check whose branch raises leaves the cell checked for the rest of the scope.
         if let Some((key, ty, false)) = check {
             // SAFETY: `then` is the reduced dyad just parsed.
-            if els.is_null() && unsafe { dyad::ty(types.through(then)) } == types.error.error {
+            let then_ty = unsafe { dyad::ty(types.through(then)) };
+            if els.is_null() && crate::identities::error::ends_run(types, then_ty) {
                 let scope = self.cx.open.last_mut().expect("the `if` stands in an open scope");
                 scope.narrowed.push((key, ty));
             }

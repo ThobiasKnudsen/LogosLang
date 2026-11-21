@@ -68,7 +68,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::ArmGivesNothing => {
             "every arm of an `if` used as a value must give one, and this arm gives nothing \
-             (a statement, a `return` or an `error` gives the `if` no value)"
+             (a statement, a `return`, an `error` or an `abort` gives the `if` no value)"
                 .into()
         }
         ParseError::ArmsDiffer => {
@@ -88,8 +88,8 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::LineAfterLeave => {
-            "this line never runs: the line before it always leaves, with a `return` or an \
-             `error`"
+            "this line never runs: the line before it always leaves, with a `return`, an `error` \
+             or an `abort`"
                 .into()
         }
         ParseError::VoidBodyGives => {
@@ -196,6 +196,25 @@ pub fn parse_message(e: &ParseError) -> String {
         ),
         ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
         ParseError::ExpectedQuote(word) => format!("`{word}` must be followed by a «…» quote"),
+        ParseError::ErrorNeedsCategory => {
+            "an error needs a category: write `error.x «…»` over a category declared with \
+             `error.x := «description»`, or `abort «…»` to stop the program"
+                .into()
+        }
+        ParseError::UnknownCategory(name) => {
+            format!("unknown category `{name}`: declare it with `{name} := «description»`")
+        }
+        ParseError::CategoryDeclared(name) => format!(
+            "the category `{name}` is already declared and still in scope: a category is \
+             declared once where it can be seen, and it lasts as long as its scope"
+        ),
+        ParseError::CategoryApart(name) => {
+            format!("a category's name is one word: write `{name}`, with no space inside it")
+        }
+        ParseError::CategoryAlone(name) => format!(
+            "`{name}` is a category, a name with no value to read: raise it with \
+             `{name} «message»`"
+        ),
         ParseError::EmptySpelling => {
             "a declared spelling must not be empty: no text could ever lex as it".into()
         }
@@ -571,7 +590,8 @@ pub fn run_message(e: &RunError) -> String {
         }
         RunError::NotText => "`lex` takes a string".into(),
         RunError::Output(why) => format!("print could not write to stdout: {why}"),
-        RunError::Raised(message) => message.to_string(),
+        RunError::Aborted(message) => message.to_string(),
+        RunError::Raised(raised) => format!("{}: {}", raised.0, raised.1),
         RunError::NoTape => "there is no tape behind this receiver".into(),
         RunError::OffTape => "this index is off the tape".into(),
         RunError::MissingKey => {
