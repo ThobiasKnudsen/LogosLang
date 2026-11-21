@@ -4760,6 +4760,19 @@ fn a_static_member_is_read_through_its_type_or_a_value_only_when_it_is_pub() {
     };
     assert_eq!(script_parse_err(&pt("")), not_pub("s"));
     assert_eq!(run_script(&pt("pub ")), 3);
+    // A function called through the type, a chooser as any other.
+    let chooser = |gate: &str, call: &str| {
+        format!(
+            "p := type ( static ms := hashmap type -> type, {gate}static get_mint := fn (l := type ?) \
+             -> type ( mut m := ms[l], if m != ? return m, m = type ( pub v := l ? ), ms[l] = m, m ) ), \
+             {call}"
+        )
+    };
+    let twice = "p.get_mint(i32) == p.get_mint(i32)";
+    for call in [twice.to_string(), format!("f := fn () -> bool ( {twice} ), f.compile(), f()")] {
+        assert_eq!(script_parse_err(&chooser("", &call)), not_pub("get_mint"), "{call}");
+        assert_eq!(run_script(&chooser("pub ", &call)), 1, "{call}");
+    }
 }
 
 #[test]
