@@ -526,7 +526,8 @@ impl<'a> Parser<'a> {
                 self.add_gate(binding, gate)?;
             }
             if owns_node {
-                self.add_gate(binding, self.types.own_)?;
+                // SAFETY: `binding` is the binding just made.
+                unsafe { Binding::set_holds(binding) };
             }
             fields.push(field);
             bindings.push(binding);
@@ -991,6 +992,10 @@ impl<'a> Parser<'a> {
             }
             key.push(KeyPart::Name(Binding::spelling(binding)));
             key.extend(gates(binding));
+            // A member still unwritten holds no value to tell it by.
+            if Binding::read(binding).unread {
+                return None;
+            }
             let held = types.through(Binding::read(binding).names(binding));
             if types.is_storage(held) {
                 let ty = types.type_of(held);

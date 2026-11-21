@@ -467,7 +467,7 @@ pub(crate) unsafe fn only_borrows(types: &Core, holder: DyadPtr) -> bool {
     if Binding::read(holder).is_field() {
         !super::copy::field_needs_owner(types, holder)
     } else {
-        !Binding::has_gate(holder, types.own_)
+        !Binding::read(holder).holds
     }
 }
 

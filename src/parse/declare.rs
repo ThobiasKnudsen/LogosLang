@@ -74,7 +74,7 @@ impl<'a> Parser<'a> {
         let types = self.types;
         if place.is_null()
             || dyad::ty(place) != types.binding_
-            || !Binding::has_gate(place, types.waiting.line)
+            || !Binding::read(place).typed_at_run
         {
             return Ok(value);
         }
@@ -281,16 +281,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Whether the name owns the node it holds: its binding carries `own`.
+    /// Whether the name owns the node it holds, as its binding site decided.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store.
     pub(crate) unsafe fn owns_node(&self, binding: DyadPtr) -> bool {
-        Binding::has_gate(binding, self.types.own_)
+        Binding::read(binding).holds
     }
 
     /// Whether the binding site made the name an owner: of a block, its place an owning
-    /// pointer's, of a node, its binding carrying `own`, or of what its `dyad ?` place holds.
+    /// pointer's, of a node, or of what its `dyad ?` place holds.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store.
@@ -307,7 +307,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `binding` must be the binding dyad being declared, laid out as a node's place.
     unsafe fn hold_node(&mut self, binding: DyadPtr) {
-        Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.own_);
+        Binding::set_holds(binding);
         self.hold(binding);
     }
 
@@ -530,7 +530,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::Resolve(ResolveError::Dead(name)));
         }
         // SAFETY: as above.
-        if !unsafe { Binding::has_gate(binding, types.unknown) }
+        if !unsafe { Binding::read(binding) }.unread
             || next_is(types.assign)
             || next_is(types.colon_)
         {
@@ -661,7 +661,7 @@ impl<'a> Parser<'a> {
                 .collect();
             if left.is_empty() {
                 Binding::set_unwritten(binding, std::ptr::null_mut());
-                Binding::remove_gate(self.rt.store, self.types.array_, binding, self.types.unknown);
+                Binding::set_unread(binding, false);
             } else {
                 let arr = crate::identities::array::build(self.rt.store, self.types.array_, &left);
                 Binding::set_unwritten(binding, arr);
@@ -670,12 +670,12 @@ impl<'a> Parser<'a> {
         }
         if place.is_null()
             || dyad::ty(place) != self.types.binding_
-            || !Binding::has_gate(place, self.types.unknown)
+            || !Binding::read(place).unread
             || Binding::read(place).scope != scope
         {
             return;
         }
-        Binding::remove_gate(self.rt.store, self.types.array_, place, self.types.unknown);
+        Binding::set_unread(place, false);
         Binding::set_unwritten(place, std::ptr::null_mut());
     }
 
@@ -694,9 +694,7 @@ impl<'a> Parser<'a> {
         if unwritten.is_empty() {
             return;
         }
-        if !Binding::has_gate(binding, self.types.unknown) {
-            Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.unknown);
-        }
+        Binding::set_unread(binding, true);
         let arr = crate::identities::array::build(self.rt.store, self.types.array_, &unwritten);
         Binding::set_unwritten(binding, arr);
     }
@@ -939,12 +937,11 @@ impl<'a> Parser<'a> {
         // it, as one declared `T ?` does.
         // SAFETY: `binding` is the binding just declared.
         unsafe {
-            let (store, array) = (&mut *self.rt.store, self.types.array_);
             if typed_at_run {
-                Binding::add_gate(store, array, binding, self.types.waiting.line);
+                Binding::set_typed_at_run(binding);
             }
             if unwritten {
-                Binding::add_gate(store, array, binding, self.types.unknown);
+                Binding::set_unread(binding, true);
             }
         }
         let node =
@@ -1124,12 +1121,7 @@ impl<'a> Parser<'a> {
                     _ => self.hold(binding),
                 }
                 if !crate::identities::hashmap::is_hashmap(self.types, t) {
-                    Binding::add_gate(
-                        self.rt.store,
-                        self.types.array_,
-                        binding,
-                        self.types.unknown,
-                    );
+                    Binding::set_unread(binding, true);
                     // `T ?` of a record leaves zeroed bytes, not the defaults, so every field
                     // waits for its write.
                     if crate::identities::meta::is_record_type(t) {

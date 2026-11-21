@@ -61,6 +61,14 @@ pub struct Binding {
     /// The spelling is a pattern, keyed in the trie as the recognizer it is; any other
     /// spelling is keyed escaped, so it stands for itself.
     pub pattern: bool,
+    /// Declared without a value and not yet written: a read is refused until a write fills it
+    /// (›Reading a place before its first write is refused at parse‹ [[R104]]).
+    pub unread: bool,
+    /// Its line gives its type when it runs, and a write converts into that type.
+    pub typed_at_run: bool,
+    /// The binding site made the name the owner of the node it holds (›Holding is decided at
+    /// the binding site, parameters included‹ [[R61]]).
+    pub holds: bool,
 }
 
 /// Where a storage binding's bytes lie, with the offset into it.
@@ -90,6 +98,9 @@ impl Binding {
             over: std::ptr::null_mut(),
             unmade: false,
             pattern: false,
+            unread: false,
+            typed_at_run: false,
+            holds: false,
         }
     }
 
@@ -313,6 +324,24 @@ impl Binding {
     /// As `Binding::read`; `fields` null or an `array` node from the store.
     pub unsafe fn set_unwritten(dyad: DyadPtr, fields: DyadPtr) {
         (*Self::shared(dyad)).unwritten = fields;
+    }
+
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn set_unread(dyad: DyadPtr, unread: bool) {
+        (*Self::shared(dyad)).unread = unread;
+    }
+
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn set_typed_at_run(dyad: DyadPtr) {
+        (*Self::shared(dyad)).typed_at_run = true;
+    }
+
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn set_holds(dyad: DyadPtr) {
+        (*Self::shared(dyad)).holds = true;
     }
 
     /// The binding of the path under the name that ends at `field`, null while no `move` or

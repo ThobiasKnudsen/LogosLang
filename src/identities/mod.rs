@@ -177,7 +177,7 @@ pub struct Core {
     pub binding_: DyadPtr,
     /// `:`, the binding read.
     pub colon_: DyadPtr,
-    /// `?`, the one unknown; also the read-veto entry its declarations put on a binding.
+    /// `?`, the one unknown.
     pub unknown: DyadPtr,
     /// The type of the node a fresh spelling lexes to, holding the spelling.
     pub unknown_name: DyadPtr,
