@@ -14,6 +14,7 @@
 use super::*;
 use crate::identities::meta::prec;
 use crate::identities::read::{read_kind, Read};
+use crate::identities::tape::{NodeMember, NodeRead};
 
 /// What the scan of a line found: where the first top-level cell whose build reaches a read
 /// starts, what stands before it that the parse cannot stop after, and the first word such a
@@ -260,6 +261,10 @@ impl<'a> Parser<'a> {
         let mut run_type: Option<usize> = None;
         // A name just scanned whose type its line gave when it ran, with an `=` next.
         let mut run_write = false;
+        // A read of a tape node just scanned, `tape[k]` or `tape[k].dyads[i]`, or the `.type` of
+        // one; and the `.dyads` of one. Each with where its cells start.
+        let mut node_read: Option<(NodeRead, usize)> = None;
+        let mut lines: Option<usize> = None;
         // At the top, the tokens before the first `:=` that are no gate word; in a bracket, the
         // tokens of the line being scanned.
         let (mut lead, mut line_tokens) = (0, 0);
@@ -302,6 +307,7 @@ impl<'a> Parser<'a> {
                 (callee, after_call, type_member) = (None, false, false);
                 (type_callee, run_type, run_write, line_tokens) = (false, None, false, 0);
                 (reached, path_start) = (None, (None, None));
+                (node_read, lines) = (None, None);
                 continue;
             }
             let (Some(r), Some(id)) = (r, id) else { unreachable!("a boundary at the end") };
@@ -342,10 +348,19 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            let (after_node, after_lines) = (node_read.take(), lines.take());
             if self.is_opener(id) {
                 if member_call && id == types.open_ {
                     found.needs += 1;
                 }
+                let on_tape = reached == Some(types.tape.parsing_tape);
+                // Where the cells of a tape read this bracket indexes start.
+                let indexes = match (id == types.open_sq_ && !skipping, on_tape) {
+                    (false, _) => None,
+                    (true, true) => Some(chain),
+                    (true, false) => after_lines,
+                };
+                let own_tape = on_tape && prev.is_some_and(|tape| self.is_own_tape(tape));
                 let reads_before = found.call_reads + found.needs;
                 let unknown_before = found.unknown_now;
                 let inner = if skipping {
@@ -377,10 +392,33 @@ impl<'a> Parser<'a> {
                 }
                 (before_prev, prev) = (prev, Some(types.open_));
                 reached = None;
+                if let Some(from) = indexes {
+                    let index = &self.cx.source[at + r.matched..self.cx.pos];
+                    let own = own_tape && Self::is_index_zero(index);
+                    node_read = Some((NodeRead::Node { own }, from));
+                }
                 continue;
             }
             if skipping {
                 continue;
+            }
+            // A member of a tape node that the read does not answer where it is written is read
+            // from the node the tape holds when the line runs.
+            let spelling = &self.cx.source[at..at + r.matched];
+            if id == types.dot_ {
+                (node_read, lines) = (after_node, after_lines);
+            } else if let Some((read, from)) = after_node.filter(|_| prev == Some(types.dot_)) {
+                match crate::identities::tape::node_member(read, spelling) {
+                    NodeMember::Type => node_read = Some((NodeRead::Type, from)),
+                    NodeMember::Lines => lines = Some(from),
+                    NodeMember::Held => {
+                        line_reads = true;
+                        if top {
+                            found.read_at.get_or_insert(from);
+                        }
+                    }
+                    NodeMember::Own => {}
+                }
             }
             if !self.known_as_written(id) {
                 found.unknown_now += 1;
@@ -477,6 +515,21 @@ impl<'a> Parser<'a> {
             || self.returns_type(id)
             || self.is_logos_ctor(id)
             || id == self.types.import_
+    }
+
+    /// Whether `id` names the tape of the parse body being read, whose cell 0 holds the node the
+    /// parse builds.
+    fn is_own_tape(&self, id: DyadPtr) -> bool {
+        let Some(def) = self.cx.definitions.last().filter(|d| d.in_parse) else { return false };
+        // SAFETY: a resolved token's identity is null or a dyad from the store.
+        !id.is_null() && unsafe { self.types.through(id) } == def.tape_param
+    }
+
+    /// Whether `index`, the text of a `[…]` from after its opener through its closer, is the
+    /// literal `0`. An index 0 written any other way reads as another cell's here, so its line
+    /// waits, and the parse at run then reads the parse's own cell as it does where written.
+    fn is_index_zero(index: &str) -> bool {
+        index.strip_suffix(']').is_some_and(|inner| inner.trim() == "0")
     }
 
     /// Whether `id`, after a type, reads that type: a value it takes, a `?`, or a `.` before a

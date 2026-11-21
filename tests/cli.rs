@@ -394,6 +394,104 @@ fn size_bytes_is_the_bytes_a_value_takes_and_zero_for_a_type_with_none() {
     );
 }
 
+/// `ch`, a type whose parse runs `body` and then takes what stands right of it off the tape.
+fn tape_reader(body: &str) -> String {
+    format!(
+        "ch := type ( static parse_rank = fn.parse_rank, static associativity = right, \
+         static parse = ( {body}, tape.remove(1), tape.is_constructed[0] = true ) )"
+    )
+}
+
+/// A member a tape read does not answer itself is the member of the node the tape holds when the
+/// parse runs, so its line waits for the run, as a name's does (›`x.type` reads the type word of
+/// the node a name or an expression stands for‹ [[R279]], ›A type known only when the program runs
+/// still works; what needs it is parsed when its line runs‹ [[R377]]).
+#[test]
+fn a_parse_reads_a_member_of_the_node_its_tape_holds() {
+    for (body, tail, printed) in [
+        // The first read of the tape stands in the line that waits.
+        ("print «{tape[1].size_bytes}»", "c := type ch i32", "4\n"),
+        ("if tape[1].type == type ( print «{tape[1].size_bytes}» )", "c := type ch i32", "4\n"),
+        (
+            "if tape[1].type == type ( t := type tape[1], print «{t.size_bytes}» )",
+            "c := type ch i32",
+            "4\n",
+        ),
+        ("print «{tape[1].parse_rank == i32.parse_rank}»", "c := type ch i32", "true\n"),
+        ("n := tape[1].size_bytes, print «{n + 1}»", "c := type ch i32", "5\n"),
+        ("if tape[1].size_bytes == 4 ( print «four» )", "c := type ch i32", "four\n"),
+        (
+            "if tape[1].size_bytes != 0 ( print «has bytes» ) else ( print «none» )",
+            "c := type ch i64, d := type ch void",
+            "has bytes\nnone\n",
+        ),
+        (
+            "mut n := u64 0, while tape[1].size_bytes > n ( n = n + 3 ), print «{n}»",
+            "c := type ch i32",
+            "6\n",
+        ),
+        // The node the tape holds when the line runs, after an earlier line's edit.
+        ("tape.remove(1), print «{tape[1].size_bytes}»", "c := type ch i32 i64", "8\n"),
+        // A type's own shared names.
+        (
+            "print «{tape[1].tag} {tape[1].size_bytes}»",
+            "p := type ( pub static tag := 7, a := i32 ? ), c := type ch p",
+            "7 4\n",
+        ),
+        // The type word's members are the type's.
+        ("print «{tape[1].type.size_bytes} {tape[1].type.type}»", "c := type ch i32", "8 type\n"),
+        // The parse runs where its line is parsed, on either tier.
+        (
+            "print «{tape[1].size_bytes}»",
+            "f := fn () -> i32 ( c := type ch i64, 5 ), f.compile(), f()",
+            "8\n5\n",
+        ),
+    ] {
+        let src = format!("{}, {tail}", tape_reader(body));
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+    // A line of a bracket, and the node left of the parse.
+    for (src, printed) in [
+        (
+            "q := type ( static parse_rank = fn.parse_rank, static parse = ( \
+             print «{tape[1].dyads[1].size_bytes} {tape[1].dyads.size}», tape.remove(1), \
+             tape.is_constructed[0] = true ) ), c := type q [i64, i8]",
+            "1 2\n",
+        ),
+        (
+            "p := type ( static parse_rank = 60, static parse = ( \
+             print «{tape[-1].lhs} {tape[-1].output_type}», tape.remove(-1), tape[0] = i32 1, \
+             tape.is_constructed[0] = true ) ), x := i32 3, (x + 2) p",
+            "3 i32\n1\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A read of a field the node's type does not have is the error that says so‹ [[R279]]: the
+/// same one a name of that node gives.
+#[test]
+fn a_member_the_tape_s_node_does_not_have_is_refused_as_a_name_s_is() {
+    for (body, tail, named, message) in [
+        ("print «{tape[1].nope}»", "c := type ch i32", "i32.nope", "does not fit the node's type"),
+        (
+            "print «{tape[1].size_bytes}»",
+            "c := ch 5",
+            "x := i32 5, x.size_bytes",
+            "this value's type has no field `size_bytes`",
+        ),
+    ] {
+        let src = format!("{}, {tail}", tape_reader(body));
+        for src in [src.as_str(), named] {
+            let (code, _, stderr) = run_line(src);
+            assert!(code != Some(0) && stderr.contains(message), "{src}: stderr: {stderr}");
+        }
+    }
+}
+
 #[test]
 fn the_power_demo_prints_nine() {
     let out = logos().arg("import file «identities/power.logos»").output().unwrap();
