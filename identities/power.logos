@@ -23,14 +23,14 @@ error.not_real := «a power is no real number»,
 error.needs_float := «a power needs a float result»,
 
 ^ := type (
-    pub static get_mint := fn (l := type ?, r := type ?) -> type (
+    get_mint := pub static fn (l := type ?, r := type ?) -> type (
         place := type_mint.step(type_mint.step(type_mint.step(0, ^), l), r),
-        mut mint := type type_mint.kept(place),
+        mint := mut type type_mint.kept(place),
         if mint != ? return mint,
         mint = type (
-            pub lhs := l ?,
-            pub rhs := r ?,
-            static output_type := type if l == f64 or r == f64 (f64)
+            lhs := pub l ?,
+            rhs := pub r ?,
+            output_type := static type if l == f64 or r == f64 (f64)
                 else if l == f32 or r == f32 (f32)
                 else if r == rational_number (f64)
                 else (l),
@@ -38,14 +38,14 @@ error.needs_float := «a power needs a float result»,
             # The run is built where `^` is first used, after the program's own names exist,
             # so its locals avoid common ones. NaN and the infinities are no whole exponent,
             # and have no whole number to test.
-            static run = (
+            run = (
                 whole_exponent := if rhs - rhs == 0 (
                     f64 lossy (rhs) == f64 lossy (i64 lossy (rhs))
                 ) else (false),
                 if (whole_exponent) (
-                    mut power := output_type 1,
-                    mut times := i64 lossy (rhs),
-                    mut factor := if output_type == rational_number (output_type(lhs)) else (output_type lossy (lhs)),
+                    power := mut output_type 1,
+                    times := mut i64 lossy (rhs),
+                    factor := mut if output_type == rational_number (output_type(lhs)) else (output_type lossy (lhs)),
                     if times < 0 (
                         if not (output_type == (f64 or f32 or rational_number))
                             error.not_whole «a negative exponent of a whole number is not whole: write the base as a float»,
@@ -71,9 +71,9 @@ error.needs_float := «a power needs a float result»,
         mint
     ),
 
-    static parse_rank = *.parse_rank + 1,
-    static associativity = right,
-    static parse = (
+    parse_rank = *.parse_rank + 1,
+    associativity = right,
+    parse = (
         exponent := type if tape[1].type ⊆ i64 (i64) else (tape[1].type),
         tape[0].type = get_mint(tape[-1].type, exponent),
         tape[0].lhs = tape[-1],

@@ -1,2 +1,2 @@
 import file «static_counter.logos»,
-pub a := bump()
+a := pub bump()
