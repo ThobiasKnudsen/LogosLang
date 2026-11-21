@@ -614,9 +614,9 @@ pub(crate) unsafe fn build_place_free(
     })
 }
 
-/// Whether `=` over `target` writes a place that holds its value, a name, an owning field or
-/// pointer place, an entry of a `{ … }` value or an element holding a record whose values have an
-/// end: the place frees the value it displaces and takes a copy of one it would only borrow.
+/// Whether `=` over `target` writes a place that holds its value, a name, an owning field, an
+/// entry of a `{ … }` value or an element holding a record whose values have an end: the place
+/// frees the value it displaces and takes a copy of one it would only borrow.
 ///
 /// # Safety
 /// `target` must be the reduced dyad `=` writes.
@@ -624,14 +624,13 @@ pub(crate) unsafe fn holds_place(p: &crate::parse::Parser, target: DyadPtr) -> b
     let types = p.types();
     dyad::ty(target) == types.binding_ && p.name_holds(target)
         || owning_field_pointee(types, target).is_some()
-        || is_owning_place(types, target)
         || p.is_owning_read(target)
         || is_held_entry(types, target)
         || cell_teardown(types, target).is_some()
 }
 
-/// `=` over a place that [`holds_place`]: the free of the value it displaces, `None` over any
-/// other place.
+/// `=` over a place that [`holds_place`] or of an owning pointer type, which takes only a value
+/// just made or moved: the free of the value it displaces, `None` over any other place.
 ///
 /// # Safety
 /// `target` must be the reduced dyad `=` writes.
@@ -639,7 +638,7 @@ pub(crate) unsafe fn displaced_free(
     p: &mut crate::parse::Parser,
     target: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
-    if !holds_place(p, target) {
+    if !holds_place(p, target) && !is_owning_place(p.types(), target) {
         return Ok(None);
     }
     let named = dyad::ty(target) == p.types().binding_ && p.name_holds(target);
@@ -3449,7 +3448,8 @@ mod tests {
 
     /// ›A union holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]: the
     /// owning pointer a union holds is freed when another member is written, when a write of the
-    /// member displaces it, and at the union's end; a named owner written in is copied.
+    /// member displaces it, and at the union's end; as a cell that owns, a member takes only a
+    /// value just made or moved, and the cell, too, frees the pointer a write displaces.
     #[test]
     fn a_union_frees_the_owning_pointer_it_holds() {
         let u = "u := type union ( mut p := own @i32 ?, mut i := i32 ),\nmut v := u ?,\n";
@@ -3458,10 +3458,16 @@ mod tests {
              v.p = alloc 1 of i32 6,\nx"
         ));
         assert_eq!((v, live), (5, 0));
-        let (v, live) = run(&format!("{u}q := alloc 1 of i32 7,\nv.p = q,\nv.p@ = 8,\nq@"));
-        assert_eq!((v, live), (7, 0));
         let (v, live) = run(&format!("{u}q := alloc 1 of i32 7,\nv.p = move q,\nv.p@"));
         assert_eq!((v, live), (7, 0));
+        assert_eq!(
+            parse_err(&format!("{u}q := alloc 1 of i32 7,\nv.p = q")),
+            ParseError::NonOwningIntoOwning
+        );
+        let (v, live) =
+            run("c := alloc 1 of own @i32 ?,\nc@ = alloc 1 of i32 4,\nc@ = alloc 1 of i32 5,\n\
+             x := c@@,\nfree c@,\nfree c,\nx");
+        assert_eq!((v, live), (5, 0));
     }
 
     #[test]
