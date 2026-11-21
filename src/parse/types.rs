@@ -323,17 +323,15 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if !self.reads_own_bracket(tape) {
+        // With nothing to its right `union` stands as itself, as every word that reads its right
+        // side does.
+        if !self.finds_right_side(tape) {
+            return Ok(Constructed::Decline);
+        }
+        if !self.at_open() {
             return Err(ParseError::UnionNeedsMembers);
         }
-        let named = match (self.cx.filling.last(), self.cx.filling_at.last()) {
-            (Some(_), Some(&at)) => self
-                .cx
-                .source
-                .get(at..self.cx.pos)
-                .is_some_and(|t| t.split_whitespace().eq(["type", "union"])),
-            _ => false,
-        };
+        let named = !self.name_given(&["type", "union"]).is_null();
         let opened_at = self.cx.pos;
         self.expect_open()?;
         let depth = self.cx.scopes.depth();
@@ -861,15 +859,7 @@ impl<'a> Parser<'a> {
         if self.cx.runtime_depth > 0 {
             return self.hold_type_body();
         }
-        // The declaration whose whole right side is this `type (…)` names it.
-        let own_name = match (self.cx.filling.last(), self.cx.filling_at.last()) {
-            (Some(&binding), Some(&at))
-                if self.cx.source.get(at..self.cx.pos).is_some_and(|t| t.trim() == "type") =>
-            {
-                binding
-            }
-            _ => std::ptr::null_mut(),
-        };
+        let own_name = self.name_given(&["type"]);
         self.expect_open()?;
         let opened_at = self.cx.pos;
         let depth = self.cx.scopes.depth();
@@ -1035,6 +1025,26 @@ impl<'a> Parser<'a> {
                 }
             };
             Ok(self.named_type(node, mint, own_name))
+        }
+    }
+
+    /// The name that gives the type being read here its identity: the name of the declaration
+    /// whose whole right side up to the cursor is `words`, the former's own spelling with `type`
+    /// before it where the former gives a type; null where no declaration holds it so (›Every
+    /// type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+    /// gives it its identity‹ [[R383]]).
+    fn name_given(&self, words: &[&str]) -> DyadPtr {
+        match (self.cx.filling.last(), self.cx.filling_at.last()) {
+            (Some(&binding), Some(&at))
+                if self
+                    .cx
+                    .source
+                    .get(at..self.cx.pos)
+                    .is_some_and(|t| t.split_whitespace().eq(words.iter().copied())) =>
+            {
+                binding
+            }
+            _ => std::ptr::null_mut(),
         }
     }
 

@@ -33,7 +33,7 @@ pub struct UnionIds {
 /// The tag's width in a value.
 pub(crate) const TAG_BYTES: usize = 1;
 /// The most members the tag tells apart, 0 saying none is held.
-pub(crate) const MOST_MEMBERS: usize = (1 << (8 * TAG_BYTES)) - 1;
+pub(crate) const MOST_MEMBERS: usize = (u64::MAX >> (64 - 8 * TAG_BYTES)) as usize;
 
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> UnionIds {
     let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER);
@@ -118,10 +118,20 @@ pub(crate) unsafe fn build_member(
 
 /// # Safety
 /// `node` must be a member node from [`build_member`].
-unsafe fn member_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u8, bool) {
+unsafe fn member_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u64, bool) {
     let ops = dyad::value(node) as *const DyadPtr;
     let word = |k: usize| std::ptr::read_unaligned(dyad::value(*ops.add(k)) as *const u64);
-    (*ops, *ops.add(1), word(2) as u8, word(3) != 0)
+    (*ops, *ops.add(1), word(2), word(3) != 0)
+}
+
+/// The tag of the union value at `at`.
+///
+/// # Safety
+/// `at` must be the address of a union value.
+unsafe fn tag_at(at: *const u8) -> u64 {
+    let mut bytes = [0u8; 8];
+    std::ptr::copy_nonoverlapping(at, bytes.as_mut_ptr(), TAG_BYTES);
+    u64::from_le_bytes(bytes)
 }
 
 /// The room of the union value at `at`, for the member `node` reads: its tag set by a write,
@@ -135,12 +145,13 @@ unsafe fn enter(node: DyadPtr, at: *mut u8) -> Result<i64, RunError> {
         return Err(RunError::NullPointer);
     }
     if writes {
-        *at = tag;
-    } else if *at != tag {
+        std::ptr::copy_nonoverlapping(tag.to_le_bytes().as_ptr(), at, TAG_BYTES);
+    } else if tag_at(at) != tag {
         let bindings = array::items(meta::record_field_bindings_of(union));
-        let name = |tag: u8| Binding::spelling(bindings[usize::from(tag) - 1]);
-        let held = (*at != 0).then(|| name(*at));
-        return Err(RunError::UnionHolds(Box::new((held, name(tag)))));
+        let name = |tag: u64| bindings.get(tag as usize - 1).map(|&b| Binding::spelling(b));
+        let held = Some(tag_at(at)).filter(|&held| held != 0).and_then(name);
+        let read = name(tag).expect("a member node reads a member of its union");
+        return Err(RunError::UnionHolds(Box::new((held, read))));
     }
     Ok(at.add(TAG_BYTES) as i64)
 }

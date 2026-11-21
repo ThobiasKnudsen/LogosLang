@@ -6605,7 +6605,7 @@ fn what_a_union_does_not_take_is_refused_where_it_is_written() {
     let members = (0..256).map(|k| format!("pub m{k} := i32")).collect::<Vec<_>>().join(", ");
     for (src, message) in [
         ("x := union ( ), 0".to_string(), written),
-        ("union".to_string(), written),
+        ("x := union 5, 0".to_string(), written),
         ("x := type union ( static a := i32 3 ), 0".to_string(), no_member),
         ("x := type union ( pub a := i32 3 ), 0".to_string(), no_member),
         (format!("{bag}, u := type union ( pub mut b := bag, pub mut i := i32 ), 0"), owns),
@@ -6621,6 +6621,8 @@ fn what_a_union_does_not_take_is_refused_where_it_is_written() {
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains(&format!("error: {message}")), "{src}: stderr: {stderr}");
     }
+    // With nothing to its right the word stands as itself.
+    assert_eq!(line("x := type union, x == union"), "true");
     // A member that only borrows is a pointer, and 255 members are told apart.
     let members = (0..255).map(|k| format!("pub mut m{k} := i32")).collect::<Vec<_>>().join(", ");
     for (src, want) in [
