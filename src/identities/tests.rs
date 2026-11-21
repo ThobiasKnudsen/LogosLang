@@ -3606,30 +3606,10 @@ fn a_name_is_written_only_if_declared_mut() {
         ParseError::NotMutable(Box::new("x".into()))
     );
     assert_eq!(parse_err("mut mut x := 5"), ParseError::DoubleGate);
+    // `immut` is no word, so the name it stands before is one nobody declared.
     assert_eq!(
-        parse_err_after(&["immut x := i32 5"], "x = 6"),
-        ParseError::Immutable(Box::new("x".into()))
-    );
-    assert_eq!(
-        parse_err_after(&["immut mut x := i32 5"], "x = 6"),
-        ParseError::Immutable(Box::new("x".into()))
-    );
-    assert_eq!(
-        parse_err("f := fn (immut a := i32 ?) -> i32 ( a = 1, a )"),
-        ParseError::Immutable(Box::new("a".into()))
-    );
-    assert_eq!(
-        parse_err(
-            "t := type (immut a := i32 ?, static parse = ( tape[0].type = t, tape[0].a = tape[-1] ))"
-        ),
-        ParseError::Immutable(Box::new("a".into()))
-    );
-    // An `immut` sibling never written blocks nothing: the other fill parses.
-    assert_eq!(
-        run_script(
-            "t := type (a := i32 ?, immut b := i32 ?, static parse = ( tape[0].type = t, tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
-        ),
-        1
+        parse_err("immut x := i32 5"),
+        ParseError::Resolve(crate::parse::ResolveError::Unknown("immut".into()))
     );
     assert_eq!(parse_err("mut 5"), ParseError::GateNeedsDeclaration);
     assert_eq!(run_script("f := fn (mut a := i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);

@@ -173,8 +173,6 @@ pub enum ParseError {
     NotMutable(Box<String>),
     /// `x:lex_rank = …` written outside the scope that declares `x`; carries the name.
     LexOutsideScope(Box<String>),
-    /// A write into a name or field declared `immut`; carries the name.
-    Immutable(Box<String>),
     /// A read of a name declared `T ?` before a sibling write filled it; carries the name.
     Unwritten(Box<String>),
     /// An `import` was not followed by the `file «…»` it reads.

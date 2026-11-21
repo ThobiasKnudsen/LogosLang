@@ -19,9 +19,9 @@ impl<'a> Parser<'a> {
     }
 
     /// A write into a name is granted by its own binding, and into a place reached by a path by
-    /// every binding along it, `immut` vetoing first; the constructor's fill of its fresh node is
-    /// granted unless `immut` vetoes it; a write of a name's `lex_rank` is decided as a write at
-    /// its `:gate`; a place reached no such way passes here.
+    /// every binding along it; the constructor's fill of its fresh node is granted; a write of a
+    /// name's `lex_rank` is decided by the scope it is written from; a place reached no such way
+    /// passes here.
     pub(crate) fn check_write(&self, target: &Cell) -> Result<(), ParseError> {
         use crate::identities::this;
         let node = target.dyad;
@@ -33,15 +33,8 @@ impl<'a> Parser<'a> {
                     return self.check_lex_write(binding);
                 }
             }
-            if this::is_field_read(self.types, node) && this::is_fill(self.types, node) {
-                let binding = this::field_binding_of(self.types, node);
-                if Binding::has_gate(binding, self.types.immut_) {
-                    return Err(ParseError::Immutable(Box::new(Binding::spelling(binding))));
-                }
-                return Ok(());
-            }
-            // A fill of a field of a type stamped as the parse runs: its `immut` is read then.
-            if this::is_named(self.types, node) {
+            let fill = this::is_field_read(self.types, node) && this::is_fill(self.types, node);
+            if fill || this::is_named(self.types, node) {
                 return Ok(());
             }
             if target.path.is_null() && dyad::ty(node) == self.types.binding_ {
@@ -52,7 +45,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A write at a name's lex level, admitted from the scope that declares it and the scopes
-    /// below; `mut` and `immut` guard the value and have no part in it. ›Two levels: the binding
+    /// below; `mut` guards the value and has no part in it. ›Two levels: the binding
     /// is the lex level, the dyad is the value level‹ [[R284]]
     ///
     /// # Safety
@@ -127,9 +120,6 @@ impl<'a> Parser<'a> {
         for &binding in path {
             // SAFETY: the path holds binding dyads from the store.
             unsafe {
-                if Binding::has_gate(binding, self.types.immut_) {
-                    return Err(ParseError::Immutable(Box::new(Binding::spelling(binding))));
-                }
                 if !Binding::has_gate(binding, self.types.mut_) {
                     return Err(ParseError::NotMutable(Box::new(Binding::spelling(binding))));
                 }
@@ -870,7 +860,7 @@ impl<'a> Parser<'a> {
     /// A word written left of the name a `:=` declares.
     pub(super) fn is_gate_word(&self, id: DyadPtr) -> bool {
         let t = self.types;
-        [t.static_, t.mut_, t.pub_, t.immut_].contains(&id)
+        [t.static_, t.mut_, t.pub_].contains(&id)
     }
 
     /// `name := value`: the binding is made before the value parses and points at the

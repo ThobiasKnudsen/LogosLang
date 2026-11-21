@@ -51,16 +51,16 @@ mut := type (
     # prefix word on the NAME, left of :=, mut x := 5, pub mut x := i32 5, superseding the right-side x := mut 5 of
     # 5 September. It is the entry «write allowed from the declaring scope and its descendants»; the binding := fills
     # takes it where the gate type and := meet on the tape, on the name's side, so mut never reaches across := (the
-    # target := ? this body once held is gone with that). gates combine as grants and vetoes, ? being silence; lock
-    # seals the set, immut x removes this entry. Standing anywhere else, f(mut i32 5), it is a gate value where none is
-    # accepted, the checked error. mut T as a TYPE is superseded: a type never carries mutability.
+    # target := ? this body once held is gone with that). gates combine as grants and vetoes, ? being silence.
+    # Standing anywhere else, f(mut i32 5), it is a gate value where none is accepted, the checked error. mut T as a
+    # TYPE is superseded: a type never carries mutability.
     # ruled 15 September 2026: a gate word reads the declaration to its right, each gate its own constructor, so
     # pub mut x := 5 is pub reading mut reading x := 5. open: a gated return type, which has no name to stand beside.
     parse = (
         ?                                 # drive the declaration to the right (its name, then :=, or another gate word first); when it
                                           # stands constructed at tape[1], this mut node is the gate: a body node referring to that name
                                           # (ruled 15 September 2026), its creation a write at the name's :gate voted on by the gates
-                                          # already standing there (none refuses while no lock), and the name's binding caches it;
+                                          # already standing there, and the name's binding caches it;
                                           # nothing declared there is the checked error
     )
 )
@@ -152,7 +152,7 @@ binding of a {        # the trie entry (id_context renamed record 7 September 20
     scope -> (the scope a was declared in)
     start -> (the := node that declared a)
     end -> null                                        # to scope end, unless move a / free a ends the name earlier
-    gate -> [read own scope, write own scope while null, mut]   # ordered set, grants and vetoes; lock would seal it
+    gate -> [read own scope, write own scope while null, mut]   # ordered set, grants and vetoes
     name -> «a»                                        # the spelling the trie holds; a:name (ruled 14 September 2026: the binding is the lex level,
                                                        # every fact tied to the name; the dyad is the other level, and := binds only that)
     lex_rank -> 0                                      # ranks the spelling at a text position; name data, never crosses := (14 September 2026)

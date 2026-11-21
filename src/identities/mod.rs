@@ -168,7 +168,6 @@ pub struct Core {
     /// The gate word; its constructor fills the declare node's gate slot.
     pub pub_: DyadPtr,
     pub mut_: DyadPtr,
-    pub immut_: DyadPtr,
     pub static_: DyadPtr,
     /// Its node is the trace of the load; running it does nothing.
     pub import_: DyadPtr,
@@ -347,7 +346,7 @@ impl Core {
         op_leaves.return_ = return_leaf;
         let (declare_, declare_leaf, declare_tok) = declare::register(&mut cx, &callables);
         op_leaves.declare_ = declare_leaf;
-        let (pub_, mut_, immut_, static_) = gate::register(&mut cx);
+        let (pub_, mut_, static_) = gate::register(&mut cx);
         let (import_, import_leaf) = import::register(&mut cx, &callables);
         op_leaves.import_ = import_leaf;
         let file = file::register(&mut cx);
@@ -530,7 +529,6 @@ impl Core {
             copy_,
             pub_,
             mut_,
-            immut_,
             static_,
             import_,
             file,

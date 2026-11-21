@@ -580,7 +580,6 @@ fn a_parse_stamps_a_type_a_function_chooses_and_fills_its_fields_by_name() {
 fn a_parse_that_stamps_a_chosen_type_refuses_what_that_type_cannot_take() {
     let missing = chooser("v := l ?", "type l", "v", "tape[0].w = tape[1]");
     let narrow = chooser("pub v := i32 ?", "type i32", "v", "tape[0].v = tape[1]");
-    let immut = chooser("pub immut v := l ?", "type l", "v", "tape[0].v = tape[1]");
     let stamp = |ty: &str| {
         format!(
             "q := type ( static parse_rank = 60, static parse = ( tape[0].type = {ty}, \
@@ -590,7 +589,6 @@ fn a_parse_that_stamps_a_chosen_type_refuses_what_that_type_cannot_take() {
     for (src, want) in [
         (format!("{missing}, x := i32 4, q x"), "has no field `w`"),
         (format!("{narrow}, x := i64 4, q x"), "these types do not match"),
-        (format!("{immut}, x := i32 4, q x"), "`v` is `immut`"),
         (format!("{}, x := i32 4, q x", stamp("3")), "`tape[0].type = T` takes a type"),
         (format!("{}, x := i32 4, q x", stamp("i32")), "with a `run` or a `parse` of its own"),
     ] {
@@ -998,11 +996,9 @@ fn a_static_function_writes_only_a_mut_field() {
     };
     let (code, stdout, stderr) = run_line(&p("mut "));
     assert_eq!((code, stdout.as_str()), (Some(0), "11\n"), "stderr: {stderr}");
-    for (gate, expect) in [("", "`x` is not `mut`"), ("immut ", "`x` is `immut`")] {
-        let (code, _, stderr) = run_line(&p(gate));
-        assert_eq!(code, Some(1), "stderr: {stderr}");
-        assert!(stderr.contains(expect), "stderr: {stderr}");
-    }
+    let (code, _, stderr) = run_line(&p(""));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`x` is not `mut`"), "stderr: {stderr}");
 }
 
 #[test]
@@ -4328,7 +4324,6 @@ fn a_name_s_lex_rank_is_written_from_its_own_scope_and_below_whatever_its_gates(
     // ›Two levels: the binding is the lex level, the dyad is the value level‹ [[R284]]
     for (line, want) in [
         ("s := i32 5, s:lex_rank = 7, s:lex_rank", "7.0"),
-        ("immut s := i32 5, s:lex_rank = 7, s:lex_rank", "7.0"),
         ("mut s := i32 5, s:lex_rank = 7, s:lex_rank", "7.0"),
         ("s := i32 5, ( s:lex_rank = 4 ), s:lex_rank", "4.0"),
         ("s := i32 5, f := fn () -> f64 ( s:lex_rank = 3, s:lex_rank ), f()", "3.0"),
@@ -4596,7 +4591,6 @@ fn a_write_along_a_path_needs_mut_on_every_step() {
         (b"p := type (pub v := i32 ?)\nmut q := p(1)\nq.v = 3\n", "`v` is not `mut`"),
         (b"t := type (pub static y := i32 3)\nt.y = 4\n", "`y` is not `mut`"),
         (b"t := type (pub static y := i32 3)\nq := t()\nq.y = 4\n", "`y` is not `mut`"),
-        (b"p := type (pub immut v := i32 ?)\nmut q := p(1)\nq.v = 3\n", "`v` is `immut`"),
     ] {
         let (_e, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
@@ -4618,7 +4612,6 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
     };
     for (src, expect) in [
         (format!("{}, p := alloc 1 of t (5), p@.n = 7", t("")), "`n` is not `mut`"),
-        (format!("{}, p := alloc 1 of t (5), p@.n = 7", t("immut ")), "`n` is `immut`"),
         (format!("{}, mut v := t (5), q := &v, q@.n = 7", t("")), "`n` is not `mut`"),
         (format!("{}, p := alloc 2 of t (5), (p + 1)@.n = 7", t("")), "`n` is not `mut`"),
         (
@@ -6539,7 +6532,7 @@ fn a_category_is_known_only_in_reach_of_its_declaration() {
         ("error.x := 5, 0", "`error.X :=` must be followed by a «…» quote".to_string()),
         (
             "pub error.x := «d», 0",
-            "a gate word (`pub`, `mut`, `immut`, `static`) must be followed by a declaration".to_string(),
+            "a gate word (`pub`, `mut`, `static`) must be followed by a declaration".to_string(),
         ),
         (
             "error.x := «d», y := error.x «boom», 0",

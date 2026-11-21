@@ -159,12 +159,9 @@ pub fn parse_message(e: &ParseError) -> String {
              `mut x := i32 5`, to make a place"
         ),
         ParseError::GateNeedsDeclaration => {
-            "a gate word (`pub`, `mut`, `immut`, `static`) must be followed by a declaration".into()
+            "a gate word (`pub`, `mut`, `static`) must be followed by a declaration".into()
         }
         ParseError::DoubleGate => "this gate word already stands on the declaration".into(),
-        ParseError::Immutable(name) => {
-            format!("`{name}` is `immut`: it is written nowhere, not even by its constructor")
-        }
         ParseError::Unwritten(name) => format!(
             "`{name}` is read before it is written: give it a value with `{name} = …` in the same block first"
         ),

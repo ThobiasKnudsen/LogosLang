@@ -382,11 +382,11 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let (mut start, mut name) = (start, &source[start..start + len]);
             let mut word = self.cx.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
-            // `mut` or `immut` before a field or parameter gates its binding, as before any name,
-            // and so does `pub` in a type body, where a read from outside needs it (›Fields are
-            // read with a dot outside their scope‹ [[R234]]).
+            // `mut` before a field or parameter gates its binding, as before any name, and so does
+            // `pub` in a type body, where a read from outside needs it (›Fields are read with a
+            // dot outside their scope‹ [[R234]]).
             let t = self.types;
-            let is_gate = |w: DyadPtr| w == t.mut_ || w == t.immut_ || relaxed && w == t.pub_;
+            let is_gate = |w: DyadPtr| w == t.mut_ || relaxed && w == t.pub_;
             let mut gates = Vec::new();
             while let Some(gate) = word.filter(|&w| is_gate(w)) {
                 gates.push(gate);
