@@ -62,6 +62,11 @@ fn logos_constructor(
     id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
+    if let Some(native) = p.types.native_of(id) {
+        if let Some(outcome) = p.around_written(id, native, tape)? {
+            return Ok(outcome);
+        }
+    }
     // SAFETY: `id` is the identity whose slot `construct_of` just read.
     let f = unsafe { crate::identities::meta::constructor_of(id) };
     // SAFETY: `f` is the fn the type's constructor slot holds, `id` the type.
@@ -928,6 +933,86 @@ impl<'a> Parser<'a> {
         let out = unsafe { self.run_logos_body(f, this, tape) };
         self.rt.restore_fresh_this(outer);
         out
+    }
+
+    /// What the operation `written`, written in Logos, has the seed do around its parse, where
+    /// both its operands stand built: over an `and` or `or` group it applies to each member and
+    /// the results join (›A conjecture states a boolean, and calling it yields the other side of a
+    /// fact‹ [[R31]]), and a pointer to its left steps through `native`, the version it replaced
+    /// (stand-in for #487). `None` where its own parse runs.
+    fn around_written(
+        &mut self,
+        written: DyadPtr,
+        native: DyadPtr,
+        tape: &mut ParsingTape,
+    ) -> Result<Option<Constructed>, ParseError> {
+        use crate::identities::{group, operand_of, Operand};
+        let types = self.types;
+        // Its parse reads the right side this way too.
+        self.cell_at(tape, 1)?;
+        let (Some(l), Some(r)) = (self.operand_now(tape, -1), self.operand_now(tape, 1)) else {
+            return Ok(None);
+        };
+        // SAFETY: a built cell holds a reduced dyad from the store.
+        if matches!(unsafe { operand_of(types, l) }, Operand::Pointer(_)) {
+            let construct = self.construct_of(native).expect("a native version has a constructor");
+            return construct(self, native, tape).map(Some);
+        }
+        for (k, side) in [(-1, l), (1, r)] {
+            // SAFETY: as above.
+            let Some((connective, a, b)) = (unsafe { group::members(types, side) }) else {
+                continue;
+            };
+            let a = self.written_over(written, tape, k, a)?;
+            let b = self.written_over(written, tape, k, b)?;
+            let joined = group::join(self.rt.store, types, connective, a, b)?;
+            tape.reduce_here(joined);
+            return Ok(Some(Constructed::Placed));
+        }
+        Ok(None)
+    }
+
+    /// What the operand at `k` gives as an infix reads it, a name its binding, read without the
+    /// checks the read makes; `None` where no operand stands there.
+    fn operand_now(&self, tape: &ParsingTape, k: isize) -> Option<DyadPtr> {
+        let cell = tape.at(k)?;
+        if cell.constructed {
+            return Some(cell.dyad);
+        }
+        if !self.is_operand_cell(cell) || cell.is_fresh(self.types) {
+            return None;
+        }
+        let binding = cell.binding(self.types);
+        Some(if binding.is_null() { self.cell_identity(cell) } else { binding })
+    }
+
+    /// The node `written`'s parse builds over `tape`'s operands, the one at `k` replaced by
+    /// `member`.
+    fn written_over(
+        &mut self,
+        written: DyadPtr,
+        tape: &ParsingTape,
+        k: isize,
+        member: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
+        let mut over = ParsingTape::new();
+        for i in -1..=1 {
+            let mut cell = *tape.at(i).expect("an operation stands between its operands");
+            if i == k {
+                cell.over(member);
+            }
+            over.push(cell);
+        }
+        over.set_cursor(1);
+        let start = over.at(0).map_or(self.cx.pos, |c| c.start);
+        self.run_ctor(logos_constructor, written, &mut over, self.cx.discovering)?;
+        match over.at(0) {
+            Some(c) if c.constructed => Ok(c.dyad),
+            _ => {
+                self.cx.pos = start;
+                Err(ParseError::CellLeftUnconstructed(Box::new(tape.spelling(0).unwrap_or("").to_string())))
+            }
+        }
     }
 
     /// A `parse` body run over the tape with `this` as its node, `tape[0]`.

@@ -51,16 +51,7 @@ impl Members {
 /// Where the file the seed was built with does not parse or run, or lacks a function the seed
 /// calls: a defect of the seed.
 pub(super) fn load(store: &mut Store, trie: &mut RegexTrie, core: &Core) -> Members {
-    let mut scopes = ScopeStack::new();
-    scopes.push(core.root_scope);
-    let file = scopes.push_section(store, core.scope);
-    let mut p = Parser::new(SOURCE, store, trie, core, scopes);
-    let read = p.read_lines(LinesEnd::TextEnd).and_then(|_| p.finish());
-    if let Err(e) = read {
-        let message = crate::report::parse_message(&e);
-        panic!("{}", crate::report::render(PATH, SOURCE, p.offset(), &message));
-    }
-    p.hand_exit();
+    let file = read_file(store, trie, core, PATH, SOURCE);
     let name_in = |scope: DyadPtr, name: &str| {
         let mut members = ScopeStack::new();
         members.push(scope);
@@ -83,12 +74,52 @@ pub(super) fn load(store: &mut Store, trie: &mut RegexTrie, core: &Core) -> Memb
         kept: member("kept"),
         keep: member("keep"),
     };
+    publish(store, trie, core, PATH, NAME, keeper.binding);
+    members
+}
+
+/// The file the seed carries at `path`, read in a scope of its own under the root, as an imported
+/// file is read; that scope.
+///
+/// # Panics
+/// Where the file does not parse or run: a defect of the seed.
+pub(super) fn read_file(
+    store: &mut Store,
+    trie: &mut RegexTrie,
+    core: &Core,
+    path: &str,
+    source: &str,
+) -> DyadPtr {
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let file = scopes.push_section(store, core.scope);
+    let mut p = Parser::new(source, store, trie, core, scopes);
+    let read = p.read_lines(LinesEnd::TextEnd).and_then(|_| p.finish());
+    if let Err(e) = read {
+        let message = crate::report::parse_message(&e);
+        panic!("{}", crate::report::render(path, source, p.offset(), &message));
+    }
+    p.hand_exit();
+    file
+}
+
+/// The root takes `binding`, a name a file the seed carries declared, under `name`.
+///
+/// # Panics
+/// Where the root refuses it: a defect of the seed.
+pub(super) fn publish(
+    store: &mut Store,
+    trie: &mut RegexTrie,
+    core: &Core,
+    path: &str,
+    name: &str,
+    binding: DyadPtr,
+) {
     let mut root = ScopeStack::new();
     root.push(core.root_scope);
     Parser::new("", store, trie, core, root)
-        .publish(&[(NAME.to_string(), keeper.binding)])
-        .unwrap_or_else(|e| panic!("{PATH}: {}", crate::report::parse_message(&e)));
-    members
+        .publish(&[(name.to_string(), binding)])
+        .unwrap_or_else(|e| panic!("{path}: {}", crate::report::parse_message(&e)));
 }
 
 /// One argument of a mint's key.

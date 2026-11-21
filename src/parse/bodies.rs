@@ -560,7 +560,14 @@ impl<'a> Parser<'a> {
         drop(g);
 
         match inner {
-            Ok(f) => Ok(f),
+            Ok(f) => {
+                // A run that is one instruction over the fields is that instruction, kept on the
+                // mint, and its nodes jump to it.
+                if let Some(instruction) = crate::identities::instruction::named_by(types, f) {
+                    crate::identities::meta::keep_instruction(ty, instruction);
+                }
+                Ok(f)
+            }
             Err(e) => {
                 crate::identities::run_body::remove(self.rt.store, types, held, key);
                 self.cx.pos = at;

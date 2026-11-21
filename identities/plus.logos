@@ -1,0 +1,53 @@
+# `+`, written in ordinary Logos. Its parse lands both operands in one type, makes its own cell a
+# node of `+`'s mint for that type and fills it by name; a plain number takes the other operand's
+# type. The mint's run calls that type's own `add`, the machine instruction that adds two of its
+# values (›Which machine operation an operator is (`+` over `i32` → `add_i32`) is named by its mint
+# when it is made, through the operand type's own member‹ [[R185]]), and `type_mint` keeps each mint
+# once made (›An operation mints through a chooser, one mint per set of operand types, so each mint's
+# `run` body is parsed once‹ [[R301]]). The seed reads this file at its start, after `type_mint`'s,
+# and the name `+` holds this type from then on (›Bootstrapping‹ [[R16]]).
+
+# What `+` refuses, a category of this file.
+error.operands := «`+` has no sum for these operands»,
+
+pub + := type (
+    # `l is number`: stand-in for #487.
+    static number := fn (t := type ?) -> bool (
+        t == (i8 or i16 or i32 or i64 or u8 or u16 or u32 or u64 or f32 or f64 or rational_number)
+    ),
+
+    pub static mint := fn (l := type ?, r := type ?) -> type (
+        place := type_mint.step(type_mint.step(type_mint.step(0, +), l), r),
+        mut made := type type_mint.kept(place),
+        if made != ? return made,
+        if not number(l) or not number(r) error.operands «`+` adds numbers, and this type is none»,
+        if l != r error.operands «`+` adds two values of one type»,
+        made = type (
+            pub lhs := l ?,
+            pub rhs := r ?,
+            static output_type := type l,
+            static run = ( lhs.type.add(lhs, rhs) )
+        ),
+        type_mint.keep(place, made),
+        made
+    ),
+
+    static parse_rank = 60,
+    static associativity = left,
+    static parse = (
+        l := type tape[-1].type,
+        r := type tape[1].type,
+        # With nothing on either side, `+` stands as itself.
+        if l != void or r != void (
+            if l == void or r == void error.operands «`+` needs a value on each side»,
+            if not number(l) or not number(r) error.operands «`+` adds numbers, and this type is none»,
+            t := type if l == rational_number (r) else if r == rational_number (l) else if l ⊆ r (r) else (l),
+            tape[0].type = mint(t, t),
+            tape[0].lhs = tape[-1],
+            tape[0].rhs = tape[1],
+            tape.is_constructed[0] = true,
+            tape.remove(1),
+            tape.remove(-1)
+        )
+    )
+)

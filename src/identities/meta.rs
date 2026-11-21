@@ -229,6 +229,23 @@ pub(crate) unsafe fn mint_record(
     store.alloc_bytes(&blob)
 }
 
+/// A machine instruction's record: a mint's, ranked as application, so its name reads the bracket
+/// to its right as a call's callee does.
+///
+/// # Safety
+/// As [`mint_record`].
+pub(crate) unsafe fn instruction_record(
+    store: &mut Store,
+    origin: DyadPtr,
+    output_type: DyadPtr,
+    op: DyadPtr,
+    key: DyadPtr,
+) -> *mut u8 {
+    let record = mint_record(store, origin, output_type, op, key);
+    record.add(PREC_OFF).cast::<f64>().write_unaligned(prec::APPLY);
+    record
+}
+
 /// The type `id` is a mint of; null for a type that is no mint.
 ///
 /// # Safety
@@ -333,6 +350,7 @@ fn record_blob(
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&(bindings as usize).to_ne_bytes());
+    blob.extend_from_slice(&0usize.to_ne_bytes());
     blob
 }
 
@@ -353,7 +371,26 @@ pub(crate) fn formed_record(
 }
 
 /// Where a record type's payload ends.
-const RECORD_END: usize = PAYLOAD_OFF + 56;
+const RECORD_END: usize = PAYLOAD_OFF + 64;
+
+const INSTRUCTION_OFF: usize = PAYLOAD_OFF + 56;
+
+/// The machine instruction a mint's run names, kept on the mint once its run is built, which its
+/// nodes run in place of the run (›Which machine operation an operator is (`+` over `i32` →
+/// `add_i32`) is named by its mint when it is made, through the operand type's own member‹
+/// [[R185]]); null where none is kept.
+///
+/// # Safety
+/// As `record_scope_of`.
+pub(crate) unsafe fn instruction_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned(dyad::head(id).add(INSTRUCTION_OFF) as *const DyadPtr)
+}
+
+/// # Safety
+/// `id` must carry a `RECORD_TAG` record; `instruction` an instruction identity from the store.
+pub(crate) unsafe fn keep_instruction(id: DyadPtr, instruction: DyadPtr) {
+    std::ptr::write_unaligned(dyad::head(id).add(INSTRUCTION_OFF) as *mut DyadPtr, instruction);
+}
 
 /// The record of a type with no fields that `former` mints for `arguments`: as `record_layout`
 /// lays it, `scope` its body too, with the former in its header and the arguments after its

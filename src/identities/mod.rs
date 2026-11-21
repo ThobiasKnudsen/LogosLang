@@ -56,6 +56,7 @@ pub(crate) mod if_mod;
 mod immediate;
 pub mod import;
 pub(crate) mod instance;
+pub(crate) mod instruction;
 pub mod lex;
 mod logos;
 pub(crate) mod lossy;
@@ -85,6 +86,7 @@ pub(crate) mod type_mint;
 mod type_mod;
 pub(crate) mod union;
 pub(crate) mod waiting;
+pub(crate) mod written;
 #[path = "while.rs"]
 mod while_mod;
 
@@ -187,6 +189,9 @@ pub struct Core {
     pub tape: tape::TapeIds,
     pub hashmap: hashmap::HashmapIds,
     pub type_mint: type_mint::Members,
+    /// The operations written in Logos, each with the native version whose name it took.
+    pub written: Vec<written::Replaced>,
+    pub(crate) instructions: instruction::Instructions,
     pub held_type: held_type::HeldTypeIds,
     pub this: this::ThisIds,
     pub place: place::PlaceIds,
@@ -327,6 +332,15 @@ impl Core {
             ge,
             ne,
         } = binary::register_all(&mut cx);
+        let instructions = instruction::register(
+            &mut cx,
+            type_,
+            array_,
+            &numtypes,
+            rational,
+            &op_leaves,
+            [plus, minus, times, div_, rem_],
+        );
         let (and_, and_leaf) = and::register(&mut cx, &callables);
         op_leaves.and_ = and_leaf;
         let (or_, or_leaf) = or::register(&mut cx, &callables);
@@ -548,6 +562,8 @@ impl Core {
             tape,
             hashmap,
             type_mint: type_mint::Members::unread(),
+            written: Vec::new(),
+            instructions,
             held_type,
             this,
             place,
@@ -590,7 +606,20 @@ impl Core {
         };
         core.type_mint = type_mint::load(store, trie, &core);
         type_mint::keep_early(store, &core);
+        core.written = written::load(store, trie, &core);
         core
+    }
+
+    /// The native version whose name the operation `written`, written in Logos, took; `None` for
+    /// any other identity.
+    pub(crate) fn native_of(&self, written: DyadPtr) -> Option<DyadPtr> {
+        self.written.iter().find(|r| r.written == written).map(|r| r.native)
+    }
+
+    /// Whether `scope` is the scope of a file the seed read at its start, whose names live for
+    /// the run.
+    pub(crate) fn is_seed_file(&self, scope: DyadPtr) -> bool {
+        scope == self.type_mint.file || self.written.iter().any(|r| r.file == scope)
     }
 
     /// Each opener with the closer that ends its bracket: `( )`, `[ ]` and `{ }`, one mechanism

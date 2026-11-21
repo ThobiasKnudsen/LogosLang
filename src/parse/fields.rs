@@ -1241,8 +1241,9 @@ impl<'a> Parser<'a> {
     }
 
     /// The call runs on the pass and the result bits are the produced type
-    /// node's address (DESIGN ›Build and run are one self-directing pass‹); a
-    /// run failure or a non-type result is `NonComptimeTypeCall`.
+    /// node's address (DESIGN ›Build and run are one self-directing pass‹); an error the call
+    /// raised, or a mint it failed to build, is its own; any other run failure or a non-type
+    /// result is `NonComptimeTypeCall`.
     ///
     /// # Safety
     /// `call` must be a reduced call node from the store.
@@ -1250,7 +1251,9 @@ impl<'a> Parser<'a> {
         // What stands before the call runs first, so the call reads committed state.
         self.drain()?;
         let bits = self.run_on_pass(call).map_err(|e| match e {
-            crate::run::RunError::MintFailed(_) => ParseError::Run(e),
+            crate::run::RunError::MintFailed(_) | crate::run::RunError::Raised(_) => {
+                ParseError::Run(e)
+            }
             _ => ParseError::NonComptimeTypeCall,
         })?;
         // A call declared `-> type` yields a node's address (DESIGN ›The store is keyed by address‹).
@@ -1835,6 +1838,10 @@ impl<'a> Parser<'a> {
                 let bytes = crate::identities::read::instance_bytes(self.types, logos)
                     .ok_or(ParseError::BadReflectRead)?;
                 Ok(self.scalar_value(NumType::U64, bytes as i64))
+            }
+            _ if crate::identities::instruction::member(self.types, logos, name).is_some() => {
+                Ok(crate::identities::instruction::member(self.types, logos, name)
+                    .expect("found just above"))
             }
             "scope" if meta::is_record_type(logos) => Ok(self
                 .rt
