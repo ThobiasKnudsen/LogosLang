@@ -520,8 +520,8 @@ impl<'a> Parser<'a> {
     /// Pub-only exposure, the ordinary visibility rule: a collision with a
     /// live name is the ordinary shadowing error. Idempotent where an open scope already
     /// holds the name, or a live name for the same identity. The importer's name is a copy of
-    /// the file's binding record in the importer's scope, kept in step with it, so an end
-    /// anywhere ends the name everywhere
+    /// the file's binding record in the importer's scope that holds only its scope and line, so
+    /// an end or a `lex_rank` written anywhere is the name's everywhere
     /// (›Importing is dropping the text there, wrapped in its own scope‹ [[R306]]).
     fn publish(&mut self, pubs: &[(String, DyadPtr)]) -> Result<(), ParseError> {
         // A collision is the import's: reported where the import stands.
@@ -552,9 +552,8 @@ impl<'a> Parser<'a> {
                 continue;
             }
             // SAFETY: as above.
-            let binding = unsafe {
-                Binding::copy_of(self.rt.store, self.types.binding_, self.types.array_, *exported)
-            };
+            let binding =
+                unsafe { Binding::copy_of(self.rt.store, self.types.binding_, *exported) };
             self.enter_binding(name, binding, at)?;
         }
         Ok(())

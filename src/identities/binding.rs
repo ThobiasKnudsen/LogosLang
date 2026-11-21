@@ -49,11 +49,9 @@ pub struct Binding {
     /// partial move.
     pub paths: DyadPtr,
     /// The record this one copies, an imported `pub` name's in the file; null on a name's
-    /// own record. A copy differs from it in `scope` and `start` alone.
+    /// own record. A copy holds its own `scope` and `start` alone: every other field of it is
+    /// read and written on this record.
     pub origin: DyadPtr,
-    /// The copies made of this record, an `array` of bindings, one that a failed line or a
-    /// refused import left in no scope included; null while none.
-    pub copies: DyadPtr,
     /// On the spelling-less place an `x:f` read lays over `x`'s record, `x`'s binding; null on
     /// every other binding.
     pub over: DyadPtr,
@@ -89,7 +87,6 @@ impl Binding {
             unwritten: std::ptr::null_mut(),
             paths: std::ptr::null_mut(),
             origin: std::ptr::null_mut(),
-            copies: std::ptr::null_mut(),
             over: std::ptr::null_mut(),
             unmade: false,
             pattern: false,
@@ -120,6 +117,14 @@ impl Binding {
         }
         let ty = dyad::ty(self.frame);
         dyad::ty(ty) != ty
+    }
+
+    /// Whether the name is a field, laid out inside each value of the type that is its frame.
+    ///
+    /// # Safety
+    /// As `is_storage`.
+    pub unsafe fn is_field(&self) -> bool {
+        !self.frame.is_null() && !self.is_storage()
     }
 
     /// What a use of the name yields: the storage itself, or the dyad the name denotes.
@@ -155,11 +160,10 @@ impl Binding {
     /// # Safety
     /// As `Binding::read`; `ty` null or a type node, `frame` a scope, `fn` or type node.
     pub unsafe fn lay_out(dyad: DyadPtr, ty: DyadPtr, frame: DyadPtr, offset: usize) {
-        Self::write(dyad, |f| {
-            (*f).dyad = ty;
-            (*f).frame = frame;
-            (*f).offset = offset;
-        });
+        let f = Self::shared(dyad);
+        (*f).dyad = ty;
+        (*f).frame = frame;
+        (*f).offset = offset;
     }
 
     /// A field's offset inside each value of `ty`; the binding's `dyad` stays the field node.
@@ -167,10 +171,9 @@ impl Binding {
     /// # Safety
     /// As `Binding::read`; `ty` a type node.
     pub unsafe fn set_field_offset(dyad: DyadPtr, ty: DyadPtr, offset: usize) {
-        Self::write(dyad, |f| {
-            (*f).frame = ty;
-            (*f).offset = offset;
-        });
+        let f = Self::shared(dyad);
+        (*f).frame = ty;
+        (*f).offset = offset;
     }
 
     /// Store `rec` and return its dyad, the value every trie entry is and every use of the name
@@ -179,32 +182,18 @@ impl Binding {
         store.alloc_binding(binding_ty, rec)
     }
 
-    /// A copy of the record `dyad` keeps, for one more scope to enter: the same name, so a
-    /// write to either reaches both (›Importing is dropping the text there, wrapped in its own
-    /// scope‹ [[R306]]).
+    /// A copy of the record `dyad` keeps, for one more scope to enter: the same name, one record
+    /// wherever it is entered (›Importing is dropping the text there, wrapped in its own scope‹
+    /// [[R306]]).
     ///
     /// # Safety
-    /// As `Binding::read`; `array_ty` the `array` identity.
-    pub unsafe fn copy_of(
-        store: &mut Store,
-        binding_ty: DyadPtr,
-        array_ty: DyadPtr,
-        dyad: DyadPtr,
-    ) -> DyadPtr {
+    /// As `Binding::read`.
+    pub unsafe fn copy_of(store: &mut Store, binding_ty: DyadPtr, dyad: DyadPtr) -> DyadPtr {
         let origin = Self::origin_of(dyad);
-        let rec = Binding {
-            start: std::ptr::null_mut(),
-            origin,
-            copies: std::ptr::null_mut(),
-            ..Self::read(origin)
-        };
-        let copy = Self::alloc(store, binding_ty, rec);
-        let copies = (*Self::fields(origin)).copies;
-        let mut items =
-            if copies.is_null() { Vec::new() } else { super::array::items(copies).to_vec() };
-        items.push(copy);
-        (*Self::fields(origin)).copies = super::array::build(store, array_ty, &items);
-        copy
+        let scope = (*Self::fields(origin)).scope;
+        let rec =
+            Binding { origin, ..Binding::new(std::ptr::null_mut(), scope, std::ptr::null_mut()) };
+        Self::alloc(store, binding_ty, rec)
     }
 
     /// The name's own record: `dyad` itself, or the one it is a copy of.
@@ -220,14 +209,43 @@ impl Binding {
         }
     }
 
+    /// The fields a copy holds itself, by offset, each a pointer; every other field is its
+    /// origin's.
+    const OWN: [usize; 3] = [
+        std::mem::offset_of!(Binding, scope),
+        std::mem::offset_of!(Binding, start),
+        std::mem::offset_of!(Binding, origin),
+    ];
+
     /// A copy, never a reference: a reference minted from the raw pointer would alias
-    /// whatever reference a caller up the chain still holds.
+    /// whatever reference a caller up the chain still holds. Each field from the record that
+    /// holds it ([`Binding::holder`]).
     ///
     /// # Safety
     /// `dyad` must be a binding dyad from the store (its type the `binding` identity, its
     /// value from `Binding::alloc`).
     pub unsafe fn read(dyad: DyadPtr) -> Binding {
-        std::ptr::read(Self::fields(dyad))
+        let own = Self::fields(dyad);
+        let mut rec = std::ptr::read(Self::shared(dyad));
+        let into = std::ptr::addr_of_mut!(rec) as *mut u8;
+        for offset in Self::OWN {
+            *(into.add(offset) as *mut DyadPtr) =
+                *((own as *const u8).add(offset) as *const DyadPtr);
+        }
+        rec
+    }
+
+    /// The record whose bytes hold the field at `offset` of the name `dyad`: the copy's own for
+    /// the fields it holds itself, its origin's for every other.
+    ///
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn holder(dyad: DyadPtr, offset: usize) -> DyadPtr {
+        if Self::OWN.contains(&offset) {
+            dyad
+        } else {
+            Self::origin_of(dyad)
+        }
     }
 
     /// The raw place; the setters write one field through it and no reference is created.
@@ -238,19 +256,12 @@ impl Binding {
         dyad::value(dyad) as *mut Binding
     }
 
-    /// Write one field of the name's record wherever it is kept: its own, and every copy.
+    /// The raw place of every field a copy does not hold itself: the origin's.
     ///
     /// # Safety
     /// As `Binding::read`.
-    unsafe fn write(dyad: DyadPtr, set: impl Fn(*mut Binding)) {
-        let origin = Self::origin_of(dyad);
-        set(Self::fields(origin));
-        let copies = (*Self::fields(origin)).copies;
-        if !copies.is_null() {
-            for &copy in super::array::items(copies) {
-                set(Self::fields(copy));
-            }
-        }
+    unsafe fn shared(dyad: DyadPtr) -> *mut Binding {
+        Self::fields(Self::origin_of(dyad))
     }
 
     /// # Safety
@@ -262,7 +273,7 @@ impl Binding {
     /// # Safety
     /// As `Binding::read`.
     pub unsafe fn set_dyad(dyad: DyadPtr, identity: DyadPtr) {
-        Self::write(dyad, |f| (*f).dyad = identity);
+        (*Self::shared(dyad)).dyad = identity;
     }
 
     /// # Safety
@@ -274,33 +285,34 @@ impl Binding {
     /// # Safety
     /// As `Binding::read`.
     pub unsafe fn set_end(dyad: DyadPtr, item: DyadPtr) {
-        Self::write(dyad, |f| (*f).end = item);
+        (*Self::shared(dyad)).end = item;
     }
 
     /// # Safety
     /// As `Binding::read`.
     pub unsafe fn replace_end(dyad: DyadPtr, item: DyadPtr) -> DyadPtr {
-        let prev = (*Self::fields(dyad)).end;
-        Self::set_end(dyad, item);
+        let f = Self::shared(dyad);
+        let prev = (*f).end;
+        (*f).end = item;
         prev
     }
 
     /// # Safety
     /// As `Binding::read`.
     pub unsafe fn set_lex_rank(dyad: DyadPtr, rank: f64) {
-        Self::write(dyad, |f| (*f).lex_rank = rank);
+        (*Self::shared(dyad)).lex_rank = rank;
     }
 
     /// # Safety
     /// As `Binding::read`.
     pub unsafe fn set_pattern(dyad: DyadPtr, pattern: bool) {
-        Self::write(dyad, |f| (*f).pattern = pattern);
+        (*Self::shared(dyad)).pattern = pattern;
     }
 
     /// # Safety
     /// As `Binding::read`; `fields` null or an `array` node from the store.
     pub unsafe fn set_unwritten(dyad: DyadPtr, fields: DyadPtr) {
-        Self::write(dyad, |f| (*f).unwritten = fields);
+        (*Self::shared(dyad)).unwritten = fields;
     }
 
     /// The binding of the path under the name that ends at `field`, null while no `move` or
@@ -309,26 +321,25 @@ impl Binding {
     /// # Safety
     /// As `Binding::read`.
     pub unsafe fn path(dyad: DyadPtr, field: DyadPtr) -> DyadPtr {
-        let paths = (*Self::fields(dyad)).paths;
+        let paths = (*Self::shared(dyad)).paths;
         if paths.is_null() {
             return std::ptr::null_mut();
         }
         super::array::items(paths)
             .iter()
             .copied()
-            .find(|&p| (*Self::fields(p)).dyad == field)
+            .find(|&p| (*Self::shared(p)).dyad == field)
             .unwrap_or(std::ptr::null_mut())
     }
 
     /// # Safety
     /// As `add_gate`; `path` a binding dyad from the store.
     pub unsafe fn add_path(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, path: DyadPtr) {
-        let paths = (*Self::fields(dyad)).paths;
+        let paths = (*Self::shared(dyad)).paths;
         let mut items =
             if paths.is_null() { Vec::new() } else { super::array::items(paths).to_vec() };
         items.push(path);
-        let paths = super::array::build(store, array_ty, &items);
-        Self::write(dyad, |f| (*f).paths = paths);
+        (*Self::shared(dyad)).paths = super::array::build(store, array_ty, &items);
     }
 
     /// Whether a path under the name has ended, at any depth, so the name is dead as a whole.
@@ -336,17 +347,17 @@ impl Binding {
     /// # Safety
     /// As `Binding::read`.
     pub unsafe fn has_ended_path(dyad: DyadPtr) -> bool {
-        let paths = (*Self::fields(dyad)).paths;
+        let paths = (*Self::shared(dyad)).paths;
         !paths.is_null()
             && super::array::items(paths)
                 .iter()
-                .any(|&p| !(*Self::fields(p)).end.is_null() || Self::has_ended_path(p))
+                .any(|&p| !(*Self::shared(p)).end.is_null() || Self::has_ended_path(p))
     }
 
     /// # Safety
     /// As `Binding::read`; `gate` an identity from the store.
     pub unsafe fn has_gate(dyad: DyadPtr, gate: DyadPtr) -> bool {
-        let gates = (*Self::fields(dyad)).gate;
+        let gates = (*Self::shared(dyad)).gate;
         !gates.is_null() && super::array::items(gates).contains(&gate)
     }
 
@@ -355,35 +366,33 @@ impl Binding {
     /// # Safety
     /// As `Binding::read`; `array_ty` the `array` identity, `gate` an identity from the store.
     pub unsafe fn add_gate(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, gate: DyadPtr) {
-        let gates = (*Self::fields(dyad)).gate;
+        let gates = (*Self::shared(dyad)).gate;
         let mut items =
             if gates.is_null() { Vec::new() } else { super::array::items(gates).to_vec() };
         items.insert(0, gate);
-        let gates = super::array::build(store, array_ty, &items);
-        Self::write(dyad, |f| (*f).gate = gates);
+        (*Self::shared(dyad)).gate = super::array::build(store, array_ty, &items);
     }
 
     /// # Safety
     /// As `add_gate`.
     pub unsafe fn remove_gate(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, gate: DyadPtr) {
-        let gates = (*Self::fields(dyad)).gate;
+        let gates = (*Self::shared(dyad)).gate;
         if gates.is_null() {
             return;
         }
         let items: Vec<DyadPtr> =
             super::array::items(gates).iter().copied().filter(|&g| g != gate).collect();
-        let gates = if items.is_empty() {
+        (*Self::shared(dyad)).gate = if items.is_empty() {
             std::ptr::null_mut()
         } else {
             super::array::build(store, array_ty, &items)
         };
-        Self::write(dyad, |f| (*f).gate = gates);
     }
 
     /// # Safety
     /// As `Binding::read`; the binding's `name` must be null or a string node.
     pub unsafe fn spelling(dyad: DyadPtr) -> String {
-        let name = (*Self::fields(dyad)).name;
+        let name = (*Self::shared(dyad)).name;
         if name.is_null() {
             String::new()
         } else {
@@ -397,7 +406,7 @@ impl Binding {
     /// # Safety
     /// As [`Binding::spelling`].
     pub unsafe fn is_named(dyad: DyadPtr) -> bool {
-        let name = (*Self::fields(dyad)).name;
+        let name = (*Self::shared(dyad)).name;
         !name.is_null() && !super::string::text(name).is_empty()
     }
 }
