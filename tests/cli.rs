@@ -13053,6 +13053,137 @@ fn two_names_of_one_mint_do_not_convert_into_each_other() {
     )]);
 }
 
+/// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+/// gives it its identity‹ [[R383]]: a name declared in a body that runs later gives its type an
+/// identity as a name outside a body does, so a place of one name's type takes no value of
+/// another's there, in a function, a loop and a branch taken at run.
+#[test]
+fn two_names_of_one_mint_in_a_body_do_not_convert_into_each_other() {
+    let defs = "meters := type ( pub v := f64 ? ), seconds := type ( pub v := f64 ? )";
+    let lines = "mut a := meters(1.0), b := seconds(2.0), a = b";
+    for src in [
+        format!("f := fn () -> f64 ( {defs}, {lines}, a.v ), f()"),
+        format!("for i in 0..1 ( {defs}, {lines}, print «{{a.v}}» )"),
+        format!("mut i := i32 0, while i < 1 ( {defs}, {lines}, print «{{a.v}}», i = i + 1 )"),
+        format!("f := fn (c := bool ?) -> f64 ( if c ( {defs}, {lines}, print «{{a.v}}» ), 1.0 ), f(true)"),
+        // A name outside the body against a name in it.
+        format!(
+            "meters := type ( pub v := f64 ? ), \
+             f := fn () -> f64 ( seconds := type ( pub v := f64 ? ), {lines}, a.v ), f()"
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: {stderr}");
+        assert!(stderr.contains("held line:1:6: error: these types do not match"), "{src}: {stderr}");
+    }
+    // A value of the name's own type is taken, at every run.
+    assert_runs(&[(
+        "f := fn () -> f64 ( meters := type ( pub v := f64 ? ), mut a := meters(1.0), \
+         b := meters(2.0), a = b, a.v ), print «{f()} {f()}»"
+            .to_string(),
+        "2.0 2.0\n",
+    )]);
+}
+
+/// A name declared in a body that runs later holds one dyad per mint, found again at the next
+/// run ([[R383]]): its address tells it from another name's of the same contents, `==` still
+/// compares by reading, and a type that is never found again is a new one at each run. A union
+/// in a body gets its name's dyad from the same place, on both tiers.
+#[test]
+fn a_name_in_a_body_holds_one_dyad_per_mint_found_again_at_the_next_run() {
+    let defs = "meters := type ( pub v := f64 ? ), seconds := type ( pub v := f64 ? )";
+    let own = |body: &str| format!("m := type ( {body} ), &m");
+    let mut cases = vec![
+        (format!("f := fn () -> bool ( {defs}, &meters == &seconds ), f()"), "false\n"),
+        (format!("f := fn () -> bool ( {defs}, &meters == &meters ), f()"), "true\n"),
+        (
+            format!("f := fn () -> bool ( {defs}, a := meters(1.0), b := seconds(2.0), a.type == b.type ), f()"),
+            "true\n",
+        ),
+        (
+            "for i in 0..2 ( t := type ( pub v := f64 ? ), u := type ( pub v := f64 ? ), \
+             print «{t == u} {&t == &u} {&t == &t}» )"
+                .to_string(),
+            "true false true\ntrue false true\n",
+        ),
+        // The same written name is the same type at every run, and another written name is not.
+        (
+            format!(
+                "f := fn () -> @dyad ( {defs}, &meters ), \
+                 g := fn () -> @dyad ( meters := type ( pub v := f64 ? ), &meters ), \
+                 print «{{f() == f()}} {{f() == g()}}»"
+            ),
+            "true false\n",
+        ),
+        // A value of one call's type fits a place of the next call's.
+        (
+            "f := fn () -> type ( meters := type ( pub v := f64 ? ), meters ), a := type f(), \
+             b := type f(), mut x := a(1.0), y := b(2.0), x = y, print «{&a == &b} {x.v}»"
+                .to_string(),
+            "true 2.0\n",
+        ),
+        // One name, a mint per argument: one dyad for each.
+        (
+            format!(
+                "mk := fn (t := type ?) -> @dyad ( {} ), \
+                 print «{{mk(i32) == mk(i32)}} {{mk(i32) == mk(f64)}} {{mk(f64) == mk(f64)}}»",
+                own("pub static e := type t")
+            ),
+            "true false true\n",
+        ),
+        // A name written in a type body built at each run is one written name too.
+        (
+            format!(
+                "f := fn () -> @dyad ( {} ), print «{{f() == f()}}»",
+                own("pub static u := type ( pub x := i32 ? )")
+            ),
+            "true\n",
+        ),
+        // A writable `static` keeps its type from every other, an earlier run's too.
+        (
+            format!("f := fn () -> @dyad ( {} ), print «{{f() == f()}}»", own("pub static mut n := i32 0")),
+            "false\n",
+        ),
+    ];
+    for compile in ["", "f.compile(), g.compile(), "] {
+        cases.push((
+            format!(
+                "f := fn () -> bool ( a := type union ( pub mut i := i32 ), \
+                 b := type union ( pub mut i := i32 ), &a == &b ), \
+                 g := fn () -> bool ( a := type union ( pub mut i := i32 ), &a == &a ), \
+                 {compile}print «{{f()}} {{g()}}»"
+            ),
+            "false true\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
+/// A name that holds a type known only when its line runs hands out the address of the dyad it
+/// holds then, as a name whose type the pass knows does ([[R377]], [[R383]]), on both tiers.
+#[test]
+fn the_address_of_a_name_filled_at_run_is_its_dyad_s_on_both_tiers() {
+    let meters = "meters := type ( pub v := f64 ? )";
+    let mut cases = Vec::new();
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!(
+                "{meters}, f := fn (t := type ?) -> bool ( &t == &meters ), \
+                 {compile}print «{{f(meters)}} {{f(i32)}}»"
+            ),
+            "true false\n",
+        ));
+        cases.push((
+            format!(
+                "{meters}, f := fn () -> bool ( mut t := type ?, t = meters, &t == &meters ), \
+                 {compile}f()"
+            ),
+            "true\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
 /// `@T` is minted through `type_mint` by its pointee, so every spelling of one pointer type is one
 /// type ([[R383]]).
 #[test]
