@@ -19,14 +19,14 @@ import file «exp.logos»,
 
 ^ := type (
     static power_mints := hashmap type -> hashmap type -> type,
-    static get_mint := fn (l := type ?, r := type ?) -> type (
+    pub static get_mint := fn (l := type ?, r := type ?) -> type (
         mut row := power_mints[l],
         if row == ? ( row = hashmap type -> type ),
         mut mint := row[r],
         if mint != ? return mint,
         mint = type (
-            lhs := l ?,
-            rhs := r ?,
+            pub lhs := l ?,
+            pub rhs := r ?,
             static output_type := if l == f64 or r == f64 (f64)
                 else if l == f32 or r == f32 (f32)
                 else if r == rational_number (f64)

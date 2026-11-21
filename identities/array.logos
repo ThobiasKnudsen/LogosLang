@@ -5,21 +5,21 @@
 
 pub array := type (
     static array_mints := hashmap type -> type,
-    static get_mint := fn (t := type ?) -> type (
+    pub static get_mint := fn (t := type ?) -> type (
         mut mint := array_mints[t],
         if mint != ? return mint,
         mint = type (
-            static element_type := t,
-            mut ptr := own @element_type ?,
-            mut size := u64 0,
-            static size_bytes := fn () -> u64 (size * element_type.size_bytes),
+            pub static element_type := t,
+            pub mut ptr := own @element_type ?,
+            pub mut size := u64 0,
+            pub static size_bytes := fn () -> u64 (size * element_type.size_bytes),
 
             static free = (
                 for i in 0..size ( free (ptr + i)@ ),
                 free ptr
             ),
 
-            static at := fn (index := u64 ?) -> element_type (
+            pub static at := fn (index := u64 ?) -> element_type (
                 if index >= size error «index out of range: the index is at or past the array's size»,
                 (ptr + index)@
             ),

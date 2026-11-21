@@ -26,9 +26,9 @@ pub struct Imports {
 enum ImportState {
     /// Reading it as Logos again now is a cycle.
     Loading,
-    /// `section` is the file's scope; `pubs` each `pub` name's spelling and its binding there, in
-    /// declaration order.
-    Loaded { section: DyadPtr, pubs: Vec<(String, DyadPtr)>, text: &'static str },
+    /// `section` is the file's scope; `names` each name its lines declared, its spelling and its
+    /// binding there, in declaration order.
+    Loaded { section: DyadPtr, names: Vec<(String, DyadPtr)>, text: &'static str },
 }
 
 impl Imports {
@@ -40,10 +40,10 @@ impl Imports {
         })
     }
 
-    /// The `pub` names of the file whose scope `section` is; `None` for any other scope.
-    pub(super) fn pubs_of(&self, section: DyadPtr) -> Option<&[(String, DyadPtr)]> {
+    /// The names the file whose scope `section` is declared; `None` for any other scope.
+    pub(super) fn names_of(&self, section: DyadPtr) -> Option<&[(String, DyadPtr)]> {
         self.entries.values().find_map(|state| match state {
-            ImportState::Loaded { section: s, pubs, .. } if *s == section => Some(&pubs[..]),
+            ImportState::Loaded { section: s, names, .. } if *s == section => Some(&names[..]),
             _ => None,
         })
     }
@@ -138,7 +138,10 @@ impl<'a> Parser<'a> {
             return Err(ParseError::ImportTakesFile);
         }
         let (file, section) = self.read_logos_after(tape)?;
-        let pubs = self.imports.pubs_of(section).expect("a loaded section").to_vec();
+        let names = self.imports.names_of(section).expect("a loaded section").to_vec();
+        // SAFETY: each name is a binding dyad the file's pass built.
+        let pubs: Vec<_> =
+            names.into_iter().filter(|&(_, b)| unsafe { self.read_gate(b) }.is_ok()).collect();
         self.publish(&pubs)?;
         let types = self.types;
         let node = self.rt.store.alloc_words(types.import_, &[file.node, types.ops.import_]);
@@ -162,21 +165,21 @@ impl<'a> Parser<'a> {
         Ok(Some(self.reach(section)))
     }
 
-    /// `.name` over a file's scope: its `pub` name `name`, used as a name is; `None` where `node`
-    /// is no file's scope. Nothing else of the file is reached (›`logos` and `import` load a Logos
-    /// file; whoever reads it reaches only its `pub` names‹ [[R303]]).
+    /// `.name` over a file's scope: its name `name` where the gate read lets it through, used as
+    /// a name is; `None` where `node` is no file's scope. So only its `pub` names are reached
+    /// (›`logos` and `import` load a Logos file; whoever reads it reaches only its `pub` names‹
+    /// [[R303]]).
     pub(super) fn file_member(
         &self,
         node: DyadPtr,
         name: &str,
     ) -> Option<Result<DyadPtr, ParseError>> {
-        let pubs = self.imports.pubs_of(node)?;
-        Some(
-            pubs.iter()
-                .find(|(spelling, _)| spelling == name)
-                .map(|&(_, binding)| binding)
-                .ok_or_else(|| ParseError::NoPubName(Box::new(name.to_string()))),
-        )
+        let names = self.imports.names_of(node)?;
+        let Some(&(_, binding)) = names.iter().find(|(spelling, _)| spelling == name) else {
+            return Some(Err(ParseError::NoPubName(Box::new(name.to_string()))));
+        };
+        // SAFETY: `binding` is a binding dyad the file's pass built.
+        Some(unsafe { self.read_gate(binding) }.map(|()| binding))
     }
 
     /// Read the `«…»` to the right at discovery and place a `regex` node
@@ -484,8 +487,8 @@ impl<'a> Parser<'a> {
                     rendered: crate::report::render(path, text, inner_pos, &message),
                 })
             }
-            Ok(pubs) => {
-                let loaded = ImportState::Loaded { section, pubs, text };
+            Ok(names) => {
+                let loaded = ImportState::Loaded { section, names, text };
                 self.imports.entries.insert(canon.clone(), loaded);
                 Ok(section)
             }
@@ -493,8 +496,8 @@ impl<'a> Parser<'a> {
     }
 
     /// The nested pass over an imported file, whose lines land in `section`: the file read
-    /// and run, then its `pub` (name, binding) pairs in declaration order. On failure the
-    /// message is returned with `offset` at the stuck point.
+    /// and run, then the (name, binding) pairs its lines declared, in declaration order. On
+    /// failure the message is returned with `offset` at the stuck point.
     fn run_imported(&mut self, section: DyadPtr) -> Result<Vec<(String, DyadPtr)>, String> {
         let message = |e: ParseError| crate::report::parse_message(&e);
         self.read_lines(LinesEnd::TextEnd).map_err(message)?;
@@ -502,17 +505,16 @@ impl<'a> Parser<'a> {
         let types = self.types;
         // SAFETY: `section` is the file's scope node, its lines nodes from the store; a declare
         // line holds the binding it declared.
-        let pubs = unsafe {
+        let names = unsafe {
             crate::identities::scope::exprs_of(section)
                 .unwrap_or(&[])
                 .iter()
                 .filter(|&&line| dyad::ty(line) == types.declare_)
                 .map(|&line| crate::identities::declare::binding_of(line))
-                .filter(|&binding| Binding::has_gate(binding, types.pub_))
                 .map(|binding| (Binding::spelling(binding), binding))
                 .collect()
         };
-        Ok(pubs)
+        Ok(names)
     }
 
     /// Pub-only exposure, the ordinary visibility rule: a collision with a

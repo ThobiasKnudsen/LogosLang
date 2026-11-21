@@ -360,8 +360,20 @@ impl<'a> Parser<'a> {
             // `self.cx.source` is `&'a str` (Copy), so the slice is independent
             // of the `&mut self` needed below.
             let source = self.cx.source;
-            let name = &source[start..start + len];
-            let word = self.cx.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
+            let (mut start, mut name) = (start, &source[start..start + len]);
+            let mut word = self.cx.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
+            // `mut` or `immut` before a field or parameter gates its binding, as before any name,
+            // and so does `pub` in a type body, where a read from outside needs it (›Fields are
+            // read with a dot outside their scope‹ [[R234]]).
+            let t = self.types;
+            let is_gate = |w: DyadPtr| w == t.mut_ || w == t.immut_ || relaxed && w == t.pub_;
+            let mut gates = Vec::new();
+            while let Some(gate) = word.filter(|&w| is_gate(w)) {
+                gates.push(gate);
+                let (at, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
+                (start, name) = (at, &source[at..at + len]);
+                word = self.cx.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
+            }
             // One place stored with the type, not a field of the layout; never a
             // parameter, which each call fills (DESIGN ›Two muts, and the storage partition‹).
             if word == Some(self.types.static_) {
@@ -370,20 +382,16 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::StaticMisplaced);
                 }
                 if self.at_slot_word() {
+                    if !gates.is_empty() {
+                        self.cx.pos = start;
+                        return Err(ParseError::GateNeedsDeclaration);
+                    }
                     self.slot_line(self.cx.pos)?;
                 } else {
-                    self.static_member(start)?;
+                    self.static_member(start, &gates)?;
                 }
                 continue;
             }
-            // `mut` or `immut` before a field or parameter gates its binding, as before any name.
-            let gate = word.filter(|&w| w == self.types.mut_ || w == self.types.immut_);
-            let (start, name) = if gate.is_some() {
-                let (start, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
-                (start, &source[start..start + len])
-            } else {
-                (start, name)
-            };
             // A literal, `5`, matches a pattern identity and names nothing.
             if relaxed {
                 if let Ok(r) = self.cx.scopes.resolve(self.trie, name) {
@@ -394,7 +402,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            if relaxed && gate.is_none() {
+            if relaxed && gates.is_empty() {
                 let declares =
                     matches!(self.peek_token(), Some((id, _)) if id == self.types.declare_tok);
                 let def = self.cx.definitions.last().expect("a relaxed field list is a type body");
@@ -487,7 +495,7 @@ impl<'a> Parser<'a> {
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = self.mint_binding(field, scope, name.as_bytes());
             self.enter_binding_in(scope, name, binding, start)?;
-            if let Some(gate) = gate {
+            for &gate in gates.iter().rev() {
                 self.add_gate(binding, gate)?;
             }
             if owns_node {
@@ -504,8 +512,9 @@ impl<'a> Parser<'a> {
 
     /// `static name := value` in a type body: one place stored with the type,
     /// declared in the body scope (DESIGN ›Two muts, and the storage
-    /// partition‹). The fields and the members stay one scope for no-shadowing.
-    fn static_member(&mut self, at: usize) -> Result<(), ParseError> {
+    /// partition‹). The fields and the members stay one scope for no-shadowing. `gates` are the
+    /// gate words written before `static`, in text order.
+    fn static_member(&mut self, at: usize, gates: &[DyadPtr]) -> Result<(), ParseError> {
         let body = match self.cx.definitions.last() {
             Some(def) => def.scope,
             None => {
@@ -556,6 +565,9 @@ impl<'a> Parser<'a> {
             return Err(ParseError::StaticNeedsDeclaration);
         }
         self.add_gate(binding, self.types.static_)?;
+        for &gate in gates.iter().rev() {
+            self.add_gate(binding, gate)?;
+        }
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.cx.scopes.settle_item(body, item) };
         Ok(())

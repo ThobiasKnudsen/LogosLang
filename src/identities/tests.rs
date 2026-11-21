@@ -251,7 +251,8 @@ fn an_unnamed_result_is_scratch_freed_with_its_line() {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let src = "pt := type (a := i32 ?, b := i32 ?), f := fn (p := pt ?) -> i32 ( p.a + p.b ), \
+    let src =
+        "pt := type (pub a := i32 ?, pub b := i32 ?), f := fn (p := pt ?) -> i32 ( p.a + p.b ), \
                mut s := i32 0, for i in 0..200 ( s = s + f(pt(i, 1)) ), s";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
     let root = p.parse_sequence().unwrap();
@@ -1397,7 +1398,7 @@ fn a_line_after_one_that_always_gives_or_leaves_is_refused() {
     assert_eq!(parse_err("x := for i in 0..3 (i)"), ParseError::StatementAsValue);
     // A `{ … }` gives the scope itself, so a line in it has nowhere to give a value.
     assert_eq!(parse_err("m := { a := i32 1, 5 }"), ParseError::KeptScopeGives);
-    assert_eq!(run_script("m := { a := i32 1, free (5), b := i32 2 }, m.b"), 2);
+    assert_eq!(run_script("m := { a := i32 1, free (5), pub b := i32 2 }, m.b"), 2);
     // A value nobody wants is thrown away, and the next line runs.
     assert_eq!(run_script("free (5), y := i32 1, y"), 1);
 }
@@ -2149,7 +2150,8 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
     {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("holder := type (r := @i32 ?)", &mut store, &mut trie, &core, s);
+        let mut p =
+            Parser::new("holder := type (pub r := @i32 ?)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap();
     }
     let func = {
@@ -2476,7 +2478,7 @@ fn the_unknown_is_one_value_a_type_or_dyad_place_holds() {
 /// number types or not, takes `?` as its operand and decides what it is there.
 #[test]
 fn the_identity_that_takes_the_unknown_decides_what_it_is() {
-    let q = "q := type ( v := u64 ?, static parse_rank = i32.parse_rank, static parse = ( \
+    let q = "q := type ( pub v := u64 ?, static parse_rank = i32.parse_rank, static parse = ( \
              tape[0].type = q, if tape[1] == ? ( tape[0].v = 1 ) else ( tape[0].v = 2 ), \
              tape.remove(1), tape.is_constructed[0] = true ) ),\n";
     assert_eq!(run_script(&format!("{q}x := q ?, x.v")), 1);
@@ -2536,7 +2538,7 @@ fn address_of_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
     for (f, args, expect) in [
         ("f := fn (a := @i32 ?) -> i32 ( q := &(a@), q@ = 5, a@ )", "mut x := i32 3, f(&x)", 5),
         (
-            "point := type ( x := i32 ?, y := i32 ? ), \
+            "point := type ( x := i32 ?, pub y := i32 ? ), \
              f := fn (p := @point ?) -> i32 ( q := &(p@.y), q@ = 9, p@.y )",
             "mut v := point (1, 2), f(&v)",
             9,
@@ -2560,7 +2562,7 @@ fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers(
     for (f, args, expect) in [
         ("f := fn (a := @i32 ?) -> i32 ( a@ = 4, a@ )", "mut x := i32 1, f(&x)", 4),
         (
-            "point := type ( x := i32 ?, mut y := i32 ? ), \
+            "point := type ( pub x := i32 ?, pub mut y := i32 ? ), \
              f := fn (p := @point ?) -> i32 ( p@.y = 9, p@ = point(5, p@.y), p@.x + p@.y )",
             "mut v := point (1, 2), f(&v)",
             14,
@@ -2611,7 +2613,7 @@ fn address_of_what_has_no_address_is_refused() {
 #[test]
 fn address_of_a_value_nothing_names_holds_it_both_tiers() {
     for (f, args, expect) in [
-        ("w := type ( x := i64 ? ), g := fn () -> i64 ( p := &w(7), p@.x )", "g()", 7),
+        ("w := type ( pub x := i64 ? ), g := fn () -> i64 ( p := &w(7), p@.x )", "g()", 7),
         ("f := fn () -> i32 ( 7 ), g := fn () -> i32 ( p := &(f()), p@ )", "g()", 7),
         ("g := fn (a := i32 ?) -> i32 ( p := &(a + 1), q := &(a + 2), p@ * 10 + q@ )", "g(3)", 45),
         (
@@ -2648,7 +2650,7 @@ fn a_pointer_steps_by_whole_cells_both_tiers() {
         48
     );
     assert_eq!(
-        run_script("holder := type (r := @i32 ?), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
+        run_script("holder := type (pub r := @i32 ?), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
         12
     );
     let walk = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), mut s := i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
@@ -2833,7 +2835,7 @@ const POW_TYPE: &str = "pw := type (\n\
      static get_mint := fn (l := type ?) -> type (\n\
          mut mint := pw_mints[l],\n\
          if mint != ? return mint,\n\
-         mint = type ( a := l ?, b := i32 ?, static output_type := l, static run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ) ),\n\
+         mint = type ( pub a := l ?, pub b := i32 ?, static output_type := l, static run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ) ),\n\
          pw_mints[l] = mint,\n\
          mint\n\
      ),\n\
@@ -3070,7 +3072,7 @@ fn a_promoted_loop_matches_the_interpreter() {
 
 #[test]
 fn compile_is_reserved_only_on_fn_typed_values() {
-    assert_eq!(run_script("point := type (compile := i32 ?),\np := point(7),\np.compile"), 7);
+    assert_eq!(run_script("point := type (pub compile := i32 ?),\np := point(7),\np.compile"), 7);
 }
 
 #[test]
@@ -3113,7 +3115,8 @@ fn a_literal_into_a_pointer_parameter_is_rejected() {
 fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
-    let mut p = Parser::new("point := type (mut x := i32 ?, y := i32 ?)", store, trie, core, s);
+    let mut p =
+        Parser::new("point := type (pub mut x := i32 ?, pub y := i32 ?)", store, trie, core, s);
     p.parse_expression().unwrap();
 }
 
@@ -3154,7 +3157,7 @@ fn record_fields_lay_out_mixed_widths() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "cell := type (a := u8 ?, b := i64 ?, c := i32 ?)",
+            "cell := type (pub a := u8 ?, pub b := i64 ?, pub c := i32 ?)",
             &mut store,
             &mut trie,
             &core,
@@ -3832,7 +3835,7 @@ fn recursion_with_a_record_local_is_per_activation_both_tiers() {
     unsafe {
         assert_recursion_both_tiers(
             &[
-                "point := type ( x := i32 ?, y := i32 ? )",
+                "point := type ( pub x := i32 ?, y := i32 ? )",
                 "h := fn (n := i32 ?) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (free (h(n - 1)), pt.x) )",
             ],
             "h",
@@ -4366,7 +4369,7 @@ fn a_number_type_takes_the_name_to_its_right() {
 
 #[test]
 fn a_type_takes_the_value_built_at_discovery_before_it() {
-    let pt = "pt := type (a := i32 ?, b := i32 ?), p := pt(7, 8)";
+    let pt = "pt := type (pub a := i32 ?, b := i32 ?), p := pt(7, 8)";
     for (src, want) in [
         (format!("{pt}, i32 p.a"), 7),
         (format!("{pt}, i32 lossy p.a"), 7),
@@ -4565,8 +4568,8 @@ fn a_line_the_pass_ran_keeps_its_node_and_is_not_run_again() {
 /// A `q` whose `parse` runs `body` and then takes its bracket off the tape.
 fn tape_line_q(body: &str) -> String {
     format!(
-        "pt := type ( mut a := u64 ?, mut b := u64 ? ), \
-         q := type ( v := u64 ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
+        "pt := type ( pub mut a := u64 ?, pub mut b := u64 ? ), \
+         q := type ( pub v := u64 ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
          {body}, tape.remove(1), tape.is_constructed[0] = true ) )"
     )
 }
@@ -4683,4 +4686,140 @@ fn a_tape_line_no_check_narrowed_is_checked_where_a_type_is_wanted_when_the_pars
             }
         }
     }
+}
+
+fn not_pub(name: &str) -> ParseError {
+    ParseError::NotPub(Box::new(name.into()))
+}
+
+#[test]
+fn a_field_is_read_from_outside_its_type_only_when_it_is_pub_both_tiers() {
+    let pt = "pt := type ( pub x := i32 ?, y := i32 ? )";
+    for compile in ["", "f.compile(), "] {
+        let read = |field: &str| {
+            format!("{pt}, f := fn () -> i32 ( p := pt(1, 2), p.{field} ), {compile}f()")
+        };
+        assert_eq!(run_script(&read("x")), 1, "{compile}");
+        assert_eq!(script_parse_err(&read("y")), not_pub("y"), "{compile}");
+    }
+    for (tail, want) in [("p.y", "y"), ("q := &p, q@.y", "y"), ("r := &p.y, 1", "y")] {
+        assert_eq!(
+            script_parse_err(&format!("{pt}, p := pt(1, 2), {tail}")),
+            not_pub(want),
+            "{tail}"
+        );
+    }
+    // A write through `.` needs the read, and `mut` besides.
+    assert_eq!(
+        script_parse_err("pt := type ( mut x := i32 ? ), mut p := pt(1), p.x = 5, 1"),
+        not_pub("x")
+    );
+    assert_eq!(run_script("pt := type ( pub mut x := i32 ? ), mut p := pt(1), p.x = 5, p.x"), 5);
+}
+
+#[test]
+fn a_types_own_bodies_read_every_field_and_member() {
+    assert_eq!(
+        run_script(
+            "pt := type ( x := i32 ?, y := i32 ?, pub static sum := fn () -> i32 ( x + y ) ), \
+             p := pt(1, 2), p.sum()"
+        ),
+        3
+    );
+    assert_eq!(
+        run_script(
+            "mk := type ( static tag := i32 7, pub static get := fn () -> i32 ( tag ) ), mk.get()"
+        ),
+        7
+    );
+    // `run`, and a `parse` that writes its own type's fields through the tape.
+    let inc = "inc := type ( a := i32 ?, output_type := type ?, \
+               static twice := fn () -> i32 ( a * 2 ), static run = ( twice() + 1 ), \
+               static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = inc, \
+               tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
+               tape.remove(-1) ) ), f := fn (y := i32 ?) -> i32 ( y inc )";
+    for compile in ["", "f.compile(), "] {
+        assert_eq!(run_script(&format!("{inc}, {compile}f(5)")), 11, "{compile}");
+    }
+}
+
+#[test]
+fn a_static_member_is_read_through_its_type_or_a_value_only_when_it_is_pub() {
+    assert_eq!(script_parse_err("mk := type ( static tag := i32 7 ), mk.tag"), not_pub("tag"));
+    for gates in ["pub static", "static pub"] {
+        assert_eq!(
+            run_script(&format!("mk := type ( {gates} tag := i32 7 ), mk.tag")),
+            7,
+            "{gates}"
+        );
+    }
+    let pt = |gate: &str| {
+        format!(
+            "pt := type ( x := i32 ?, {gate}static s := fn () -> i32 ( x ) ), p := pt(3), p.s()"
+        )
+    };
+    assert_eq!(script_parse_err(&pt("")), not_pub("s"));
+    assert_eq!(run_script(&pt("pub ")), 3);
+    // A function called through the type, a chooser as any other.
+    let chooser = |gate: &str, call: &str| {
+        format!(
+            "p := type ( static ms := hashmap type -> type, {gate}static get_mint := fn (l := type ?) \
+             -> type ( mut m := ms[l], if m != ? return m, m = type ( pub v := l ? ), ms[l] = m, m ) ), \
+             {call}"
+        )
+    };
+    let twice = "p.get_mint(i32) == p.get_mint(i32)";
+    for call in [twice.to_string(), format!("f := fn () -> bool ( {twice} ), f.compile(), f()")] {
+        assert_eq!(script_parse_err(&chooser("", &call)), not_pub("get_mint"), "{call}");
+        assert_eq!(run_script(&chooser("pub ", &call)), 1, "{call}");
+    }
+}
+
+#[test]
+fn a_kept_scopes_entries_are_read_from_outside_only_when_pub_both_tiers() {
+    assert_eq!(script_parse_err("m := { a := i32 1 }, m.a"), not_pub("a"));
+    for compile in ["", "f.compile(), "] {
+        let src = format!("m := {{ pub a := i32 1 }}, f := fn () -> i32 ( m.a ), {compile}f()");
+        assert_eq!(run_script(&src), 1, "{compile}");
+    }
+    // A `fn` entry reads its siblings bare.
+    let m = "m := { a := i32 1, pub f := fn () -> i32 ( a + 1 ) }";
+    assert_eq!(run_script(&format!("{m}, m.f()")), 2);
+    assert_eq!(script_parse_err(&format!("{m}, m.a")), not_pub("a"));
+}
+
+#[test]
+fn a_hashmap_takes_only_the_pub_entries_of_a_scope() {
+    assert_eq!(
+        run_script("h := hashmap string -> i32 { pub a := 1, pub b := 2 }, h[«a»] + h[«b»]"),
+        3
+    );
+    assert_eq!(
+        script_parse_err("h := hashmap string -> i32 { pub a := 1, b := 2 }, 1"),
+        not_pub("b")
+    );
+}
+
+#[test]
+fn a_parse_that_stamps_another_type_writes_only_its_pub_fields() {
+    let src = |gate: &str, stamp: &str| {
+        format!(
+            "box := type ( {gate}v := i32 ?, static output_type := type i32, static run = ( v + 1 ) ), \
+             get := fn () -> type ( box ), \
+             wrap := type ( static parse_rank = *.parse_rank + 1, static parse = ( \
+             tape[0].type = {stamp}, tape[0].v = tape[-1], tape.is_constructed[0] = true, \
+             tape.remove(-1) ) ), 4 wrap"
+        )
+    };
+    for stamp in ["box", "get()"] {
+        assert_eq!(script_parse_err(&src("", stamp)), not_pub("v"), "{stamp}");
+        assert_eq!(run_script(&src("pub ", stamp)), 5, "{stamp}");
+    }
+}
+
+#[test]
+fn a_file_is_read_from_outside_only_by_its_pub_names() {
+    let lib = "(logos file «tests/fixtures/lib_pub.logos»)";
+    assert_eq!(run_script(&format!("{lib}.double(21)")), 42);
+    assert_eq!(script_parse_err(&format!("{lib}.helper(1)")), not_pub("helper"));
 }

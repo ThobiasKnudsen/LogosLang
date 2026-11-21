@@ -189,6 +189,9 @@ pub enum ParseError {
     },
     /// `.name` over a file's scope where the file has no `pub` name `name`; carries the name.
     NoPubName(Box<String>),
+    /// `.name` from outside the scope `name` is declared in, a file's, a type's or a `{ … }`'s,
+    /// where it is no `pub` name; carries the name.
+    NotPub(Box<String>),
     /// A `regex` was not followed by a `«…»` quote.
     ExpectedPattern,
     /// A `lex`, `print` or `error` was not followed by a `«…»` quote; carries the word.

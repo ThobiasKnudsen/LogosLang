@@ -38,6 +38,30 @@ pub(super) fn word(cx: &mut Cx, name: &str) -> DyadPtr {
     id
 }
 
+/// Whether `binding`'s gates grant a read from the scope `from`: its default entry grants one
+/// from its own scope and below, along the parent links, and `pub` one from any scope (›A name's
+/// gates are one ordered set on its binding, combined as grants and vetoes‹ [[R81]]). A `.` from
+/// outside a file, a type or a `{ … }` reaches only its `pub` names so (›Fields are read with a
+/// dot outside their scope‹ [[R234]]).
+///
+/// # Safety
+/// `binding` must be a binding dyad from the store; `from` null or a scope node.
+pub(crate) unsafe fn grants_read(types: &crate::Core, binding: DyadPtr, from: DyadPtr) -> bool {
+    use crate::binding::Binding;
+    if Binding::has_gate(binding, types.pub_) {
+        return true;
+    }
+    let own = Binding::read(binding).scope;
+    let mut at = from;
+    while !at.is_null() {
+        if at == own {
+            return true;
+        }
+        at = super::scope::parent_of(at);
+    }
+    false
+}
+
 /// A type body's reader takes the word at a line's start; anywhere else on
 /// a body line it stands for nothing.
 fn outside_block(
