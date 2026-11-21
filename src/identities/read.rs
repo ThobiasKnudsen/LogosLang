@@ -152,11 +152,12 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
 
 /// The type `node` gives back when it runs, read from the node: a place's declared type, a
 /// call's `-> T`, the output a Logos-written type's set was built for, the `output_type` its
-/// mint shares, the `output_type` slot a built-in that does not mint wrote, what an `if`'s arms
-/// or a block's last line give, `void` for a node that runs and declares no `output_type`; a
-/// node of no other kind is a value and gives back its own type. Null where nothing knows it
-/// before the program runs. ›A node's output type is written by its parse, on the mint for a
-/// type that mints‹ [[R194]], ›`=` sits beside `:=`, and returns nothing‹ [[R277]].
+/// mint shares, the `output_type` slot a built-in that does not mint wrote, what an `if` or a
+/// block gives as [`super::flow::value_type`] works it out, `void` for a node that runs and
+/// declares no `output_type`; a node of no other kind is a value and gives back its own type.
+/// Null where nothing knows it before the program runs. ›A mint's output type is written in its
+/// `output_type := static …` declaration; a type that does not mint has its parse write it into
+/// each node‹ [[R194]], ›`=` sits beside `:=`, and returns nothing‹ [[R277]].
 ///
 /// # Safety
 /// `node` must be null or a reduced dyad from the store.
@@ -186,11 +187,8 @@ pub unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
             *(dyad::value(spec) as *const DyadPtr).add(FN_OUTPUT)
         };
     }
-    if op == types.if_ {
-        return super::if_mod::output_type(types, node);
-    }
-    if op == types.scope {
-        return super::scope::output_type(types, node);
+    if op == types.if_ || op == types.scope {
+        return super::flow::value_type(types, node).unwrap_or(types.void_);
     }
     if let Some(t) = super::mint::output_type_of(op) {
         return t;
