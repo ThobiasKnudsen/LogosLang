@@ -90,6 +90,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)
     });
+    cx.choosers.insert(alloc_, choose_alloc);
     let alloc_leaf = callable::mint_native(cx.store, cs.callable, run_alloc, cs.seed_native);
 
     // `own` stands only in a type position, `own @T ?` or `-> own @T`: the word makes the hole,
@@ -158,6 +159,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         Ok(crate::parse::Constructed::Placed)
     });
     cx.lower.insert(move_, lower_move);
+    cx.choosers.insert(move_, choose_move);
     let move_leaf = callable::mint_native(cx.store, cs.callable, run_move, cs.seed_native);
     // SAFETY: both carry the records `keyword` built.
     unsafe {
@@ -382,28 +384,41 @@ pub(super) fn build_alloc(
             init
         }
     };
-    // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store; the
-    // owning `@pointee` is made with the mint, so its nodes give one type.
+    // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store.
     unsafe {
         let key = [super::read::output_type(types, count), pointee];
-        let output = super::mint::output_for(types.alloc_, &key).unwrap_or_else(|| {
-            super::pointer::make_owning_pointer_type(
-                store,
-                types.type_,
-                pointee,
-                types.ops.teardown_,
-            )
-        });
-        Ok(super::mint::node(
-            store,
-            types,
-            types.alloc_,
-            &key,
-            output,
-            types.ops.alloc_,
-            &[count, init],
-        ))
+        super::mint::node(store, types, types.alloc_, &key, &[count, init])
     }
+}
+
+/// What `alloc`'s mint over the field types `key`, the count's and the pointee, gives back and
+/// runs: the owning `@pointee`, made with the mint, so its nodes give one type.
+///
+/// # Safety
+/// `key` must hold type nodes from the store.
+unsafe fn choose_alloc(
+    store: &mut Store,
+    types: &Core,
+    key: &[DyadPtr],
+) -> Option<super::mint::Made> {
+    let &[_, pointee] = key else {
+        return None;
+    };
+    let teardown = types.ops.teardown_;
+    let output_type =
+        super::pointer::make_owning_pointer_type(store, types.type_, pointee, teardown);
+    Some(super::mint::Made { output_type, op: types.ops.alloc_ })
+}
+
+/// What `move`'s mint over the field type `key` gives back, that type, and runs.
+///
+/// # Safety
+/// `key` must hold a type node from the store.
+unsafe fn choose_move(_: &mut Store, types: &Core, key: &[DyadPtr]) -> Option<super::mint::Made> {
+    let &[t] = key else {
+        return None;
+    };
+    Some(super::mint::Made { output_type: t, op: types.ops.move_ })
 }
 
 fn free_node(store: &mut Store, types: &Core, slots: [DyadPtr; 3]) -> DyadPtr {
@@ -545,7 +560,7 @@ pub(crate) unsafe fn own_result(
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let ty = super::read::output_type(types, place);
-    let moved = super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place]);
+    let moved = super::mint::node_of_any(store, types, types.move_, &[ty], &[place]);
     if super::this::in_bytes(types, ty) {
         super::by_copy::build_out(store, types, moved)
     } else {

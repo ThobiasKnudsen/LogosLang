@@ -3,14 +3,15 @@
 
 //! The eleven infix operators over two operands, `+ - * / %` and `< > <= >= == !=`, and
 //! negation, which `-` spells too. Each node is `[mint, lhs, rhs]`, or negation's `[mint,
-//! operand]`: the parse chooses the mint from the operand types once they meet, and the mint
-//! holds the output type and the leaf; comptime rationals fold at parse instead.
+//! operand]`: the parse converts the operands until they meet, and each operator's chooser makes
+//! its mint for their types, holding the output type and the leaf; comptime rationals fold at
+//! parse instead.
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{ArithOp, CmpOp, NumType};
+use super::numtype::{self, ArithOp, CmpOp, NumType};
 use super::read::Read;
-use super::{bool_mod, group, meta, mint, rational, resolve_binary, Cx};
+use super::{bool_mod, group, is_numtype_node, meta, mint, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, LowerFn, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -62,9 +63,10 @@ fn register(cx: &mut Cx, spelling: &str, rank: f64, family: Family) -> DyadPtr {
     let record = meta::operand_record(cx, meta::TUPLE_TAG, rank, Assoc::Left, &["lhs", "rhs"]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(spelling, id);
-    let (construct, lower) = shims(family);
+    let (construct, lower, choose) = shims(family);
     cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
+    cx.choosers.insert(id, choose);
     id
 }
 
@@ -79,6 +81,7 @@ fn register_negate(cx: &mut Cx) -> DyadPtr {
     cx.declare("-", id);
     cx.metas.insert(id, construct_negate);
     cx.lower.insert(id, lower_negate);
+    cx.choosers.insert(id, choose_negate);
     id
 }
 
@@ -97,29 +100,28 @@ const EQ: u8 = CmpOp::Eq as u8;
 const NE: u8 = CmpOp::Ne as u8;
 
 /// A table entry is a plain fn pointer, so each (family, op) pair is its own function.
-fn shims(family: Family) -> (ConstructFn, LowerFn) {
+fn shims(family: Family) -> (ConstructFn, LowerFn, mint::ChooseFn) {
+    macro_rules! entry {
+        ($family:ident, $op:ident) => {
+            (
+                super::infix_construct!(build::<$family, $op>),
+                lower::<$family, $op> as LowerFn,
+                choose::<$family, $op> as mint::ChooseFn,
+            )
+        };
+    }
     match family {
-        Family::Arith(ArithOp::Add) => {
-            (super::infix_construct!(build::<ARITH, ADD>), lower::<ARITH, ADD>)
-        }
-        Family::Arith(ArithOp::Sub) => {
-            (super::infix_construct!(build::<ARITH, SUB>), lower::<ARITH, SUB>)
-        }
-        Family::Arith(ArithOp::Mul) => {
-            (super::infix_construct!(build::<ARITH, MUL>), lower::<ARITH, MUL>)
-        }
-        Family::Arith(ArithOp::Div) => {
-            (super::infix_construct!(build::<ARITH, DIV>), lower::<ARITH, DIV>)
-        }
-        Family::Arith(ArithOp::Rem) => {
-            (super::infix_construct!(build::<ARITH, REM>), lower::<ARITH, REM>)
-        }
-        Family::Cmp(CmpOp::Lt) => (super::infix_construct!(build::<CMP, LT>), lower::<CMP, LT>),
-        Family::Cmp(CmpOp::Gt) => (super::infix_construct!(build::<CMP, GT>), lower::<CMP, GT>),
-        Family::Cmp(CmpOp::Le) => (super::infix_construct!(build::<CMP, LE>), lower::<CMP, LE>),
-        Family::Cmp(CmpOp::Ge) => (super::infix_construct!(build::<CMP, GE>), lower::<CMP, GE>),
-        Family::Cmp(CmpOp::Eq) => (super::infix_construct!(build::<CMP, EQ>), lower::<CMP, EQ>),
-        Family::Cmp(CmpOp::Ne) => (super::infix_construct!(build::<CMP, NE>), lower::<CMP, NE>),
+        Family::Arith(ArithOp::Add) => entry!(ARITH, ADD),
+        Family::Arith(ArithOp::Sub) => entry!(ARITH, SUB),
+        Family::Arith(ArithOp::Mul) => entry!(ARITH, MUL),
+        Family::Arith(ArithOp::Div) => entry!(ARITH, DIV),
+        Family::Arith(ArithOp::Rem) => entry!(ARITH, REM),
+        Family::Cmp(CmpOp::Lt) => entry!(CMP, LT),
+        Family::Cmp(CmpOp::Gt) => entry!(CMP, GT),
+        Family::Cmp(CmpOp::Le) => entry!(CMP, LE),
+        Family::Cmp(CmpOp::Ge) => entry!(CMP, GE),
+        Family::Cmp(CmpOp::Eq) => entry!(CMP, EQ),
+        Family::Cmp(CmpOp::Ne) => entry!(CMP, NE),
     }
 }
 
@@ -161,22 +163,15 @@ unsafe fn build_op(
                 return Ok(node);
             }
             if rational_operands(types, lhs, rhs)? {
-                let leaf = types.ops.rational_arith_leaf(a);
-                return Ok(node(store, types, op, lhs, rhs, types.rational, leaf));
+                return node(store, types, op, lhs, rhs);
             }
-            let ([lhs, rhs], nt) = resolve_binary(store, types, lhs, rhs)?;
-            // No machine float remainder exists, so the node cannot.
-            if matches!(a, ArithOp::Rem) && nt.is_float() {
-                return Err(ParseError::UnsupportedOperands);
-            }
-            let (output, leaf) = (types.numtypes[nt as usize], types.ops.arith_leaf(a, nt));
-            Ok(node(store, types, op, lhs, rhs, output, leaf))
+            let ([lhs, rhs], _) = resolve_binary(store, types, lhs, rhs)?;
+            node(store, types, op, lhs, rhs)
         }
         Family::Cmp(c) => {
             if matches!(c, CmpOp::Eq | CmpOp::Ne) {
-                let equal = matches!(c, CmpOp::Eq);
                 if let Some(node) =
-                    super::hashmap::build_unknown_compare(store, types, op, equal, lhs, rhs)
+                    super::hashmap::build_unknown_compare(store, types, op, lhs, rhs)?
                 {
                     return Ok(node);
                 }
@@ -185,11 +180,10 @@ unsafe fn build_op(
                 return Ok(bool_mod::literal_node(store, types.bool_, v));
             }
             if rational_operands(types, lhs, rhs)? {
-                let leaf = types.ops.rational_cmp_leaf(c);
-                return Ok(node(store, types, op, lhs, rhs, types.bool_, leaf));
+                return node(store, types, op, lhs, rhs);
             }
             if matches!(c, CmpOp::Eq | CmpOp::Ne) {
-                if let Some(node) = build_identity_compare(store, types, op, c, lhs, rhs) {
+                if let Some(node) = build_identity_compare(store, types, op, c, lhs, rhs)? {
                     return Ok(node);
                 }
                 // Two values of one type with a machine form, a `bool` among them, are equal
@@ -198,34 +192,125 @@ unsafe fn build_op(
                 let same = (t == super::read::output_type(types, rhs))
                     .then(|| super::read::place_layout(types, t))
                     .flatten();
-                if let Some((Read::Scalar(nt), _)) = same {
-                    let leaf = types.ops.cmp_leaf(c, nt);
-                    return Ok(node(store, types, op, lhs, rhs, types.bool_, leaf));
+                if let Some((Read::Scalar(_), _)) = same {
+                    return node(store, types, op, lhs, rhs);
                 }
             }
-            let ([lhs, rhs], nt) = resolve_binary(store, types, lhs, rhs)?;
-            let leaf = types.ops.cmp_leaf(c, nt);
-            Ok(node(store, types, op, lhs, rhs, types.bool_, leaf))
+            let ([lhs, rhs], _) = resolve_binary(store, types, lhs, rhs)?;
+            node(store, types, op, lhs, rhs)
         }
     }
 }
 
-/// `[mint, lhs, rhs]`, the mint `op`'s for the types its operands give.
+/// `[mint, lhs, rhs]`, the mint `op`'s chooser makes for the types its operands give.
 ///
 /// # Safety
-/// `lhs`/`rhs` must be reduced dyads from the store; `output_type` and `leaf` what every node of
-/// `op` over these operand types gives back and runs.
+/// `lhs`/`rhs` must be reduced dyads from the store.
 unsafe fn node(
     store: &mut Store,
     types: &Core,
     op: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,
-    output_type: DyadPtr,
-    leaf: DyadPtr,
-) -> DyadPtr {
+) -> Result<DyadPtr, ParseError> {
     let key = [super::read::output_type(types, lhs), super::read::output_type(types, rhs)];
-    mint::node(store, types, op, &key, output_type, leaf, &[lhs, rhs])
+    mint::node(store, types, op, &key, &[lhs, rhs])
+}
+
+/// # Safety
+/// `key` must hold type nodes from the store, or null.
+unsafe fn choose<const FAMILY: u8, const OP: u8>(
+    store: &mut Store,
+    types: &Core,
+    key: &[DyadPtr],
+) -> Option<mint::Made> {
+    match family_of::<FAMILY, OP>() {
+        Family::Arith(a) => choose_arith(store, types, a, key),
+        Family::Cmp(c) => choose_compare(types, c, key),
+    }
+}
+
+/// What `a`'s mint over the field types `key` gives back and runs: a number type over two of it,
+/// with no float remainder, since no machine one exists; a run-time rational over two; a pointer
+/// stepped by an `i64` count of bytes, giving the plain pointer to the same type (›A pointer
+/// steps by whole cells‹).
+///
+/// # Safety
+/// `key` must hold type nodes from the store, or null.
+unsafe fn choose_arith(
+    store: &mut Store,
+    types: &Core,
+    a: ArithOp,
+    key: &[DyadPtr],
+) -> Option<mint::Made> {
+    let &[l, r] = key else {
+        return None;
+    };
+    let (output_type, op) = if numtype::is_pointer_type(l) {
+        let i64_ = types.numtypes[NumType::I64 as usize];
+        if !matches!(a, ArithOp::Add | ArithOp::Sub) || r != i64_ {
+            return None;
+        }
+        let output = super::pointer::make_pointer_type(store, types.type_, numtype::pointee_of(l));
+        (output, types.ops.arith_leaf(a, NumType::I64))
+    } else if l == types.rational && r == types.rational {
+        (types.rational, types.ops.rational_arith_leaf(a))
+    } else {
+        let nt = one_number_type(types, l, r)?;
+        if matches!(a, ArithOp::Rem) && nt.is_float() {
+            return None;
+        }
+        (types.numtypes[nt as usize], types.ops.arith_leaf(a, nt))
+    };
+    Some(mint::Made { output_type, op })
+}
+
+/// What `c`'s mint over the field types `key` runs, giving a `bool`: a comparison of two values
+/// of one number type or of two run-time rationals; and for `==` and `!=`, of a map and `?`, of
+/// two values of one other machine type (a `bool`), of two values read as the address of a node
+/// (a type, a dyad, text) and of two pointers.
+///
+/// # Safety
+/// `key` must hold type nodes from the store, or null.
+unsafe fn choose_compare(types: &Core, c: CmpOp, key: &[DyadPtr]) -> Option<mint::Made> {
+    let &[l, r] = key else {
+        return None;
+    };
+    let equality = matches!(c, CmpOp::Eq | CmpOp::Ne);
+    let addressed = |t: DyadPtr| matches!(super::read::place_kind(types, t), Read::Container(_));
+    let unknown = if equality {
+        super::hashmap::unknown_compare_leaf(types, matches!(c, CmpOp::Eq), l, r)
+    } else {
+        None
+    };
+    let op = if let Some(leaf) = unknown {
+        leaf
+    } else if l == types.rational && r == types.rational {
+        types.ops.rational_cmp_leaf(c)
+    } else if let Some(nt) = one_number_type(types, l, r) {
+        types.ops.cmp_leaf(c, nt)
+    } else if !equality {
+        return None;
+    } else if let (true, Some((Read::Scalar(nt), _))) =
+        (l == r, super::read::place_layout(types, l))
+    {
+        types.ops.cmp_leaf(c, nt)
+    } else if (addressed(l) && addressed(r))
+        || (numtype::is_pointer_type(l) && numtype::is_pointer_type(r))
+    {
+        types.ops.cmp_leaf(c, NumType::I64)
+    } else {
+        return None;
+    };
+    Some(mint::Made { output_type: types.bool_, op })
+}
+
+/// The number type `l` and `r` both are; `None` where they differ or are no number type.
+///
+/// # Safety
+/// `l` and `r` must be type nodes from the store, or null.
+unsafe fn one_number_type(types: &Core, l: DyadPtr, r: DyadPtr) -> Option<NumType> {
+    (l == r && is_numtype_node(types, l)).then(|| numtype::of_type_node(l))
 }
 
 /// `p + k` and `p - k` on an `@T` step k whole cells: the node is `[p, k * width]` under the
@@ -273,14 +358,11 @@ unsafe fn pointer_step(
                 )
             };
             let w = store.alloc_blob(i64_ty, &(width as i64).to_ne_bytes());
-            let mul = types.ops.arith_leaf(ArithOp::Mul, NumType::I64);
-            node(store, types, types.times, k, w, i64_ty, mul)
+            node(store, types, types.times, k, w)?
         }
         _ => return Err(ParseError::UnsupportedOperands),
     };
-    let output = super::pointer::make_pointer_type(store, types.type_, pointee);
-    let leaf = types.ops.arith_leaf(a, NumType::I64);
-    Ok(Some(node(store, types, op, lhs, offset, output, leaf)))
+    node(store, types, op, lhs, offset).map(Some)
 }
 
 /// The pointer the steps `p + k` and `p - k` start from, whose block holds every cell they
@@ -328,7 +410,7 @@ fn build_identity_compare(
     c: CmpOp,
     lhs: DyadPtr,
     rhs: DyadPtr,
-) -> Option<DyadPtr> {
+) -> Result<Option<DyadPtr>, ParseError> {
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (l, r) =
         unsafe { (super::read::read_kind(types, lhs), super::read::read_kind(types, rhs)) };
@@ -336,7 +418,7 @@ fn build_identity_compare(
         // SAFETY: as above.
         let same = unsafe { types.through(lhs) == types.through(rhs) };
         let truth = if matches!(c, CmpOp::Eq) { same } else { !same };
-        return Some(bool_mod::literal_node(store, types.bool_, truth));
+        return Ok(Some(bool_mod::literal_node(store, types.bool_, truth)));
     }
     // A tape cell compares as the identity it names, read at run as its `.type` is.
     // SAFETY: as above.
@@ -357,11 +439,10 @@ fn build_identity_compare(
     let pointer =
         |n: DyadPtr| unsafe { matches!(super::operand_of(types, n), super::Operand::Pointer(_)) };
     if (addressed(lhs, l) && addressed(rhs, r)) || (pointer(lhs) && pointer(rhs)) {
-        let leaf = types.ops.cmp_leaf(c, NumType::I64);
         // SAFETY: as above; a cell's identity read is built over a reduced dyad too.
-        return Some(unsafe { node(store, types, op, lhs, rhs, types.bool_, leaf) });
+        return unsafe { node(store, types, op, lhs, rhs) }.map(Some);
     }
-    None
+    Ok(None)
 }
 
 /// The value to its right negated; a literal to the right folded it at discovery.
@@ -397,8 +478,7 @@ unsafe fn build_negate(
         return group::join(store, types, connective, a, b);
     }
     if rational::is_rational_value(types, operand) {
-        let (t, leaf) = (types.rational, types.ops.rational_neg);
-        return Ok(mint::node(store, types, negate, &[t], t, leaf, &[operand]));
+        return mint::node(store, types, negate, &[types.rational], &[operand]);
     }
     match super::operand_of(types, operand) {
         super::Operand::Literal => {
@@ -407,12 +487,31 @@ unsafe fn build_negate(
         super::Operand::Concrete(nt) => {
             let t = types.numtypes[nt as usize];
             let operand = super::land(store, types, operand, t)?;
-            Ok(mint::node(store, types, negate, &[t], t, types.ops.neg[nt as usize], &[operand]))
+            mint::node(store, types, negate, &[t], &[operand])
         }
         super::Operand::Pointer(_) | super::Operand::NonNumeric => {
             Err(ParseError::UnsupportedOperands)
         }
     }
+}
+
+/// What negation's mint over the field type `key` gives back, that type, and runs: the negation
+/// of a number type or of a run-time rational.
+///
+/// # Safety
+/// `key` must hold type nodes from the store, or null.
+unsafe fn choose_negate(_: &mut Store, types: &Core, key: &[DyadPtr]) -> Option<mint::Made> {
+    let &[t] = key else {
+        return None;
+    };
+    let op = if t == types.rational {
+        types.ops.rational_neg
+    } else if is_numtype_node(types, t) {
+        types.ops.neg[numtype::of_type_node(t) as usize]
+    } else {
+        return None;
+    };
+    Some(mint::Made { output_type: t, op })
 }
 
 fn lower_negate(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {

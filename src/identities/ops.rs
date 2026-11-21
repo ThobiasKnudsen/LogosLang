@@ -381,21 +381,11 @@ mod tests {
     fn sum_node(store: &mut Store, core: &Core) -> DyadPtr {
         let lhs = store.alloc_blob(core.i32_, &20i32.to_ne_bytes());
         let rhs = store.alloc_blob(core.i32_, &22i32.to_ne_bytes());
-        let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
         let key = [core.i32_, core.i32_];
-        // SAFETY: `+` carries an operand record of two roles; the key and output are type nodes
-        // and the leaf a minted callable, all from `store`.
-        unsafe {
-            crate::identities::mint::node(
-                store,
-                core,
-                core.plus,
-                &key,
-                core.i32_,
-                leaf,
-                &[lhs, rhs],
-            )
-        }
+        // SAFETY: `+` carries an operand record of two roles; the key's are type nodes from
+        // `store`.
+        unsafe { crate::identities::mint::node(store, core, core.plus, &key, &[lhs, rhs]) }
+            .expect("`+` has a mint for two `i32`s")
     }
 
     #[test]

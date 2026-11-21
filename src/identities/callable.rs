@@ -28,6 +28,8 @@ pub(crate) struct Callables {
     pub seed_parse: DyadPtr,
     /// A token's own extent, `ExtentFn`.
     pub seed_extent: DyadPtr,
+    /// A built-in operation's chooser, `ChooseFn`.
+    pub seed_choose: DyadPtr,
 }
 
 /// Neither type has a spelling: callables are minted by registration loops and compilation,
@@ -43,8 +45,17 @@ pub(super) fn register(cx: &mut Cx) -> Callables {
     let container_i64 = mint_convention(cx, convention, b"container-i64");
     let seed_parse = mint_convention(cx, convention, b"seed-parse");
     let seed_extent = mint_convention(cx, convention, b"seed-extent");
+    let seed_choose = mint_convention(cx, convention, b"seed-choose");
 
-    Callables { callable, convention, seed_native, container_i64, seed_parse, seed_extent }
+    Callables {
+        callable,
+        convention,
+        seed_native,
+        container_i64,
+        seed_parse,
+        seed_extent,
+        seed_choose,
+    }
 }
 
 /// `{type: convention, value -> name string node}`.

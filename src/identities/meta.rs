@@ -19,12 +19,14 @@
 //!                 extent, or 0
 //! [50..58]   u64  mints: this type's mints made so far, an array, or 0
 //! [58..66]   u64  mint of: the type this one is a mint of, or 0
-//! [66]       u8   1 where the type's definition says a value of it is its node's address
-//! [67]       u8   where its nodes carry the `own` mark: `EVERY_NODE` here for every node, else
+//! [66..74]   u64  chooser: a `seed-choose` callable leaf that makes a built-in operation's mint
+//!                 for a set of field types, or 0
+//! [74]       u8   1 where the type's definition says a value of it is its node's address
+//! [75]       u8   where its nodes carry the `own` mark: `EVERY_NODE` here for every node, else
 //!                 the slot of each node that holds it, the `own` word or null; `NO_SLOT` nowhere
-//! [68]       u8   the slots whose node a node of this type hands on as its value, one bit each
-//! [69]       u8   the slots whose lines it hands on the last of, one bit each
-//! [70..]     payload, per kind:
+//! [76]       u8   the slots whose node a node of this type hands on as its value, one bit each
+//! [77]       u8   the slots whose lines it hands on the last of, one bit each
+//! [78..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST/TOKEN   u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
 //!                                 none), then arity × `dyad@` role-name strings; a token's
@@ -41,6 +43,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ExtentFn};
 use crate::store::Store;
 
+use super::mint::ChooseFn;
 use super::numtype::ADDR_TAG;
 use super::{string, Cx};
 use crate::dyad;
@@ -82,11 +85,12 @@ const POINTER_TYPE_OFF: usize = 34;
 const EXTENT_OFF: usize = 42;
 const MINTS_OFF: usize = 50;
 const MINT_OF_OFF: usize = 58;
-const NODE_VALUE_OFF: usize = 66;
-const OWN_OFF: usize = 67;
-const HANDS_ON_OFF: usize = 68;
-const HANDS_ON_LINES_OFF: usize = 69;
-pub(crate) const PAYLOAD_OFF: usize = 70;
+const CHOOSER_OFF: usize = 66;
+const NODE_VALUE_OFF: usize = 74;
+const OWN_OFF: usize = 75;
+const HANDS_ON_OFF: usize = 76;
+const HANDS_ON_LINES_OFF: usize = 77;
+pub(crate) const PAYLOAD_OFF: usize = 78;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -488,6 +492,37 @@ pub(crate) unsafe fn extent_reader(id: DyadPtr) -> Option<ExtentFn> {
     }
     // SAFETY: `install_extent` is the one writer, and takes only a leaf minted from an `ExtentFn`.
     Some(std::mem::transmute::<usize, ExtentFn>(super::callable::entry_of(leaf)))
+}
+
+/// The chooser leaf of a built-in operation; null on every other identity, a mint among them.
+///
+/// # Safety
+/// As `parse_rank_of`.
+pub(crate) unsafe fn chooser_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned(dyad::head(id).add(CHOOSER_OFF) as *const DyadPtr)
+}
+
+/// # Safety
+/// `id` must carry a record and `leaf` must be a callable leaf whose entry is a `ChooseFn`.
+pub(crate) unsafe fn install_chooser(id: DyadPtr, leaf: DyadPtr) {
+    std::ptr::write_unaligned(dyad::head(id).add(CHOOSER_OFF) as *mut DyadPtr, leaf);
+}
+
+/// The function that makes `id`'s mints, or `None` where `id` is no built-in operation. Safe on
+/// any node, as `kind_of` is.
+///
+/// # Safety
+/// `id` must be null or a valid dyad from the store.
+pub(crate) unsafe fn chooser(id: DyadPtr) -> Option<ChooseFn> {
+    if id.is_null() || kind_of(id).is_none() {
+        return None;
+    }
+    let leaf = chooser_of(id);
+    if leaf.is_null() {
+        return None;
+    }
+    // SAFETY: `install_chooser` is the one writer, and takes only a leaf minted from a `ChooseFn`.
+    Some(std::mem::transmute::<usize, ChooseFn>(super::callable::entry_of(leaf)))
 }
 
 /// `None` where there is no record to read: no head yet (a type still being defined) or a

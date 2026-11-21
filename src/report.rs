@@ -232,6 +232,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadReflectRead => {
             "this read does not fit the node's type".into()
         }
+        ParseError::NoMint => "this operation has no mint for these field types".into(),
         ParseError::ExpectedIndexBracket => {
             "expected `[index]` — element access is `[…]`, `(…)` is application".into()
         }
