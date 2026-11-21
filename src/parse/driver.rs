@@ -1050,8 +1050,10 @@ impl<'a> Parser<'a> {
         let call = build_call(self.rt.store, f, &[handle, this_arg]);
         // Inside the call, `caller.scope` reads the pass's position.
         let outer = self.rt.enter_constructor(tape);
+        self.tape_hosts.push(self.outer.len());
         // SAFETY: `call` was just built into the store; the tape and the store are reached only through the natives until `run` returns.
         let out = unsafe { self.run_on_pass(call) };
+        self.tape_hosts.pop();
         self.rt.leave_constructor(outer);
         match out {
             Ok(_) => Ok(Constructed::Placed),
@@ -1062,7 +1064,9 @@ impl<'a> Parser<'a> {
     }
 
     /// A Logos constructor's read past the frontier: the driver lexes on, as for a
-    /// built-in reader (DESIGN ›The scope's constructor is the driver‹).
+    /// built-in reader (DESIGN ›The scope's constructor is the driver‹), in the sub-parse the
+    /// tape was handed out in: a read made while a line of the constructor is parsed as it runs
+    /// lexes the tape's source, not that line's.
     ///
     /// # Safety
     /// `parser` must be the parser hosting the run, and `tape` the tape it handed the
@@ -1070,7 +1074,10 @@ impl<'a> Parser<'a> {
     unsafe fn lex_on(parser: *mut (), tape: *mut ParsingTape, k: isize) -> Result<(), ParseError> {
         // SAFETY: as this function's own contract.
         let (parser, tape) = unsafe { (&mut *(parser as *mut Self), &mut *tape) };
-        parser.cell_at(tape, k).map(|_| ())
+        match parser.tape_hosts.last().copied().filter(|&at| at < parser.outer.len()) {
+            Some(at) => TapeHost::new(parser, at).0.cell_at(tape, k).map(|_| ()),
+            None => parser.cell_at(tape, k).map(|_| ()),
+        }
     }
 
     /// `f` over the runtime with this parser as its host: the lexer is attached, so a

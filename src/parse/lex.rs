@@ -283,6 +283,24 @@ impl<'a> Parser<'a> {
         self.held_now(id)
     }
 
+    /// The place of the `dyad` name `cell` spells, where the lexer read it through to the node it
+    /// holds ([`Self::read_through`]), so the cell holds that node and no binding; `None` for any
+    /// other cell.
+    pub(super) fn name_read_through(&self, cell: &Cell) -> Option<DyadPtr> {
+        let types = self.types;
+        if cell.constructed || cell.is_fresh(types) || !cell.binding(types).is_null() {
+            return None;
+        }
+        let named = self.cx.scopes.resolve(self.trie, cell.spelling()).ok()?;
+        if named.matched != cell.len || named.binding.is_null() {
+            return None;
+        }
+        // SAFETY: a resolved name's binding is a dyad from the store.
+        let place = unsafe { types.through(named.binding) };
+        // SAFETY: `place` is the dyad the binding names, or the binding itself.
+        (place != cell.dyad && unsafe { self.is_dyad_place(place) }).then_some(place)
+    }
+
     /// Whether `place` is a `dyad` place the pass reads where it runs its line: a name, or an
     /// entry of a `{ … }` reached by a field path from a name or from the value a body is about,
     /// so that reading it runs nothing but the read.
@@ -428,9 +446,15 @@ impl<'a> Parser<'a> {
         Ok(r)
     }
 
-    /// An unresolved cell stays fresh for the boundary to report.
+    /// A held cell is resolved where it is built when nothing was live for it where it was lexed,
+    /// or when it lexed to the word of a body around it: the body it is built in declares its
+    /// own then, which is the innermost. An unresolved cell stays as it was lexed, a fresh one
+    /// for the boundary to report.
     fn feed_resolve(&self, cell: &mut Cell) {
-        if !cell.is_fresh(self.types) {
+        let binding = cell.binding(self.types);
+        // SAFETY: a lexed cell's binding is null or a binding dyad from the store.
+        let outer_word = !binding.is_null() && unsafe { Binding::read(binding) }.body_word;
+        if !cell.is_fresh(self.types) && !outer_word {
             return;
         }
         if let Ok(r) = self.resolve_fresh(cell.spelling()) {

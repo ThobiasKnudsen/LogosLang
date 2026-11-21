@@ -866,7 +866,11 @@ impl<'a> Parser<'a> {
         for (name, &marker) in SLOT_NAMES.iter().zip(&slots) {
             let binding = self.mint_binding(marker, words, name.as_bytes());
             // SAFETY: `binding` was minted by `Binding::alloc` just above.
-            if let Err(e) = unsafe { self.cx.scopes.declare_field(self.trie, name, binding) } {
+            let declared = unsafe {
+                Binding::set_body_word(binding);
+                self.cx.scopes.declare_field(self.trie, name, binding)
+            };
+            if let Err(e) = declared {
                 self.cx.scopes.pop();
                 return Err(ParseError::Resolve(e));
             }
@@ -1187,23 +1191,8 @@ impl<'a> Parser<'a> {
         // SAFETY: `text` is the string node just built; its bytes live for the store.
         let held = unsafe { crate::identities::string::text(text) };
         let held = std::str::from_utf8(held).expect("copied from the source text");
-        let mut fragment = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held)
+        let fragment = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held)
             .map_err(ParseError::Resolve)?;
-        // A slot word of a type around this one names that type's slot; the held body's
-        // own are declared when it is built, so its cells wait fresh to be resolved then.
-        let outer_slot = |cell: &Cell| {
-            let id = cell.identity(types);
-            !cell.is_fresh(types) && self.cx.definitions.iter().any(|d| d.slot_index(id).is_some())
-        };
-        for (i, cell) in fragment.cells().iter().enumerate() {
-            if outer_slot(cell) {
-                let fresh = crate::identities::fresh::node(self.rt.store, types, cell.spelling());
-                fragment.set_dyad(i as isize, fresh);
-            }
-        }
-        for cell in fragment.inner.iter_mut().filter(|c| outer_slot(c)) {
-            cell.dyad = crate::identities::fresh::node(self.rt.store, types, cell.spelling());
-        }
         self.refuse_held_shadowing(&fragment.held_cells(), start - 1)?;
         let cells = Box::into_raw(Box::new(fragment));
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
@@ -1530,9 +1519,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A parameter record no text spelled: each name declared in its own scope and checked
-    /// against every open scope, since the body reopens it; the bindings, one per field,
-    /// spelling-less for an unnamed one, for `fn_over_body` to lay out. `at` is the error position.
+    /// A parameter record no text spelled: each name declared in its own scope as a body's
+    /// word, checked against every open scope, since the body reopens it; the bindings, one per
+    /// field, spelling-less for an unnamed one, for `fn_over_body` to lay out. `at` is the error
+    /// position.
     pub(super) fn hidden_param_record(
         &mut self,
         params: &[(Option<&str>, DyadPtr)],
@@ -1551,16 +1541,15 @@ impl<'a> Parser<'a> {
             );
             // A parameter with no name is a place the body reaches another
             // way: a receiver, or a run body's field of type `type`.
-            let binding = match name {
-                Some(name) => match self.declare_name(name, field, at) {
-                    Ok(binding) => binding,
-                    Err(e) => {
-                        declared = Err(e);
-                        std::ptr::null_mut()
-                    }
-                },
-                None => self.mint_binding(field, scope, b""),
-            };
+            let binding = self.mint_binding(field, scope, name.unwrap_or_default().as_bytes());
+            if let Some(name) = name {
+                // SAFETY: `binding` was minted by `Binding::alloc` just above.
+                let entered = unsafe { self.cx.scopes.declare_body_word(self.trie, name, binding) };
+                if let Err(e) = entered {
+                    self.cx.pos = at;
+                    declared = Err(ParseError::Resolve(e));
+                }
+            }
             fields.push(field);
             bindings.push(binding);
         }

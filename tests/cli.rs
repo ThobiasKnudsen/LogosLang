@@ -394,6 +394,104 @@ fn size_bytes_is_the_bytes_a_value_takes_and_zero_for_a_type_with_none() {
     );
 }
 
+/// `ch`, a type whose parse runs `body` and then takes what stands right of it off the tape.
+fn tape_reader(body: &str) -> String {
+    format!(
+        "ch := type ( static parse_rank = fn.parse_rank, static associativity = right, \
+         static parse = ( {body}, tape.remove(1), tape.is_constructed[0] = true ) )"
+    )
+}
+
+/// A member a tape read does not answer itself is the member of the node the tape holds when the
+/// parse runs, so its line waits for the run, as a name's does (›`x.type` reads the type word of
+/// the node a name or an expression stands for‹ [[R279]], ›A type known only when the program runs
+/// still works; what needs it is parsed when its line runs‹ [[R377]]).
+#[test]
+fn a_parse_reads_a_member_of_the_node_its_tape_holds() {
+    for (body, tail, printed) in [
+        // The first read of the tape stands in the line that waits.
+        ("print «{tape[1].size_bytes}»", "c := type ch i32", "4\n"),
+        ("if tape[1].type == type ( print «{tape[1].size_bytes}» )", "c := type ch i32", "4\n"),
+        (
+            "if tape[1].type == type ( t := type tape[1], print «{t.size_bytes}» )",
+            "c := type ch i32",
+            "4\n",
+        ),
+        ("print «{tape[1].parse_rank == i32.parse_rank}»", "c := type ch i32", "true\n"),
+        ("n := tape[1].size_bytes, print «{n + 1}»", "c := type ch i32", "5\n"),
+        ("if tape[1].size_bytes == 4 ( print «four» )", "c := type ch i32", "four\n"),
+        (
+            "if tape[1].size_bytes != 0 ( print «has bytes» ) else ( print «none» )",
+            "c := type ch i64, d := type ch void",
+            "has bytes\nnone\n",
+        ),
+        (
+            "mut n := u64 0, while tape[1].size_bytes > n ( n = n + 3 ), print «{n}»",
+            "c := type ch i32",
+            "6\n",
+        ),
+        // The node the tape holds when the line runs, after an earlier line's edit.
+        ("tape.remove(1), print «{tape[1].size_bytes}»", "c := type ch i32 i64", "8\n"),
+        // A type's own shared names.
+        (
+            "print «{tape[1].tag} {tape[1].size_bytes}»",
+            "p := type ( pub static tag := 7, a := i32 ? ), c := type ch p",
+            "7 4\n",
+        ),
+        // The type word's members are the type's.
+        ("print «{tape[1].type.size_bytes} {tape[1].type.type}»", "c := type ch i32", "8 type\n"),
+        // The parse runs where its line is parsed, on either tier.
+        (
+            "print «{tape[1].size_bytes}»",
+            "f := fn () -> i32 ( c := type ch i64, 5 ), f.compile(), f()",
+            "8\n5\n",
+        ),
+    ] {
+        let src = format!("{}, {tail}", tape_reader(body));
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+    // A line of a bracket, and the node left of the parse.
+    for (src, printed) in [
+        (
+            "q := type ( static parse_rank = fn.parse_rank, static parse = ( \
+             print «{tape[1].dyads[1].size_bytes} {tape[1].dyads.size}», tape.remove(1), \
+             tape.is_constructed[0] = true ) ), c := type q [i64, i8]",
+            "1 2\n",
+        ),
+        (
+            "p := type ( static parse_rank = 60, static parse = ( \
+             print «{tape[-1].lhs} {tape[-1].output_type}», tape.remove(-1), tape[0] = i32 1, \
+             tape.is_constructed[0] = true ) ), x := i32 3, (x + 2) p",
+            "3 i32\n1\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A read of a field the node's type does not have is the error that says so‹ [[R279]]: the
+/// same one a name of that node gives.
+#[test]
+fn a_member_the_tape_s_node_does_not_have_is_refused_as_a_name_s_is() {
+    for (body, tail, named, message) in [
+        ("print «{tape[1].nope}»", "c := type ch i32", "i32.nope", "does not fit the node's type"),
+        (
+            "print «{tape[1].size_bytes}»",
+            "c := ch 5",
+            "x := i32 5, x.size_bytes",
+            "this value's type has no field `size_bytes`",
+        ),
+    ] {
+        let src = format!("{}, {tail}", tape_reader(body));
+        for src in [src.as_str(), named] {
+            let (code, _, stderr) = run_line(src);
+            assert!(code != Some(0) && stderr.contains(message), "{src}: stderr: {stderr}");
+        }
+    }
+}
+
 #[test]
 fn the_power_demo_prints_nine() {
     let out = logos().arg("import file «identities/power.logos»").output().unwrap();
@@ -539,8 +637,8 @@ fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
     )
 }
 
-/// A postfix operator `name` that mints as `array` does: `get_mint` builds one type per type `t`
-/// of the operand to its left, whose field `a` holds the operand, kept by `type_mint`.
+/// A postfix operator `name` that mints through a function of its own: `get_mint` builds one type
+/// per type `t` of the operand to its left, whose field `a` holds the operand, kept by `type_mint`.
 fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
     format!(
         "{name} := type ( \
@@ -1793,7 +1891,7 @@ fn the_slot_words_are_names_only_inside_a_type_body() {
 
 #[test]
 fn a_slot_body_is_read_bare() {
-    // The hidden `tape` is declared as a parameter is, so an outer `tape` is the shadowing error.
+    // A name `tape` the program declared refuses the hidden `tape`, as it would a parameter.
     let (echoes, stderr) = repl(
         b"sp := type (static parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := 1\nf := fn () -> void ( x sp )\n5\n",
@@ -1835,6 +1933,82 @@ fn a_slot_body_is_read_bare() {
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
+}
+
+/// ›`tape` is a word the `parse` slot declares into its body‹ [[R191]]: a `parse` body written
+/// inside another has its own `tape`, as a type body has its own slot words, and a name the
+/// program declares still collides with either.
+#[test]
+fn a_parse_body_inside_another_has_its_own_tape() {
+    let done = "tape.is_constructed[0] = true";
+    let inner = format!("type ( static parse = ( {done} ) )");
+    let wrap = "import file «./tests/fixtures/wrap.logos», mut w := wrap i32, w.v = 7";
+    let mut cases = vec![
+        (format!("a := type ( static parse = ( m := {inner}, {done} ) ), a"), "type\n"),
+        (
+            format!(
+                "a := type ( static parse = ( m := type ( static parse = ( n := {inner}, \
+                 {done} ) ), k := type m, {done} ) ), a"
+            ),
+            "type\n",
+        ),
+        (
+            format!(
+                "a := type ( static parse = ( mk := fn () -> type ( {inner} ), m := type mk(), \
+                 {done} ) ), a"
+            ),
+            "type\n",
+        ),
+        // The mint's parse reads the bracket after a value, the chooser's the type after it.
+        (
+            format!(
+                "{wrap}, print «{{w[0]}} {{(wrap i32) == (wrap i32)}} {{(wrap i32) == (wrap i64)}}»"
+            ),
+            "7 true false\n",
+        ),
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!("{wrap}, f := fn (x := wrap i32) -> i32 ( x[0] + 1 ), {compile}f(w)"),
+            "8\n",
+        ));
+    }
+    assert_runs(&cases);
+
+    let shadowed = |name: &str| format!("`{name}` is already declared and still in scope");
+    let no_closure = "a nested function cannot use an outer function's local or parameter";
+    for (src, want) in [
+        (format!("tape := i32 5, a := {inner}, a"), shadowed("tape")),
+        (format!("a := type ( static parse = ( tape := i32 5, {done} ) ), a"), shadowed("tape")),
+        (
+            format!(
+                "a := type ( static parse = ( m := type ( static parse = ( tape := i32 5, \
+                 {done} ) ), {done} ) ), a"
+            ),
+            shadowed("tape"),
+        ),
+        (format!("f := fn (tape := i32) -> type ( {inner} ), t := type f(1), t"), shadowed("tape")),
+        (
+            format!("a := type ( static parse = ( k := fn () -> void ( {done} ), k() ) ), a"),
+            no_closure.to_string(),
+        ),
+        (
+            format!(
+                "a := type ( static parse = ( m := type ( static k := fn () -> void ( \
+                 tape.remove(1) ) ), {done} ) ), a"
+            ),
+            no_closure.to_string(),
+        ),
+        // A slot word's spelling declared in a held body is refused where it is written.
+        (
+            "a := type ( static f := fn () -> type ( type ( run := i32 5 ) ) ), 5".to_string(),
+            shadowed("run"),
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&want), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]
@@ -3172,6 +3346,148 @@ fn a_map_is_copied_by_declaration_and_assignment() {
             "5\n",
         ),
     ]);
+}
+
+/// ›`a[k]` is an application, exactly as `a(k)`‹ [[R227]]: the value left of `[` decides, so a
+/// map another map gives is read and written by key as one a name holds is, in place.
+#[test]
+fn a_map_given_by_an_expression_is_read_and_written_by_key() {
+    let m =
+        "m := hashmap i32 -> hashmap i32 -> i32, mut r := hashmap i32 -> i32, r[1] = 7, m[2] = r";
+    assert_runs(&[
+        (format!("{m}, print «{{m[2][1]}}»"), "7\n"),
+        (
+            format!("{m}, m[2][1] = 8, m[2][3] = 9, print «{{m[2][1]}} {{m[2][3]}} {{r[1]}}»"),
+            "8 9 7\n",
+        ),
+        (
+            "m := hashmap i32 -> hashmap i32 -> i32, mut r := hashmap i32 -> i32, m[2] = r, \
+          m[2][1] = 7, m[2][1]"
+                .into(),
+            "7\n",
+        ),
+        (
+            "pm := hashmap type -> hashmap type -> type, mut row := hashmap type -> type, \
+             row[i64] = f32, pm[i32] = row, print «{pm[i32][i64] == f32} {pm[i32][i8] == ?}»"
+                .into(),
+            "true true\n",
+        ),
+        (
+            "deep := hashmap i32 -> hashmap i32 -> hashmap i32 -> i32, \
+             mut b := hashmap i32 -> hashmap i32 -> i32, mut c := hashmap i32 -> i32, b[2] = c, \
+             deep[1] = b, deep[1][2][3] = 9, deep[1][2][3]"
+                .into(),
+            "9\n",
+        ),
+        ("mut m := { pub mut h := hashmap u64 -> u64 }, (m.h)[0] = 5, (m.h)[0]".into(), "5\n"),
+        (
+            "f := fn (k := u64 ?) -> u64 ( m := hashmap u64 -> hashmap u64 -> u64, \
+             mut r := hashmap u64 -> u64, m[k] = r, m[k][k] = 8, m[k][k] ), f(2)"
+                .into(),
+            "8\n",
+        ),
+    ]);
+    // No map stands at a missing first key (›A declared hashmap is the empty map: `m := hashmap
+    // K -> V`‹ [[R17]]).
+    for src in [
+        "m := hashmap i32 -> hashmap i32 -> i32, m[2][1] = 7",
+        "m := hashmap i32 -> hashmap i32 -> i32, m[2][1]",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("this map is the unknown `?`"), "{src}: stderr: {stderr}");
+    }
+    // A map nothing holds is read by key, and keeps nothing written into it.
+    for (src, error) in [
+        ("(hashmap i32 -> i32)[1] = 5", "this is not an assignable place"),
+        ("(hashmap i32 -> i32)[1]", "the map holds no value at this key"),
+        (
+            "mut e := hashmap u64 -> u64, mut d := dyad ?, d = e, (d)[0] = 5",
+            "this is not an assignable place",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]: `[k]`
+/// over a `dyad` place reads and writes the map the place holds when the line runs, an empty one
+/// included, at the top level and in a body, whose line waits for the run.
+#[test]
+fn a_map_a_dyad_place_holds_is_read_and_written_by_key() {
+    let e = "mut e := hashmap u64 -> u64";
+    assert_runs(&[
+        (
+            "f := fn (a := dyad ?) -> u64 ( m := hashmap dyad -> hashmap u64 -> u64, mut n := m[a], \
+             if n == ? ( n = hashmap u64 -> u64 ), n[0] = 5, n[0] ), f(i32)"
+                .into(),
+            "5\n",
+        ),
+        (
+            "f := fn (a := dyad ?) -> u64 ( m := hashmap dyad -> hashmap u64 -> u64, mut n := m[a], \
+             if n == ? ( n = hashmap u64 -> u64 ), n[0] = 5, m[a] = n, m[a][0] ), f(i32)"
+                .into(),
+            "5\n",
+        ),
+        (format!("{e}, mut n := dyad ?, n = e, n[0] = 5, n[1] = 6, print «{{n[0]}} {{n[1]}}»"), "5 6\n"),
+        // The name holds a copy of its own, so the map it was written from keeps its value.
+        (format!("{e}, e[0] = 1, mut n := dyad ?, n = e, n[0] = 5, print «{{n[0]}} {{e[0]}}»"), "5 1\n"),
+        (format!("{e}, f := fn () -> u64 ( mut n := dyad ?, n = e, n[0] = 5, n[0] ), f()"), "5\n"),
+        (format!("{e}, e[0] = 7, f := fn (a := dyad ?) -> u64 ( a[0] ), f(e)"), "7\n"),
+        (
+            format!(
+                "{e}, f := fn (a := dyad ?) -> u64 ( mut n := a, mut i := u64 0, \
+                 while i < 3 ( n[i] = i, i = i + 1 ), n[2] ), f(e)"
+            ),
+            "2\n",
+        ),
+        (
+            format!(
+                "{e}, e[0] = 1, mut d := dyad ?, d = e, mut s := u64 0, \
+                 while d[0] < 3 ( d[0] = d[0] + 1, s = s + 1 ), s"
+            ),
+            "2\n",
+        ),
+        (format!("{e}, mut m := {{ pub mut d := dyad (e.type, e) }}, (m.d)[0] = 5, (m.d)[0]"), "5\n"),
+        // The right side runs first, so a map it puts in the `dyad` is the one written.
+        (
+            format!(
+                "{e}, mut d := dyad ?, d = e, mut o := hashmap u64 -> u64, o[1] = 4, \
+                 g := fn () -> u64 ( d = o, 5 ), d[0] = g(), print «{{d[0]}} {{d[1]}}»"
+            ),
+            "5 4\n",
+        ),
+    ]);
+    for (src, error) in [
+        (
+            format!("{e}, mut d := dyad ?, d = e, g := fn () -> u64 ( d = i64 3, 5 ), d[0] = g()"),
+            "by the time it reached the `dyad` it held a node of another type",
+        ),
+        (format!("{e}, mut n := dyad ?, n = e, n[0]"), "the map holds no value at this key"),
+        // The write lands in the map the name holds, never in the empty map every new one copies.
+        (
+            "mut d := dyad ?, d = hashmap u64 -> u64, d[0] = 5, x := hashmap u64 -> u64, x[0]"
+                .into(),
+            "the map holds no value at this key",
+        ),
+        ("mut d := dyad ?, d = i64 3, d[0]".into(), "expected one expression, found more"),
+        (
+            "f := fn (a := dyad ?) -> u64 ( a[0] ), f(i64 3)".into(),
+            "expected one expression, found more",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+    // An array a `dyad` name holds is still read and written through its own parse.
+    let array = "import file «./identities/array.logos»";
+    assert_runs(&[(
+        format!("{array}, f := fn (a := dyad ?) -> i32 ( mut n := a, n[1] = 9, n[1] ), f(array i32 [4, 5])"),
+        "9\n",
+    )]);
 }
 
 #[test]
@@ -12781,14 +13097,15 @@ fn a_static_line_runs_at_each_build_of_one_type() {
 }
 
 /// ›`array` is a chooser‹ [[R223]]: `array` and `^` keep no memo of their own, and each still has
-/// one mint per key, kept by `type_mint`.
+/// one mint per key, kept by `type_mint`; `array`'s parse makes its mint itself, with no minting
+/// function beside it.
 #[test]
 fn array_and_power_keep_their_mints_in_type_mint() {
     let array = "import file «./identities/array.logos»";
     let mut cases = vec![
         (format!("{array}, a := array i32 [1, 2], b := array i32 [3], a.type == b.type"), "true\n"),
         (format!("{array}, (array i32) == (array i64)"), "false\n"),
-        (format!("{array}, array.get_mint(i32) == array.get_mint(i32)"), "true\n"),
+        (format!("{array}, (array i32) == (array i32)"), "true\n"),
         (format!("{array}, k := type array array i32, k == array array i32"), "true\n"),
     ];
     for compile in ["", "f.compile(), "] {
@@ -12812,4 +13129,7 @@ fn array_and_power_keep_their_mints_in_type_mint() {
         let text = std::fs::read_to_string(file).expect(file);
         assert!(!text.contains("hashmap"), "{file} keeps a memo of its own");
     }
+    let (code, _, stderr) = run_line(&format!("{array}, array.get_mint(i32)"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("get_mint"), "stderr: {stderr}");
 }
