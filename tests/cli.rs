@@ -5995,7 +5995,7 @@ fn a_scope_is_read_by_path_and_reading_runs_nothing() {
           m.dyads\n",
     );
     assert_eq!(stderr.matches("this read does not fit the node's type").count(), 2, "{stderr}");
-    assert!(stderr.contains("this operator cannot compute over these operands"), "{stderr}");
+    assert!(stderr.contains("this value's type has no field `dyads`"), "{stderr}");
 }
 
 #[test]
@@ -6084,7 +6084,7 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         let out = logos().arg(format!("{power}, {tail}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success() && out.stdout.is_empty(), "{tail}: {stderr}");
-        assert!(stderr.contains("cannot compute"), "{tail}: {stderr}");
+        assert!(stderr.contains("this value's type has no field `lhs`"), "{tail}: {stderr}");
     }
     // `&x` is typed by `&`'s mint, not by the `@i32` it gives; `y mk` is typed `mk`, not by the
     // record its `run` gives, which a copy carries.
@@ -6246,7 +6246,7 @@ fn a_pointer_type_applies_to_any_type() {
     // A scope's link up is `.back`; `.scope` on a scope is a field it does not have.
     let (_echoes, stderr) = repl(b"mut p := @dyad ?\np = here.scope\np.scope\nhere.scope.scope\n");
     assert_eq!(
-        stderr.matches("this operator cannot compute over these operands").count(),
+        stderr.matches("this value's type has no field `scope`").count(),
         2,
         "stderr: {stderr}"
     );
@@ -10504,6 +10504,92 @@ fn a_dyad_entry_of_a_curly_bracket_reads_as_a_dyad_name_does() {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains("cannot be compiled yet"), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]: a field
+/// of a record a `dyad` holds is read through it, as through a name of the record (›Reading a path
+/// runs nothing‹ [[R273]]), for a `dyad` name, an entry of a `{ … }`, a parameter, a `-> dyad`
+/// call and `dyad (T, v)`, at the top level and in a body, whose line waits for the run.
+#[test]
+fn a_field_of_a_record_a_dyad_holds_is_read_through_it() {
+    let pt = "pt := type ( x := i32 ?, y := i32 ? ), ";
+    let made = "dyad (pt, pt (1, 2))";
+    for (read, printed) in
+        [("D.x", "1"), ("D.y + 1", "3"), ("D.x + D.y", "3"), ("D.y == 2", "true")]
+    {
+        let ty = if printed == "true" { "bool" } else { "i32" };
+        let at = |d: &str| read.replace('D', d);
+        for src in [
+            format!("p := pt (1, 2), {}", at("p")),
+            format!("mut d := dyad ?, d = pt (1, 2), {}", at("d")),
+            format!("d := {made}, {}", at("d")),
+            format!("m := {{ d := {made} }}, {}", at("m.d")),
+            format!("f := fn () -> dyad ( pt (1, 2) ), {}", at("f()")),
+            at(made),
+            format!("f := fn (a := dyad ?) -> {ty} ( {} ), f(pt (1, 2))", at("a")),
+            format!("f := fn () -> {ty} ( d := {made}, {} ), f()", at("d")),
+            format!("m := {{ d := {made}, f := fn () -> {ty} ( {} ) }}, m.f()", at("d")),
+            format!("f := fn () -> dyad ( pt (1, 2) ), g := fn () -> {ty} ( {} ), g()", at("f()")),
+        ] {
+            let src = format!("{pt}{src}");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    for (src, printed) in [
+        (format!("d := {made}, print «{{d.x}} {{d.y}}»"), "1 2"),
+        ("f := fn (a := dyad ?) -> void ( print «{a.x}» ), f(pt (4, 2))".into(), "4"),
+        (
+            "ln := type ( a := pt ?, b := pt ? ), d := dyad (ln, ln (pt (1, 2), pt (3, 4))), d.b.x"
+                .into(),
+            "3",
+        ),
+        // The read is of the node the place holds when its line runs.
+        ("mut d := dyad ?, d = pt (1, 2), e := d.x, d = pt (7, 8), print «{e} {d.x}»".into(), "1 7"),
+        // Compiled where a `dyad` read compiles: `dyad (T, v)` in the body, and a caller of a
+        // function whose line waits for the run.
+        ("g := fn (m := i32 ?) -> i32 ( dyad (pt, pt (m, 2)).y + m ), g.compile(), g(i32 7)".into(), "9"),
+        (
+            "f := fn (a := dyad ?) -> i32 ( a.x ), h := fn () -> i32 ( f(pt (1, 2)) ), h.compile(), h()"
+                .into(),
+            "1",
+        ),
+    ] {
+        let src = format!("{pt}{src}");
+        assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    // A field the held node's type lacks is refused where the read is parsed, as through a name:
+    // at the top level as the pass reaches it, in a body when the waiting line runs.
+    for (src, error) in [
+        ("n := i64 5, n.x", "this value's type has no field `x`"),
+        ("mut d := dyad ?, d = i64 5, d.x", "this value's type has no field `x`"),
+        ("mut d := dyad ?, d = «hi», d.x", "this value's type has no field `x`"),
+        ("f := fn (a := dyad ?) -> i32 ( a.x ), f(i64 5)", "this value's type has no field `x`"),
+        ("p := pt (1, 2), p.z", "unknown name `z`"),
+        ("d := dyad (pt, pt (1, 2)), d.z", "unknown name `z`"),
+        ("f := fn (a := dyad ?) -> i32 ( a.z ), f(pt (1, 2))", "unknown name `z`"),
+    ] {
+        let src = format!("{pt}{src}");
+        let (code, out, stderr) = run_line(&src);
+        assert_eq!((code, out.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+    // A write through what a `dyad` holds is refused, where it would land in the copy the line
+    // stands on: stand-in for #411.
+    let mpt =
+        "mpt := type ( mut x := i32 ?, y := i32 ?, static bump := fn () -> void ( x = x + 1 ) ), ";
+    for src in [
+        "mut d := dyad ?, d = mpt (1, 2), d.x = i32 5, d.x",
+        "d := dyad (mpt, mpt (1, 2)), d.x = i32 5",
+        "mut d := dyad ?, d = mpt (1, 2), d.bump(), d.x",
+        "mut m := { mut d := dyad (mpt, mpt (1, 2)) }, m.d.x = i32 5",
+        "f := fn (a := dyad ?) -> void ( a.x = i32 5 ), f(mpt (1, 2))",
+        "f := fn (a := dyad ?) -> void ( a.bump() ), f(mpt (1, 2))",
+    ] {
+        let src = format!("{mpt}{src}");
+        let (code, out, stderr) = run_line(&src);
+        assert_eq!((code, out.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("not written through it yet"), "{src}: stderr: {stderr}");
     }
 }
 

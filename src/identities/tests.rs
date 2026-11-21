@@ -2356,9 +2356,13 @@ fn every_place_that_needs_a_type_now_answers_one_operand_alike() {
     }
     assert_eq!(parse_err("fn (t := type ?) -> i32 ( t 5 )"), ParseError::TypeKnownOnlyAtRun);
     let f = ["f := fn () -> dyad ( i32 5 )"];
-    for src in ["y := f() ?", "y := dyad (f(), 7)", "f() 5", "f().parse_rank"] {
+    for src in ["y := f() ?", "y := dyad (f(), 7)", "f() 5"] {
         assert_eq!(parse_err_after(&f, src), ParseError::TypeKnownOnlyAtRun, "{src}");
     }
+    // A member reads the node the call gives, as it reads a value a name holds.
+    let no_field = ParseError::NotAField(Box::new("parse_rank".into()));
+    assert_eq!(parse_err_after(&f, "f().parse_rank"), no_field);
+    assert_eq!(parse_err_after(&["x := i32 5"], "x.parse_rank"), no_field);
 }
 
 #[test]
