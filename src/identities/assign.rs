@@ -35,7 +35,22 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     cx.declare("=", id);
     cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
+    cx.choosers.insert(id, choose);
     id
+}
+
+/// What `=`'s mint over the field type `key`, the type of the place it writes, gives back,
+/// nothing, and runs: the write of a whole value of that type; `None` for a type no whole value
+/// of which moves into a place.
+///
+/// # Safety
+/// `key` must hold a type node from the store, or null.
+unsafe fn choose(_: &mut Store, types: &Core, key: &[DyadPtr]) -> Option<mint::Made> {
+    let &[place_type] = key else {
+        return None;
+    };
+    let carry = carry_of(types, place_type)?;
+    Some(mint::Made { output_type: types.void_, op: types.ops.put_leaf(carry) })
 }
 
 /// The place an `=` at the center of `tape` writes, read before its right side: the cells before
@@ -257,13 +272,12 @@ pub(super) fn build_store(
     let (through_pointer, place_type) =
         unsafe { (dyad::ty(lhs_d) == types.deref_, super::read::output_type(types, lhs_d)) };
     // SAFETY: as above; `place_type` is null or a type node.
-    let carry = unsafe {
-        (through_pointer || types.is_storage(lhs_d)).then(|| carry_of(types, place_type))
-    }
-    .flatten();
-    let Some(carry) = carry else {
-        return Err(ParseError::BadAssignTarget);
+    let moves_whole = unsafe {
+        (through_pointer || types.is_storage(lhs_d)) && carry_of(types, place_type).is_some()
     };
+    if !moves_whole {
+        return Err(ParseError::BadAssignTarget);
+    }
     // SAFETY: `place_type` is the type node `carry` was read from.
     let held_record = unsafe {
         super::this::is_plain(types, place_type) && !meta::instances_free_of(place_type).is_null()
@@ -296,10 +310,9 @@ pub(super) fn build_store(
     // A frame's place stays the name, which lifting a `?`'s read veto reads; a cell is held as
     // its dereference, which both tiers write through.
     let written = if through_pointer { lhs_d } else { lhs };
-    let leaf = types.ops.put_leaf(carry);
     // SAFETY: `op` is `=`, an operand record of two roles; `place_type` is the type node `carry`
     // was read from.
-    Ok(unsafe { mint::node(store, types, op, &[place_type], types.void_, leaf, &[written, rhs]) })
+    unsafe { mint::node(store, types, op, &[place_type], &[written, rhs]) }
 }
 
 /// What `value` hands a place of `carry`: the word it runs to, or the address of its bytes.

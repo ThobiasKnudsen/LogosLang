@@ -6471,6 +6471,54 @@ fn every_operation_is_typed_by_its_mint() {
     }
 }
 
+/// ›An operation is defined for its operand types by its mint, named through the operation's
+/// chooser‹ [[R312]]: `op.mint(T, …)` names the mint `op`'s chooser makes for those field types,
+/// which is the one its parse takes for operands of them, whichever comes first, on both tiers;
+/// a chooser written in Logos is reached the same way, as a `static` member of its operation.
+#[test]
+fn a_mint_is_named_through_its_operations_chooser() {
+    let mut cases = Vec::new();
+    for (body, want) in [
+        ("(x + x).type == +.mint(i32, i32)", "true\n"),
+        ("(x + x).type == +.mint(i64, i64)", "false\n"),
+        ("(x + 1).type == +.mint(i32, i32)", "true\n"),
+        ("(x + w).type == +.mint(i64, i64)", "true\n"),
+        ("(x * y).type == +.mint(i32, i32)", "false\n"),
+        ("(x < y).type == <.mint(i32, i32)", "true\n"),
+        ("(-x).type == -.mint(i32)", "true\n"),
+        ("(&x).type == &.mint(i32)", "true\n"),
+        ("+.mint(i32, i32).output_type == i32", "true\n"),
+        ("<.mint(i64, i64).output_type == bool", "true\n"),
+    ] {
+        cases.push((format!("x := i32 3, y := i32 4, w := i64 5, {body}"), want));
+        let f = format!("f := fn (x := i32 ?, y := i32 ?, w := i64 ?) -> bool ( {body} )");
+        cases.push((format!("{f}, f(3, 4, 5)"), want));
+        cases.push((format!("{f}, f.compile(), f(3, 4, 5)"), want));
+    }
+    // Named before any node of it is parsed, the mint is the one the parse then takes.
+    cases.push(("t := +.mint(i64, i64), w := i64 5, (w + w).type == t".into(), "true\n"));
+    for (body, want) in [
+        ("(x ^ 2).type == ^.get_mint(i32)", "true\n"),
+        ("(x ^ 2).type == ^.get_mint(i64)", "false\n"),
+    ] {
+        let f = format!("{POWER}, f := fn (x := i32 ?) -> bool ( {body} )");
+        cases.push((format!("{f}, f(3)"), want));
+        cases.push((format!("{f}, f.compile(), f(3)"), want));
+    }
+    cases.push((format!("{POWER}, t := ^.get_mint(i32), x := i32 3, (x ^ 2).type == t"), "true\n"));
+    assert_runs(&cases);
+    for src in [
+        "+.mint(i32, i64)",
+        "%.mint(f64, f64)",
+        "+.mint(i32)",
+        "f := fn () -> bool ( +.mint(i32, i64) == +.mint(i64, i64) ), f.compile(), f()",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("has no mint for these field types"), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_pointer_type_applies_to_any_type() {
     let (echoes, stderr) = repl(

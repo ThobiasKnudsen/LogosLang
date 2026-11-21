@@ -304,9 +304,9 @@ pub(crate) unsafe fn build_put(
     Ok(store.alloc_words(types.hashmap.put, &put))
 }
 
-/// `m == ?` (`equal`) or `m != ?` when one side gives a map and the other is `?`, a map's
-/// places holding `?` (›A declared hashmap is the empty map: `m := hashmap K -> V`‹ [[R17]]):
-/// a node of `op`'s mint for the two sides' types; else `None`.
+/// `m == ?` or `m != ?` when one side gives a map and the other is `?`, a map's places holding
+/// `?` (›A declared hashmap is the empty map: `m := hashmap K -> V`‹ [[R17]]): a node of `op`'s
+/// mint for the two sides' types; else `None`.
 ///
 /// # Safety
 /// `op` must be `==` or `!=`; `lhs` and `rhs` reduced dyads from the store.
@@ -314,20 +314,38 @@ pub(crate) unsafe fn build_unknown_compare(
     store: &mut Store,
     types: &Core,
     op: DyadPtr,
-    equal: bool,
     lhs: DyadPtr,
     rhs: DyadPtr,
-) -> Option<DyadPtr> {
+) -> Result<Option<DyadPtr>, ParseError> {
     let output_type = |n: DyadPtr| super::read::output_type(types, n);
     let key = [output_type(lhs), output_type(rhs)];
     match key.map(|t| is_hashmap(types, t)) {
         [true, false] if types.through(rhs) == types.unknown => {}
         [false, true] if types.through(lhs) == types.unknown => {}
-        _ => return None,
+        _ => return Ok(None),
     }
+    super::mint::node(store, types, op, &key, &[lhs, rhs]).map(Some)
+}
+
+/// What `m == ?` (`equal`) or `m != ?` runs over the field types `l` and `r`, a map's type and
+/// the type `?` gives, either way round; `None` for any other pair.
+///
+/// # Safety
+/// `l` and `r` must be type nodes from the store, or null.
+pub(crate) unsafe fn unknown_compare_leaf(
+    types: &Core,
+    equal: bool,
+    l: DyadPtr,
+    r: DyadPtr,
+) -> Option<DyadPtr> {
+    let unknown = super::read::output_type(types, types.unknown);
+    let map_and_unknown = |m: DyadPtr, u: DyadPtr| is_hashmap(types, m) && u == unknown;
     let ids = &types.hashmap;
-    let leaf = if equal { ids.eq_unknown_leaf } else { ids.ne_unknown_leaf };
-    Some(super::mint::node(store, types, op, &key, types.bool_, leaf, &[lhs, rhs]))
+    (map_and_unknown(l, r) || map_and_unknown(r, l)).then_some(if equal {
+        ids.eq_unknown_leaf
+    } else {
+        ids.ne_unknown_leaf
+    })
 }
 
 /// The eight bytes a map kept as another map's value lives in, holding a copy of `table`, a
