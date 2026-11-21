@@ -6,10 +6,10 @@
 pub array := type (
     static array_mints := hashmap type -> type,
     pub static get_mint := fn (t := type ?) -> type (
-        mut mint := array_mints[t],
+        mut mint := type array_mints[t],
         if mint != ? return mint,
         mint = type (
-            pub static element_type := t,
+            pub static element_type := type t,
             pub mut ptr := own @element_type ?,
             pub mut size := u64 0,
             pub static size_bytes := fn () -> u64 (size * element_type.size_bytes),
@@ -79,8 +79,8 @@ pub array := type (
         ) else if tape[1].type != void (
             if tape[1].type != type
                 error «id after array is not a type»,
-            t := tape[1],
-            mint := get_mint(t),
+            t := type tape[1],
+            mint := type get_mint(t),
             if tape[2].type == scope
                 error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
             # Right of another `array` this one is the element type, and the list is the outer one's.

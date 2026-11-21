@@ -152,12 +152,12 @@ This is what the first public preview is built to show. An operator is a type wi
 ^ := type (
     static power_mints := hashmap type -> type,    # each mint once built, by the base's type
     static get_mint := fn (l := type ?) -> type (  # builds the mint for a base of type l
-        mut mint := power_mints[l],
+        mut mint := type power_mints[l],           # `type` first holds the type, not a place of it
         if mint != ? return mint,
         mint = type (
             lhs := l ?,                            # the operands: one field per cell consumed
             rhs := i32 ?,
-            static output_type := l,               # the result follows the base's type
+            static output_type := type l,          # the result follows the base's type
             static run = (                         # what every node computes, its fields by name
                 mut r := output_type 1,
                 for 0..rhs ( r = r * lhs ),

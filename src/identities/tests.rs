@@ -1451,7 +1451,7 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         // Each `alloc` mints its own owning `@i32`, one type with the other.
         "x := if c (alloc 1 of i32 5) else (alloc 1 of i32 6)",
         // A `.` reads the `if` node and uses no arm's value.
-        "x := (if c (i32 1) else (i64 2)).type",
+        "x := (if c (i32 1) else (i64 2)).type == if",
     ] {
         assert_eq!(parses(&f(body)), Ok(()), "{body}");
     }
@@ -2272,7 +2272,7 @@ fn a_type_is_a_value_a_place_can_hold() {
     assert_eq!(run_script("i32 == i32"), 1);
     assert_eq!(
         run_script(
-            "f := fn (b := i32 ?) -> type ( if (b < 1) (i32) else (f64) ),\nt := f(0), x := t 5, x"
+            "f := fn (b := i32 ?) -> type ( if (b < 1) (i32) else (f64) ),\nt := type f(0), x := t 5, x"
         ),
         5
     );
@@ -2293,10 +2293,10 @@ fn a_type_returning_body_must_hand_back_a_type() {
         ParseError::BadDeclaredType
     );
 
-    assert_eq!(run_script("f := fn () -> type ( i32 ), g := f(), x := g 5, x"), 5);
+    assert_eq!(run_script("f := fn () -> type ( i32 ), g := type f(), x := g 5, x"), 5);
     assert_eq!(
         run_script(
-            "f := fn (b := i32 ?) -> type ( if (b < 1) (i32) else (i64) ),\ng := f(0), x := g 7, x"
+            "f := fn (b := i32 ?) -> type ( if (b < 1) (i32) else (i64) ),\ng := type f(0), x := g 7, x"
         ),
         7
     );
@@ -2833,9 +2833,9 @@ fn compile_member_before_and_after_agree() {
 const POW_TYPE: &str = "pw := type (\n\
      static pw_mints := hashmap type -> type,\n\
      static get_mint := fn (l := type ?) -> type (\n\
-         mut mint := pw_mints[l],\n\
+         mut mint := type pw_mints[l],\n\
          if mint != ? return mint,\n\
-         mint = type ( pub a := l ?, pub b := i32 ?, static output_type := l, static run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ) ),\n\
+         mint = type ( pub a := l ?, pub b := i32 ?, static output_type := type l, static run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ) ),\n\
          pw_mints[l] = mint,\n\
          mint\n\
      ),\n\
@@ -4764,7 +4764,7 @@ fn a_static_member_is_read_through_its_type_or_a_value_only_when_it_is_pub() {
     let chooser = |gate: &str, call: &str| {
         format!(
             "p := type ( static ms := hashmap type -> type, {gate}static get_mint := fn (l := type ?) \
-             -> type ( mut m := ms[l], if m != ? return m, m = type ( pub v := l ? ), ms[l] = m, m ) ), \
+             -> type ( mut m := type ms[l], if m != ? return m, m = type ( pub v := l ? ), ms[l] = m, m ) ), \
              {call}"
         )
     };

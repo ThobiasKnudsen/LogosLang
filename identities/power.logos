@@ -22,12 +22,12 @@ import file «exp.logos»,
     pub static get_mint := fn (l := type ?, r := type ?) -> type (
         mut row := power_mints[l],
         if row == ? ( row = hashmap type -> type ),
-        mut mint := row[r],
+        mut mint := type row[r],
         if mint != ? return mint,
         mint = type (
             pub lhs := l ?,
             pub rhs := r ?,
-            static output_type := if l == f64 or r == f64 (f64)
+            static output_type := type if l == f64 or r == f64 (f64)
                 else if l == f32 or r == f32 (f32)
                 else if r == rational_number (f64)
                 else (l),
@@ -72,7 +72,7 @@ import file «exp.logos»,
     static parse_rank = *.parse_rank + 1,
     static associativity = right,
     static parse = (
-        exponent := if tape[1].type ⊆ i64 (i64) else (tape[1].type),
+        exponent := type if tape[1].type ⊆ i64 (i64) else (tape[1].type),
         tape[0].type = get_mint(tape[-1].type, exponent),
         tape[0].lhs = tape[-1],
         if tape[1].type ⊆ i64 (

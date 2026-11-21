@@ -2781,7 +2781,7 @@ mod tests {
 
     /// A value whose owning field holds an array, in the array's shape: `bag ()` is a node
     /// whose run makes a new `bagged`, and `bag` with no bracket is `bagged`.
-    const BAG: &str = "import file «./identities/array.logos», t := array i32, \
+    const BAG: &str = "import file «./identities/array.logos», t := type array i32, \
         bagged := type ( \
             pub mut items := t ?, \
             static free = ( free items ), \
@@ -2846,12 +2846,12 @@ mod tests {
 
     /// A plain record whose type fills `free`, kept behind its pointer, with a field of a node
     /// type and no word before it.
-    const HELD: &str = "import file «./identities/array.logos», t := array i32, \
+    const HELD: &str = "import file «./identities/array.logos», t := type array i32, \
         held := type ( pub mut z := i32 ?, pub mut items := t ?, static free = ( free items ) ),\n";
 
     #[test]
     fn a_field_whose_type_fills_free_owns_the_node_written_into_it() {
-        let array = "import file «./identities/array.logos», t := array i32, ";
+        let array = "import file «./identities/array.logos», t := type array i32, ";
         assert_eq!(
             parse_err(&format!("{array}h := type ( pub mut items := t ? ), 0")),
             ParseError::FieldsNeedFree(vec!["items".into()])

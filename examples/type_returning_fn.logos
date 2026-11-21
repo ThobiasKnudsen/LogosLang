@@ -9,6 +9,6 @@ pick := fn (i := i32 ?) -> type ( if (i == 0) (i32) else (f64) ),
 
 same := pick(0) == i32,   # true:  branch 0 yields i32
 other := pick(1) == f64,   # true:  branch 1 yields f64
-t := pick(0),          # t := i32 (the call resolved to a type, then rebinds)
+t := type pick(0),     # t holds i32: `type` keeps the type the call resolved to
 
 print «{same and other and (t == i32)}»
