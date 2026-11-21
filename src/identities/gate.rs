@@ -281,9 +281,10 @@ pub(crate) unsafe fn words_of(mint: DyadPtr) -> Vec<DyadPtr> {
 
 /// A gate word reads the whole value to its right, everything there having reduced to one
 /// value before it, and gives it with `id` among the gates of its type (›A gate word reads the
-/// whole value to its right and gives it with its type gated‹ [[R102]]). A declaration or any
-/// other line that gives nothing is no value to gate (›Left of `:=` stands one name (or
-/// regex), and nothing else‹ [[R101]]); a place is one, whatever its type.
+/// whole value to its right and gives it with its type gated‹ [[R102]]). A declaration is no
+/// value to gate, its gate standing right of its own `:=` (›Left of `:=` stands one name (or
+/// regex), and nothing else‹ [[R101]]), and neither is any other line that gives nothing; a
+/// place is one, whatever its type.
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
@@ -296,12 +297,17 @@ fn construct(
     let inner = p.take_right(tape)?;
     let types = p.types();
     // SAFETY: `inner` is a reduced dyad just parsed.
-    let gives_nothing = unsafe {
-        dyad::ty(inner) == types.declare_
-            || !right.hole && super::read::output_type(types, inner) == types.void_
+    let (declares, gives_nothing) = unsafe {
+        (
+            dyad::ty(inner) == types.declare_,
+            !right.hole && super::read::output_type(types, inner) == types.void_,
+        )
     };
-    if gives_nothing {
+    if declares {
         return Err(p.fail_at(word_at, ParseError::GateNeedsValue));
+    }
+    if gives_nothing {
+        return Err(p.fail_at(right.start, ParseError::StatementAsValue));
     }
     let mut value = right;
     value.dyad = inner;

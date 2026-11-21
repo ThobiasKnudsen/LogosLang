@@ -4329,7 +4329,7 @@ fn a_gate_word_stands_right_of_the_declaration_and_gates_the_whole_value() {
         ),
         ("o := { pub a := i32 1 }", "it stands right of `:=`: `x := mut i32 5`"),
         ("t := type ( static parse_rank = 50.0 )", "it stands right of `:=`: `x := mut i32 5`"),
-        ("mut print «a»", "it stands right of `:=`: `x := mut i32 5`"),
+        ("mut print «a»", "1:5: error: this gives nothing, and a value is needed here"),
         ("x := mut", "missing an operand"),
         ("p := type ( v := pub i32 ? ), q := mut p(1), q.v = 3", "`v` is not `mut`"),
         ("p := type ( v := i32 ? ), q := p(1), q.v", "`v` is not `pub`"),

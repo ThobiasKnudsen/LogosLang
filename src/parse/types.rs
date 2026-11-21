@@ -985,7 +985,10 @@ impl<'a> Parser<'a> {
     /// where no declaration holds it so (›Every type is minted by its contents through
     /// `type_mint`; the name that holds a `type ( … )` gives it its identity‹ [[R383]]).
     fn name_given(&self, words: &[&str]) -> DyadPtr {
-        let gate = |word: &&str| ["pub", "mut", "static"].contains(word);
+        let gate = |word: &&str| {
+            let found = self.cx.scopes.resolve(self.trie, word).ok();
+            found.is_some_and(|r| r.matched == word.len() && self.is_gate_word(r.identity))
+        };
         match (self.cx.filling.last(), self.cx.filling_at.last()) {
             (Some(&binding), Some(&at))
                 if self.cx.source.get(at..self.cx.pos).is_some_and(|t| {

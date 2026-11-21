@@ -3659,6 +3659,10 @@ fn a_gate_word_reads_the_whole_value_to_its_right() {
     assert_eq!(run_script("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
     assert_eq!(parse_err("x := mut mut i32 5"), ParseError::DoubleGate);
     assert_eq!(parse_err("x := mut"), ParseError::MissingOperand);
+    assert_eq!(parse_err("mut x := i32 5"), ParseError::GateNeedsValue);
+    assert_eq!(parse_err("x := mut (y := i32 1)"), ParseError::GateNeedsValue);
+    assert_eq!(parse_err("mut print «a»"), ParseError::StatementAsValue);
+    assert_eq!(parse_err("x := pub (y := i32 1, print «a»)"), ParseError::StatementAsValue);
     assert_eq!(parse_err("f := fn (a := pub i32 ?) -> i32 ( a )"), ParseError::PubParameter);
     assert_eq!(parse_err("f := fn (a := static i32 ?) -> i32 ( a )"), ParseError::StaticMisplaced);
     // A copy takes no gate: the name's gates are those written in its own declaration.
