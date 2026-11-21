@@ -6991,7 +6991,8 @@ fn holds_asks_which_member_a_union_holds() {
 
 /// R379: a union ends the member it holds, as a field's end would: when another member is
 /// written, when a write of the member displaces it, at the union's own end and at `free`; a
-/// copy of a union copies what it holds, so each ends its own; on both tiers.
+/// copy of a union copies what it holds, so each ends its own; a member `free` ended is not ended
+/// again when another member is written; on both tiers.
 #[test]
 fn a_union_ends_the_member_it_holds() {
     let bag = "bag := type ( pub mut n := i32 ?, static free = ( print «freed {n}» ) )";
@@ -7017,10 +7018,16 @@ fn a_union_ends_the_member_it_holds() {
             ),
             ("mut v := u ?, v.b = bag(1), free v.b, print «end»", "freed 1\nend"),
             ("mut v := u ?, v.b = bag(1), free v, print «end»", "freed 1\nend"),
+            ("mut v := u ?, v.b = bag(1), free v.b, v.i = 5, print «end»", "freed 1\nend"),
             (
                 "mut v := outer ?, mut k := inner ?, k.b = bag(3), v.x = k, print «mid», \
                  v.f = 1.5, print «end»",
                 "mid\nfreed 3\nend\nfreed 3",
+            ),
+            (
+                "mut v := outer ?, mut k := inner ?, k.b = bag(3), v.x = move k, free v.x, \
+                 print «mid», v.f = 1.5, print «end»",
+                "freed 3\nmid\nend",
             ),
         ] {
             cases.push((
@@ -7032,6 +7039,11 @@ fn a_union_ends_the_member_it_holds() {
     for (src, want) in cases {
         assert_eq!(line(&src), want, "{src}");
     }
+    // A member `free` ended is dead, and a write of it is refused, as a `{ … }` entry's is.
+    let (code, stdout, stderr) =
+        run_line(&format!("{bag}, {u}, mut v := u ?, v.b = bag(1), free v.b, v.b = bag(2), 0"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("error: `v.b` is dead here: it was moved or freed above"), "{stderr}");
 }
 
 /// A declaration of an empty place runs nothing on either tier, a record's as a number's.
