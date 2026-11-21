@@ -99,11 +99,11 @@ unsafe fn owned(types: &Core, ty: DyadPtr) -> Option<Owned> {
     }
 }
 
-/// What field `binding` of type `ty` owns: an entry of a `{ … }` whatever the name it was held,
-/// a `dyad`'s node included (›`{ … }` outside text is a scope kept as a value, read with `.`‹
-/// [[R374]]); any other field holding a node only with `own` on its binding, one holding a record
-/// whose type fills `free` always (›A field may be `own t ?`, `t` a type whose body fills `static
-/// free`‹ [[R68]]).
+/// What field `binding` of type `ty` owns: what a value of `ty` owns, a `dyad`'s node too for an
+/// entry of a `{ … }` (›`{ … }` outside text is a scope kept as a value, read with `.`‹
+/// [[R374]]). So a field whose type fills `free` owns what it holds, a node and a record alike,
+/// and one that only borrows is a plain pointer (›A field whose type fills `free` owns what it
+/// holds; one that only borrows is written `@t ?`‹ [[R68]]).
 ///
 /// # Safety
 /// `binding` must be a field's binding dyad, laid out in its record type, and `ty` its declared
@@ -111,15 +111,11 @@ unsafe fn owned(types: &Core, ty: DyadPtr) -> Option<Owned> {
 unsafe fn field_owned(types: &Core, binding: DyadPtr, ty: DyadPtr) -> Option<Owned> {
     let owner = Binding::read(binding).frame;
     if let Teardown::Entries(_) = teardown_of_type(types, owner) {
-        return match teardown_of_type(types, ty) {
-            Teardown::Dyad => Some(Owned::Dyad),
-            _ => owned(types, ty),
-        };
+        if let Teardown::Dyad = teardown_of_type(types, ty) {
+            return Some(Owned::Dyad);
+        }
     }
-    match owned(types, ty)? {
-        Owned::Node(_) if !Binding::has_gate(binding, types.own_) => None,
-        owned => Some(owned),
-    }
+    owned(types, ty)
 }
 
 /// Whether field `binding` holds a value its holder must free, as [`needs_owner`] says of a value.

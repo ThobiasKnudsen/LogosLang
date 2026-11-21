@@ -445,21 +445,28 @@ pub(crate) fn is_owning_place(types: &Core, place: DyadPtr) -> bool {
 }
 
 /// Whether `holder`, a name, field or pointer a place is reached through, only borrows what it
-/// reaches: a pointer that owns nothing, as one `&` made and a parameter without `own` hold, or
-/// a name or field holding a node without `own`. A plain record is its holder's own. DESIGN
-/// ›`move` is the act, `own` the gate word, `free` the end‹.
+/// reaches: a pointer that owns nothing, as one `&` made and a parameter without `own` hold, a
+/// name holding a node without `own`, or a field holding a node it does not own
+/// (`copy::field_needs_owner`). A plain record is its holder's own. DESIGN ›`move` is the act,
+/// `own` the gate word, `free` the end‹.
 ///
 /// # Safety
 /// `holder` must be a reduced dyad from the store.
 pub(crate) unsafe fn only_borrows(types: &Core, holder: DyadPtr) -> bool {
+    use crate::binding::Binding;
     let named = dyad::ty(holder) == types.binding_;
     let ty = if named { types.type_of(holder) } else { super::read::output_type(types, holder) };
     if numtype::is_pointer_type(ty) {
         return meta::destructor_of(ty).is_null();
     }
-    named
-        && meta::is_node_valued(ty, types.fn_type)
-        && !crate::binding::Binding::has_gate(holder, types.own_)
+    if !named || !meta::is_node_valued(ty, types.fn_type) {
+        return false;
+    }
+    if Binding::read(holder).is_field() {
+        !super::copy::field_needs_owner(types, holder)
+    } else {
+        !Binding::has_gate(holder, types.own_)
+    }
 }
 
 /// What a field path reaches its last field through: its name, then each field before the last.
@@ -2776,7 +2783,7 @@ mod tests {
     /// whose run makes a new `bagged`, and `bag` with no bracket is `bagged`.
     const BAG: &str = "import file «./identities/array.logos», t := array i32, \
         bagged := type ( \
-            pub mut items := own t ?, \
+            pub mut items := t ?, \
             static free = ( free items ), \
             static parse_rank = dyad.parse_rank, \
             static parse = ( tape.is_constructed[0] = true ) ), \
@@ -2835,6 +2842,39 @@ mod tests {
         // The count sees the array: a free that leaves the field alone leaks its one block.
         let forgetful = BAG.replace("static free = ( free items )", "static free = ( free (0) )");
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
+    }
+
+    /// A plain record whose type fills `free`, kept behind its pointer, with a field of a node
+    /// type and no word before it.
+    const HELD: &str = "import file «./identities/array.logos», t := array i32, \
+        held := type ( pub mut z := i32 ?, pub mut items := t ?, static free = ( free items ) ),\n";
+
+    #[test]
+    fn a_field_whose_type_fills_free_owns_the_node_written_into_it() {
+        let array = "import file «./identities/array.logos», t := array i32, ";
+        assert_eq!(
+            parse_err(&format!("{array}h := type ( pub mut items := t ? ), 0")),
+            ParseError::FieldsNeedFree(vec!["items".into()])
+        );
+        for (tail, want) in [
+            ("mut h := held ?, h.items = array i32 [1, 2], h.items[1]", 2),
+            ("mut h := held ?, h.z = i32 1, h.items = array i32 [1, 2], h.items[0] + h.z", 2),
+            // `=` frees the array it displaces.
+            ("mut h := held ?, h.items = array i32 [1, 2], h.items = array i32 [3], h.items[0]", 3),
+            ("mut h := held ?, x := array i32 [4], h.items = move x, h.items[0]", 4),
+            // A bare name is copied deep into it, so field and name each free their own array.
+            ("mut h := held ?, x := array i32 [4], h.items = x, h.items[0] = i32 5, x[0]", 4),
+            (
+                "f := fn () -> i32 ( mut h := held ?, h.items = array i32 [1, 2], h.items[1] ), \
+                 f() + f()",
+                4,
+            ),
+        ] {
+            assert_eq!(run(&format!("{HELD}{tail}")), (want, 0), "{tail}");
+        }
+        // The count sees the array: a free that leaves the field alone leaks its one block.
+        let forgetful = HELD.replace("static free = ( free items )", "static free = ( free (0) )");
+        assert_eq!(run(&format!("{forgetful}mut h := held ?, h.items = array i32 [1], 1")), (1, 1));
     }
 
     /// The scope `src` parses to, and the items of its exit.
