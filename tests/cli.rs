@@ -9739,6 +9739,17 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
     let (code, _, stderr) = run_line(src);
     assert_eq!(code, Some(1), "{src}");
     assert!(stderr.contains("is parsed only when it runs"), "{src}: {stderr}");
+    // A line that waits for its type holds no `move`, with `?` after the type or without.
+    let pk = "pk := fn (p := @i32 ?) -> type ( if p@ == 1 (i64) else (i32) )";
+    for value in ["pk(move a)", "pk(move a) ?"] {
+        let src = format!(
+            "{pk}, f := fn (n := i32 ?) -> type ( a := alloc 1 of i32 n, mut u := {value}, \
+             u = 5, u.type ), f(1)"
+        );
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("such a line cannot hold `move` yet"), "{src}: stderr: {stderr}");
+    }
 }
 
 /// ›`?` is one value, the unknown; `key := T ?` declares without a value‹ [[R103]]: an empty place

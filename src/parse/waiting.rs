@@ -96,14 +96,18 @@ impl<'a> Parser<'a> {
         let scanned = self.scan_level(0, &mut found);
         let end = self.cx.pos;
         self.cx.pos = start;
-        if let (true, Ok(_), Some(cut)) = (declares, &scanned, found.bare_type) {
-            return Ok(Some(Waits { cut, writes: false, end, hole: true }));
-        }
         // A line that does not scan is left to the parse to report where it fails.
-        let Ok(true) = scanned else { return Ok(None) };
+        let Ok(reads) = scanned else { return Ok(None) };
+        let bare_type = found.bare_type.filter(|_| declares);
+        if !reads && bare_type.is_none() {
+            return Ok(None);
+        }
         if let Some((at, word)) = found.refused {
             self.cx.pos = at;
             return Err(ParseError::WaitingLineHolds(Box::new(word)));
+        }
+        if let Some(cut) = bare_type {
+            return Ok(Some(Waits { cut, writes: false, end, hole: true }));
         }
         let read_at = found.read_at.unwrap_or(start);
         if let Some(at) = found.declaration {
