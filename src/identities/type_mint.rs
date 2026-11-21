@@ -188,13 +188,15 @@ pub(crate) unsafe fn early(
 /// # Panics
 /// As [`mint_of`].
 pub(super) fn keep_early(store: &mut Store, types: &Core) {
-    for (former, key, mint) in store.take_early_mints() {
+    let early = store.take_early_mints();
+    let mut keeper = Keeper::over(store, types);
+    for (former, key, mint) in early {
         let former = if former.is_null() { types.at_ } else { former };
         let parts: Vec<KeyPart> = key.iter().map(|&node| KeyPart::Node(node)).collect();
         // SAFETY: `former`, the key's nodes and `mint` are what `early` noted.
         unsafe {
-            let (place, _) = find(store, types, former, &parts).expect("`type_mint` walks a key");
-            keep(store, types, place, mint).expect("`type_mint` keeps a mint");
+            let place = keeper.place(former, &parts).expect("`type_mint` walks a key");
+            keeper.keep(place, mint).expect("`type_mint` keeps a mint");
         }
     }
 }
