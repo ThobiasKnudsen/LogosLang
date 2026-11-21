@@ -51,6 +51,8 @@ pub(super) struct OpenType {
     instances_free: DyadPtr,
     /// The type node being defined, its record written at the close: what its name means in its parse.
     pub(super) self_type: DyadPtr,
+    /// The `static` members declared so far, in written order.
+    statics: Vec<DyadPtr>,
 }
 
 impl OpenType {
@@ -78,6 +80,7 @@ impl OpenType {
             block: (scope, fields),
             instances_free: none,
             self_type: ty,
+            statics: Vec::new(),
         }
     }
 
@@ -591,6 +594,7 @@ impl<'a> Parser<'a> {
         for &gate in gates.iter().rev() {
             self.add_gate(binding, gate)?;
         }
+        self.cx.definitions.last_mut().expect("checked above").statics.push(binding);
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.cx.scopes.settle_item(body, item) };
         Ok(())
@@ -727,6 +731,7 @@ impl<'a> Parser<'a> {
             _ => std::ptr::null_mut(),
         };
         self.expect_open()?;
+        let opened_at = self.cx.pos;
         let depth = self.cx.scopes.depth();
         // The slot words are the fields `type` declares (identities/type.logos):
         // names on the body's lines and nowhere outside them, in a scope of
@@ -787,6 +792,7 @@ impl<'a> Parser<'a> {
             block: (field_scope, Vec::new()),
             instances_free: std::ptr::null_mut(),
             self_type,
+            statics: Vec::new(),
         });
         // A `fn` literal on a slot's right side must not claim the enclosing
         // declaration's binding.
@@ -820,6 +826,8 @@ impl<'a> Parser<'a> {
             return Err(ParseError::DeferInTypeBody);
         }
         self.expect_close()?;
+        // SAFETY: `def` was just closed over these fields and their names.
+        let contents = unsafe { self.type_contents(&def, &fields, &bindings, opened_at) };
         let fields = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         // SAFETY: the bindings were just minted for these fields; `def.self_type` is the type node.
         let size_bytes = unsafe { lay_out_fields(self.types, def.self_type, fields, &bindings) };
@@ -868,7 +876,129 @@ impl<'a> Parser<'a> {
             // SAFETY: `node` was just built with a record layout; the free is the fill's fn.
             unsafe { crate::identities::meta::install_instances_free(node, def.instances_free) };
         }
+        // A type a name holds is that name's own; `type_mint` itself is built before it keeps
+        // anything.
+        let found_again = own_name.is_null() && self.types.type_mint.is_read();
+        let Some(contents) = contents.filter(|_| found_again) else {
+            return Ok(node);
+        };
+        // SAFETY: the key's nodes are types, gates and functions of the body just built.
+        unsafe {
+            let place = self.mint_place(self.types.type_, &contents)?;
+            if let Some(kept) = self.mint_kept(place)? {
+                return Ok(kept);
+            }
+            self.mint_keep(place, node)?;
+        }
         Ok(node)
+    }
+
+    /// The contents of the `type ( … )` body just built, as its key in `type_mint` after the
+    /// former: each field's spelling, gates, type and whole default; each `static` member's
+    /// spelling and gates with the type it holds, the whole value it holds, or the function it
+    /// holds; the rank and the side; and, where a body is written in it, a slot's or a
+    /// function's, the place the `type ( … )` itself is written, since a body is the same only
+    /// where it is written. `None` for a type that is never found again: one that holds a
+    /// writable `static`, a value with no key (a float, a record, a pointer, a text), or a body
+    /// while it is built where it is read, which happens once (›Every type is minted by its
+    /// contents through `type_mint`; the name that holds a `type ( … )` gives it its identity‹
+    /// [[R383]]).
+    ///
+    /// # Safety
+    /// `def` must be the definition `parse_type_body` just closed, `fields` and `bindings` its
+    /// fields and their names.
+    unsafe fn type_contents(
+        &self,
+        def: &OpenType,
+        fields: &[DyadPtr],
+        bindings: &[DyadPtr],
+        opened_at: usize,
+    ) -> Option<Vec<KeyPart>> {
+        use crate::identities::read::{place_layout, Read};
+        use crate::identities::{hole, meta, numtype, scope};
+        let types = self.types;
+        let gates = |binding: DyadPtr| {
+            // SAFETY: `binding` is a binding dyad of the body just built.
+            let mut gates = unsafe { Binding::gates(binding) };
+            gates.sort();
+            gates.into_iter().map(KeyPart::Node)
+        };
+        // SAFETY: `ty` is a type node and `at` a place of it.
+        let whole = |ty: DyadPtr, at: *const u8| match unsafe { place_layout(types, ty) } {
+            Some((Read::Scalar(nt), _)) if !nt.is_float() => {
+                // SAFETY: as above.
+                Some(KeyPart::Word(unsafe { numtype::read_scalar_nt(nt, at) } as u64))
+            }
+            _ => None,
+        };
+        // A function's value and result typed by the type being built are the same in every build.
+        let own = |ty: DyadPtr| {
+            if ty == def.self_type {
+                KeyPart::Word(0)
+            } else {
+                KeyPart::Node(ty)
+            }
+        };
+        let mut key = Vec::new();
+        for (&field, &binding) in fields.iter().zip(bindings) {
+            let ty = hole::type_in(field);
+            key.push(KeyPart::Name(Binding::spelling(binding)));
+            key.extend(gates(binding));
+            key.push(KeyPart::Node(ty));
+            let default = hole::default_in(field);
+            if !default.is_null() {
+                key.push(whole(ty, dyad::value(default))?);
+            }
+        }
+        let mut written_here =
+            !def.ctor.is_null() || !def.run_body.is_null() || !def.instances_free.is_null();
+        for &binding in &def.statics {
+            if Binding::has_gate(binding, types.mut_) {
+                return None;
+            }
+            key.push(KeyPart::Name(Binding::spelling(binding)));
+            key.extend(gates(binding));
+            let held = types.through(Binding::read(binding).names(binding));
+            if types.is_storage(held) {
+                let ty = types.type_of(held);
+                key.push(KeyPart::Node(ty));
+                key.push(whole(ty, self.rt.place_addr(held)?)?);
+            } else if dyad::ty(held) == types.fn_type {
+                key.push(KeyPart::Node(types.fn_type));
+                let parts = dyad::value(held) as *const DyadPtr;
+                let input = *parts.add(FN_INPUT);
+                let mut at = meta::record_scope_of(input);
+                while !at.is_null() && at != def.scope {
+                    at = scope::parent_of(at);
+                }
+                if at.is_null() {
+                    key.push(KeyPart::Node(held));
+                } else {
+                    written_here = true;
+                    let params = crate::identities::array::items(meta::record_fields_of(input));
+                    key.extend(params.iter().map(|&p| own(hole::type_in(p))));
+                    key.push(own(*parts.add(FN_OUTPUT)));
+                }
+            } else if crate::identities::is_type_value(types, held) {
+                key.push(KeyPart::Node(types.type_));
+                key.push(KeyPart::Node(held));
+            } else {
+                return None;
+            }
+        }
+        key.push(KeyPart::Word(def.parse_rank.to_bits()));
+        key.push(KeyPart::Word(matches!(def.assoc, Assoc::Right).into()));
+        if key.iter().any(|part| matches!(part, KeyPart::Node(node) if node.is_null())) {
+            return None;
+        }
+        if written_here {
+            if self.cx.held.is_null() {
+                return None;
+            }
+            key.push(KeyPart::Word(self.cx.held as u64));
+            key.push(KeyPart::Word(opened_at as u64));
+        }
+        Some(key)
     }
 
     /// A `type (…)` in a body that runs later reads that run's values, so it is
@@ -980,6 +1110,7 @@ impl<'a> Parser<'a> {
         let cx = Context {
             frames,
             held_depth: depth,
+            held: node,
             feed: Some(Feed { cells, next: 0, base_depth, in_run_order: true }),
             ..Context::nested(&self.cx, text, nested)
         };

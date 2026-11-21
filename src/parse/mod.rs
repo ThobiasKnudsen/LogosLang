@@ -154,6 +154,9 @@ struct Context<'a> {
     /// While a held `type (…)` is built at its run, the function frames open
     /// where it was written: a place declared at that depth is the type's, global.
     held_depth: usize,
+    /// While a held `type (…)` is built at its run, its held node: the place the body is written
+    /// in, one for every build of it. Null for a body built where it is read.
+    held: DyadPtr,
     /// A cell the branch about to open is checked against a type, with that type.
     narrow_next: Option<(CellKey, DyadPtr)>,
     /// While a `static` line of a type body is read, the frame depth a
@@ -230,6 +233,7 @@ impl<'a> Context<'a> {
             feed: None,
             kept: None,
             held_depth: 0,
+            held: std::ptr::null_mut(),
             narrow_next: None,
             member_fn_depth: None,
             once_at: None,

@@ -22,6 +22,7 @@ const NAME: &str = "type_mint";
 pub struct Members {
     pub(crate) step: DyadPtr,
     pub(crate) step_name: DyadPtr,
+    pub(crate) step_word: DyadPtr,
     pub(crate) kept: DyadPtr,
     pub(crate) keep: DyadPtr,
 }
@@ -30,7 +31,11 @@ impl Members {
     /// What a core holds until the file is read.
     pub(super) const fn unread() -> Self {
         let null = std::ptr::null_mut();
-        Self { step: null, step_name: null, kept: null, keep: null }
+        Self { step: null, step_name: null, step_word: null, kept: null, keep: null }
+    }
+
+    pub(crate) fn is_read(&self) -> bool {
+        !self.step.is_null()
     }
 }
 
@@ -69,6 +74,7 @@ pub(super) fn load(store: &mut Store, trie: &mut RegexTrie, core: &Core) -> Memb
     Members {
         step: member("step"),
         step_name: member("step_name"),
+        step_word: member("step_word"),
         kept: member("kept"),
         keep: member("keep"),
     }

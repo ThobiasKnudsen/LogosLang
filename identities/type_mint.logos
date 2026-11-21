@@ -2,8 +2,9 @@
 # addresses of its arguments, each already minted, so equal contents have equal addresses. The key
 # is walked as a trie of hashmaps: `step` goes one level down, from the place `at` by one argument,
 # and the walk starts at place 0 with the former as its first argument. A name in the key, as a
-# field's, is walked by its spelling, with `step_name`. `kept` gives the mint kept at a place, or
-# `?`, and `keep` keeps one there. The former builds its own mint where none is kept
+# field's, is walked by its spelling, with `step_name`, and a whole number, as a rank or a value a
+# `static` holds, with `step_word`. `kept` gives the mint kept at a place, or `?`, and `keep` keeps
+# one there. The former builds its own mint where none is kept
 # (›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
 # gives it its identity‹ [[R383]]).
 
@@ -11,6 +12,7 @@ pub type_mint := type (
     # A place's branch, by argument; the place one level down is the one entry of the map found.
     static branches := hashmap u64 -> hashmap type -> hashmap u64 -> u64,
     static name_branches := hashmap u64 -> hashmap string -> hashmap u64 -> u64,
+    static word_branches := hashmap u64 -> hashmap u64 -> hashmap u64 -> u64,
     static mints := hashmap u64 -> type,
     static mut places := u64 0,
 
@@ -38,6 +40,20 @@ pub type_mint := type (
             next[0] = places,
             branch[name] = next,
             name_branches[at] = branch
+        ),
+        next[0]
+    ),
+
+    pub static step_word := fn (at := u64 ?, word := u64 ?) -> u64 (
+        mut branch := word_branches[at],
+        if branch == ? ( branch = hashmap u64 -> hashmap u64 -> u64 ),
+        mut next := branch[word],
+        if next == ? (
+            places = places + 1,
+            next = hashmap u64 -> u64,
+            next[0] = places,
+            branch[word] = next,
+            word_branches[at] = branch
         ),
         next[0]
     ),

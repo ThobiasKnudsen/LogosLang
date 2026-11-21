@@ -3879,8 +3879,11 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
     assert!(stderr.contains("it holds something else"), "{src}: stderr: {stderr}");
 }
 
+/// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+/// gives it its identity‹ [[R383]]: the body is built at each call, and two builds of the same
+/// contents are one type.
 #[test]
-fn a_type_body_in_a_function_is_built_per_call() {
+fn a_type_body_in_a_function_is_built_per_call_and_minted_by_its_contents() {
     let (echoes, stderr) = repl(
         "mk := fn (t := type ?) -> type ( type ( pub static e := type t ) )\n\
           a := type mk(i32)\nb := type mk(f64)\nc := type mk(i32)\n\
@@ -3893,7 +3896,7 @@ fn a_type_body_in_a_function_is_built_per_call() {
     );
     assert_eq!(
         echoes,
-        ["true", "true", "false", "false", "true", "false", "true", "3.0"],
+        ["true", "true", "false", "true", "true", "false", "true", "3.0"],
         "stderr: {stderr}"
     );
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -11912,6 +11915,108 @@ fn type_mint_keeps_one_mint_per_key_on_both_tiers() {
         ));
     }
     assert_runs(&cases);
+}
+
+/// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+/// gives it its identity‹ [[R383]]: a type no name holds is its mint, found again by its fields'
+/// names, gates, types and defaults in order, by what its `static` members hold, and by its rank.
+#[test]
+fn a_type_no_name_holds_is_minted_by_its_contents_on_both_tiers() {
+    let two = |a: &str, b: &str| {
+        format!("a := fn () -> type ( type ( {a} ) ), b := fn () -> type ( type ( {b} ) )")
+    };
+    let mk = |body: &str| format!("mk := fn (t := type ?) -> type ( type ( {body} ) )");
+    let apart = "mk(i32) == mk(i32) and mk(i32) != mk(f64)";
+    let mut cases = Vec::new();
+    for (defs, body, want) in [
+        (two("v := f64 ?", "v := f64 ?"), "a() == b()", "true\n"),
+        (two("v := f64 ?", "w := f64 ?"), "a() == b()", "false\n"),
+        (two("v := f64 ?", "v := f32 ?"), "a() == b()", "false\n"),
+        (two("v := f64 ?", "pub v := f64 ?"), "a() == b()", "false\n"),
+        (two("v := f64 ?", "mut v := f64 ?"), "a() == b()", "false\n"),
+        (two("x := i32 ?, y := f64 ?", "y := f64 ?, x := i32 ?"), "a() == b()", "false\n"),
+        (two("n := u64 0", "n := u64 0"), "a() == b()", "true\n"),
+        (two("n := u64 0", "n := u64 1"), "a() == b()", "false\n"),
+        (two("static n := i32 3", "static n := i32 3"), "a() == b()", "true\n"),
+        (two("static n := i32 3", "static n := i32 4"), "a() == b()", "false\n"),
+        (
+            "mk := fn (n := i32 ?) -> type ( type ( static parse_rank = n ) )".to_string(),
+            "mk(3) == mk(3) and mk(3) != mk(4)",
+            "true\n",
+        ),
+        (mk("static e := type t"), apart, "true\n"),
+        (mk("a := t ?"), apart, "true\n"),
+        // A function's own types are read at the build, so they are contents too.
+        (mk("pub static get := fn (v := t ?) -> t ( v )"), apart, "true\n"),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            cases.push((format!("{defs}, g := fn () -> bool ( {body} ), {compile}g()"), want));
+        }
+    }
+    // A value of the type is made and read through any build of it.
+    cases.push((
+        "mk := fn () -> type ( type ( pub v := f64 ? ) ), k := fn (t := type ?) -> type ( t ), \
+         p := type k(mk()), q := type k(mk()), a := p(1.5), mut b := q(2.5), b = a, \
+         print «{a.type == b.type} {b.v}»"
+            .into(),
+        "true 1.5\n",
+    ));
+    assert_runs(&cases);
+}
+
+/// R383's rules (2) and (3): a writable `static` is never shared, so a type that holds one is
+/// found by no other build, and a body is the same only where it is written, so one `type ( … )`
+/// built again is one type and the same text written twice is two. A `static` that holds a float
+/// keeps its type apart until a rule says how a float is minted.
+#[test]
+fn a_writable_static_and_a_body_keep_types_apart() {
+    let k = "k := fn (t := type ?) -> type ( t )";
+    let body = "pub x := i32 ?, pub static twice := fn () -> i32 ( x * 2 )";
+    let run = "pub x := i32 ?, static run = ( x + 1 )";
+    let mut cases = vec![(
+        format!(
+            "a := fn () -> type ( type ( pub static mut n := i32 0 ) ), {k}, c1 := type k(a()), \
+             c2 := type k(a()), c1.n = 1, print «{{c1 == c2}} {{c1.n}} {{c2.n}}»"
+        ),
+        "false 1 0\n",
+    )];
+    for compile in ["", "g.compile(), "] {
+        for inside in [body, run] {
+            cases.push((
+                format!(
+                    "a := fn () -> type ( type ( {inside} ) ), b := fn () -> type ( type ( {inside} ) ), \
+                     g := fn () -> bool ( a() == a() and a() != b() ), {compile}g()"
+                ),
+                "true\n",
+            ));
+        }
+        cases.push((
+            format!(
+                "a := fn () -> type ( type ( static x := f64 0.0 ) ), \
+                 g := fn () -> bool ( a() == a() ), {compile}g()"
+            ),
+            "false\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
+/// A `static` line runs at each build, before the type is looked up, so a second build of one
+/// type runs it again; whether it should is open at [[R383]], and [[R297]] has the lines made at
+/// each build.
+#[test]
+fn a_static_line_runs_at_each_build_of_one_type() {
+    let src = |compile: &str| {
+        format!(
+            "bump := fn () -> i32 ( print «bump», 1 ), mk3 := fn (t := type ?) -> type ( \
+             type ( static e := type t, static g := bump() ) ), print «defined», \
+             same := fn () -> bool ( mk3(i32) == mk3(i32) ), {compile}print «{{same()}}»"
+        )
+    };
+    assert_runs(&[
+        (src(""), "defined\nbump\nbump\ntrue\n"),
+        (src("same.compile(), "), "defined\nbump\nbump\ntrue\n"),
+    ]);
 }
 
 /// ›`array` is a chooser‹ [[R223]]: `array` and `^` keep no memo of their own, and each still has

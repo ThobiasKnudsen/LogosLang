@@ -16,6 +16,8 @@ pub(super) enum KeyPart {
     Node(DyadPtr),
     /// A name, by its spelling.
     Name(String),
+    /// A whole number: a rank, a whole value, a place in a text.
+    Word(u64),
 }
 
 impl Parser<'_> {
@@ -53,6 +55,9 @@ impl Parser<'_> {
                         name.as_bytes(),
                     );
                     self.call_type_mint(members.step_name, &[place, text as i64])?
+                }
+                KeyPart::Word(word) => {
+                    self.call_type_mint(members.step_word, &[place, *word as i64])?
                 }
             };
         }

@@ -361,6 +361,19 @@ impl Binding {
         !gates.is_null() && super::array::items(gates).contains(&gate)
     }
 
+    /// The name's gates, in text order.
+    ///
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn gates(dyad: DyadPtr) -> Vec<DyadPtr> {
+        let gates = (*Self::shared(dyad)).gate;
+        if gates.is_null() {
+            Vec::new()
+        } else {
+            super::array::items(gates).to_vec()
+        }
+    }
+
     /// Put `gate` first: the words are read right to left, so first keeps text order.
     ///
     /// # Safety
