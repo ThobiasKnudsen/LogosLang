@@ -217,6 +217,8 @@ unsafe fn node(
     mint::node(store, types, op, &key, &[lhs, rhs])
 }
 
+/// stand-in for #462
+///
 /// # Safety
 /// `key` must hold type nodes from the store, or null.
 unsafe fn choose<const FAMILY: u8, const OP: u8>(
@@ -233,7 +235,7 @@ unsafe fn choose<const FAMILY: u8, const OP: u8>(
 /// What `a`'s mint over the field types `key` gives back and runs: a number type over two of it,
 /// with no float remainder, since no machine one exists; a run-time rational over two; a pointer
 /// stepped by an `i64` count of bytes, giving the plain pointer to the same type (›A pointer
-/// steps by whole cells‹).
+/// steps by whole cells‹); stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store, or null.
@@ -268,7 +270,7 @@ unsafe fn choose_arith(
 /// What `c`'s mint over the field types `key` runs, giving a `bool`: a comparison of two values
 /// of one number type or of two run-time rationals; and for `==` and `!=`, of a map and `?`, of
 /// two types by reading, of two values of one other machine type (a `bool`), of two values read
-/// as the address of a node (a dyad, text) and of two pointers.
+/// as the address of a node (a dyad, text) and of two pointers; stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store, or null.
@@ -501,7 +503,7 @@ unsafe fn build_negate(
 }
 
 /// What negation's mint over the field type `key` gives back, that type, and runs: the negation
-/// of a number type or of a run-time rational.
+/// of a number type or of a run-time rational; stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store, or null.

@@ -41,7 +41,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 
 /// What `=`'s mint over the field type `key`, the type of the place it writes, gives back,
 /// nothing, and runs: the write of a whole value of that type; `None` for a type no whole value
-/// of which moves into a place.
+/// of which moves into a place; stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold a type node from the store, or null.

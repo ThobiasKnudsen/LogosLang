@@ -121,7 +121,8 @@ pub(crate) unsafe fn build_address(
     mint::node_of_any(store, types, ty, &[pointee], &[place, held])
 }
 
-/// What an address mint over the field type `key`, the pointee, gives back, `@pointee`, and runs.
+/// What an address mint over the field type `key`, the pointee, gives back, `@pointee`, and runs;
+/// stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold a type node from the store.

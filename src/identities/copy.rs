@@ -35,7 +35,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     (copy, leaf)
 }
 
-/// What `copy`'s mint over the field type `key` gives back, that type, and runs.
+/// What `copy`'s mint over the field type `key` gives back, that type, and runs;
+/// stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold a type node from the store.
