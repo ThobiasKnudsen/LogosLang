@@ -746,13 +746,13 @@ fn a_fresh_spelling_on_the_tape_is_a_node_of_type_unknown_name() {
 /// A multiplication written in Logos: its parse mints from `tape[-1].type` and `tape[1].type`
 /// and takes both sides through `tape[k]`.
 const TIMES: &str = "⊗ := type ( \
-    static get_mint := fn (l := type ?, r := type ?) -> type ( \
+    get_mint := static fn (l := type ?, r := type ?) -> type ( \
     place := type_mint.step(type_mint.step(type_mint.step(0, ⊗), l), r), \
-    mut mint := type type_mint.kept(place), if mint != ? return mint, \
-    mint = type ( pub lhs := l ?, pub rhs := r ?, static output_type := type l, \
-    static run = ( lhs * rhs ) ), type_mint.keep(place, mint), mint ), \
-    static parse_rank = *.parse_rank, \
-    static parse = ( tape[0].type = get_mint(tape[-1].type, tape[1].type), tape[0].lhs = tape[-1], \
+    mint := mut type type_mint.kept(place), if mint != ? return mint, \
+    mint = type ( lhs := pub l ?, rhs := pub r ?, output_type := static type l, \
+    run = ( lhs * rhs ) ), type_mint.keep(place, mint), mint ), \
+    parse_rank = *.parse_rank, \
+    parse = ( tape[0].type = get_mint(tape[-1].type, tape[1].type), tape[0].lhs = tape[-1], \
     tape[0].rhs = tape[1], tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
 
 /// A parse written in Logos reads its operands through `tape[k]` and `tape[k].type` as a built-in
@@ -809,7 +809,7 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
 fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
     let k = |body: &str, operand: &str| {
         format!(
-            "c := true, k := type ( static parse = ( {body}, tape.remove(1), \
+            "c := true, k := type ( parse = ( {body}, tape.remove(1), \
              tape.is_constructed[0] = true ) ), k {operand}"
         )
     };
@@ -824,8 +824,8 @@ fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
             "{operand}: stderr: {stderr}"
         );
     }
-    let takes = "k := type ( a := i32 ?, static output_type := type i32, static run = ( a ), \
-                 static parse_rank = 60, static parse = ( tape[0].type = k, tape[0].a = tape[1], \
+    let takes = "k := type ( a := i32 ?, output_type := static type i32, run = ( a ), \
+                 parse_rank = 60, parse = ( tape[0].type = k, tape[0].a = tape[1], \
                  tape.remove(1), tape.is_constructed[0] = true ) ), n := i32 2, \
                  f := fn () -> i32 ( k n )";
     let (code, stdout, stderr) = run_line(&format!("{takes}, f()"));
