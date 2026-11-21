@@ -1,12 +1,15 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! A line whose value's type is known only when it runs, since it reads a `dyad` name, or a
-//! `-> dyad` call as an infix's operand or through `.`: found before it is lexed, parsed where it
+//! A line whose parse needs a type known only when it runs: one that reads a `dyad` name, or a
+//! `-> dyad` call as an infix's operand or through `.`, one that reads a value, a `?` or a field
+//! after a type a name or a call gives only then, and one that writes a name whose type its own
+//! line gave when it ran. Found before it is lexed, parsed where it
 //! is written up to that read or a reader before it, and from there each time it runs, over the
-//! nodes such values hold then (`identities::waiting`, ›A `dyad ?` place is transparent: a
-//! placeholder for a new node of any type‹ [[R293]]). A `while` condition that read a `dyad` name
-//! is held the same way, parsed again on each pass.
+//! nodes and types such values hold then (`identities::waiting`, ›A `dyad ?` place is
+//! transparent: a placeholder for a new node of any type‹ [[R293]], ›A type known only when the
+//! program runs still works; what needs it is parsed when its line runs‹ [[R377]]). A `while`
+//! condition that read a `dyad` name is held the same way, parsed again on each pass.
 
 use super::*;
 use crate::identities::meta::prec;
@@ -31,14 +34,23 @@ struct Found {
     needs: usize,
     /// Where each bracket that holds such a read or another point opens, at any depth.
     cuts: Vec<usize>,
+    /// At the top, the `:=` of a line that declares one name: what follows it is its value.
+    declaration: Option<usize>,
+    /// How many tokens and lines inside brackets the scan has met that the pass may not know as
+    /// an argument of a call for a type: anything but one type or one literal alone on its line.
+    unknown_now: usize,
+    /// At the top, where a `?` after a type known only at run ends.
+    typed_hole_end: Option<usize>,
 }
 
-/// A line that waits: where it ends, where the part left to the run starts, and whether an `=`
-/// stands there, the part before it being the place it writes.
+/// A line that waits: where it ends, where the part left to the run starts, whether an `=`
+/// stands there, the part before it being the place it writes, and whether the line is a `?`
+/// after a type known only at run.
 pub(super) struct Waits {
     cut: usize,
     writes: bool,
     end: usize,
+    hole: bool,
 }
 
 /// The part of a line parsed before the cut: its cells, and what their parse noted for the line.
@@ -49,22 +61,25 @@ pub(super) struct Kept {
 }
 
 /// A line held for the run, as [`Parser::hold_line`] left it: every cell of its text, lexed
-/// against the scopes open where it is written, the part before `cut` parsed there, and what a
+/// against the scopes open where it is written, the part before `cut` parsed there, what a
 /// bare field or a bare call there needs to reach the value its body is about: the type
-/// definitions open there and a `run` body's fields.
+/// definitions open there and a `run` body's fields, and whether the line is the `T ?` a `:=`
+/// declares its name with, which lays out a new node of `T`.
 pub(crate) struct HeldLine {
     cells: ParsingTape,
     cut: usize,
     kept: Kept,
     definitions: Vec<OpenType>,
     run_fields: Option<(DyadPtr, Vec<DyadPtr>, DyadPtr)>,
+    lays_out: bool,
 }
 
 impl<'a> Parser<'a> {
-    /// The line at the cursor, when it waits for the run: a line of a body that reads a `dyad`
-    /// value for its value, outside a `fn` or `type (…)` written in it, and outside a line of a
-    /// bracket that waits on its own. The cursor stays. A line that waits and holds `:=`,
-    /// `return`, `free` or `move` is refused here: stand-in for #281.
+    /// The line at the cursor, when it waits for the run: a line of a body whose parse needs a
+    /// type known only then, outside a `fn` or `type (…)` written in it, and outside a line of a
+    /// bracket that waits on its own. The cursor stays. A line that declares one name does not
+    /// wait: its value waits on its own ([`Self::waiting_value`]). A line that waits and holds
+    /// another `:=`, a `return`, `free` or `move` is refused here: stand-in for #281.
     pub(super) fn waiting_line_end(&mut self) -> Result<Option<Waits>, ParseError> {
         let open = self.cx.open.last();
         if self.cx.runtime_depth == 0 || open.is_none_or(|o| !o.own_lines()) {
@@ -82,15 +97,24 @@ impl<'a> Parser<'a> {
             return Err(ParseError::WaitingLineHolds(Box::new(word)));
         }
         let read_at = found.read_at.unwrap_or(start);
+        if let Some(at) = found.declaration {
+            if at < read_at {
+                return Ok(None);
+            }
+            self.cx.pos = at;
+            return Err(ParseError::WaitingLineHolds(Box::new(":=".into())));
+        }
         // A reader before the read may read past it, so the parse here stops before the reader.
         let (cut, writes) = match found.reader_at {
             Some((at, writes)) if at < read_at => (at, writes),
             _ => (read_at, false),
         };
+        let hole =
+            found.typed_hole_end == Some(start + self.cx.source[start..end].trim_end().len());
         if found.address_at.is_some_and(|at| at < cut) {
-            return Ok(Some(Waits { cut: start, writes: false, end }));
+            return Ok(Some(Waits { cut: start, writes: false, end, hole }));
         }
-        Ok(Some(Waits { cut, writes, end }))
+        Ok(Some(Waits { cut, writes, end, hole }))
     }
 
     /// Where the line at the cursor reads what a call that gives a `dyad` gives, or holds another
@@ -192,9 +216,10 @@ impl<'a> Parser<'a> {
 
     /// One level of the line: at the top the line itself, up to its boundary, left unconsumed;
     /// below it the lines of a bracket, up to its closer, consumed. Whether a line of this level
-    /// reads a `dyad` value for the line around it: an assignment gives nothing (›`=` sits beside
-    /// `:=`, and returns nothing‹ [[R277]]), so one in a bracket waits on its own, when the parse
-    /// reaches it. A `:=` on a line that reads is refused, and at the top a `:=` at all.
+    /// reads a value whose type is known only at run for the line around it: an assignment gives
+    /// nothing (›`=` sits beside `:=`, and returns nothing‹ [[R277]]), so one in a bracket waits
+    /// on its own, when the parse reaches it. A `:=` on a line that reads is refused, and at the
+    /// top a `:=` at all, but the one that declares the line's name.
     fn scan_level(&mut self, depth: usize, found: &mut Found) -> Result<bool, ParseError> {
         self.check_stack()?;
         let types = self.types;
@@ -215,6 +240,16 @@ impl<'a> Parser<'a> {
         let (mut callee, mut after_call): (Option<bool>, bool) = (None, false);
         // A member just scanned whose call is a call for a type.
         let mut type_member = false;
+        // A function just scanned whose call is a call for a type.
+        let mut type_callee = false;
+        // A type known only when the line runs, just scanned: a name holding a type, or a call
+        // for a type over an argument the pass may not know; where the cells built with it start.
+        let mut run_type: Option<usize> = None;
+        // A name just scanned whose type its line gave when it ran, with an `=` next.
+        let mut run_write = false;
+        // At the top, the tokens before the first `:=` that are no gate word; in a bracket, the
+        // tokens of the line being scanned.
+        let (mut lead, mut line_tokens) = (0, 0);
         // At the top: where the cells built together with the token just scanned start, and
         // where those of the last call that gives a `dyad` start.
         let (mut chain, mut call_chain) = (0, 0);
@@ -238,6 +273,9 @@ impl<'a> Parser<'a> {
                 if top {
                     return Ok(any);
                 }
+                if line_tokens > 1 {
+                    found.unknown_now += 1;
+                }
                 let (Some(r), Some(id)) = (r, id) else { return Err(ParseError::UnclosedBracket) };
                 self.cx.pos = at + r.matched;
                 if self.is_closer(id) {
@@ -246,12 +284,19 @@ impl<'a> Parser<'a> {
                 (line_reads, assigns, declares, prev, before_prev, skipping) =
                     (false, false, None, None, None, false);
                 (callee, after_call, type_member) = (None, false, false);
+                (type_callee, run_type, run_write, line_tokens) = (false, None, false, 0);
                 (reached, path_start) = (None, (None, None));
                 continue;
             }
             let (Some(r), Some(id)) = (r, id) else { unreachable!("a boundary at the end") };
             self.cx.pos = at + r.matched;
+            line_tokens += 1;
+            let leads = id != types.declare_tok && !self.is_gate_word(id);
+            if top && leads && found.declaration.is_none() && declares.is_none() {
+                lead += 1;
+            }
             let member_call = std::mem::take(&mut type_member);
+            let type_call = std::mem::take(&mut type_callee) || member_call;
             if top {
                 if !self.joins_chain(prev, id) {
                     chain = at;
@@ -260,11 +305,30 @@ impl<'a> Parser<'a> {
                     found.reader_at.get_or_insert((chain, id == types.assign));
                 }
             }
+            // What is written into a place whose type its line gave when it ran converts into
+            // that type, so the line waits from its `=`, the place read where it is written.
+            if std::mem::take(&mut run_write) {
+                line_reads = true;
+                if top {
+                    found.read_at.get_or_insert(at + r.matched);
+                }
+            }
+            // A value, a `?` or a field read after a type known only at run needs that type.
+            if let Some(from) = run_type.take().filter(|_| !skipping && self.uses_type(id)) {
+                line_reads = true;
+                if top {
+                    found.read_at.get_or_insert(from);
+                    if id == types.unknown {
+                        found.typed_hole_end = Some(at + r.matched);
+                    }
+                }
+            }
             if self.is_opener(id) {
                 if member_call && id == types.open_ {
                     found.needs += 1;
                 }
                 let reads_before = found.call_reads + found.needs;
+                let unknown_before = found.unknown_now;
                 let inner = if skipping {
                     self.skip_bracket(id).map(|_| false)?
                 } else {
@@ -273,6 +337,11 @@ impl<'a> Parser<'a> {
                 if found.call_reads + found.needs > reads_before {
                     found.cuts.push(at);
                 }
+                if type_call && id == types.open_ && found.unknown_now > unknown_before {
+                    run_type = Some(chain);
+                }
+                // A bracket among a call's arguments is no argument the pass knows as written.
+                found.unknown_now += 1;
                 let call_operand = callee.take();
                 after_call = call_operand == Some(false);
                 if after_call {
@@ -293,6 +362,9 @@ impl<'a> Parser<'a> {
             }
             if skipping {
                 continue;
+            }
+            if !self.known_as_written(id) {
+                found.unknown_now += 1;
             }
             if prev != Some(types.dot_) && id != types.dot_ {
                 path_start = (prev, before_prev);
@@ -333,11 +405,24 @@ impl<'a> Parser<'a> {
                 found.refused.get_or_insert((at, word));
             }
             if id == types.declare_tok {
-                declares.get_or_insert(at);
+                if top && lead == 1 && found.declaration.is_none() && declares.is_none() {
+                    found.declaration = Some(at);
+                } else {
+                    declares.get_or_insert(at);
+                }
             }
             // SAFETY: a resolved token's identity is a dyad from the store, and so is the one
             // before the `.`.
             unsafe {
+                if prev != Some(types.dot_) {
+                    type_callee = self.returns_type(id);
+                    if read_kind(types, id) == Read::Container(types.type_) {
+                        run_type = Some(chain);
+                    }
+                    run_write = crate::dyad::ty(id) == types.binding_
+                        && Binding::has_gate(id, types.waiting.line)
+                        && self.peek_token().is_some_and(|(next, _)| next == types.assign);
+                }
                 if prev != Some(types.dot_) && self.needs_value(id) {
                     found.needs += 1;
                 }
@@ -373,6 +458,25 @@ impl<'a> Parser<'a> {
             || self.returns_type(id)
             || self.is_logos_ctor(id)
             || id == self.types.import_
+    }
+
+    /// Whether `id`, after a type, reads that type: a value it takes, a `?`, or a `.` before a
+    /// field, never an operator, a `=` or a `:=` (›A type known only when the program runs still
+    /// works; what needs it is parsed when its line runs‹ [[R377]]).
+    fn uses_type(&self, id: DyadPtr) -> bool {
+        id == self.types.dot_
+            || id == self.types.unknown
+            || self.is_opener(id)
+            || self.ctor_of(id).is_none()
+            || self.ranked(id, prec::LITERAL)
+    }
+
+    /// Whether the pass knows the value `id` gives where it is written, as an argument of a call
+    /// for a type: a type or a literal (`identities::is_comptime_arg`).
+    fn known_as_written(&self, id: DyadPtr) -> bool {
+        // SAFETY: a resolved token's identity is null or a dyad from the store.
+        self.ranked(id, prec::LITERAL)
+            || unsafe { !id.is_null() && crate::identities::is_type_value(self.types, id) }
     }
 
     /// Whether `id` has a constructor at parse_rank `rank`.
@@ -486,8 +590,9 @@ impl<'a> Parser<'a> {
 
     /// The line at the cursor, cut where `waits` says: the part before the cut parsed here, and
     /// the line held as it is written, lexed against the scopes open here, its names checked as a
-    /// use of them is, and parsed from the cut each time it runs.
-    pub(super) fn hold_line(&mut self, waits: Waits) -> Result<Cell, ParseError> {
+    /// use of them is, and parsed from the cut each time it runs; with `lays_out`, the `T ?` that
+    /// lays out a name's node.
+    pub(super) fn hold_line(&mut self, waits: Waits, lays_out: bool) -> Result<Cell, ParseError> {
         let types = self.types;
         let start = self.cx.pos;
         let end = start + self.cx.source[start..waits.end].trim_end().len();
@@ -528,6 +633,7 @@ impl<'a> Parser<'a> {
             kept,
             definitions: self.cx.definitions.clone(),
             run_fields: self.cx.run_fields.clone(),
+            lays_out,
         };
         let line = Box::into_raw(Box::new(line));
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
@@ -650,13 +756,28 @@ impl<'a> Parser<'a> {
         open.add_line_notes(kept.notes);
     }
 
+    /// The value a `:=` declares its name with, when it waits for the run: held as a line of its
+    /// own, whose value lands in a new node, a `dyad`, which the name holds, since its type is
+    /// known only then (›A `type ?` place is a box, written any number of times‹ [[R291]], its
+    /// Q72 line), with whether that value is a `?`, which lays the node out, unwritten, when the
+    /// line runs (›A type known only when the program runs still works; what needs it is parsed
+    /// when its line runs‹ [[R377]]).
+    pub(super) fn waiting_value(&mut self) -> Result<Option<(Cell, bool)>, ParseError> {
+        let Some(waits) = self.waiting_line_end()? else { return Ok(None) };
+        let hole = waits.hole;
+        let held = self.hold_line(waits, hole)?;
+        // SAFETY: `held` holds the line `hold_line` just built, which has not run.
+        unsafe { crate::identities::waiting::set_into(self.types, held.dyad, self.types.dyad_) };
+        Ok(Some((held, hole)))
+    }
+
     /// The `while` condition begun at `start` and ended at the cursor, which read a `dyad` name:
     /// the name stood for the node it held when the condition was parsed, so the condition is held
     /// as written and parsed again each time it runs, its value landing in `bool`.
     pub(super) fn hold_condition(&mut self, start: usize) -> Result<DyadPtr, ParseError> {
         let end = self.cx.pos;
         self.cx.pos = start;
-        let held = self.hold_line(Waits { cut: start, writes: false, end })?;
+        let held = self.hold_line(Waits { cut: start, writes: false, end, hole: false }, false)?;
         self.cx.pos = end;
         // SAFETY: `held` holds the line `hold_line` just built, which has not run.
         unsafe { crate::identities::waiting::set_into(self.types, held.dyad, self.types.bool_) };
@@ -720,9 +841,14 @@ impl<'a> Parser<'a> {
         let built = g.0.parse_sequence();
         let built_pos = g.0.cx.pos;
         drop(g);
+        let lays_out = line.lays_out;
         let built = built.and_then(|line| {
             if into.is_null() {
                 return Ok(line);
+            }
+            if lays_out && types.is_hole(types.through(line)) {
+                let hole = types.through(line);
+                return crate::identities::dyad_place::lay_out(self.rt.store, types, hole);
             }
             crate::identities::commit_fn_body(self.rt.store, types, line, into)
         });

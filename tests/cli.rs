@@ -2558,6 +2558,9 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
             "mut d := dyad ?, d = i64 1, d = f64 2.5, f := fn (a := dyad ?) -> f64 ( a ), f(d)",
             "2.5",
         ),
+        // A name declared from such a line is a `dyad`, the lines that read it waiting too.
+        ("f := fn (a := dyad ?) -> i64 ( x := a + 1, x ), f(i64 2)", "3"),
+        ("f := fn (a := dyad ?) -> bool ( x := a + 1, x.type == i32 ), f(i32 2)", "true"),
         // A compiled caller of a function whose lines wait.
         (
             "f := fn (a := dyad ?) -> i64 ( a ), g := fn () -> i64 ( f(i64 3) + f(42) ), \
@@ -2574,7 +2577,7 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
         ("f := fn (a := dyad ?) -> i64 ( a ), f(f64 2.5)", "these types do not match"),
         ("f := fn (a := dyad ?) -> i64 ( a ), f(1/2)", "no exact value"),
         ("f := fn (a := dyad ?) -> i64 ( a + «x» ), f(i64 1)", "cannot compute"),
-        ("f := fn (a := dyad ?) -> i64 ( x := a + 1, x ), f(i64 2)", "cannot hold `:=` yet"),
+        ("f := fn (a := dyad ?) -> i64 ( g(x := a + 1), 2 ), f(i64 2)", "cannot hold `:=` yet"),
         (
             "f := fn (a := dyad ?) -> i64 ( if a > 0 ( return 1 ), 2 ), f(i64 2)",
             "cannot hold `return` yet",
@@ -3731,10 +3734,114 @@ fn a_type_call_with_a_runtime_argument_yields_a_type_at_run() {
         "pick := fn (i := i32 ?) -> type (if (i==0)(i32) else (f64))\n\
           g := fn (n := i32 ?) -> i32 ( a := pick(n), if (a == f64) (7) else (3) )\n\
           print «{g(1)}»\nprint «{g(0)}»\n\
-          h := fn (n := i32 ?) -> i32 ( x := pick(n) 5, 1 )\n",
+          h := fn (n := i32 ?) -> type ( x := pick(n) 5, x.type )\n\
+          print «{h(1)} {h(0)}»\n",
     );
-    assert_eq!(echoes, ["7", "3"], "stderr: {stderr}");
-    assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
+    assert_eq!(echoes, ["7", "3", "f64 i32"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn what_needs_a_type_known_only_at_run_is_parsed_when_its_line_runs() {
+    let pick = "pick := fn (n := i32 ?) -> type ( if n > 0 (i64) else (i32) )";
+    for (body, want) in [
+        // A value read after the type, named or not, in a `:=` or alone.
+        ("-> i32 ( u := pick(n), x := u 5, 1 ), print «{f(1)}»", "1"),
+        ("-> type ( u := pick(n), x := u 5, x.type ), print «{f(1)} {f(0)}»", "i64 i32"),
+        ("-> i64 ( x := pick(n) 5, x + 1 ), print «{f(1)}»", "6"),
+        ("-> i64 ( pick(n) 5 ), print «{f(1)}»", "5"),
+        // A place laid out when its line runs, unwritten until a write fills it, is a place of
+        // that type: a write converts into it, its line waiting too.
+        ("-> i32 ( x := pick(n) ?, 1 ), print «{f(1)}»", "1"),
+        ("-> i32 ( mut x := pick(n) ?, x = 5, x ), print «{f(0)}»", "5"),
+        ("-> i64 ( mut x := pick(n) ?, x = 5, x + 1 ), print «{f(1)}»", "6"),
+        (
+            "-> bool ( mut x := pick(n) ?, x = 5, x.type == i64 ), print «{f(1)} {f(0)}»",
+            "true false",
+        ),
+        (
+            "-> bool ( mut x := pick(n) ?, x = 5, x.type == i32 ), print «{f(1)} {f(0)}»",
+            "false true",
+        ),
+        ("-> type ( mut x := pick(n) 5, x = 7, x.type ), print «{f(1)} {f(0)}»", "i64 i32"),
+        ("-> i64 ( mut x := pick(n) ?, x = 1, for 0..3 ( x = x + 1 ), x ), print «{f(1)}»", "4"),
+        (
+            "-> bool ( mut x := pick(n) 1, if n > 0 ( x = 5 ) else ( x = 6 ), x.type == i64 ), \
+             print «{f(1)} {f(0)}»",
+            "true false",
+        ),
+        // A field of such a type.
+        ("-> bool ( pick(n).parse_rank == i64.parse_rank ), print «{f(1)}»", "true"),
+        ("-> bool ( u := pick(n), u.parse_rank == i64.parse_rank ), print «{f(1)}»", "true"),
+        // A loop body and a branch wait the same way.
+        ("-> i32 ( for 0..2 ( print «{pick(n) 3}» ), 1 ), print «{f(1)}»", "3\n3\n1"),
+        ("-> i32 ( if n > 0 ( print «{pick(n) 4}» ) else ( print «no» ), 1 ), f(0)", "no\n1"),
+    ] {
+        let src = format!("{pick}, f := fn (n := i32 ?) {body}");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.trim_end()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+    // A `type ?` box a body reads, a parameter's or a local's, alike.
+    for (src, want) in [
+        ("f := fn (t := type ?) -> i32 ( t 5 ), f(i32)", "5"),
+        ("f := fn (t := type ?) -> i32 ( mut x := t ?, x = 5, x ), f(i32)", "5"),
+        ("f := fn (t := type ?) -> bool ( t.parse_rank == i32.parse_rank ), f(i32)", "true"),
+        ("f := fn () -> i32 ( mut a := type ?, a = i32, x := a 5, x ), f()", "5"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.trim_end()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+    // The part of the line before the type is parsed where it is written.
+    let src = format!("{pick}, f := fn (n := i32 ?) -> i32 ( x := nowhere + pick(n) 5, 1 ), 0");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}");
+    assert!(stderr.contains("unknown name `nowhere`") && !stderr.contains("run error"), "{stderr}");
+    // A name laid out at run is read only after a write, as one declared `T ?` is.
+    let src = format!("{pick}, f := fn (n := i32 ?) -> i32 ( x := pick(n) ?, x ), 0");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}");
+    assert!(stderr.contains("`x` is read before it is written"), "{stderr}");
+    // A write the place's type does not hold is refused as it is into a place declared with that
+    // type, when its line runs.
+    for (body, call) in [
+        ("( mut x := pick(n) ?, x = f64 2.5, x.type == f64 )", "f(1)"),
+        ("( mut x := pick(n) 5, x = i64 7, x.type == i64 )", "f(0)"),
+    ] {
+        let src = format!("{pick}, f := fn (n := i32 ?) -> bool {body}, print «{{{call}}}»");
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(
+            stderr.contains("is parsed then, and here it failed")
+                && stderr.contains("these types do not match"),
+            "{src}: {stderr}"
+        );
+    }
+    // That pass checks the write's gates where it is written.
+    let src = format!("{pick}, f := fn (n := i32 ?) -> i32 ( x := pick(n) ?, x = 5, 1 ), 0");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}");
+    assert!(stderr.contains("`x` is not `mut`") && !stderr.contains("run error"), "{stderr}");
+    // A name declared `dyad ?` takes a node of any type.
+    let src = "f := fn () -> type ( mut d := dyad ?, d = i64 5, d = f64 2.5, d.type ), f()";
+    assert_eq!(run_line(src), (Some(0), "f64\n".into(), String::new()), "{src}");
+    // A type no place of which is laid out at run, refused when its line runs.
+    let (code, _, stderr) = run_line("f := fn (t := type ?) -> i32 ( x := t ?, 1 ), f(dyad)");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("a place is laid out then only for a type"), "{stderr}");
+    // Compiled code cannot parse, so a function holding such a line stays interpreted.
+    for body in ["( u := pick(n), x := u 5, 1 )", "( pick(n) 5 )", "( x := pick(n) ?, 1 )"] {
+        let src = format!("{pick}, f := fn (n := i32 ?) -> i32 {body}, f.compile(), f(1)");
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(
+            stderr.contains("is parsed only when it runs") && stderr.contains("stays interpreted"),
+            "{src}: {stderr}"
+        );
+    }
+    // A call for a type over arguments known where it is written still runs in the pass.
+    let src = "mk := fn (t := type ?) -> type ( t ), g := fn () -> i32 ( mk(i32) 3 ), \
+               g.compile(), g()";
+    assert_eq!(run_line(src), (Some(0), "3\n".into(), String::new()), "{src}");
 }
 
 #[test]
@@ -4299,17 +4406,10 @@ fn the_dyad_box_says_what_it_holds() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n", "{}", String::from_utf8_lossy(src));
     }
 
-    // A deferred body is the one place a box fill stays refused: there parse order is not run order.
-    let out = logos()
-        .arg("f := fn () -> i32 ( mut a := type ?, a = i32, x := a 5, x ), f()")
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("known only when the program runs"),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    // In a deferred body parse order is not run order, so the box holds its type only when the
+    // body runs, and the line that reads a value after it is parsed then.
+    let src = "f := fn () -> i32 ( mut a := type ?, a = i32, x := a 5, x ), f()";
+    assert_eq!(run_line(src), (Some(0), "5\n".into(), String::new()), "{src}");
 
     let (echoes, stderr) =
         repl("mut a := dyad ?\na = 5\nprint «{a}»\na = i64 7\nprint «{a.type == i64}»\na\n");
@@ -10054,6 +10154,8 @@ fn a_type_field_is_a_box_its_run_reads_when_it_runs() {
         (format!("{pass}, mut d := dyad ?, d = i32, (pass d) == i32"), "true\n"),
         (format!("{pass}, f := fn (d := dyad ?) -> bool ( (pass d) == f64 ), f(f64)"), "true\n"),
         (format!("{sq}, mut t := type ?, t = i64, sq t"), "16\n"),
+        // A `run` line that reads a value after the field's type is parsed when it runs.
+        (format!("{mk}, mk i32"), "7\n"),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
@@ -10062,7 +10164,6 @@ fn a_type_field_is_a_box_its_run_reads_when_it_runs() {
     let at_run = "which type this is is known only when the program runs, and this needs it now";
     for (src, error) in [
         (format!("{pass}, pass (i32 5)"), "the declared or assigned type must be a type value"),
-        (format!("{mk}, mk i32"), at_run),
         (format!("{sq}, f := fn (u := type ?) -> i32 ( sq u ), f(i32)"), at_run),
     ] {
         let (code, _, stderr) = run_line(&src);
@@ -10587,7 +10688,7 @@ fn a_dyad_entry_of_a_curly_bracket_reads_as_a_dyad_name_does() {
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-        assert!(stderr.contains("cannot be compiled yet"), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("is parsed only when it runs"), "{src}: stderr: {stderr}");
     }
 }
 

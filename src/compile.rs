@@ -85,6 +85,8 @@ pub type LowerTable = HashMap<DyadPtr, LowerFn>;
 pub enum CompileError {
     /// No lowering rule for this node's operation.
     NotLowerable(DyadPtr),
+    /// A line parsed only when it runs, since a type its parse needs is known only then.
+    ParsedAtRun,
     /// A null storage address; refused rather than baking a load from address 0.
     Uninitialized,
     /// A frame place compiled outside any call.

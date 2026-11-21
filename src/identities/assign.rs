@@ -100,6 +100,8 @@ fn construct(
     }
     let value = p.parse_expression()?;
     let value = p.held_type_or(value);
+    // SAFETY: `target` and `value` are reduced dyads from the store.
+    let value = unsafe { p.land_in_run_type(target, value) }?;
     // SAFETY: `target` is the reduced dyad of the cell to the left.
     let into_cell = unsafe { dyad::ty(target) } == types.tape.cell_type;
     let value = if into_cell {

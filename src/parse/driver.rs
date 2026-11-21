@@ -737,8 +737,9 @@ impl<'a> Parser<'a> {
             {
                 return None;
             }
-            let waits =
-                self.waiting_line_end().and_then(|end| end.map(|e| self.hold_line(e)).transpose());
+            let waits = self
+                .waiting_line_end()
+                .and_then(|end| end.map(|e| self.hold_line(e, false)).transpose());
             match waits {
                 Ok(Some(held)) => {
                     // SAFETY: `held` holds the line `hold_line` just built.
