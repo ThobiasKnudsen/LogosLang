@@ -281,6 +281,7 @@ impl<'a> Parser<'a> {
             return Ok(tape.at(offset).copied());
         }
         let mark = tape.mark();
+        let edits = tape.edits();
         // `lex_next` pushes at the end and moves the center there, so the
         // center is put back before each look at `offset`.
         while tape.at(offset).is_none() {
@@ -294,6 +295,7 @@ impl<'a> Parser<'a> {
             }
         }
         tape.restore(mark);
+        tape.lexed_on(edits);
         Ok(tape.at(offset).copied())
     }
 
@@ -575,7 +577,9 @@ impl<'a> Parser<'a> {
         tape.restore(own);
         // The driver's rule (DESIGN ›Execution is function application‹): flag
         // true, done; flag false and another identity, its turn; flag false and
-        // the same identity, the checked error. A Rust constructor declines with `Decline` or an untouched frontier.
+        // the same identity, the checked error. Any constructor, built-in or written in Logos,
+        // declines with `Decline` or an untouched frontier (›A constructor's outcome is read off
+        // its own cell; no holding, no re-invocation‹ [[R261]]).
         let same = self.cell_identity(&cell) == id;
         if cell.constructed {
             let instance = same && self.is_awake_instance(id);
@@ -637,7 +641,7 @@ impl<'a> Parser<'a> {
             self.cx.pos = cell.start;
             return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));
         }
-        let declined = matches!(outcome, Constructed::Decline) || (!logos && tape.edits() == edits);
+        let declined = matches!(outcome, Constructed::Decline) || tape.edits() == edits;
         if !declined {
             self.cx.pos = cell.start;
             return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));

@@ -766,11 +766,7 @@ impl<'a> Parser<'a> {
         if !self.marked_static(tape) {
             return self.declare_here(tape);
         }
-        let saved_init = self.cx.once_at.replace(self.cx.frames.len());
-        let saved_runtime_depth = std::mem::replace(&mut self.cx.runtime_depth, 0);
-        let built = self.declare_here(tape);
-        self.cx.once_at = saved_init;
-        self.cx.runtime_depth = saved_runtime_depth;
+        let built = self.parse_in_pass(|p| p.declare_here(tape));
         if !matches!(built?, Constructed::Placed) {
             return Ok(Constructed::Decline);
         }
