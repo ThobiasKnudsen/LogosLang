@@ -6522,6 +6522,7 @@ fn a_bare_error_is_refused_where_it_is_written() {
     for (src, at) in [
         ("error «msg»", "1:1"),
         ("error 5", "1:1"),
+        ("error. := «d», 0", "1:1"),
         ("f := fn () -> i32 ( error «boom» ), 0", "1:21"),
         ("x := i32 2, if x == 1 ( error «one» ), 0", "1:25"),
     ] {

@@ -294,6 +294,10 @@ impl<'a> Parser<'a> {
             self.cx.pos = word;
             return Err(ParseError::ErrorNeedsCategory);
         }
+        if self.consume_token(self.types.declare_tok) {
+            self.cx.pos = word;
+            return Err(ParseError::ErrorNeedsCategory);
+        }
         if let Some((at, len)) = self.lex_spelling() {
             let name = format!("error.{}", &self.cx.source[at..at + len]);
             if self.consume_token(self.types.declare_tok) {
