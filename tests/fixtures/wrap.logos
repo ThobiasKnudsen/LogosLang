@@ -1,0 +1,36 @@
+# A chooser whose mint is written inside its own `parse`, as `array`'s is: `wrap i32` is the type of
+# a value that holds one `i32`, one mint per type, kept by `type_mint`. The mint fills a `parse` of
+# its own, which takes a `[…]` after a value and gives what the value holds.
+pub wrap := type (
+    static parse_rank = fn.parse_rank,
+    static associativity = right,
+    static parse = (
+        if tape[1] == ? (
+            tape.is_constructed[0] = true
+        ) else if tape[1].type == type (
+            t := type tape[1],
+            place := type_mint.step(type_mint.step(0, wrap), t),
+            mut mint := type type_mint.kept(place),
+            if mint == ? (
+                mint = type (
+                    pub static inner := type t,
+                    pub mut v := inner,
+                    pub static get := fn () -> inner ( v ),
+
+                    static parse_rank = dyad.parse_rank,
+                    static associativity = left,
+                    static parse = (
+                        if tape[0].type != type and tape[1].type == square_brackets (
+                            tape[0] = tape[0].get(),
+                            tape.remove(1)
+                        ),
+                        tape.is_constructed[0] = true
+                    )
+                ),
+                type_mint.keep(place, mint)
+            ),
+            tape[0] = mint,
+            tape.remove(1)
+        )
+    )
+)
