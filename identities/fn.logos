@@ -4,7 +4,7 @@ fn := type (
     output_type := type ?
     bcode := callable ?
     frame := u64 ?
-    static compile := fn () -> void ( ? )
+    pub static compile := fn () -> void ( ? )
 
     static parse_rank = …
     static associativity = left

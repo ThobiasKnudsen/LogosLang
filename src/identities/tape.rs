@@ -88,14 +88,16 @@ pub struct TapeIds {
     pub cell_identity_leaf: DyadPtr,
 }
 
-/// The members are declared in the type's own scope, where `.` resolves them; the
-/// field list holds only `cells`, so an instance is eight bytes.
+/// The members are declared in the type's own scope, where `.` resolves them, each `pub`, since
+/// every parse reads them from outside; the field list holds only `cells`, so an instance is
+/// eight bytes.
 pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
     scope_ty: DyadPtr,
     array_ty: DyadPtr,
     void_ty: DyadPtr,
+    pub_: DyadPtr,
 ) -> TapeIds {
     let scope = super::scope::mint(cx.store, scope_ty, std::ptr::null_mut());
     // SAFETY: `void_ty` is the type node `Core::build` minted.
@@ -162,7 +164,9 @@ pub(super) fn register(
         ("remove", remove),
         ("recenter", recenter),
     ] {
-        cx.declare_in(scope, name, id);
+        let binding = cx.declare_in(scope, name, id);
+        // SAFETY: `binding` was just minted by `declare_in`.
+        unsafe { crate::binding::Binding::add_gate(cx.store, array_ty, binding, pub_) };
     }
     TapeIds {
         parsing_tape,

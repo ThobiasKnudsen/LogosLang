@@ -2443,7 +2443,7 @@ mod tests {
         );
         // A field moves only what it owns.
         assert_eq!(
-            parse_err("p := type ( x := i32 ?, y := i32 ? ),\nq := p (1, 2),\nb := move q.x"),
+            parse_err("p := type ( pub x := i32 ?, y := i32 ? ),\nq := p (1, 2),\nb := move q.x"),
             ParseError::MoveOfUnownedPath
         );
     }
@@ -2627,7 +2627,7 @@ mod tests {
     }
 
     /// A record type that fills `free`, so its values live behind a pointer of their own.
-    const KEPT: &str = "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ),\n";
+    const KEPT: &str = "r := type ( pub mut n := i32 ?, static free = ( print «freed {n}» ) ),\n";
 
     #[test]
     fn a_record_behind_its_pointer_is_freed_once_and_never_leaks() {
@@ -2670,7 +2670,7 @@ mod tests {
     }
 
     /// `x`, a record with two owning fields, `p` holding 5 and `q` 6.
-    const PAIR: &str = "r := type ( mut p := own @i32 ?, mut q := own @i32 ?, \
+    const PAIR: &str = "r := type ( pub mut p := own @i32 ?, pub mut q := own @i32 ?, \
         static free = ( free p, free q ), static s := fn () -> i32 ( 2 ) ),\n\
         mut x := r ?,\na := alloc 1 of i32 5,\nx.p = move a,\nb := alloc 1 of i32 6,\nx.q = move b,\n";
 
@@ -2692,7 +2692,8 @@ mod tests {
     }
 
     /// `q`, a record whose type fills no `free`, `x` holding 5 and `y` 6.
-    const PLAIN: &str = "r := type ( x := i32 ?, y := i32 ?, static s := fn () -> i32 ( 2 ) ),\n\
+    const PLAIN: &str =
+        "r := type ( pub x := i32 ?, pub y := i32 ?, pub static s := fn () -> i32 ( 2 ) ),\n\
         q := r (5, 6),\n";
 
     #[test]
@@ -2729,7 +2730,7 @@ mod tests {
     /// whose run makes a new `bagged`, and `bag` with no bracket is `bagged`.
     const BAG: &str = "import file «./identities/array.logos», t := array i32, \
         bagged := type ( \
-            mut items := own t ?, \
+            pub mut items := own t ?, \
             static free = ( free items ), \
             static parse_rank = dyad.parse_rank, \
             static parse = ( tape.is_constructed[0] = true ) ), \

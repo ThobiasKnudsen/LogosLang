@@ -9,11 +9,11 @@
 # A body names a field declared above it, so the fields come first.
 
 type := type (
-    parse_rank := f64 ?
-    associativity := type ?
-    parse := parse ?
-    run := run ?
-    free := free ?
+    pub parse_rank := f64 ?
+    pub associativity := type ?
+    pub parse := parse ?
+    pub run := run ?
+    pub free := free ?
 
     static parse_rank = f64 2.0
     static associativity = left

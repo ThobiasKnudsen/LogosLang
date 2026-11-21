@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn a_place_is_a_name_a_field_path_a_dereference_a_cell_or_a_call_that_ends_in_one() {
         let (mut store, _trie, core, exprs) = parse_seq(
-            "point := type ( x := i32 ?, y := i32 ? ),\n\
+            "point := type ( pub x := i32 ?, y := i32 ? ),\n\
              mut v := point (1, 2),\n\
              x := i32 1,\n\
              a := &x,\n\
