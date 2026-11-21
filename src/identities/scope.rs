@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `scope`: the type of a scope node, the parser's membership marker and, for
-//! a block, the sequence node itself: `[exprs, op, parent, exit, held, flow]`, the parent link
-//! set at [`mint`], the expressions (the `dyads` field) pushed as each line
+//! a block, the sequence node itself: `[exprs, op, parent, exit, held, flow, kept_as]`, the
+//! parent link set at [`mint`], the expressions (the `dyads` field) pushed as each line
 //! completes, the op set at [`fill`] when the block closes, and the exit, what the
 //! scope's end runs, and what its lines' ends free, set when it closes.
 //! DESIGN ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹
@@ -46,7 +46,7 @@ pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> Dya
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }
 
-/// The slots of a scope node's value, `[exprs, op, parent, exit, held, flow]`.
+/// The slots of a scope node's value, `[exprs, op, parent, exit, held, flow, kept_as]`.
 const EXPRS: usize = 0;
 const OP: usize = 1;
 const PARENT: usize = 2;
@@ -59,14 +59,35 @@ const HELD: usize = 4;
 /// How a closed block's lines end, once a walk has read it: null before, else a word,
 /// `1 + gives + 2 * falls`, never an address.
 const FLOW: usize = 5;
-pub(crate) const SLOTS: usize = FLOW + 1;
+/// Null, or for the block of a `{ … }` the record its value is of, which other `{ … }` of the same
+/// shape share (›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]).
+const KEPT_AS: usize = 6;
+pub(crate) const SLOTS: usize = KEPT_AS + 1;
 
 /// The block's membership key while it parses, and the sequence node once
 /// [`fill`] gives it its expressions; `parent` is null at the arche. A scope that
 /// holds names alone (the root, a type's member scope) is minted with no parent.
 pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> DyadPtr {
     let none = std::ptr::null_mut();
-    store.alloc_words(scope_ty, &[none, none, parent, none, none, none])
+    let mut slots = [none; SLOTS];
+    slots[PARENT] = parent;
+    store.alloc_words(scope_ty, &slots)
+}
+
+/// The record the block `node` is kept as a value of, when it is a `{ … }`'s; null otherwise.
+///
+/// # Safety
+/// `node` must be a scope node from the store.
+pub(crate) unsafe fn kept_as(node: DyadPtr) -> DyadPtr {
+    *(dyad::value(node) as *const DyadPtr).add(KEPT_AS)
+}
+
+/// The block `node` is a `{ … }`'s, kept as a value of the record `ty`.
+///
+/// # Safety
+/// `node` must be a scope node from the store and `ty` a record type node.
+pub(crate) unsafe fn set_kept_as(node: DyadPtr, ty: DyadPtr) {
+    *(dyad::value(node) as *mut DyadPtr).add(KEPT_AS) = ty;
 }
 
 /// How the closed block `node`'s lines end, if a walk has read it.
@@ -178,9 +199,12 @@ pub(crate) unsafe fn with_exprs(
 ) -> DyadPtr {
     let slots = dyad::value(node) as *const DyadPtr;
     let lines = array::build(store, types.array_, exprs);
-    let kept = [*slots.add(OP), *slots.add(PARENT), *slots.add(EXIT), *slots.add(HELD)];
-    let none = std::ptr::null_mut();
-    store.alloc_words(dyad::ty(node), &[lines, kept[0], kept[1], kept[2], kept[3], none])
+    let mut words = [std::ptr::null_mut(); SLOTS];
+    words[EXPRS] = lines;
+    for k in [OP, PARENT, EXIT, HELD] {
+        words[k] = *slots.add(k);
+    }
+    store.alloc_words(dyad::ty(node), &words)
 }
 
 /// The nodes whose values the scope's lines free at their ends.
