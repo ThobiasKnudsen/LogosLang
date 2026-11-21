@@ -1,7 +1,7 @@
 # The language defines itself: a power operator `^` written in ordinary Logos,
 # used in the same file, and compiled with f.compile().
 #
-# An operator is a type. `^` mints as `array` does: get_mint builds one type per pair of
+# An operator is a type. `^` mints through a function of its own: get_mint builds one type per pair of
 # operand types, whose fields `lhs` and `rhs` are typed by them, whose `static output_type`
 # is the type its nodes give, and whose run is a bare body over the fields; type_mint
 # keeps each mint once built. The parse, a body over the parsing tape `tape`, makes its own
