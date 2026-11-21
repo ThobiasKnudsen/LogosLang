@@ -30,7 +30,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
         // the classifier stands as itself.
         if p.reads_own_bracket(tape) {
             let node = p.parse_type_body(id)?;
-            tape.place(node);
+            tape.place_type_value(node);
             return Ok(crate::parse::Constructed::Placed);
         }
         p.construct_type_value(id, tape)

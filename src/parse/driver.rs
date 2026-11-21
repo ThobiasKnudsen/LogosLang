@@ -648,7 +648,7 @@ impl<'a> Parser<'a> {
         }
         // The identity stands as its own value: the use of its name, its binding.
         let value = self.stand_as_value(tape, id);
-        tape.place_named(value);
+        tape.place(value);
         Ok(())
     }
 
@@ -742,7 +742,7 @@ impl<'a> Parser<'a> {
                 return None;
             }
             let waits = self
-                .waiting_line_end()
+                .waiting_line_end(false)
                 .and_then(|end| end.map(|e| self.hold_line(e, false)).transpose());
             match waits {
                 Ok(Some(held)) => {

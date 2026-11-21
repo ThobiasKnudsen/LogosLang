@@ -937,7 +937,7 @@ impl<'a> Parser<'a> {
         self.cx.filling_at.pop();
         self.cx.last_declared = binding;
         self.cx.pending_binding = std::ptr::null_mut();
-        let cell = if typed_at_run { value? } else { self.named_type_place(value?)? };
+        let cell = if typed_at_run { value? } else { self.declared_value(value?)? };
         let value = cell.dyad;
         if self.is_bare_unknown(&cell) {
             return Err(self.untyped(tok.start, false));
@@ -964,36 +964,39 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// What `:=` takes from a right side that is a type's name with nothing after it: the place
-    /// `T ?` makes of that type, with no value, for a name, a field and a parameter alike (›`?` is
-    /// one value, the unknown; `key := T ?` declares without a value‹ [[R103]]). A bracket gives
-    /// what its line gives, so `(i32)` is `i32`. Any other right side stands as it is: a type
-    /// `type` gives (`type i32`, `type (…)`) is held, as is one a line computes.
-    pub(super) fn named_type_place(&mut self, cell: Cell) -> Result<Cell, ParseError> {
-        let types = self.types;
-        // SAFETY: a parsed cell holds a reduced dyad from the store.
-        let named = unsafe {
-            let d = cell.dyad;
-            cell.is_name_alone()
-                && !cell.hole
-                && !d.is_null()
-                && !self.is_bare_unknown(&cell)
-                && dyad::ty(d) == types.binding_
-                && !types.is_storage(d)
-                && crate::identities::type_identity_of(types, d)
-                    .is_some_and(|t| dyad::ty(t) == types.type_)
-        };
-        if !named {
+    /// What `:=` makes of its right side, read as a type and the value after it, for a name, a
+    /// field and a parameter alike (›`?` is one value, the unknown; `key := T ?` declares without
+    /// a value‹ [[R103]]): a type with nothing after it gives the place `T ?` makes of it, a type
+    /// a line computes too; a value stands as it is, the one `type` made of what stood after it
+    /// (`type i32`, `type (…)`) among them.
+    pub(super) fn declared_value(&mut self, cell: Cell) -> Result<Cell, ParseError> {
+        if cell.hole || cell.type_value {
             return Ok(cell);
         }
-        // SAFETY: as above; `named` saw the binding name a type.
-        let t = unsafe { types.through(cell.dyad) };
-        let place = self.valueless_place(t).map_err(|e| self.fail_at(cell.start, e))?;
+        let place = self.empty_place_of(cell.dyad).map_err(|e| self.fail_at(cell.start, e))?;
+        let Some(place) = place else { return Ok(cell) };
         let mut cell = cell;
         cell.dyad = place;
         cell.hole = true;
         cell.constructed = true;
         Ok(cell)
+    }
+
+    /// The place `T ?` makes of the type `value` gives, read as `?` reads the type to its left;
+    /// `None` for a value whose own type is not `type`, and for `?` itself.
+    pub(super) fn empty_place_of(&mut self, value: DyadPtr) -> Result<Option<DyadPtr>, ParseError> {
+        let types = self.types;
+        // SAFETY: a parsed value is null or a reduced dyad from the store.
+        let gives_type = unsafe {
+            !value.is_null()
+                && types.through(value) != types.unknown
+                && crate::identities::read::output_type(types, value) == types.type_
+        };
+        if !gives_type {
+            return Ok(None);
+        }
+        let t = self.type_known_now(value)?;
+        self.valueless_place(t).map(Some)
     }
 
     /// `type T`: the type `T` as a value of `type`, as `i32 1` is a value of `i32`, so a name
@@ -1031,7 +1034,7 @@ impl<'a> Parser<'a> {
                 })
                 .map_err(|e| self.fail_at(operand.start, e))?
         };
-        tape.place(held);
+        tape.place_type_value(held);
         Ok(Constructed::Placed)
     }
 
@@ -1162,8 +1165,7 @@ impl<'a> Parser<'a> {
             } else if crate::identities::read::read_kind(self.types, read)
                 == crate::identities::read::Read::Identity
             {
-                // A type held, `type i32` or one a line computes: the name is another spelling
-                // of it.
+                // A type held, `type i32`: the name is another spelling of it.
                 self.cx.scopes.rebind(binding, read);
                 read
             } else if let Some(t) = crate::identities::node_output(self.types, value) {
@@ -1321,7 +1323,7 @@ impl<'a> Parser<'a> {
     /// What `T ?` makes of the type `t`, the valueless form a declaration takes, whose type
     /// `hole::declared_type` reads: an empty node of a type whose nodes run (›`array` is a
     /// chooser‹ [[R223]]), else the valueless marker.
-    fn valueless_place(&mut self, t: DyadPtr) -> Result<DyadPtr, ParseError> {
+    pub(super) fn valueless_place(&mut self, t: DyadPtr) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         // SAFETY: `t` is a type node from the store.
         unsafe {

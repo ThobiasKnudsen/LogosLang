@@ -9558,8 +9558,8 @@ fn a_new_name_without_its_type_is_refused_where_it_is_written() {
     }
 }
 
-/// ›`?` is one value, the unknown; `key := T ?` declares without a value‹ [[R103]]: a type's name
-/// alone after `:=` declares as `T ?` does, and `type` before it holds the type.
+/// ›`?` is one value, the unknown; `key := T ?` declares without a value‹ [[R103]]: a type with
+/// nothing after it declares as `T ?` does, and `type` before it holds the type.
 #[test]
 fn a_type_alone_after_colon_equals_declares_a_place_of_it() {
     let pt = "pt := type ( pub x := i32, pub y := i32 )";
@@ -9632,6 +9632,113 @@ fn type_takes_its_whole_right_side() {
     assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
     let message = "1:11: error: the declared or assigned type must be a type value";
     assert!(stderr.contains(message), "stderr: {stderr}");
+}
+
+/// ›`?` is one value, the unknown; `key := T ?` declares without a value‹ [[R103]]: a right side
+/// that gives a type, with nothing after it, declares the place `T ?` makes of that type, however
+/// the type is written, for a name, a field and a parameter, on both tiers.
+#[test]
+fn a_type_a_line_computes_declares_a_place_of_it() {
+    let array = "import file «./identities/array.logos»";
+    let pick = "pick := fn (n := i32 ?) -> type ( if n == 1 (i64) else (i32) )";
+    let k = "k := fn (t := type ?) -> type ( t )";
+    // The name is an empty place, read only after a write.
+    for (src, name) in [
+        (format!("{pick}, u := pick(1), u"), "u"),
+        (format!("{pick}, pick.compile(), u := pick(1), u"), "u"),
+        (format!("{array}, t := array i32, t"), "t"),
+        (
+            format!(
+                "{array}, f := fn () -> i32 ( t := array i32, mut x := t ?, x = [4, 5], x[1] ), \
+                 f.compile(), f()"
+            ),
+            "t",
+        ),
+        ("t := «a».type, t".into(), "t"),
+        ("t := «a».type, t == string".into(), "t"),
+        ("mut t := type ?, t = i32, x := t, x".into(), "x"),
+        ("a := i32 5, t := a.type, t 3".into(), "t"),
+        ("f := fn () -> i32 ( a := i32 5, t := a.type, t 3 ), f.compile(), f()".into(), "t"),
+        (format!("{pick}, f := fn (n := i32 ?) -> i32 ( u := pick(n), u ), 0"), "u"),
+        ("f := fn (t := type ?) -> i32 ( x := t, x ), 0".into(), "x"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        let message = format!("error: `{name}` is read before it is written");
+        assert!(stderr.contains(&message) && !stderr.contains("run error"), "{src}: {stderr}");
+    }
+    // A write fills it, converting into the type the right side gave.
+    let run_pick =
+        format!("{pick}, f := fn (n := i32 ?) -> type ( mut u := pick(n), u = 5, u.type )");
+    for (src, want) in [
+        (format!("{pick}, mut u := pick(1), u = 5, u.type"), "i64"),
+        (
+            format!("{k}, g := fn () -> type ( mut u := k(i64), u = 5, u.type ), g.compile(), g()"),
+            "i64",
+        ),
+        (format!("{array}, mut t := array i32, t = [4, 5], t[1]"), "5"),
+        (
+            format!(
+                "{array}, f := fn () -> i32 ( mut t := array i32, t = [4, 5], t[1] ), \
+                 f.compile(), f()"
+            ),
+            "5",
+        ),
+        ("mut t := «a».type, t = «b», t".into(), "b"),
+        ("f := fn () -> string ( mut t := «a».type, t = «b», t ), f.compile(), f()".into(), "b"),
+        ("a := i32 5, mut t := a.type, t = 3, t + a".into(), "8"),
+        ("mut t := type ?, t = i32, mut x := t, x = 7, x".into(), "7"),
+        ("mut x := if true (i32) else (i64), x = 3, x".into(), "3"),
+        // A type known only when its line runs: the place is laid out then.
+        (format!("{run_pick}, print «{{f(1)}} {{f(0)}}»"), "i64 i32"),
+        ("f := fn (t := type ?) -> i32 ( mut x := t, x = 5, x ), f(i32)".into(), "5"),
+        // A field, a `static` member and a parameter.
+        (
+            format!(
+                "{pick}, pt := type ( pub a := pick(1), pub b := i32 ), p := pt(1, 2), p.a.type"
+            ),
+            "i64",
+        ),
+        (format!("{k}, pt := type ( pub static e := k(i64) ), pt.e.type"), "i64"),
+        (format!("{pick}, f := fn (a := pick(1)) -> type ( a.type ), f(1)"), "i64"),
+        (
+            format!(
+                "{array}, f := fn (a := array i32) -> i32 ( a[1] ), b := array i32 [4, 5], f(b)"
+            ),
+            "5",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // `==` and a parameter read the type as itself, and a value is held as it was.
+    for (src, want) in [
+        ("t := type i32, t == i32", "true"),
+        ("g := fn (t := type ?) -> type ( t ), g(i32)", "i32"),
+        ("x := (type i32), x", "i32"),
+        ("f := fn (x := i32) -> i32 ( x + 1 ), g := f, g(2)", "3"),
+        ("m := hashmap i32 -> i32, m[1] = 2, m[1]", "2"),
+        // A `dyad` holding a type is copied.
+        ("f := fn (a := dyad ?) -> type ( x := a, x.type ), f(i32)", "type"),
+    ] {
+        assert_eq!(line(src), want, "{src}");
+    }
+    // What `T ?` refuses, `T` alone refuses: a type no place of which the seed lays out, and one
+    // known only when the program runs where the line cannot wait for it.
+    for (src, message) in [
+        ("x := scope, 1", "declarations of non-numeric types are not in the seed yet"),
+        (
+            "m := hashmap type -> type, m[i32] = i64, x := m[i32], 1",
+            "which type this is is known only when the program runs",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+    let src = "f := fn (t := type ?) -> i32 ( mut x := t, x = 5, x ), f.compile(), f(i32)";
+    let (code, _, stderr) = run_line(src);
+    assert_eq!(code, Some(1), "{src}");
+    assert!(stderr.contains("is parsed only when it runs"), "{src}: {stderr}");
 }
 
 /// ›`?` is one value, the unknown; `key := T ?` declares without a value‹ [[R103]]: an empty place
