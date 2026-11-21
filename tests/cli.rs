@@ -12724,6 +12724,14 @@ fn a_name_in_a_body_holds_one_dyad_per_mint_found_again_at_the_next_run() {
             ),
             "true false true\n",
         ),
+        // A name written in a type body built at each run is one written name too.
+        (
+            format!(
+                "f := fn () -> @dyad ( {} ), print «{{f() == f()}}»",
+                own("pub static u := type ( pub x := i32 ? )")
+            ),
+            "true\n",
+        ),
         // A writable `static` keeps its type from every other, an earlier run's too.
         (
             format!("f := fn () -> @dyad ( {} ), print «{{f() == f()}}»", own("pub static mut n := i32 0")),

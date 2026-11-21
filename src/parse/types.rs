@@ -144,6 +144,22 @@ enum FieldList {
     TypeBody,
 }
 
+/// The name that gives a formed type its identity: its binding, and for a name declared in a held
+/// body while it is built, that body's held node and where the name's value starts in its text.
+#[derive(Clone, Copy)]
+struct OwnName {
+    binding: DyadPtr,
+    written: Option<(DyadPtr, usize)>,
+}
+
+impl OwnName {
+    const NONE: OwnName = OwnName { binding: std::ptr::null_mut(), written: None };
+
+    fn is_none(&self) -> bool {
+        self.binding.is_null()
+    }
+}
+
 /// Each field's offset inside a value of `ty`, packed in order at the width a place of its type
 /// takes, written onto the field's binding; the fields' total, the type's `size_bytes`.
 /// DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹.
@@ -841,25 +857,25 @@ impl<'a> Parser<'a> {
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
         let own_name = self.name_given(&["type"]);
         if self.cx.runtime_depth > 0 {
-            return self.hold_type_body(own_name);
+            return self.hold_type_body(own_name.binding);
         }
         let node = self.rt.store.alloc_leaf(id);
-        if !own_name.is_null() {
+        if !own_name.is_none() {
             // The body's lines name the type they are building (DESIGN ›An unknown spelling is
             // a node of type `unknown_name`; `:=` makes the binding, and the node comes with
             // the value‹ [[R251]]).
-            // SAFETY: `own_name` is the binding `:=` is filling, live for the whole drive.
-            unsafe { Binding::set_dyad(own_name, node) };
+            // SAFETY: the binding is the one `:=` is filling, live for the whole drive.
+            unsafe { Binding::set_dyad(own_name.binding, node) };
         }
         self.build_type_body(node, own_name)
     }
 
     /// Builds the type body at the cursor into `self_type`, a type node with no record yet, for
-    /// the name `own_name`, null where no name holds the type.
+    /// `own_name`, none where no name holds the type.
     fn build_type_body(
         &mut self,
         self_type: DyadPtr,
-        own_name: DyadPtr,
+        own_name: OwnName,
     ) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
         let opened_at = self.cx.pos;
@@ -1023,10 +1039,10 @@ impl<'a> Parser<'a> {
 
     /// The name that gives the type being read here its identity: the name of the declaration
     /// whose whole right side up to the cursor is `words`, the former's own spelling with `type`
-    /// before it where the former gives a type; null where no declaration holds it so (›Every
+    /// before it where the former gives a type; none where no declaration holds it so (›Every
     /// type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
     /// gives it its identity‹ [[R383]]).
-    fn name_given(&self, words: &[&str]) -> DyadPtr {
+    fn name_given(&self, words: &[&str]) -> OwnName {
         match (self.cx.filling.last(), self.cx.filling_at.last()) {
             (Some(&binding), Some(&at))
                 if self
@@ -1035,9 +1051,10 @@ impl<'a> Parser<'a> {
                     .get(at..self.cx.pos)
                     .is_some_and(|t| t.split_whitespace().eq(words.iter().copied())) =>
             {
-                binding
+                let written = (!self.cx.held.is_null()).then_some((self.cx.held, at));
+                OwnName { binding, written }
             }
-            _ => std::ptr::null_mut(),
+            _ => OwnName::NONE,
         }
     }
 
@@ -1047,8 +1064,8 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `node` must be a type node carrying its record.
-    unsafe fn mint_of(&mut self, node: DyadPtr, own_name: DyadPtr) -> DyadPtr {
-        if own_name.is_null() {
+    unsafe fn mint_of(&mut self, node: DyadPtr, own_name: OwnName) -> DyadPtr {
+        if own_name.is_none() {
             return node;
         }
         self.rt.store.alloc_head(self.types.type_, dyad::head(node))
@@ -1056,26 +1073,33 @@ impl<'a> Parser<'a> {
 
     /// What a formed type gives where its contents are the mint `mint`: the mint, or for the
     /// name that holds it the name's own dyad over the mint's record, which a value's type word
-    /// then points at. A name has one dyad per mint, which `type_mint` keeps under the name, so
-    /// a body that runs again finds it again; the first build makes it, of `node` where the
-    /// builder has a dyad for the name already (›Every type is minted by its contents through
-    /// `type_mint`; the name that holds a `type ( … )` gives it its identity‹ [[R383]]).
+    /// then points at. A written name has one dyad per mint, which `type_mint` keeps under where
+    /// the name is written, so a body that runs again finds it again; the first build makes it,
+    /// of `node` where the builder has a dyad for the name already (›Every type is minted by its
+    /// contents through `type_mint`; the name that holds a `type ( … )` gives it its identity‹
+    /// [[R383]]).
     ///
     /// # Safety
-    /// `mint` must be a type node carrying a record, `own_name` null or a binding dyad, and
+    /// `mint` must be a type node carrying a record, `own_name`'s binding a binding dyad, and
     /// `node` null or a type node of the mint's contents.
     unsafe fn named_type(
         &mut self,
-        own_name: DyadPtr,
+        own_name: OwnName,
         mint: DyadPtr,
         node: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        if own_name.is_null() {
+        if own_name.is_none() {
             return Ok(mint);
         }
         let types = self.types;
-        let (place, kept) = type_mint::find(self.rt.store, types, own_name, &[KeyPart::Node(mint)])
-            .map_err(ParseError::Run)?;
+        // A held body makes its names' bindings again at each build, so a name written in one is
+        // found by the held node and the place in its text.
+        let (former, key) = match own_name.written {
+            Some((held, at)) => (held, vec![KeyPart::Word(at as u64), KeyPart::Node(mint)]),
+            None => (own_name.binding, vec![KeyPart::Node(mint)]),
+        };
+        let (place, kept) =
+            type_mint::find(self.rt.store, types, former, &key).map_err(ParseError::Run)?;
         if let Some(named) = kept {
             return Ok(named);
         }
@@ -1326,7 +1350,8 @@ impl<'a> Parser<'a> {
         };
         let self_type = self.rt.store.alloc_leaf(self.types.type_);
         let g = self.enter(cx);
-        let built = g.0.build_type_body(self_type, held.name);
+        let own_name = OwnName { binding: held.name, written: None };
+        let built = g.0.build_type_body(self_type, own_name);
         let built_pos = g.0.cx.pos;
         drop(g);
 
