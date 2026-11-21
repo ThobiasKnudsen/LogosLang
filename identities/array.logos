@@ -12,57 +12,6 @@ error.not_a_list := «an array's list is not written in square brackets»,
 error.element_type := «an element does not fit its array's element type»,
 
 array := pub type (
-    # The mint fills a `parse`, which cannot be written inside `array`'s own: stand-in for #458.
-    get_mint := pub static fn (t := type ?) -> type (
-        place := type_mint.step(type_mint.step(0, array), t),
-        mint := mut type type_mint.kept(place),
-        if mint != ? return mint,
-        mint = type (
-            element_type := pub static type t,
-            ptr := pub mut own @element_type ?,
-            size := pub mut u64 0,
-            size_bytes := pub static fn () -> u64 (size * element_type.size_bytes),
-
-            free = (
-                for i in 0..size ( free (ptr + i)@ ),
-                free ptr
-            ),
-
-            at := pub static fn (index := u64 ?) -> element_type (
-                if index >= size error.index_out_of_range «the index is at or past the array's size»,
-                (ptr + index)@
-            ),
-            at_signed := static fn (index := i64 ?) -> element_type (
-                if index < 0 or u64 lossy (index) >= size
-                    error.index_out_of_range «the index is negative or at or past the array's size»,
-                (ptr + index)@
-            ),
-
-            # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
-            parse_rank = dyad.parse_rank,
-            associativity = left,
-            parse = (
-                if tape[0].type != type and tape[1].type == square_brackets (
-                    # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
-                    if tape[1].dyads[0].type ⊆ tape[0].size.type (
-                        tape[0] = tape[0].at(tape[1].dyads[0])
-                    ) else (
-                        # A literal's value is known now, so one outside the size type is refused now.
-                        if tape[1].dyads[0].type == rational_number
-                            error.index_type «the index type is not within the size type, so the index could lie outside the array»,
-                        if not tape[1].dyads[0].type ⊆ i64
-                            error.index_type «the index is not an integer»,
-                        tape[0] = tape[0].at_signed(tape[1].dyads[0])
-                    ),
-                    tape.remove(1)
-                ),
-                tape.is_constructed[0] = true
-            )
-        ),
-        type_mint.keep(place, mint),
-        mint
-    ),
-
     # The parse asks through a call, so the branch it guards is built where it is written: stand-in for #456.
     bytes_of := static fn (t := type ?) -> u64 ( t.size_bytes ),
 
@@ -94,7 +43,54 @@ array := pub type (
                 error.not_a_type «id after array is not a type»,
             t := type tape[1],
             if bytes_of(t) != 0 (
-                mint := type get_mint(t),
+                place := type_mint.step(type_mint.step(0, array), t),
+                mint := mut type type_mint.kept(place),
+                if mint == ? (
+                    mint = type (
+                        element_type := pub static type t,
+                        ptr := pub mut own @element_type ?,
+                        size := pub mut u64 0,
+                        size_bytes := pub static fn () -> u64 (size * element_type.size_bytes),
+
+                        free = (
+                            for i in 0..size ( free (ptr + i)@ ),
+                            free ptr
+                        ),
+
+                        at := pub static fn (index := u64 ?) -> element_type (
+                            if index >= size error.index_out_of_range «the index is at or past the array's size»,
+                            (ptr + index)@
+                        ),
+                        at_signed := static fn (index := i64 ?) -> element_type (
+                            if index < 0 or u64 lossy (index) >= size
+                                error.index_out_of_range «the index is negative or at or past the array's size»,
+                            (ptr + index)@
+                        ),
+
+                        # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
+                        parse_rank = dyad.parse_rank,
+                        associativity = left,
+                        # Its `tape` is the mint's own, not `array`'s (›`tape` is a word the `parse` slot declares into its body‹ [[R191]]).
+                        parse = (
+                            if tape[0].type != type and tape[1].type == square_brackets (
+                                # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
+                                if tape[1].dyads[0].type ⊆ tape[0].size.type (
+                                    tape[0] = tape[0].at(tape[1].dyads[0])
+                                ) else (
+                                    # A literal's value is known now, so one outside the size type is refused now.
+                                    if tape[1].dyads[0].type == rational_number
+                                        error.index_type «the index type is not within the size type, so the index could lie outside the array»,
+                                    if not tape[1].dyads[0].type ⊆ i64
+                                        error.index_type «the index is not an integer»,
+                                    tape[0] = tape[0].at_signed(tape[1].dyads[0])
+                                ),
+                                tape.remove(1)
+                            ),
+                            tape.is_constructed[0] = true
+                        )
+                    ),
+                    type_mint.keep(place, mint)
+                ),
                 if tape[2].type == scope
                     error.not_a_list «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
                 # Right of another `array` this one is the element type, and the list is the outer one's.
