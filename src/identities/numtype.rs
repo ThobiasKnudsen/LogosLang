@@ -166,7 +166,7 @@ fn construct(
         // SAFETY: `taken` is the reduced dyad `lossy` took; `id` is this numeric type's node.
         unsafe {
             let args = p.args_of(taken);
-            p.build_call_as(id, &args, true)
+            p.build_conversion(id, &args, true)
         }
         .map_err(|e| p.fail_at(operand.start, e))?
     } else if operand.is_bracket() {
@@ -175,7 +175,7 @@ fn construct(
         let args = unsafe { p.args_of(operand.dyad) };
         tape.remove(1);
         // SAFETY: `id` is this numeric type's node; `args` are reduced dyads.
-        unsafe { p.build_call(id, &args) }?
+        unsafe { p.build_conversion(id, &args, false) }?
     } else {
         let value = p.as_operand(operand)?;
         tape.remove(1);

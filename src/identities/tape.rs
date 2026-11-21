@@ -116,6 +116,7 @@ pub(super) fn register(
         std::ptr::null_mut(),
         meta::prec::APPLY,
         crate::parse::Assoc::Left,
+        cx.derived_parse,
     );
     let parsing_tape = cx.store.alloc_head(cx.type_, layout);
     cx.declare("parsing_tape", parsing_tape);
