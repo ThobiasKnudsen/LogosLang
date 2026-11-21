@@ -900,7 +900,7 @@ impl<'a> Parser<'a> {
     /// with an end is refused where something it is reached through only borrows it.
     fn ended_path(&mut self, place: DyadPtr, cell: &Cell) -> Result<Option<Ended>, ParseError> {
         use crate::identities::drop_model::{
-            cell_free, freeing_holder, is_owning_place, path_borrows,
+            cell_teardown, freeing_holder, is_owning_place, path_borrows,
         };
         use crate::identities::this::{field_path, FieldPath};
         let (at, held) = (cell.start, self.settled_type(cell.root));
@@ -908,7 +908,7 @@ impl<'a> Parser<'a> {
         let owns = unsafe {
             self.is_owning_read(place)
                 || is_owning_place(self.types, place)
-                || cell_free(self.types, place).is_some()
+                || cell_teardown(self.types, place).is_some()
         };
         // SAFETY: `place` is a reduced dyad from the store, the cell's root null or a binding.
         let (binding, path) = match unsafe { field_path(self.types, place, cell.root, held) } {
