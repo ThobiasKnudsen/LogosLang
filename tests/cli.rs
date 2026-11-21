@@ -9531,6 +9531,47 @@ fn a_type_alone_after_colon_equals_declares_a_place_of_it() {
     }
 }
 
+/// ›`?` is one value, the unknown; `key := T ?` declares without a value‹ [[R103]]: `type` takes
+/// the whole right side as its value, a type a line computes too, and the name holds that type.
+#[test]
+fn type_takes_its_whole_right_side() {
+    let array = "import file «./identities/array.logos»";
+    let pick = "pick := fn (n := i32 ?) -> type ( if n == 1 (i64) else (i32) )";
+    let run_pick = "pick := fn (n := i32 ?) -> type ( if n > 0 (i64) else (i32) ), \
+                    f := fn (n := i32 ?) -> type ( u := type pick(n), x := u 5, x.type )";
+    for (src, want) in [
+        (format!("{array}, t := type array i32, t == array i32"), "true"),
+        (format!("{array}, t := type array i32, mut x := t ?, x = [4, 5], x[1]"), "5"),
+        (
+            format!(
+                "{array}, f := fn () -> i32 ( t := type array i32, mut x := t ?, x = [4, 5], \
+                 x[1] ), f.compile(), f()"
+            ),
+            "5",
+        ),
+        (format!("{pick}, u := type pick(1), u"), "i64"),
+        (format!("{pick}, pick.compile(), u := type pick(1), u"), "i64"),
+        (format!("{run_pick}, f(1)"), "i64"),
+        (format!("{run_pick}, f(0)"), "i32"),
+        ("t := type «a».type, t == string".into(), "true"),
+        ("a := i32 5, t := type a.type, t 3".into(), "3"),
+        ("f := fn () -> i32 ( a := i32 5, t := type a.type, t 3 ), f.compile(), f()".into(), "3"),
+        ("n := i32 1, x := type if n == 1 (i32) else (i64), x".into(), "i32"),
+        ("m := hashmap type -> type, m[i32] = i64, mut x := type m[i32], x = f64, x".into(), "f64"),
+        ("k := fn (t := type ?) -> type ( t ), x := type k(type i64), x".into(), "i64"),
+        ("f := fn (t := type ?) -> i32 ( x := type t, y := x 5, y ), f(i32)".into(), "5"),
+        // Inside a condition the value is the one lexeme before the body's bracket.
+        ("t := type i32, if t == type i32 ( 1 ) else ( 2 )".into(), "1"),
+        ("t := type i32, mut n := i32 0, while t != type i32 ( n = 1 ), n".into(), "0"),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    let (code, stdout, stderr) = run_line("x := type i32 5, x");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    let message = "1:11: error: the declared or assigned type must be a type value";
+    assert!(stderr.contains(message), "stderr: {stderr}");
+}
+
 /// ›`?` is one value, the unknown; `key := T ?` declares without a value‹ [[R103]]: an empty place
 /// of a type that fills `run` has no value, so nothing runs until a write gives it one, and a read
 /// before then is refused (›Reading a place before its first write is refused at parse‹ [[R104]]).

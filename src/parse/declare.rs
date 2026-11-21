@@ -998,9 +998,8 @@ impl<'a> Parser<'a> {
 
     /// `type T`: the type `T` as a value of `type`, as `i32 1` is a value of `i32`, so a name
     /// given it holds `T` itself (›The ground is one identity, spelled `type`; `logos` is a
-    /// language‹ [[R134]]). Read at discovery, a type not built yet is the type itself, as
-    /// `array` reads its element type (›A `tape[k]` read past the lexed frontier lexes on demand
-    /// for every constructor‹ [[R231]]). A box the pass has filled gives what it holds; a type
+    /// language‹ [[R134]]). `T` is the whole right side, a type a line computes too:
+    /// `type array i32`, `type pick(1)`. A box the pass has filled gives what it holds; a type
     /// known only when the program runs stays the value it is, which lands in a `type` place.
     /// `type ?` is the valueless `type` place, and with nothing to its right `type` stands as
     /// itself.
@@ -1012,10 +1011,13 @@ impl<'a> Parser<'a> {
         if !self.finds_right_side(tape) {
             return Ok(Constructed::Decline);
         }
-        let Some(operand) = self.cell_at(tape, 1)? else {
+        let Some(operand) = self.value_after(tape)? else {
             return Ok(Constructed::Decline);
         };
-        if self.takes_unknown(tape, &operand, id)? {
+        if self.is_bare_unknown(&operand) {
+            let place = self.valueless_place(id)?;
+            tape.place(place);
+            tape.at_mut(0).expect("placed above").hole = true;
             return Ok(Constructed::Placed);
         }
         let value = self.as_operand(operand)?;
@@ -1029,9 +1031,23 @@ impl<'a> Parser<'a> {
                 })
                 .map_err(|e| self.fail_at(operand.start, e))?
         };
-        tape.remove(1);
         tape.place(held);
         Ok(Constructed::Placed)
+    }
+
+    /// The value after the type at the center, taken off the source: the rest of its expression,
+    /// read as `:=` reads its own right side. Inside a read that ends at a bracket, a condition
+    /// or a range, it is the one cell before that bracket, which only the read around it can
+    /// tell from the value's own.
+    fn value_after(&mut self, tape: &mut ParsingTape) -> Result<Option<Cell>, ParseError> {
+        if self.cx.lex_mode.is_none() {
+            return self.parse_expression_cell().map(Some);
+        }
+        let cell = self.cell_at(tape, 1)?;
+        if cell.is_some() {
+            tape.remove(1);
+        }
+        Ok(cell)
     }
 
     /// A declaration's right side is `?` alone, with no type to its left.
