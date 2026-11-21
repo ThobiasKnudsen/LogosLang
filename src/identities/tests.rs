@@ -3643,7 +3643,8 @@ fn a_name_is_written_only_if_declared_mut() {
         parse_err("immut x := i32 5"),
         ParseError::Resolve(crate::parse::ResolveError::Unknown("immut".into()))
     );
-    assert_eq!(parse_err("mut 5"), ParseError::GateNeedsDeclaration);
+    // A gate word gates the value to its right, named or not.
+    assert_eq!(run_script("mut 5"), 5);
     assert_eq!(run_script("f := fn (mut a := i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
     assert_eq!(
         parse_err("f := fn (a := i32 ?) -> i32 ( a = a + 1, a )"),
@@ -3652,13 +3653,25 @@ fn a_name_is_written_only_if_declared_mut() {
 }
 
 #[test]
-fn pub_without_a_declaration_is_an_error() {
-    let (mut store, mut trie, core) = new_core();
-
-    let mut s = ScopeStack::new();
-    s.push(core.root_scope);
-    let mut p = Parser::new("pub 5", &mut store, &mut trie, &core, s);
-    assert!(matches!(p.parse_expression(), Err(crate::parse::ParseError::GateNeedsDeclaration)));
+fn a_gate_word_reads_the_whole_value_to_its_right() {
+    // ›A gate word reads the whole value to its right and gives it with its type gated‹ [[R102]]
+    assert_eq!(run_script("pub 5"), 5);
+    assert_eq!(run_script("x := mut i32 5,\nx = 6,\nx"), 6);
+    assert_eq!(run_script("x := pub mut i32 5,\nx = 6,\nx"), 6);
+    assert_eq!(run_script("a := i32 1,\nb := i32 2,\nx := mut a + b,\nx = x + 1,\nx"), 4);
+    assert_eq!(run_script("x := mut i32,\nx = 4,\nx"), 4);
+    assert_eq!(run_script("x := mut i32 ?,\nx = 4,\nx"), 4);
+    assert_eq!(run_script("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
+    assert_eq!(parse_err("x := mut mut i32 5"), ParseError::DoubleGate);
+    assert_eq!(parse_err("x := mut"), ParseError::MissingOperand);
+    assert_eq!(parse_err("f := fn (a := pub i32 ?) -> i32 ( a )"), ParseError::PubParameter);
+    assert_eq!(parse_err("f := fn (a := static i32 ?) -> i32 ( a )"), ParseError::StaticMisplaced);
+    // A copy takes no gate: the name's gates are those written in its own declaration.
+    assert_eq!(
+        parse_err_after(&["x := mut i32 5", "y := x"], "y = 2"),
+        ParseError::NotMutable(Box::new("y".into()))
+    );
+    assert_eq!(run_script("x := i32 5,\ny := mut x,\ny = 2,\nx + y"), 7);
 }
 
 #[test]

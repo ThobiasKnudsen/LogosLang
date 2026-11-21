@@ -136,6 +136,9 @@ pub(crate) mod prec {
     pub const NOT: f64 = 35.0;
     pub const AND: f64 = 30.0;
     pub const OR: f64 = 20.0;
+    /// Below every operator, so a gate word reads the whole value to its right: `pub a + b`
+    /// gates the sum.
+    pub const GATE: f64 = 15.0;
     pub const RETURN: f64 = 10.0;
     /// No constructor: a delimiter, a data type, a node record; never constructed by the driver.
     pub const INERT: f64 = 0.0;

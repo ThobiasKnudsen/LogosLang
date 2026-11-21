@@ -20,6 +20,8 @@ pub enum ParseError {
     TypeBodyLine,
     /// `static` on a parameter, or anywhere but at the start of a type body's line.
     StaticMisplaced,
+    /// `pub` on a parameter, which only its function reads.
+    PubParameter,
     /// `parse = (…)` without `static`: a slot is stored once per type.
     SlotFillNeedsStatic,
     /// A value made once at the definition (`static`, `immediate`) read a name that

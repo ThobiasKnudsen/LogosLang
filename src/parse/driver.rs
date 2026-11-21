@@ -646,9 +646,11 @@ impl<'a> Parser<'a> {
             self.cx.pos = cell.start;
             return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));
         }
-        // The identity stands as its own value: the use of its name, its binding.
+        // The identity stands as its own value: the use of its name, its binding. A type read
+        // with its gates, `x.type`, stands with them.
         let value = self.stand_as_value(tape, id);
         tape.place(value);
+        tape.at_mut(0).expect("placed above").gates = cell.gates;
         Ok(())
     }
 

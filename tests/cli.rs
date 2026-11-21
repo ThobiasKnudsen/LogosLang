@@ -1863,10 +1863,11 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (share y := 3)\n", "unknown name `share`"),
         (b"d := i32 5\nfree = 3\n", "a line of the type body itself"),
         (b"t := type (static parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
-        (b"t := type (static parse = ( static parse_rank = 3 ))\n", "followed by a declaration"),
-        (b"t := type (lex_rank = 5)\n", "its fill says so"),
-        (b"t := type (parse = ( 1 ))\n", "its fill says so"),
-        ("t := type (# «note» parse = ( 1 ))\n".as_bytes(), "its fill says so"),
+        (
+            b"t := type (static parse = ( static parse_rank = 3 ))\n",
+            "a line of the type body itself",
+        ),
+        (b"t := type (parse)\n", "its fill says so"),
         (b"x := 1\nt := type (x = 5)\n", "a type body line"),
         (b"t := type (fields = (a := i32 ?))\n", "unknown name `fields`"),
         (b"t := type (static associativity = 5)\n", "`left` or `right`"),
@@ -4292,6 +4293,58 @@ fn the_binding_read_answers_scope_and_range_and_holds_no_gate() {
         let (code, _, stderr) = run_line(line);
         assert_eq!(code, Some(1), "{line}: stderr: {stderr}");
         assert!(stderr.contains(want), "{line}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_gate_word_stands_right_of_the_declaration_and_gates_the_whole_value() {
+    // ›A gate word reads the whole value to its right and gives it with its type gated‹ [[R102]]
+    for (src, want) in [
+        ("x := mut i32 5, x = 6, x", "6"),
+        ("x := mut pub i32 5, x = 7, x", "7"),
+        ("a := i32 1, b := i32 2, x := mut a + b, x = x + 1, x", "4"),
+        ("a := i32 1, b := i32 2, x := pub (a + b), x", "3"),
+        ("x := mut i32, x = 4, x", "4"),
+        ("x := i32 5, y := mut x, y = 2, x + y", "7"),
+        ("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ), f(4)", "5"),
+        ("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ), f.compile(), f(4)", "5"),
+        ("f := fn (a := i32 ?) -> i32 ( a ), f(mut i32 5)", "5"),
+        ("p := type ( v := pub mut i32 ? ), q := mut p(1), q.v = 3, q.v", "3"),
+        ("t := type ( n := pub static mut i32 0 ), t.n = 3, t.n", "3"),
+        ("t := type ( n := static pub i32 7 ), t.n", "7"),
+        ("math := pub type ( v := pub f64 ? ), a := math(1.5), a.v", "1.5"),
+        ("o := { a := pub i32 1, b := i32 2 }, o.a", "1"),
+        ("f := fn () -> i32 ( n := static mut i32 0, n = n + 1, n ), free (f()), f()", "2"),
+        (
+            "f := fn () -> i32 ( n := static mut i32 0, n = n + 1, n ), f.compile(), free (f()), f()",
+            "2",
+        ),
+        // A slot is one place per type already, so its fill takes no gate word.
+        ("t := type ( parse_rank = 50.0, v := pub i32 ? ), t.parse_rank", "50.0"),
+        // `x.type` is the type with its gates, which read as the type they gate.
+        ("x := mut i32 5, x.type == i32", "true"),
+        ("x := mut i32 5, y := x.type ?, y = 3, y", "3"),
+        ("x := mut i32 5, y := x.type, y = 3, y", "3"),
+        ("p := type ( v := pub mut i32 ? ), q := p(1), y := q.v.type ?, y = 3, y", "3"),
+    ] {
+        assert_eq!(line(src), want, "{src}");
+    }
+    for (src, want) in [
+        ("x := i32 5, x = 6", "`x` is not `mut`"),
+        ("x := mut i32 5, y := x, y = 2", "`y` is not `mut`"),
+        ("x := i32 5, y := x.type ?, y = 3", "`y` is not `mut`"),
+        ("x := mut mut i32 5", "already stands on the declaration"),
+        ("x := mut", "missing an operand"),
+        ("p := type ( v := pub i32 ? ), q := mut p(1), q.v = 3", "`v` is not `mut`"),
+        ("p := type ( v := i32 ? ), q := p(1), q.v", "`v` is not `pub`"),
+        ("t := type ( n := static pub i32 7 ), t.n = 3", "`n` is not `mut`"),
+        ("o := { a := pub i32 1, b := i32 2 }, o.b", "`b` is not `pub`"),
+        ("f := fn (a := pub i32 ?) -> i32 ( a ), f(4)", "a parameter takes no `pub`"),
+        ("f := fn (a := static i32 ?) -> i32 ( a ), f(4)", "never on a parameter"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(want), "{src}: stderr: {stderr}");
     }
 }
 

@@ -839,8 +839,41 @@ impl<'a> Parser<'a> {
         self.cx.definitions.last().is_some_and(|def| self.cx.scopes.current() == Some(def.scope))
     }
 
-    /// The gate words left of the name being declared include `static`.
-    fn marked_static(&self, tape: &ParsingTape) -> bool {
+    /// The gates of the value the name `binding` took, written before it, are the gates of the
+    /// name's type (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹
+    /// [[R381]]).
+    pub(super) fn gate_name(&mut self, binding: DyadPtr, mint: DyadPtr) -> Result<(), ParseError> {
+        // SAFETY: a cell's gates are null or a gate mint.
+        for gate in unsafe { crate::identities::gate::words_of(mint) } {
+            self.add_gate(binding, gate)?;
+        }
+        Ok(())
+    }
+
+    /// The gate words that open the value at the cursor include `static`; nothing is consumed.
+    pub(super) fn static_ahead(&mut self) -> bool {
+        let at = self.cx.pos;
+        let found = loop {
+            let word = self.lex_spelling().and_then(|(start, len)| {
+                let source = self.cx.source;
+                self.cx.scopes.resolve(self.trie, &source[start..start + len]).ok()
+            });
+            match word.map(|r| r.identity) {
+                Some(id) if id == self.types.static_ => break true,
+                Some(id) if self.is_gate_word(id) => {}
+                _ => break false,
+            }
+        };
+        self.cx.pos = at;
+        found
+    }
+
+    /// The gate words of the name being declared include `static`: those that open its value,
+    /// or those written left of it.
+    fn marked_static(&mut self, tape: &ParsingTape) -> bool {
+        if self.static_ahead() {
+            return true;
+        }
         let t = self.types;
         let mut k = -2;
         while let Some(cell) = tape.at(k) {
@@ -936,6 +969,7 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `binding` is the binding just declared; `value` a reduced dyad from the store.
         let declared = unsafe { self.land_at_binding(binding, value, cell.hole, cell.owning) }?;
+        self.gate_name(binding, cell.gates)?;
         // A place whose type its line gives when it runs keeps that type, which a write converts
         // into ([`Self::land_in_run_type`]); one laid out then holds no value until a write fills
         // it, as one declared `T ?` does.
@@ -1280,9 +1314,13 @@ impl<'a> Parser<'a> {
             return Ok(Constructed::Placed);
         };
         let node = self.valueless_place(t)?;
+        // The place of a gated type, `x.type ?`, has that type's gates.
+        let gates = tape.at(-1).map_or(std::ptr::null_mut(), |cell| cell.gates);
         tape.remove(-1);
         tape.place(node);
-        tape.at_mut(0).expect("placed above").hole = true;
+        let cell = tape.at_mut(0).expect("placed above");
+        cell.hole = true;
+        cell.gates = gates;
         Ok(Constructed::Placed)
     }
 
@@ -1300,9 +1338,12 @@ impl<'a> Parser<'a> {
             return Ok(false);
         }
         let node = self.valueless_place(t)?;
+        let gates = tape.at(0).map_or(std::ptr::null_mut(), |cell| cell.gates);
         tape.remove(1);
         tape.place(node);
-        tape.at_mut(0).expect("placed above").hole = true;
+        let cell = tape.at_mut(0).expect("placed above");
+        cell.hole = true;
+        cell.gates = gates;
         Ok(true)
     }
 

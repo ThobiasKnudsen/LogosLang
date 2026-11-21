@@ -95,7 +95,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 
     // `own` stands only in a type position, `own @T ?` or `-> own @T`: the word makes the hole,
     // or the function's result, an owning one.
-    let own_ = super::gate::word(cx, "own");
+    let own_ = super::gate::word(cx, "own", meta::prec::PREFIX);
     cx.metas.insert(own_, |p, _id, tape| {
         let Some(&hole) = tape.at(1) else {
             return Err(ParseError::MissingOperand);

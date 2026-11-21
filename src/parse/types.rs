@@ -485,13 +485,16 @@ impl<'a> Parser<'a> {
                 if self.prose_at()?.is_some() {
                     let at = self.cx.pos;
                     self.skip_prose()?;
-                    if self.at_slot_word() {
+                    let fill = self.at_slot_fill();
+                    if self.at_slot_word() && !fill {
                         return Err(ParseError::SlotFillNeedsStatic);
                     }
-                    if self.at_static_slot() {
+                    if fill || self.at_static_slot() {
                         self.cx.pos = at;
                         self.lift_prose()?;
-                        self.lex_spelling();
+                        if !fill {
+                            self.lex_spelling();
+                        }
                         self.slot_line(self.cx.pos)?;
                     }
                     continue;
@@ -530,7 +533,7 @@ impl<'a> Parser<'a> {
                     }
                     self.slot_line(self.cx.pos)?;
                 } else {
-                    self.static_member(start, &gates)?;
+                    self.static_member(start, &gates, false)?;
                 }
                 continue;
             }
@@ -549,6 +552,11 @@ impl<'a> Parser<'a> {
                     matches!(self.peek_token(), Some((id, _)) if id == self.types.declare_tok);
                 let def = self.cx.definitions.last().expect("a relaxed field list is a type body");
                 if word.is_some_and(|id| id == self.types.free_ || def.slot_index(id).is_some()) {
+                    // A slot is one place per type already, so its fill takes no gate word.
+                    if matches!(self.peek_token(), Some((id, _)) if id == self.types.assign) {
+                        self.slot_line(start)?;
+                        continue;
+                    }
                     self.cx.pos = start;
                     return Err(if declares {
                         ParseError::Resolve(ResolveError::Shadowed(name.to_string()))
@@ -573,6 +581,15 @@ impl<'a> Parser<'a> {
                     });
                 }
                 return Err(self.untyped(start, relaxed));
+            }
+            // `name := static …`: one place stored with the type, as above.
+            if self.static_ahead() {
+                self.cx.pos = start;
+                if !relaxed {
+                    return Err(ParseError::StaticMisplaced);
+                }
+                self.static_member(start, &gates, true)?;
+                continue;
             }
             // `name := T ?` declares the field's type through the hole `?` built, and so does
             // `name := T`. A default, `size := u64 0`, is a constant: the field's dyad is that
@@ -647,6 +664,14 @@ impl<'a> Parser<'a> {
             for &gate in gates.iter().rev() {
                 self.add_gate(binding, gate)?;
             }
+            // SAFETY: a cell's gates are null or a gate mint.
+            let public =
+                unsafe { crate::identities::gate::words_of(cell.gates) }.contains(&self.types.pub_);
+            if public && !read_outside {
+                self.cx.pos = start;
+                return Err(ParseError::PubParameter);
+            }
+            self.gate_name(binding, cell.gates)?;
             if owns_node {
                 // SAFETY: `binding` is the binding just made.
                 unsafe { Binding::set_holds(binding) };
@@ -663,8 +688,14 @@ impl<'a> Parser<'a> {
     /// `static name := value` in a type body: one place stored with the type,
     /// declared in the body scope (DESIGN ›Two muts, and the storage
     /// partition‹). The fields and the members stay one scope for no-shadowing. `gates` are the
-    /// gate words written before `static`, in text order.
-    fn static_member(&mut self, at: usize, gates: &[DyadPtr]) -> Result<(), ParseError> {
+    /// gate words written before `static`, in text order; `in_value` says `static` stands in the
+    /// value, `name := static …`, whose declaration takes it with the value's other gates.
+    fn static_member(
+        &mut self,
+        at: usize,
+        gates: &[DyadPtr],
+        in_value: bool,
+    ) -> Result<(), ParseError> {
         let body = match self.cx.definitions.last() {
             Some(def) => def.scope,
             None => {
@@ -714,7 +745,9 @@ impl<'a> Parser<'a> {
             self.cx.pos = at;
             return Err(ParseError::StaticNeedsDeclaration);
         }
-        self.add_gate(binding, self.types.static_)?;
+        if !in_value {
+            self.add_gate(binding, self.types.static_)?;
+        }
         for &gate in gates.iter().rev() {
             self.add_gate(binding, gate)?;
         }
@@ -814,6 +847,19 @@ impl<'a> Parser<'a> {
         let slot = word == Some(self.types.static_) && self.at_slot_word();
         self.cx.pos = at;
         slot
+    }
+
+    /// The next word is a slot word or `free` and `=` follows it: a slot's fill; nothing is
+    /// consumed.
+    fn at_slot_fill(&mut self) -> bool {
+        if !self.at_slot_word() {
+            return false;
+        }
+        let at = self.cx.pos;
+        self.lex_spelling();
+        let fill = matches!(self.peek_token(), Some((id, _)) if id == self.types.assign);
+        self.cx.pos = at;
+        fill
     }
 
     /// The next word is a slot word or `free`; nothing is consumed.

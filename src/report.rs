@@ -323,6 +323,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::StaticMisplaced => {
             "`static` stands at the start of a type body's line, `static y := 3`, never on a parameter, which each call fills".into()
         }
+        ParseError::PubParameter => {
+            "a parameter takes no `pub`: only its own function reads it".into()
+        }
         ParseError::SlotFillNeedsStatic => {
             "a slot is stored once per type, so its fill says so: `static parse = (…)`".into()
         }
