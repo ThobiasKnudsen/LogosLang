@@ -17,7 +17,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
-use crate::parse::{Cell, ParseError, ParsingTape};
+use crate::parse::{Cell, ParseError, ParsingTape, TapeRead};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
@@ -672,13 +672,25 @@ unsafe fn tape_of(rt: &mut Runtime, recv: DyadPtr) -> Result<*mut ParsingTape, R
 /// constructed `void` node. DESIGN ›The scope's constructor is the driver‹.
 unsafe fn read_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<Cell, RunError> {
     let (tape, k) = tape_at(rt, ops)?;
-    let nothing = rt.types().tape.nothing;
-    Ok((*tape).at(k).copied().unwrap_or_else(|| Cell::built(nothing)))
+    Ok(cell_on(rt, tape, k))
 }
 
+/// # Safety
+/// `tape` must be a live `ParsingTape`.
+unsafe fn cell_on(rt: &Runtime, tape: *mut ParsingTape, k: isize) -> Cell {
+    let nothing = rt.types().tape.nothing;
+    (*tape).at(k).copied().unwrap_or_else(|| Cell::built(nothing))
+}
+
+/// A cell of the running constructor's tape is taken as an operation takes its operand
+/// (`Parser::read_tape`).
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
-    unsafe { Ok(read_cell(rt, dyad::value(node) as *const DyadPtr)?.dyad as i64) }
+    unsafe {
+        let (tape, k) = tape_at(rt, dyad::value(node) as *const DyadPtr)?;
+        let taken = rt.read_on_tape(tape, k, TapeRead::Cell)?;
+        Ok(taken.unwrap_or_else(|| cell_on(rt, tape, k).dyad) as i64)
+    }
 }
 
 /// The pointer replaced and nothing more; the flag is the constructor's line.
@@ -847,15 +859,33 @@ pub(crate) unsafe fn read_target(
 }
 
 /// A bracket is a `scope` or `square_brackets`, whose lines the constructor reads; any other
-/// line's type is the type of what it yields.
+/// line's type is the type of what it yields. A cell of the running constructor's tape is read as
+/// an operation reads its operand (`Parser::read_tape`).
 pub(crate) fn run_line_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a node `is_line_type_read` accepts.
     unsafe {
-        let line = line_of_type_read(rt, node)?;
+        let line = if is_cell_type_read(rt.types(), node) {
+            let (tape, k) = tape_at(rt, dyad::value(node) as *const DyadPtr)?;
+            match rt.read_on_tape(tape, k, TapeRead::Type)? {
+                Some(operand) => operand,
+                None => rt.through(cell_on(rt, tape, k).dyad),
+            }
+        } else {
+            line_of_type_read(rt, node)?
+        };
         let types = rt.types();
         Ok(bracket_kind(types, line).unwrap_or_else(|| super::read::output_type(types, line))
             as i64)
     }
+}
+
+/// `.type` of a tape cell itself, `tape[k].type`, no line of it.
+///
+/// # Safety
+/// `node` must be a node `is_line_type_read` accepts.
+unsafe fn is_cell_type_read(types: &Core, node: DyadPtr) -> bool {
+    let ops = dyad::value(node) as *const DyadPtr;
+    dyad::ty(node) == types.tape.cell_type && !(*ops.add(1)).is_null() && (*ops.add(2)).is_null()
 }
 
 /// `.type` of a line a parse holds: a tape cell, a line of one, or a `dyad` field of the parse's
