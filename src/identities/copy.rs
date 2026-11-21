@@ -94,24 +94,25 @@ unsafe fn owned(types: &Core, ty: DyadPtr) -> Option<Owned> {
         Teardown::Block(pointee) => Some(Owned::Block(pointee)),
         Teardown::Node(_) => Some(Owned::Node(ty)),
         Teardown::Behind(t) => Some(Owned::Behind(t)),
-        Teardown::Entries(t) => Some(Owned::Record(t)),
+        Teardown::Parts(t) => Some(Owned::Record(t)),
         // A `dyad ?` place copies the node it holds itself.
         Teardown::Dyad | Teardown::Nothing => None,
     }
 }
 
-/// What field `binding` of type `ty` owns: what a value of `ty` owns, a `dyad`'s node too for an
-/// entry of a `{ … }` (›`{ … }` outside text is a scope kept as a value, read with `.`‹
-/// [[R374]]). So a field whose type fills `free` owns what it holds, a node and a record alike,
-/// and one that only borrows is a plain pointer (›A field whose type fills `free` owns what it
-/// holds; one that only borrows is written `@t ?`‹ [[R68]]).
+/// What field `binding` of type `ty` owns: what a value of `ty` owns, a `dyad`'s node too for a
+/// part of a value that ends its parts, an entry of a `{ … }` (›`{ … }` outside text is a scope
+/// kept as a value, read with `.`‹ [[R374]]) or a union's member. So a field whose type fills
+/// `free` owns what it holds, a node and a record alike, and one that only borrows is a plain
+/// pointer (›A field whose type fills `free` owns what it holds; one that only borrows is written
+/// `@t ?`‹ [[R68]]).
 ///
 /// # Safety
 /// `binding` must be a field's binding dyad, laid out in its record type, and `ty` its declared
 /// type, from the store.
 unsafe fn field_owned(types: &Core, binding: DyadPtr, ty: DyadPtr) -> Option<Owned> {
     let owner = Binding::read(binding).frame;
-    if let Teardown::Entries(_) = teardown_of_type(types, owner) {
+    if let Teardown::Parts(_) = teardown_of_type(types, owner) {
         if let Teardown::Dyad = teardown_of_type(types, ty) {
             return Some(Owned::Dyad);
         }
@@ -144,7 +145,7 @@ pub(crate) unsafe fn owning_fields<'a>(
 ///
 /// # Safety
 /// `ty` must be a record type node from the store.
-unsafe fn fields<'a>(ty: DyadPtr) -> impl Iterator<Item = (DyadPtr, DyadPtr)> + 'a {
+pub(crate) unsafe fn fields<'a>(ty: DyadPtr) -> impl Iterator<Item = (DyadPtr, DyadPtr)> + 'a {
     let fields = array::items(meta::record_fields_of(ty));
     let bindings = array::items(meta::record_field_bindings_of(ty));
     // SAFETY: each field is a hole node from the store.
@@ -202,16 +203,13 @@ unsafe fn deepen_as(rt: &mut Runtime, what: Owned, at: *mut u8) -> Result<(), Ru
             if !block.is_null() {
                 let copy = super::drop_model::new_behind(rt, t)?;
                 std::ptr::copy_nonoverlapping(block, copy, meta::record_size_of(t) as usize);
-                deepen_as(rt, Owned::Record(t), copy)?;
+                deepen_fields(rt, fields(t).collect(), copy)?;
                 std::ptr::write_unaligned(at as *mut usize, copy as usize);
             }
         }
         Owned::Record(t) => {
-            for (binding, field_ty) in fields(t) {
-                if let Some(what) = field_owned(rt.types(), binding, field_ty) {
-                    deepen_as(rt, what, at.add(Binding::read(binding).offset))?;
-                }
-            }
+            let parts = super::drop_model::kept_parts(rt.types(), t, Some(at)).unwrap_or_default();
+            deepen_fields(rt, parts, at)?;
         }
         Owned::Map(t) => {
             let types: *const Core = rt.types();
@@ -221,6 +219,23 @@ unsafe fn deepen_as(rt: &mut Runtime, what: Owned, at: *mut u8) -> Result<(), Ru
             let held = std::ptr::read_unaligned(at as *const usize) as DyadPtr;
             let copy = super::dyad_place::copy(rt, held)?;
             std::ptr::write_unaligned(at as *mut i64, copy);
+        }
+    }
+    Ok(())
+}
+
+/// [`deepen`] of each of `fields`, a field's binding and declared type, in the record at `at`.
+///
+/// # Safety
+/// `at` must hold a whole record whose fields include `fields`, each holding a whole value.
+unsafe fn deepen_fields(
+    rt: &mut Runtime,
+    fields: Vec<(DyadPtr, DyadPtr)>,
+    at: *mut u8,
+) -> Result<(), RunError> {
+    for (binding, field_ty) in fields {
+        if let Some(what) = field_owned(rt.types(), binding, field_ty) {
+            deepen_as(rt, what, at.add(Binding::read(binding).offset))?;
         }
     }
     Ok(())

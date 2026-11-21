@@ -388,8 +388,7 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// A union holds only members whose values move whole into its room and end with nothing
-    /// to free; refusing a member that owns is a stand-in for #159.
+    /// A union holds only members whose values move whole into its room.
     ///
     /// # Safety
     /// `members` must be holes from the store, each over a type node, and `bindings` their
@@ -399,28 +398,13 @@ impl<'a> Parser<'a> {
         members: &[DyadPtr],
         bindings: &[DyadPtr],
     ) -> Result<(), ParseError> {
-        use crate::identities::drop_model::{teardown_of_type, Teardown};
-        use crate::identities::{copy, hole, read::carry_of};
-        let types = self.types;
-        let mut owning = Vec::new();
         for (&member, &binding) in members.iter().zip(bindings) {
-            let ty = hole::type_in(member);
-            let name = Binding::spelling(binding);
-            if carry_of(types, ty).is_none() {
-                return Err(ParseError::UnionMemberUnkept(Box::new(name)));
-            }
-            if copy::owns(types, ty)
-                || teardown_of_type(types, ty) != Teardown::Nothing
-                || Binding::read(binding).holds
-            {
-                owning.push(name);
+            let ty = crate::identities::hole::type_in(member);
+            if crate::identities::read::carry_of(self.types, ty).is_none() {
+                return Err(ParseError::UnionMemberUnkept(Box::new(Binding::spelling(binding))));
             }
         }
-        if owning.is_empty() {
-            Ok(())
-        } else {
-            Err(ParseError::UnionMemberOwns(owning))
-        }
+        Ok(())
     }
 
     /// A `fn`'s parameter list, in a scope of its own that the body reopens. Also the fields'
@@ -511,6 +495,11 @@ impl<'a> Parser<'a> {
             let is_gate = |w: DyadPtr| w == t.mut_ || read_outside && w == t.pub_;
             let mut gates = Vec::new();
             while let Some(gate) = word.filter(|&w| is_gate(w)) {
+                // ›A union holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]
+                if list == FieldList::Members && gate == t.pub_ {
+                    self.cx.pos = start;
+                    return Err(ParseError::UnionMemberPub);
+                }
                 gates.push(gate);
                 let (at, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
                 (start, name) = (at, &source[at..at + len]);

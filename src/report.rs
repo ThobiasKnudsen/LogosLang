@@ -534,16 +534,21 @@ pub fn parse_message(e: &ParseError) -> String {
              member, fills no slot, and a member has no default"
                 .into()
         }
-        ParseError::UnionMemberOwns(members) => {
-            let named = members.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", ");
-            let (which, own) = match members.len() {
-                1 => ("member", "owns what it holds"),
-                _ => ("members", "own what they hold"),
-            };
-            format!(
-                "the {which} {named} {own}, and a union does not free a member yet: a member \
-                 that only borrows is written as a pointer, `a := @t`"
-            )
+        ParseError::UnionMemberPub => {
+            "every member of a union is read from outside it, so a member takes no `pub`; `mut` \
+             still lets it be written from outside"
+                .into()
+        }
+        ParseError::HoldsNeedsUnion => {
+            "`holds` asks a union which member it holds, and this value is no union".into()
+        }
+        ParseError::HoldsNeedsMember => {
+            "`holds` is followed by the name of a member of the union: `v holds a`".into()
+        }
+        ParseError::NotAMember(named) => {
+            let (name, members) = &**named;
+            let members = members.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", ");
+            format!("`{name}` is no member of this union, whose members are {members}")
         }
         ParseError::UnionApplied => {
             "a union holds one member, so it is not made from values in a row: declare an empty \
