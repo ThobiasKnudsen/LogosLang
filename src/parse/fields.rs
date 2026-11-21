@@ -1104,16 +1104,11 @@ impl<'a> Parser<'a> {
         // it is written in place (›A `dyad ?` place is transparent: a placeholder for a new node
         // of any type‹ [[R293]]). A place read through to nothing stands as `lhs`.
         let read = self.read_through_value(tape, -1, place).map(|read| {
-            // SAFETY: `place` is a reduced dyad off the tape, and a `read` other than it a node.
-            unsafe {
-                if read == place {
-                    return lhs;
-                }
-                if !self.is_dyad_place(place) {
-                    return read;
-                }
-                crate::identities::dyad_place::build_reach(self.rt.store, self.types, place, read)
+            if read == place {
+                return lhs;
             }
+            // SAFETY: `place` is a reduced dyad off the tape, and a `read` other than it a node.
+            unsafe { self.through_place(place, read) }
         });
         // SAFETY: the value read through is a reduced dyad off the tape or a node.
         let read = read.and_then(|read| unsafe {
@@ -1157,6 +1152,46 @@ impl<'a> Parser<'a> {
             cell.root = path_root;
         }
         Ok(Constructed::Gave)
+    }
+
+    /// `held`, the node `place` was read through to, as `.` and `[` take it: what a `dyad` place
+    /// holds is reached through the place each time the line runs, so a write through the reader
+    /// lands in the node the place holds then; what any other operand gave stands as it is (›A
+    /// `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]).
+    ///
+    /// # Safety
+    /// `place` must be a reduced dyad off the tape and `held` a node from the store.
+    unsafe fn through_place(&mut self, place: DyadPtr, held: DyadPtr) -> DyadPtr {
+        if !self.is_dyad_place(place) {
+            return held;
+        }
+        crate::identities::dyad_place::build_reach(self.rt.store, self.types, place, held)
+    }
+
+    /// What `[` reads an element of, `lhs` in the cell `left` at `tape[-1]`: the node a `dyad`
+    /// place holds, reached through the place ([`Self::through_place`]), where `left` is a `dyad`
+    /// name the lexer read through or `lhs` an entry of a `{ … }` a field path reaches; any other
+    /// value as it is.
+    fn element_owner(
+        &mut self,
+        tape: &mut ParsingTape,
+        left: &Cell,
+        lhs: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
+        // SAFETY: `lhs` is a reduced dyad off the tape, and what it is read through to a node.
+        unsafe {
+            let (place, held) = if self.is_dyad_place(lhs) {
+                (lhs, self.read_through_value(tape, -1, lhs)?)
+            } else if let Some(place) = self.name_read_through(left) {
+                (place, lhs)
+            } else {
+                return Ok(lhs);
+            };
+            if held == place {
+                return Ok(lhs);
+            }
+            Ok(self.through_place(place, held))
+        }
     }
 
     /// The comptime index a `[…]` cell carries when its interior is a
@@ -1231,9 +1266,10 @@ impl<'a> Parser<'a> {
                     tape.place(node);
                     return Ok(Constructed::Placed);
                 }
-                // SAFETY: `lhs` and `key` are reduced dyads from the store.
+                let map = self.element_owner(tape, &left, lhs)?;
+                // SAFETY: `map` and `key` are reduced dyads from the store.
                 let get = unsafe {
-                    crate::identities::hashmap::build_get(self.rt.store, types, lhs, key)
+                    crate::identities::hashmap::build_get(self.rt.store, types, map, key)
                 }?;
                 if let Some(node) = get {
                     tape.remove(-1);

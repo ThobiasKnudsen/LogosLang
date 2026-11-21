@@ -23,10 +23,10 @@ type Table = std::collections::HashMap<i64, i64>;
 #[derive(Debug, Clone, Copy)]
 pub struct HashmapIds {
     pub hashmap: DyadPtr,
-    /// `m[k]`: `[map address, key, op]`.
+    /// `m[k]`: `[map, key, op, output_type]`.
     pub get: DyadPtr,
     pub get_leaf: DyadPtr,
-    /// `m[k] = v`: `[map address, key, value, value type, op]`.
+    /// `m[k] = v`: `[map, key, value, value type, op]`.
     pub put: DyadPtr,
     pub put_leaf: DyadPtr,
     /// `hashmap K -> V` as a value: `[op, map type]`, a new empty map.
@@ -256,25 +256,21 @@ pub(crate) unsafe fn is_hashmap(types: &Core, t: DyadPtr) -> bool {
     params_of(types, t).is_some()
 }
 
-/// `m[k]` when `lhs` is a `hashmap` place, else `None`.
+/// `m[k]` when `map` gives a `hashmap`, a name or any other value, else `None` (›`a[k]` is an
+/// application, exactly as `a(k)`‹ [[R227]]).
 ///
 /// # Safety
-/// `lhs` and `key` must be reduced dyads from the store.
+/// `map` and `key` must be reduced dyads from the store.
 pub(crate) unsafe fn build_get(
     store: &mut Store,
     types: &Core,
-    lhs: DyadPtr,
+    map: DyadPtr,
     key: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
-    let place = types.through(lhs);
-    if !types.is_storage(place) {
-        return Ok(None);
-    }
-    let Some((k, v)) = params_of(types, types.type_of(place)) else {
+    let Some((k, v)) = params_of(types, super::read::output_type(types, map)) else {
         return Ok(None);
     };
     let key = super::land(store, types, key, k)?;
-    let map = super::pointer::build_addr(store, types, place, std::ptr::null_mut());
     Ok(Some(store.alloc_words(types.hashmap.get, &[map, key, types.hashmap.get_leaf, v])))
 }
 
@@ -286,9 +282,15 @@ pub(crate) unsafe fn build_put(
     get: DyadPtr,
     value: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    let ops = dyad::value(get) as *const DyadPtr;
+    // A map nothing holds keeps no entry: a name, a field, another map's entry or what a `dyad`
+    // place holds does.
+    let map = types.through(*ops);
+    if super::read::place_of(types, map).is_none() && !super::dyad_place::is_reach(types, map) {
+        return Err(ParseError::BadAssignTarget);
+    }
     let v = super::read::output_type(types, get);
     let value = super::land(store, types, value, v)?;
-    let ops = dyad::value(get) as *const DyadPtr;
     let put = [*ops, *ops.add(1), value, v, types.hashmap.put_leaf];
     Ok(store.alloc_words(types.hashmap.put, &put))
 }
@@ -388,13 +390,13 @@ unsafe fn copy_table(
     copy
 }
 
-/// The slot the instance's table pointer lives in, and the table there: null for the empty
-/// map; a map that is `?` has none to read or write.
+/// The slot the table pointer of the map `map` gives lives in, and the table there: null for the
+/// empty map; a map that is `?` has none to read or write.
 unsafe fn table_slot(
     rt: &mut Runtime,
     map: DyadPtr,
 ) -> Result<(*mut *mut Table, *mut Table), RunError> {
-    let addr = rt.run(map)? as *mut *mut Table;
+    let addr = super::by_copy::record_addr(rt, map)? as *mut *mut Table;
     if addr.is_null() {
         return Err(RunError::NullPointer);
     }
