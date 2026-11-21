@@ -4979,7 +4979,6 @@ fn a_line_that_gives_nothing_echoes_nothing_and_no_value_reads_it() {
     for tail in [
         "x := f(), x",
         "print «{f()}»",
-        "f() + 1",
         "g := fn () -> i32 ( y := (return n), y ), g()",
         "f().type",
         "g := fn (a := i32 ?) -> i32 ( a ), g(f())",
@@ -4990,6 +4989,10 @@ fn a_line_that_gives_nothing_echoes_nothing_and_no_value_reads_it() {
         assert_eq!(code, Some(1), "{tail}");
         assert!(stderr.contains("gives nothing"), "{tail}: stderr: {stderr}");
     }
+    // `+`, written in Logos, is handed the call as `void` and refuses it in its own words.
+    let (code, _, stderr) = run_line(&format!("{void_fn}, f() + 1"));
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("`+` needs a value on each side"), "stderr: {stderr}");
 }
 
 #[test]
@@ -12148,8 +12151,11 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
         ("x := i32 1, (x == 1) + 1", "`+` adds numbers, and this type is none"),
         ("x := i32 1, a := mut i32 0, a = x == 1, a", "these types do not match"),
         ("x := i32 1, a := mut x == 1, a = i32 1, a", "these types do not match"),
-        // A `return` gives its own line nothing.
-        ("f := fn (x := f64 ?) -> f64 ( (return x) + 1.0 ), f(2.5)", "gives nothing"),
+        // A `return` gives its own line nothing, which `+` is handed as `void`.
+        (
+            "f := fn (x := f64 ?) -> f64 ( (return x) + 1.0 ), f(2.5)",
+            "`+` needs a value on each side",
+        ),
         ("f := fn (x := f64 ?) -> f64 ( y := (return x), y ), f(2.5)", "gives nothing"),
     ] {
         let (code, _, stderr) = run_line(src);

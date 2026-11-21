@@ -43,6 +43,11 @@ fn no_sum() -> ParseError {
     ))
 }
 
+/// What `+`'s parse raises where a side gives nothing.
+fn no_value_side() -> ParseError {
+    ParseError::ConstructorFailed(Box::new("error.operands: `+` needs a value on each side".into()))
+}
+
 /// `+.mint(t, t)`, the mint identities/plus.logos made for two values of `t`.
 ///
 /// # Safety
@@ -1436,7 +1441,8 @@ fn a_line_after_one_that_always_gives_or_leaves_is_refused() {
 #[test]
 fn an_else_less_if_is_rejected_in_value_positions() {
     assert_eq!(parse_err("y := if (1 < 2) (1)"), ParseError::MissingElse);
-    assert_eq!(parse_err("( if (1 < 2) (1) ) + 1"), ParseError::MissingElse);
+    // `+` is handed the side as `void` and refuses it in its own words.
+    assert_eq!(parse_err("( if (1 < 2) (1) ) + 1"), no_value_side());
     // A block whose one line gives on some paths only can end without a value.
     assert_eq!(parse_err("fn () -> i32 ( if (1 < 2) (1) )"), ParseError::EndsWithoutValue);
     assert_eq!(parse_err("( k := i32 1, if (1 < 2) (1) ) + 1"), ParseError::EndsWithoutValue);
@@ -1841,7 +1847,7 @@ fn while_condition_must_be_bool() {
 fn a_while_loop_is_not_a_value() {
     // Its body's value passes out on some paths only.
     assert_eq!(parse_err("fn () -> i32 ( while (1 < 2) (3) )"), ParseError::EndsWithoutValue);
-    assert_eq!(parse_err("( while (1 < 2) (3) ) + 1"), ParseError::StatementAsValue);
+    assert_eq!(parse_err("( while (1 < 2) (3) ) + 1"), no_value_side());
     assert_eq!(parse_err("y := while (1 < 2) (3)"), ParseError::StatementAsValue);
 }
 
