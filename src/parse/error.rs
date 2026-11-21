@@ -18,16 +18,14 @@ pub enum ParseError {
     /// A line of a `type (…)` body that neither fills a slot, declares a
     /// field or member, nor is prose.
     TypeBodyLine,
-    /// `static` on a parameter, or anywhere but at the start of a type body's line.
+    /// `static` on a parameter or a union's member, which each value holds.
     StaticMisplaced,
-    /// `parse = (…)` without `static`: a slot is stored once per type.
-    SlotFillNeedsStatic,
+    /// `pub` on a parameter, which only its function reads.
+    PubParameter,
     /// A value made once at the definition (`static`, `immediate`) read a name that
     /// holds no value there: a parameter or local of the function around it, or a
     /// name declared in the loop or branch around it.
     OnceReadsUnmade,
-    /// `static` not followed by a `name := value` declaration or a slot fill.
-    StaticNeedsDeclaration,
     /// A field named bare inside a parse, where it goes through `tape[0]`.
     BareFieldInParse(Box<String>),
     /// `tape[0].type = …` anywhere but on a parse's own cell.
@@ -164,9 +162,9 @@ pub enum ParseError {
     /// literals are uncommitted‹).
     /// Carries the literal's spelling.
     AssignToLiteral(Box<String>),
-    /// A gate word (`pub`) not followed by a declaration, whose name's value it gates.
-    GateNeedsDeclaration,
-    /// A declaration was gated twice (`pub pub x := …`).
+    /// A gate word (`pub`) where a line's name stands, left of `:=` or of a slot fill.
+    GateNeedsValue,
+    /// A value was gated twice by one word (`x := pub pub …`).
     DoubleGate,
     /// `x = …` on a name not declared `mut`; carries the name.
     NotMutable(Box<String>),
@@ -337,9 +335,9 @@ pub enum ParseError {
     /// A `return` in a type's `run` hands on a borrow, where the `run`'s last value is made there
     /// and so marks it to hand on what it makes.
     RunReturnBorrows,
-    /// `static w = …` in a type body where `w` is no slot and nothing declared.
+    /// `w = …` in a type body where `w` is no slot and nothing declared.
     NoSuchSlot(String),
-    /// A type body whose fields, named here, own what they hold, and no `static free = (…)` to
+    /// A type body whose fields, named here, own what they hold, and no `free = (…)` to
     /// free it.
     FieldsNeedFree(Vec<String>),
     /// A name of a `{ … }` whose value its scope's end runs a teardown for, or that does not

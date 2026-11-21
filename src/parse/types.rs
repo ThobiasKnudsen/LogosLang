@@ -47,7 +47,7 @@ pub(super) struct OpenType {
     /// The fields' scope and the fields declared so far: what a body written
     /// below them reaches by name.
     pub(super) block: (DyadPtr, Vec<DyadPtr>),
-    /// From a `static free = (…)` line: the `fn` over the value an owner's teardown runs.
+    /// From a `free = (…)` line: the `fn` over the value an owner's teardown runs.
     instances_free: DyadPtr,
     /// The type node being defined, its record written at the close: what its name means in its parse.
     pub(super) self_type: DyadPtr,
@@ -400,7 +400,8 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// A union holds only members whose values move whole into its room.
+    /// A union holds only members whose values move whole into its room, and a member's type
+    /// takes no `pub`, every member being read from outside.
     ///
     /// # Safety
     /// `members` must be holes from the store, each over a type node, and `bindings` their
@@ -411,6 +412,11 @@ impl<'a> Parser<'a> {
         bindings: &[DyadPtr],
     ) -> Result<(), ParseError> {
         for (&member, &binding) in members.iter().zip(bindings) {
+            // ›A union holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]
+            let gated = crate::identities::hole::gated_type_in(member);
+            if crate::identities::gate::has(gated, self.types.pub_) {
+                return Err(ParseError::UnionMemberPub);
+            }
             let ty = crate::identities::hole::type_in(member);
             if crate::identities::read::carry_of(self.types, ty).is_none() {
                 return Err(ParseError::UnionMemberUnkept(Box::new(Binding::spelling(binding))));
@@ -481,13 +487,9 @@ impl<'a> Parser<'a> {
                 if self.prose_at()?.is_some() {
                     let at = self.cx.pos;
                     self.skip_prose()?;
-                    if self.at_slot_word() {
-                        return Err(ParseError::SlotFillNeedsStatic);
-                    }
-                    if self.at_static_slot() {
+                    if self.at_slot_fill() {
                         self.cx.pos = at;
                         self.lift_prose()?;
-                        self.lex_spelling();
                         self.slot_line(self.cx.pos)?;
                     }
                     continue;
@@ -497,43 +499,12 @@ impl<'a> Parser<'a> {
             // `self.cx.source` is `&'a str` (Copy), so the slice is independent
             // of the `&mut self` needed below.
             let source = self.cx.source;
-            let (mut start, mut name) = (start, &source[start..start + len]);
-            let mut word = self.cx.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
-            // `mut` before a field or parameter gates its binding, as before any name, and so does
-            // `pub` in a type body, where a read from outside needs it (›Fields are read with a
-            // dot outside their scope‹ [[R234]]).
-            let t = self.types;
-            let read_outside = list != FieldList::Parameters;
-            let is_gate = |w: DyadPtr| w == t.mut_ || read_outside && w == t.pub_;
-            let mut gates = Vec::new();
-            while let Some(gate) = word.filter(|&w| is_gate(w)) {
-                // ›A union holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]
-                if list == FieldList::Members && gate == t.pub_ {
-                    self.cx.pos = start;
-                    return Err(ParseError::UnionMemberPub);
-                }
-                gates.push(gate);
-                let (at, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
-                (start, name) = (at, &source[at..at + len]);
-                word = self.cx.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
-            }
-            // One place stored with the type, not a field of the layout; never a
-            // parameter, which each call fills (DESIGN ›Two muts, and the storage partition‹).
-            if word == Some(self.types.static_) {
-                if !relaxed {
-                    self.cx.pos = start;
-                    return Err(ParseError::StaticMisplaced);
-                }
-                if self.at_slot_word() {
-                    if !gates.is_empty() {
-                        self.cx.pos = start;
-                        return Err(ParseError::GateNeedsDeclaration);
-                    }
-                    self.slot_line(self.cx.pos)?;
-                } else {
-                    self.static_member(start, &gates)?;
-                }
-                continue;
+            let name = &source[start..start + len];
+            let word = self.cx.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
+            // A gate word gates a value, so none stands where a line's name does.
+            if word.is_some_and(|id| self.is_gate_word(id)) {
+                self.cx.pos = start;
+                return Err(ParseError::GateNeedsValue);
             }
             // A literal, `5`, matches a pattern identity and names nothing.
             if relaxed {
@@ -545,16 +516,22 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            if relaxed && gates.is_empty() {
+            let assigns = matches!(self.peek_token(), Some((id, _)) if id == self.types.assign);
+            if relaxed {
                 let declares =
                     matches!(self.peek_token(), Some((id, _)) if id == self.types.declare_tok);
                 let def = self.cx.definitions.last().expect("a relaxed field list is a type body");
                 if word.is_some_and(|id| id == self.types.free_ || def.slot_index(id).is_some()) {
+                    // A slot is one place per type already, so its fill takes no gate word.
+                    if assigns {
+                        self.slot_line(start)?;
+                        continue;
+                    }
                     self.cx.pos = start;
                     return Err(if declares {
                         ParseError::Resolve(ResolveError::Shadowed(name.to_string()))
                     } else {
-                        ParseError::SlotFillNeedsStatic
+                        ParseError::TypeBodyLine
                     });
                 }
             }
@@ -569,11 +546,23 @@ impl<'a> Parser<'a> {
                 if relaxed && !alone {
                     self.cx.pos = start;
                     return Err(match word {
+                        // `=` writes what exists, so a fresh word before it names no slot.
+                        None if assigns => ParseError::NoSuchSlot(name.to_string()),
                         None => ParseError::Resolve(ResolveError::Unknown(name.to_string())),
                         Some(_) => ParseError::TypeBodyLine,
                     });
                 }
                 return Err(self.untyped(start, relaxed));
+            }
+            // `name := static …`: one place stored with the type, not a field of the layout;
+            // never a parameter, which each call fills.
+            if self.static_ahead() {
+                self.cx.pos = start;
+                if !relaxed {
+                    return Err(ParseError::StaticMisplaced);
+                }
+                self.static_member(start)?;
+                continue;
             }
             // `name := T ?` declares the field's type through the hole `?` built, and so does
             // `name := T`. A default, `size := u64 0`, is a constant: the field's dyad is that
@@ -645,9 +634,14 @@ impl<'a> Parser<'a> {
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = self.mint_binding(field, scope, name.as_bytes());
             self.enter_binding_in(scope, name, binding, start)?;
-            for &gate in gates.iter().rev() {
-                self.add_gate(binding, gate)?;
+            // SAFETY: a cell's gates are null or a gate mint.
+            let public =
+                unsafe { crate::identities::gate::words_of(cell.gates) }.contains(&self.types.pub_);
+            if public && list == FieldList::Parameters {
+                self.cx.pos = start;
+                return Err(ParseError::PubParameter);
             }
+            self.gate_name(binding, cell.gates);
             if owns_node {
                 // SAFETY: `binding` is the binding just made.
                 unsafe { Binding::set_holds(binding) };
@@ -661,37 +655,16 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `static name := value` in a type body: one place stored with the type,
-    /// declared in the body scope (DESIGN ›Two muts, and the storage
-    /// partition‹). The fields and the members stay one scope for no-shadowing. `gates` are the
-    /// gate words written before `static`, in text order.
-    fn static_member(&mut self, at: usize, gates: &[DyadPtr]) -> Result<(), ParseError> {
-        let body = match self.cx.definitions.last() {
-            Some(def) => def.scope,
-            None => {
-                self.cx.pos = at;
-                return Err(ParseError::StaticMisplaced);
-            }
-        };
-        if self.consume_token(self.types.declare_tok) {
-            self.cx.pos = at;
-            return Err(ParseError::StaticNeedsDeclaration);
-        }
-        // `=` writes what exists, so a fresh word before it names no slot.
-        let word_at = self.cx.pos;
-        if let Some((start, len, true)) = self.lex_spelling_fresh() {
-            if self.peek_token().is_some_and(|(id, _)| id == self.types.assign) {
-                self.cx.pos = start;
-                return Err(ParseError::NoSuchSlot(self.cx.source[start..start + len].to_string()));
-            }
-        }
-        self.cx.pos = word_at;
+    /// `name := static value` in a type body, read from the name at `at`: one place stored with
+    /// the type, declared in the body scope (DESIGN ›Two muts, and the storage partition‹). The
+    /// fields and the members stay one scope for no-shadowing.
+    fn static_member(&mut self, at: usize) -> Result<(), ParseError> {
+        let body = self.cx.definitions.last().expect("a member is declared in a type body").scope;
         self.cx.last_declared = std::ptr::null_mut();
         let outer_member = self.cx.member_fn_depth.replace(self.cx.frames.len());
         let items = self.static_line();
         self.cx.member_fn_depth = outer_member;
-        // The line's one declaration, a member or a slot fill, with its prose
-        // lifted out beside it; anything else is not what `static` marks.
+        // The line's one declaration, with its prose lifted out beside it.
         let mut declared = None;
         for item in items? {
             // SAFETY: `item` is a reduced dyad just parsed.
@@ -703,23 +676,15 @@ impl<'a> Parser<'a> {
                 declared = Some(item);
             } else {
                 self.cx.pos = at;
-                return Err(ParseError::StaticNeedsDeclaration);
+                return Err(ParseError::TypeBodyLine);
             }
         }
-        let Some(item) = declared else {
-            self.cx.pos = at;
-            return Err(ParseError::StaticNeedsDeclaration);
-        };
         let binding = self.cx.last_declared;
-        if binding.is_null() {
+        let Some(item) = declared.filter(|_| !binding.is_null()) else {
             self.cx.pos = at;
-            return Err(ParseError::StaticNeedsDeclaration);
-        }
-        self.add_gate(binding, self.types.static_)?;
-        for &gate in gates.iter().rev() {
-            self.add_gate(binding, gate)?;
-        }
-        self.cx.definitions.last_mut().expect("checked above").statics.push(binding);
+            return Err(ParseError::TypeBodyLine);
+        };
+        self.cx.definitions.last_mut().expect("read above").statics.push(binding);
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.cx.scopes.settle_item(body, item) };
         Ok(())
@@ -805,16 +770,17 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// The next words are `static` and a slot word or `free`; nothing is consumed.
-    fn at_static_slot(&mut self) -> bool {
+    /// The next word is a slot word or `free` and `=` follows it: a slot's fill; nothing is
+    /// consumed.
+    fn at_slot_fill(&mut self) -> bool {
+        if !self.at_slot_word() {
+            return false;
+        }
         let at = self.cx.pos;
-        let word = self.lex_spelling().and_then(|(start, len)| {
-            let source = self.cx.source;
-            self.cx.scopes.resolve(self.trie, &source[start..start + len]).ok().map(|r| r.identity)
-        });
-        let slot = word == Some(self.types.static_) && self.at_slot_word();
+        self.lex_spelling();
+        let fill = matches!(self.peek_token(), Some((id, _)) if id == self.types.assign);
         self.cx.pos = at;
-        slot
+        fill
     }
 
     /// The next word is a slot word or `free`; nothing is consumed.
@@ -1032,17 +998,19 @@ impl<'a> Parser<'a> {
 
     /// The name that gives the type being read here its identity: the name of the declaration
     /// whose whole right side up to the cursor is `words`, the former's own spelling with `type`
-    /// before it where the former gives a type; none where no declaration holds it so (›Every
-    /// type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
-    /// gives it its identity‹ [[R383]]).
+    /// before it where the former gives a type, after the gate words that gate the value; none
+    /// where no declaration holds it so (›Every type is minted by its contents through
+    /// `type_mint`; the name that holds a `type ( … )` gives it its identity‹ [[R383]]).
     fn name_given(&self, words: &[&str]) -> OwnName {
+        let gate = |word: &&str| {
+            let found = self.cx.scopes.resolve(self.trie, word).ok();
+            found.is_some_and(|r| r.matched == word.len() && self.is_gate_word(r.identity))
+        };
         match (self.cx.filling.last(), self.cx.filling_at.last()) {
             (Some(&binding), Some(&at))
-                if self
-                    .cx
-                    .source
-                    .get(at..self.cx.pos)
-                    .is_some_and(|t| t.split_whitespace().eq(words.iter().copied())) =>
+                if self.cx.source.get(at..self.cx.pos).is_some_and(|t| {
+                    t.split_whitespace().skip_while(gate).eq(words.iter().copied())
+                }) =>
             {
                 let written = (!self.cx.held.is_null()).then_some((self.cx.held, at));
                 OwnName { binding, written }
