@@ -29,6 +29,8 @@ pub struct OpLeaves {
     pub(crate) rational_arith: [DyadPtr; 5],
     pub(crate) rational_cmp: [DyadPtr; 6],
     pub(crate) rational_neg: DyadPtr,
+    /// `!=` and `==` of two types, which compare by reading.
+    pub(crate) type_cmp: [DyadPtr; 2],
     /// `[NumType]`: the `=` of a word at that width.
     pub(crate) store: [DyadPtr; 10],
     /// The `=` of a value that is its bytes.
@@ -92,6 +94,19 @@ impl OpLeaves {
         self.rational_cmp[op as usize]
     }
 
+    /// The leaf of `==` over two types, or of `!=`.
+    pub(crate) fn type_cmp_leaf(&self, equal: bool) -> DyadPtr {
+        self.type_cmp[usize::from(equal)]
+    }
+
+    /// Whether `leaf` is `==` over two types, `false` for `!=`; `None` for any other leaf.
+    pub(crate) fn type_cmp_of(&self, leaf: DyadPtr) -> Option<bool> {
+        if leaf.is_null() {
+            return None;
+        }
+        self.type_cmp.iter().position(|&l| l == leaf).map(|i| i == 1)
+    }
+
     /// What the compiler refuses: every step over rational values.
     pub(crate) fn is_rational_leaf(&self, leaf: DyadPtr) -> bool {
         !leaf.is_null()
@@ -152,6 +167,28 @@ fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Resul
         let r = rt.run(rhs)?;
         Ok(apply_compare(CmpOp::from_tag(OP), NumType::from_tag(NT), l, r))
     }
+}
+
+fn type_cmp_run<const EQUAL: bool>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: as `arith_run`; each side gives a type, a type node's address.
+    unsafe {
+        let (lhs, rhs) = operands(node);
+        let l = rt.run(lhs)? as usize as DyadPtr;
+        let r = rt.run(rhs)? as usize as DyadPtr;
+        Ok(i64::from(crate::dyad::types_read_the_same(l, r) == EQUAL))
+    }
+}
+
+/// Whether the types at `l` and `r` read the same, for compiled code.
+///
+/// # Safety
+/// Called only by compiled code, with its context and two values of type `type`.
+pub(crate) unsafe extern "C" fn compiled_types_read_the_same(
+    _ctx: *mut crate::run::Context,
+    l: DyadPtr,
+    r: DyadPtr,
+) -> i64 {
+    i64::from(crate::dyad::types_read_the_same(l, r))
 }
 
 fn neg_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -294,6 +331,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
     let rational_neg =
         callable::mint_native(cx.store, cs.callable, super::rational::NEG_RUN, cs.seed_native);
     let store_bytes = callable::mint_native(cx.store, cs.callable, store_bytes_run, cs.seed_native);
+    let type_cmp = [type_cmp_run::<false> as RunFn, type_cmp_run::<true>]
+        .map(|run| callable::mint_native(cx.store, cs.callable, run, cs.seed_native));
     // The single-native leaves are minted by their own registrations.
     OpLeaves {
         arith,
@@ -302,6 +341,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         rational_arith,
         rational_cmp,
         rational_neg,
+        type_cmp,
         store,
         store_bytes,
         and_: std::ptr::null_mut(),

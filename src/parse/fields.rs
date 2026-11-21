@@ -1311,6 +1311,19 @@ impl<'a> Parser<'a> {
                 }
                 // A node's field, a map entry, a tape cell: a place with no address to hand out.
                 Some(_) => return Err(ParseError::BadAddressOf),
+                // A name that holds a type or a function holds a dyad, whose address is the
+                // name's identity ([[R383]]).
+                None if named
+                    && (crate::identities::is_type_value(types, node)
+                        || dyad::ty(node) == types.fn_type) =>
+                {
+                    crate::identities::pointer::address_value(
+                        self.rt.store,
+                        types,
+                        types.dyad_,
+                        node,
+                    )
+                }
                 // A name names its value already: one that is no place, `x := 5`, has no address.
                 None if named => return Err(ParseError::BadAddressOf),
                 None => {
@@ -1418,11 +1431,7 @@ impl<'a> Parser<'a> {
         for _ in 0..depth {
             // SAFETY: `logos` is the base type node, or the pointer type minted in the previous round.
             logos = unsafe {
-                crate::identities::pointer::make_pointer_type(
-                    self.rt.store,
-                    self.types.type_,
-                    logos,
-                )
+                crate::identities::pointer::make_pointer_type(self.rt.store, self.types, logos)
             };
         }
         tape.place(logos);

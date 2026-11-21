@@ -12,6 +12,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::numtype::NumType;
 use super::read::carry_of;
+use super::type_mint::{self, KeyPart};
 use super::{assign, meta, mint, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -128,7 +129,7 @@ unsafe fn choose_address(store: &mut Store, types: &Core, key: &[DyadPtr]) -> Op
     let &[pointee] = key else {
         return None;
     };
-    let output_type = make_pointer_type(store, types.type_, pointee);
+    let output_type = make_pointer_type(store, types, pointee);
     Some(mint::Made { output_type, op: types.ops.addr_ })
 }
 
@@ -185,40 +186,84 @@ pub(crate) fn address_value(
     addr: DyadPtr,
 ) -> DyadPtr {
     // SAFETY: `pointee` is the type node the address was taken of.
-    let ty = unsafe { make_pointer_type(store, types.type_, pointee) };
+    let ty = unsafe { make_pointer_type(store, types, pointee) };
     store.alloc_blob(ty, &(addr as usize as u64).to_ne_bytes())
 }
 
-/// One node per pointee: the first mint is written into the pointee's record and every
-/// later `@pointee` reads it back, so two spellings of `@i32` are one type. A pointee
-/// carrying no record gets a fresh node; an owning pointer type is never interned.
+/// One node per pointee: `type_mint` keeps the mint under `@` and the pointee, so two spellings
+/// of `@i32` are one type (›Every type is minted by its contents through `type_mint`; the name
+/// that holds a `type ( … )` gives it its identity‹ [[R383]]). A pointee carrying no record gets
+/// a fresh node; an owning pointer type is never interned.
 ///
 /// # Safety
 /// `pointee` must be a type node from the store.
+///
+/// # Panics
+/// Where `type_mint`'s own functions fail: a defect of the seed.
 pub(crate) unsafe fn make_pointer_type(
+    store: &mut Store,
+    types: &Core,
+    pointee: DyadPtr,
+) -> DyadPtr {
+    if !types.type_mint.is_read() {
+        return early_pointer_type(store, types.type_, pointee);
+    }
+    if super::meta::kind_of(pointee).is_none() {
+        return new_pointer_type(store, types.type_, pointee);
+    }
+    let key = [KeyPart::Node(pointee)];
+    let (place, kept) =
+        type_mint::find(store, types, types.at_, &key).expect("`type_mint` walks `@T`'s key");
+    kept.unwrap_or_else(|| {
+        let node = new_pointer_type(store, types.type_, pointee);
+        type_mint::keep(store, types, place, node).expect("`type_mint` keeps `@T`'s mint");
+        node
+    })
+}
+
+unsafe fn new_pointer_type(store: &mut Store, type_: DyadPtr, pointee: DyadPtr) -> DyadPtr {
+    let value = super::meta::pointer_record(store, pointee);
+    store.alloc_head(type_, value)
+}
+
+/// `@pointee` before `type_mint` stands, which is built from pointer types itself: one node per
+/// pointee all the same, which [`keep_early`] hands over: stand-in for #442's bootstrap.
+///
+/// # Safety
+/// `pointee` must be a type node from the store.
+pub(super) unsafe fn early_pointer_type(
     store: &mut Store,
     type_: DyadPtr,
     pointee: DyadPtr,
 ) -> DyadPtr {
-    let interned = super::meta::kind_of(pointee).is_some();
-    if interned {
-        let known = super::meta::pointer_type_of(pointee);
-        if !known.is_null() {
-            return known;
+    if super::meta::kind_of(pointee).is_none() {
+        return new_pointer_type(store, type_, pointee);
+    }
+    if let Some(known) = store.early_pointer_type(pointee) {
+        return known;
+    }
+    let node = new_pointer_type(store, type_, pointee);
+    store.note_early_pointer_type(pointee, node);
+    node
+}
+
+/// Hands `type_mint`, once it stands, the pointer types the seed made before.
+pub(super) fn keep_early(store: &mut Store, types: &Core) {
+    for (pointee, node) in store.take_early_pointer_types() {
+        let key = [KeyPart::Node(pointee)];
+        // SAFETY: `pointee` and `node` are type nodes `early_pointer_type` noted.
+        unsafe {
+            let (place, _) = type_mint::find(store, types, types.at_, &key)
+                .expect("`type_mint` walks `@T`'s key");
+            type_mint::keep(store, types, place, node).expect("`type_mint` keeps `@T`'s mint");
         }
     }
-    let value = super::meta::pointer_record(store, pointee);
-    let node = store.alloc_head(type_, value);
-    if interned {
-        super::meta::install_pointer_type(pointee, node);
-    }
-    node
 }
 
 /// `@dyad`, what a read of a cell, a line, a field, a name or a scope gives back.
 pub(crate) fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
     // SAFETY: `dyad_` is a type node `Core::build` minted.
-    unsafe { make_pointer_type(store, types.type_, types.dyad_) }
+    unsafe { make_pointer_type(store, types, types.dyad_) }
 }
 
 /// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,

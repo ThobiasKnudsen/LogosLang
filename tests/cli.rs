@@ -11964,6 +11964,117 @@ fn a_type_no_name_holds_is_minted_by_its_contents_on_both_tiers() {
     assert_runs(&cases);
 }
 
+/// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
+/// gives it its identity‹ [[R383]]: two names of one mint are two dyads that read the same, so
+/// `==` is true of them and of the types of their values, on both tiers, and their addresses
+/// tell them apart.
+#[test]
+fn two_names_of_one_mint_read_the_same_and_differ_by_address() {
+    let defs = "meters := type ( pub v := f64 ? ), seconds := type ( pub v := f64 ? ), \
+                feet := type ( pub w := f64 ? ), mk := fn () -> type ( type ( pub v := f64 ? ) )";
+    let mut cases = Vec::new();
+    for (body, want) in [
+        ("meters == seconds", "true\n"),
+        ("meters != seconds", "false\n"),
+        ("meters == feet", "false\n"),
+        ("meters(1.0).type == seconds(2.0).type", "true\n"),
+        ("mk() == meters and meters == mk()", "true\n"),
+        ("&meters == &seconds", "false\n"),
+        ("&meters == &meters and &i32 == &i32", "true\n"),
+        ("&meters != &seconds and &i32 != &i64", "true\n"),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            cases.push((format!("{defs}, g := fn () -> bool ( {body} ), {compile}g()"), want));
+        }
+    }
+    // A type handed over as a value compares by reading when the code runs.
+    for compile in ["", "g.compile(), "] {
+        cases.push((
+            format!(
+                "{defs}, g := fn (t := type ?, u := type ?) -> bool ( t == u ), \
+                 {compile}print «{{g(meters, seconds)}} {{g(meters, feet)}} {{g(i32, i32)}}»"
+            ),
+            "true false true\n",
+        ));
+    }
+    cases.extend([
+        // A value's type is its name's own dyad: a map keys the two names apart.
+        (
+            format!(
+                "{defs}, a := meters(1.0), b := seconds(2.0), mut m := hashmap type -> i32, \
+                 m[meters] = 1, m[seconds] = 2, print «{{m[a.type]}} {{m[b.type]}} {{a.v}} {{b.v}}»"
+            ),
+            "1 2 1.0 2.0\n",
+        ),
+        // An alias passes the identity through.
+        (
+            format!(
+                "{defs}, t := type meters, u := type i32, \
+                 print «{{t == meters}} {{u == i32}} {{&t == &meters}} {{&t == &seconds}}»"
+            ),
+            "true true true false\n",
+        ),
+        // A pointer type is minted by its pointee's own dyad.
+        (
+            format!(
+                "{defs}, k := fn (t := type ?) -> type ( t ), \
+                 g := fn () -> bool ( k(@meters) == k(@seconds) ), g()"
+            ),
+            "false\n",
+        ),
+        (
+            "f := fn (y := i32 ?) -> i32 ( y ), g := fn (y := i32 ?) -> i32 ( y ), \
+             print «{&f == &g} {&f == &f}»"
+                .to_string(),
+            "false true\n",
+        ),
+    ]);
+    assert_runs(&cases);
+}
+
+/// A place of one name's type takes no value of another name of the same mint, written as a
+/// conversion or not, until its type's `parse` says so ([[R383]], [[R155]]); a writable `static`
+/// keeps two types two.
+#[test]
+fn two_names_of_one_mint_do_not_convert_into_each_other() {
+    let defs = "meters := type ( pub v := f64 ? ), seconds := type ( pub v := f64 ? )";
+    for (rest, at) in [
+        ("mut a := meters(1.0), b := seconds(2.0), a = b, a.v", "1:118"),
+        ("b := seconds(2.0), a := meters (b), a.v", "1:106"),
+        ("f := fn (m := meters ?) -> f64 ( m.v ), f(seconds(2.0))", "1:127"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{defs}, {rest}"));
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{rest}: {stderr}");
+        assert!(stderr.contains(&format!("{at}: error: these types do not match")), "{stderr}");
+    }
+    assert_runs(&[(
+        "c1 := type ( pub static mut n := i32 0 ), c2 := type ( pub static mut n := i32 0 ), \
+         c1.n = 1, print «{c1 == c2} {c1.n} {c2.n}»"
+            .to_string(),
+        "false 1 0\n",
+    )]);
+}
+
+/// `@T` is minted through `type_mint` by its pointee, so every spelling of one pointer type is one
+/// type ([[R383]]).
+#[test]
+fn a_pointer_type_is_one_mint_per_pointee_on_both_tiers() {
+    let defs = "w := type ( v := i32 ? ), k := fn (t := type ?) -> type ( t )";
+    let mut cases = Vec::new();
+    for body in [
+        "k(@i32) == k(@i32) and k(@i32) != k(@f64)",
+        "k(@@i32) == k(@@i32) and k(@@i32) != k(@i32)",
+        "k(@w) == k(@w) and k(@w) != k(@i32)",
+    ] {
+        for compile in ["", "g.compile(), "] {
+            cases.push((format!("{defs}, g := fn () -> bool ( {body} ), {compile}g()"), "true\n"));
+        }
+    }
+    cases
+        .push(("x := i32 5, p := &x, q := &x, print «{p.type == q.type} {p@}»".into(), "true 5\n"));
+    assert_runs(&cases);
+}
+
 /// R383's rules (2) and (3): a writable `static` is never shared, so a type that holds one is
 /// found by no other build, and a body is the same only where it is written, so one `type ( … )`
 /// built again is one type and the same text written twice is two. A `static` that holds a float

@@ -1013,6 +1013,15 @@ impl<'a> Lowerer<'a, '_> {
         // The width is in the mint: the parse chose its leaf for the resolved operand
         // types, so they are not classified a second time here.
         let leaf = mint::operation_of(dyad::ty(node)).unwrap_or(std::ptr::null_mut());
+        if let Some(equal) = self.types.ops.type_cmp_of(leaf) {
+            let l = self.lower(lhs)?;
+            let r = self.lower(rhs)?;
+            let entry = crate::identities::ops::compiled_types_read_the_same as *const () as usize;
+            let same = self.call_seed(entry, &[l, r])?;
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            let cc = if equal { IntCC::NotEqual } else { IntCC::Equal };
+            return Ok(self.icmp(cc, same, zero));
+        }
         // A map's compare against `?` is interpreted only.
         let Some(logos) = self.types.ops.cmp_nt_of(leaf) else {
             return Err(CompileError::NotLowerable(node));

@@ -79,7 +79,7 @@ pub(crate) mod string;
 mod subset;
 pub mod tape;
 pub mod this;
-mod type_mint;
+pub(crate) mod type_mint;
 #[path = "type.rs"]
 mod type_mod;
 pub(crate) mod waiting;
@@ -578,6 +578,7 @@ impl Core {
             lower,
         };
         core.type_mint = type_mint::load(store, trie, &core);
+        pointer::keep_early(store, &core);
         core
     }
 
@@ -1198,10 +1199,7 @@ pub(crate) unsafe fn copy_place(
     let t = read::output_type(types, value);
     let width = read::carry_of(types, t)?.width();
     if numtype::is_pointer_type(t) {
-        return Some((
-            pointer::make_pointer_type(store, types.type_, numtype::pointee_of(t)),
-            width,
-        ));
+        return Some((pointer::make_pointer_type(store, types, numtype::pointee_of(t)), width));
     }
     Some((t, width))
 }

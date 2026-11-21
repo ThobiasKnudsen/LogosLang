@@ -21,7 +21,6 @@ mod driver;
 mod error;
 mod fields;
 mod lex;
-mod mints;
 mod operands;
 mod quotes;
 mod scopes;

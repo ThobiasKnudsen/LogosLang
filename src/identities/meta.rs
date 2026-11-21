@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The `static`-member record every identity carries in its value slot: parse rank
-//! and associativity, the constructor and destructor leaves, the run-body slot, the
-//! interned pointer type, and the layout its values are read by.
+//! and associativity, the constructor and destructor leaves, the run-body slot, and the
+//! layout its values are read by.
 //!
 //! Record layout (unaligned, native-endian, byte offsets):
 //!
@@ -14,19 +14,18 @@
 //! [10..18]   u64  constructor: a `seed-parse` callable leaf, or 0
 //! [18..26]   u64  destructor: the owning pointer's teardown, else 0
 //! [26..34]   u64  run body: the lexed body a `run = (…)` line held, or 0
-//! [34..42]   u64  pointer type: the interned `@T` of this type, or 0
-//! [42..50]   u64  extent: a `seed-extent` callable leaf for a token that reads its own
+//! [34..42]   u64  extent: a `seed-extent` callable leaf for a token that reads its own
 //!                 extent, or 0
-//! [50..58]   u64  mints: this type's mints made so far, an array, or 0
-//! [58..66]   u64  mint of: the type this one is a mint of, or 0
-//! [66..74]   u64  chooser: a `seed-choose` callable leaf that makes a built-in operation's mint
+//! [42..50]   u64  mints: this type's mints made so far, an array, or 0
+//! [50..58]   u64  mint of: the type this one is a mint of, or 0
+//! [58..66]   u64  chooser: a `seed-choose` callable leaf that makes a built-in operation's mint
 //!                 for a set of field types, or 0
-//! [74]       u8   1 where the type's definition says a value of it is its node's address
-//! [75]       u8   where its nodes carry the `own` mark: `EVERY_NODE` here for every node, else
+//! [66]       u8   1 where the type's definition says a value of it is its node's address
+//! [67]       u8   where its nodes carry the `own` mark: `EVERY_NODE` here for every node, else
 //!                 the slot of each node that holds it, the `own` word or null; `NO_SLOT` nowhere
-//! [76]       u8   the slots whose node a node of this type hands on as its value, one bit each
-//! [77]       u8   the slots whose lines it hands on the last of, one bit each
-//! [78..]     payload, per kind:
+//! [68]       u8   the slots whose node a node of this type hands on as its value, one bit each
+//! [69]       u8   the slots whose lines it hands on the last of, one bit each
+//! [70..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST/TOKEN   u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
 //!                                 none), then arity × `dyad@` role-name strings; a token's
@@ -80,17 +79,15 @@ const CTOR_OFF: usize = 10;
 const DTOR_OFF: usize = 18;
 /// The lexed `run` body with its constructed functions.
 const RUN_BODY_OFF: usize = 26;
-/// The interned `@T` of this type, so two spellings of `@i32` are one node.
-const POINTER_TYPE_OFF: usize = 34;
-const EXTENT_OFF: usize = 42;
-const MINTS_OFF: usize = 50;
-const MINT_OF_OFF: usize = 58;
-const CHOOSER_OFF: usize = 66;
-const NODE_VALUE_OFF: usize = 74;
-const OWN_OFF: usize = 75;
-const HANDS_ON_OFF: usize = 76;
-const HANDS_ON_LINES_OFF: usize = 77;
-pub(crate) const PAYLOAD_OFF: usize = 78;
+const EXTENT_OFF: usize = 34;
+const MINTS_OFF: usize = 42;
+const MINT_OF_OFF: usize = 50;
+const CHOOSER_OFF: usize = 58;
+const NODE_VALUE_OFF: usize = 66;
+const OWN_OFF: usize = 67;
+const HANDS_ON_OFF: usize = 68;
+const HANDS_ON_LINES_OFF: usize = 69;
+pub(crate) const PAYLOAD_OFF: usize = 70;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -447,20 +444,6 @@ pub(crate) unsafe fn run_body_of(id: DyadPtr) -> DyadPtr {
 /// `id` must carry a record and `body` must be a run-body node from the store.
 pub(crate) unsafe fn install_run_body(id: DyadPtr, body: DyadPtr) {
     std::ptr::write_unaligned(dyad::head(id).add(RUN_BODY_OFF) as *mut DyadPtr, body);
-}
-
-/// The interned `@T` of `id`, or null while none has been minted.
-///
-/// # Safety
-/// As `parse_rank_of`.
-pub(crate) unsafe fn pointer_type_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned(dyad::head(id).add(POINTER_TYPE_OFF) as *const DyadPtr)
-}
-
-/// # Safety
-/// `id` must carry a record and `p` must be the plain pointer type node over `id`.
-pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
-    std::ptr::write_unaligned(dyad::head(id).add(POINTER_TYPE_OFF) as *mut DyadPtr, p);
 }
 
 /// Null on every identity whose extent is its spelling.

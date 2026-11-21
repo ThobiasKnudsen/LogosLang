@@ -2602,7 +2602,6 @@ fn address_of_what_has_no_address_is_refused() {
         "( x := 5, &x )",
         "( x := 1 + 2, &(x) )",
         "( &(i32 ?) )",
-        "( &i32 )",
         "( x := i32 3, &x:name )",
         "( m := hashmap i32 -> i32 ?, m[1] = 2, &(m[1]) )",
     ] {

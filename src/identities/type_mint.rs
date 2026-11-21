@@ -3,13 +3,15 @@
 
 //! `type_mint`, the one keeper of every mint, written in Logos: the seed carries
 //! identities/type_mint.logos and reads it into the root scope before any program, so the name
-//! stands wherever a type mints. ›Every type is minted by its contents through `type_mint`; the
-//! name that holds a `type ( … )` gives it its identity‹ [[R383]]
+//! stands wherever a type mints. The formers written in the seed ask it through [`Keeper`], which
+//! calls its functions as a program does. ›Every type is minted by its contents through
+//! `type_mint`; the name that holds a `type ( … )` gives it its identity‹ [[R383]]
 
 use super::meta;
 use crate::dyad::{self, DyadPtr};
 use crate::parse::{LinesEnd, Parser, ScopeStack};
 use crate::regex_trie::RegexTrie;
+use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
 
@@ -20,11 +22,11 @@ const NAME: &str = "type_mint";
 /// `type_mint`'s functions, which the formers written in the seed call.
 #[derive(Debug, Clone, Copy)]
 pub struct Members {
-    pub(crate) step: DyadPtr,
-    pub(crate) step_name: DyadPtr,
-    pub(crate) step_word: DyadPtr,
-    pub(crate) kept: DyadPtr,
-    pub(crate) keep: DyadPtr,
+    step: DyadPtr,
+    step_name: DyadPtr,
+    step_word: DyadPtr,
+    kept: DyadPtr,
+    keep: DyadPtr,
 }
 
 impl Members {
@@ -77,5 +79,112 @@ pub(super) fn load(store: &mut Store, trie: &mut RegexTrie, core: &Core) -> Memb
         step_word: member("step_word"),
         kept: member("kept"),
         keep: member("keep"),
+    }
+}
+
+/// One argument of a mint's key.
+#[derive(Debug, Clone)]
+pub(crate) enum KeyPart {
+    /// A type, or another node that is one identity wherever it stands, by its address.
+    Node(DyadPtr),
+    /// A name, by its spelling.
+    Name(String),
+    /// A whole number: a rank, a whole value, a place in a text.
+    Word(u64),
+}
+
+/// The place the key `former`, then `key`, reaches in `type_mint`, and the mint kept there.
+///
+/// # Safety
+/// `former` and each node of `key` must be dyads from the store.
+///
+/// # Panics
+/// Before the seed has read `type_mint`'s file: nothing mints through it until then.
+pub(crate) unsafe fn find(
+    store: &mut Store,
+    types: &Core,
+    former: DyadPtr,
+    key: &[KeyPart],
+) -> Result<(u64, Option<DyadPtr>), RunError> {
+    let mut keeper = Keeper::over(store, types);
+    let place = keeper.place(former, key)?;
+    Ok((place, keeper.kept(place)?))
+}
+
+/// Has `type_mint` keep `made` at `place`.
+///
+/// # Safety
+/// `place` must be a place [`find`] gave, and `made` a type node from the store.
+pub(crate) unsafe fn keep(
+    store: &mut Store,
+    types: &Core,
+    place: u64,
+    made: DyadPtr,
+) -> Result<(), RunError> {
+    Keeper::over(store, types).keep(place, made)
+}
+
+/// `type_mint` as the seed's formers call it, over a runtime of its own: its functions read and
+/// write only the places of their own type, so they need nothing of the run that asks.
+struct Keeper<'a> {
+    rt: Runtime<'a>,
+}
+
+impl<'a> Keeper<'a> {
+    fn over(store: &'a mut Store, types: &'a Core) -> Self {
+        assert!(types.type_mint.is_read(), "a type is minted before `type_mint` stands");
+        Keeper { rt: Runtime::new(types, store) }
+    }
+
+    /// `f`, a function of `type_mint`, called through the type as `type_mint.f(…)` is: the value
+    /// it works on is none, then `arguments`.
+    ///
+    /// # Safety
+    /// `arguments` must be what `f`'s written parameters take, a word each.
+    unsafe fn call(&mut self, f: DyadPtr, arguments: &[i64]) -> Result<i64, RunError> {
+        let mut values = Vec::with_capacity(arguments.len() + 1);
+        values.push(0);
+        values.extend_from_slice(arguments);
+        self.rt.apply_values(f, &values)
+    }
+
+    /// The place the key `former`, then `key`, reaches.
+    ///
+    /// # Safety
+    /// `former` and each node of `key` must be dyads from the store.
+    unsafe fn place(&mut self, former: DyadPtr, key: &[KeyPart]) -> Result<u64, RunError> {
+        let members = self.rt.types().type_mint;
+        let mut place = self.call(members.step, &[0, former as i64])?;
+        for part in key {
+            place = match part {
+                KeyPart::Node(node) => self.call(members.step, &[place, *node as i64])?,
+                KeyPart::Name(name) => {
+                    let string = self.rt.types().string_;
+                    let text = super::string::build_text(self.rt.store(), string, name.as_bytes());
+                    self.call(members.step_name, &[place, text as i64])?
+                }
+                KeyPart::Word(word) => self.call(members.step_word, &[place, *word as i64])?,
+            };
+        }
+        Ok(place as u64)
+    }
+
+    /// The mint kept at `place`.
+    ///
+    /// # Safety
+    /// `place` must be a place [`Self::place`] gave.
+    unsafe fn kept(&mut self, place: u64) -> Result<Option<DyadPtr>, RunError> {
+        let (kept, unknown) = (self.rt.types().type_mint.kept, self.rt.types().unknown);
+        let kept = self.call(kept, &[place as i64])? as usize as DyadPtr;
+        Ok((!kept.is_null() && kept != unknown).then_some(kept))
+    }
+
+    /// Keeps `made` at `place`.
+    ///
+    /// # Safety
+    /// As [`Self::kept`]; `made` must be a type node from the store.
+    unsafe fn keep(&mut self, place: u64, made: DyadPtr) -> Result<(), RunError> {
+        let keep = self.rt.types().type_mint.keep;
+        self.call(keep, &[place as i64, made as i64]).map(|_| ())
     }
 }

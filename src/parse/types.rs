@@ -4,9 +4,9 @@
 //! Type bodies: the field list, the slot fills and `static` members, a held `type (…)`
 //! built at its run, and a run type's specialization and comptime fold.
 
-use super::mints::KeyPart;
 use super::*;
 use crate::dyad;
+use crate::identities::type_mint::{self, KeyPart};
 
 /// What a `type (…)` body's lines have filled so far: the head the type node
 /// takes at the close, its one set of slots, and its values' fields. Also the `{ … }` a `fn`
@@ -254,8 +254,9 @@ impl<'a> Parser<'a> {
                 );
                 key.push(KeyPart::Node(types.type_of(name)));
             }
-            let place = self.mint_place(types.open_curly_, &key)?;
-            if let Some(shape) = self.mint_kept(place)? {
+            let (place, kept) = type_mint::find(self.rt.store, types, types.open_curly_, &key)
+                .map_err(ParseError::Run)?;
+            if let Some(shape) = kept {
                 return Ok((shape, names));
             }
             Some(place)
@@ -286,7 +287,7 @@ impl<'a> Parser<'a> {
         let fields = crate::identities::array::build(self.rt.store, types.array_, &fields);
         let record = self.record_node(ty, field_scope, fields, &bindings, scope);
         if let Some(place) = place {
-            self.mint_keep(place, record)?;
+            type_mint::keep(self.rt.store, types, place, record).map_err(ParseError::Run)?;
         }
         Ok((record, names))
     }
@@ -876,21 +877,53 @@ impl<'a> Parser<'a> {
             // SAFETY: `node` was just built with a record layout; the free is the fill's fn.
             unsafe { crate::identities::meta::install_instances_free(node, def.instances_free) };
         }
-        // A type a name holds is that name's own; `type_mint` itself is built before it keeps
-        // anything.
-        let found_again = own_name.is_null() && self.types.type_mint.is_read();
-        let Some(contents) = contents.filter(|_| found_again) else {
+        // `type_mint` itself is built before it keeps anything.
+        let Some(contents) = contents.filter(|_| self.types.type_mint.is_read()) else {
             return Ok(node);
         };
         // SAFETY: the key's nodes are types, gates and functions of the body just built.
         unsafe {
-            let place = self.mint_place(self.types.type_, &contents)?;
-            if let Some(kept) = self.mint_kept(place)? {
-                return Ok(kept);
-            }
-            self.mint_keep(place, node)?;
+            let types = self.types;
+            let (place, kept) = type_mint::find(self.rt.store, types, types.type_, &contents)
+                .map_err(ParseError::Run)?;
+            let mint = match kept {
+                Some(mint) => mint,
+                None => {
+                    let mint = self.mint_of(node, own_name);
+                    type_mint::keep(self.rt.store, types, place, mint).map_err(ParseError::Run)?;
+                    mint
+                }
+            };
+            Ok(self.named_type(node, mint, own_name))
         }
-        Ok(node)
+    }
+
+    /// The mint `type_mint` keeps for the type just built at `node`: `node` itself where no
+    /// name holds it, and beside a name's own dyad a dyad of its own over the same record, so a
+    /// type no name holds is never the name's.
+    ///
+    /// # Safety
+    /// `node` must be a type node carrying its record.
+    unsafe fn mint_of(&mut self, node: DyadPtr, own_name: DyadPtr) -> DyadPtr {
+        if own_name.is_null() {
+            return node;
+        }
+        self.rt.store.alloc_head(self.types.type_, dyad::head(node))
+    }
+
+    /// What a `type ( … )` gives where its contents are the mint `mint`: the mint, or for the
+    /// name that holds it the name's own dyad `node` over the mint's record, which a value's
+    /// type word then points at (›Every type is minted by its contents through `type_mint`; the
+    /// name that holds a `type ( … )` gives it its identity‹ [[R383]]).
+    ///
+    /// # Safety
+    /// `node` and `mint` must be type nodes carrying a record, of the same contents.
+    unsafe fn named_type(&mut self, node: DyadPtr, mint: DyadPtr, own_name: DyadPtr) -> DyadPtr {
+        if own_name.is_null() {
+            return mint;
+        }
+        dyad::set_head(node, dyad::head(mint));
+        node
     }
 
     /// The contents of the `type ( … )` body just built, as its key in `type_mint` after the
