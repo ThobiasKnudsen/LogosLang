@@ -217,6 +217,11 @@ impl ScopeStack {
         self.barriers.iter().any(|&b| b > idx)
     }
 
+    /// Whether a body that runs again or later encloses the position.
+    pub fn in_barrier(&self) -> bool {
+        !self.barriers.is_empty()
+    }
+
     pub fn position(&self, scope: DyadPtr) -> Option<usize> {
         self.open.iter().position(|&s| s == scope)
     }

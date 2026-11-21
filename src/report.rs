@@ -218,10 +218,6 @@ pub fn parse_message(e: &ParseError) -> String {
              another identity, remove it, or set the flag on the untouched cell to stand as itself"
         ),
         ParseError::BadPattern(why) => format!("this pattern does not compile: {why}"),
-        ParseError::LoadInRuntimeBody(word) => format!(
-            "`{word}` reads a file as Logos at parse time, so it cannot stand inside a \
-             function body, loop, or runtime branch"
-        ),
         ParseError::FileRead(detail) => format!("cannot read {detail}"),
         ParseError::ImportCycle(path) => format!(
             "reading `{path}` as Logos here closes a cycle: the graph of files reaching files \
