@@ -8848,6 +8848,11 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
             "1:60: error: a nested function cannot use an outer function's local or parameter",
         ),
         (inc("k := fn () -> i32 ( a ), k() + 1"), "a nested function cannot use an outer function's local"),
+        // Refused at the use, not at the declaration: stand-in for #408.
+        (
+            format!("{t}static h := fn () -> i32 ( k := fn (x := i32 ?) -> i32 ( x ), k(3) ) ), v := t (5), v.h()"),
+            "a nested function cannot use an outer function's local or parameter",
+        ),
         (
             format!("{t}static h := fn () -> i32 ( static c := x, c ) ), v := t (5), v.h()"),
             "1:171: error: a value made once, where it is written (`static`, `immediate`), cannot use a name",
