@@ -1,8 +1,8 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Declarations: `:=`, `?`, `dyad`, the binding and its gates, what a write must be
-//! granted by, ownership marks, and the unwritten-fields rule.
+//! Declarations: `:=`, `?`, `dyad`, the binding, what a write must be granted by, ownership
+//! marks, and the unwritten-fields rule.
 
 use super::*;
 use crate::dyad;
@@ -19,9 +19,9 @@ impl<'a> Parser<'a> {
     }
 
     /// A write into a name is granted by its own binding, and into a place reached by a path by
-    /// every binding along it, `immut` vetoing first; the constructor's fill of its fresh node is
-    /// granted unless `immut` vetoes it; a write of a name's `lex_rank` is decided as a write at
-    /// its `:gate`; a place reached no such way passes here.
+    /// every binding along it; the constructor's fill of its fresh node is granted; a write of a
+    /// name's `lex_rank` is decided by the scope it is written from; a place reached no such way
+    /// passes here.
     pub(crate) fn check_write(&self, target: &Cell) -> Result<(), ParseError> {
         use crate::identities::this;
         let node = target.dyad;
@@ -33,15 +33,8 @@ impl<'a> Parser<'a> {
                     return self.check_lex_write(binding);
                 }
             }
-            if this::is_field_read(self.types, node) && this::is_fill(self.types, node) {
-                let binding = this::field_binding_of(self.types, node);
-                if Binding::has_gate(binding, self.types.immut_) {
-                    return Err(ParseError::Immutable(Box::new(Binding::spelling(binding))));
-                }
-                return Ok(());
-            }
-            // A fill of a field of a type stamped as the parse runs: its `immut` is read then.
-            if this::is_named(self.types, node) {
+            let fill = this::is_field_read(self.types, node) && this::is_fill(self.types, node);
+            if fill || this::is_named(self.types, node) {
                 return Ok(());
             }
             if target.path.is_null() && dyad::ty(node) == self.types.binding_ {
@@ -52,7 +45,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A write at a name's lex level, admitted from the scope that declares it and the scopes
-    /// below; `mut` and `immut` guard the value and have no part in it. ›Two levels: the binding
+    /// below; `mut` guards the value and has no part in it. ›Two levels: the binding
     /// is the lex level, the dyad is the value level‹ [[R284]]
     ///
     /// # Safety
@@ -81,7 +74,7 @@ impl<'a> Parser<'a> {
         let types = self.types;
         if place.is_null()
             || dyad::ty(place) != types.binding_
-            || !Binding::has_gate(place, types.waiting.line)
+            || !Binding::read(place).typed_at_run
         {
             return Ok(value);
         }
@@ -127,10 +120,7 @@ impl<'a> Parser<'a> {
         for &binding in path {
             // SAFETY: the path holds binding dyads from the store.
             unsafe {
-                if Binding::has_gate(binding, self.types.immut_) {
-                    return Err(ParseError::Immutable(Box::new(Binding::spelling(binding))));
-                }
-                if !Binding::has_gate(binding, self.types.mut_) {
+                if !crate::identities::gate::name_has(self.types, binding, self.types.mut_) {
                     return Err(ParseError::NotMutable(Box::new(Binding::spelling(binding))));
                 }
             }
@@ -181,14 +171,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Add `gate` to a name's binding, once.
+    /// A gate word written left of the name moves into the type of the name's value, once:
+    /// stand-in for #440, whose gate words stand right of `:=`.
     pub(crate) fn add_gate(&mut self, binding: DyadPtr, gate: DyadPtr) -> Result<(), ParseError> {
-        // SAFETY: `binding` is a binding dyad from the store.
+        use crate::identities::gate::{add_to_name, name_has};
+        // SAFETY: `binding` is a binding dyad from the store, and `gate` a gate word.
         unsafe {
-            if Binding::has_gate(binding, gate) {
+            if name_has(self.types, binding, gate) {
                 return Err(ParseError::DoubleGate);
             }
-            Binding::add_gate(self.rt.store, self.types.array_, binding, gate);
+            add_to_name(self.rt.store, self.types, binding, gate);
         }
         Ok(())
     }
@@ -206,9 +198,9 @@ impl<'a> Parser<'a> {
         Binding::alloc(self.rt.store, self.types.binding_, rec)
     }
 
-    /// One binding per declared name, a dyad of type `binding` (DESIGN ›`mut` is
-    /// a gate on the binding‹); an error is reported at `at`, the name's own
-    /// offset, so the caret lands on the name.
+    /// One binding per declared name, a dyad of type `binding` (›One binding per declared
+    /// name‹ [[R119]]); an error is reported at `at`, the name's own offset, so the caret lands
+    /// on the name.
     pub(crate) fn declare_name(
         &mut self,
         name: &str,
@@ -291,16 +283,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Whether the name owns the node it holds: its binding carries `own`.
+    /// Whether the name owns the node it holds, as its binding site decided.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store.
     pub(crate) unsafe fn owns_node(&self, binding: DyadPtr) -> bool {
-        Binding::has_gate(binding, self.types.own_)
+        Binding::read(binding).holds
     }
 
     /// Whether the binding site made the name an owner: of a block, its place an owning
-    /// pointer's, of a node, its binding carrying `own`, or of what its `dyad ?` place holds.
+    /// pointer's, of a node, or of what its `dyad ?` place holds.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store.
@@ -317,7 +309,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `binding` must be the binding dyad being declared, laid out as a node's place.
     unsafe fn hold_node(&mut self, binding: DyadPtr) {
-        Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.own_);
+        Binding::set_holds(binding);
         self.hold(binding);
     }
 
@@ -540,7 +532,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::Resolve(ResolveError::Dead(name)));
         }
         // SAFETY: as above.
-        if !unsafe { Binding::has_gate(binding, types.unknown) }
+        if !unsafe { Binding::read(binding) }.unread
             || next_is(types.assign)
             || next_is(types.colon_)
         {
@@ -673,7 +665,7 @@ impl<'a> Parser<'a> {
                 .collect();
             if left.is_empty() {
                 Binding::set_unwritten(binding, std::ptr::null_mut());
-                Binding::remove_gate(self.rt.store, self.types.array_, binding, self.types.unknown);
+                Binding::set_unread(binding, false);
             } else {
                 let arr = crate::identities::array::build(self.rt.store, self.types.array_, &left);
                 Binding::set_unwritten(binding, arr);
@@ -682,12 +674,12 @@ impl<'a> Parser<'a> {
         }
         if place.is_null()
             || dyad::ty(place) != self.types.binding_
-            || !Binding::has_gate(place, self.types.unknown)
+            || !Binding::read(place).unread
             || Binding::read(place).scope != scope
         {
             return;
         }
-        Binding::remove_gate(self.rt.store, self.types.array_, place, self.types.unknown);
+        Binding::set_unread(place, false);
         Binding::set_unwritten(place, std::ptr::null_mut());
     }
 
@@ -706,9 +698,7 @@ impl<'a> Parser<'a> {
         if unwritten.is_empty() {
             return;
         }
-        if !Binding::has_gate(binding, self.types.unknown) {
-            Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.unknown);
-        }
+        Binding::set_unread(binding, true);
         let arr = crate::identities::array::build(self.rt.store, self.types.array_, &unwritten);
         Binding::set_unwritten(binding, arr);
     }
@@ -872,7 +862,7 @@ impl<'a> Parser<'a> {
     /// A word written left of the name a `:=` declares.
     pub(super) fn is_gate_word(&self, id: DyadPtr) -> bool {
         let t = self.types;
-        [t.static_, t.mut_, t.pub_, t.immut_].contains(&id)
+        [t.static_, t.mut_, t.pub_].contains(&id)
     }
 
     /// `name := value`: the binding is made before the value parses and points at the
@@ -951,12 +941,11 @@ impl<'a> Parser<'a> {
         // it, as one declared `T ?` does.
         // SAFETY: `binding` is the binding just declared.
         unsafe {
-            let (store, array) = (&mut *self.rt.store, self.types.array_);
             if typed_at_run {
-                Binding::add_gate(store, array, binding, self.types.waiting.line);
+                Binding::set_typed_at_run(binding);
             }
             if unwritten {
-                Binding::add_gate(store, array, binding, self.types.unknown);
+                Binding::set_unread(binding, true);
             }
         }
         let node =
@@ -1136,12 +1125,7 @@ impl<'a> Parser<'a> {
                     _ => self.hold(binding),
                 }
                 if !crate::identities::hashmap::is_hashmap(self.types, t) {
-                    Binding::add_gate(
-                        self.rt.store,
-                        self.types.array_,
-                        binding,
-                        self.types.unknown,
-                    );
+                    Binding::set_unread(binding, true);
                     // `T ?` of a record leaves zeroed bytes, not the defaults, so every field
                     // waits for its write.
                     if crate::identities::meta::is_record_type(t) {

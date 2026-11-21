@@ -47,7 +47,7 @@ fn place(store: &mut Store, core: &Core, ty: DyadPtr, bytes: &[u8]) -> (DyadPtr,
     // SAFETY: `binding` was just built into the store; `ty` is a type node.
     unsafe {
         Binding::lay_out(binding, ty, core.root_scope, offset);
-        Binding::add_gate(store, core.array_, binding, core.mut_);
+        crate::identities::gate::add_to_name(store, core, binding, core.mut_);
     }
     (binding, at)
 }
@@ -3358,7 +3358,10 @@ fn declaration_binds_a_name_to_a_value() {
     }
     // SAFETY: `x_ref` is the binding of `x`.
     unsafe {
-        assert!(!Binding::has_gate(x_ref, core.pub_) && !Binding::has_gate(x_ref, core.mut_));
+        assert!(
+            !crate::identities::gate::name_has(&core, x_ref, core.pub_)
+                && !crate::identities::gate::name_has(&core, x_ref, core.mut_)
+        );
     }
 }
 
@@ -3417,7 +3420,10 @@ fn pub_marks_the_names_binding() {
     let x = use_of(&mut store, &mut trie, &core, "x");
     // SAFETY: `x` is the binding of `x`.
     unsafe {
-        assert!(Binding::has_gate(x, core.pub_) && !Binding::has_gate(x, core.mut_));
+        assert!(
+            crate::identities::gate::name_has(&core, x, core.pub_)
+                && !crate::identities::gate::name_has(&core, x, core.mut_)
+        );
     }
 }
 
@@ -3438,7 +3444,7 @@ fn pub_gates_a_typed_declaration() {
     let x = use_of(&mut store, &mut trie, &core, "x");
     // SAFETY: `x` is the binding of `x`.
     unsafe {
-        assert!(Binding::has_gate(x, core.pub_));
+        assert!(crate::identities::gate::name_has(&core, x, core.pub_));
     }
 }
 
@@ -3467,17 +3473,18 @@ fn pub_gates_a_fn_declaration() {
     let double = use_of(&mut store, &mut trie, &core, "double");
     // SAFETY: `double` is the binding of `double`.
     unsafe {
-        assert!(Binding::has_gate(double, core.pub_));
+        assert!(crate::identities::gate::name_has(&core, double, core.pub_));
     }
 }
 
 #[test]
-fn static_stands_first_on_the_members_binding() {
+fn a_members_gates_are_one_gate_node_in_its_type_however_they_are_written() {
     let (mut store, mut trie, core) = new_core();
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p = Parser::new(
-        "t := type (static y := i32 3, static mut z := i32 4, v := i32 ?)",
+        "t := type (static y := i32 3, static mut z := i32 4, static pub mut a := i32 5, \
+         pub static mut b := i32 6, pub mut v := i32 ?, mut pub w := i32 ?, u := i32 ?)",
         &mut store,
         &mut trie,
         &core,
@@ -3491,11 +3498,36 @@ fn static_stands_first_on_the_members_binding() {
         body.push(crate::identities::meta::record_body_of(t));
         let y = body.resolve(&trie, "y").unwrap().binding;
         let z = body.resolve(&trie, "z").unwrap().binding;
-        assert!(Binding::has_gate(y, core.static_) && !Binding::has_gate(y, core.mut_));
-        assert_eq!(
-            crate::identities::array::items(Binding::read(z).gate),
-            &[core.static_, core.mut_]
+        assert!(
+            crate::identities::gate::name_has(&core, y, core.static_)
+                && !crate::identities::gate::name_has(&core, y, core.mut_)
         );
+        use crate::identities::gate::{is_node, name_has, set_of, under, word_of_name};
+        assert!(name_has(&core, z, core.static_) && name_has(&core, z, core.mut_));
+        assert_eq!(set_of(word_of_name(&core, z)).len(), 2);
+        // The record's own word is the gate node, and a read of it gives the type under it.
+        assert!(is_node(Binding::gated(z)));
+        assert_eq!(Binding::read(z).dyad, core.i32_);
+        assert_eq!(under(Binding::gated(z)), core.i32_);
+        // One set of gate words is one gate mint, and one gate node over one type.
+        let [a, b] = ["a", "b"].map(|name| body.resolve(&trie, name).unwrap().binding);
+        let mut fields = ScopeStack::new();
+        fields.push(crate::identities::meta::record_scope_of(t));
+        let [v, w, u] = ["v", "w", "u"].map(|name| fields.resolve(&trie, name).unwrap().binding);
+        assert_eq!(Binding::gated(a), Binding::gated(b));
+        assert_ne!(Binding::gated(a), Binding::gated(z));
+        assert_eq!(word_of_name(&core, v), word_of_name(&core, w));
+        assert_eq!(dyad::ty(Binding::gated(a)), dyad::ty(Binding::gated(b)));
+        // No gate word is no gate node.
+        assert!(!is_node(word_of_name(&core, u)));
+        // Gating a gated type gives the node of the joined set over the type under it.
+        let mint = crate::identities::gate::mint_of(&mut store, &core, &[core.mut_]);
+        let mut_i32 = crate::identities::gate::over(&mut store, &core, mint, core.i32_);
+        let again = crate::identities::gate::with(&mut store, &core, mut_i32, core.mut_);
+        assert_eq!(again, mut_i32);
+        let both = crate::identities::gate::with(&mut store, &core, mut_i32, core.pub_);
+        assert_eq!(under(both), core.i32_);
+        assert_eq!(set_of(both).len(), 2);
     }
     assert_eq!(parse_err("f := fn (static x := i32 ?) -> i32 ( x )"), ParseError::StaticMisplaced);
 }
@@ -3606,30 +3638,10 @@ fn a_name_is_written_only_if_declared_mut() {
         ParseError::NotMutable(Box::new("x".into()))
     );
     assert_eq!(parse_err("mut mut x := 5"), ParseError::DoubleGate);
+    // `immut` is no word, so the name it stands before is one nobody declared.
     assert_eq!(
-        parse_err_after(&["immut x := i32 5"], "x = 6"),
-        ParseError::Immutable(Box::new("x".into()))
-    );
-    assert_eq!(
-        parse_err_after(&["immut mut x := i32 5"], "x = 6"),
-        ParseError::Immutable(Box::new("x".into()))
-    );
-    assert_eq!(
-        parse_err("f := fn (immut a := i32 ?) -> i32 ( a = 1, a )"),
-        ParseError::Immutable(Box::new("a".into()))
-    );
-    assert_eq!(
-        parse_err(
-            "t := type (immut a := i32 ?, static parse = ( tape[0].type = t, tape[0].a = tape[-1] ))"
-        ),
-        ParseError::Immutable(Box::new("a".into()))
-    );
-    // An `immut` sibling never written blocks nothing: the other fill parses.
-    assert_eq!(
-        run_script(
-            "t := type (a := i32 ?, immut b := i32 ?, static parse = ( tape[0].type = t, tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
-        ),
-        1
+        parse_err("immut x := i32 5"),
+        ParseError::Resolve(crate::parse::ResolveError::Unknown("immut".into()))
     );
     assert_eq!(parse_err("mut 5"), ParseError::GateNeedsDeclaration);
     assert_eq!(run_script("f := fn (mut a := i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
