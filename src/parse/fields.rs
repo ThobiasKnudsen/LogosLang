@@ -1532,6 +1532,14 @@ impl<'a> Parser<'a> {
         record
     }
 
+    /// The binding whose record `record` lies over: [`Parser::binding_record_place`]'s inverse.
+    ///
+    /// # Safety
+    /// `record` must be a place `binding_record_place` laid out.
+    pub(super) unsafe fn binding_of_record_place(&self, record: DyadPtr) -> DyadPtr {
+        dyad::of_value(self.rt.store.arena_base().add(Binding::read(record).offset))
+    }
+
     /// A pointer-typed literal with its own eight bytes of storage, read at
     /// run time like any pointer variable.
     fn address_value(&mut self, pointee: DyadPtr, addr: DyadPtr) -> DyadPtr {
