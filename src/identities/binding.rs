@@ -72,6 +72,11 @@ pub struct Binding {
     /// The binding site made the name the owner of the node it holds (›Holding is decided at
     /// the binding site, parameters included‹ [[R61]]).
     pub holds: bool,
+    /// A word its body got from the language, which no text declared: a type body's slot word
+    /// (›Slot words are known only inside a type body‹ [[R220]]), a `parse` body's `tape`
+    /// (›`tape` is a word the `parse` slot declares into its body‹ [[R191]]). A body inside
+    /// another has its own beside the outer one's, and a lookup finds the innermost.
+    pub body_word: bool,
 }
 
 /// Where a storage binding's bytes lie, with the offset into it.
@@ -103,6 +108,7 @@ impl Binding {
             unread: false,
             typed_at_run: false,
             holds: false,
+            body_word: false,
         }
     }
 
@@ -329,6 +335,12 @@ impl Binding {
     /// As `Binding::read`.
     pub unsafe fn set_pattern(dyad: DyadPtr, pattern: bool) {
         (*Self::shared(dyad)).pattern = pattern;
+    }
+
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn set_body_word(dyad: DyadPtr) {
+        (*Self::shared(dyad)).body_word = true;
     }
 
     /// # Safety
