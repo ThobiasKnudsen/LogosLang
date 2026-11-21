@@ -376,6 +376,93 @@ fn a_logos_constructor_runs_when_its_identity_appears() {
 }
 
 #[test]
+fn every_record_type_runs_the_constructor_its_own_slot_holds() {
+    // `type` fills the slot of a body that fills no `parse` with its derived constructor, and the
+    // driver reads the slot alone (›No climbing: a type without a parse leaves its values inert‹
+    // [[R214]]).
+    use crate::identities::{meta, Core};
+    use crate::regex_trie::RegexTrie;
+    use crate::store::Store;
+
+    let mut store = Store::new();
+    let mut trie = RegexTrie::new();
+    let core = Core::build(&mut store, &mut trie);
+    let types = &core;
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+
+    let (_, s) =
+        go("pt := type ( a := pub i32 ?, b := pub i32 ? )", &mut store, &mut trie, types, scopes);
+    let (_, s) = go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, s);
+    let (_, s) = go(
+        "squared := type ( \
+            a := i32 ?, output_type := type ?, run = ( sq(a) ), \
+            parse_rank = *.parse_rank + 1, \
+            parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
+                      tape.is_constructed[0] = true, tape.remove(-1) ) )",
+        &mut store,
+        &mut trie,
+        types,
+        s,
+    );
+    let pt = s.resolve(&trie, "pt").unwrap().identity;
+    let squared = s.resolve(&trie, "squared").unwrap().identity;
+    // SAFETY: each is a record type the build or the lines above laid out.
+    unsafe {
+        for record in [pt, core.tape.parsing_tape, core.binding_] {
+            assert_eq!(meta::constructor_of(record), core.derived_parse);
+            assert!(meta::written_parse_of(record, core.fn_type).is_null());
+        }
+        let written = meta::written_parse_of(squared, core.fn_type);
+        assert!(!written.is_null(), "a body that fills `parse` keeps its own");
+        assert_eq!(written, meta::constructor_of(squared));
+    }
+
+    let (v, s) = go("pt (3, 4).b", &mut store, &mut trie, types, s);
+    assert_eq!(v, 4, "the derived constructor fills the fields in order");
+    let (_, s) = go("p := pt (3, 4)", &mut store, &mut trie, types, s);
+    let (v, _s) = go("p.a", &mut store, &mut trie, types, s);
+    assert_eq!(v, 3);
+}
+
+#[test]
+fn a_function_is_called_by_the_constructor_its_signature_holds() {
+    // The record of a function's parameters carries the call defaults (›`fn` is not a primitive:
+    // `fn (…) -> T` is a function's type, and its body the value‹ [[R199]]).
+    use crate::identities::{meta, Core};
+    use crate::regex_trie::RegexTrie;
+    use crate::store::Store;
+
+    let mut store = Store::new();
+    let mut trie = RegexTrie::new();
+    let core = Core::build(&mut store, &mut trie);
+    let types = &core;
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+
+    let f = {
+        let mut own = ScopeStack::new();
+        own.push(core.root_scope);
+        let source = "fn (x := i32 ?) -> i32 ( x + 1 )";
+        let mut p = Parser::new(source, &mut store, &mut trie, types, own);
+        p.parse_expression().unwrap()
+    };
+    // SAFETY: `f` is the `fn` node just parsed, its value `FN_SLOTS` words.
+    unsafe {
+        assert_eq!(dyad::ty(f), core.fn_type);
+        let input = *(dyad::value(f) as *const DyadPtr).add(FN_INPUT);
+        assert_eq!(meta::constructor_of(input), core.call_parse);
+        assert_eq!(meta::parse_rank_of(input), meta::prec::APPLY);
+    }
+
+    let (_, s) = go("f := fn (x := i32 ?) -> i32 ( x + 1 )", &mut store, &mut trie, types, scopes);
+    let (v, s) = go("2 * f (3) + 1", &mut store, &mut trie, types, s);
+    assert_eq!(v, 9, "a call ranks at application, above `*`");
+    let (v, _s) = go("f (f (1))", &mut store, &mut trie, types, s);
+    assert_eq!(v, 3);
+}
+
+#[test]
 fn a_constructor_writes_a_cell_from_logos() {
     // The write and the flag are two lines: `t[0] = g` repoints, `t.is_constructed[0] = true` marks.
     use crate::identities::Core;

@@ -93,12 +93,33 @@ fn instances_constructor(
     out
 }
 
-fn application(
+/// The constructor a function's signature gives its values, the call defaults' `parse`: a
+/// function before a bracket is called with it (›`fn` is not a primitive: `fn (…) -> T` is a
+/// function's type, and its body the value‹ [[R199]]). The signature standing there itself, read
+/// as `f.input`, makes a value of its parameters, as a record type does.
+pub(crate) fn call_parse(
     p: &mut Parser,
     id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    p.construct_application(id, tape)
+    // SAFETY: `id` is a resolved dyad from the store.
+    let build = match unsafe { p.identity_head(id) } {
+        Some(_) => Parser::build_instance,
+        None => Parser::build_fn_call,
+    };
+    p.construct_application(id, tape, build)
+}
+
+/// The constructor `type` gives a record type whose body fills no `parse`: `T (…)` makes a value
+/// of `T` from the bracket's values, positional in order (›`X (…)` is one spelling, and X's
+/// constructor decides what the bracket is‹ [[R270]], ›Plain data and hand-written types are one
+/// identity, `type`‹ [[R209]]).
+pub(crate) fn derived_parse(
+    p: &mut Parser,
+    id: DyadPtr,
+    tape: &mut ParsingTape,
+) -> Result<Constructed, ParseError> {
+    p.construct_application(id, tape, Parser::build_instance)
 }
 
 impl<'a> Parser<'a> {
@@ -444,26 +465,36 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `None` for an inert cell (a value, a delimiter). The identity's own
-    /// slot first; failing that, its type's `static` instance constructor,
-    /// application (DESIGN ›The constructor is a field‹).
+    /// `None` for an inert cell (a value, a delimiter): an identity's constructor slot, or the
+    /// `parse` of the type of the value standing in the cell (›The constructors drive the tape‹
+    /// [[R211]], ›No climbing: a type without a parse leaves its values inert‹ [[R214]]).
     pub(super) fn ctor_of(&self, id: DyadPtr) -> Option<ConstructFn> {
-        // SAFETY: `id` is a resolved dyad from the store.
-        unsafe {
-            if !id.is_null() && dyad::ty(id) == self.types.fn_type {
-                return Some(application);
-            }
-            if self.is_awake_instance(id) {
-                return Some(instances_constructor);
-            }
-            let id = self.identity_head(id)?;
-            // A record type runs the constructor its body filled, or the
-            // derived one: application, the instance construction.
-            if crate::identities::meta::is_record_type(id) {
-                return self.construct_of(id).or(Some(application));
-            }
-            self.construct_of(id)
+        if self.is_awake_instance(id) {
+            return Some(instances_constructor);
         }
+        // SAFETY: `id` is a resolved dyad from the store.
+        self.construct_of(unsafe { self.dispatch_record(id) }?)
+    }
+
+    /// The record whose slots decide a cell: an identity's own, or a function's signature.
+    ///
+    /// # Safety
+    /// `id` must be null or a dyad from the store.
+    unsafe fn dispatch_record(&self, id: DyadPtr) -> Option<DyadPtr> {
+        self.identity_head(id).or_else(|| self.signature_of(id))
+    }
+
+    /// A function value's signature, the record of its parameters, which the value holds where
+    /// its type would; stand-in for #474.
+    ///
+    /// # Safety
+    /// `id` must be null or a dyad from the store.
+    unsafe fn signature_of(&self, id: DyadPtr) -> Option<DyadPtr> {
+        if id.is_null() || dyad::ty(id) != self.types.fn_type {
+            return None;
+        }
+        let record = *(dyad::value(id) as *const DyadPtr).add(super::FN_INPUT);
+        (!record.is_null()).then_some(record)
     }
 
     /// `id` when it is an identity carrying a record, or `None` for null, a
@@ -507,7 +538,10 @@ impl<'a> Parser<'a> {
                 return None;
             }
             let ty = dyad::ty(id);
-            let wakes = |t: DyadPtr| meta::is_record_type(t) && !meta::constructor_of(t).is_null();
+            let fn_type = self.types.fn_type;
+            let wakes = |t: DyadPtr| {
+                meta::is_record_type(t) && !meta::written_parse_of(t, fn_type).is_null()
+            };
             // A node of a type with a run stands for the value its run yields.
             if wakes(ty) && meta::run_body_of(ty).is_null() {
                 return Some(ty);
@@ -519,8 +553,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The place of `id` on the one axis (its record's parse_rank), or
-    /// `prec::APPLY` for a cell that carries no record.
+    /// The place of `id` on the one axis, its record's `parse_rank`, or `prec::INERT` for a cell
+    /// that wakes nothing.
     pub(super) fn precedence_of_cell(&self, id: DyadPtr) -> f64 {
         if let Some(t) = self.awake_type(id) {
             // SAFETY: `awake_type` found `t` a record type.
@@ -528,9 +562,9 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `id` is null or a resolved dyad from the store.
         unsafe {
-            match self.identity_head(id) {
+            match self.dispatch_record(id) {
                 Some(id) => crate::identities::meta::parse_rank_of(id),
-                None => crate::identities::meta::prec::APPLY,
+                None => crate::identities::meta::prec::INERT,
             }
         }
     }
@@ -543,7 +577,7 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `id` is null or a resolved dyad from the store.
         unsafe {
-            match self.identity_head(id) {
+            match self.dispatch_record(id) {
                 Some(id) => crate::identities::meta::assoc_of(id),
                 None => Assoc::Left,
             }
@@ -689,13 +723,12 @@ impl<'a> Parser<'a> {
 
     /// A `fn` node in the constructor slot: judged by the flag alone.
     pub(super) fn is_logos_ctor(&self, id: DyadPtr) -> bool {
-        // SAFETY: `id` is a resolved dyad from the store; the slot is read only where a record head exists.
+        use crate::identities::meta;
         self.is_awake_instance(id)
+            // SAFETY: `id` is a resolved dyad from the store; the slot is read only where a record head exists.
             || unsafe {
-                !id.is_null() && crate::identities::meta::is_record_type(id) && {
-                    let leaf = crate::identities::meta::constructor_of(id);
-                    !leaf.is_null() && dyad::ty(leaf) == self.types.fn_type
-                }
+                meta::is_record_type(id)
+                    && !meta::written_parse_of(id, self.types.fn_type).is_null()
             }
     }
 
@@ -805,14 +838,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The constructor a `fn`, a record type, or a numeric type runs for the
-    /// bracket to its right (DESIGN ›`X (…)` is one spelling, and X's
-    /// constructor decides what the bracket is‹); without a `(` directly ahead
-    /// the identity stands as its own value.
+    /// The bracket to the right of `id`, read and handed to `build` with `id`: what a function
+    /// value's call and a record type's derived constructor share (›`X (…)` is one spelling, and
+    /// X's constructor decides what the bracket is‹ [[R270]]); without a `(` directly ahead the
+    /// identity stands as its own value.
     pub(crate) fn construct_application(
         &mut self,
         id: DyadPtr,
         tape: &mut ParsingTape,
+        build: unsafe fn(&mut Self, DyadPtr, &[DyadPtr]) -> Result<DyadPtr, ParseError>,
     ) -> Result<Constructed, ParseError> {
         // A type still being defined has no record yet: its name stands as itself, the
         // bracket to its right not in reach.
@@ -839,7 +873,7 @@ impl<'a> Parser<'a> {
                 self.run_first(tape, cell.start)?;
             }
             // SAFETY: `id` is the resolved callee and `args` reduced dyads.
-            let node = unsafe { self.build_call(id, &args) }?;
+            let node = unsafe { build(self, id, &args) }?;
             tape.remove(1);
             tape.place(node);
             return Ok(Constructed::Gave);
@@ -886,6 +920,33 @@ impl<'a> Parser<'a> {
         let mut tape = ParsingTape::new();
         // SAFETY: `self.cx.source` outlives the parse; `id` came from the index.
         tape.push(unsafe { Cell::lexed(id, self.cx.source, start, len) });
+        match construct(self, id, &mut tape)? {
+            Constructed::Placed | Constructed::Gave => {
+                Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad))
+            }
+            Constructed::Decline => Ok(None),
+        }
+    }
+
+    /// `id`'s constructor over the bracket a reader already read after `id`'s spelling, on a fresh
+    /// tape of the two: `cell` holds `id` as written, `start` and `len` its spelling. `Ok(None)`
+    /// where `id` has no constructor or it declined.
+    pub(super) fn construct_applied(
+        &mut self,
+        id: DyadPtr,
+        cell: DyadPtr,
+        (start, len): (usize, usize),
+        bracket: Cell,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        let Some(construct) = self.ctor_of(id) else {
+            return Ok(None);
+        };
+        let mut tape = ParsingTape::new();
+        // SAFETY: `self.cx.source` outlives the parse; `cell` is a dyad from the store.
+        tape.push(unsafe { Cell::lexed(cell, self.cx.source, start, len) });
+        let own = tape.mark();
+        tape.push(bracket);
+        tape.restore(own);
         match construct(self, id, &mut tape)? {
             Constructed::Placed | Constructed::Gave => {
                 Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad))
@@ -1070,9 +1131,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A Logos constructor's read past the frontier: the driver lexes on, as for a
-    /// built-in reader (DESIGN ›The scope's constructor is the driver‹), in the sub-parse the
-    /// tape was handed out in: a read made while a line of the constructor is parsed as it runs
-    /// lexes the tape's source, not that line's.
+    /// built-in reader (DESIGN ›The scope's constructor is the driver‹).
     ///
     /// # Safety
     /// `parser` must be the parser hosting the run, and `tape` the tape it handed the
@@ -1080,16 +1139,39 @@ impl<'a> Parser<'a> {
     unsafe fn lex_on(parser: *mut (), tape: *mut ParsingTape, k: isize) -> Result<(), ParseError> {
         // SAFETY: as this function's own contract.
         let (parser, tape) = unsafe { (&mut *(parser as *mut Self), &mut *tape) };
-        match parser.tape_hosts.last().copied().filter(|&at| at < parser.outer.len()) {
-            Some(at) => TapeHost::new(parser, at).0.cell_at(tape, k).map(|_| ()),
-            None => parser.cell_at(tape, k).map(|_| ()),
+        parser.on_tape_host(|p| p.cell_at(tape, k).map(|_| ()))
+    }
+
+    /// A Logos constructor's `tape[k]` or `tape[k].type` ([`Parser::read_tape`]).
+    ///
+    /// # Safety
+    /// As `lex_on`.
+    unsafe fn read_tape_host(
+        parser: *mut (),
+        tape: *mut ParsingTape,
+        k: isize,
+        read: TapeRead,
+    ) -> Result<i64, crate::run::RunError> {
+        // SAFETY: as this function's own contract.
+        let (parser, tape) = unsafe { (&mut *(parser as *mut Self), &mut *tape) };
+        let node = parser.on_tape_host(|p| p.read_tape(tape, k, read));
+        node.map(|d| d as i64).map_err(|e| crate::run::RunError::Parse(Box::new(e)))
+    }
+
+    /// `f` in the sub-parse the running constructor's tape was handed out in: a read made while
+    /// a line of the constructor is parsed as it runs reads the tape's source, not that line's.
+    fn on_tape_host<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        match self.tape_hosts.last().copied().filter(|&at| at < self.outer.len()) {
+            Some(at) => f(&mut *TapeHost::new(self, at).0),
+            None => f(self),
         }
     }
 
     /// `f` over the runtime with this parser as its host: the lexer is attached, so a
     /// `lex «…»` inside what runs resolves against the scopes open now and the index (DESIGN
     /// ›Text is the quote‹), and what runs reaches the parser for a held `type (…)`, a
-    /// constructor and a waiting line. The parser reads neither while the runtime runs.
+    /// constructor, a waiting line and a read of a constructor's tape. The parser reads neither
+    /// while the runtime runs.
     pub(super) fn hosted<R>(&mut self, f: impl FnOnce(&mut crate::run::Runtime) -> R) -> R {
         let host = crate::run::Host {
             parser: (self as *mut Self).cast(),
@@ -1097,6 +1179,7 @@ impl<'a> Parser<'a> {
             mint: Self::mint_host,
             construct: Self::construct_host,
             parse_waiting: Self::parse_waiting_host,
+            read_tape: Self::read_tape_host,
         };
         self.rt.hosting(&self.cx.scopes, self.trie, Some(host), f)
     }

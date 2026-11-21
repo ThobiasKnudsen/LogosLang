@@ -218,6 +218,10 @@ pub struct Core {
     pub conv_container: DyadPtr,
     /// The constructor convention, one `ConstructFn` signature for every identity.
     pub conv_seed_parse: DyadPtr,
+    /// The constructor a record type whose body fills no `parse` runs, `type`'s derived one.
+    pub derived_parse: DyadPtr,
+    /// The constructor a function's signature gives its values: the call.
+    pub call_parse: DyadPtr,
     pub open_: DyadPtr,
     pub close_: DyadPtr,
     pub open_sq_: DyadPtr,
@@ -261,6 +265,7 @@ impl Core {
             binding_,
             string_,
             unknown: std::ptr::null_mut(),
+            derived_parse: std::ptr::null_mut(),
             metas: HashMap::new(),
             extents: HashMap::new(),
             choosers: HashMap::new(),
@@ -292,6 +297,19 @@ impl Core {
         let regex_ = regex_mod::register(&mut cx);
         // After `string`, before anything executable.
         let callables = callable::register(&mut cx);
+        let derived_parse = callable::mint(
+            cx.store,
+            callables.callable,
+            crate::parse::derived_parse as ConstructFn as usize,
+            callables.seed_parse,
+        );
+        cx.derived_parse = derived_parse;
+        let call_parse = callable::mint(
+            cx.store,
+            callables.callable,
+            crate::parse::call_parse as ConstructFn as usize,
+            callables.seed_parse,
+        );
         // The single-native leaves (`and`, `convert`, …) are patched in below.
         let mut op_leaves = ops::register(&mut cx, &callables);
         let array_ = array::register(&mut cx);
@@ -584,6 +602,8 @@ impl Core {
             conv_seed_native: callables.seed_native,
             conv_container: callables.container_i64,
             conv_seed_parse: callables.seed_parse,
+            derived_parse,
+            call_parse,
             open_,
             close_,
             open_sq_,
@@ -762,6 +782,8 @@ pub(crate) struct Cx<'a> {
     string_: DyadPtr,
     /// `?`, the type of every hole and field node; null until `hole::register`.
     unknown: DyadPtr,
+    /// `Core::derived_parse`; null until the callables are registered.
+    derived_parse: DyadPtr,
     metas: HashMap<DyadPtr, ConstructFn>,
     extents: HashMap<DyadPtr, crate::parse::ExtentFn>,
     choosers: HashMap<DyadPtr, mint::ChooseFn>,
@@ -1468,6 +1490,9 @@ pub(crate) unsafe fn commit_fn_body(
     waiting::lands_in(types, *slot, output);
     // A record result is handed back as the address of its bytes, which the call copies.
     let by_bytes = read::carry_of(types, output).and_then(read::Carry::bytes).is_some();
+    // A result whose values have an end is the caller's to end, so a value the body only borrows
+    // is handed back as its copy (›A last value moves out‹ [[R66]]).
+    let owned = drop_model::teardown_of_type(types, output).of_record();
     let flow = flow::rewrite_given(types, slot, &mut |leaf| {
         // A line held for the run lands in the result when it runs; an `out` already hands back
         // its bytes.
@@ -1475,6 +1500,7 @@ pub(crate) unsafe fn commit_fn_body(
         if out || dyad::ty(leaf) == types.waiting.line {
             return Ok(leaf);
         }
+        let leaf = if owned { copy::taken(store, types, leaf) } else { leaf };
         // The caller holds what the call gives.
         let landed = land_held(store, types, leaf, output, dyad_place::Holder::Owner)?;
         if by_bytes {

@@ -178,9 +178,11 @@ unsafe fn lay_out_fields(types: &Core, ty: DyadPtr, fields: DyadPtr, bindings: &
 }
 
 impl<'a> Parser<'a> {
-    /// `( field-list )` as a record node whose value is a `RECORD_TAG` record
-    /// holding the scope, the `fields` array and the packed `size_bytes`. Fresh
-    /// field names are read raw, which is why the list has its own sub-parse.
+    /// A function's `( field-list )` as a record node whose value is a `RECORD_TAG` record
+    /// holding the scope, the `fields` array and the packed `size_bytes`, and the call as its
+    /// constructor (›`fn` is not a primitive: `fn (…) -> T` is a function's type, and its body
+    /// the value‹ [[R199]]). Fresh field names are read raw, which is why the list has its own
+    /// sub-parse.
     pub fn parse_record(&mut self) -> Result<DyadPtr, ParseError> {
         self.parse_record_taking(None).map(|(input, _)| input)
     }
@@ -193,12 +195,17 @@ impl<'a> Parser<'a> {
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         let (scope, fields_arr, bindings) = self.parse_field_list(leading)?;
         let input = self.rt.store.alloc_leaf(self.types.type_);
-        Ok((self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
+        let call = self.types.call_parse;
+        Ok((
+            self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut(), call),
+            bindings,
+        ))
     }
 
     /// `input`, a type node with no record yet, made the record node over a field list: its
     /// fields laid out onto their bindings, then the record holding the scope, the fields, their
-    /// bindings, their total and `body`, the scope its `static` members are read in, null for none.
+    /// bindings, their total and `body`, the scope its `static` members are read in, null for none,
+    /// and `parse` in its constructor slot.
     fn record_node(
         &mut self,
         input: DyadPtr,
@@ -206,6 +213,7 @@ impl<'a> Parser<'a> {
         fields: DyadPtr,
         bindings: &[DyadPtr],
         body: DyadPtr,
+        parse: DyadPtr,
     ) -> DyadPtr {
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         let size_bytes = unsafe { lay_out_fields(self.types, input, fields, bindings) };
@@ -219,6 +227,7 @@ impl<'a> Parser<'a> {
             body,
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
+            parse,
         );
         // SAFETY: `input` was minted above with no record; nothing reads one until now.
         unsafe { dyad::set_head(input, record.cast()) };
@@ -299,7 +308,8 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         declared?;
         let fields = crate::identities::array::build(self.rt.store, types.array_, &fields);
-        let record = self.record_node(ty, field_scope, fields, &bindings, scope);
+        let record =
+            self.record_node(ty, field_scope, fields, &bindings, scope, types.derived_parse);
         if let Some(place) = place {
             type_mint::keep(self.rt.store, types, place, record).map_err(ParseError::Run)?;
         }
@@ -388,6 +398,7 @@ impl<'a> Parser<'a> {
                         bindings,
                         size_bytes,
                         body,
+                        types.derived_parse,
                     );
                     dyad::set_head(mint, record.cast());
                     type_mint::keep(self.rt.store, types, place, mint).map_err(ParseError::Run)?;
@@ -400,8 +411,8 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// A union holds only members whose values move whole into its room and end with nothing
-    /// to free; refusing a member that owns is a stand-in for #159.
+    /// A union holds only members whose values move whole into its room, and a member's type
+    /// takes no `pub`, every member being read from outside.
     ///
     /// # Safety
     /// `members` must be holes from the store, each over a type node, and `bindings` their
@@ -411,28 +422,18 @@ impl<'a> Parser<'a> {
         members: &[DyadPtr],
         bindings: &[DyadPtr],
     ) -> Result<(), ParseError> {
-        use crate::identities::drop_model::{teardown_of_type, Teardown};
-        use crate::identities::{copy, hole, read::carry_of};
-        let types = self.types;
-        let mut owning = Vec::new();
         for (&member, &binding) in members.iter().zip(bindings) {
-            let ty = hole::type_in(member);
-            let name = Binding::spelling(binding);
-            if carry_of(types, ty).is_none() {
-                return Err(ParseError::UnionMemberUnkept(Box::new(name)));
+            // ›A union holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]
+            let gated = crate::identities::hole::gated_type_in(member);
+            if crate::identities::gate::has(gated, self.types.pub_) {
+                return Err(ParseError::UnionMemberPub);
             }
-            if copy::owns(types, ty)
-                || teardown_of_type(types, ty) != Teardown::Nothing
-                || Binding::read(binding).holds
-            {
-                owning.push(name);
+            let ty = crate::identities::hole::type_in(member);
+            if crate::identities::read::carry_of(self.types, ty).is_none() {
+                return Err(ParseError::UnionMemberUnkept(Box::new(Binding::spelling(binding))));
             }
         }
-        if owning.is_empty() {
-            Ok(())
-        } else {
-            Err(ParseError::UnionMemberOwns(owning))
-        }
+        Ok(())
     }
 
     /// A `fn`'s parameter list, in a scope of its own that the body reopens. Also the fields'
@@ -593,7 +594,6 @@ impl<'a> Parser<'a> {
                 }
             }
             let value = cell.dyad;
-            let owns_node = cell.owning;
             if self.is_bare_unknown(&cell) {
                 return Err(self.untyped(start, relaxed));
             }
@@ -634,7 +634,7 @@ impl<'a> Parser<'a> {
                 crate::identities::numtype::is_pointer_type(logos)
                     && !crate::identities::meta::destructor_of(logos).is_null()
             };
-            if list == FieldList::Parameters && (owning || owns_node) {
+            if list == FieldList::Parameters && owning {
                 self.cx.pos = start;
                 return Err(ParseError::OwnParameterNotInSeed);
             }
@@ -652,10 +652,6 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::PubParameter);
             }
             self.gate_name(binding, cell.gates);
-            if owns_node {
-                // SAFETY: `binding` is the binding just made.
-                unsafe { Binding::set_holds(binding) };
-            }
             fields.push(field);
             bindings.push(binding);
             if !self.consume_separator() {
@@ -950,6 +946,7 @@ impl<'a> Parser<'a> {
             scope,
             def.parse_rank,
             def.assoc,
+            self.types.derived_parse,
         );
         let node = def.self_type;
         // SAFETY: `node` was minted at the open with no record; nothing reads one until now.
@@ -1587,7 +1584,11 @@ impl<'a> Parser<'a> {
         declared?;
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         let input = self.rt.store.alloc_leaf(self.types.type_);
-        Ok((self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut()), bindings))
+        let call = self.types.call_parse;
+        Ok((
+            self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut(), call),
+            bindings,
+        ))
     }
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN

@@ -339,33 +339,33 @@ pub const FN_OUTER: usize = 5;
 /// `static` function's body reads or writes a field of its value; null for neither.
 pub const FN_RECEIVER: usize = 6;
 
-/// The result's gate: the `own` gate word for `-> own T`, else null (DESIGN ›A last value
-/// moves out‹).
-pub const FN_OUTPUT_GATE: usize = 7;
-
-pub const FN_SLOTS: usize = FN_OUTPUT_GATE + 1;
+pub const FN_SLOTS: usize = FN_RECEIVER + 1;
 
 /// The fields' names in slot order, as reflection reads them.
 pub const FN_FIELDS: [&str; FN_SLOTS] =
-    ["input", "output_type", "body", "bcode", "frame", "outer", "receiver", "output_gate"];
+    ["input", "output_type", "body", "bcode", "frame", "outer", "receiver"];
 
-/// A function's result as its signature writes it, for the check where its body closes.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct WrittenResult<'s> {
-    /// The source after `->`, as an error names the type.
-    text: &'s str,
-    /// Whether `own` stands in it.
-    owned: bool,
-}
-
-/// Refuses a value a function hands on, `made` as `handed_ends` reads it, that its `own` mark
-/// does not say: a borrow under the mark, or, where the result is written (`written`), a value
-/// made in it without the mark (DESIGN ›A last value moves out‹). No `written` is a `run`.
-fn check_handed(marked: bool, written: Option<&str>, made: Option<bool>) -> Result<(), ParseError> {
+/// Refuses a value a function hands on through a pointer result, `made` as `handed_ends` reads
+/// it, that the result does not say: a borrow under an owning `@T`, or, where the result is
+/// written (`written`, the source after `->`), a value made under a plain one. A result of any
+/// other type owns what it gets either way (›A last value moves out‹ [[R66]]). No `written` is a
+/// `run`.
+///
+/// # Safety
+/// `output` must be the result type node of the function whose body closes.
+unsafe fn check_handed(
+    output: DyadPtr,
+    written: Option<&str>,
+    made: Option<bool>,
+) -> Result<(), ParseError> {
+    if !crate::identities::numtype::is_pointer_type(output) {
+        return Ok(());
+    }
+    let owns = !crate::identities::meta::destructor_of(output).is_null();
     match (made, written) {
-        (Some(false), Some(_)) if marked => Err(ParseError::OwnResultBorrows),
-        (Some(false), None) if marked => Err(ParseError::RunReturnBorrows),
-        (Some(true), Some(text)) if !marked => Err(ParseError::HandsOnMade(text.to_string())),
+        (Some(false), Some(_)) if owns => Err(ParseError::OwnResultBorrows),
+        (Some(false), None) if owns => Err(ParseError::RunReturnBorrows),
+        (Some(true), Some(text)) if !owns => Err(ParseError::HandsOnMade(text.to_string())),
         _ => Ok(()),
     }
 }
@@ -763,7 +763,7 @@ impl<'a> Parser<'a> {
         self.expect_arrow()?;
         self.skip_whitespace();
         let start = self.cx.pos;
-        let (output, owned) = {
+        let output = {
             let was = std::mem::replace(&mut self.cx.result_type, true);
             let items = self.drive_until_open(RightSide::ReturnType);
             self.cx.result_type = was;
@@ -773,14 +773,13 @@ impl<'a> Parser<'a> {
             })?;
             // The function is built here, so its result type is needed now (›`fn` is not a
             // primitive: a function is a type in this same shape‹ [[R199]]).
-            let ty = self
-                .operand_dyad(out)
+            self.operand_dyad(out)
                 .and_then(|d| self.type_known_now(d))
-                .map_err(|e| self.fail_at(start, e))?;
-            (ty, out.owning)
+                .map_err(|e| self.fail_at(start, e))?
         };
         let source = self.cx.source;
-        let result = WrittenResult { text: source[start..self.cx.pos].trim_end(), owned };
+        // The source after `->`, as an error names the type.
+        let result = source[start..self.cx.pos].trim_end();
         if !member {
             // SAFETY: `input` was just built by `parse_record`; `binding` is the caller's.
             return unsafe {
@@ -867,7 +866,7 @@ impl<'a> Parser<'a> {
     /// body parsed deferred with the parameter scope reopened. The node is `spec`, a run
     /// body's node minted for its set, or fresh; its signature is on it, and `binding`
     /// points at it, before the body parses, so a recursive self-call resolves its types.
-    /// `result` is `None` for a type's `run` body, which writes no `->`.
+    /// `result` is the source after `->`, `None` for a type's `run` body, which writes none.
     ///
     /// # Safety
     /// `input` must be a record node and `params` its fields' bindings in order; `spec`
@@ -880,17 +879,14 @@ impl<'a> Parser<'a> {
         input: DyadPtr,
         params: &[DyadPtr],
         output: DyadPtr,
-        result: Option<WrittenResult>,
+        result: Option<&str>,
         spec: DyadPtr,
         binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        let owned = result.is_some_and(|r| r.owned);
-        let gate = if owned { self.types.own_ } else { std::ptr::null_mut() };
         let node = if spec.is_null() {
             let mut early = [std::ptr::null_mut(); FN_SLOTS];
             early[FN_INPUT] = input;
             early[FN_OUTPUT] = output;
-            early[FN_OUTPUT_GATE] = gate;
             self.rt.store.alloc_words(fn_type, &early)
         } else {
             // SAFETY: `spec` holds `FN_SLOTS` words (the caller's contract).
@@ -898,7 +894,6 @@ impl<'a> Parser<'a> {
                 let slots = dyad::value(spec) as *mut DyadPtr;
                 *slots.add(FN_INPUT) = input;
                 *slots.add(FN_OUTPUT) = output;
-                *slots.add(FN_OUTPUT_GATE) = gate;
             }
             spec
         };
@@ -950,48 +945,43 @@ impl<'a> Parser<'a> {
         let OpenFn { size: frame_size, outer, returns, .. } =
             self.cx.frames.pop().expect("parse_fn pushed a frame");
         let body = body?;
-        // What the call gets lands in `output`: a `dyad` result is a new node the caller holds
-        // whatever the body gives (›A `dyad ?` place is transparent: a placeholder for a new node
-        // of any type‹ [[R293]]), and a `dyad` read through into a typed result is a value of that
-        // type, so the body's value is made for the caller only where `output` has an end.
-        // SAFETY: `output` is the result type node the signature read.
-        let lands_with_end = output != self.types.dyad_
-            && unsafe { crate::identities::drop_model::has_end(self.types, output) };
         // The value its lines give is the call's, so an `if` among them is a used one.
         let made = if output == self.types.void_ {
             None
         } else {
             // SAFETY: `body` is the valid dyad just built.
             unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?
-                .filter(|_| lands_with_end)
         };
 
         // SAFETY: `body`/`output` are valid dyads just built.
         let body =
             unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };
-        // A type's `run` has no `->` to write `own` in, so its close writes it: stand-in for P128.
-        if result.is_none() && made == Some(true) {
-            // SAFETY: `output` is the type the node was minted with, from the store.
+        // A type's `run` has no `->` to write `own` in, so over a pointer result its close writes
+        // it: stand-in for P128.
+        // SAFETY: `output` is the type the node was minted with, from the store.
+        let plain_pointer = unsafe {
+            crate::identities::numtype::is_pointer_type(output)
+                && crate::identities::meta::destructor_of(output).is_null()
+        };
+        let result_type = if result.is_none() && made == Some(true) && plain_pointer {
+            // SAFETY: as above.
             let owned = unsafe {
                 crate::identities::drop_model::own_result(self.rt.store, self.types, output)
             }?;
             // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
-            unsafe {
-                let slots = dyad::value(node) as *mut DyadPtr;
-                *slots.add(FN_OUTPUT) = owned;
-                *slots.add(FN_OUTPUT_GATE) = self.types.own_;
-            }
-        }
+            unsafe { *(dyad::value(node) as *mut DyadPtr).add(FN_OUTPUT) = owned };
+            owned
+        } else {
+            output
+        };
         // The last value, once its type is, and every `return`'s operand, which a `return` makes
-        // the call's value, are checked against the mark a call reads.
-        // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
-        let marked =
-            unsafe { !(*(dyad::value(node) as *const DyadPtr).add(FN_OUTPUT_GATE)).is_null() };
-        let written = result.map(|r| r.text);
-        check_handed(marked, written, made)?;
+        // the call's value, are checked against the result type a call reads.
+        // SAFETY: `result_type` is the result type node the function carries.
+        unsafe { check_handed(result_type, result, made) }?;
         for r in &returns {
-            let made = r.made.filter(|_| lands_with_end);
-            check_handed(marked, written, made).map_err(|e| self.fail_at(r.at, e))?;
+            // SAFETY: as above.
+            unsafe { check_handed(result_type, result, r.made) }
+                .map_err(|e| self.fail_at(r.at, e))?;
         }
         for r in returns {
             let ends: Vec<DyadPtr> = r
@@ -1585,40 +1575,32 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    /// The callee's own constructor's work (DESIGN ›`X (…)` is one spelling,
-    /// and X's constructor decides what the bracket is‹): a numeric callee is
-    /// a conversion, a record type constructs an instance, a type-returning callee resolves now.
+    /// What a bracket's values go through before the constructor that took the bracket builds
+    /// its node: a held type is built, a group `a | b` spreads the build over its two members, each
+    /// value's type is read, and a value made here is held by the parameter it lands in (›Holding
+    /// is decided at the binding site, parameters included‹ [[R61]]).
     ///
     /// # Safety
-    /// `callee` and every `arg` must be dyads from the store.
-    pub(crate) unsafe fn build_call(
+    /// `callee` and every `arg` must be dyads from the store, and `build` must take values that
+    /// are.
+    unsafe fn over_arguments<F>(
         &mut self,
         callee: DyadPtr,
         args: &[DyadPtr],
-    ) -> Result<DyadPtr, ParseError> {
-        self.build_call_as(callee, args, false)
-    }
-
-    /// [`build_call`](Self::build_call), a numeric callee converting with `lossy` when it is set,
-    /// as `i32 lossy (x)`.
-    ///
-    /// # Safety
-    /// As [`build_call`](Self::build_call).
-    pub(crate) unsafe fn build_call_as(
-        &mut self,
-        callee: DyadPtr,
-        args: &[DyadPtr],
-        lossy: bool,
-    ) -> Result<DyadPtr, ParseError> {
+        build: &mut F,
+    ) -> Result<DyadPtr, ParseError>
+    where
+        F: FnMut(&mut Self, &[DyadPtr]) -> Result<DyadPtr, ParseError>,
+    {
         let mut args: Vec<DyadPtr> = args.iter().map(|&a| self.held_type_or(a)).collect();
         for i in 0..args.len() {
             // SAFETY: `args` are reduced dyads from the store.
             if let Some((connective, a, b)) = crate::identities::group::members(self.types, args[i])
             {
                 args[i] = a;
-                let a = self.build_call_as(callee, &args, lossy)?;
+                let a = self.over_arguments(callee, &args, build)?;
                 args[i] = b;
-                let b = self.build_call_as(callee, &args, lossy)?;
+                let b = self.over_arguments(callee, &args, build)?;
                 return crate::identities::group::join(self.rt.store, self.types, connective, a, b);
             }
         }
@@ -1630,9 +1612,7 @@ impl<'a> Parser<'a> {
                 Ok(_) | Err(ParseError::ArmsDiffer) => {}
                 Err(e) => return Err(e),
             }
-            // A value made or moved here is held by the parameter it is passed to
-            // (›Holding is decided at the binding site, parameters included‹ [[R61]]); a `dyad`
-            // only where it lands as itself, being read through elsewhere.
+            // A `dyad` is held only where it lands as itself, being read through elsewhere.
             // SAFETY: as above; `callee` is a resolved dyad from the store.
             unsafe {
                 use crate::identities::drop_model::{param_holds, teardown_of, Teardown};
@@ -1643,101 +1623,137 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        // SAFETY: `callee` is a resolved dyad from the store; a record type carries the record `run_body_of` reads.
-        let (is_numtype, is_record) = unsafe {
-            (
-                crate::identities::is_numtype_node(self.types, callee),
-                crate::identities::meta::is_record_type(callee),
-            )
-        };
-        if is_numtype {
-            // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
+        build(self, &args)
+    }
+
+    /// `T (…)` for a number type `T`: the written conversion, losing what `T` cannot hold where
+    /// `lossy` is set, as `i32 lossy (x)` (›A type's `parse` decides what converts into it;
+    /// unwritten, a value converts only into a type that holds it exactly‹ [[R155]]).
+    ///
+    /// # Safety
+    /// `ty` must be a number type node and every `arg` a dyad from the store.
+    pub(crate) unsafe fn build_conversion(
+        &mut self,
+        ty: DyadPtr,
+        args: &[DyadPtr],
+        lossy: bool,
+    ) -> Result<DyadPtr, ParseError> {
+        self.over_arguments(ty, args, &mut |p, args| {
+            // SAFETY: `ty` is a number type node; `args` are reduced dyads.
+            unsafe { crate::identities::build_cast(p.rt.store, p.types, ty, args, lossy) }
+        })
+    }
+
+    /// `T (…)` for a record type `T` whose body fills no `parse`: a value of `T` from the
+    /// bracket's values, positional in order (›`X (…)` is one spelling, and X's constructor
+    /// decides what the bracket is‹ [[R270]]).
+    ///
+    /// # Safety
+    /// `ty` must be a record type node and every `arg` a dyad from the store.
+    pub(crate) unsafe fn build_instance(
+        &mut self,
+        ty: DyadPtr,
+        args: &[DyadPtr],
+    ) -> Result<DyadPtr, ParseError> {
+        self.over_arguments(ty, args, &mut |p, args| {
+            // SAFETY: `ty` is a record type node; `args` are reduced dyads from the store.
             unsafe {
-                crate::identities::build_cast(self.rt.store, self.types, callee, &args, lossy)
-            }
-        } else if is_record {
-            // SAFETY: `callee` is a record type node.
-            if unsafe { !crate::identities::meta::run_body_of(callee).is_null() } {
-                return Err(ParseError::RunTypeApplied);
-            }
-            // A record type applied to its field values constructs an
-            // instance, like `i32(a)`.
-            let types = self.types;
-            // SAFETY: `callee` is a record type node; `args` are reduced dyads from the store.
-            unsafe {
+                if !crate::identities::meta::run_body_of(ty).is_null() {
+                    return Err(ParseError::RunTypeApplied);
+                }
                 crate::identities::instance::build_ctor(
-                    self.rt.store,
-                    types,
-                    types.construct_,
-                    callee,
-                    &args,
+                    p.rt.store,
+                    p.types,
+                    p.types.construct_,
+                    ty,
+                    args,
                     crate::identities::dyad_place::Holder::Nobody,
                 )
             }
-        } else {
-            // Each uncommitted literal argument commits to its parameter's
-            // declared type; a callee that is no `fn` has no signature and commits nothing.
-            let types = self.types;
-            let mut args = args;
+        })
+    }
+
+    /// `f (…)` for a function `f`: the call. A record result is copied out where the call runs,
+    /// and a call for a type resolves now, in the pass, where it can.
+    ///
+    /// # Safety
+    /// `callee` and every `arg` must be dyads from the store.
+    pub(crate) unsafe fn build_fn_call(
+        &mut self,
+        callee: DyadPtr,
+        args: &[DyadPtr],
+    ) -> Result<DyadPtr, ParseError> {
+        self.over_arguments(callee, args, &mut |p, args| {
             // SAFETY: `callee` and `args` are reduced dyads from the store.
-            unsafe {
-                use crate::identities::drop_model::{
-                    build_hold, param_holds, teardown_of, Teardown,
-                };
-                let written = args.clone();
-                crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
-                for (i, arg) in args.iter_mut().enumerate() {
-                    // What the argument lands as, a new node a `dyad ?` parameter takes a value
-                    // in included, which takes the value written there with it.
-                    if teardown_of(types, *arg) == Teardown::Nothing {
-                        continue;
-                    }
-                    if !param_holds(types, callee, i) {
-                        return Err(ParseError::UnboundOwningValue);
-                    }
-                    self.take(written[i]);
-                    self.take(*arg);
-                    *arg = build_hold(self.rt.store, types, *arg);
+            unsafe { p.call_over(callee, args.to_vec()) }
+        })
+    }
+
+    /// # Safety
+    /// As [`Self::build_fn_call`].
+    unsafe fn call_over(
+        &mut self,
+        callee: DyadPtr,
+        mut args: Vec<DyadPtr>,
+    ) -> Result<DyadPtr, ParseError> {
+        // Each uncommitted literal argument commits to its parameter's declared type.
+        let types = self.types;
+        // SAFETY: `callee` and `args` are reduced dyads from the store.
+        unsafe {
+            use crate::identities::drop_model::{build_hold, param_holds, teardown_of, Teardown};
+            let written = args.clone();
+            crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
+            for (i, arg) in args.iter_mut().enumerate() {
+                // What the argument lands as, a new node a `dyad ?` parameter takes a value
+                // in included, which takes the value written there with it.
+                if teardown_of(types, *arg) == Teardown::Nothing {
+                    continue;
                 }
+                if !param_holds(types, callee, i) {
+                    return Err(ParseError::UnboundOwningValue);
+                }
+                self.take(written[i]);
+                self.take(*arg);
+                *arg = build_hold(self.rt.store, types, *arg);
             }
-            let call = build_call(self.rt.store, callee, &args);
-            // SAFETY: `callee` is a reduced dyad; a `fn` node holds `FN_SLOTS` words.
-            let record_out = unsafe {
-                if dyad::ty(callee) == types.fn_type {
-                    let out = *(dyad::value(callee) as *const DyadPtr).add(FN_OUTPUT);
-                    crate::identities::read::carry_of(types, out)
-                        .and_then(crate::identities::read::Carry::bytes)
-                        .map(|w| (out, w))
-                } else {
-                    None
-                }
-            };
-            if let Some((out, _)) = record_out {
-                // The record result is copied out where the call runs: into the name that
-                // takes it, else scratch.
-                return Ok(crate::identities::by_copy::build_result(
-                    self.rt.store,
-                    types,
-                    std::ptr::null_mut(),
-                    call,
-                    out,
-                ));
-            }
-            // A type-returning call resolves now, at comptime, so the result
-            // flows as an ordinary type value; the outer-name check runs first,
-            // since a body that reads a dead name must not run.
-            // SAFETY: `callee` is a reduced dyad.
-            if unsafe { self.returns_type(callee) } {
-                self.check_call_reads(callee)?;
-                // A call that waits for the run gives a type value then.
-                if !self.runs_in_pass(&args) {
-                    return Ok(call);
-                }
-                // SAFETY: `call` was just built over reduced dyads.
-                unsafe { self.eval_type_call(call) }
+        }
+        let call = build_call(self.rt.store, callee, &args);
+        // SAFETY: `callee` is a reduced dyad; a `fn` node holds `FN_SLOTS` words.
+        let record_out = unsafe {
+            if dyad::ty(callee) == types.fn_type {
+                let out = *(dyad::value(callee) as *const DyadPtr).add(FN_OUTPUT);
+                crate::identities::read::carry_of(types, out)
+                    .and_then(crate::identities::read::Carry::bytes)
+                    .map(|w| (out, w))
             } else {
-                Ok(call)
+                None
             }
+        };
+        if let Some((out, _)) = record_out {
+            // The record result is copied out where the call runs: into the name that
+            // takes it, else scratch.
+            return Ok(crate::identities::by_copy::build_result(
+                self.rt.store,
+                types,
+                std::ptr::null_mut(),
+                call,
+                out,
+            ));
+        }
+        // A type-returning call resolves now, at comptime, so the result
+        // flows as an ordinary type value; the outer-name check runs first,
+        // since a body that reads a dead name must not run.
+        // SAFETY: `callee` is a reduced dyad.
+        if unsafe { self.returns_type(callee) } {
+            self.check_call_reads(callee)?;
+            // A call that waits for the run gives a type value then.
+            if !self.runs_in_pass(&args) {
+                return Ok(call);
+            }
+            // SAFETY: `call` was just built over reduced dyads.
+            unsafe { self.eval_type_call(call) }
+        } else {
+            Ok(call)
         }
     }
 

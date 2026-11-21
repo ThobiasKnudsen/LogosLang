@@ -17,6 +17,27 @@ pub(super) enum Before {
     Waits(usize),
 }
 
+/// Who takes the operands [`Parser::operands`] reads, which decides what a side that is no value
+/// is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Taker {
+    /// A built-in operation, which refuses it where it stands, saying why.
+    Operation,
+    /// A parse written in Logos, handed it to decide itself (›A `tape[k]` read past the lexed
+    /// frontier lexes on demand for every constructor‹ [[R231]]): a spelling no live name has as
+    /// its `unknown_name` node, a side that gives nothing as the tape's `void` node.
+    Parse,
+}
+
+/// What a running constructor reads of a cell of its tape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TapeRead {
+    /// The cell, `tape[k]`: a name in it read as every reader of an operand reads one.
+    Cell,
+    /// Its type, `tape[k].type`: the cell read as an operation reads its operand.
+    Type,
+}
+
 impl<'a> Parser<'a> {
     /// `fn`'s constructor claims it so a recursive self-call inside the body
     /// resolves the published signature.
@@ -393,27 +414,98 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Option<(DyadPtr, DyadPtr)>, ParseError> {
-        let (Some(&l), Some(&r)) = (tape.at(-1), tape.at(1)) else {
-            return Ok(None);
-        };
-        if !self.is_operand_cell(&l) || !self.is_operand_cell(&r) {
-            return Ok(None);
-        }
-        let (lhs, rhs) = (self.as_operand(l)?, self.as_operand(r)?);
-        for (cell, operand) in [(l, lhs), (r, rhs)] {
-            // SAFETY: `operand` is a reduced dyad from the store.
-            if let Err(e) = unsafe { crate::identities::read::value_type(self.types, operand) } {
-                return Err(self.fail_at(cell.start, e));
+        Ok(self.operands(tape, [-1, 1], Taker::Operation)?.map(|[lhs, rhs]| (lhs, rhs)))
+    }
+
+    /// The operands at `ks` of `tape`, read as every operation reads what it takes, built in or
+    /// written in Logos: each side a name live here (›A dead name takes nothing until `:=`
+    /// redeclares it‹ [[R72]]) giving a value refused nowhere (`read::value_type`), and a `dyad`
+    /// read through to the node it gives ([`Self::read_through_value`]). Every side is checked
+    /// before any is read through, so nothing runs before a side is refused. `Ok(None)` when a
+    /// side is structurally missing.
+    fn operands<const N: usize>(
+        &mut self,
+        tape: &mut ParsingTape,
+        ks: [isize; N],
+        taker: Taker,
+    ) -> Result<Option<[DyadPtr; N]>, ParseError> {
+        let types = self.types;
+        let mut cells = Vec::with_capacity(N);
+        for k in ks {
+            match tape.at(k) {
+                Some(&cell) if self.is_operand_cell(&cell) => cells.push(cell),
+                _ => return Ok(None),
             }
         }
-        let lhs = self.read_through_value(tape, -1, lhs)?;
-        let rhs = self.read_through_value(tape, 1, rhs)?;
-        // A left side the pass ran stands for the value its run gave.
-        let lhs = match tape.at(-1) {
-            Some(ran) if ran.dyad != l.dyad => ran.dyad,
-            _ => lhs,
-        };
-        Ok(Some((lhs, rhs)))
+        let mut names = Vec::with_capacity(N);
+        for &cell in &cells {
+            names.push(self.name_read(cell, taker)?);
+        }
+        let mut gives = Vec::with_capacity(N);
+        for (&name, cell) in names.iter().zip(&cells) {
+            // SAFETY: `name` is a reduced dyad from the store.
+            gives.push(match unsafe { crate::identities::read::value_type(types, name) } {
+                Ok(_) => true,
+                Err(e) if taker == Taker::Parse && crate::identities::read::gives_nothing(&e) => {
+                    false
+                }
+                Err(e) => return Err(self.fail_at(cell.start, e)),
+            });
+        }
+        let mut read = [std::ptr::null_mut(); N];
+        for (i, k) in ks.into_iter().enumerate() {
+            read[i] = if gives[i] {
+                self.read_through_value(tape, k, names[i])?
+            } else {
+                types.tape.nothing
+            };
+        }
+        // A side the pass ran while a later side was read stands for the value its run gave.
+        for i in 0..N.saturating_sub(1) {
+            if let Some(ran) = tape.at(ks[i]).filter(|ran| ran.dyad != cells[i].dyad) {
+                read[i] = ran.dyad;
+            }
+        }
+        Ok(Some(read))
+    }
+
+    /// The read of a name every reader of an operand makes ([`Self::as_operand`]), a dead one
+    /// refused; a parse is handed a spelling no live name has as its `unknown_name` node
+    /// (›Unknown spellings are two pattern identities‹ [[R252]]).
+    fn name_read(&mut self, cell: Cell, taker: Taker) -> Result<DyadPtr, ParseError> {
+        let unknown = taker == Taker::Parse
+            && cell.is_fresh(self.types)
+            && matches!(self.resolve_fresh(cell.spelling()), Err(e) if !matches!(e, ResolveError::Dead(_)));
+        if unknown {
+            return Ok(cell.dyad);
+        }
+        self.as_operand(cell)
+    }
+
+    /// What a running constructor reads at `k` of its tape: a bracket, whose lines it reads, and
+    /// a cell that is no operand, an identity still to be built, as they stand; the tape's `void`
+    /// node past its reach (›A `tape[k]` read past the lexed frontier lexes on demand for every
+    /// constructor‹ [[R231]]); any other cell as an operation takes its operand, `tape[k]` by its
+    /// name read alone and `tape[k].type` by the whole read.
+    pub(crate) fn read_tape(
+        &mut self,
+        tape: &mut ParsingTape,
+        k: isize,
+        read: TapeRead,
+    ) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        let Some(cell) = tape.at(k).copied() else { return Ok(types.tape.nothing) };
+        // SAFETY: a lexed or built cell holds a dyad from the store.
+        let bracket = unsafe { crate::identities::tape::bracket_kind(types, cell.dyad) }.is_some();
+        if bracket || !self.is_operand_cell(&cell) {
+            return Ok(cell.dyad);
+        }
+        match read {
+            TapeRead::Cell => self.name_read(cell, Taker::Parse),
+            TapeRead::Type => {
+                Ok(self.operands(tape, [k], Taker::Parse)?.map_or(cell.dyad, |[operand]| operand))
+            }
+        }
     }
 
     /// `operand`, the cell at `k` of `tape`, read through when it gives a `dyad` no name holds,
@@ -905,7 +997,7 @@ impl<'a> Parser<'a> {
     /// with an end is refused where something it is reached through only borrows it.
     fn ended_path(&mut self, place: DyadPtr, cell: &Cell) -> Result<Option<Ended>, ParseError> {
         use crate::identities::drop_model::{
-            cell_free, freeing_holder, is_owning_place, path_borrows,
+            cell_teardown, freeing_holder, is_owning_place, path_borrows,
         };
         use crate::identities::this::{field_path, FieldPath};
         let (at, held) = (cell.start, self.settled_type(cell.root));
@@ -913,7 +1005,7 @@ impl<'a> Parser<'a> {
         let owns = unsafe {
             self.is_owning_read(place)
                 || is_owning_place(self.types, place)
-                || cell_free(self.types, place).is_some()
+                || cell_teardown(self.types, place).is_some()
         };
         // SAFETY: `place` is a reduced dyad from the store, the cell's root null or a binding.
         let (binding, path) = match unsafe { field_path(self.types, place, cell.root, held) } {

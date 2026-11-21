@@ -234,14 +234,21 @@ pub(crate) unsafe fn value_type(
 /// # Safety
 /// `node` must be a reduced dyad from the store.
 pub unsafe fn gives_value(types: &Core, node: DyadPtr) -> Result<bool, crate::parse::ParseError> {
-    use crate::parse::ParseError;
     match value_type(types, node) {
         Ok(_) => Ok(true),
-        Err(
-            ParseError::StatementAsValue | ParseError::MissingElse | ParseError::ArmGivesNothing,
-        ) => Ok(false),
+        Err(e) if gives_nothing(&e) => Ok(false),
         Err(e) => Err(e),
     }
+}
+
+/// Whether `e`, from [`value_type`], says that the node gives nothing, where any other error
+/// refuses a value it gives.
+pub(crate) fn gives_nothing(e: &crate::parse::ParseError) -> bool {
+    use crate::parse::ParseError;
+    matches!(
+        e,
+        ParseError::StatementAsValue | ParseError::MissingElse | ParseError::ArmGivesNothing
+    )
 }
 
 /// How storage declared `t` reads: at the type's own layout, or as the eight-byte
@@ -464,6 +471,9 @@ unsafe fn call_tail(types: &Core, node: DyadPtr) -> Option<CallTail> {
     } else {
         (body, None)
     };
+    // A dereference of a value with an end is handed back as its copy; the place is what the
+    // copy reads (›A last value moves out‹ [[R66]]).
+    let tail = super::copy::copied(types, tail).map_or(tail, |copied| types.through(copied));
     (dyad::ty(tail) == types.deref_).then_some(CallTail {
         call: types.through(node),
         callee,
@@ -485,6 +495,19 @@ pub unsafe fn place_node(store: &mut Store, types: &Core, node: DyadPtr) -> Opti
     }
 }
 
+/// What a `.` or a `[…]` that goes on along a path takes `node` as: the dereference a call that
+/// ends in one stands for, so the path reads and writes where the call's body points and the
+/// call hands nothing back; any other node is itself.
+///
+/// # Safety
+/// As `place_of`.
+pub unsafe fn on_path(store: &mut Store, types: &Core, node: DyadPtr) -> DyadPtr {
+    match call_tail(types, node) {
+        Some(call) => call_place(store, types, call),
+        None => node,
+    }
+}
+
 /// The call's dereference, over a call of a copy of the callee whose body yields the address
 /// where the original reads through it: the body runs with the call's arguments, bounds
 /// check included, and the place is where its dereference points.
@@ -492,7 +515,7 @@ pub unsafe fn place_node(store: &mut Store, types: &Core, node: DyadPtr) -> Opti
 /// # Safety
 /// `call` must come from `place_of`.
 pub unsafe fn call_place(store: &mut Store, types: &Core, call: CallTail) -> DyadPtr {
-    use crate::parse::{FN_BCODE, FN_BODY, FN_OUTPUT, FN_OUTPUT_GATE, FN_SLOTS};
+    use crate::parse::{FN_BCODE, FN_BODY, FN_OUTPUT, FN_SLOTS};
     let (address, pointee, offset) = super::pointer::deref_parts(call.tail);
     let body = match call.line {
         None => address,
@@ -507,7 +530,6 @@ pub unsafe fn call_place(store: &mut Store, types: &Core, call: CallTail) -> Dya
     record[FN_OUTPUT] = super::pointer::make_pointer_type(store, types, pointee);
     record[FN_BODY] = body;
     record[FN_BCODE] = std::ptr::null_mut();
-    record[FN_OUTPUT_GATE] = std::ptr::null_mut();
     let finder = store.alloc_words(dyad::ty(call.callee), &record);
     let args = crate::parse::null_terminated(dyad::value(call.call) as *const DyadPtr);
     let found = crate::parse::build_call(store, finder, args);
