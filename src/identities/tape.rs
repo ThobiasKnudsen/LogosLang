@@ -350,7 +350,8 @@ unsafe fn read_parts(types: &Core, read: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr)
         || ty == types.tape.cell_type
         || ty == types.tape.cell_value
         || ty == types.tape.cell_number
-        || ty == types.tape.cell_node;
+        || ty == types.tape.cell_node
+        || ty == types.tape.cell_into;
     let i =
         if has_line { *(dyad::value(read) as *const DyadPtr).add(2) } else { std::ptr::null_mut() };
     (recv, k, i)
@@ -829,12 +830,13 @@ fn run_cell_value(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// The number a literal or a constant of a type lying inside `ty` holds, as a `ty`; any other
-/// dyad, an expression whose value is known only when it runs, is refused.
+/// The value a constant of `ty` the cell holds is, as a `ty`: the number a literal or a constant
+/// of a type lying inside `ty` holds, or for `type` the type the cell names. Any other dyad, an
+/// expression whose value is known only when it runs, is refused.
 ///
 /// # Safety
-/// `cell` must be a dyad from the store; `ty` a number type, `bool` or a pointer type node.
-pub(crate) unsafe fn constant_number(
+/// `cell` must be a dyad from the store; `ty` `type`, a number type, `bool` or a pointer type node.
+pub(crate) unsafe fn constant_value(
     types: &Core,
     cell: DyadPtr,
     ty: DyadPtr,
@@ -844,9 +846,12 @@ pub(crate) unsafe fn constant_number(
 }
 
 /// # Safety
-/// As [`constant_number`].
+/// As [`constant_value`].
 unsafe fn constant_of(types: &Core, cell: DyadPtr, ty: DyadPtr) -> Option<i64> {
     use super::numtype::{apply_cast, of_type_node, read_scalar};
+    if ty == types.type_ {
+        return super::type_identity_of(types, cell).map(|t| t as i64);
+    }
     let nt = of_type_node(ty);
     let from = dyad::ty(cell);
     if from == types.rational {
@@ -877,7 +882,7 @@ fn run_cell_number(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let cell = read_target(rt, ops)?;
-        constant_number(rt.types(), cell, *ops.add(3))
+        constant_value(rt.types(), cell, *ops.add(3))
     }
 }
 
@@ -909,25 +914,30 @@ fn run_cell_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// A line no check narrowed, written by `=` into a place of `ty`, is decided by that type when
-/// the write runs: a number type or `bool` takes the literal or constant the line holds, and a
-/// type a Logos `parse` builds builds a bracket by that parse. `None` for a place of any other
-/// type, which [`super::land`] decides. ›A tape read checked against a number type reads as that
+/// A cell or line no check narrowed, written by `=` into a place of `ty` or passed to a
+/// parameter of `ty`, is decided by that type when the write runs: `type` takes a type, a number
+/// type or `bool` the literal or constant the line holds, and a type a Logos `parse` builds
+/// builds a bracket by that parse. `None` for any other value, and for a place of any other type,
+/// which [`super::land`] decides. ›A tape read checked against a number type reads as that
 /// number‹ [[R229]], ›What `=` does is decided by the type of the place on its left‹ [[R192]].
 ///
 /// # Safety
-/// `read` must be a line node from `build_cell_dyad_at`; `ty` null or a type node.
+/// `value` must be a reduced dyad from the store; `ty` null or a type node.
 pub(crate) unsafe fn build_cell_into(
     store: &mut Store,
     types: &Core,
-    read: DyadPtr,
+    value: DyadPtr,
     ty: DyadPtr,
 ) -> Option<DyadPtr> {
     use super::read::{place_layout, Read};
+    let read = types.through(value);
+    if dyad::ty(read) != types.tape.cell_dyad_at && dyad::ty(read) != types.tape.slot {
+        return None;
+    }
     let ty = super::type_identity_of(types, ty)?;
     match place_layout(types, ty)?.0 {
         Read::Scalar(_) => {}
-        Read::Container(t) if meta::is_node_valued(t, types.fn_type) => {}
+        Read::Container(t) if t == types.type_ || meta::is_node_valued(t, types.fn_type) => {}
         _ => return None,
     }
     let (recv, k, i) = read_parts(types, read);
@@ -942,7 +952,7 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let mut line = read_target(rt, ops)?;
         let ty = *ops.add(3);
         if !super::meta::is_node_valued(ty, rt.types().fn_type) {
-            return constant_number(rt.types(), line, ty);
+            return constant_value(rt.types(), line, ty);
         }
         if is_bracket(rt.types(), line) {
             let built = rt.construct_on_pass(ty, line)? as DyadPtr;
@@ -1002,19 +1012,24 @@ pub(crate) unsafe fn named_line(
     if ty == ids.slot || ty == ids.cell_dyad_at {
         return Some(rt.run(read).map(|d| rt.through(d as DyadPtr)));
     }
-    if ty == ids.cell_value || ty == ids.cell_number || ty == ids.cell_node {
+    if ty == ids.cell_value || ty == ids.cell_number || ty == ids.cell_node || ty == ids.cell_into {
         return Some(read_target(rt, dyad::value(read) as *const DyadPtr));
     }
     None
 }
 
-/// The number type a read of a cell or line was checked against; `None` for any other node.
+/// The type a read of a cell or line takes its line as, a number type, `bool` or `type`; `None`
+/// for any other node, and for a type a Logos `parse` builds, whose bracket the call builds.
 ///
 /// # Safety
 /// `read` must be a reduced dyad from the store.
-pub(crate) unsafe fn checked_number(types: &Core, read: DyadPtr) -> Option<DyadPtr> {
-    (dyad::ty(read) == types.tape.cell_number)
-        .then(|| *(dyad::value(read) as *const DyadPtr).add(3))
+pub(crate) unsafe fn checked_type(types: &Core, read: DyadPtr) -> Option<DyadPtr> {
+    let ty = dyad::ty(read);
+    if ty != types.tape.cell_number && ty != types.tape.cell_into {
+        return None;
+    }
+    let checked = *(dyad::value(read) as *const DyadPtr).add(3);
+    (!meta::is_node_valued(checked, types.fn_type)).then_some(checked)
 }
 
 /// A bracket a type's `parse` hands to the call it places is the list the new value is built

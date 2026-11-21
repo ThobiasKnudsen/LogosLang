@@ -801,7 +801,7 @@ unsafe fn load(rt: &mut Runtime, node: DyadPtr, this: DyadPtr) -> Result<i64, Ru
                 && (is_fill(rt.types(), node)
                     || super::read::output_type(rt.types(), *slot) == rt.types().rational) =>
         {
-            super::tape::constant_number(rt.types(), *slot, ty)
+            super::tape::constant_value(rt.types(), *slot, ty)
         }
         Field::Slot(slot, _) => super::assign::take(rt, carry, *slot),
     }

@@ -109,7 +109,7 @@ pub(crate) mod prec {
     /// Application (`f(x)`, `pt(1, 2)`): reads its bracket lazily in source order, so the
     /// tight reads sit above it and the bracket readers above those.
     pub const APPLY: f64 = 91.0;
-    /// `?`: above a type that takes a value, so `i32 ?` takes `i32` as the type it is a place of.
+    /// `?`: above a type that takes a value, so in `i32 ?` the unknown stands before `i32` takes it.
     pub const HOLE: f64 = 87.0;
     /// A type taking the value to its right, `i64 m`, and `lossy` between it and the value: below
     /// `(` and `?`, above `&` and the prefix words. ›A parse is ranked by what it takes from its

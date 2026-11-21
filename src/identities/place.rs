@@ -80,7 +80,7 @@ unsafe fn place(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunEr
     let types = &*types;
     if let Some(line) = super::tape::named_line(rt, node) {
         let line = line?;
-        return Ok(Placed::New(match (at, super::tape::checked_number(types, node)) {
+        return Ok(Placed::New(match (at, super::tape::checked_type(types, node)) {
             (At::Inside, Some(ty)) => land(rt, line, ty)?,
             _ => line,
         }));

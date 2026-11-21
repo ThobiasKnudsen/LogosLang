@@ -139,7 +139,7 @@ unsafe fn from_scope(
     map_ty: DyadPtr,
     value: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
-    let Some((scope, line)) = super::instance::kept_scope(types, value) else {
+    let Some((names, line)) = super::instance::kept_value(types, value) else {
         return Ok(None);
     };
     let (k, v) = params_of(types, map_ty).expect("`map_type` mints a hashmap");
@@ -147,7 +147,7 @@ unsafe fn from_scope(
         return Err(ParseError::ScopeKeysAreText);
     }
     let mut ops = vec![types.hashmap.entries_leaf, map_ty];
-    for name in super::instance::kept_names(types, scope) {
+    for name in names {
         let spelling = crate::binding::Binding::spelling(name);
         if crate::binding::Binding::read(name).pattern {
             return Err(ParseError::PatternIsNoKey(Box::new(spelling)));
@@ -160,9 +160,9 @@ unsafe fn from_scope(
     if line == value {
         return Ok(Some(map));
     }
-    let lines = array::items(super::scope::exprs_array(scope));
-    let at = lines.iter().rposition(|&l| l == line).expect("`kept_scope` found the line in it");
-    super::scope::set_item(scope, at, map);
+    let lines = array::items(super::scope::exprs_array(value));
+    let at = lines.iter().rposition(|&l| l == line).expect("`kept_value` found the line in it");
+    super::scope::set_item(value, at, map);
     Ok(Some(value))
 }
 

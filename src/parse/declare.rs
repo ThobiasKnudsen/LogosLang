@@ -1158,67 +1158,75 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// `?`'s constructor (DESIGN ›Declarations are immutable by default‹): the
-    /// one unknown standing as its value, or with a type to its left that
-    /// type's valueless place, the cells to the left consumed.
+    /// `?`'s constructor (›`?` is one value, the unknown; `key := T ?` declares without a value‹
+    /// [[R103]]): with a finished value to its left, which must be a type, that type's valueless
+    /// place, the cell to the left consumed. Otherwise the one unknown stands as its value, and an
+    /// identity to its left still to take its turn takes it as its operand and decides what it is
+    /// there: `x != ?` compares with it, `i32 ?` is `i32`'s place.
     pub(crate) fn construct_hole(
         &mut self,
         id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let types = self.types;
         let base = match tape.at(-1).copied() {
-            Some(cell) => {
-                // A fresh name to the left is not a type; leave it for the
-                // boundary's own report. An operator still waiting for its
-                // turn (`x != ?`), or a word such as `lossy`, is no type either;
-                // which is which by its rank, stand-in for #286.
-                let left = self.cell_identity(&cell);
-                let waiting = !cell.constructed
-                    && self.ctor_of(left).is_some()
-                    && (self.precedence_of_cell(left) < crate::identities::meta::prec::CONVERT
-                        || self.is_delimiter(left));
-                if cell.is_fresh(types) || waiting {
-                    None
-                } else {
-                    let d = self.operand_dyad(cell)?;
-                    Some(self.type_known_now(d)?)
-                }
+            // A fresh name to the left is left for the boundary's own report.
+            Some(cell) if !cell.is_fresh(self.types) && self.is_operand_cell(&cell) => {
+                let d = self.operand_dyad(cell)?;
+                Some(self.type_known_now(d)?)
             }
-            None => None,
+            _ => None,
         };
-        let mut hole = false;
-        let node = match base {
-            None => self.stand_as_value(tape, id),
-            Some(t)
-                // SAFETY: `t` is a type node from the store.
-                if unsafe {
-                    crate::identities::meta::is_record_type(t)
-                        && !crate::identities::meta::run_body_of(t).is_null()
-                } =>
-            {
-                // A type whose nodes run has no place: the hole is an empty node of it.
-                tape.remove(-1);
-                // SAFETY: as above.
-                unsafe { crate::identities::this::empty_node(self.rt.store, t) }
-            }
-            Some(t) => {
-                // The valueless marker `[T][null]`: the name `:=` gives it is laid out at
-                // the type's width by the reading rule, so allocation and read cannot
-                // disagree.
-                // SAFETY: `t` is a type node from the store.
-                if unsafe { crate::identities::read::place_layout(types, t) }.is_none()
-                    && !self.cx.field_hole
-                {
-                    return Err(ParseError::NonNumericDeclaredType);
-                }
-                tape.remove(-1);
-                hole = true;
-                crate::identities::hole::build(self.rt.store, types.unknown, t, std::ptr::null_mut())
-            }
+        let Some(t) = base else {
+            let value = self.stand_as_value(tape, id);
+            tape.place(value);
+            return Ok(Constructed::Placed);
         };
+        let (node, hole) = self.valueless_place(t)?;
+        tape.remove(-1);
         tape.place(node);
         tape.at_mut(0).expect("placed above").hole = hole;
         Ok(Constructed::Placed)
+    }
+
+    /// The type `t` at the center, whose parse takes the value to its right, finding `?` alone
+    /// there, `operand`: its valueless place takes both cells (›`?` is one value, the unknown;
+    /// `key := T ?` declares without a value‹ [[R103]]). `false`, the tape untouched, for any other
+    /// operand.
+    pub(crate) fn takes_unknown(
+        &mut self,
+        tape: &mut ParsingTape,
+        operand: &Cell,
+        t: DyadPtr,
+    ) -> Result<bool, ParseError> {
+        if !self.is_bare_unknown(operand) {
+            return Ok(false);
+        }
+        let (node, hole) = self.valueless_place(t)?;
+        tape.remove(1);
+        tape.place(node);
+        tape.at_mut(0).expect("placed above").hole = hole;
+        Ok(true)
+    }
+
+    /// What `T ?` makes of the type `t`, and whether it is the valueless marker: a type whose
+    /// nodes run has no place, so it is an empty node of it.
+    fn valueless_place(&mut self, t: DyadPtr) -> Result<(DyadPtr, bool), ParseError> {
+        let types = self.types;
+        // SAFETY: `t` is a type node from the store.
+        unsafe {
+            if crate::identities::meta::is_record_type(t)
+                && !crate::identities::meta::run_body_of(t).is_null()
+            {
+                return Ok((crate::identities::this::empty_node(self.rt.store, t), false));
+            }
+            // The valueless marker `[T][null]`: the name `:=` gives it is laid out at the type's
+            // width by the reading rule, so allocation and read cannot disagree.
+            if crate::identities::read::place_layout(types, t).is_none() && !self.cx.field_hole {
+                return Err(ParseError::NonNumericDeclaredType);
+            }
+        }
+        let hole =
+            crate::identities::hole::build(self.rt.store, types.unknown, t, std::ptr::null_mut());
+        Ok((hole, true))
     }
 }

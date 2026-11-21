@@ -195,13 +195,16 @@ impl<'a> Parser<'a> {
         input
     }
 
-    /// The record a `{ … }` lays out on `kept.ty`: each live name of `scope` that holds bytes a
-    /// field of its spelling, type and `mut` in written order, and `scope` itself the record's
-    /// body, so a name that holds none, a `fn` or a type, reads through the value as a `static`
-    /// member does (›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]).
-    /// A `fn` that read the value read its fields by their place among the names then, so those
-    /// names must still be the first fields. Returns the record with the names its fields are made
-    /// from.
+    /// The record a `{ … }` is a value of: each live name of `scope` that holds bytes a field of
+    /// its spelling, type and gates in written order, and the block of the `{ … }` that made it
+    /// the record's body, so a name that holds none, a `fn` or a type, reads through the value as
+    /// a `static` member does (›`{ … }` outside text is a scope kept as a value, read with `.`‹
+    /// [[R374]]). Where every name holds bytes, `{` makes one record per shape and finds it again
+    /// (`instance::shape_of`); a name that holds none is a type of its own (›`fn` is not a
+    /// primitive: a function is a type in this same shape‹ [[R199]]), and so is the record read
+    /// through it, laid out on `kept.ty` when a `fn` written here needed it. A `fn` that read the
+    /// value read its fields by their place among the names then, so those names must still be
+    /// the first fields. Returns the record with the names its fields are made from.
     ///
     /// # Safety
     /// `scope` must be the innermost open scope, the block whose lines were just read, and `kept`
@@ -211,11 +214,13 @@ impl<'a> Parser<'a> {
         scope: DyadPtr,
         kept: KeptValue,
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
-        use crate::identities::{hole, read::carry_of};
+        use crate::identities::{hole, instance, read::carry_of};
         let types = self.types;
         let mut names = Vec::new();
-        for name in crate::identities::instance::kept_names(types, scope) {
+        let mut own = !kept.ty.is_null();
+        for name in instance::kept_names(types, scope) {
             if !types.is_storage(name) {
+                own = true;
                 continue;
             }
             if carry_of(types, types.type_of(name)).is_none() {
@@ -231,6 +236,12 @@ impl<'a> Parser<'a> {
                 });
             }
         }
+        if !own {
+            if let Some(shape) = instance::shape_of(types, &names) {
+                return Ok((shape, names));
+            }
+        }
+        let ty = if kept.ty.is_null() { self.rt.store.alloc_leaf(types.type_) } else { kept.ty };
         let field_scope = self.open_scope();
         let mut fields = Vec::with_capacity(names.len());
         let mut bindings = Vec::with_capacity(names.len());
@@ -242,7 +253,7 @@ impl<'a> Parser<'a> {
                 std::ptr::null_mut(),
             );
             let binding = self.declare_field_name(&Binding::spelling(name), field, self.cx.pos)?;
-            for gate in [types.mut_, types.immut_] {
+            for gate in instance::entry_gates(types) {
                 if Binding::has_gate(name, gate) {
                     self.add_gate(binding, gate)?;
                 }
@@ -254,7 +265,11 @@ impl<'a> Parser<'a> {
         self.cx.scopes.pop();
         declared?;
         let fields = crate::identities::array::build(self.rt.store, types.array_, &fields);
-        Ok((self.record_node(kept.ty, field_scope, fields, &bindings, scope), names))
+        let record = self.record_node(ty, field_scope, fields, &bindings, scope);
+        if !own {
+            instance::keep_shape(self.rt.store, types, record);
+        }
+        Ok((record, names))
     }
 
     /// `{`'s constructor: the lines up to its `}`, the scope kept as a value.
