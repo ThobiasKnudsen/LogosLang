@@ -139,28 +139,22 @@ impl<'a> Parser<'a> {
         let Some((mut cell, start)) = self.lex_cell(tape)? else {
             return Ok(Some(Boundary::Eof));
         };
-        if !cell.constructed && !self.after_tight_read(tape) && self.names_own_field(&cell) {
-            if self.cx.definitions.last().is_some_and(|d| d.in_parse) {
+        if !cell.constructed && !self.after_tight_read(tape) {
+            let field = self.names_own_field(&cell);
+            if field.is_err() {
                 self.cx.pos = start;
-                return Err(ParseError::BareFieldInParse(Box::new(cell.spelling().to_string())));
             }
-            // Left unbuilt, as a name is, so a value whose type has a parse wakes it: `items[1]`.
-            cell.dyad = self.this_field(cell.spelling(), start)?;
+            if field? {
+                // Left unbuilt, as a name is, so a value whose type has a parse wakes it: `items[1]`.
+                cell.dyad = self.this_field(cell.spelling(), start)?;
+            }
         }
         let id = self.cell_identity(&cell);
         if !cell.constructed {
             self.check_unwritten(&cell)?;
-            if id == self.types.sep_ {
+            if let Some(boundary) = self.boundary_of(id) {
                 self.cx.pos = start;
-                return Ok(Some(Boundary::Comma));
-            }
-            if self.is_closer(id) {
-                self.cx.pos = start;
-                return Ok(Some(Boundary::Close));
-            }
-            if id == self.types.else_ && self.cx.else_ends == Some(self.cx.open.len()) {
-                self.cx.pos = start;
-                return Ok(Some(Boundary::Else));
+                return Ok(Some(boundary));
             }
             if let Some(mode) = self.cx.lex_mode {
                 if mode != RightSide::Condition && id == self.types.open_ && !tape.is_empty() {
@@ -210,6 +204,20 @@ impl<'a> Parser<'a> {
             self.discover_pending(tape)?;
         }
         Ok(None)
+    }
+
+    /// The boundary an unbuilt token ends its segment at: a `,`, a closer, or the `else` that ends
+    /// an `if`'s bare branch.
+    pub(super) fn boundary_of(&self, id: DyadPtr) -> Option<Boundary> {
+        if id == self.types.sep_ {
+            Some(Boundary::Comma)
+        } else if self.is_closer(id) {
+            Some(Boundary::Close)
+        } else if id == self.types.else_ && self.cx.else_ends == Some(self.cx.open.len()) {
+            Some(Boundary::Else)
+        } else {
+            None
+        }
     }
 
     /// A cell a reader's lazy read lexes that would construct before the reader at the
@@ -457,10 +465,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `id` must be null or a dyad from the store.
     pub(super) unsafe fn identity_head(&self, id: DyadPtr) -> Option<DyadPtr> {
-        if id.is_null()
-            || dyad::ty(id) != self.types.type_
-            || crate::identities::meta::kind_of(id).is_none()
-        {
+        if id.is_null() || crate::identities::meta::kind_of(id).is_none() {
             None
         } else {
             Some(id)
@@ -674,14 +679,10 @@ impl<'a> Parser<'a> {
         // SAFETY: `id` is a resolved dyad from the store; the slot is read only where a record head exists.
         self.is_awake_instance(id)
             || unsafe {
-                !id.is_null()
-                    && dyad::ty(id) == self.types.type_
-                    && crate::identities::meta::kind_of(id).is_some()
-                    && crate::identities::meta::is_record_type(id)
-                    && {
-                        let leaf = crate::identities::meta::constructor_of(id);
-                        !leaf.is_null() && dyad::ty(leaf) == self.types.fn_type
-                    }
+                !id.is_null() && crate::identities::meta::is_record_type(id) && {
+                    let leaf = crate::identities::meta::constructor_of(id);
+                    !leaf.is_null() && dyad::ty(leaf) == self.types.fn_type
+                }
             }
     }
 
@@ -692,8 +693,7 @@ impl<'a> Parser<'a> {
         unsafe {
             !d.is_null()
                 && (dyad::ty(d) == self.types.fn_type
-                    || (dyad::ty(d) == self.types.type_
-                        && crate::identities::meta::kind_of(d).is_some()))
+                    || crate::identities::meta::kind_of(d).is_some())
         }
     }
 
@@ -809,9 +809,7 @@ impl<'a> Parser<'a> {
             dyad::ty(node) == self.types.type_ && dyad::head(node).is_null()
         };
         if unfinished {
-            let value = self.stand_as_value(tape, id);
-            tape.place(value);
-            return Ok(Constructed::Placed);
+            return Ok(Constructed::Decline);
         }
         // The bracket, lexed on demand: application runs at discovery.
         if let Some(scope) =
@@ -833,9 +831,7 @@ impl<'a> Parser<'a> {
             tape.place(node);
             return Ok(Constructed::Gave);
         }
-        let value = self.stand_as_value(tape, id);
-        tape.place(value);
-        Ok(Constructed::Placed)
+        Ok(Constructed::Decline)
     }
 
     /// The scope's expressions in order (prose and teardown structure aside),

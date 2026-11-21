@@ -46,7 +46,8 @@ impl<'a> Parser<'a> {
     }
 
     /// The bindings a write into the cell's node must be granted by: the cell's path, or
-    /// for a field read outside the type's own parse the field's binding alone.
+    /// for a field read outside the type's own parse the field's binding and those of the fields
+    /// it is read through, `p.x` both `p`'s and `x`'s.
     pub(super) fn path_of(&self, cell: &Cell) -> Vec<DyadPtr> {
         use crate::identities::this;
         // SAFETY: a cell's path is null or an `array` node, its dyad null or a dyad from the
@@ -56,17 +57,23 @@ impl<'a> Parser<'a> {
                 return crate::identities::array::items(cell.path).to_vec();
             }
             let node = cell.dyad;
-            if !node.is_null()
-                && this::is_field_read(self.types, node)
-                && !this::is_fill(self.types, node)
+            if node.is_null()
+                || !this::is_field_read(self.types, node)
+                || this::is_fill(self.types, node)
             {
-                let binding = this::field_binding_of(self.types, node);
-                if !binding.is_null() {
-                    return vec![binding];
-                }
+                return Vec::new();
             }
+            let mut path = Vec::new();
+            let mut at = node;
+            while let Some((into, binding)) = this::field_step(self.types, at) {
+                if !binding.is_null() {
+                    path.push(binding);
+                }
+                at = into;
+            }
+            path.reverse();
+            path
         }
-        Vec::new()
     }
 
     fn check_gates(&self, path: &[DyadPtr]) -> Result<(), ParseError> {
@@ -117,7 +124,11 @@ impl<'a> Parser<'a> {
         if !crate::identities::this::is_field_read(self.types, target) {
             return;
         }
-        let this = *(dyad::value(target) as *const DyadPtr);
+        // A field reached through another, `p.x`, lies in the value too.
+        let mut this = target;
+        while let Some((into, _)) = crate::identities::this::field_step(self.types, this) {
+            this = into;
+        }
         if let Some(def) = self.cx.definitions.last_mut() {
             def.wrote_receiver |= !def.in_parse && !this.is_null() && this == def.this_param;
         }
@@ -1077,14 +1088,11 @@ impl<'a> Parser<'a> {
     /// its line runs‹ [[R371]]). Without a bracket, `dyad` stands as its value.
     pub(crate) fn construct_dyad(
         &mut self,
-        id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let types = self.types;
         let Some(bracket) = self.cell_at(tape, 1)?.filter(|c| c.is_bracket()) else {
-            let value = self.stand_as_value(tape, id);
-            tape.place(value);
-            return Ok(Constructed::Placed);
+            return Ok(Constructed::Decline);
         };
         // SAFETY: the bracket cell holds a node from the store; its arguments are reduced dyads.
         let node = unsafe {

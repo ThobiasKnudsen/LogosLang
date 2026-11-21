@@ -69,7 +69,7 @@ pub(crate) struct HeldLine {
     cut: usize,
     kept: Kept,
     definitions: Vec<OpenType>,
-    run_fields: Option<(DyadPtr, Vec<DyadPtr>)>,
+    run_fields: Option<(DyadPtr, Vec<DyadPtr>, DyadPtr)>,
     lays_out: bool,
 }
 
@@ -227,6 +227,10 @@ impl<'a> Parser<'a> {
         let (mut any, mut line_reads, mut assigns) = (false, false, false);
         let mut declares: Option<usize> = None;
         let (mut prev, mut before_prev): (Option<DyadPtr>, Option<DyadPtr>) = (None, None);
+        // The type of the place the name or field path scanned last ends at, and the two tokens
+        // before that path.
+        let mut reached: Option<DyadPtr> = None;
+        let mut path_start: (Option<DyadPtr>, Option<DyadPtr>) = (None, None);
         // After a `fn` or `type`, not a member's name, the rest of the level is a body read where
         // it is built.
         let mut skipping = false;
@@ -278,6 +282,7 @@ impl<'a> Parser<'a> {
                     (false, false, None, None, None, false);
                 (callee, after_call, type_member) = (None, false, false);
                 (type_callee, run_type, line_tokens) = (false, None, 0);
+                (reached, path_start) = (None, (None, None));
                 continue;
             }
             let (Some(r), Some(id)) = (r, id) else { unreachable!("a boundary at the end") };
@@ -341,6 +346,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 (before_prev, prev) = (prev, Some(types.open_));
+                reached = None;
                 continue;
             }
             if skipping {
@@ -349,14 +355,24 @@ impl<'a> Parser<'a> {
             if !self.known_as_written(id) {
                 found.unknown_now += 1;
             }
+            if prev != Some(types.dot_) && id != types.dot_ {
+                path_start = (prev, before_prev);
+            }
+            // SAFETY: a resolved token's identity is a dyad from the store.
+            reached = unsafe {
+                self.place_reached(prev, reached, id, &self.cx.source[at..at + r.matched])
+            };
             if (id == types.fn_type || id == types.type_) && prev != Some(types.dot_) {
-                // `logos file «…»` reads the file as Logos where it is written: no body follows.
-                if id == types.type_ && self.next_identity() == Some(types.file) {
-                    found.needs += 1;
-                    (before_prev, prev) = (prev, Some(id));
-                    continue;
-                }
                 skipping = true;
+                continue;
+            }
+            // `logos file «…»` reads the file as Logos where it is written.
+            if id == types.logos
+                && prev != Some(types.dot_)
+                && self.next_identity() == Some(types.file)
+            {
+                found.needs += 1;
+                (before_prev, prev) = (prev, Some(id));
                 continue;
             }
             if self.ranked(id, prec::ADDRESS) {
@@ -402,13 +418,12 @@ impl<'a> Parser<'a> {
                     });
             }
             assigns |= id == types.assign;
+            let dyad_read = id != types.dot_ && reached == Some(types.dyad_);
+            let (before_path, target) = path_start;
             // SAFETY: a resolved token's identity is a dyad from the store.
-            let dyad_read = prev != Some(types.dot_)
-                && unsafe { read_kind(types, id) } == Read::Container(types.dyad_);
-            // SAFETY: as above.
-            let target_holds_dyad = before_prev
+            let target_holds_dyad = target
                 .is_some_and(|t| unsafe { read_kind(types, t) == Read::Container(types.dyad_) });
-            if dyad_read && !self.reads_the_box(prev, target_holds_dyad, top, bare_branch) {
+            if dyad_read && !self.reads_the_box(before_path, target_holds_dyad, top, bare_branch) {
                 line_reads = true;
                 if top {
                     found.read_at.get_or_insert(chain);
@@ -484,9 +499,38 @@ impl<'a> Parser<'a> {
             && !call
     }
 
-    /// Whether the `dyad` name just scanned, after `prev`, stands for its place rather than the
-    /// node it holds: what `=` writes, `&` points at, `free` and `move` end, and a value taken
-    /// whole by a `:=`, a `return`, an `=` into another `dyad` place or the line itself.
+    /// The type of the place the token `id`, spelled `spelling`, after `prev`, ends a name or a
+    /// field path at: a name's own, or after a `.` the field's of the record the path reached so
+    /// far, `reached`, so an entry of a `{ … }` reads as a name does (›`{ … }` outside text is a
+    /// scope kept as a value, read with `.`‹ [[R374]]). A `.` keeps what the path reached;
+    /// `None` for any other token.
+    ///
+    /// # Safety
+    /// `id` must be a resolved dyad from the store, and `reached`, where it is one, a type node.
+    unsafe fn place_reached(
+        &self,
+        prev: Option<DyadPtr>,
+        reached: Option<DyadPtr>,
+        id: DyadPtr,
+        spelling: &str,
+    ) -> Option<DyadPtr> {
+        let types = self.types;
+        if id == types.dot_ {
+            return reached;
+        }
+        if prev == Some(types.dot_) {
+            return self.field_type(reached?, spelling);
+        }
+        if read_kind(types, id) == Read::Container(types.dyad_) {
+            return Some(types.dyad_);
+        }
+        types.storage_type(id)
+    }
+
+    /// Whether the `dyad` name or field path just scanned, after `prev`, stands for its place
+    /// rather than the node it holds: what `=` writes, `&` points at, `free` and `move` end, and
+    /// a value taken whole by a `:=`, a `return`, an `=` into another `dyad` place or the line
+    /// itself.
     fn reads_the_box(
         &mut self,
         prev: Option<DyadPtr>,
@@ -601,8 +645,8 @@ impl<'a> Parser<'a> {
     /// field read, or written where `=` follows it, and a bare call of a `static` function that
     /// writes mark a `static` function's receiver (›A `static` function writes the value it is
     /// called on, and respects `mut`‹ [[R239]]); in a parse, a stamp, `.type =`, has the node's
-    /// later fields read by name, since the type it stamps is known only at run, and a bare field
-    /// is refused, as on any line of a parse.
+    /// later fields read by name, since the type it stamps is known only at run. A bare field is
+    /// refused where [`Parser::names_own_field`] refuses it.
     fn note_held_use(&mut self, cells: &[Cell], k: usize) -> Result<bool, ParseError> {
         let types = self.types;
         let cell = &cells[k];
@@ -617,10 +661,7 @@ impl<'a> Parser<'a> {
             }
             return Ok(false);
         }
-        let field = self.names_own_field(cell);
-        if field && in_parse {
-            return Err(ParseError::BareFieldInParse(Box::new(cell.spelling().to_string())));
-        }
+        let field = self.names_own_field(cell)?;
         let bits = if field {
             RECEIVER_READS | (u64::from(next == Some(types.assign)) * RECEIVER_WRITES)
         } else if next == Some(types.open_) {
@@ -636,7 +677,7 @@ impl<'a> Parser<'a> {
         } else {
             0
         };
-        if let Some(def) = self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
+        if let Some(def) = self.about_value_mut() {
             def.note_receiver_use(bits);
         }
         Ok(field)

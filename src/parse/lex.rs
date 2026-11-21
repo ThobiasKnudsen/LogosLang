@@ -240,7 +240,7 @@ impl<'a> Parser<'a> {
                 self.drain()?;
             }
             if dyad_box {
-                if let Some(held) = self.read_through(id) {
+                if let Some(held) = self.read_through(id)? {
                     self.cx.each_pass_read |= self.cx.each_pass;
                     cell.dyad = held;
                 }
@@ -268,22 +268,60 @@ impl<'a> Parser<'a> {
     }
 
     /// What a read of `id`, a `dyad` name, stands for once the pass has run everything before
-    /// it: the value node it holds (›A `dyad ?` place is transparent: a placeholder for a new
-    /// node of any type‹ [[R293]]). A held identity is read by dispatching on it, the name
-    /// staying the box (›A block settles its boxes as the top level does‹ [[R295]]), and a name
-    /// `=` writes keeps its place.
-    fn read_through(&mut self, id: DyadPtr) -> Option<DyadPtr> {
-        let held = self.settled_type(id);
-        // SAFETY: `held` is `id` or the live node the place holds now.
-        if held == id || unsafe { crate::identities::type_identity_of(self.types, held) }.is_some()
-        {
-            return None;
-        }
+    /// it ([`Self::held_now`]); a name `=` writes keeps its place.
+    fn read_through(&mut self, id: DyadPtr) -> Result<Option<DyadPtr>, ParseError> {
         if matches!(self.peek_token(), Some((t, _)) if t == self.types.assign) {
-            return None;
+            return Ok(None);
+        }
+        self.held_now(id)
+    }
+
+    /// Whether `place` is a `dyad` place the pass reads where it runs its line: a name, or an
+    /// entry of a `{ … }` reached by a field path from a name or from the value a body is about,
+    /// so that reading it runs nothing but the read.
+    ///
+    /// # Safety
+    /// `place` must be null or a reduced dyad from the store.
+    pub(super) unsafe fn is_dyad_place(&self, place: DyadPtr) -> bool {
+        use crate::identities::{read, this};
+        let types = self.types;
+        if types.is_storage(place) {
+            return read::read_kind(types, place) == read::Read::Container(types.dyad_);
+        }
+        this::is_field_read(types, place)
+            && read::output_type(types, place) == types.dyad_
+            && this::reached_by_name(types, place)
+    }
+
+    /// What a read of `place`, a `dyad` place ([`Self::is_dyad_place`]), stands for where the
+    /// pass runs its line, once everything before the read has run: the node it holds now (›A
+    /// `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]). A name
+    /// and an entry of a `{ … }` read alike, the entry through the value it is reached by or
+    /// named bare in a `fn` entry (›`{ … }` outside text is a scope kept as a value, read with
+    /// `.`‹ [[R374]]). `None` where it holds nothing or a type, which is read by dispatching on
+    /// it, the name staying the box (›A block settles its boxes as the top level does‹
+    /// [[R295]]), and for any other operand.
+    pub(super) fn held_now(&mut self, place: DyadPtr) -> Result<Option<DyadPtr>, ParseError> {
+        let types = self.types;
+        // SAFETY: `place` is a reduced dyad from the store.
+        if !self.in_pass_order() || !unsafe { self.is_dyad_place(place) } {
+            return Ok(None);
+        }
+        // SAFETY: as above.
+        let held = if unsafe { types.is_storage(place) } {
+            self.settled_type(place)
+        } else {
+            // SAFETY: `place` is a field read reached by names alone, so running it runs only
+            // reads, of the value the call running this line is about.
+            unsafe { crate::identities::this::held(&mut self.rt, place) }
+                .map_err(ParseError::Run)?
+        };
+        // SAFETY: `held` is `place` or the live node the place holds now.
+        if held == place || unsafe { crate::identities::type_identity_of(types, held) }.is_some() {
+            return Ok(None);
         }
         // SAFETY: `held` is the live node the place holds now.
-        Some(unsafe { crate::identities::dyad_place::stable(self.rt.store, self.types, held) })
+        Ok(Some(unsafe { crate::identities::dyad_place::stable(self.rt.store, types, held) }))
     }
 
     /// A slot of the call a held `type (…)` is being built in, which is live: a name of the
@@ -488,6 +526,22 @@ impl<'a> Parser<'a> {
             }
             None => None,
         }
+    }
+
+    /// The token at the cursor read as the start of what follows a word, no value to its left, so
+    /// a `-` there negates: `None` at the end, `Some(None)` for a spelling no identity has.
+    pub(super) fn peek_start(&mut self) -> Option<Option<DyadPtr>> {
+        if self.cx.feed.is_some() {
+            let i = self.feed_index()?;
+            let mut cell = self.cx.feed.as_ref()?.cells[i];
+            self.feed_resolve(&mut cell);
+            return Some((!cell.is_fresh(self.types)).then(|| cell.identity(self.types)));
+        }
+        self.skip_whitespace();
+        let source = self.cx.source;
+        let rest = source.get(self.cx.pos..).filter(|rest| !rest.is_empty())?;
+        let resolved = token(&self.cx.scopes, self.trie, rest, true, Left::Nothing);
+        Some(resolved.ok().filter(|(r, _)| !r.fresh).map(|(r, _)| r.identity))
     }
 
     pub(super) fn consume_token(&mut self, id: DyadPtr) -> bool {

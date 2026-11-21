@@ -61,6 +61,9 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        if !self.finds_right_side(tape) {
+            return Ok(Constructed::Decline);
+        }
         let reached = self.reach_file()?;
         let file = self.reach(reached.node);
         tape.place(file);
@@ -128,6 +131,9 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        if !self.finds_right_side(tape) {
+            return Ok(Constructed::Decline);
+        }
         self.skip_whitespace();
         let start = self.cx.pos;
         if self.next_identity() != Some(self.types.file) {
@@ -183,6 +189,9 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        if !self.finds_right_side(tape) {
+            return Ok(Constructed::Decline);
+        }
         self.skip_whitespace();
         let source = self.cx.source;
         let start = self.cx.pos;
@@ -229,6 +238,9 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        if !self.finds_right_side(tape) {
+            return Ok(Constructed::Decline);
+        }
         let quote = self.quote_after("lex")?;
         let node = crate::identities::lex::build(self.rt.store, self.types, quote);
         tape.place(node);
@@ -239,6 +251,9 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        if !self.finds_right_side(tape) {
+            return Ok(Constructed::Decline);
+        }
         let parts = self.interpolated_quote("print")?;
         let node = crate::identities::print::build(self.rt.store, self.types, &parts);
         tape.place(node);
@@ -249,6 +264,9 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        if !self.finds_right_side(tape) {
+            return Ok(Constructed::Decline);
+        }
         let parts = self.interpolated_quote("error")?;
         let node = crate::identities::error::build(self.rt.store, self.types, &parts);
         tape.place(node);

@@ -322,7 +322,9 @@ mod tests {
             ("42", prec::LITERAL, true),
             ("«t»", prec::LITERAL, true),
             ("return", prec::RETURN, true),
+            ("type", prec::READER, true),
             ("logos", prec::READER, true),
+            ("language", prec::INERT, false),
             ("fn", prec::READER, true),
             ("if", prec::READER, true),
             ("not", prec::NOT, true),
@@ -381,7 +383,7 @@ mod tests {
         scopes.push(core.root_scope);
         let node = {
             let mut p = Parser::new(
-                "logos (alpha := i32 ?, beta := i32 ?)",
+                "type (alpha := i32 ?, beta := i32 ?)",
                 &mut store,
                 &mut trie,
                 &core,
@@ -574,7 +576,7 @@ mod tests {
     fn describe_reads_a_program_from_the_graph_alone() {
         let (_store, core, roots) = parse_all(&[
             "mut x := i32 41",
-            "point := logos (a := i32 ?, b := i64 ?)",
+            "point := type (a := i32 ?, b := i64 ?)",
             "pt := point(3, 4)",
             "x = x + 1",
             // A runtime condition: a comptime-known one would fold the `if` away at parse.
@@ -721,7 +723,7 @@ mod tests {
     #[test]
     fn the_whole_store_describes() {
         let (store, core, _roots) = parse_all(&[
-            "point := logos (a := i32 ?, b := i64 ?)",
+            "point := type (a := i32 ?, b := i64 ?)",
             "pt := point(3, 4)",
             "q := &pt",
             "f := fn (v := i64 ?) -> i64 ( if (v < 2) ( 1 ) else ( v * 2 ) )",

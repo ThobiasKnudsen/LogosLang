@@ -62,6 +62,6 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::DYAD_TAG, meta::prec::APPLY);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("dyad", id);
-    cx.metas.insert(id, |p, id, tape| p.construct_dyad(id, tape));
+    cx.metas.insert(id, |p, _id, tape| p.construct_dyad(tape));
     id
 }

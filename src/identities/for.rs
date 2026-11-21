@@ -32,6 +32,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     unsafe { meta::install_hands_on(for_, &["body"], &[]) };
     cx.declare("for", for_);
     cx.metas.insert(for_, |p, id, tape| {
+        if !p.finds_right_side(tape) {
+            return Ok(crate::parse::Constructed::Decline);
+        }
         let node = p.parse_for(id, p.starts_line(tape))?;
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)

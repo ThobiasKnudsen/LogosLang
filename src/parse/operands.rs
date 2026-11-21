@@ -52,7 +52,6 @@ impl<'a> Parser<'a> {
         // SAFETY: `id` is null or a resolved identity from the store.
         unsafe {
             !id.is_null()
-                && dyad::ty(id) == self.types.type_
                 && crate::identities::meta::kind_of(id) == Some(crate::identities::meta::TOKEN_TAG)
         }
     }
@@ -152,13 +151,33 @@ impl<'a> Parser<'a> {
             && (prec::OR..=prec::MULTIPLICATIVE).contains(&rank)
     }
 
-    /// Whether a bracket reader takes the `(` at the cursor: only when woken
-    /// at discovery, the one moment it may read source, and not where the `(`
-    /// ends a complete `if` or `while` condition, being the body.
+    /// Whether a word that reads its own right side finds one to consume (›`parse_rank` and
+    /// `associativity` are data, and the only triggers‹ [[R215]]): woken at discovery and at the
+    /// frontier, the one moment it may read source, with a token at the cursor that is no
+    /// boundary, no operator that reads to its left, and no `(` that is the body of a complete
+    /// `if` or `while` condition. Where it finds none it declines, and stands as its own value (›A
+    /// constructor's outcome is read off its own cell; no holding, no re-invocation‹ [[R261]]).
+    pub(crate) fn finds_right_side(&mut self, tape: &ParsingTape) -> bool {
+        if !self.cx.discovering || tape.at(1).is_some() {
+            return false;
+        }
+        match self.peek_start() {
+            None => false,
+            Some(None) => true,
+            Some(Some(id)) if id == self.types.open_ => {
+                !(self.cx.lex_mode == Some(RightSide::Condition) && self.condition_ends(tape, None))
+            }
+            Some(Some(id)) => {
+                let operator = self.ctor_of(id).is_some() && self.reads_left(id);
+                self.boundary_of(id).is_none() && !operator
+            }
+        }
+    }
+
+    /// Whether a bracket reader takes the `(` at the cursor: a right side it finds that opens with
+    /// its bracket.
     pub(crate) fn reads_own_bracket(&mut self, tape: &ParsingTape) -> bool {
-        self.cx.discovering
-            && self.at_open()
-            && !(self.cx.lex_mode == Some(RightSide::Condition) && self.condition_ends(tape, None))
+        self.finds_right_side(tape) && self.at_open()
     }
 
     /// An operand, or `?`, which reads only to its left.
@@ -397,11 +416,13 @@ impl<'a> Parser<'a> {
     /// in its place (›A `dyad ?` place is transparent: a placeholder for a new node of any
     /// type‹ [[R293]]). Where that node's type is known where the operand is written, it is read
     /// at that type each time the line runs (`dyad_place::read_through`, which every landing in a
-    /// typed place reads it by too). A call whose node's type is known only at run runs now,
-    /// where the pass has reached its line (the top level, or a body's line parsed when it runs),
-    /// after what stands before it ([`Self::run_before`]), and its cell stands for the node it
-    /// gave, as a `dyad` name read there does; a body's line holding one waits for the run
-    /// (`waiting_line_end`), and so does a `while` condition holding one (`hold_condition`).
+    /// typed place reads it by too). An entry of a `{ … }` a field path reaches is read as a
+    /// `dyad` name is where the lexer meets it ([`Self::held_now`]). A call whose node's type is
+    /// known only at run runs now, where the pass has reached its line (the top level, or a
+    /// body's line parsed when it runs), after what stands before it ([`Self::run_before`]), and
+    /// its cell stands for the node it gave, as a `dyad` name read there does; a body's line
+    /// holding either waits for the run (`waiting_line_end`), and so does a `while` condition
+    /// holding one (`hold_condition`).
     pub(super) fn read_through_value(
         &mut self,
         tape: &mut ParsingTape,
@@ -419,6 +440,12 @@ impl<'a> Parser<'a> {
             let unknown = std::ptr::null_mut();
             let read = dyad_place::read_through(self.rt.store, types, operand, unknown, false);
             if let Some(node) = read {
+                return Ok(node);
+            }
+            if self.in_pass_order() && self.is_dyad_place(operand) {
+                self.run_first(tape, at)?;
+                let Some(node) = self.held_now(operand)? else { return Ok(operand) };
+                self.cx.each_pass_read |= self.cx.each_pass;
                 return Ok(node);
             }
             let call = matches!(
@@ -995,15 +1022,22 @@ impl<'a> Parser<'a> {
     /// `node` must be a resolved dyad from the store.
     pub(super) unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
         let node = self.types.through(node);
-        if let Some((crate::binding::Frame::Call(f), _)) = self.types.frame_of(node) {
-            if let Some(at) = self.cx.once_at {
-                if self.cx.frames[..at].iter().any(|open| open.frame == f) {
-                    return Err(ParseError::OnceReadsUnmade);
-                }
+        match self.types.frame_of(node) {
+            Some((crate::binding::Frame::Call(f), _)) => self.reach_frame(f),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether the line being read reaches the frame of the function `f`: only from `f`'s own
+    /// body, in a call of it, which a value made once at its definition is not.
+    pub(super) fn reach_frame(&self, f: DyadPtr) -> Result<(), ParseError> {
+        if let Some(at) = self.cx.once_at {
+            if self.cx.frames[..at].iter().any(|open| open.frame == f) {
+                return Err(ParseError::OnceReadsUnmade);
             }
-            if self.cx.frames.last().is_none_or(|open| open.frame != f) {
-                return Err(ParseError::CapturedLocal);
-            }
+        }
+        if self.cx.frames.last().is_none_or(|open| open.frame != f) {
+            return Err(ParseError::CapturedLocal);
         }
         Ok(())
     }
@@ -1011,8 +1045,12 @@ impl<'a> Parser<'a> {
     /// A value made once (`static`, `immediate`) runs at parse, where a name of the
     /// loop or branch around it has no value yet.
     pub(super) fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
-        // SAFETY: `binding` is the binding dyad the resolver returned for the name.
-        if self.cx.once_at.is_some() && unsafe { Binding::read(binding) }.unmade {
+        // A field named bare has no binding.
+        if self.cx.once_at.is_none() || binding.is_null() {
+            return Ok(());
+        }
+        // SAFETY: a non-null `binding` is the binding dyad the resolver returned for the name.
+        if unsafe { Binding::read(binding) }.unmade {
             return Err(ParseError::OnceReadsUnmade);
         }
         Ok(())
@@ -1063,9 +1101,16 @@ impl<'a> Parser<'a> {
                         .into_owned()
                 }
             };
-            // A `static` name is one place for the run, reachable wherever its function is.
-            // SAFETY: as above.
-            let is_static = unsafe { Binding::has_gate(binding, self.types.static_) };
+            // A `static` name is one place for the run, reachable wherever its function is, and so
+            // is a name of a `{ … }` that holds no bytes, which reads through its value.
+            // SAFETY: as above; a binding's scope is a scope node from the store.
+            let is_static = unsafe {
+                Binding::has_gate(binding, self.types.static_)
+                    || !fields.is_storage()
+                        && !fields.scope.is_null()
+                        && crate::identities::instance::kept_scope(self.types, fields.scope)
+                            .is_some()
+            };
             if !is_static
                 && !self.cx.scopes.is_open(fields.scope)
                 && !self.outer.iter().any(|c| c.scopes.is_open(fields.scope))
