@@ -66,8 +66,9 @@ pub(crate) const CONVENTION_TAG: u8 = 21;
 /// Values are `[len: u64][data: @dyad]`, 16 bytes; a list never lives inline in a node.
 pub(crate) const ARRAY_TAG: u8 = 22;
 /// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]
-/// [body: @dyad][free: @dyad][bracket builder: @dyad][field bindings: @dyad]`, 56 bytes, locked
-/// at definition; `body` is null where the type has none, `free` where its body fills none.
+/// [body: @dyad][free: @dyad][bracket builder: @dyad][field bindings: @dyad][align: usize]`,
+/// 64 bytes, locked at definition; `body` is null where the type has none, `free` where its body
+/// fills none.
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Values are dyad views: the value IS the viewed node's address.
 pub(crate) const DYAD_TAG: u8 = 24;
