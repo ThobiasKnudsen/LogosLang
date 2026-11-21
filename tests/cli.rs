@@ -2239,7 +2239,7 @@ fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
             ("mut d := dyad ?, d = bag (1), e := d, print «end»".to_string(), "end\nfreed 1\nfreed 1\n"),
             ("b := bag (7), mut d := dyad ?, d = b, print «end»".to_string(), "end\nfreed 7\nfreed 7\n"),
             ("d := dyad (bag, bag (6)), print «end»".to_string(), "end\nfreed 6\n"),
-            ("f := fn () -> dyad ( bag (9) ), mut y := bag ?, y = f(), print «end»".to_string(), "freed 0\nend\nfreed 9\n"),
+            ("f := fn () -> dyad ( bag (9) ), mut y := bag ?, y = f(), print «end»".to_string(), "end\nfreed 9\n"),
             (format!("f := fn (a := dyad ?) -> i32 ( 1 ), {c}f(bag (3))"), "freed 3\n1\n"),
             (
                 format!("f := fn (a := dyad ?) -> dyad ( a ), {c}x := f(bag (3)), print «end»"),
@@ -7836,6 +7836,55 @@ fn free_of_a_cell_runs_the_free_of_the_record_it_holds() {
     }
 }
 
+/// ›`free` and `move` end a name; no drop flag‹ [[R60]]: a value whose type fills `free` lives
+/// behind a pointer of its own, which `free` and `move` make NULL, so nothing frees it twice, a
+/// place never written frees nothing, and a copy is a block of its own, on both tiers.
+#[test]
+fn a_value_whose_type_fills_free_lives_behind_a_pointer() {
+    let g = "g := fn () -> i32 ( error «stop» )";
+    let fails = "f := fn () -> i32 ( a := bag(1), x := ( free a, g() ), x )";
+    for (tail, printed) in [
+        (format!("{g}, a := bag(1), x := immediate ( free a, g() ), 1"), "freed 1\n"),
+        (format!("{g}, {fails}, f()"), "freed 1\n"),
+        (format!("{g}, {fails}, f.compile(), f()"), "freed 1\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(1), printed), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("run error: stop"), "{tail}: stderr: {stderr}");
+    }
+    let static_set = "s := type ( mut n := i32 ?, static free = ( print «freed {n}» ), \
+                      static set := fn () -> void ( n = 4 ), static get := fn () -> i32 ( n ) )";
+    let mut cases = vec![
+        ("p := alloc 1 of bag(1), free p@, free p@, print «end»".to_string(), "freed 1\nend\n"),
+        ("mut a := bag ?, print «end»".to_string(), "end\n"),
+        ("a := bag(1), b := a, free a, print «end»".to_string(), "freed 1\nend\nfreed 1\n"),
+        (
+            "mut a := bag ?, a = bag(3), a = bag(4), print «end»".to_string(),
+            "freed 3\nend\nfreed 4\n",
+        ),
+        ("mut a := bag ?, a.n = 7, print «end»".to_string(), "end\nfreed 7\n"),
+        (format!("{static_set}, mut a := s ?, a.set(), print «{{a.get()}}»"), "4\nfreed 4\n"),
+    ];
+    for (body, want) in [
+        ("mut a := bag ?, print «end», 0", "end\n0\n"),
+        ("a := bag(1), b := a, free a, print «end», 0", "freed 1\nend\nfreed 1\n0\n"),
+        ("mut a := bag ?, a = bag(3), a = bag(4), print «end», 0", "freed 3\nend\nfreed 4\n0\n"),
+        ("mut a := bag ?, a.n = 7, print «end», 0", "end\nfreed 7\n0\n"),
+    ] {
+        for c in ["", "f.compile(), "] {
+            cases.push((format!("f := fn () -> i32 ( {body} ), {c}f()"), want));
+        }
+    }
+    for (tail, printed) in cases {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    // A record is shown through its fields, never whole.
+    let (code, stdout, stderr) = run_line(&format!("{RECORD}, a := bag(1), print «{{a}}»"));
+    assert_eq!((code, stdout.as_str()), (Some(1), "freed 1\n"), "stderr: {stderr}");
+    assert!(stderr.contains("a record or hole is not read as one value"), "stderr: {stderr}");
+}
+
 /// DESIGN ›`move` is the act, `own` the gate word, `free` the end‹: "Something that only borrows
 /// a value cannot end it: through a pointer `&` made (`pp := &a, free pp@`) … `free` and `move`
 /// are refused where they are written". A cell with nothing to end keeps the inert `free`.
@@ -9698,15 +9747,34 @@ fn equals_frees_the_record_it_displaces() {
     ]);
 }
 
-/// A record whose type fills `free` is refused through a pointer, never written over the value
-/// whose `free` would then never run.
+/// ›`free` and `move` end a name; no drop flag‹ [[R60]]: a record whose type fills `free` written
+/// through a pointer frees the record it displaces, which the element holds behind a pointer, and
+/// a named one is copied in, on both tiers.
 #[test]
-fn a_held_record_through_a_pointer_is_refused() {
-    let src = "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), w := r(2), \
-               mut x := r(1), p := &x, p@ = w, 0";
-    let (code, stdout, stderr) = run_line(src);
-    assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
-    assert!(stderr.contains("through a pointer is not in the seed yet"), "stderr: {stderr}");
+fn a_record_written_through_a_pointer_frees_the_one_it_displaces() {
+    let r = "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) )";
+    let body = "p@ = r(2), print «end», 0";
+    assert_runs(&[
+        (
+            format!("{r}, w := r(2), mut x := r(1), p := &x, p@ = w, 0"),
+            "freed 1\nfreed 2\nfreed 2\n0\n",
+        ),
+        (
+            format!("{r}, p := alloc 1 of r(1), p@ = r(2), print «end», free p@"),
+            "freed 1\nend\nfreed 2\n",
+        ),
+        (
+            format!("{r}, p := alloc 1 of r(1), f := fn () -> i32 ( {body} ), x := f(), free p@"),
+            "freed 1\nend\nfreed 2\n",
+        ),
+        (
+            format!(
+                "{r}, p := alloc 1 of r(1), f := fn () -> i32 ( {body} ), f.compile(), x := f(), \
+                 free p@"
+            ),
+            "freed 1\nend\nfreed 2\n",
+        ),
+    ]);
 }
 
 /// DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹: a

@@ -81,7 +81,7 @@ unsafe fn compose(
     let mut line = Vec::new();
     for &part in parts_of(node) {
         let bits = value(part)?;
-        line.extend_from_slice(super::display_value(types, part, bits).as_bytes());
+        line.extend_from_slice(super::display_value(types, part, bits)?.as_bytes());
     }
     Ok(line)
 }

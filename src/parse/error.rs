@@ -296,8 +296,6 @@ pub enum ParseError {
     AddressOfHeld,
     /// `move b` where `b` borrows the value with an end it names: only the owner can move it.
     MoveOfBorrow,
-    /// `p@ = v` of a plain record whose type fills `free`. stand-in for #240
-    HeldRecordThroughPointerNotInSeed,
     /// `move p.f` or `move p@` of a field or cell that owns nothing. stand-in for #66
     MoveOfUnownedPath,
     /// `move` or `free` of a field the parse cannot follow back to a name that holds it:

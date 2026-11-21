@@ -1081,7 +1081,7 @@ impl<'a> Runtime<'a> {
             Read::Address => Ok(dyad::head(node) as i64),
             // A rational value travels as the address of its sixteen bytes.
             Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),
-            Read::Container(_) => self.read_container(node),
+            Read::Container(_) | Read::Behind(_) => self.read_container(node),
             Read::Scalar(_) | Read::Pointer(_) => {
                 let slot = self.place_addr(node).ok_or(RunError::NoActivation)?;
                 if slot.is_null() {

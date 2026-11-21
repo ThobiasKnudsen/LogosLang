@@ -264,14 +264,6 @@ pub(super) fn build_store(
     let Some(carry) = carry else {
         return Err(ParseError::BadAssignTarget);
     };
-    // SAFETY: `place_type` is the type node `carry` was read from.
-    let held_record = unsafe {
-        super::this::is_plain(types, place_type) && !meta::instances_free_of(place_type).is_null()
-    };
-    // stand-in for #240: no free runs over a value displaced through a pointer.
-    if through_pointer && held_record {
-        return Err(ParseError::HeldRecordThroughPointerNotInSeed);
-    }
     // SAFETY: `rhs` is a reduced dyad from the store.
     let rhs = unsafe {
         match super::tape::build_cell_into(store, types, rhs, place_type) {

@@ -431,8 +431,8 @@ pub(crate) fn is_owning_place(types: &Core, place: DyadPtr) -> bool {
 
 /// Whether `holder`, a name, field or pointer a place is reached through, only borrows what it
 /// reaches: a pointer that owns nothing, as one `&` made and a parameter without `own` hold, or
-/// a name or field holding a node without `own`. A record kept in its
-/// bytes is its holder's own. DESIGN ›`move` is the act, `own` the gate word, `free` the end‹.
+/// a name or field holding a node without `own`. A plain record is its holder's own. DESIGN
+/// ›`move` is the act, `own` the gate word, `free` the end‹.
 ///
 /// # Safety
 /// `holder` must be a reduced dyad from the store.
@@ -537,15 +537,16 @@ pub(crate) unsafe fn own_result(
 }
 
 /// `move` of a place: `[place]` under `move`'s mint for the moved value's type, which it gives,
-/// so the name that takes it learns whether it holds it. A plain record moves as its bytes'
-/// address, which the taker copies.
+/// so the name that takes it learns whether it holds it. A `{ … }` value kept in its bytes moves
+/// as their address, which the taker copies; any other value as the word its place holds, NULL
+/// there from then on.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let ty = super::read::output_type(types, place);
     let moved = super::mint::node(store, types, types.move_, &[ty], ty, types.ops.move_, &[place]);
-    if super::this::is_plain(types, ty) {
+    if super::this::in_bytes(types, ty) {
         super::by_copy::build_out(store, types, moved)
     } else {
         moved
@@ -583,9 +584,9 @@ pub(crate) unsafe fn build_place_free(
     })
 }
 
-/// Whether `=` over `target` writes a place that holds its value, a name, an owning field or an
-/// entry of a `{ … }` value: the place frees the value it displaces and takes a copy of one it
-/// would only borrow.
+/// Whether `=` over `target` writes a place that holds its value, a name, an owning field, an
+/// entry of a `{ … }` value or an element holding a value whose type fills `free`: the place frees
+/// the value it displaces and takes a copy of one it would only borrow.
 ///
 /// # Safety
 /// `target` must be the reduced dyad `=` writes.
@@ -595,6 +596,7 @@ pub(crate) unsafe fn holds_place(p: &crate::parse::Parser, target: DyadPtr) -> b
         || owning_field_pointee(types, target).is_some()
         || p.is_owning_read(target)
         || is_held_entry(types, target)
+        || cell_free(types, target).is_some()
 }
 
 /// `=` over a place that [`holds_place`]: the free of the value it displaces, `None` over any
@@ -754,8 +756,29 @@ pub(crate) unsafe fn end_of_type(rt: &mut Runtime, ty: DyadPtr, this: i64) -> Re
             Ok(())
         }
         Teardown::Node(free) => rt.apply_values(free, &[this]).map(|_| ()),
+        Teardown::Behind(t) => {
+            let ran = rt.apply_values(meta::instances_free_of(t), &[this]);
+            heap_free(this as u64 as *mut u8);
+            rt.note_free();
+            ran.map(|_| ())
+        }
         Teardown::Entries(t) => end_entries(rt, t, this),
     }
+}
+
+/// A new block for a record of `t` kept behind its pointer, its bytes zeroed: the value `t (…)`
+/// makes, a copy, or a field write into a place that held none.
+///
+/// # Safety
+/// `t` must be a record type [`teardown_of_type`] answers [`Teardown::Behind`]; the block is freed
+/// once, by [`end_of_type`].
+pub(crate) unsafe fn new_behind(rt: &mut Runtime, t: DyadPtr) -> Result<*mut u8, RunError> {
+    let block = heap_alloc((meta::record_size_of(t) as usize).max(1));
+    if block.is_null() {
+        return Err(RunError::OutOfMemory);
+    }
+    rt.note_alloc();
+    Ok(block)
 }
 
 /// Ends the `{ … }` value of `t` whose bytes are at `this`: each entry with an end, last declared
@@ -772,10 +795,12 @@ unsafe fn end_entries(rt: &mut Runtime, t: DyadPtr, this: i64) -> Result<(), Run
             continue;
         }
         let at = (this as *mut u8).add(offset);
-        let value = if super::this::is_plain(rt.types(), ty) {
+        let value = if super::this::in_bytes(rt.types(), ty) {
             at as i64
         } else {
-            std::ptr::read_unaligned(at as *const i64)
+            let held = std::ptr::read_unaligned(at as *const i64);
+            std::ptr::write_unaligned(at as *mut i64, 0);
+            held
         };
         end_of_type(rt, ty, value)?;
     }
@@ -792,6 +817,26 @@ unsafe extern "C" fn compiled_end_of_type(
 ) -> i64 {
     // SAFETY: the caller's contract.
     crate::run::interpret_step(ctx, |rt| unsafe { end_of_type(rt, ty, this) }.map(|()| 0))
+}
+
+/// The end of what the place at `slot` holds, NULL there from then on, as [`take_held`] takes it;
+/// `slot` 0, a field of a record that is not there, holds nothing.
+///
+/// # Safety
+/// Called only by compiled code, with its context, 0 or the address of a place holding 0 or a live
+/// value of `ty`, a type [`teardown_of_type`] answers.
+unsafe extern "C" fn compiled_end_at(
+    ctx: *mut crate::run::Context,
+    slot: *mut i64,
+    ty: DyadPtr,
+) -> i64 {
+    if slot.is_null() {
+        return 0;
+    }
+    let held = slot.read_unaligned();
+    slot.write_unaligned(0);
+    // SAFETY: the caller's contract.
+    crate::run::interpret_step(ctx, |rt| unsafe { end_of_type(rt, ty, held) }.map(|()| 0))
 }
 
 /// A line's end once `value`, what the line gave, is known: each value the line made that
@@ -898,8 +943,8 @@ pub(crate) fn build_instance_free(
 }
 
 /// The `free` the type of what a dereference `p@` reads fills, as [`teardown_of_type`] reads it:
-/// a node's, whose address the cell holds, or a plain record's, kept in the cell's bytes. DESIGN
-/// ›A value owns what its elements hold and frees it‹.
+/// a node's or a record's, whose address the cell holds (›A value owns what its elements hold and
+/// frees it‹ [[R226]]).
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
@@ -909,6 +954,7 @@ pub(crate) unsafe fn cell_free(types: &Core, place: DyadPtr) -> Option<DyadPtr> 
     }
     match teardown_of_type(types, super::read::output_type(types, place)) {
         Teardown::Node(free) => Some(free),
+        Teardown::Behind(t) => Some(meta::instances_free_of(t)),
         _ => None,
     }
 }
@@ -979,7 +1025,7 @@ fn build_field_free(store: &mut Store, types: &Core, read: DyadPtr, pointee: Dya
 /// `free` of a value no name holds: `[value, free, op]` runs the value, then `free` over
 /// the node it makes, a null `free` nothing more; `[value, pointee, op]` frees the block
 /// an owning pointer value holds, `[value, dyad, op]` the node a `dyad` made, and `[value, t, op]`
-/// the entries of a `{ … }` value of `t`.
+/// a record of `t` behind its pointer or the entries of a `{ … }` value of `t`.
 fn build_value_free(
     store: &mut Store,
     types: &Core,
@@ -991,7 +1037,7 @@ fn build_value_free(
         Teardown::Node(free) => (free, types.ops.value_free_),
         Teardown::Block(pointee) => (pointee, types.ops.value_release_),
         Teardown::Dyad => (types.dyad_, types.ops.value_release_),
-        Teardown::Entries(t) => (t, types.ops.value_release_),
+        Teardown::Behind(t) | Teardown::Entries(t) => (t, types.ops.value_release_),
     };
     free_node(store, types, [value, what, op])
 }
@@ -1003,9 +1049,9 @@ fn build_inert_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr 
     free_node(store, types, [place, std::ptr::null_mut(), types.ops.free_])
 }
 
-/// A node's `free` runs in the seed, and a cell's or a frame field's over a plain record, which
-/// hands its type's `free` its bytes' address as a value does. A cell's or field's free that
-/// empties a slot no frame holds keeps the function interpreted: stand-in for #164.
+/// A node's `free` runs in the seed, as does the end of a record behind its pointer or a `{ … }`
+/// value no name holds. A cell's or field's free that empties a slot no frame holds keeps the
+/// function interpreted: stand-in for #164.
 fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `free` node `[place, pointee, op]`, `[place, free, op]` or
     // `[value, free, op]`.
@@ -1014,18 +1060,9 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         (*slots, *slots.add(TEARDOWN_POINTEE), *slots.add(2))
     };
     let core = lw.types();
-    // SAFETY: `place` is a reduced dyad from the store; its output type is null or a type node.
-    let in_bytes = op == core.ops.instance_free_
-        && unsafe { !holds_by_address(core, super::read::output_type(core, place)) };
-    if op == core.ops.value_free_ || in_bytes {
-        // SAFETY: the value is a reduced dyad from the store, a frame's place among them.
-        let this = unsafe {
-            if in_bytes && core.is_storage(place) {
-                lw.place_addr(place)
-            } else {
-                lw.lower(place)
-            }
-        }?;
+    if op == core.ops.value_free_ {
+        // SAFETY: the value is a reduced dyad from the store.
+        let this = unsafe { lw.lower(place) }?;
         if pointee.is_null() {
             return Ok(lw.const_i32(0));
         }
@@ -1037,17 +1074,38 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         unsafe { lower_end_held(lw, place) }?;
         return Ok(lw.const_i32(0));
     }
-    let entries = op == core.ops.value_release_ && {
+    let ends = op == core.ops.value_release_ && {
         // SAFETY: a `[value, t, op]` node's `t` is a type node.
         let teardown = unsafe { teardown_of_type(core, pointee) };
-        matches!(teardown, Teardown::Entries(_))
+        matches!(teardown, Teardown::Behind(_) | Teardown::Entries(_))
     };
-    if entries {
-        // SAFETY: the value is a reduced dyad from the store, a `{ … }` value of `pointee`.
+    if ends {
+        // SAFETY: the value is a reduced dyad from the store, a value of `pointee`.
         let this = unsafe { lw.lower(place) }?;
         let t = lw.node_addr(pointee);
         lw.call_seed(compiled_end_of_type as *const () as usize, &[this, t])?;
         return Ok(lw.const_i32(0));
+    }
+    // SAFETY: `place` is a reduced dyad; its output type is null or a type node.
+    let ty = unsafe { super::read::output_type(core, place) };
+    // SAFETY: `ty` is null or a type node.
+    let behind = op == core.ops.instance_free_
+        && unsafe { matches!(teardown_of_type(core, ty), Teardown::Behind(_)) };
+    if behind {
+        let t = lw.node_addr(ty);
+        let end = |lw: &mut Lowerer, slot: Value| {
+            lw.call_seed(compiled_end_at as *const () as usize, &[slot, t])?;
+            Ok(lw.const_i32(0))
+        };
+        // SAFETY: `place` is a cell or an owning field's slot holding a record's address or 0.
+        return unsafe {
+            if dyad::ty(place) == lw.types().deref_ {
+                super::pointer::lower_at_place(lw, place, types::I32, end)
+            } else {
+                let slot = super::this::lower_held_slot(lw, place)?;
+                end(lw, slot)
+            }
+        };
     }
     if !pointee.is_null() {
         return Err(CompileError::NotLowerable(node));
@@ -1260,9 +1318,8 @@ pub(crate) unsafe fn exit_item_of(node: DyadPtr) -> ExitItem {
     }
 }
 
-/// Whether a place of type `ty` holds its value by address, an owning pointer or a node, so
-/// that 0 is its NULL. A record kept in its own bytes has no NULL form yet, so a line that
-/// fails cannot tell whether its own `free` or `move` of one ran: stand-in for #240.
+/// Whether a place of type `ty` holds its value by address, an owning pointer, a node or a
+/// record behind its pointer, so that 0 is its NULL.
 ///
 /// # Safety
 /// `ty` must be null or a type node from the store.
@@ -1270,7 +1327,7 @@ pub(crate) unsafe fn holds_by_address(types: &Core, ty: DyadPtr) -> bool {
     !ty.is_null()
         && (ty == types.dyad_
             || numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()
-            || meta::is_record_type(ty) && !super::this::is_plain(types, ty))
+            || meta::is_record_type(ty) && !super::this::in_bytes(types, ty))
 }
 
 /// Whether the name holds the node its `dyad ?` place holds: every `dyad` name but a
@@ -1313,9 +1370,9 @@ pub(crate) unsafe fn ended_at_run(rt: &Runtime, place: DyadPtr) -> bool {
 
 /// The one teardown of the value a held place holds, the `free` slot of the place's type run
 /// over it: an owning pointer's destructor frees its block, a type that fills `free` runs it
-/// over the value, a node by its address and a plain record by its bytes' address, as a
-/// `static` function takes its receiver. A place holding an address is NULL from here; one
-/// already NULL frees nothing.
+/// over the value by its address, as a `static` function takes its receiver, and a `{ … }` value
+/// ends its entries. A place holding an address is NULL from here; one already NULL frees
+/// nothing.
 ///
 /// # Safety
 /// `place` must be a name the binding site made an owner, laid out in the frame `rt` runs.
@@ -1330,17 +1387,20 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
     end_of_type(rt, ty, held)
 }
 
-/// What a place of type `ty` hands that type's `free`: a plain record its bytes' address, a
-/// node its address, the place NULL from here, and 0 once a `free` or `move` emptied it.
+/// What a place of type `ty` hands that type's teardown: a `{ … }` value kept in its bytes their
+/// address, any other the address it holds, the place NULL from here, and 0 once a `free` or
+/// `move` emptied it or where it is a field of a record that is not there.
 ///
 /// # Safety
 /// `place` must be a name laid out in the frame `rt` runs, a cell, or an owning field's slot.
 unsafe fn take_held(rt: &mut Runtime, place: DyadPtr, ty: DyadPtr) -> Result<i64, RunError> {
-    let slot = super::pointer::place_addr(rt, place)?;
+    let Some(slot) = super::pointer::held_place_addr(rt, place)? else {
+        return Ok(0);
+    };
     if slot.is_null() {
         return Err(RunError::Uninitialized);
     }
-    if super::this::is_plain(rt.types(), ty) {
+    if super::this::in_bytes(rt.types(), ty) {
         return Ok(slot as i64);
     }
     let held = std::ptr::read_unaligned(slot as *const i64);
@@ -1362,7 +1422,7 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
     if matches!(teardown, Teardown::Block(_)) {
         return Err(CompileError::NotLowerable(place));
     }
-    let this = if super::this::is_plain(lw.types(), ty) {
+    let this = if super::this::in_bytes(lw.types(), ty) {
         lw.place_addr(place)?
     } else {
         let held = lw.read_place(place, types::I64)?;
@@ -1378,7 +1438,7 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
             let free = lw.node_addr(free);
             lw.call_seed(compiled_instance_free as *const () as usize, &[this, free])?;
         }
-        Teardown::Entries(t) => {
+        Teardown::Behind(t) | Teardown::Entries(t) => {
             let t = lw.node_addr(t);
             lw.call_seed(compiled_end_of_type as *const () as usize, &[this, t])?;
         }
@@ -1518,8 +1578,12 @@ unsafe fn handed_operands(types: &Core, node: DyadPtr) -> Option<Vec<DyadPtr>> {
 pub(crate) enum Teardown {
     /// A borrow, or a value whose type fills no `free`.
     Nothing,
-    /// The `free` its type fills, run over a node by its address or a plain record by its bytes'.
+    /// The `free` its type fills, run over a node by its address.
     Node(DyadPtr),
+    /// A record of this type, whose body fills `free`, kept behind a pointer of its own (›`free`
+    /// and `move` end a name; no drop flag‹ [[R60]]): the `free` runs over its block, then the
+    /// block is freed.
+    Behind(DyadPtr),
     /// An owning pointer to this pointee type: its block is freed.
     Block(DyadPtr),
     /// A `dyad`: the node it holds is freed where a `dyad ?` place made it.
@@ -1530,10 +1594,10 @@ pub(crate) enum Teardown {
 }
 
 impl Teardown {
-    /// Whether it ends a record: a node, or a record kept in its bytes, whose owner the binding
-    /// site marks with `own`.
+    /// Whether it ends a record: a node, a record behind its pointer, or a `{ … }` value kept in
+    /// its bytes, whose owner the binding site marks with `own`.
     pub(crate) fn of_record(self) -> bool {
-        matches!(self, Teardown::Node(_) | Teardown::Entries(_))
+        matches!(self, Teardown::Node(_) | Teardown::Behind(_) | Teardown::Entries(_))
     }
 }
 
@@ -1570,12 +1634,14 @@ pub(crate) unsafe fn teardown_of_type(types: &Core, t: DyadPtr) -> Teardown {
         return Teardown::Entries(t);
     }
     // A record whose node runs is a call, which leaves no value of its own to end.
-    let freed = meta::is_node_valued(t, types.fn_type) || super::this::is_plain(types, t);
-    let free = if freed { meta::instances_free_of(t) } else { std::ptr::null_mut() };
-    if free.is_null() {
+    if !meta::is_record_type(t) || meta::instances_free_of(t).is_null() {
         Teardown::Nothing
+    } else if meta::is_node_valued(t, types.fn_type) {
+        Teardown::Node(meta::instances_free_of(t))
+    } else if super::this::is_plain(types, t) {
+        Teardown::Behind(t)
     } else {
-        Teardown::Node(free)
+        Teardown::Nothing
     }
 }
 
@@ -1742,19 +1808,16 @@ fn run_held_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     Ok(0)
 }
 
-/// A slot holding a node is emptied before the body runs, so the free of what holds it finds
-/// nothing.
+/// A slot holding a node or a record's address is emptied before the body runs, so the free of
+/// what holds it finds nothing.
 fn run_instance_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[place, free, op]` node from `build_instance_free`, over a cell or an
-    // owning field's slot.
+    // owning field's slot, whose type's teardown runs `free`.
     unsafe {
-        let slots = dyad::value(node) as *const DyadPtr;
-        let place = *slots.add(TEARDOWN_PLACE);
+        let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
         let ty = super::read::output_type(rt.types(), place);
         let this = take_held(rt, place, ty)?;
-        if this != 0 {
-            rt.apply_values(*slots.add(TEARDOWN_POINTEE), &[this])?;
-        }
+        end_of_type(rt, ty, this)?;
         Ok(0)
     }
 }
@@ -2543,6 +2606,43 @@ mod tests {
             parse_err("a := alloc 1 of i32 7,\nf := fn () -> i32 ( b := move a, b@ )"),
             ParseError::MoveOfOuterName
         );
+    }
+
+    /// A record type that fills `free`, so its values live behind a pointer of their own.
+    const KEPT: &str = "r := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ),\n";
+
+    #[test]
+    fn a_record_behind_its_pointer_is_freed_once_and_never_leaks() {
+        let body = "a := r(1), b := a, free a, mut c := r ?, c.n = 2, b.n + c.n";
+        for (tail, want) in [
+            ("a := r(1),\na.n".to_string(), 1),
+            ("a := r(1),\nb := a,\nfree a,\nb.n".into(), 1),
+            ("a := r(1),\nb := move a,\nb.n".into(), 1),
+            ("mut a := r ?,\n1".into(), 1),
+            ("mut a := r ?,\na = r(3),\na = r(4),\na.n".into(), 4),
+            ("mut a := r ?,\na.n = 7,\na.n".into(), 7),
+            ("p := alloc 1 of r(1),\nfree p@,\nfree p@,\n1".into(), 1),
+            ("p := alloc 1 of r(1),\np@ = r(2),\nfree p@,\n1".into(), 1),
+            ("free (r(1)),\n1".into(), 1),
+            ("f := fn () -> own r ( r(2) ),\nx := f(),\nx.n".into(), 2),
+            ("d := dyad (r, r(1)),\ne := d,\n1".into(), 1),
+            (
+                "h := type ( mut b := r ?, static free = ( free b ) ),\na := r(1),\nv := h(a),\n1"
+                    .into(),
+                1,
+            ),
+            (format!("f := fn () -> i32 ( {body} ),\nf()"), 3),
+            (format!("f := fn () -> i32 ( {body} ),\nf.compile(),\nf()"), 3),
+        ] {
+            assert_eq!(run(&format!("{KEPT}{tail}")), (want, 0), "{tail}");
+        }
+        let g = "g := fn () -> i32 ( error «stop» ),\n";
+        let f = "f := fn () -> i32 ( a := r(1), x := ( free a, g() ), x ),\n";
+        for c in ["", "f.compile(),\n"] {
+            let (e, live) = fault(&format!("{KEPT}{g}{f}{c}f()"));
+            assert!(matches!(e, RunError::Raised(_)), "{c}{e:?}");
+            assert_eq!(live, 0, "{c}");
+        }
     }
 
     /// `x`, a record with two owning fields, `p` holding 5 and `q` 6.

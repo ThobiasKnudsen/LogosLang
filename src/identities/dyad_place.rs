@@ -184,15 +184,18 @@ pub(crate) unsafe fn lay_out(
     Ok(build_new_node(store, types, hole, ty))
 }
 
-/// A type whose value lies in its place's bytes, a number, a pointer, a rational or a record,
-/// and moves whole.
+/// A type whose value lies in its place's bytes, a number, a pointer, a rational or a record, its
+/// bytes or its address, and moves whole.
 ///
 /// # Safety
 /// `t` must be null or a valid dyad from the store.
 unsafe fn is_data(types: &Core, t: DyadPtr) -> bool {
     matches!(
         place_layout(types, t),
-        Some((Read::Scalar(_) | Read::Pointer(_) | Read::Rational | Read::Aggregate, _))
+        Some((
+            Read::Scalar(_) | Read::Pointer(_) | Read::Rational | Read::Aggregate | Read::Behind(_),
+            _
+        ))
     ) && carry_of(types, t).is_some()
 }
 
@@ -374,8 +377,11 @@ fn run_reach(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if dyad::ty(held) != ty {
             return Err(RunError::HeldNodeReplaced);
         }
-        if super::this::is_plain(rt.types(), ty) {
+        if super::this::in_bytes(rt.types(), ty) {
             return Ok(dyad::value(held) as i64);
+        }
+        if super::this::is_plain(rt.types(), ty) {
+            return Ok(std::ptr::read_unaligned(dyad::value(held) as *const i64));
         }
         Ok(held as i64)
     }

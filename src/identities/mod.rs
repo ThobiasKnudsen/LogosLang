@@ -1025,7 +1025,7 @@ unsafe fn land_leaf(
         }
         read::Read::Container(t) => node_value_output(types, value) == Some(t),
         read::Read::Rational => plain_number || rational::is_rational_value(types, value),
-        read::Read::Aggregate => from == ty,
+        read::Read::Aggregate | read::Read::Behind(_) => from == ty,
         _ => false,
     };
     if fits {
@@ -1195,13 +1195,28 @@ pub(crate) unsafe fn same_type(a: DyadPtr, b: DyadPtr) -> bool {
             && same_type(numtype::pointee_of(a), numtype::pointee_of(b)))
 }
 
-/// Render a run result through `node`'s static type, so `5.5` and `true` print as such.
+/// Render a run result through `node`'s static type, so `5.5` and `true` print as such. A record
+/// is shown through its fields, never whole, as a record kept in its bytes is never read whole.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store, the expression whose value `bits` is.
-pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
+pub unsafe fn display_value(
+    types: &Core,
+    node: DyadPtr,
+    bits: i64,
+) -> Result<String, crate::run::RunError> {
     // A block's value is given by one of its lines, each of one type; render the first.
     let node = types.through(flow::first_given(types, node));
+    let ty = read::output_type(types, node);
+    if matches!(read::place_layout(types, ty), Some((read::Read::Behind(_), _))) {
+        return Err(crate::run::RunError::NoWholeRead);
+    }
+    Ok(shown(types, node, bits))
+}
+
+/// # Safety
+/// As [`display_value`], `node` read through.
+unsafe fn shown(types: &Core, node: DyadPtr, bits: i64) -> String {
     if read::output_type(types, node) == types.bool_ {
         return if bits != 0 { "true" } else { "false" }.to_string();
     }

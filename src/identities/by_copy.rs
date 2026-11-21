@@ -9,6 +9,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
+use super::drop_model::{teardown_of_type, Teardown};
 use super::read::{carry_of, place_layout, read_kind, Carry, Dispatch, Read};
 use super::{array, meta, Cx};
 use crate::compile::{CompileError, Lowerer};
@@ -82,31 +83,59 @@ pub(crate) unsafe fn carried(types: &Core, node: DyadPtr) -> DyadPtr {
     }
 }
 
-/// Where a `construct` or `result` node puts its value: the name's storage, or scratch
-/// of the value's width taken now.
+/// Where a `construct` or `result` node puts its value: a new block for a record kept behind its
+/// pointer, whose address the name that takes it holds (›`free` and `move` end a name; no drop
+/// flag‹ [[R60]]); else the name's storage, or scratch of the value's width taken now.
 ///
 /// # Safety
 /// `node` must be a `construct` or `result` node from the store.
 pub(crate) unsafe fn dest_of(rt: &mut Runtime, node: DyadPtr) -> Result<*mut u8, RunError> {
     let target = *(dyad::value(node) as *const DyadPtr);
+    let ty = super::read::output_type(rt.types(), node);
+    if let Teardown::Behind(t) = teardown_of_type(rt.types(), ty) {
+        let block = super::drop_model::new_behind(rt, t)?;
+        if !target.is_null() {
+            let slot = rt.place_addr(target).ok_or(RunError::NoActivation)?;
+            std::ptr::write_unaligned(slot as *mut usize, block as usize);
+        }
+        return Ok(block);
+    }
     if target.is_null() {
-        let ty = super::read::output_type(rt.types(), node);
         return Ok(rt.scratch(place_width(rt.types(), ty)));
     }
     rt.place_addr(target).ok_or(RunError::NoActivation)
 }
 
-/// [`dest_of`]'s compiled half: a stack slot of this function for scratch.
+/// [`dest_of`]'s compiled half: a stack slot of this function for scratch, and a record's block
+/// taken by the seed.
 ///
 /// # Safety
 /// As [`dest_of`].
 pub(crate) unsafe fn lower_dest_of(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     let target = *(dyad::value(node) as *const DyadPtr);
+    let ty = super::read::output_type(lw.types(), node);
+    if let Teardown::Behind(t) = teardown_of_type(lw.types(), ty) {
+        let t = lw.node_addr(t);
+        let block = lw.call_seed(compiled_new_behind as *const () as usize, &[t])?;
+        if !target.is_null() {
+            lw.write_place(target, cranelift_codegen::ir::types::I64, block)?;
+        }
+        return Ok(block);
+    }
     if target.is_null() {
-        let ty = super::read::output_type(lw.types(), node);
         return Ok(lw.scratch_slot(place_width(lw.types(), ty)));
     }
     lw.place_addr(target)
+}
+
+/// # Safety
+/// Called only by compiled code, with its context and a type [`teardown_of_type`] answers
+/// [`Teardown::Behind`].
+unsafe extern "C" fn compiled_new_behind(ctx: *mut crate::run::Context, t: DyadPtr) -> i64 {
+    crate::run::interpret_step(ctx, |rt| {
+        // SAFETY: the caller's contract.
+        unsafe { super::drop_model::new_behind(rt, t) }.map(|block| block as i64)
+    })
 }
 
 /// # Safety
@@ -176,11 +205,12 @@ pub(crate) unsafe fn words(types: &Core, f: DyadPtr) -> usize {
     slots(types, f).last().map_or(first, |s| s.word + s.width.map_or(1, |w| w.div_ceil(8)))
 }
 
-/// Evaluate `node`, whose value is its bytes, and yield their address: a record place's own, or
-/// the address the node runs to, as every node that makes or reaches such a value does.
+/// Evaluate `node`, whose value is a record's bytes, and yield their address: a record place's
+/// own, the block a place of a record behind its pointer holds, or the address the node runs to,
+/// as every node that makes or reaches such a value does.
 ///
 /// # Safety
-/// `node` must be a valid dyad from the store whose type moves as its bytes.
+/// `node` must be a valid dyad from the store whose type is a plain record or moves as its bytes.
 pub(crate) unsafe fn record_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut u8, RunError> {
     let node = rt.through(node);
     match read_kind(rt.types(), node) {
@@ -192,6 +222,11 @@ pub(crate) unsafe fn record_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut
             }
             Ok(addr)
         }
+        // NULL: freed or moved by a line the parse could not follow.
+        Read::Behind(_) => match rt.run(node)? {
+            0 => Err(RunError::NullPointer),
+            addr => Ok(addr as usize as *mut u8),
+        },
         _ => rt.run(node).map(|addr| addr as usize as *mut u8),
     }
 }
@@ -207,6 +242,10 @@ pub(crate) unsafe fn lower_record_addr(
     let node = lw.through(node);
     match read_kind(lw.types(), node) {
         Read::Aggregate => lw.place_addr(node),
+        Read::Behind(_) => {
+            let addr = lw.lower(node)?;
+            lw.guard_non_null(addr, cranelift_codegen::ir::types::I64, |_| Ok(addr))
+        }
         _ => lw.lower(node),
     }
 }

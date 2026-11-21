@@ -40,8 +40,18 @@ unsafe fn has_address(types: &crate::Core, p: DyadPtr) -> bool {
     use crate::identities::read::{output_type, place_kind, Read};
     matches!(
         place_kind(types, output_type(types, p)),
-        Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate | Read::Rational
+        Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate | Read::Behind(_) | Read::Rational
     )
+}
+
+/// Whether a value of `t` is a record kept behind a pointer of its own, so a field of it is read
+/// through the address its place holds.
+///
+/// # Safety
+/// `t` must be null or a valid dyad from the store.
+unsafe fn behind(types: &crate::Core, t: DyadPtr) -> bool {
+    use crate::identities::read::{place_layout, Read};
+    matches!(place_layout(types, t), Some((Read::Behind(_), _)))
 }
 
 impl<'a> Parser<'a> {
@@ -301,7 +311,12 @@ impl<'a> Parser<'a> {
                 Receiver::Value(value) => {
                     self.check_receiver_write(left, member)?;
                     let output = crate::identities::read::output_type(types, value);
-                    if types.is_storage(value)
+                    let writes = fn_receiver(types, f) & RECEIVER_WRITES != 0;
+                    if writes && crate::identities::this::receives_block(types, value) {
+                        let block =
+                            crate::identities::this::build_block(self.rt.store, types, value);
+                        crate::identities::by_copy::build_out(self.rt.store, types, block)
+                    } else if types.is_storage(value)
                         || dyad::ty(value) == types.deref_
                         || crate::identities::this::is_plain(types, output)
                     {
@@ -828,11 +843,20 @@ impl<'a> Parser<'a> {
                 return Ok((node, 1));
             }
         }
-        // Through a record pointer, `p@.x` folds the field offset into the deref.
+        // Through a record pointer, `p@.x` folds the field offset into the deref; a cell holding a
+        // record's address has the field read through that address, as a name holding one does.
         if dyad::ty(lhs) == self.types.deref_ {
             let (ptr_expr, pointee, base_off) = crate::identities::pointer::deref_parts(lhs);
             if pointee.is_null() || !crate::identities::meta::is_record_type(pointee) {
                 return Err(ParseError::UnsupportedOperands);
+            }
+            if behind(self.types, pointee) {
+                let name = &self.cx.source[nstart..nstart + nlen];
+                if let Some(read) = self.run_node_member(tape, lhs, left, pointee, name, call)? {
+                    return Ok(read);
+                }
+                self.resolve_field(pointee, nstart, nlen)?;
+                return Err(ParseError::ExpectedField);
             }
             let (field, offset, binding) = match self.resolve_field(pointee, nstart, nlen) {
                 Ok(found) => found,
@@ -858,9 +882,10 @@ impl<'a> Parser<'a> {
         // A `static` member of the record's type, or a field: the field's offset inside the
         // record's storage, read through the record's binding and the field's. A record value no
         // name lays out, a field named bare or what a call returns, has the field read off what it
-        // gives when it runs (›Reading a path runs nothing‹ [[R273]]).
+        // gives when it runs (›Reading a path runs nothing‹ [[R273]]), as has a record a place
+        // keeps behind its pointer (›`free` and `move` end a name; no drop flag‹ [[R60]]).
         let storage = self.types.is_storage(lhs);
-        if !storage && !self.types.is_hole(lhs) {
+        if (!storage || behind(self.types, self.types.type_of(lhs))) && !self.types.is_hole(lhs) {
             let t = crate::identities::read::output_type(self.types, lhs);
             if crate::identities::this::is_plain(self.types, t)
                 && crate::identities::read::carry_of(self.types, t).is_some()

@@ -447,11 +447,6 @@ pub fn parse_message(e: &ParseError) -> String {
                  `{holder}` whole"
             )
         }
-        ParseError::HeldRecordThroughPointerNotInSeed => {
-            "writing a record whose type fills `free` through a pointer is not in the seed yet: \
-             the value it displaces would never be freed"
-                .into()
-        }
         ParseError::MoveOfBorrow => {
             "this name borrows what it holds, so it cannot move it; only its owner can".into()
         }

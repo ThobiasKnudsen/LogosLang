@@ -298,9 +298,16 @@ pub(crate) unsafe fn build_ctor(
     ops.push(record_logos);
     ops.push(types.ops.construct_);
     ops.push(record_logos);
-    for (&arg, &field) in args.iter().zip(super::array::items(meta::record_fields_of(record_logos)))
-    {
-        ops.push(super::land_held(store, types, arg, super::hole::type_in(field), holder)?);
+    let fields = super::array::items(meta::record_fields_of(record_logos));
+    let bindings = super::array::items(meta::record_field_bindings_of(record_logos));
+    for ((&arg, &field), &binding) in args.iter().zip(fields).zip(bindings) {
+        let ty = super::hole::type_in(field);
+        let landed = super::land_held(store, types, arg, ty, holder)?;
+        // A field that owns what it holds takes a copy of a value it would only borrow, as a
+        // name does (›A filled `static free` is the value's teardown; one name owns each value‹
+        // [[R65]]); a `dyad` field's node is the holder's to copy.
+        let owns = ty != types.dyad_ && super::copy::field_needs_owner(types, binding);
+        ops.push(if owns { super::copy::taken(store, types, landed) } else { landed });
     }
     ops.push(std::ptr::null_mut());
     Ok(store.alloc_words(construct, &ops))
@@ -332,9 +339,12 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let ops = dyad::value(node) as *const DyadPtr;
         let ty = *ops.add(1);
         let places = places(lw.types(), ty).ok_or(CompileError::NoLayout(ty))?;
+        let mut taken = Vec::with_capacity(places.len());
+        for (i, &(_, carry)) in places.iter().enumerate() {
+            taken.push(super::assign::lower_take(lw, carry, *ops.add(ARGS + i))?);
+        }
         let base = super::by_copy::lower_dest_of(lw, node)?;
-        for (i, &(offset, carry)) in places.iter().enumerate() {
-            let value = super::assign::lower_take(lw, carry, *ops.add(ARGS + i))?;
+        for (&(offset, carry), &value) in places.iter().zip(&taken) {
             super::assign::lower_put(lw, carry, base, offset as i64, value);
         }
         Ok(base)
