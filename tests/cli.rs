@@ -10010,6 +10010,14 @@ fn a_record_written_through_a_pointer_frees_the_one_it_displaces() {
             format!("{r}, p := alloc 1 of r(1), p@ = r(2), print «end», free p@"),
             "freed 1\nend\nfreed 2\n",
         ),
+        // A named owner written into a cell is copied: the cell and the name each free their own.
+        (
+            format!(
+                "{r}, p := alloc 1 of r(1), mut a := r(5), p@ = a, a.n = 6, print «end {{p@.n}}», \
+                 free p@, print «after»"
+            ),
+            "freed 1\nend 5\nfreed 5\nafter\nfreed 6\n",
+        ),
         (
             format!("{r}, p := alloc 1 of r(1), f := fn () -> i32 ( {body} ), x := f(), free p@"),
             "freed 1\nend\nfreed 2\n",
