@@ -217,6 +217,12 @@ impl ParsingTape {
         self.edits
     }
 
+    /// A read lexed on from a count of `edits`: what it lexed, and built as it lexed it, stood in
+    /// the source already, so the frontier counts as untouched.
+    pub(super) fn lexed_on(&mut self, edits: u64) {
+        self.edits = edits;
+    }
+
     /// `None` when the cell at `mark` has been removed since: how the driver
     /// judges a constructor's outcome on the construct's own cell, whatever
     /// the center is after the call.

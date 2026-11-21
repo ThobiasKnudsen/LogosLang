@@ -1307,15 +1307,11 @@ fn a_value_runs_its_type_s_parse_as_tape_0() {
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{src}");
     }
-    // A parse that says nothing for the value leaves the handed-on cell unconstructed.
-    let out = logos()
-        .args(["q := type ( size := i32 ?, static parse_rank = 61, static parse = ( \
-                if tape[0].type == type ( tape[0].type = q, tape[0].size = tape[1], tape.remove(1) ) ) ), \
-                q i32 5"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("left its own cell unconstructed"), "stderr: {stderr}");
+    // A parse that says nothing for the value has declined, and the value stands as itself.
+    let q = "q := type ( size := i32 ?, static parse_rank = 61, static parse = ( \
+             if tape[0].type == type ( tape[0].type = q, tape[0].size = tape[1], tape.remove(1) ) ) )";
+    assert_eq!(line(&format!("{q}, v := q i32 5, v.size")), "5");
+    assert_eq!(line(&format!("{q}, f := fn () -> i32 ( (q i32 8).size ), f.compile(), f()")), "8");
 }
 
 #[test]
@@ -5107,6 +5103,52 @@ fn a_word_that_finds_nothing_to_its_right_stands_as_its_own_value() {
 }
 
 #[test]
+fn a_parse_written_in_logos_that_finds_nothing_to_consume_declines() {
+    // A parse checks what stands beside it. Where it builds nothing it leaves the tape untouched,
+    // or sets the flag on its untouched cell, and its type stands as its own value; where it
+    // fails instead, its own error says why.
+    let pt = "pt := type ( x := i32 ? )";
+    let mk = |otherwise: &str| {
+        format!(
+            "{pt}, mk := type ( a := i32 ?, output_type := type ?, static tag := i32 7, \
+             static run = ( pt(a) ), static parse = ( if tape[-1].type == i32 ( \
+             tape[0].type = mk, tape[0].a = tape[-1], tape[0].output_type = pt, \
+             tape.is_constructed[0] = true, tape.remove(-1) ){otherwise} ) )"
+        )
+    };
+    let pre = format!(
+        "{pt}, mk := type ( static tag := i32 7, static parse = ( if tape[1].type == i32 ( \
+         tape[0] = tape[1], tape.remove(1), tape.is_constructed[0] = true ) ) )"
+    );
+    let f = "f := fn (t := type ?) -> bool ( t == mk )";
+    for defs in [mk(""), mk(" else ( tape.is_constructed[0] = true )"), pre.clone()] {
+        let built = if defs == pre { "mk n" } else { "(n mk).a" };
+        for (body, out, want) in
+            [("mk == pt", "bool", "false"), ("mk.tag", "i32", "7"), ("(mk) == mk", "bool", "true")]
+        {
+            assert_eq!(line(&format!("{defs}, {body}")), want, "{defs}, {body}");
+            for call in ["g()", "g.compile(), g()"] {
+                let src = format!("{defs}, g := fn () -> {out} ( {body} ), {call}");
+                assert_eq!(line(&src), want, "{src}");
+            }
+        }
+        for (fc, gc) in [("", ""), ("f.compile(), ", "g.compile(), ")] {
+            assert_eq!(line(&format!("{defs}, {f}, {fc}f(mk)")), "true", "{defs}");
+            assert_eq!(line(&format!("{defs}, {f}, {fc}f(pt)")), "false", "{defs}");
+            let src = format!("{defs}, g := fn (n := i32 ?) -> i32 ( {built} ), {gc}g(i32 3)");
+            assert_eq!(line(&src), "3", "{src}");
+        }
+    }
+    let fails = mk(" else ( error «mk takes an i32 to its left» )");
+    assert_eq!(line(&format!("{fails}, y := i32 3, (y mk).a")), "3");
+    for src in [format!("{fails}, {f}, f(mk)"), format!("{fails}, y := f64 3.0, y mk")] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: {stderr}");
+        assert!(stderr.contains("failed while parsing: mk takes an i32 to its left"), "{stderr}");
+    }
+}
+
+#[test]
 fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_once() {
     // Each point where the parse needs a value runs the earlier arguments first, each then
     // standing for the value it gave, and the call runs them no more.
@@ -6385,17 +6427,14 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
           c.type == type\n",
     );
     assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
-    for src in [
-        &b"r4 := type (static parse = ( tape.recenter(1) ))\nx := r4\n"[..],
-        b"r5 := type (static parse = ( tape[0] = tape.spelling[0] ))\nf := fn () -> void ( r5 )\n",
-    ] {
-        let (_echoes, stderr) = repl(src);
-        assert!(
-            stderr.contains("left its own cell unconstructed"),
-            "{}: stderr: {stderr}",
-            String::from_utf8_lossy(src)
-        );
-    }
+    // Moving the center touches no cell, so a parse that only moves it has declined.
+    let (echoes, stderr) =
+        repl("r4 := type (static parse = ( tape.recenter(1) ))\nx := r4\nx == r4\n");
+    assert_eq!(echoes, ["true"], "stderr: {stderr}");
+    let src =
+        b"r5 := type (static parse = ( tape[0] = tape.spelling[0] ))\nf := fn () -> void ( r5 )\n";
+    let (_echoes, stderr) = repl(src);
+    assert!(stderr.contains("left its own cell unconstructed"), "stderr: {stderr}");
     // `as_i32` hands its cell to `i32` with the flag false, so `as_i32 5` is `i32 5`.
     let (echoes, stderr) = repl(
         b"as_i32 := type (static parse = ( tape[0] = i32 ))\n\
