@@ -7,12 +7,12 @@
 ^ := type (
     static power_mints := hashmap type -> type,
     static get_mint := fn (l := type ?) -> type (
-        mut mint := power_mints[l],
+        mut mint := type power_mints[l],
         if mint != ? return mint,
         mint = type (
             pub lhs := l ?,
             pub rhs := i32 ?,
-            static output_type := l,
+            static output_type := type l,
             static run = (
                 mut r := output_type 1,
                 for 0..rhs ( r = r * lhs ),

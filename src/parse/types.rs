@@ -437,7 +437,7 @@ impl<'a> Parser<'a> {
             // value, and each new node starts with it in the field's slot.
             let mut default = std::ptr::null_mut();
             let outer = std::mem::replace(&mut self.cx.field_hole, relaxed);
-            let value = self.parse_expression_cell().and_then(|c| self.named_type_place(c));
+            let value = self.parse_expression_cell().and_then(|c| self.declared_value(c));
             self.cx.field_hole = outer;
             let cell = value?;
             // A field line's comments are the body's, as a `static` line's are; a parameter's

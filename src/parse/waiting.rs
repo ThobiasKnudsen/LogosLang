@@ -41,11 +41,14 @@ struct Found {
     unknown_now: usize,
     /// At the top, where a `?` after a type known only at run ends.
     typed_hole_end: Option<usize>,
+    /// At the top, where the line starts when it is one type known only at run, with nothing
+    /// after it.
+    bare_type: Option<usize>,
 }
 
 /// A line that waits: where it ends, where the part left to the run starts, whether an `=`
-/// stands there, the part before it being the place it writes, and whether the line is a `?`
-/// after a type known only at run.
+/// stands there, the part before it being the place it writes, and whether the line is the place
+/// of a type known only at run that a `:=` declares its name with: `T ?`, or `T` alone.
 pub(super) struct Waits {
     cut: usize,
     writes: bool,
@@ -79,8 +82,11 @@ impl<'a> Parser<'a> {
     /// type known only then, outside a `fn` or `type (…)` written in it, and outside a line of a
     /// bracket that waits on its own. The cursor stays. A line that declares one name does not
     /// wait: its value waits on its own ([`Self::waiting_value`]). A line that waits and holds
-    /// another `:=`, a `return`, `free` or `move` is refused here: stand-in for #281.
-    pub(super) fn waiting_line_end(&mut self) -> Result<Option<Waits>, ParseError> {
+    /// another `:=`, a `return`, `free` or `move` is refused here: stand-in for #281. With
+    /// `declares`, the line is the value of a `:=`, which makes a place of a type with nothing
+    /// after it, so one known only at run waits as `T ?` does (›`?` is one value, the unknown;
+    /// `key := T ?` declares without a value‹ [[R103]]).
+    pub(super) fn waiting_line_end(&mut self, declares: bool) -> Result<Option<Waits>, ParseError> {
         let open = self.cx.open.last();
         if self.cx.runtime_depth == 0 || open.is_none_or(|o| !o.own_lines()) {
             return Ok(None);
@@ -91,10 +97,17 @@ impl<'a> Parser<'a> {
         let end = self.cx.pos;
         self.cx.pos = start;
         // A line that does not scan is left to the parse to report where it fails.
-        let Ok(true) = scanned else { return Ok(None) };
+        let Ok(reads) = scanned else { return Ok(None) };
+        let bare_type = found.bare_type.filter(|_| declares);
+        if !reads && bare_type.is_none() {
+            return Ok(None);
+        }
         if let Some((at, word)) = found.refused {
             self.cx.pos = at;
             return Err(ParseError::WaitingLineHolds(Box::new(word)));
+        }
+        if let Some(cut) = bare_type {
+            return Ok(Some(Waits { cut, writes: false, end, hole: true }));
         }
         let read_at = found.read_at.unwrap_or(start);
         if let Some(at) = found.declaration {
@@ -253,6 +266,8 @@ impl<'a> Parser<'a> {
         // At the top: where the cells built together with the token just scanned start, and
         // where those of the last call that gives a `dyad` start.
         let (mut chain, mut call_chain) = (0, 0);
+        // At the top, where the line's first token starts.
+        let mut line_start: Option<usize> = None;
         loop {
             self.skip_whitespace();
             let at = self.cx.pos;
@@ -271,6 +286,7 @@ impl<'a> Parser<'a> {
                 }
                 any |= line_reads && (top || !assigns);
                 if top {
+                    found.bare_type = run_type.filter(|_| !skipping && run_type == line_start);
                     return Ok(any);
                 }
                 if line_tokens > 1 {
@@ -291,6 +307,9 @@ impl<'a> Parser<'a> {
             let (Some(r), Some(id)) = (r, id) else { unreachable!("a boundary at the end") };
             self.cx.pos = at + r.matched;
             line_tokens += 1;
+            if top {
+                line_start.get_or_insert(at);
+            }
             let leads = id != types.declare_tok && !self.is_gate_word(id);
             if top && leads && found.declaration.is_none() && declares.is_none() {
                 lead += 1;
@@ -763,7 +782,7 @@ impl<'a> Parser<'a> {
     /// line runs (›A type known only when the program runs still works; what needs it is parsed
     /// when its line runs‹ [[R377]]).
     pub(super) fn waiting_value(&mut self) -> Result<Option<(Cell, bool)>, ParseError> {
-        let Some(waits) = self.waiting_line_end()? else { return Ok(None) };
+        let Some(waits) = self.waiting_line_end(true)? else { return Ok(None) };
         let hole = waits.hole;
         let held = self.hold_line(waits, hole)?;
         // SAFETY: `held` holds the line `hold_line` just built, which has not run.
@@ -837,11 +856,17 @@ impl<'a> Parser<'a> {
             next_block: if into.is_null() { BlockValue::Thrown } else { BlockValue::Returned },
             ..Context::nested(&self.cx, text, nested)
         };
+        let lays_out = line.lays_out;
         let g = self.enter(cx);
-        let built = g.0.parse_sequence();
+        // A type with nothing after it is the place `T ?` makes of it.
+        let built = g.0.parse_sequence().and_then(|line| {
+            if !lays_out || types.is_hole(types.through(line)) {
+                return Ok(line);
+            }
+            Ok(g.0.empty_place_of(line)?.unwrap_or(line))
+        });
         let built_pos = g.0.cx.pos;
         drop(g);
-        let lays_out = line.lays_out;
         let built = built.and_then(|line| {
             if into.is_null() {
                 return Ok(line);

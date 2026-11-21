@@ -41,8 +41,9 @@ pub struct Cell {
     /// A hole `own` marked over a type whose body fills `free`: the name or field declared
     /// with it owns the node written into it.
     pub owning: bool,
-    /// A name whose constructor found nothing to take, standing as its own value.
-    pub named: bool,
+    /// The value `type` made of what stood after it, `type i32` or `type ( … )`: a type held as a
+    /// value of `type`, where any other cell that gives a type is that type with nothing after it.
+    pub type_value: bool,
 }
 
 impl Cell {
@@ -61,12 +62,12 @@ impl Cell {
         self.root = from.root;
         self.hole = from.hole;
         self.owning = from.owning;
-        self.named = from.is_name_alone();
+        self.type_value = from.type_value;
     }
 
     /// The cell placed over `dyad`, its facts cleared.
     fn over(&mut self, dyad: DyadPtr) {
-        let (path, target, root, hole, owning, named) = Self::NO_FACTS;
+        let (path, target, root, hole, owning, type_value) = Self::NO_FACTS;
         self.dyad = dyad;
         self.constructed = true;
         self.bracket = false;
@@ -75,7 +76,7 @@ impl Cell {
         self.root = root;
         self.hole = hole;
         self.owning = owning;
-        self.named = named;
+        self.type_value = type_value;
     }
 }
 
@@ -84,7 +85,7 @@ impl Cell {
     /// `text` must outlive every read of the cell's spelling; `dyad` must be a
     /// dyad from the store.
     pub unsafe fn lexed(dyad: DyadPtr, text: &str, start: usize, len: usize) -> Self {
-        let (path, target, root, hole, owning, named) = Self::NO_FACTS;
+        let (path, target, root, hole, owning, type_value) = Self::NO_FACTS;
         Cell {
             dyad,
             constructed: false,
@@ -97,14 +98,14 @@ impl Cell {
             root,
             hole,
             owning,
-            named,
+            type_value,
         }
     }
 
     /// # Safety
     /// `dyad` must be null or a dyad from the store.
     pub unsafe fn built(dyad: DyadPtr) -> Self {
-        let (path, target, root, hole, owning, named) = Self::NO_FACTS;
+        let (path, target, root, hole, owning, type_value) = Self::NO_FACTS;
         Cell {
             dyad,
             constructed: true,
@@ -117,14 +118,8 @@ impl Cell {
             root,
             hole,
             owning,
-            named,
+            type_value,
         }
-    }
-
-    /// A name as written, nothing built over it: a lexed one no constructor took, or one whose
-    /// constructor found nothing to take; a bracket standing as such a name is one too.
-    pub fn is_name_alone(&self) -> bool {
-        !self.constructed || self.named
     }
 
     /// The cell over `text`, which holds its spelling `shift` bytes before the text it was lexed
@@ -545,9 +540,9 @@ impl ParsingTape {
         self.at_mut(0).expect("placed above").bracket = true;
     }
 
-    pub fn place_named(&mut self, dyad: DyadPtr) {
+    pub fn place_type_value(&mut self, dyad: DyadPtr) {
         self.place(dyad);
-        self.at_mut(0).expect("placed above").named = true;
+        self.at_mut(0).expect("placed above").type_value = true;
     }
 
     /// A bracket standing as its one expression stands with that expression's facts.
