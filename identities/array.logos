@@ -63,7 +63,7 @@ pub array := type (
         mint
     ),
 
-    # The parse asks through a call, so the branch it guards is built where it is written: stand-in for #455.
+    # The parse asks through a call, so the branch it guards is built where it is written: stand-in for #456.
     static bytes_of := fn (t := type ?) -> u64 ( t.size_bytes ),
 
     elements := square_brackets ?,

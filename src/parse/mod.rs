@@ -52,6 +52,10 @@ pub struct Parser<'a> {
     /// The sub-parse being driven now; `outer` holds the ones it interrupted, innermost last.
     cx: Context<'a>,
     outer: Vec<Context<'a>>,
+    /// For each constructor written in Logos that is running, innermost last: how many
+    /// sub-parses were set aside when it was handed its tape, which is lexed on in the one
+    /// driven then ([`Parser::lex_on`]).
+    tape_hosts: Vec<usize>,
     trie: &'a mut RegexTrie,
     types: &'a Core,
     imports: Imports,
@@ -300,6 +304,23 @@ impl Drop for Entered<'_, '_> {
     }
 }
 
+/// Drives the sub-parse a running constructor's tape belongs to, set aside at `outer[.1]` by a
+/// sub-parse entered since, and puts both back where they were, by return or by unwinding.
+struct TapeHost<'p, 'a>(&'p mut Parser<'a>, usize);
+
+impl<'p, 'a> TapeHost<'p, 'a> {
+    fn new(parser: &'p mut Parser<'a>, at: usize) -> Self {
+        std::mem::swap(&mut parser.cx, &mut parser.outer[at]);
+        TapeHost(parser, at)
+    }
+}
+
+impl Drop for TapeHost<'_, '_> {
+    fn drop(&mut self) {
+        std::mem::swap(&mut self.0.cx, &mut self.0.outer[self.1]);
+    }
+}
+
 impl<'a> Parser<'a> {
     pub fn new(
         source: &'a str,
@@ -314,6 +335,7 @@ impl<'a> Parser<'a> {
         Parser {
             cx: Context::top(source, scopes),
             outer: Vec::new(),
+            tape_hosts: Vec::new(),
             rt,
             trie,
             types,
