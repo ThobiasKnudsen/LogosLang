@@ -108,6 +108,8 @@ pub enum RunError {
     Return(i64),
     /// A read or write through a pointer holding nothing.
     NullPointer,
+    /// A read of a union's member while the union holds another, named first, or none.
+    UnionHolds(Box<(Option<String>, String)>),
     /// A line built over the node a `dyad` place held found one of another type there when it
     /// ran.
     HeldNodeReplaced,

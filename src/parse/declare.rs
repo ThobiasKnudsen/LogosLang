@@ -655,11 +655,13 @@ impl<'a> Parser<'a> {
             if rec.scope != scope || rec.unwritten.is_null() {
                 return;
             }
+            // A union is one place: a write of any member fills it.
+            let whole = crate::identities::union::is_union(self.types, Binding::read(field).frame);
             let field = Binding::read(field).dyad;
             let left: Vec<DyadPtr> = crate::identities::array::items(rec.unwritten)
                 .iter()
                 .copied()
-                .filter(|&f| f != field)
+                .filter(|&f| !whole && f != field)
                 .collect();
             if left.is_empty() {
                 Binding::set_unwritten(binding, std::ptr::null_mut());

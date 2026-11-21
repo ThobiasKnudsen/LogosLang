@@ -16,6 +16,8 @@ struct Member {
     index: Option<usize>,
     key: Option<DyadPtr>,
     call: Option<Vec<DyadPtr>>,
+    /// The member read is the left side of `=`.
+    writes: bool,
 }
 
 /// What a `static` function called after a member read works on.
@@ -650,7 +652,7 @@ impl<'a> Parser<'a> {
         left: Cell,
         member: Member,
     ) -> Result<(DyadPtr, usize), ParseError> {
-        let Member { start: nstart, len: nlen, index, key, call } = member;
+        let Member { start: nstart, len: nlen, index, key, call, writes } = member;
         let unit_call = matches!(call, Some(ref a) if a.is_empty());
         // The member name is read as its raw spelling: a field is dot-only,
         // so what the driver resolved it to is beside the point. `index` and
@@ -866,6 +868,23 @@ impl<'a> Parser<'a> {
                 return Ok((node, 1));
             }
         }
+        // A union's member is read through its tag, wherever the union's value lies (›A union
+        // holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]).
+        let value_type = crate::identities::read::output_type(self.types, lhs);
+        if !self.types.is_hole(lhs) && crate::identities::union::is_union(self.types, value_type) {
+            let (member, _, binding) = self.resolve_field(value_type, nstart, nlen)?;
+            self.cx.member_path = self.field_path(&left, binding);
+            let types = self.types;
+            let place = crate::identities::union::build_member(
+                self.rt.store,
+                types,
+                lhs,
+                value_type,
+                member,
+                writes,
+            );
+            return Ok((place, 0));
+        }
         // Through a record pointer, `p@.x` folds the field offset into the deref; a cell holding a
         // record's address has the field read through that address, as a name holding one does.
         if dyad::ty(lhs) == self.types.deref_ {
@@ -1057,7 +1076,7 @@ impl<'a> Parser<'a> {
                 return Err(e);
             }
         };
-        let member = Member { start: nstart, len: nlen, index, key, call };
+        let member = Member { start: nstart, len: nlen, index, key, call, writes };
         // SAFETY: `lhs` is a reduced dyad off the tape.
         let access = unsafe { self.field_access_each(tape, lhs, left, member) };
         // A member the gate read refuses is refused where its name is written.

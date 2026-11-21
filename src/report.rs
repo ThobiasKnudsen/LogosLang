@@ -520,6 +520,40 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::OwnParameterNotInSeed => {
             "an `own` parameter, which takes its argument's ownership, is not in the seed yet".into()
         }
+        ParseError::UnionNeedsMembers => {
+            "a union is written with its members, each a name and a type: \
+             `union ( a := i32, b := f64 )`"
+                .into()
+        }
+        ParseError::UnionTooManyMembers => format!(
+            "a union holds one of at most {} members",
+            crate::identities::union::MOST_MEMBERS
+        ),
+        ParseError::UnionLine => {
+            "a union's line is a member, a name and a type, `a := i32`: a union has no `static` \
+             member, fills no slot, and a member has no default"
+                .into()
+        }
+        ParseError::UnionMemberOwns(members) => {
+            let named = members.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", ");
+            let (which, own) = match members.len() {
+                1 => ("member", "owns what it holds"),
+                _ => ("members", "own what they hold"),
+            };
+            format!(
+                "the {which} {named} {own}, and a union does not free a member yet: a member \
+                 that only borrows is written as a pointer, `a := @t`"
+            )
+        }
+        ParseError::UnionApplied => {
+            "a union holds one member, so it is not made from values in a row: declare an empty \
+             place and write the member, `mut v := num ?, v.a = …`"
+                .into()
+        }
+        ParseError::UnionMemberUnkept(name) => format!(
+            "`{name}` cannot be a member of a union: the seed keeps a member whose value moves \
+             whole into a place, as a number, a string, a record or a pointer does"
+        ),
         ParseError::MoveOfOuterName => {
             "move or free of a name declared outside this loop or function body: \
              the next pass or call would find it dead; move or free it outside, \
@@ -686,6 +720,16 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::NullPointer => "this pointer holds nothing yet".into(),
+        RunError::UnionHolds(members) => match &**members {
+            (Some(held), read) => format!(
+                "this union holds `{held}`, not `{read}`: a member is read only while the union \
+                 holds it"
+            ),
+            (None, read) => format!(
+                "this union holds no member yet, so `{read}` is not there to read: write a \
+                 member first"
+            ),
+        },
         RunError::HeldNodeReplaced => {
             "this line was read for the type of what its `dyad` held, but by the time it reached \
              the `dyad` it held a node of another type"
