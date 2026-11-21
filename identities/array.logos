@@ -3,6 +3,13 @@
 # it builds an `array` node instead, whose run makes a new value of that type each time it is evaluated
 # (DESIGN ›An array expression is a node of `array`, and its run makes the value‹).
 
+# The kinds of mistake an array refuses, each a category of this file.
+error.index_out_of_range := «an index lies outside its array»,
+error.index_type := «an index is of a type that could lie outside its array»,
+error.not_a_type := «what stands after `array` is no type»,
+error.not_a_list := «an array's list is not written in square brackets»,
+error.element_type := «an element does not fit its array's element type»,
+
 pub array := type (
     static array_mints := hashmap type -> type,
     pub static get_mint := fn (t := type ?) -> type (
@@ -20,12 +27,12 @@ pub array := type (
             ),
 
             pub static at := fn (index := u64 ?) -> element_type (
-                if index >= size error «index out of range: the index is at or past the array's size»,
+                if index >= size error.index_out_of_range «the index is at or past the array's size»,
                 (ptr + index)@
             ),
             static at_signed := fn (index := i64 ?) -> element_type (
                 if index < 0 or u64 lossy (index) >= size
-                    error «index out of range: the index is negative or at or past the array's size»,
+                    error.index_out_of_range «the index is negative or at or past the array's size»,
                 (ptr + index)@
             ),
 
@@ -40,9 +47,9 @@ pub array := type (
                     ) else (
                         # A literal's value is known now, so one outside the size type is refused now.
                         if tape[1].dyads[0].type == rational_number
-                            error «the index type is not within the size type, so the index could lie outside the array»,
+                            error.index_type «the index type is not within the size type, so the index could lie outside the array»,
                         if not tape[1].dyads[0].type ⊆ i64
-                            error «the index is not an integer»,
+                            error.index_type «the index is not an integer»,
                         tape[0] = tape[0].at_signed(tape[1].dyads[0])
                     ),
                     tape.remove(1)
@@ -82,19 +89,19 @@ pub array := type (
             tape.is_constructed[0] = true
         ) else if tape[1].type != void (
             if tape[1].type != type
-                error «id after array is not a type»,
+                error.not_a_type «id after array is not a type»,
             t := type tape[1],
             if bytes_of(t) != 0 (
                 mint := type get_mint(t),
                 if tape[2].type == scope
-                    error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
+                    error.not_a_list «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
                 # Right of another `array` this one is the element type, and the list is the outer one's.
                 if tape[2].type == square_brackets and tape[-1] != array (
                     # A bracket line is checked when the run's `=` builds it.
                     for i in 0..tape[2].dyads.size (
                         if tape[2].dyads[i].type != square_brackets and tape[2].dyads[i].type != scope (
                             if not (tape[2].dyads[i].type ⊆ t)
-                                error «an element does not fit the element type»
+                                error.element_type «an element does not fit the element type»
                         )
                     ),
                     tape[0].type = array,

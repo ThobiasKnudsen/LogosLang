@@ -21,6 +21,7 @@ pub mod binding;
 pub mod dyad;
 pub mod read;
 
+pub mod abort;
 mod and;
 pub(crate) mod array;
 pub(crate) mod assign;
@@ -188,6 +189,7 @@ pub struct Core {
     pub lex: lex::LexIds,
     pub print: print::PrintIds,
     pub error: error::ErrorIds,
+    pub abort: abort::AbortIds,
     pub run_body: run_body::RunBodyIds,
     pub by_copy: by_copy::ByCopyIds,
     pub here: here::HereIds,
@@ -410,6 +412,7 @@ impl Core {
         let print = print::register(&mut cx, &callables);
         immediate::register(&mut cx);
         let error = error::register(&mut cx, &callables);
+        let abort = abort::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let by_copy = by_copy::register(&mut cx, &callables);
         let (copy_, copy_leaf) = copy::register(&mut cx, &callables);
@@ -542,6 +545,7 @@ impl Core {
             lex,
             print,
             error,
+            abort,
             run_body,
             by_copy,
             here,

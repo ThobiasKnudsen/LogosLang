@@ -976,9 +976,8 @@ impl<'a> Parser<'a> {
         };
         let (lhs, root) = (self.operand_dyad(left)?, left.binding(self.types));
         // The member is read by its spelling at the offset it was lexed at, so a
-        // keyword there (`.type`) reads as a name.
-        let this_read = self.is_node_cell(lhs);
-        self.cx.member_asleep = this_read;
+        // keyword there (`.type`, `.error`) reads as a name and never wakes.
+        self.cx.member_asleep = true;
         let m = self.cell_at(tape, 1);
         self.cx.member_asleep = false;
         let Some(m) = m? else {

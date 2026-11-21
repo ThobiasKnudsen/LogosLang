@@ -1,0 +1,3 @@
+# A library with a category of its own: `error.not_found` here is no other file's.
+error.not_found := «no page at this address»,
+pub fetch := fn (code := i32 ?) -> i32 ( if code == 404 ( error.not_found «http {code}» ), code )

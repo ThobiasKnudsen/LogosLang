@@ -102,8 +102,13 @@ impl Binding {
         if self.pattern {
             spelling.to_string()
         } else {
-            regex::escape(spelling)
+            Self::name_key(spelling)
         }
+    }
+
+    /// The key of a spelling that stands for itself.
+    pub fn name_key(spelling: &str) -> String {
+        regex::escape(spelling)
     }
 
     /// The name's bytes are in a frame of its own: a type as the frame lays a field out

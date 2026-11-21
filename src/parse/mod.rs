@@ -129,8 +129,8 @@ struct Context<'a> {
     /// just lexed and the source after it unread, rather than at the boundary:
     /// an identity that reads its own bracket reads source only at discovery.
     discovering: bool,
-    /// While `.` lexes the member right of a parse's `tape[0]`: the member is
-    /// read by its spelling, so a raw-text word it happens to spell is not woken.
+    /// While `.` lexes the member to its right: the member is read by its spelling, so a
+    /// raw-text word it happens to spell is not woken.
     member_asleep: bool,
     /// The identity whose constructor is running, whose lazy reads lex its right side.
     reader: DyadPtr,

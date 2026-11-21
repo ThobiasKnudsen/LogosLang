@@ -34,8 +34,11 @@ pub enum RunError {
     NotText,
     /// `print` failed to write stdout; the I/O error's sentence.
     Output(Box<String>),
-    /// `error «…»` ran; its quote's text.
-    Raised(Box<String>),
+    /// `abort «…»` ran; its quote's text.
+    Aborted(Box<String>),
+    /// A raise ran where nothing takes its error: the category as it is declared, `error.X`,
+    /// and the message.
+    Raised(Box<(String, String)>),
     /// A tape affordance with no tape behind its receiver.
     NoTape,
     /// A tape index the tape does not hold.

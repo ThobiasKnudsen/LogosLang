@@ -8,6 +8,8 @@
 # cell still unconstructed afterwards is the checked error. the constructed cells, in order, are the scope's
 # expressions, the array the scope dyad's value references. no holding, no re-invocation.
 
+error.unconstructed := «a cell is still unconstructed where its segment ends»
+
 ( := type (
     static parse_rank = …
     static associativity = left
@@ -25,7 +27,7 @@
                 )
                 for k in first..i (
                     if not tape.is_constructed[k]
-                        error «unconstructed cell at a segment boundary»
+                        error.unconstructed «unconstructed cell at a segment boundary»
                     body.push(tape[k])
                 )
                 if cell == lex «)»[0] break

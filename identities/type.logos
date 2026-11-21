@@ -8,6 +8,8 @@
 # it. lex_rank is not here: it lives on the binding (14 September 2026).
 # A body names a field declared above it, so the fields come first.
 
+error.expected_open := «a word that reads a bracket is not followed by one»
+
 type := type (
     pub parse_rank := f64 ?
     pub associativity := type ?
@@ -19,7 +21,7 @@ type := type (
     static associativity = left
     static parse = (
         if tape[1] != lex «(»[0]
-            error «type must be followed by (»
+            error.expected_open «type must be followed by (»
         tape[0].type = type
         (.parse(tape.recenter(1))
         tape.is_constructed[0] = true

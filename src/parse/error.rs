@@ -110,8 +110,8 @@ pub enum ParseError {
     /// An `if` without an `else` where a value is required: with no false
     /// branch it yields unit.
     MissingElse,
-    /// An arm of an `if` whose value is used gives nothing, as one ending in `return` or
-    /// `error`.
+    /// An arm of an `if` whose value is used gives nothing, as one ending in `return`, a raise
+    /// or `abort`.
     ArmGivesNothing,
     /// The arms of an `if` whose value is used give different types, and no type
     /// written in front of it says which one it gives.
@@ -121,7 +121,8 @@ pub enum ParseError {
     ArmsMakeAndBorrow,
     /// A line written after one that always gives its scope a value, which never runs.
     LineAfterValue,
-    /// A line written after one that always leaves, a `return` or an `error`, which never runs.
+    /// A line written after one that always leaves, a `return`, a raise or an `abort`, which
+    /// never runs.
     LineAfterLeave,
     /// A line of a `-> void` function's body gives a value.
     VoidBodyGives,
@@ -194,8 +195,13 @@ pub enum ParseError {
     NotPub(Box<String>),
     /// A `regex` was not followed by a `«…»` quote.
     ExpectedPattern,
-    /// A `lex`, `print` or `error` was not followed by a `«…»` quote; carries the word.
+    /// A `lex`, `print`, `abort` or a category's `:=` was not followed by a `«…»` quote;
+    /// carries the word.
     ExpectedQuote(&'static str),
+    /// `error` with something to its right that names no category.
+    ErrorNeedsCategory,
+    /// A raise over a category no open scope declares; carries the category as written.
+    UnknownCategory(Box<String>),
     /// `lex «» := …`: a spelling of no text, which no lex could ever match.
     EmptySpelling,
     /// A `}` in a `print` quote with no `{` before it.

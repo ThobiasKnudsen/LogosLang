@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The words that read the `«…»` to their right (`regex`, `lex`, `print`, `error`, `file`),
+//! The words that read the `«…»` to their right (`regex`, `lex`, `print`, `abort`, `error`, `file`),
 //! `here`, `caller`, and the two that read a file as Logos, `logos` and `import`.
 
 use super::*;
@@ -260,20 +260,96 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    pub(crate) fn construct_error(
+    pub(crate) fn construct_abort(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         if !self.finds_right_side(tape) {
             return Ok(Constructed::Decline);
         }
-        let parts = self.interpolated_quote("error")?;
-        let node = crate::identities::error::build(self.rt.store, self.types, &parts);
+        let parts = self.interpolated_quote("abort")?;
+        let node = crate::identities::abort::build(self.rt.store, self.types, &parts);
         tape.place(node);
         Ok(Constructed::Placed)
     }
 
-    /// The `«…»` to the right of `print` or `error`, read into its parts: text runs, and
+    /// `error`'s own parse (›Error values are in v0.1.0; an error names a category, which is a
+    /// scoped name‹ [[R143]]): `.X := «description»` to its right declares the category `X`, and
+    /// `.X «message»` raises it. Any other `.` is a read of `error` itself, left to `.`; anything
+    /// else to its right names no category (›There is no bare `error «…»`; `abort «…»` stops the
+    /// program; `alloc` returns `@T!`‹ [[R145]]).
+    pub(crate) fn construct_error(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        if !self.cx.discovering || tape.at(1).is_some() {
+            return Ok(Constructed::Decline);
+        }
+        let after = self.cx.pos;
+        let word = tape.at(0).map_or(after, |cell| cell.start);
+        if !self.consume_token(self.types.dot_) {
+            if !self.finds_right_side(tape) {
+                return Ok(Constructed::Decline);
+            }
+            self.cx.pos = word;
+            return Err(ParseError::ErrorNeedsCategory);
+        }
+        if let Some((at, len)) = self.lex_spelling() {
+            let name = format!("error.{}", &self.cx.source[at..at + len]);
+            if self.consume_token(self.types.declare_tok) {
+                return self.declare_category(tape, &name, word);
+            }
+            self.skip_whitespace();
+            if self.cx.source[self.cx.pos..].starts_with('«') {
+                return self.raise(tape, &name, word);
+            }
+        }
+        self.cx.pos = after;
+        Ok(Constructed::Decline)
+    }
+
+    /// `error.X := «description»`: the category is a name of the open scope, entered as every
+    /// name is, under its whole path. Its record holds the description, and a `lex_rank` under
+    /// every other, so no lex reads the path as one word and `error`'s parse alone reaches it.
+    /// The line takes no gate word: its record is not offered to one.
+    fn declare_category(
+        &mut self,
+        tape: &mut ParsingTape,
+        name: &str,
+        at: usize,
+    ) -> Result<Constructed, ParseError> {
+        let description = self.quote_after("error.X :=")?;
+        let scope = self.cx.scopes.current().expect("a line stands in an open scope");
+        let binding = self.mint_binding(description, scope, name.as_bytes());
+        // SAFETY: `binding` was minted by `Binding::alloc` just above.
+        unsafe { Binding::set_lex_rank(binding, f64::NEG_INFINITY) };
+        self.enter_binding(name, binding, at)?;
+        self.cx.last_declared = std::ptr::null_mut();
+        let (store, types) = (&mut *self.rt.store, self.types);
+        let node =
+            crate::identities::declare::build(store, types, binding, description, description);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// `error.X «message»` over the category `name` a scope in reach declares.
+    fn raise(
+        &mut self,
+        tape: &mut ParsingTape,
+        name: &str,
+        at: usize,
+    ) -> Result<Constructed, ParseError> {
+        let Some(category) = self.cx.scopes.named(self.trie, name) else {
+            self.cx.pos = at;
+            return Err(ParseError::UnknownCategory(Box::new(name.to_string())));
+        };
+        let parts = self.interpolated_quote("error")?;
+        let node = crate::identities::error::build(self.rt.store, self.types, &parts, category);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// The `«…»` to the right of `print`, `abort` or a raise, read into its parts: text runs, and
     /// each `{…}` read here as a scope inside the one the word appears in. The parts are parts of
     /// the line the word stands in, as an argument list's lines are of the call's line: a point
     /// in a later part where the pass needs a value runs the earlier ones first, and each then
