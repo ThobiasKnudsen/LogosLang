@@ -10420,6 +10420,66 @@ fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
     }
 }
 
+/// ›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]: two `{ … }` with the
+/// same names, in the same order, of the same types and with the same gates are one type,
+/// wherever each is written, as `array i32` is; a `fn` entry is a type of its own, so its
+/// `{ … }` is too.
+#[test]
+fn two_curly_brackets_of_one_shape_are_one_type() {
+    let bag = "bag := type ( mut n := i32 ?, static free = ( print «freed {n}» ) ), ";
+    for compile in ["", "f.compile(), "] {
+        for (body, printed) in [
+            ("mut m := { a := i32 1 }, m = { a := i32 2 }, print «{m.a}»", "2"),
+            ("mut m := { a := k, b := «x» }, m = { a := k * 2, b := «y» }, print «{m.a} {m.b}»", "10 y"),
+            ("mut m := { p := { a := k } }, m = { p := { a := i32 9 } }, print «{m.p.a}»", "9"),
+            ("mut m := { mut a := k }, m = { mut a := i32 2 }, m.a = 7, print «{m.a}»", "7"),
+            ("x := { a := i32 1 }, y := { a := k }, print «{x.type == y.type}»", "true"),
+            ("x := { }, y := { }, print «{x.type == y.type}»", "true"),
+            ("x := { a := k, b := k }, y := { b := k, a := k }, print «{x.type == y.type}»", "false"),
+            ("x := { a := i32 1 }, y := { a := i64 1 }, print «{x.type == y.type}»", "false"),
+            ("x := { a := k }, y := { b := k }, print «{x.type == y.type}»", "false"),
+            ("x := { mut a := k }, y := { a := k }, print «{x.type == y.type}»", "false"),
+            (
+                "x := { a := i32 1, g := fn () -> i32 ( a ) }, y := { a := k, g := fn () -> i32 ( a ) }, \
+                 print «{x.type == y.type} {x.g() + y.g()}»",
+                "false 6",
+            ),
+            ("x := { a := k }, y := { a := k, g := fn () -> i32 ( a ) }, print «{x.type == y.type}»", "false"),
+            ("mut m := { b := bag (k) }, m = { b := bag (2) }, print «end»", "freed 5\nend\nfreed 2"),
+        ] {
+            let src = format!("{bag}f := fn (k := i32 ?) -> void ( {body} ), {compile}f(5)");
+            assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+        }
+    }
+    for (src, printed) in [
+        ("mut m := { a := i32 1 }, m = { a := i32 2 }, m.a", "2"),
+        (
+            "h := hashmap string -> i32 { a := 1, b := 2 }, m := { a := 1, b := 2 }, h[«b»] + m.b",
+            "4",
+        ),
+        (
+            "m := { a := 1, b := 2 }, h := hashmap string -> i32 { a := 3, b := 4 }, h[«b»] + m.b",
+            "6",
+        ),
+        ("h := hashmap string -> i32 { }, k := hashmap string -> i32 { }, m := { }, 0", "0"),
+    ] {
+        assert_eq!(run_line(src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    let (echoes, stderr) = repl(b"mut m := { a := i32 1 }\nm = { a := i32 2 }\nm.a\n");
+    assert_eq!(echoes, ["2"], "stderr: {stderr}");
+    for src in [
+        "mut m := { mut a := i32 1 }, m = { a := i32 2 }",
+        "mut m := { a := i32 1 }, m = { mut a := i32 2 }",
+        "mut m := { a := i32 1, b := i32 2 }, m = { b := i32 2, a := i32 1 }",
+        "mut m := { a := i32 1 }, m = { a := i64 2 }",
+        "mut m := { a := i32 1, g := fn () -> i32 ( a ) }, m = { a := i32 2, g := fn () -> i32 ( a ) }",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("these types do not match"), "{src}: stderr: {stderr}");
+    }
+}
+
 /// ›A type body describes one level‹ [[R222]]: a field named bare is read as the field inside a
 /// `static` initializer too, which checks only names for a value made once.
 #[test]
