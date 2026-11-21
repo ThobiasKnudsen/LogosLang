@@ -6718,7 +6718,7 @@ fn a_text_node_and_a_place_of_text_read_as_the_node() {
     assert_eq!(echoes, ["a", "a"], "stderr: {stderr}");
 }
 
-const NUM: &str = "num := type union ( i := pub mut i32, f := pub mut f64 )";
+const NUM: &str = "num := type union ( i := mut i32, f := mut f64 )";
 
 /// ›A union holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]: a member
 /// is read with `.` while the union holds it, and a write of a member makes the union hold it,
@@ -6732,13 +6732,23 @@ fn a_union_holds_the_member_written_last() {
         (format!("{NUM}, v := mut num ?, v.i = 5, v.i = v.i + 1, v.i"), "6"),
         (format!("{NUM}, v := mut num ?, v.i = 5, v.f = f64 (v.i), v.f"), "5.0"),
         // No name holds the type: the place is of the mint itself.
-        ("u := mut union ( i := pub mut i32, f := pub mut f64 ), u.f = 2.5, u.f".to_string(), "2.5"),
+        ("u := mut union ( i := mut i32, f := mut f64 ), u.f = 2.5, u.f".to_string(), "2.5"),
         // The tag and the room of the largest member, packed.
         (format!("{NUM}, num.size_bytes"), "9"),
-        ("u := type union ( a := pub mut u8, b := pub mut i8 ), u.size_bytes".to_string(), "2"),
-        (format!("{NUM}, v := mut num ?, v.i = 5, print «{{v.type == num}} {{v.i.type == i32}}»"), "true true"),
+        ("u := type union ( a := mut u8, b := mut i8 ), u.size_bytes".to_string(), "2"),
+        (
+            format!(
+                "{NUM}, v := mut num ?, v.i = 5, print «{{v.type == num}} {{v.i.type == i32}}»"
+            ),
+            "true true",
+        ),
         // A copy holds what the value held, and a write of one leaves the other.
-        (format!("{NUM}, v := mut num ?, v.i = 5, w := mut v, w.f = 1.5, print «{{v.i}} {{w.f}}»"), "5 1.5"),
+        (
+            format!(
+                "{NUM}, v := mut num ?, v.i = 5, w := mut v, w.f = 1.5, print «{{v.i}} {{w.f}}»"
+            ),
+            "5 1.5",
+        ),
         (format!("{NUM}, v := mut num ?, v.i = 5, w := mut num ?, w.f = 1.5, w = v, w.i"), "5"),
         // Behind a pointer, and a pointer to the member it holds.
         (format!("{NUM}, v := mut num ?, v.i = 5, p := &v, p@.f = 1.5, v.f"), "1.5"),
@@ -6753,13 +6763,13 @@ fn a_union_holds_the_member_written_last() {
         // Members of other types: a record, whose fields are read through it, a text, a pointer.
         (
             format!(
-                "{pt}, u := type union ( p := pub mut pt, i := pub mut i32 ), v := mut u ?, \
+                "{pt}, u := type union ( p := mut pt, i := mut i32 ), v := mut u ?, \
                  v.p = pt(1, 2.5), v.p.a = 9, print «{{v.p.a}} {{v.p.b}} {{u.size_bytes}}»"
             ),
             "9 2.5 13",
         ),
         (
-            "u := type union ( s := pub mut string, q := pub mut @i32 ), x := i32 4, v := mut u ?, \
+            "u := type union ( s := mut string, q := mut @i32 ), x := i32 4, v := mut u ?, \
              v.q = &x, print «{v.q@}», v.s = «hi», v.s"
                 .to_string(),
             "4\nhi",
@@ -6775,7 +6785,7 @@ fn a_union_holds_the_member_written_last() {
         ),
         (
             format!(
-                "{NUM}, big := type union ( n := pub mut num, s := pub mut string ), \
+                "{NUM}, big := type union ( n := mut num, s := mut string ), \
                  t := mut num ?, t.i = 3, v := mut big ?, v.n = t, v.n.f = 0.5, v.n.f"
             ),
             "0.5",
@@ -6803,7 +6813,7 @@ fn a_union_holds_the_member_written_last() {
                 "6",
             ),
             (
-                "f := fn () -> i32 ( u := type union ( a := pub mut i32, b := pub mut f64 ), \
+                "f := fn () -> i32 ( u := type union ( a := mut i32, b := mut f64 ), \
                  v := mut u ?, v.a = 3, v.a )",
                 "f()",
                 "3",
@@ -6841,7 +6851,7 @@ fn reading_a_member_a_union_does_not_hold_is_a_run_error() {
         // A member's field is written only while the union holds the member.
         (
             format!(
-                "{NUM}, big := type union ( n := pub mut num, s := pub mut string ), \
+                "{NUM}, big := type union ( n := mut num, s := mut string ), \
                  v := mut big ?, v.s = «a», v.n.i = 3"
             ),
             "",
@@ -6882,18 +6892,22 @@ fn reading_a_member_a_union_does_not_hold_is_a_run_error() {
 /// and place among the members each make another union.
 #[test]
 fn a_union_is_minted_by_its_members_and_named_by_the_name_that_holds_it() {
-    let a = "a := type union ( i := pub mut i32, f := pub f64 )";
+    let a = "a := type union ( i := mut i32, f := f64 )";
     for (src, want) in [
-        (format!("{a}, b := type union ( i := pub mut i32, f := pub f64 ), print «{{a == b}} {{&a == &b}}»"), "true false"),
-        (format!("{a}, b := type union ( i := pub i32, f := pub f64 ), a == b"), "false"),
-        (format!("{a}, b := type union ( f := pub f64, i := pub mut i32 ), a == b"), "false"),
-        (format!("{a}, b := type union ( j := pub mut i32, f := pub f64 ), a == b"), "false"),
-        (format!("{a}, b := type union ( i := pub mut i64, f := pub f64 ), a == b"), "false"),
+        (
+            format!(
+                "{a}, b := type union ( i := mut i32, f := f64 ), print «{{a == b}} {{&a == &b}}»"
+            ),
+            "true false",
+        ),
+        (format!("{a}, b := type union ( i := i32, f := f64 ), a == b"), "false"),
+        (format!("{a}, b := type union ( f := f64, i := mut i32 ), a == b"), "false"),
+        (format!("{a}, b := type union ( j := mut i32, f := f64 ), a == b"), "false"),
+        (format!("{a}, b := type union ( i := mut i64, f := f64 ), a == b"), "false"),
         (format!("{a}, b := type ( i := pub mut i32, f := pub f64 ), a == b"), "false"),
         // A place of the mint no name holds, written twice, is of one type.
         (
-            "x := mut union ( i := pub mut i32 ), y := mut union ( i := pub mut i32 ), \
-             x.i = 1, y = x, y.i"
+            "x := mut union ( i := mut i32 ), y := mut union ( i := mut i32 ), x.i = 1, y = x, y.i"
                 .to_string(),
             "1",
         ),
@@ -6901,18 +6915,19 @@ fn a_union_is_minted_by_its_members_and_named_by_the_name_that_holds_it() {
         assert_eq!(line(&src), want, "{src}");
     }
     let (code, _, stderr) = run_line(&format!(
-        "{a}, b := type union ( i := pub mut i32, f := pub f64 ), x := mut a ?, x.i = 1, \
+        "{a}, b := type union ( i := mut i32, f := f64 ), x := mut a ?, x.i = 1, \
          y := mut b ?, y = x"
     ));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("error: these types do not match"), "stderr: {stderr}");
 }
 
-/// R379: «A member's gates decide as a field's do», and by ›Reading a field still unwritten is
-/// refused‹ [[R105]] an empty union place is one unwritten place: no member is read before one
-/// is written where the place is declared, and a write of any member fills it.
+/// R379: every member is read from outside the union with no `pub`, and `mut` still decides
+/// whether it is written from outside; by ›Reading a field still unwritten is refused‹ [[R105]] an
+/// empty union place is one unwritten place: no member is read before one is written where the
+/// place is declared, and a write of any member fills it.
 #[test]
-fn a_union_s_members_are_gated_as_fields_and_its_empty_place_is_unwritten() {
+fn a_union_s_members_are_read_from_outside_and_its_empty_place_is_unwritten() {
     let unwritten = |path: &str| {
         format!(
             "`{path}` is read before it is written: give it a value with `{path} = …` in the same \
@@ -6925,13 +6940,15 @@ fn a_union_s_members_are_gated_as_fields_and_its_empty_place_is_unwritten() {
              `{name} := mut …`"
         )
     };
+    // A member with no gate is read, and asked of, from outside.
+    let plain = "num := type union ( i := i32, f := mut f64 ), v := mut num ?, v.f = 1.5";
+    assert_eq!(line(&format!("{plain}, print «{{v holds i}} {{v.f}}»")), "false 1.5");
+    let (code, _, stderr) = run_line(&format!("{plain}, v.i"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("run error: this union holds `f`, not `i`"), "stderr: {stderr}");
     for (src, message) in [
         (
-            "num := type union ( i := i32, f := pub f64 ), v := mut num ?, v.i = 5".to_string(),
-            "`i` is not `pub`, so it is read only inside the scope it is declared in".to_string(),
-        ),
-        (
-            "num := type union ( i := pub i32, f := pub f64 ), v := mut num ?, v.i = 5".to_string(),
+            "num := type union ( i := i32, f := f64 ), v := mut num ?, v.i = 5".to_string(),
             not_mut("i"),
         ),
         (format!("{NUM}, v := num ?, v.i = 5"), not_mut("v")),
@@ -6951,31 +6968,34 @@ fn a_union_s_members_are_gated_as_fields_and_its_empty_place_is_unwritten() {
     }
 }
 
-/// What a union does not take is refused where it is written: a line that is no member, a
-/// member that owns what it holds, and values in a row, which do not say the member.
+/// What a union does not take is refused where it is written: a line that is no member, `pub` on
+/// a member, which every member is already read as, and values in a row, which do not say the
+/// member.
 #[test]
 fn what_a_union_does_not_take_is_refused_where_it_is_written() {
     let written = "a union is written with its members, each a name and a type: \
                    `union ( a := i32, b := f64 )`";
     let no_member = "a union's line is a member, a name and a type, `a := i32`: a union has no \
                      `static` member, fills no slot, and a member has no default";
-    let owns = "the member `b` owns what it holds, and a union does not free a member yet: a \
-                member that only borrows is written as a pointer, `a := @t`";
+    let public = "every member of a union is read from outside it, so a member takes no `pub`; \
+                  `mut` still lets it be written from outside";
     let in_a_row = "a union holds one member, so it is not made from values in a row: declare an \
                     empty place and write the member, `v := mut num ?, v.a = …`";
     let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
-    let members = (0..256).map(|k| format!("m{k} := pub i32")).collect::<Vec<_>>().join(", ");
+    let members = (0..256).map(|k| format!("m{k} := i32")).collect::<Vec<_>>().join(", ");
     for (src, message) in [
         ("x := union ( ), 0".to_string(), written),
         ("x := union 5, 0".to_string(), written),
         ("x := type union ( a := static i32 3 ), 0".to_string(), no_member),
-        ("x := type union ( a := pub i32 3 ), 0".to_string(), no_member),
-        (format!("{bag}, u := type union ( b := pub mut bag, i := pub mut i32 ), 0"), owns),
+        ("x := type union ( a := i32 3 ), 0".to_string(), no_member),
+        ("x := type union ( a := pub i32, b := f64 ), 0".to_string(), public),
+        ("x := type union ( a := i32, b := pub mut f64 ), 0".to_string(), public),
+        ("x := type union ( a := mut pub i32 ), 0".to_string(), public),
         (format!("u := type union ( {members} ), 0"), "a union holds one of at most 255 members"),
         (format!("{NUM}, x := num(1), 0"), in_a_row),
         (format!("{NUM}, x := num(1, 2.5), 0"), in_a_row),
         (
-            "u := type union ( a := pub mut i32, a := pub mut f64 ), 0".to_string(),
+            "u := type union ( a := mut i32, a := mut f64 ), 0".to_string(),
             "`a` is already declared and still in scope",
         ),
     ] {
@@ -6986,11 +7006,11 @@ fn what_a_union_does_not_take_is_refused_where_it_is_written() {
     // With nothing to its right the word stands as itself.
     assert_eq!(line("x := type union, x == union"), "true");
     // A member that only borrows is a pointer, and 255 members are told apart.
-    let members = (0..255).map(|k| format!("m{k} := pub mut i32")).collect::<Vec<_>>().join(", ");
+    let members = (0..255).map(|k| format!("m{k} := mut i32")).collect::<Vec<_>>().join(", ");
     for (src, want) in [
         (
             format!(
-                "{bag}, u := type union ( b := pub mut @bag, i := pub mut i32 ), g := bag(1), \
+                "{bag}, u := type union ( b := mut @bag, i := mut i32 ), g := bag(1), \
                  v := mut u ?, v.b = &g, print «{{v.b@.n}}»"
             ),
             "1\nfreed 1",
@@ -6999,6 +7019,149 @@ fn what_a_union_does_not_take_is_refused_where_it_is_written() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
+}
+
+/// R379: `v holds a` gives `true` while the union holds `a` and `false` otherwise, of a name,
+/// behind a pointer, in a field, of what a call gives and of a parameter, on both tiers; behind a
+/// pointer a union nothing has written gives `false` for every member.
+#[test]
+fn holds_asks_which_member_a_union_holds() {
+    let mut cases = vec![
+        (format!("{NUM}, v := mut num ?, v.i = 5, print «{{v holds i}} {{v holds f}}»"), "true false"),
+        (format!("{NUM}, v := mut num ?, v.i = 5, v.f = 1.5, print «{{v holds i}} {{v holds f}}»"), "false true"),
+        (format!("{NUM}, v := mut num ?, v.i = 5, p := &v, p@ holds i"), "true"),
+        (
+            format!(
+                "{NUM}, p := alloc 1 of num ?, print «{{p@ holds i}} {{p@ holds f}}», p@.f = 1.5, \
+                 print «{{p@ holds f}}», free p"
+            ),
+            "false false\ntrue",
+        ),
+        (
+            format!(
+                "{NUM}, r := type ( n := pub mut num ? ), t := mut num ?, t.f = 2.5, x := mut r ?, \
+                 x.n = t, print «{{x.n holds f}} {{x.n.f}}»"
+            ),
+            "true 2.5",
+        ),
+        (
+            "u := mut union ( i := mut i32, f := mut f64 ), u.f = 2.5, print «{u holds f} {u holds i}»"
+                .to_string(),
+            "true false",
+        ),
+        // `holds` reads the cell to its left as `.` does, so a test of it joins others.
+        (
+            format!("{NUM}, v := mut num ?, v.i = 5, if v holds i and v.i > 3 ( print «big» ) else ( print «no» )"),
+            "big",
+        ),
+    ];
+    let res = "res := type union ( value := mut i32, err := mut i64 ), \
+               div := fn (n := i32 ?) -> res ( r := mut res ?, r.err = 7, if n > 0 ( r.value = n ), r )";
+    for compile in ["", "f.compile(), "] {
+        for (f, call, want) in [
+            (
+                "f := fn (v := num ?) -> bool ( v holds i )",
+                "v := mut num ?, v.i = 1, print «{f(v)}», v.f = 2.5, print «{f(v)}»",
+                "true\nfalse",
+            ),
+            ("f := fn (p := @num ?) -> bool ( p@ holds f )", "v := mut num ?, v.f = 1.5, f(&v)", "true"),
+            (
+                "mk := fn (n := i32 ?) -> num ( r := mut num ?, r.f = 0.5, if n > 0 ( r.i = n ), r ), \
+                 f := fn (n := i32 ?) -> bool ( mk(n) holds i )",
+                "print «{f(3)} {f(0)}»",
+                "true false",
+            ),
+            // A caller handles a union its callee gives by which member it holds.
+            (
+                &*format!("{res}, f := fn (n := i32 ?) -> i64 ( r := div(n), if r holds err ( r.err ) else ( i64 r.value ) )"),
+                "print «{f(3)} {f(0)}»",
+                "3 7",
+            ),
+        ] {
+            cases.push((format!("{NUM}, {f}, {compile}{call}"), want));
+        }
+    }
+    for (src, want) in cases {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    let unwritten = "`v` is read before it is written: give it a value with `v = …` in the same \
+                     block first";
+    for (src, message) in [
+        (format!("{NUM}, v := mut num ?, v holds i"), unwritten.to_string()),
+        (
+            format!("{NUM}, x := i32 5, x holds i"),
+            "`holds` asks a union which member it holds, and this value is no union".to_string(),
+        ),
+        (
+            format!("{NUM}, v := mut num ?, v.i = 5, v holds"),
+            "`holds` is followed by the name of a member of the union: `v holds a`".to_string(),
+        ),
+        (
+            format!("{NUM}, v := mut num ?, v.i = 5, v holds k"),
+            "`k` is no member of this union, whose members are `i`, `f`".to_string(),
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("error: {message}")), "{src}: stderr: {stderr}");
+    }
+}
+
+/// R379: a union ends the member it holds, as a field's end would: when another member is
+/// written, when a write of the member displaces it, at the union's own end and at `free`; a
+/// copy of a union copies what it holds, so each ends its own; a member `free` ended is not ended
+/// again when another member is written; on both tiers.
+#[test]
+fn a_union_ends_the_member_it_holds() {
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let u = "u := type union ( b := mut bag, i := mut i32 )";
+    let nest = "inner := type union ( b := mut bag, i := mut i32 ), \
+                outer := type union ( x := mut inner, f := mut f64 )";
+    let mut cases = vec![(
+        format!(
+            "{bag}, {u}, v := mut u ?, v.b = bag(1), w := mut v, w.b.n = 7, \
+             print «{{v.b.n}} {{w.b.n}}»"
+        ),
+        "1 7\nfreed 7\nfreed 1".to_string(),
+    )];
+    for compile in ["", "f.compile(), "] {
+        for (body, want) in [
+            ("v := mut u ?, v.b = bag(1), print «mid», v.i = 5, print «end»", "mid\nfreed 1\nend"),
+            ("v := mut u ?, v.b = bag(1), v.b = bag(2), print «end»", "freed 1\nend\nfreed 2"),
+            ("v := mut u ?, v.b = bag(1), print «end»", "end\nfreed 1"),
+            ("v := mut u ?, v.b = bag(1), w := v, print «{w.b.n}»", "1\nfreed 1\nfreed 1"),
+            (
+                "v := mut u ?, v.i = 1, w := mut u ?, w.b = bag(2), w = v, print «end»",
+                "freed 2\nend",
+            ),
+            ("v := mut u ?, v.b = bag(1), free v.b, print «end»", "freed 1\nend"),
+            ("v := mut u ?, v.b = bag(1), free v, print «end»", "freed 1\nend"),
+            ("v := mut u ?, v.b = bag(1), free v.b, v.i = 5, print «end»", "freed 1\nend"),
+            (
+                "v := mut outer ?, k := mut inner ?, k.b = bag(3), v.x = k, print «mid», \
+                 v.f = 1.5, print «end»",
+                "mid\nfreed 3\nend\nfreed 3",
+            ),
+            (
+                "v := mut outer ?, k := mut inner ?, k.b = bag(3), v.x = move k, free v.x, \
+                 print «mid», v.f = 1.5, print «end»",
+                "freed 3\nmid\nend",
+            ),
+        ] {
+            cases.push((
+                format!("{bag}, {u}, {nest}, f := fn () -> i32 ( {body}, 0 ), {compile}f()"),
+                format!("{want}\n0"),
+            ));
+        }
+    }
+    for (src, want) in cases {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    // A member `free` ended is dead, and a write of it is refused, as a `{ … }` entry's is.
+    let (code, stdout, stderr) =
+        run_line(&format!("{bag}, {u}, v := mut u ?, v.b = bag(1), free v.b, v.b = bag(2), 0"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("error: `v.b` is dead here: it was moved or freed above"), "{stderr}");
 }
 
 /// A declaration of an empty place runs nothing on either tier, a record's as a number's.
@@ -13188,9 +13351,9 @@ fn a_name_in_a_body_holds_one_dyad_per_mint_found_again_at_the_next_run() {
     for compile in ["", "f.compile(), g.compile(), "] {
         cases.push((
             format!(
-                "f := fn () -> bool ( a := type union ( i := pub mut i32 ), \
-                 b := type union ( i := pub mut i32 ), &a == &b ), \
-                 g := fn () -> bool ( a := type union ( i := pub mut i32 ), &a == &a ), \
+                "f := fn () -> bool ( a := type union ( i := mut i32 ), \
+                 b := type union ( i := mut i32 ), &a == &b ), \
+                 g := fn () -> bool ( a := type union ( i := mut i32 ), &a == &a ), \
                  {compile}print «{{f()}} {{g()}}»"
             ),
             "false true\n",

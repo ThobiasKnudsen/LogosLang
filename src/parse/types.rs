@@ -411,8 +411,8 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// A union holds only members whose values move whole into its room and end with nothing
-    /// to free; refusing a member that owns is a stand-in for #159.
+    /// A union holds only members whose values move whole into its room, and a member's type
+    /// takes no `pub`, every member being read from outside.
     ///
     /// # Safety
     /// `members` must be holes from the store, each over a type node, and `bindings` their
@@ -422,28 +422,18 @@ impl<'a> Parser<'a> {
         members: &[DyadPtr],
         bindings: &[DyadPtr],
     ) -> Result<(), ParseError> {
-        use crate::identities::drop_model::{teardown_of_type, Teardown};
-        use crate::identities::{copy, hole, read::carry_of};
-        let types = self.types;
-        let mut owning = Vec::new();
         for (&member, &binding) in members.iter().zip(bindings) {
-            let ty = hole::type_in(member);
-            let name = Binding::spelling(binding);
-            if carry_of(types, ty).is_none() {
-                return Err(ParseError::UnionMemberUnkept(Box::new(name)));
+            // ›A union holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]
+            let gated = crate::identities::hole::gated_type_in(member);
+            if crate::identities::gate::has(gated, self.types.pub_) {
+                return Err(ParseError::UnionMemberPub);
             }
-            if copy::owns(types, ty)
-                || teardown_of_type(types, ty) != Teardown::Nothing
-                || Binding::read(binding).holds
-            {
-                owning.push(name);
+            let ty = crate::identities::hole::type_in(member);
+            if crate::identities::read::carry_of(self.types, ty).is_none() {
+                return Err(ParseError::UnionMemberUnkept(Box::new(Binding::spelling(binding))));
             }
         }
-        if owning.is_empty() {
-            Ok(())
-        } else {
-            Err(ParseError::UnionMemberOwns(owning))
-        }
+        Ok(())
     }
 
     /// A `fn`'s parameter list, in a scope of its own that the body reopens. Also the fields'
