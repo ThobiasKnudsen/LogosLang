@@ -2875,6 +2875,11 @@ mod tests {
         // The count sees the array: a free that leaves the field alone leaks its one block.
         let forgetful = HELD.replace("static free = ( free items )", "static free = ( free (0) )");
         assert_eq!(run(&format!("{forgetful}mut h := held ?, h.items = array i32 [1], 1")), (1, 1));
+        // A function writing such a field stays interpreted: stand-in for #164.
+        let compiled = "f := fn () -> i32 ( mut h := held ?, h.items = array i32 [1, 2], \
+                        h.items[1] ), f.compile(), f()";
+        let result = try_run(&format!("{HELD}{compiled}"));
+        assert!(matches!(result, Err(RunError::CompileFailed(_))), "{result:?}");
     }
 
     /// The scope `src` parses to, and the items of its exit.
