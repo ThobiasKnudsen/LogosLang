@@ -755,8 +755,8 @@ unsafe fn own_name(
 }
 
 /// Where the node a field a write reaches holds is kept: a node's slot, or the word a plain
-/// record keeps for a `type` or `dyad` field, packed so at any offset; any other field of a plain
-/// record holds no node.
+/// record keeps for a field whose value is a node's address, a `type`, a `dyad` or a node a Logos
+/// `parse` built, packed so at any offset; any other field of a plain record holds no node.
 ///
 /// # Safety
 /// As `field_of`.
@@ -790,7 +790,11 @@ unsafe fn slot_at(
 unsafe fn slot_in(rt: &Runtime, field: Field) -> Result<(*mut DyadPtr, usize), RunError> {
     match field {
         Field::Slot(slot, k) => Ok((slot, k)),
-        Field::Bytes(addr, ty, k) if holds_node(rt.types(), ty) => Ok((addr.cast(), k)),
+        Field::Bytes(addr, ty, k)
+            if matches!(place_layout(rt.types(), ty), Some((Read::Container(_), _))) =>
+        {
+            Ok((addr.cast(), k))
+        }
         Field::Bytes(..) => Err(RunError::NoThis),
     }
 }

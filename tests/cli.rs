@@ -7122,7 +7122,7 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
     }
     // Nothing holds it yet: a record's field and a parameter `=` may write over.
     for tail in [
-        "holder := type ( b := box ? ), h := holder(box (1, 2))",
+        "holder := type ( b := box ?, static free = ( free b ) ), h := holder(box (1, 2))",
         "f := fn (mut q := box ?) -> i32 ( 1 ), f(box (1, 2))",
     ] {
         let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
@@ -8647,7 +8647,7 @@ fn an_array_holds_arrays_as_their_addresses() {
     }
 }
 
-/// A value whose field holds an array, built in the array's shape: `holder ()` is a node
+/// A value whose field owns an array, built in the array's shape: `holder ()` is a node
 /// whose run makes a new `held`, and `holder` with no bracket is `held`, whose parse
 /// reads nothing.
 const HOLDER: &str = "import file «./identities/array.logos», t := array i32, \
@@ -8655,11 +8655,12 @@ const HOLDER: &str = "import file «./identities/array.logos», t := array i32, 
         pub mut items := t ?, \
         pub static count := fn () -> u64 ( items.size ), \
         pub static second := fn () -> i32 ( items[1] ), \
+        static free = ( free items ), \
         static parse_rank = dyad.parse_rank, \
         static parse = ( tape.is_constructed[0] = true ) ), \
     holder := type ( \
         output_type := type ?, \
-        static run = ( mut v := output_type ?, v.items = array i32 [4, 5, 6], v ), \
+        static run = ( mut v := output_type ?, v.items = array i32 [4, 5, 6], move v ), \
         static parse_rank = dyad.parse_rank, \
         static associativity = left, \
         static parse = ( \
@@ -8704,8 +8705,8 @@ fn bag_line(tail: &str) -> String {
     format!(
         "import file «./identities/array.logos», {BOX}, t := array i32, \
          bagged := type ( \
-             pub mut items := own t ?, \
-             pub mut b := own boxed ?, \
+             pub mut items := t ?, \
+             pub mut b := boxed ?, \
              static free = ( print «bag», free items, free b ), \
              static parse_rank = dyad.parse_rank, \
              static parse = ( tape.is_constructed[0] = true ) ), \
@@ -8780,7 +8781,7 @@ fn a_field_under_a_type_that_fills_free_is_refused_where_it_is_written() {
     assert_eq!(echoes[echoes.len() - 3..], ["end", "bag", "free"], "{echoes:?}");
 }
 
-/// `g`, an `outer` whose field `b` borrows an `inner`; `{inner}` and `{outer}` stand in each
+/// `g`, an `outer` whose field `b` holds an `inner`; `{inner}` and `{outer}` stand in each
 /// type's body, so either can fill `free`.
 fn nested_line(inner: &str, outer: &str, tail: &str) -> String {
     format!(
@@ -8815,16 +8816,18 @@ fn a_freed_field_ends_its_path_and_its_holder_as_a_whole() {
     }
     // A type on the path that fills `free` refuses it; the first such holder is named.
     let free = |word: &str| format!("static free = ( print «{word}» ), ");
-    for (inner, outer, holder) in [
-        (free("inner"), String::new(), "g.b"),
-        (String::new(), free("outer"), "g"),
-        (free("inner"), free("outer"), "g"),
-    ] {
+    for (inner, outer, holder) in
+        [(String::new(), free("outer"), "g"), (free("inner"), free("outer"), "g")]
+    {
         let (code, _, stderr) = run_line(&nested_line(&inner, &outer, "free g.b.n, g.m"));
         assert_eq!(code, Some(1), "{holder}: stderr: {stderr}");
         let refused = format!("the type of `{holder}` fills its own `static free = (…)`");
         assert!(stderr.contains(&refused), "{holder}: stderr: {stderr}");
     }
+    // An `inner` that fills `free` is owned by the field that holds it, so `outer` must free it.
+    let (code, _, stderr) = run_line(&nested_line(&free("inner"), "", "free g.b.n, g.m"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("the field `b` owns what it holds"), "stderr: {stderr}");
 }
 
 #[test]
@@ -8865,7 +8868,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
     }
     for (tail, expect) in [
         ("f := fn (p := t ?) -> i32 ( g := bag (), g.items = move p, 1 )", "only its owner can"),
-        ("nd := type ( mut items := own t ? )", "must be freed by the type's `static free = (…)`"),
+        ("nd := type ( mut items := t ? )", "must be freed by the type's `static free = (…)`"),
         ("g := bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
         ("mk := fn () -> t ( array i32 [1] ), 1", "write `-> own t`"),
         ("nd := type ( mut n := own i32 ? )", "or a type whose body fills `free`"),

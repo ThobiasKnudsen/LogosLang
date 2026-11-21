@@ -119,6 +119,14 @@ impl Binding {
         dyad::ty(ty) != ty
     }
 
+    /// Whether the name is a field, laid out inside each value of the type that is its frame.
+    ///
+    /// # Safety
+    /// As `is_storage`.
+    pub unsafe fn is_field(&self) -> bool {
+        !self.frame.is_null() && !self.is_storage()
+    }
+
     /// What a use of the name yields: the storage itself, or the dyad the name denotes.
     ///
     /// # Safety
