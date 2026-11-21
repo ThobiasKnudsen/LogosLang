@@ -80,15 +80,21 @@ pub(crate) unsafe fn set_declared(node: DyadPtr, declared: DyadPtr) {
     *(dyad::value(node) as *mut DyadPtr).add(DECL_DECLARED) = declared;
 }
 
+/// Whether a declaration has nothing to run: the storage a hole laid out, `x := T ?`, which
+/// nothing initializes, or a node with no run, which is data and was built whole at parse.
+///
+/// # Safety
+/// `declared` must be a valid dyad from the store.
+unsafe fn runs_nothing(types: &Core, declared: DyadPtr) -> bool {
+    types.is_storage(declared)
+        || super::read::read_kind(types, declared) == super::read::Read::Aggregate
+}
+
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid declare node; its declared slot is a valid dyad.
     unsafe {
         let declared = declared_of(node);
-        // The storage a hole laid out, `x := T ?`, has nothing to run: nothing
-        // initializes it. Nor has a node with no run, which is data and was built whole at parse.
-        if !rt.types().is_storage(declared)
-            && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate
-        {
+        if !runs_nothing(rt.types(), declared) {
             rt.run(declared)?;
         }
     }
@@ -98,7 +104,10 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run`].
     unsafe {
-        lw.lower(declared_of(node))?;
+        let declared = declared_of(node);
+        if !runs_nothing(lw.types(), declared) {
+            lw.lower(declared)?;
+        }
     }
     Ok(lw.const_i32(0))
 }

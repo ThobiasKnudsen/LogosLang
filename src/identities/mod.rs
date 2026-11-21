@@ -83,6 +83,7 @@ pub mod this;
 pub(crate) mod type_mint;
 #[path = "type.rs"]
 mod type_mod;
+pub(crate) mod union;
 pub(crate) mod waiting;
 #[path = "while.rs"]
 mod while_mod;
@@ -192,6 +193,7 @@ pub struct Core {
     pub print: print::PrintIds,
     pub error: error::ErrorIds,
     pub abort: abort::AbortIds,
+    pub union: union::UnionIds,
     pub run_body: run_body::RunBodyIds,
     pub by_copy: by_copy::ByCopyIds,
     pub here: here::HereIds,
@@ -415,6 +417,7 @@ impl Core {
         immediate::register(&mut cx);
         let error = error::register(&mut cx, &callables);
         let abort = abort::register(&mut cx, &callables);
+        let union = union::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let by_copy = by_copy::register(&mut cx, &callables);
         let (copy_, copy_leaf) = copy::register(&mut cx, &callables);
@@ -549,6 +552,7 @@ impl Core {
             print,
             error,
             abort,
+            union,
             run_body,
             by_copy,
             here,

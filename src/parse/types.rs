@@ -134,6 +134,16 @@ impl SlotKind {
     }
 }
 
+/// What a list of field lines is read for. A parameter takes no `pub`, which a read from outside
+/// asks of a member and a field; only a type body's lines fill slots, declare `static` members
+/// and give a field a default.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FieldList {
+    Parameters,
+    Members,
+    TypeBody,
+}
+
 /// Each field's offset inside a value of `ty`, packed in order at the width a place of its type
 /// takes, written onto the field's binding; the fields' total, the type's `size_bytes`.
 /// DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹.
@@ -303,6 +313,133 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
+    /// `union`'s constructor: `( members )` as the union of those members, the mint `type_mint`
+    /// keeps under `union` and each member's spelling, gates and type in written order (›A union
+    /// holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]). For the name
+    /// that `num := type union ( … )` declares it gives the name's own dyad over that mint's
+    /// record (›Every type is minted by its contents through `type_mint`; the name that holds a
+    /// `type ( … )` gives it its identity‹ [[R383]]).
+    pub(crate) fn construct_union(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        if !self.reads_own_bracket(tape) {
+            return Err(ParseError::UnionNeedsMembers);
+        }
+        let named = match (self.cx.filling.last(), self.cx.filling_at.last()) {
+            (Some(_), Some(&at)) => self
+                .cx
+                .source
+                .get(at..self.cx.pos)
+                .is_some_and(|t| t.split_whitespace().eq(["type", "union"])),
+            _ => false,
+        };
+        let opened_at = self.cx.pos;
+        self.expect_open()?;
+        let depth = self.cx.scopes.depth();
+        let scope = self.open_scope();
+        let (mut members, mut bindings) = (Vec::new(), Vec::new());
+        let lines = self.field_lines(FieldList::Members, scope, &mut members, &mut bindings);
+        // As a type's body stands below its fields, where a member is looked up through a value.
+        let body = self.open_scope();
+        while self.cx.scopes.depth() > depth {
+            self.cx.scopes.pop();
+        }
+        lines.map_err(|e| match e {
+            ParseError::StaticMisplaced | ParseError::BadDeclaredType => ParseError::UnionLine,
+            other => other,
+        })?;
+        self.expect_close()?;
+        if members.is_empty() || members.len() > crate::identities::union::MOST_MEMBERS {
+            let e = match members.len() {
+                0 => ParseError::UnionNeedsMembers,
+                _ => ParseError::UnionTooManyMembers,
+            };
+            return Err(self.fail_at(opened_at, e));
+        }
+        // SAFETY: the members are holes just built with their bindings, their types type nodes.
+        let node = unsafe {
+            self.check_members(&members, &bindings).map_err(|e| self.fail_at(opened_at, e))?;
+            let types = self.types;
+            let mut key = Vec::with_capacity(members.len() * 2);
+            for (&member, &binding) in members.iter().zip(&bindings) {
+                key.push(KeyPart::Name(Binding::spelling(binding)));
+                let mut gates = Binding::gates(binding);
+                gates.sort();
+                key.extend(gates.into_iter().map(KeyPart::Node));
+                key.push(KeyPart::Node(crate::identities::hole::type_in(member)));
+            }
+            let (place, kept) = type_mint::find(self.rt.store, types, types.union.union, &key)
+                .map_err(ParseError::Run)?;
+            let mint = match kept {
+                Some(mint) => mint,
+                None => {
+                    let mint = self.rt.store.alloc_leaf(types.type_);
+                    let size_bytes =
+                        crate::identities::union::lay_out(types, mint, &members, &bindings);
+                    let members =
+                        crate::identities::array::build(self.rt.store, types.array_, &members);
+                    let bindings =
+                        crate::identities::array::build(self.rt.store, types.array_, &bindings);
+                    let record = crate::identities::meta::formed_record(
+                        self.rt.store,
+                        types.union.union,
+                        scope,
+                        members,
+                        bindings,
+                        size_bytes,
+                        body,
+                    );
+                    dyad::set_head(mint, record.cast());
+                    type_mint::keep(self.rt.store, types, place, mint).map_err(ParseError::Run)?;
+                    mint
+                }
+            };
+            if named {
+                self.rt.store.alloc_head(types.type_, dyad::head(mint))
+            } else {
+                mint
+            }
+        };
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// A union holds only members whose values move whole into its room and end with nothing
+    /// to free; refusing a member that owns is a stand-in for #159.
+    ///
+    /// # Safety
+    /// `members` must be holes from the store, each over a type node, and `bindings` their
+    /// bindings in the same order.
+    unsafe fn check_members(
+        &self,
+        members: &[DyadPtr],
+        bindings: &[DyadPtr],
+    ) -> Result<(), ParseError> {
+        use crate::identities::drop_model::{teardown_of_type, Teardown};
+        use crate::identities::{copy, hole, read::carry_of};
+        let types = self.types;
+        let mut owning = Vec::new();
+        for (&member, &binding) in members.iter().zip(bindings) {
+            let ty = hole::type_in(member);
+            let name = Binding::spelling(binding);
+            if carry_of(types, ty).is_none() {
+                return Err(ParseError::UnionMemberUnkept(Box::new(name)));
+            }
+            if copy::owns(types, ty)
+                || teardown_of_type(types, ty) != Teardown::Nothing
+                || Binding::has_gate(binding, types.own_)
+            {
+                owning.push(name);
+            }
+        }
+        if owning.is_empty() {
+            Ok(())
+        } else {
+            Err(ParseError::UnionMemberOwns(owning))
+        }
+    }
+
     /// A `fn`'s parameter list, in a scope of its own that the body reopens. Also the fields'
     /// bindings in order, the leading one's spelling-less; their offsets are the caller's to write
     /// once the record node exists.
@@ -325,7 +462,7 @@ impl<'a> Parser<'a> {
             fields.push(field);
             bindings.push(self.mint_binding(field, scope, b""));
         }
-        let lines = self.field_lines(false, scope, &mut fields, &mut bindings);
+        let lines = self.field_lines(FieldList::Parameters, scope, &mut fields, &mut bindings);
         self.cx.scopes.pop();
         lines?;
         self.expect_close()?;
@@ -333,17 +470,18 @@ impl<'a> Parser<'a> {
         Ok((scope, fields_arr, bindings))
     }
 
-    /// The lines of a parameter list, or with `relaxed` of a type body (DESIGN ›A type body
-    /// describes one level‹): its fields among its slot fills, `static` members and prose. Each
-    /// name is declared into `scope`, below the type's own in a type body, against every name open
-    /// there.
+    /// The lines of a parameter list, of a union's members, or of a type body (DESIGN ›A type
+    /// body describes one level‹): its fields among its slot fills, `static` members and prose.
+    /// Each name is declared into `scope`, below the type's own in a type body, against every
+    /// name open there.
     fn field_lines(
         &mut self,
-        relaxed: bool,
+        list: FieldList,
         scope: DyadPtr,
         fields: &mut Vec<DyadPtr>,
         bindings: &mut Vec<DyadPtr>,
     ) -> Result<(), ParseError> {
+        let relaxed = list == FieldList::TypeBody;
         loop {
             if relaxed {
                 // A type body's line has run as it was read, its `static` made there.
@@ -386,7 +524,8 @@ impl<'a> Parser<'a> {
             // and so does `pub` in a type body, where a read from outside needs it (›Fields are
             // read with a dot outside their scope‹ [[R234]]).
             let t = self.types;
-            let is_gate = |w: DyadPtr| w == t.mut_ || w == t.immut_ || relaxed && w == t.pub_;
+            let read_outside = list != FieldList::Parameters;
+            let is_gate = |w: DyadPtr| w == t.mut_ || w == t.immut_ || read_outside && w == t.pub_;
             let mut gates = Vec::new();
             while let Some(gate) = word.filter(|&w| is_gate(w)) {
                 gates.push(gate);
@@ -512,7 +651,7 @@ impl<'a> Parser<'a> {
                 crate::identities::numtype::is_pointer_type(logos)
                     && !crate::identities::meta::destructor_of(logos).is_null()
             };
-            if !relaxed && (owning || owns_node) {
+            if list == FieldList::Parameters && (owning || owns_node) {
                 self.cx.pos = start;
                 return Err(ParseError::OwnParameterNotInSeed);
             }
@@ -805,8 +944,9 @@ impl<'a> Parser<'a> {
         self.cx.open.push(OpenScope::default());
         let saved_depth = std::mem::replace(&mut self.cx.runtime_depth, 0);
         let (mut fields, mut bindings) = (Vec::new(), Vec::new());
-        let lines =
-            outer.and_then(|_| self.field_lines(true, field_scope, &mut fields, &mut bindings));
+        let lines = outer.and_then(|_| {
+            self.field_lines(FieldList::TypeBody, field_scope, &mut fields, &mut bindings)
+        });
         let lines = lines.and_then(|()| {
             self.drain().map_err(|e| match e {
                 ParseError::Run(r) => {

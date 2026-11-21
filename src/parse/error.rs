@@ -353,6 +353,18 @@ pub enum ParseError {
     KeptReadEnded { name: Box<String>, reader: Box<String> },
     /// `own @T ?` on a parameter, which would consume the caller's argument.
     OwnParameterNotInSeed,
+    /// `union` with no `( … )` after it, or with no member in it.
+    UnionNeedsMembers,
+    /// A union of more members than its tag tells apart.
+    UnionTooManyMembers,
+    /// A line of a `union ( … )` that is no member: a `static`, a slot fill or a default.
+    UnionLine,
+    /// Members of a union, named here, whose types own what they hold.
+    UnionMemberOwns(Vec<String>),
+    /// A member of a union, named here, whose value does not move whole into a place.
+    UnionMemberUnkept(Box<String>),
+    /// A union type applied to values, as a type with fields is.
+    UnionApplied,
     /// A `move` or `free` inside a loop or `fn` body names a place declared
     /// outside it: the loop would read a dead name on its next pass, and a
     /// function may own only what its parameters hand it (DESIGN ›`move` and `free` are
