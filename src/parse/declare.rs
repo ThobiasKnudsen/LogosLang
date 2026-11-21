@@ -20,13 +20,19 @@ impl<'a> Parser<'a> {
 
     /// A write into a name is granted by its own binding, and into a place reached by a path by
     /// every binding along it, `immut` vetoing first; the constructor's fill of its fresh node is
-    /// granted unless `immut` vetoes it; a place reached no such way passes here.
+    /// granted unless `immut` vetoes it; a write of a name's `lex_rank` is decided as a write at
+    /// its `:gate`; a place reached no such way passes here.
     pub(crate) fn check_write(&self, target: &Cell) -> Result<(), ParseError> {
         use crate::identities::this;
         let node = target.dyad;
         // SAFETY: `target` holds a reduced dyad from the store and a null or `array` path; a
-        // fill's binding is a binding dyad.
+        // fill's binding and an `x:f` read's are binding dyads.
         unsafe {
+            if let Some(binding) = self.types.binding_read_of(node) {
+                if crate::identities::read::is_lex_rank_field(self.types, node) {
+                    return self.check_lex_write(binding);
+                }
+            }
             if this::is_field_read(self.types, node) && this::is_fill(self.types, node) {
                 let binding = this::field_binding_of(self.types, node);
                 if Binding::has_gate(binding, self.types.immut_) {
@@ -43,6 +49,20 @@ impl<'a> Parser<'a> {
             }
         }
         self.check_gates(&self.path_of(target))
+    }
+
+    /// A write at a name's lex level, admitted from the scope that declares it and the scopes
+    /// below; `mut` and `immut` guard the value and have no part in it. ›Two levels: the binding
+    /// is the lex level, the dyad is the value level‹ [[R284]]
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store.
+    unsafe fn check_lex_write(&self, binding: DyadPtr) -> Result<(), ParseError> {
+        if self.cx.scopes.is_open(Binding::read(binding).scope) {
+            Ok(())
+        } else {
+            Err(ParseError::LexOutsideScope(Box::new(Binding::spelling(binding))))
+        }
     }
 
     /// `value`, written into `place`: where `place` is a name whose type its declaring line gives

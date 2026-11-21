@@ -171,6 +171,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::NotMutable(name) => {
             format!("`{name}` is not `mut`: a name is written after its declaration only when declared `mut {name} := …`")
         }
+        ParseError::LexOutsideScope(name) => format!(
+            "`{name}:lex_rank` is written only from the scope that declares `{name}` or a scope inside it"
+        ),
         ParseError::ImportTakesFile => {
             "`import` reads the file it is given: write `import file «path»`".into()
         }

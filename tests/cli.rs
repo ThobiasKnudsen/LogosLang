@@ -4135,6 +4135,65 @@ s
 }
 
 #[test]
+fn a_name_s_lex_rank_is_written_from_its_own_scope_and_below_whatever_its_gates() {
+    // ›Two levels: the binding is the lex level, the dyad is the value level‹ [[R284]]
+    for (line, want) in [
+        ("s := i32 5, s:lex_rank = 7, s:lex_rank", "7.0"),
+        ("immut s := i32 5, s:lex_rank = 7, s:lex_rank", "7.0"),
+        ("mut s := i32 5, s:lex_rank = 7, s:lex_rank", "7.0"),
+        ("s := i32 5, ( s:lex_rank = 4 ), s:lex_rank", "4.0"),
+        ("s := i32 5, f := fn () -> f64 ( s:lex_rank = 3, s:lex_rank ), f()", "3.0"),
+        ("s := i32 5, f := fn () -> f64 ( s:lex_rank = 3, s:lex_rank ), f.compile(), f()", "3.0"),
+        ("g := ( a := i32 1, a ), g:start.rhs.dyads[0].lhs:lex_rank", "0.0"),
+    ] {
+        let out = logos().arg(line).output().unwrap();
+        assert!(out.status.success(), "{line}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{line}");
+    }
+    let refused =
+        "`a:lex_rank` is written only from the scope that declares `a` or a scope inside it";
+    for line in [
+        "g := ( a := i32 1, a ), g:start.rhs.dyads[0].lhs:lex_rank = 7",
+        "g := ( a := i32 1, a ), f := fn () -> void ( g:start.rhs.dyads[0].lhs:lex_rank = 7 ), \
+         f.compile(), f()",
+    ] {
+        let out = logos().arg(line).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{line}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(refused), "{line}: {stderr}");
+    }
+    let (echoes, stderr) = repl(
+        "g := ( a := i32 1, a )\n\
+         g:start.rhs.dyads[0].lhs:lex_rank = 7\n\
+         g:start.rhs.dyads[0].lhs:lex_rank\n",
+    );
+    assert_eq!(echoes, ["0.0"], "stderr: {stderr}");
+    assert_eq!(stderr.matches(refused).count(), 1, "stderr: {stderr}");
+    assert_eq!(stderr.matches("error").count(), 1, "stderr: {stderr}");
+}
+
+#[test]
+fn a_field_of_a_binding_value_is_written_under_the_value_s_gates() {
+    // `b.lex_rank` is `b`'s own field, the dyad level, which `mut` guards; only `b:lex_rank`
+    // reaches `b`'s binding.
+    for (line, want) in [
+        ("b := binding ?, b.lex_rank = 3", "`b` is not `mut`"),
+        ("f := fn (b := binding ?) -> void ( b.lex_rank = 3 ), f", "`b` is not `mut`"),
+        ("mut b := binding ?, b.lex_rank = 3", "`lex_rank` is not `mut`"),
+        (
+            "f := fn () -> f64 ( mut b := binding ?, b.lex_rank = 3, b.lex_rank ), f()",
+            "`lex_rank` is not `mut`",
+        ),
+    ] {
+        let out = logos().arg(line).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{line}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(want), "{line}: {stderr}");
+        assert!(!stderr.contains("is written only from the scope"), "{line}: {stderr}");
+    }
+}
+
+#[test]
 fn a_parameter_and_a_local_are_names_of_the_call_s_frame() {
     // Parameters first, then the locals, packed at their widths: `a` at 0, `b` at 4, `c` at 12;
     // their frame is the function, not the program's.

@@ -170,6 +170,8 @@ pub enum ParseError {
     DoubleGate,
     /// `x = …` on a name not declared `mut`; carries the name.
     NotMutable(Box<String>),
+    /// `x:lex_rank = …` written outside the scope that declares `x`; carries the name.
+    LexOutsideScope(Box<String>),
     /// A write into a name or field declared `immut`; carries the name.
     Immutable(Box<String>),
     /// A read of a name declared `T ?` before a sibling write filled it; carries the name.
