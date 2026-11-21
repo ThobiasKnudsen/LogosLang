@@ -8781,7 +8781,7 @@ fn a_bare_static_call_works_on_the_value_the_body_is_about() {
 
 /// ›A bare call of a `static` function works on the value the calling body is about‹ [[R238]]: a
 /// function written inside a body about a value, or a value made once in it, is about none, so a
-/// bare call there takes only a function that uses no field, and a field is no name there.
+/// bare call there takes only a function that uses no field.
 #[test]
 fn a_function_written_inside_a_body_about_a_value_is_about_none() {
     let t = "t := type ( mut x := i32 ?, static f := fn () -> i32 ( x ), \
@@ -8834,13 +8834,23 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
             "`f` works on a value of its type: call it through one, by the member that holds it,",
         ),
         (inc("k := fn () -> i32 ( twice() ), k() + 1"), "`twice` works on a value of its type"),
+        // A field named bare there is the outer body's parameter, refused as its locals are.
         (
             format!("{t}static h := fn () -> i32 ( k := fn () -> i32 ( x ), k() ) ), v := t (5), v.h()"),
-            "`x` is not in scope here",
+            "1:179: error: a nested function cannot use an outer function's local or parameter",
+        ),
+        (
+            format!("{t}static free = ( k := fn () -> i32 ( x ), print «{{k()}}» ) ), v := t (5)"),
+            "a nested function cannot use an outer function's local or parameter",
         ),
         (
             "m := { a := i32 7, h := fn () -> i32 ( k := fn () -> i32 ( a ), k() ) }, m.h()".to_string(),
-            "`a` is not in scope here",
+            "1:60: error: a nested function cannot use an outer function's local or parameter",
+        ),
+        (inc("k := fn () -> i32 ( a ), k() + 1"), "a nested function cannot use an outer function's local"),
+        (
+            format!("{t}static h := fn () -> i32 ( static c := x, c ) ), v := t (5), v.h()"),
+            "1:171: error: a value made once, where it is written (`static`, `immediate`), cannot use a name",
         ),
     ] {
         let (code, _, stderr) = run_line(&src);
