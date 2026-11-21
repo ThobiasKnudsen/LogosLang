@@ -4285,6 +4285,7 @@ fn the_binding_read_answers_scope_and_range_and_holds_no_gate() {
     // ›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]
     for (line, want) in [
         ("pub mut x := i32 5, x:gate", "unknown name `gate`"),
+        ("x := i32 5, (x + x):gate", "unknown name `gate`"),
         ("mut x := i32 5, x:mut", "`mut` is not in scope here"),
         ("pub x := i32 5, x:pub", "`pub` is not in scope here"),
     ] {

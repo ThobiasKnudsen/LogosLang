@@ -1560,7 +1560,7 @@ impl<'a> Parser<'a> {
         }
         let value = match name {
             "scope" => self.cx.scopes.current().unwrap_or(std::ptr::null_mut()),
-            "start" | "end" | "gate" => std::ptr::null_mut(),
+            "start" | "end" => std::ptr::null_mut(),
             _ => {
                 // Not a field of a binding: the same error a binding read gives.
                 self.resolve_field(types.binding_, nstart, nlen)?;

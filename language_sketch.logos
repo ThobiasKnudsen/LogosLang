@@ -47,21 +47,18 @@ caller := type ?  # where it was called from: for a constructor the appearance o
                   # (ruled 15 September 2026, #123; a walk down stops at a section boundary, a function's scopes counting as one)
 
 mut := type (
-    # a gate word (DESIGN ›`mut` is a gate on the binding‹, ruled 5-7 September 2026; its place ruled 15 September 2026): a
-    # prefix word on the NAME, left of :=, mut x := 5, pub mut x := i32 5, superseding the right-side x := mut 5 of
-    # 5 September. It is the entry «write allowed from the declaring scope and its descendants»; the binding := fills
-    # takes it where the gate type and := meet on the tape, on the name's side, so mut never reaches across := (the
-    # target := ? this body once held is gone with that). gates combine as grants and vetoes, ? being silence.
-    # Standing anywhere else, f(mut i32 5), it is a gate value where none is accepted, the checked error. mut T as a
-    # TYPE is superseded: a type never carries mutability.
-    # ruled 15 September 2026: a gate word reads the declaration to its right, each gate its own constructor, so
-    # pub mut x := 5 is pub reading mut reading x := 5. open: a gated return type, which has no name to stand beside.
+    # a gate word (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹, ruled 21 November 2026, superseding
+    # the gate on the binding of 5-15 September): it stands right of :=, reads the whole value to its right and gives it
+    # with its type gated: x := mut i32 5 is [mut i32 | 5], x := pub (a + b) gates the sum. The gates over a type are one
+    # gate node, [gate mint | the type it gates], one mint per set of gates, so pub mut i32 is mut pub i32, and a gate
+    # node never points at another. A gated type reads as the type it gates; a write and a gate's check act on the
+    # gate, and x.type gives it. No gate node is the default gates: read from its own scope and below, written nowhere.
+    # A copy takes no gate but own: y := x is a plain i32, y := mut x a writable copy. f(mut i32 5) passes a value of
+    # type mut i32. gates combine as grants and vetoes, ? being silence.
     parse = (
-        ?                                 # drive the declaration to the right (its name, then :=, or another gate word first); when it
-                                          # stands constructed at tape[1], this mut node is the gate: a body node referring to that name
-                                          # (ruled 15 September 2026), its creation a write at the name's :gate voted on by the gates
-                                          # already standing there, and the name's binding caches it;
-                                          # nothing declared there is the checked error
+        ?                                 # read the whole value to the right, everything there reduced to one value first, and give
+                                          # it with mut joined to the gates its type has: one gate node of the mint for that set,
+                                          # which type_mint keeps; nothing to the right is the checked error
     )
 )
 
@@ -146,19 +143,18 @@ xor := type ?
 not := type ?
 
 
-mut a := i32 32       # mut gates a's binding, never the type (5 September 2026), standing beside the name (15 September 2026); the dyad is one block, type word first (29 September 2026), no phase, no mutability bit
+a := mut i32 32       # mut is in a's type, one gate node over i32, and a's binding holds no gate (21 November 2026); the dyad is one block, type word first (29 September 2026), no phase
 binding of a {        # the trie entry (id_context renamed record 7 September 2026, binding 24 September 2026): one per declared name, itself a dyad of type binding
     dyad -> a
     scope -> (the scope a was declared in)
     start -> (the := node that declared a)
     end -> null                                        # to scope end, unless move a / free a ends the name earlier
-    gate -> [read own scope, write own scope while null, mut]   # ordered set, grants and vetoes
     name -> «a»                                        # the spelling the trie holds; a:name (ruled 14 September 2026: the binding is the lex level,
                                                        # every fact tied to the name; the dyad is the other level, and := binds only that)
     lex_rank -> 0                                      # ranks the spelling at a text position; name data, never crosses := (14 September 2026)
 }
-a {                   # the dyad: type and value, nothing else; a.type reads its type, a:scope and a:gate read the binding
-    type -> i32
+a {                   # the dyad: type and value, nothing else; a.type reads its type, its gates with it; a:scope reads the binding
+    type -> mut i32                                    # the gate node [gate mint of mut | i32]: it reads as i32 but for a write, a gate's check and a.type
     value -> 32
 }
 
