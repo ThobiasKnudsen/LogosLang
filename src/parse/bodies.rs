@@ -339,33 +339,33 @@ pub const FN_OUTER: usize = 5;
 /// `static` function's body reads or writes a field of its value; null for neither.
 pub const FN_RECEIVER: usize = 6;
 
-/// The result's gate: the `own` gate word for `-> own T`, else null (DESIGN ›A last value
-/// moves out‹).
-pub const FN_OUTPUT_GATE: usize = 7;
-
-pub const FN_SLOTS: usize = FN_OUTPUT_GATE + 1;
+pub const FN_SLOTS: usize = FN_RECEIVER + 1;
 
 /// The fields' names in slot order, as reflection reads them.
 pub const FN_FIELDS: [&str; FN_SLOTS] =
-    ["input", "output_type", "body", "bcode", "frame", "outer", "receiver", "output_gate"];
+    ["input", "output_type", "body", "bcode", "frame", "outer", "receiver"];
 
-/// A function's result as its signature writes it, for the check where its body closes.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct WrittenResult<'s> {
-    /// The source after `->`, as an error names the type.
-    text: &'s str,
-    /// Whether `own` stands in it.
-    owned: bool,
-}
-
-/// Refuses a value a function hands on, `made` as `handed_ends` reads it, that its `own` mark
-/// does not say: a borrow under the mark, or, where the result is written (`written`), a value
-/// made in it without the mark (DESIGN ›A last value moves out‹). No `written` is a `run`.
-fn check_handed(marked: bool, written: Option<&str>, made: Option<bool>) -> Result<(), ParseError> {
+/// Refuses a value a function hands on through a pointer result, `made` as `handed_ends` reads
+/// it, that the result does not say: a borrow under an owning `@T`, or, where the result is
+/// written (`written`, the source after `->`), a value made under a plain one. A result of any
+/// other type owns what it gets either way (›A last value moves out‹ [[R66]]). No `written` is a
+/// `run`.
+///
+/// # Safety
+/// `output` must be the result type node of the function whose body closes.
+unsafe fn check_handed(
+    output: DyadPtr,
+    written: Option<&str>,
+    made: Option<bool>,
+) -> Result<(), ParseError> {
+    if !crate::identities::numtype::is_pointer_type(output) {
+        return Ok(());
+    }
+    let owns = !crate::identities::meta::destructor_of(output).is_null();
     match (made, written) {
-        (Some(false), Some(_)) if marked => Err(ParseError::OwnResultBorrows),
-        (Some(false), None) if marked => Err(ParseError::RunReturnBorrows),
-        (Some(true), Some(text)) if !marked => Err(ParseError::HandsOnMade(text.to_string())),
+        (Some(false), Some(_)) if owns => Err(ParseError::OwnResultBorrows),
+        (Some(false), None) if owns => Err(ParseError::RunReturnBorrows),
+        (Some(true), Some(text)) if !owns => Err(ParseError::HandsOnMade(text.to_string())),
         _ => Ok(()),
     }
 }
@@ -756,7 +756,7 @@ impl<'a> Parser<'a> {
         self.expect_arrow()?;
         self.skip_whitespace();
         let start = self.cx.pos;
-        let (output, owned) = {
+        let output = {
             let was = std::mem::replace(&mut self.cx.result_type, true);
             let items = self.drive_until_open(RightSide::ReturnType);
             self.cx.result_type = was;
@@ -766,14 +766,13 @@ impl<'a> Parser<'a> {
             })?;
             // The function is built here, so its result type is needed now (›`fn` is not a
             // primitive: a function is a type in this same shape‹ [[R199]]).
-            let ty = self
-                .operand_dyad(out)
+            self.operand_dyad(out)
                 .and_then(|d| self.type_known_now(d))
-                .map_err(|e| self.fail_at(start, e))?;
-            (ty, out.owning)
+                .map_err(|e| self.fail_at(start, e))?
         };
         let source = self.cx.source;
-        let result = WrittenResult { text: source[start..self.cx.pos].trim_end(), owned };
+        // The source after `->`, as an error names the type.
+        let result = source[start..self.cx.pos].trim_end();
         if !member {
             // SAFETY: `input` was just built by `parse_record`; `binding` is the caller's.
             return unsafe {
@@ -860,7 +859,7 @@ impl<'a> Parser<'a> {
     /// body parsed deferred with the parameter scope reopened. The node is `spec`, a run
     /// body's node minted for its set, or fresh; its signature is on it, and `binding`
     /// points at it, before the body parses, so a recursive self-call resolves its types.
-    /// `result` is `None` for a type's `run` body, which writes no `->`.
+    /// `result` is the source after `->`, `None` for a type's `run` body, which writes none.
     ///
     /// # Safety
     /// `input` must be a record node and `params` its fields' bindings in order; `spec`
@@ -873,17 +872,14 @@ impl<'a> Parser<'a> {
         input: DyadPtr,
         params: &[DyadPtr],
         output: DyadPtr,
-        result: Option<WrittenResult>,
+        result: Option<&str>,
         spec: DyadPtr,
         binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        let owned = result.is_some_and(|r| r.owned);
-        let gate = if owned { self.types.own_ } else { std::ptr::null_mut() };
         let node = if spec.is_null() {
             let mut early = [std::ptr::null_mut(); FN_SLOTS];
             early[FN_INPUT] = input;
             early[FN_OUTPUT] = output;
-            early[FN_OUTPUT_GATE] = gate;
             self.rt.store.alloc_words(fn_type, &early)
         } else {
             // SAFETY: `spec` holds `FN_SLOTS` words (the caller's contract).
@@ -891,7 +887,6 @@ impl<'a> Parser<'a> {
                 let slots = dyad::value(spec) as *mut DyadPtr;
                 *slots.add(FN_INPUT) = input;
                 *slots.add(FN_OUTPUT) = output;
-                *slots.add(FN_OUTPUT_GATE) = gate;
             }
             spec
         };
@@ -943,48 +938,43 @@ impl<'a> Parser<'a> {
         let OpenFn { size: frame_size, outer, returns, .. } =
             self.cx.frames.pop().expect("parse_fn pushed a frame");
         let body = body?;
-        // What the call gets lands in `output`: a `dyad` result is a new node the caller holds
-        // whatever the body gives (›A `dyad ?` place is transparent: a placeholder for a new node
-        // of any type‹ [[R293]]), and a `dyad` read through into a typed result is a value of that
-        // type, so the body's value is made for the caller only where `output` has an end.
-        // SAFETY: `output` is the result type node the signature read.
-        let lands_with_end = output != self.types.dyad_
-            && unsafe { crate::identities::drop_model::has_end(self.types, output) };
         // The value its lines give is the call's, so an `if` among them is a used one.
         let made = if output == self.types.void_ {
             None
         } else {
             // SAFETY: `body` is the valid dyad just built.
             unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?
-                .filter(|_| lands_with_end)
         };
 
         // SAFETY: `body`/`output` are valid dyads just built.
         let body =
             unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };
-        // A type's `run` has no `->` to write `own` in, so its close writes it: stand-in for P128.
-        if result.is_none() && made == Some(true) {
-            // SAFETY: `output` is the type the node was minted with, from the store.
+        // A type's `run` has no `->` to write `own` in, so over a pointer result its close writes
+        // it: stand-in for P128.
+        // SAFETY: `output` is the type the node was minted with, from the store.
+        let plain_pointer = unsafe {
+            crate::identities::numtype::is_pointer_type(output)
+                && crate::identities::meta::destructor_of(output).is_null()
+        };
+        let result_type = if result.is_none() && made == Some(true) && plain_pointer {
+            // SAFETY: as above.
             let owned = unsafe {
                 crate::identities::drop_model::own_result(self.rt.store, self.types, output)
             }?;
             // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
-            unsafe {
-                let slots = dyad::value(node) as *mut DyadPtr;
-                *slots.add(FN_OUTPUT) = owned;
-                *slots.add(FN_OUTPUT_GATE) = self.types.own_;
-            }
-        }
+            unsafe { *(dyad::value(node) as *mut DyadPtr).add(FN_OUTPUT) = owned };
+            owned
+        } else {
+            output
+        };
         // The last value, once its type is, and every `return`'s operand, which a `return` makes
-        // the call's value, are checked against the mark a call reads.
-        // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above.
-        let marked =
-            unsafe { !(*(dyad::value(node) as *const DyadPtr).add(FN_OUTPUT_GATE)).is_null() };
-        let written = result.map(|r| r.text);
-        check_handed(marked, written, made)?;
+        // the call's value, are checked against the result type a call reads.
+        // SAFETY: `result_type` is the result type node the function carries.
+        unsafe { check_handed(result_type, result, made) }?;
         for r in &returns {
-            let made = r.made.filter(|_| lands_with_end);
-            check_handed(marked, written, made).map_err(|e| self.fail_at(r.at, e))?;
+            // SAFETY: as above.
+            unsafe { check_handed(result_type, result, r.made) }
+                .map_err(|e| self.fail_at(r.at, e))?;
         }
         for r in returns {
             let ends: Vec<DyadPtr> = r

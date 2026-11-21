@@ -468,13 +468,13 @@ pub fn parse_message(e: &ParseError) -> String {
             "this name borrows what it holds, so it cannot move it; only its owner can".into()
         }
         ParseError::OwnNeedsPointer => {
-            "`own` in a type is written over a pointer, `own @T ?` or `-> own @T`, or a type \
-             whose body fills `free`, `own t ?` or `-> own t`"
+            "`own` stands only before a pointer, `own @T ?` or `-> own @T`; a value of any other \
+             type is owned with no word written, where its type fills `free`"
                 .into()
         }
         ParseError::OwnOutsideType => {
-            "`own` marks a hole, `own @T ?` or `own t ?`, or a function's result, `-> own @T`; \
-             `move x` moves a value"
+            "`own` marks a hole, `own @T ?`, or a function's result, `-> own @T`; `move x` moves \
+             a value"
                 .into()
         }
         ParseError::HandsOnMade(written) => {

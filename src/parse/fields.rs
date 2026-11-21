@@ -694,6 +694,14 @@ impl<'a> Parser<'a> {
     ) -> Result<(DyadPtr, usize), ParseError> {
         let Member { start: nstart, len: nlen, index, key, call, writes } = member;
         let unit_call = matches!(call, Some(ref a) if a.is_empty());
+        // A call that ends in a dereference hands nothing back to a path that goes on through
+        // it, so its line holds nothing for it (›`a[k]` is an application, exactly as `a(k)`‹
+        // [[R227]]).
+        let handed = lhs;
+        let lhs = crate::identities::read::on_path(self.rt.store, self.types, handed);
+        if lhs != handed {
+            self.take(handed);
+        }
         // The member name is read as its raw spelling: a field is dot-only,
         // so what the driver resolved it to is beside the point. `index` and
         // `unit_call` are the reads that take one more cell; the count consumed is returned.
@@ -1522,7 +1530,7 @@ impl<'a> Parser<'a> {
         };
         let scope = self.cx.scopes.current().expect("`&` parses in an open scope");
         let binding = self.mint_binding(std::ptr::null_mut(), scope, b"");
-        let declared = self.land_at_binding(binding, value, false, false)?;
+        let declared = self.land_at_binding(binding, value, false)?;
         // Only a landing that lays out bytes holds the value, so a refusal here holds nothing.
         if !types.is_storage(binding) {
             return Err(ParseError::BadAddressOf);

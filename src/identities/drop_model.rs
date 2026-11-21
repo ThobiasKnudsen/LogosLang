@@ -109,15 +109,12 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             // SAFETY: `hole.dyad` is what the signature just read after `own`, from the store.
             let owned = unsafe { own_result(p.store(), types, hole.dyad) }?;
             tape.place(owned);
-            tape.at_mut(0).expect("placed above").owning = true;
             return Ok(crate::parse::Constructed::Placed);
         }
         tape.remove(1);
-        let owning = own_hole(p, hole.dyad)?;
+        own_hole(p, hole.dyad)?;
         tape.place(hole.dyad);
-        let cell = tape.at_mut(0).expect("placed above");
-        cell.hole = true;
-        cell.owning = owning;
+        tape.at_mut(0).expect("placed above").hole = true;
         Ok(crate::parse::Constructed::Placed)
     });
 
@@ -504,25 +501,22 @@ pub(crate) unsafe fn freeing_holder(
 }
 
 /// `own @T ?`: the hole `?` built for a pointer type becomes a place of an owning pointer
-/// type, what a field or name declared with it holds (DESIGN ›Memory and concurrency‹).
-/// `own t ?`, `t` a type whose body fills `free`: the hole becomes an owning one (`true`),
-/// and the field or name declared with it owns the node written into it.
-fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseError> {
+/// type, what a field or name declared with it holds (›`move` is the act, `own` the gate word,
+/// `free` the end‹ [[R58]]).
+fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<(), ParseError> {
     let types = p.types();
     // SAFETY: `hole` is the place `?` just built; its type is a type node.
     unsafe {
         let ty = super::hole::declared_type(types.unknown, hole);
-        if meta::is_node_valued(ty, types.fn_type) && !meta::instances_free_of(ty).is_null() {
-            return Ok(true);
-        }
         let owning = owning_pointer(p.store(), types, ty)?;
         super::hole::set_type(hole, owning);
     }
-    Ok(false)
+    Ok(())
 }
 
 /// The owning `@T` that `own` makes of a plain pointer type `ty`; `OwnNeedsPointer` for
-/// anything else, an owning pointer type or a value that is no type at all (`-> own 5`).
+/// anything else: a type that is no pointer, one that fills `free` included, an owning pointer
+/// type, or a value that is no type at all (`-> own 5`).
 ///
 /// # Safety
 /// `ty` must be a valid dyad from `store`.
@@ -542,9 +536,8 @@ unsafe fn owning_pointer(
     ))
 }
 
-/// The result type `-> own T` gives its calls: an owning `@T` for a pointer type, the type
-/// itself for one that fills `free`. DESIGN ›Three fail-closed ownership rules, and `-> own
-/// @T`‹.
+/// The result type `-> own @T` gives its calls, the owning `@T` (›Three fail-closed ownership
+/// rules, and `-> own @T`‹ [[R62]]).
 ///
 /// # Safety
 /// `written` must be a reduced dyad from `store`.
@@ -553,11 +546,7 @@ pub(crate) unsafe fn own_result(
     types: &Core,
     written: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    let ty = types.through(written);
-    if meta::is_record_type(ty) && !meta::instances_free_of(ty).is_null() {
-        return Ok(ty);
-    }
-    owning_pointer(store, types, ty)
+    owning_pointer(store, types, types.through(written))
 }
 
 /// `move` of a place: `[place]` under `move`'s mint for the moved value's type, which it gives,
@@ -1550,11 +1539,11 @@ unsafe fn moved_out_via(
             let template = *(dyad::value(*args) as *const DyadPtr);
             return (*fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template)).then_some(node);
         }
-        // A `dyad` result is a node the callee made or copied for its caller.
+        // The callee's result type alone says it: an owning `@T`, a type whose values have an
+        // end, or a `dyad`, a node the callee made or copied for its caller.
         if dyad::ty(f) == types.fn_type {
-            let owned = !(*fields.add(crate::parse::FN_OUTPUT_GATE)).is_null()
-                || *fields.add(crate::parse::FN_OUTPUT) == types.dyad_;
-            return owned.then_some(node);
+            let result = *fields.add(crate::parse::FN_OUTPUT);
+            return (teardown_of_type(types, result) != Teardown::Nothing).then_some(node);
         }
     }
     None
@@ -2695,7 +2684,7 @@ mod tests {
             ("p := alloc 1 of r(1),\nfree p@,\nfree p@,\n1".into(), 1),
             ("p := alloc 1 of r(1),\np@ = r(2),\nfree p@,\n1".into(), 1),
             ("free (r(1)),\n1".into(), 1),
-            ("f := fn () -> own r ( r(2) ),\nx := f(),\nx.n".into(), 2),
+            ("f := fn () -> r ( r(2) ),\nx := f(),\nx.n".into(), 2),
             ("d := dyad (r, r(1)),\ne := d,\n1".into(), 1),
             ("h := type ( b := mut r ?, free = ( free b ) ),\na := r(1),\nv := h(a),\n1".into(), 1),
             (format!("f := fn () -> i32 ( {body} ),\nf()"), 3),
@@ -2822,7 +2811,7 @@ mod tests {
             ("f := fn () -> i32 ( b := bag (), b.items[2] ), f() + f()", 12),
             ("l := array bagged [bag (), bag ()], l[1].items[0]", 4),
             ("b := bag (), l := array bagged [move b], l[0].items.size", 3),
-            ("a := mut own t ?, a = array i32 [7], a[0]", 7),
+            ("a := mut t ?, a = array i32 [7], a[0]", 7),
         ] {
             assert_eq!(run(&format!("{BAG}{tail}")), (want, 0), "{tail}");
         }
@@ -2830,7 +2819,7 @@ mod tests {
         for tail in [
             "b := bag (), x := array i32 [1], b.items = move x, b.items[0]",
             "b := bag (), b.items = array i32 [1], b.items[0]",
-            "a := mut own t ?, a = array i32 [5], a = array i32 [1], a[0]",
+            "a := mut t ?, a = array i32 [5], a = array i32 [1], a[0]",
             "a := mut array i32 [5], a = array i32 [a[0] - 4], a[0]",
         ] {
             assert_eq!(run(&format!("{BAG}{tail}")), (1, 0), "{tail}");

@@ -968,7 +968,7 @@ impl<'a> Parser<'a> {
             return Err(self.untyped(tok.start, false));
         }
         // SAFETY: `binding` is the binding just declared; `value` a reduced dyad from the store.
-        let declared = unsafe { self.land_at_binding(binding, value, cell.hole, cell.owning) }?;
+        let declared = unsafe { self.land_at_binding(binding, value, cell.hole) }?;
         self.gate_name(binding, cell.gates);
         // A place whose type its line gives when it runs keeps that type, which a write converts
         // into ([`Self::land_in_run_type`]); one laid out then holds no value until a write fills
@@ -1108,7 +1108,6 @@ impl<'a> Parser<'a> {
         binding: DyadPtr,
         value: DyadPtr,
         hole: bool,
-        owning: bool,
     ) -> Result<DyadPtr, ParseError> {
         let value = if hole {
             value
@@ -1125,9 +1124,8 @@ impl<'a> Parser<'a> {
             std::ptr::null_mut()
         };
         Ok({
-            let empty_node = hole
-                && !owning
-                && crate::identities::meta::is_node_valued(declared, self.types.fn_type);
+            let empty_node =
+                hole && crate::identities::meta::is_node_valued(declared, self.types.fn_type);
             if empty_node {
                 // `v := T ?` of a type whose values are nodes: a new empty node each time the
                 // declaration runs, its fields filled one by one as a parse fills `tape[0]`.
@@ -1151,8 +1149,8 @@ impl<'a> Parser<'a> {
                 let t = declared;
                 let width = crate::identities::by_copy::place_width(self.types, t);
                 let place = self.place_for(binding, t, width);
-                // Whatever is written into it later is the name's to end: `a := own t ?`, `a := r ?`
-                // of a plain record whose body fills `free`, `a := own @T ?` and `d := dyad ?`.
+                // Whatever is written into it later is the name's to end: `a := r ?` of a plain
+                // record whose body fills `free`, `a := own @T ?` and `d := dyad ?`.
                 match teardown_of_type(self.types, t) {
                     t if t.of_record() => self.hold_node(binding),
                     Teardown::Nothing => {}

@@ -48,8 +48,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // Installed now that the string logos exists for the role names. `bcode`
     // is null until compiled, `frame` null for a function with no locals,
     // `outer` null for one that reads no outer name, `receiver` null for one
-    // that neither reads nor writes a field of its `static` value, `output_gate`
-    // null for a result written without `own`.
+    // that neither reads nor writes a field of its `static` value.
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,

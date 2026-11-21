@@ -1133,8 +1133,9 @@ unsafe fn owned_lines(store: &mut Store, types: &Core, bracket: DyadPtr) -> Dyad
 
 /// The operand a node's address gives a placed node: for a type's own fresh node, a copy
 /// made each time the placed node runs; for a name or a call yielding a node of a type a Logos
-/// `parse` builds, that expression, run when the placed node runs; any other node by a `dyad`
-/// view. DESIGN ›A name of a type with an instances' `parse` wakes it, as the
+/// `parse` builds, that expression, run when the placed node runs, a call that ends in a
+/// dereference as that place (›`a[k]` is an application, exactly as `a(k)`‹ [[R227]]); any other
+/// node by a `dyad` view. DESIGN ›A name of a type with an instances' `parse` wakes it, as the
 /// instance does‹.
 ///
 /// # Safety
@@ -1149,7 +1150,7 @@ pub(crate) unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
         && super::read::read_kind(&*types, d) != super::read::Read::Node
         && super::node_output(&*types, d).is_some()
     {
-        return d;
+        return super::read::on_path(store, &*types, d);
     }
     store.alloc_head((*types).dyad_, d.cast())
 }
