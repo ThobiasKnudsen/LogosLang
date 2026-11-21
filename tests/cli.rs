@@ -1011,6 +1011,40 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
     }
 }
 
+/// With nothing to its right `array`'s parse touches nothing, so `array` stands as its own value,
+/// at the end of the line, in a bracket and in a call's argument (›`parse_rank` and
+/// `associativity` are data, and the only triggers‹ [[R215]]).
+#[test]
+fn the_array_chooser_with_nothing_to_its_right_stands_as_itself() {
+    let array = "import file «./identities/array.logos»";
+    for (tail, printed) in [
+        ("array", "type"),
+        ("t := type array, t", "type"),
+        ("b := (array) == (array), b", "true"),
+        ("b := (array) == (array i32), b", "false"),
+        ("t := type array, (t) == array", "true"),
+        ("b := i32 == array, b", "false"),
+        ("(array).size_bytes", "16"),
+        ("f := fn (x := type ?) -> bool ( (x) == (array) ), f(array)", "true"),
+        ("f := fn (x := type ?) -> bool ( (x) == (array) ), f.compile(), f(array)", "true"),
+        ("f := fn (x := type ?) -> bool ( (x) == (array) ), f(i32)", "false"),
+        ("g := fn () -> bool ( t := type array, (t) == array ), g()", "true"),
+        ("g := fn () -> bool ( t := type array, (t) == array ), g.compile(), g()", "true"),
+    ] {
+        let src = format!("{array}, {tail}");
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+    }
+    let src = format!("{array}, array 5");
+    let out = logos().arg(&src).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("id after array is not a type"),
+        "stderr: {stderr}"
+    );
+}
+
 /// `v := T ?` of a type whose values are nodes is a new empty node, filled field by field.
 #[test]
 fn an_empty_node_is_filled_field_by_field() {
