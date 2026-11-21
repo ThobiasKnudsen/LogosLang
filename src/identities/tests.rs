@@ -280,8 +280,8 @@ fn an_unnamed_result_is_scratch_freed_with_its_line() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     let src =
-        "pt := type (pub a := i32 ?, pub b := i32 ?), f := fn (p := pt ?) -> i32 ( p.a + p.b ), \
-               mut s := i32 0, for i in 0..200 ( s = s + f(pt(i, 1)) ), s";
+        "pt := type (a := pub i32 ?, b := pub i32 ?), f := fn (p := pt ?) -> i32 ( p.a + p.b ), \
+               s := mut i32 0, for i in 0..200 ( s = s + f(pt(i, 1)) ), s";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
     let root = p.parse_sequence().unwrap();
     let mut rt = p.into_runtime();
@@ -478,25 +478,25 @@ fn parses_a_record_with_typed_fields() {
 fn every_new_name_says_its_type() {
     for src in [
         "x := ?, 0",
-        "mut x := ?, x = i32 5, x",
-        "static x := ?, 0",
+        "x := mut ?, x = i32 5, x",
+        "x := static ?, 0",
         "f := fn (a) -> i32 ( 1 ), 0",
         "f := fn (a := ?) -> i32 ( 1 ), 0",
-        "f := fn (b := i32 ?, mut a) -> i32 ( b ), 0",
+        "f := fn (b := i32 ?, a := mut ?) -> i32 ( b ), 0",
     ] {
         assert_eq!(script_parse_err(src), ParseError::NameNeedsType, "{src}");
     }
     for src in [
         "pt := type ( a := ? ), 0",
         "pt := type ( a ), 0",
-        "pt := type ( a := i32 ?, mut b := ? ), 0",
+        "pt := type ( a := i32 ?, b := mut ? ), 0",
         "type (t)",
     ] {
         assert_eq!(script_parse_err(src), ParseError::FieldNeedsType, "{src}");
     }
     for src in [
-        "mut x := i32 ?, x = 5, x",
-        "mut d := dyad ?, d = i64 5, d = f64 2.5, 0",
+        "x := mut i32 ?, x = 5, x",
+        "d := mut dyad ?, d = i64 5, d = f64 2.5, 0",
         "f := fn (a := dyad ?) -> i32 ( 1 ), f(i64 42)",
         "pt := type ( a := dyad ? ), 0",
     ] {
@@ -946,7 +946,7 @@ fn an_if_needs_no_brackets_in_both_tiers() {
     diff_typed_call(chain, "f(0)", 0);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 2 return 7, n + 1 )", "f(5)", 7);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 2 return 7, n + 1 )", "f(1)", 2);
-    let assign = "fn (n := i32 ?) -> i32 ( mut k := i32 0, if n > 2 k = 1 else k = 2, k )";
+    let assign = "fn (n := i32 ?) -> i32 ( k := mut i32 0, if n > 2 k = 1 else k = 2, k )";
     diff_typed_call(assign, "f(5)", 1);
     diff_typed_call(assign, "f(1)", 2);
     // A bare `else` binds to the nearest `if`.
@@ -955,8 +955,8 @@ fn an_if_needs_no_brackets_in_both_tiers() {
 
 #[test]
 fn an_if_condition_is_its_first_complete_expression() {
-    assert_eq!(run_script("mut m := type ?, m = ?, if m != ? (1) else (2)"), 2);
-    assert_eq!(run_script("mut m := type ?, m = i32, if m != ? 1 else 2"), 1);
+    assert_eq!(run_script("m := mut type ?, m = ?, if m != ? (1) else (2)"), 2);
+    assert_eq!(run_script("m := mut type ?, m = i32, if m != ? 1 else 2"), 1);
     // Right of a comparison a `(` is the body, though the identity could take it.
     assert_eq!(run_script("x := i32 1, if x.type == scope (10) else (20)"), 20);
     assert_eq!(run_script("x := i32 1, if x.type == i32 (10) else (20)"), 10);
@@ -1007,9 +1007,9 @@ fn logos_comparison(field: &str, rank: &str) -> String {
             lhs := {field} ?,\n\
             rhs := {field} ?,\n\
             output_type := type ?,\n\
-            static run = ( lhs == rhs ),\n\
-            static parse_rank = {rank},\n\
-            static parse = (\n\
+            run = ( lhs == rhs ),\n\
+            parse_rank = {rank},\n\
+            parse = (\n\
                 tape[0].type = ≈, tape[0].lhs = tape[-1],\n\
                 tape[0].rhs = tape[1],\n\
                 tape[0].output_type = bool,\n\
@@ -1027,7 +1027,7 @@ fn a_comparison_written_in_logos_ends_a_bare_condition() {
     let eq = logos_comparison("i32", "==.parse_rank");
     assert_eq!(run_script(&format!("{eq}x := i32 3, if x ≈ 3 (10) else (20)")), 10);
     assert_eq!(run_script(&format!("{eq}x := i32 3, if x ≈ 4 10 else 20")), 20);
-    let g = "g := fn (y := i32 ?) -> i32 ( mut n := i32 0, while not n ≈ y n = n + 1, n ),\n";
+    let g = "g := fn (y := i32 ?) -> i32 ( n := mut i32 0, while not n ≈ y n = n + 1, n ),\n";
     assert_eq!(run_script(&format!("{eq}{g}before := g(4), g.compile(), before * 10 + g(4)")), 44);
     let types = logos_comparison("type", "==.parse_rank");
     assert_eq!(run_script(&format!("{types}x := i32 1, if x.type ≈ i32 (10) else (20)")), 10);
@@ -1051,25 +1051,25 @@ fn a_type_right_of_an_infix_outside_the_comparisons_takes_its_bracket() {
 
 #[test]
 fn a_while_body_needs_no_brackets() {
-    assert_eq!(run_script("mut i := i32 0, while i < 5 i = i + 1, i"), 5);
-    assert_eq!(run_script("mut i := i32 0, while i < 5 (i = i + 1), i"), 5);
-    assert_eq!(run_script("mut i := i32 0, while (i < 5) (i = i + 1), i"), 5);
+    assert_eq!(run_script("i := mut i32 0, while i < 5 i = i + 1, i"), 5);
+    assert_eq!(run_script("i := mut i32 0, while i < 5 (i = i + 1), i"), 5);
+    assert_eq!(run_script("i := mut i32 0, while (i < 5) (i = i + 1), i"), 5);
     let f = "f := fn (a := i32 ?) -> i32 (a), ";
-    assert_eq!(run_script(&format!("{f}mut i := i32 0, while f(i) < 5 i = i + 1, i")), 5);
-    assert_eq!(run_script(&format!("{f}mut i := i32 0, while 5 > f(i) (i = i + 2), i")), 6);
+    assert_eq!(run_script(&format!("{f}i := mut i32 0, while f(i) < 5 i = i + 1, i")), 5);
+    assert_eq!(run_script(&format!("{f}i := mut i32 0, while 5 > f(i) (i = i + 2), i")), 6);
     // Nested, and a bare `while` as a bare `if` branch ending at the `else`.
     assert_eq!(
         run_script(
-            "mut i := i32 0, mut n := i32 0,\n\
-             while i < 3 (i = i + 1, mut j := i32 0, while j < 2 j = j + 1, n = n + j), n"
+            "i := mut i32 0, n := mut i32 0,\n\
+             while i < 3 (i = i + 1, j := mut i32 0, while j < 2 j = j + 1, n = n + j), n"
         ),
         6
     );
-    assert_eq!(run_script("mut i := i32 0, if i == 0 while i < 3 i = i + 1 else i = 9, i"), 3);
+    assert_eq!(run_script("i := mut i32 0, if i == 0 while i < 3 i = i + 1 else i = 9, i"), 3);
     assert_eq!(script_parse_err("while 1 2"), ParseError::NonBoolCondition);
-    diff_nullary_fn("fn () -> i32 ( mut i := i32 0, while i < 5 i = i + 1, i )", 5);
+    diff_nullary_fn("fn () -> i32 ( i := mut i32 0, while i < 5 i = i + 1, i )", 5);
     diff_nullary_fn(
-        "fn () -> i32 ( mut a := i32 0, mut i := i32 0, while i < 5 ( a = a + i, i = i + 1 ), a )",
+        "fn () -> i32 ( a := mut i32 0, i := mut i32 0, while i < 5 ( a = a + i, i = i + 1 ), a )",
         10,
     );
 }
@@ -1139,7 +1139,7 @@ fn assignment_mints_once_per_place_type() {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let src = "mut x := i32 0, mut y := i32 1, x = 9, y = x, mut d := f64 0.0, d = 2";
+    let src = "x := mut i32 0, y := mut i32 1, x = 9, y = x, d := mut f64 0.0, d = 2";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
     let root = p.parse_sequence().unwrap();
     // SAFETY: `root` is the sequence just parsed into `store`, which is alive.
@@ -1167,7 +1167,7 @@ fn a_write_through_a_pointer_or_a_call_place_is_a_node_of_the_mint_a_name_writes
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let src = "mut x := i32 0, a := alloc 2 of i32 3, get := fn (p := @i32 ?) -> i32 ( p@ ), \
+    let src = "x := mut i32 0, a := alloc 2 of i32 3, get := fn (p := @i32 ?) -> i32 ( p@ ), \
                x = 9, a@ = 4, (a + 1)@ = 5, get(a) = 6";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
     let root = p.parse_sequence().unwrap();
@@ -1294,7 +1294,7 @@ fn if_over_a_parameter_matches_between_tiers() {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (mut n := i32 ?) -> i32 ( if (n < 1) (100) else (200) )",
+                "fn (n := mut i32 ?) -> i32 ( if (n < 1) (100) else (200) )",
                 &mut store,
                 &mut trie,
                 &core,
@@ -1391,7 +1391,7 @@ fn a_scope_gives_the_value_of_the_first_line_that_gives_one_both_tiers() {
     diff_nullary_fn("fn () -> i32 ( for i in 0..10 ( if i * i > 20 (i) ), 0 )", 5);
     diff_nullary_fn("fn () -> i32 ( for i in 0..3 ( if i > 5 (i) ), 7 )", 7);
     diff_nullary_fn(
-        "fn () -> i32 ( mut k := i32 0, while (k < 10) ( k = k + 1, if (k * k > 10) (k) ), 0 )",
+        "fn () -> i32 ( k := mut i32 0, while (k < 10) ( k = k + 1, if (k * k > 10) (k) ), 0 )",
         4,
     );
     diff_nullary_fn(
@@ -1428,7 +1428,7 @@ fn a_line_after_one_that_always_gives_or_leaves_is_refused() {
     assert_eq!(parse_err("x := for i in 0..3 (i)"), ParseError::StatementAsValue);
     // A `{ … }` gives the scope itself, so a line in it has nowhere to give a value.
     assert_eq!(parse_err("m := { a := i32 1, 5 }"), ParseError::KeptScopeGives);
-    assert_eq!(run_script("m := { a := i32 1, free (5), pub b := i32 2 }, m.b"), 2);
+    assert_eq!(run_script("m := { a := i32 1, free (5), b := pub i32 2 }, m.b"), 2);
     // A value nobody wants is thrown away, and the next line runs.
     assert_eq!(run_script("free (5), y := i32 1, y"), 1);
 }
@@ -1453,14 +1453,14 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         ("x := if c (i32 1) else if c (i32 2) else (i64 3)", ParseError::ArmsDiffer),
         ("x := if c (i32 1) else if c (2) else (3)", ParseError::ArmsDiffer),
         ("x := if c (return 1) else (i32 2)", ParseError::ArmGivesNothing),
-        ("x := if c (i32 1) else (mut y := i32 2, y = 3)", ParseError::ArmGivesNothing),
+        ("x := if c (i32 1) else (y := mut i32 2, y = 3)", ParseError::ArmGivesNothing),
         ("x := if c (1) else (abort «no»)", ParseError::ArmGivesNothing),
         // An arm that gives nothing decides before a sibling whose arms differ, either order.
         ("x := if c (if c (i32 1) else (i64 2)) else (print «b»)", ParseError::ArmGivesNothing),
         ("x := if c (print «b») else (if c (i32 1) else (i64 2))", ParseError::ArmGivesNothing),
         // An arm is refused for its own reason, as a block's line that gives is.
         ("x := if c (y := i32 1, if c (5)) else (i32 2)", ParseError::EndsWithoutValue),
-        ("mut x := i32 1, x = if c (2)", ParseError::MissingElse),
+        ("x := mut i32 1, x = if c (2)", ParseError::MissingElse),
         ("x := if c (i32 1) else if c (i32 2)", ParseError::MissingElse),
         // A block's value is what its lines that give one give, refused for their reason.
         ("x := ( y := i32 1, if c (i32 1) else (i64 2) )", ParseError::ArmsDiffer),
@@ -1477,7 +1477,7 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         "x := if c (1) else if c (2) else (3)",
         "x := if c (1) else (print «a», if c (2) else (3))",
         "x := if c (y := i32 1, y) else (i32 2)",
-        "if c (return 1) else (mut y := i32 2, y = 3)",
+        "if c (return 1) else (y := mut i32 2, y = 3)",
         // Each `alloc` mints its own owning `@i32`, one type with the other.
         "x := if c (alloc 1 of i32 5) else (alloc 1 of i32 6)",
         // A `.` reads the `if` node and uses no arm's value.
@@ -1741,27 +1741,27 @@ fn hash_comments_are_trivia() {
 #[test]
 fn while_loop_sums_both_tiers() {
     diff_nullary_fn(
-        "fn () -> i32 ( mut a := i32 0, mut i := i32 0, while (i < 5) ( a = a + i, i = i + 1 ), a )",
+        "fn () -> i32 ( a := mut i32 0, i := mut i32 0, while (i < 5) ( a = a + i, i = i + 1 ), a )",
         10,
     );
 }
 
 #[test]
 fn while_false_never_runs_its_body() {
-    diff_nullary_fn("fn () -> i32 ( mut a := i32 7, a = 7, while (a < 0) (a = 0), a )", 7);
+    diff_nullary_fn("fn () -> i32 ( a := mut i32 7, a = 7, while (a < 0) (a = 0), a )", 7);
 }
 
 #[test]
 fn for_loop_sums_a_range_both_tiers() {
-    diff_nullary_fn("fn () -> i32 ( mut s := i32 0, for i in 0..10 ( s = s + i ), s )", 45);
-    diff_nullary_fn("fn () -> i32 ( mut s := i32 0, for i in 0..10..2 ( s = s + i ), s )", 20);
-    diff_nullary_fn("fn () -> i32 ( mut s := i32 7, for i in 5..5 ( s = 0 ), s )", 7);
+    diff_nullary_fn("fn () -> i32 ( s := mut i32 0, for i in 0..10 ( s = s + i ), s )", 45);
+    diff_nullary_fn("fn () -> i32 ( s := mut i32 0, for i in 0..10..2 ( s = s + i ), s )", 20);
+    diff_nullary_fn("fn () -> i32 ( s := mut i32 7, for i in 5..5 ( s = 0 ), s )", 7);
 }
 
 #[test]
 fn for_loop_endpoints_resolve_a_common_type() {
     diff_typed_call(
-        "fn (n := i64 ?) -> i64 ( mut s := i64 0, s = 0, for i in n..(n + 3) ( s = s + i ), s )",
+        "fn (n := i64 ?) -> i64 ( s := mut i64 0, s = 0, for i in n..(n + 3) ( s = s + i ), s )",
         "f(5000000000)",
         15_000_000_003,
     );
@@ -1769,7 +1769,7 @@ fn for_loop_endpoints_resolve_a_common_type() {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p = Parser::new(
-        "fn (mut a := i32 ?, b := u64 ?) -> void ( for i in a..b ( a = 0 ) )",
+        "fn (a := mut i32 ?, b := u64 ?) -> void ( for i in a..b ( a = 0 ) )",
         &mut store,
         &mut trie,
         &core,
@@ -1777,7 +1777,7 @@ fn for_loop_endpoints_resolve_a_common_type() {
     );
     assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
     diff_typed_call(
-        "fn (a := i32 ?, b := i64 ?) -> i64 ( mut s := i64 0, for i in a..b ( s = s + i ), s )",
+        "fn (a := i32 ?, b := i64 ?) -> i64 ( s := mut i64 0, for i in a..b ( s = s + i ), s )",
         "f(1, 4)",
         6,
     );
@@ -1786,7 +1786,7 @@ fn for_loop_endpoints_resolve_a_common_type() {
 #[test]
 fn for_loop_with_a_runtime_non_positive_step_runs_zero_iterations() {
     diff_typed_call(
-        "fn (d := i32 ?) -> i32 ( mut s := i32 3, s = 3, for i in 0..10..d ( s = 0 ), s )",
+        "fn (d := i32 ?) -> i32 ( s := mut i32 3, s = 3, for i in 0..10..d ( s = 0 ), s )",
         "f(0)",
         3,
     );
@@ -1796,7 +1796,7 @@ fn for_loop_with_a_runtime_non_positive_step_runs_zero_iterations() {
 fn for_loop_whose_step_overshoots_the_width_ends_both_tiers() {
     // A wrapped counter would satisfy `i < end` again; the step that does not fit ends the loop after one iteration.
     diff_typed_call(
-        "fn (d := i32 ?) -> i32 ( mut s := i32 0, for i in 2147483640..2147483647..d ( s = s + 1 ), s )",
+        "fn (d := i32 ?) -> i32 ( s := mut i32 0, for i in 2147483640..2147483647..d ( s = s + 1 ), s )",
         "f(10)",
         1,
     );
@@ -1804,15 +1804,15 @@ fn for_loop_whose_step_overshoots_the_width_ends_both_tiers() {
 
 #[test]
 fn for_loop_without_an_index_both_tiers() {
-    diff_nullary_fn("fn () -> i32 ( mut s := i32 0, for 0..10 ( s = s + 1 ), s )", 10);
-    diff_nullary_fn("fn () -> i32 ( mut s := i32 0, for 0..10..2 ( s = s + 1 ), s )", 5);
+    diff_nullary_fn("fn () -> i32 ( s := mut i32 0, for 0..10 ( s = s + 1 ), s )", 10);
+    diff_nullary_fn("fn () -> i32 ( s := mut i32 0, for 0..10..2 ( s = s + 1 ), s )", 5);
     diff_typed_call(
-        "fn (n := i32 ?) -> i32 ( mut s := i32 0, s = 0, for 0..n ( s = s + 2 ), s )",
+        "fn (n := i32 ?) -> i32 ( s := mut i32 0, s = 0, for 0..n ( s = s + 2 ), s )",
         "f(4)",
         8,
     );
     diff_typed_call(
-        "fn (n := i32 ?) -> i32 ( mut s := i32 0, s = 0, for n..(n + 3) ( s = s + 1 ), s )",
+        "fn (n := i32 ?) -> i32 ( s := mut i32 0, s = 0, for n..(n + 3) ( s = s + 1 ), s )",
         "f(4)",
         3,
     );
@@ -1849,7 +1849,7 @@ fn a_while_loop_is_not_a_value() {
 fn a_return_inside_a_loop_leaves_the_function() {
     assert_eq!(parse_err("while (1 < 2) (return 1)"), ParseError::ReturnOutsideFunction);
     diff_typed_call(
-        "fn (n := i32 ?) -> i32 ( mut k := i32 0, while (k < 100) ( k = k + 1, if (k == n) (return k * 2) ), 0 )",
+        "fn (n := i32 ?) -> i32 ( k := mut i32 0, while (k < 100) ( k = k + 1, if (k == n) (return k * 2) ), 0 )",
         "f(7)",
         14,
     );
@@ -2115,7 +2115,7 @@ fn pointers_mutate_caller_state_through_calls_both_tiers() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn () -> i32 ( mut x := i32 41, x = 41, incr(&x), x )",
+            "fn () -> i32 ( x := mut i32 41, x = 41, incr(&x), x )",
             &mut store,
             &mut trie,
             &core,
@@ -2140,7 +2140,7 @@ fn pointers_mutate_caller_state_through_calls_both_tiers() {
 fn pointer_variables_rewire_both_tiers() {
     // The explicit `p = &x` makes the body idempotent: the interpreted run leaves p on y.
     diff_nullary_fn(
-        "fn () -> i32 ( mut x := i32 10, mut y := i32 20, x = 10, y = 20, mut p := &x, p = &x, mut s := i32 0, s = p@, p = &y, s + p@ )",
+        "fn () -> i32 ( x := mut i32 10, y := mut i32 20, x = 10, y = 20, p := mut &x, p = &x, s := mut i32 0, s = p@, p = &y, s + p@ )",
         30,
     );
 }
@@ -2181,14 +2181,14 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p =
-            Parser::new("holder := type (pub r := @i32 ?)", &mut store, &mut trie, &core, s);
+            Parser::new("holder := type (r := pub @i32 ?)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap();
     }
     let func = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn () -> i32 ( mut x := i32 7, x = 7, h := holder(&x), h.r@ + 1 )",
+            "fn () -> i32 ( x := mut i32 7, x = 7, h := holder(&x), h.r@ + 1 )",
             &mut store,
             &mut trie,
             &core,
@@ -2209,14 +2209,14 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
 
 #[test]
 fn pointer_misuse_is_rejected() {
-    assert_eq!(parse_err("( mut x := i32 1, x@ )"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err("( x := mut i32 1, x@ )"), ParseError::UnsupportedOperands);
     assert_eq!(
-        parse_err("( mut x := i32 1, mut p := &x, p * 2 )"),
+        parse_err("( x := mut i32 1, p := mut &x, p * 2 )"),
         ParseError::UnsupportedOperands
     );
-    assert_eq!(parse_err("( mut x := i32 1, mut p := &x, p = 5 )"), ParseError::TypeMismatch);
+    assert_eq!(parse_err("( x := mut i32 1, p := mut &x, p = 5 )"), ParseError::TypeMismatch);
     assert_eq!(parse_err("( y := 5, &y )"), ParseError::BadAddressOf);
-    assert_eq!(parse_err("fn () -> i32 ( mut x := i32 1, x = 1, &x )"), ParseError::TypeMismatch);
+    assert_eq!(parse_err("fn () -> i32 ( x := mut i32 1, x = 1, &x )"), ParseError::TypeMismatch);
 }
 
 #[test]
@@ -2225,14 +2225,14 @@ fn a_compiled_store_into_a_node_box_takes_its_width_from_the_leaf() {
     for tail in ["", "f.compile(), "] {
         assert_eq!(
             run_script(&format!(
-                "mut a := type ?, a = f64, f := fn () -> i32 ( a = i32, 5 ),\n{tail}free (f()), a == i32"
+                "a := mut type ?, a = f64, f := fn () -> i32 ( a = i32, 5 ),\n{tail}free (f()), a == i32"
             )),
             1,
             "type box, {tail:?}"
         );
         assert_eq!(
             run_script(&format!(
-                "mut a := dyad ?, a = i32, f := fn () -> i32 ( a = f64, 5 ),\n{tail}free (f()), a == f64"
+                "a := mut dyad ?, a = i32, f := fn () -> i32 ( a = f64, 5 ),\n{tail}free (f()), a == f64"
             )),
             1,
             "dyad box, {tail:?}"
@@ -2341,7 +2341,7 @@ fn a_result_type_is_written_as_a_type_place_is() {
             "-> {written}"
         );
         assert_eq!(
-            parse_err_after(&["mut u := type ?"], &format!("u = {written}")),
+            parse_err_after(&["u := mut type ?"], &format!("u = {written}")),
             ParseError::BadDeclaredType,
             "u = {written}"
         );
@@ -2359,7 +2359,7 @@ fn a_result_type_is_written_as_a_type_place_is() {
         ParseError::TypeKnownOnlyAtRun
     );
     assert_eq!(
-        parse_err("fn () -> i32 ( mut t := type ?, t = i32, mk := fn () -> t ( 7 ), 1 )"),
+        parse_err("fn () -> i32 ( t := mut type ?, t = i32, mk := fn () -> t ( 7 ), 1 )"),
         ParseError::TypeKnownOnlyAtRun
     );
 
@@ -2379,7 +2379,7 @@ fn a_result_type_is_written_as_a_type_place_is() {
 
 #[test]
 fn every_place_that_needs_a_type_now_answers_one_operand_alike() {
-    let defs = ["x := i32 5", "mut u := type ?"];
+    let defs = ["x := i32 5", "u := mut type ?"];
     for src in ["y := x ?", "y := dyad (x, 7)", "fn () -> x ( 7 )", "u = x"] {
         assert_eq!(parse_err_after(&defs, src), ParseError::BadDeclaredType, "{src}");
     }
@@ -2420,7 +2420,7 @@ fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
     assert_eq!(run_script("f := fn () -> dyad ( alloc 1 of i32 5 ), x := f(), x@"), 5);
     assert_eq!(run_script("f := fn () -> dyad ( i32 ), g := f(), x := g 5, x"), 5);
     assert_eq!(
-        run_script("f := fn () -> dyad ( mut d := dyad ?, d = i64, d ),\nt := f(), x := t 9, x"),
+        run_script("f := fn () -> dyad ( d := mut dyad ?, d = i64, d ),\nt := f(), x := t 9, x"),
         9
     );
     assert_eq!(
@@ -2440,7 +2440,7 @@ fn runaway_depth_is_a_checked_error_not_an_abort() {
         let shut = ")".repeat(1_000_000);
         let skipped = format!("if false ( {deep}1{shut} ) else ( 1 )");
         assert_eq!(parse_err(&skipped), ParseError::TooDeep);
-        let held = format!("t := type ( a := i32 ?, static run = ( {deep}1{shut} ) ), 5");
+        let held = format!("t := type ( a := i32 ?, run = ( {deep}1{shut} ) ), 5");
         assert_eq!(parse_err(&held), ParseError::TooDeep);
         assert_eq!(run_script("(((((1)))))"), 1);
 
@@ -2490,17 +2490,17 @@ fn a_compile_that_meets_the_stack_limit_is_a_checked_error() {
 
 #[test]
 fn the_unknown_is_one_value_a_type_or_dyad_place_holds() {
-    assert_eq!(run_script("mut a := type ?, a = ?, a == ?"), 1);
-    assert_eq!(run_script("mut a := type ?, a = ?, a != ?"), 0);
-    assert_eq!(run_script("mut a := type ?, a = i32, a == ?"), 0);
-    assert_eq!(run_script("mut a := type ?, a = i32, a != ?"), 1);
-    assert_eq!(run_script("mut d := dyad ?, d = ?, d == ?"), 1);
+    assert_eq!(run_script("a := mut type ?, a = ?, a == ?"), 1);
+    assert_eq!(run_script("a := mut type ?, a = ?, a != ?"), 0);
+    assert_eq!(run_script("a := mut type ?, a = i32, a == ?"), 0);
+    assert_eq!(run_script("a := mut type ?, a = i32, a != ?"), 1);
+    assert_eq!(run_script("d := mut dyad ?, d = ?, d == ?"), 1);
     assert_eq!(run_script("? == ?"), 1);
     assert_eq!(run_script("f := fn (t := type ?) -> bool ( t != ? ),\nf(i32)"), 1);
     assert_eq!(run_script("f := fn (t := type ?) -> bool ( t != ? ),\nf(?)"), 0);
-    assert_eq!(run_script("mut m := type ?, m = ?, if (m != ?) (1) else (2)"), 2);
+    assert_eq!(run_script("m := mut type ?, m = ?, if (m != ?) (1) else (2)"), 2);
     // A number place refuses it: the plain mismatch.
-    assert_eq!(script_parse_err("mut x := i32 5, x = ?"), ParseError::TypeMismatch);
+    assert_eq!(script_parse_err("x := mut i32 5, x = ?"), ParseError::TypeMismatch);
     assert_eq!(script_parse_err("x := i32 5, x == ?"), ParseError::UnsupportedOperands);
 }
 
@@ -2508,38 +2508,38 @@ fn the_unknown_is_one_value_a_type_or_dyad_place_holds() {
 /// number types or not, takes `?` as its operand and decides what it is there.
 #[test]
 fn the_identity_that_takes_the_unknown_decides_what_it_is() {
-    let q = "q := type ( pub v := u64 ?, static parse_rank = i32.parse_rank, static parse = ( \
+    let q = "q := type ( v := pub u64 ?, parse_rank = i32.parse_rank, parse = ( \
              tape[0].type = q, if tape[1] == ? ( tape[0].v = 1 ) else ( tape[0].v = 2 ), \
              tape.remove(1), tape.is_constructed[0] = true ) ),\n";
     assert_eq!(run_script(&format!("{q}x := q ?, x.v")), 1);
     assert_eq!(run_script(&format!("{q}x := q 5, x.v")), 2);
-    assert_eq!(run_script("mut x := i32 ?, x = 5, x"), 5);
-    assert_eq!(run_script("T := type i64, mut x := T ?, x = 5, x"), 5);
-    assert_eq!(run_script("f := fn () -> i32 ( mut x := i32 ?, x = 4, x ), f.compile(), f()"), 4);
-    assert_eq!(run_script("mut r := rational_number ?, r = 1/4, r * 4"), 1);
+    assert_eq!(run_script("x := mut i32 ?, x = 5, x"), 5);
+    assert_eq!(run_script("T := type i64, x := mut T ?, x = 5, x"), 5);
+    assert_eq!(run_script("f := fn () -> i32 ( x := mut i32 ?, x = 4, x ), f.compile(), f()"), 4);
+    assert_eq!(run_script("r := mut rational_number ?, r = 1/4, r * 4"), 1);
 }
 
 #[test]
 fn a_valueless_place_is_read_only_after_a_sibling_write() {
     let unwritten = |name: &str| ParseError::Unwritten(Box::new(name.into()));
     assert_eq!(script_parse_err("x := i32 ?, x"), unwritten("x"));
-    assert_eq!(script_parse_err("mut x := i32 ?, x = x + 1, x"), unwritten("x"));
-    assert_eq!(run_script("mut x := i32 ?, x = 4, x + 1"), 5);
-    assert_eq!(script_parse_err("mut x := i32 ?, x.type == i32"), unwritten("x"));
+    assert_eq!(script_parse_err("x := mut i32 ?, x = x + 1, x"), unwritten("x"));
+    assert_eq!(run_script("x := mut i32 ?, x = 4, x + 1"), 5);
+    assert_eq!(script_parse_err("x := mut i32 ?, x.type == i32"), unwritten("x"));
     // A write nested in a group, an `if`, a loop or a `fn` body does not fill.
-    assert_eq!(script_parse_err("mut x := i32 ?, (x = 4), x"), unwritten("x"));
-    assert_eq!(script_parse_err("mut x := i32 ?, if (true) (x = 4), x"), unwritten("x"));
-    assert_eq!(script_parse_err("mut x := i32 ?, for 0..2 ( x = 1 ), x"), unwritten("x"));
+    assert_eq!(script_parse_err("x := mut i32 ?, (x = 4), x"), unwritten("x"));
+    assert_eq!(script_parse_err("x := mut i32 ?, if (true) (x = 4), x"), unwritten("x"));
+    assert_eq!(script_parse_err("x := mut i32 ?, for 0..2 ( x = 1 ), x"), unwritten("x"));
     assert_eq!(
-        script_parse_err("mut x := i32 ?, f := fn () -> i32 ( x = 4, 1 ), f(), x"),
+        script_parse_err("x := mut i32 ?, f := fn () -> i32 ( x = 4, 1 ), f(), x"),
         unwritten("x")
     );
     // Text position decides: a body read before the write is refused, one after passes.
     assert_eq!(
-        script_parse_err("mut x := i32 ?, g := fn () -> i32 ( x ), x = 1, g()"),
+        script_parse_err("x := mut i32 ?, g := fn () -> i32 ( x ), x = 1, g()"),
         unwritten("x")
     );
-    assert_eq!(run_script("mut x := i32 ?, x = 1, g := fn () -> i32 ( x ), g()"), 1);
+    assert_eq!(run_script("x := mut i32 ?, x = 1, g := fn () -> i32 ( x ), g()"), 1);
 }
 
 #[test]
@@ -2566,17 +2566,17 @@ fn address_of_a_parameter_works_both_tiers() {
 #[test]
 fn address_of_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
     for (f, args, expect) in [
-        ("f := fn (a := @i32 ?) -> i32 ( q := &(a@), q@ = 5, a@ )", "mut x := i32 3, f(&x)", 5),
+        ("f := fn (a := @i32 ?) -> i32 ( q := &(a@), q@ = 5, a@ )", "x := mut i32 3, f(&x)", 5),
         (
-            "point := type ( x := i32 ?, pub y := i32 ? ), \
+            "point := type ( x := i32 ?, y := pub i32 ? ), \
              f := fn (p := @point ?) -> i32 ( q := &(p@.y), q@ = 9, p@.y )",
-            "mut v := point (1, 2), f(&v)",
+            "v := mut point (1, 2), f(&v)",
             9,
         ),
         (
             "get := fn (p := @i32 ?) -> i32 ( p@ ), \
              f := fn (a := @i32 ?) -> i32 ( q := &(get(a)), q@ = 4, a@ )",
-            "mut x := i32 3, f(&x)",
+            "x := mut i32 3, f(&x)",
             4,
         ),
     ] {
@@ -2590,17 +2590,17 @@ fn address_of_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
 #[test]
 fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
     for (f, args, expect) in [
-        ("f := fn (a := @i32 ?) -> i32 ( a@ = 4, a@ )", "mut x := i32 1, f(&x)", 4),
+        ("f := fn (a := @i32 ?) -> i32 ( a@ = 4, a@ )", "x := mut i32 1, f(&x)", 4),
         (
-            "point := type ( pub x := i32 ?, pub mut y := i32 ? ), \
+            "point := type ( x := pub i32 ?, y := pub mut i32 ? ), \
              f := fn (p := @point ?) -> i32 ( p@.y = 9, p@ = point(5, p@.y), p@.x + p@.y )",
-            "mut v := point (1, 2), f(&v)",
+            "v := mut point (1, 2), f(&v)",
             14,
         ),
         (
             "get := fn (p := @i32 ?) -> i32 ( p@ ), \
              f := fn (a := @i32 ?) -> i32 ( get(a) = 7, a@ )",
-            "mut x := i32 3, f(&x)",
+            "x := mut i32 3, f(&x)",
             7,
         ),
     ] {
@@ -2642,11 +2642,11 @@ fn address_of_what_has_no_address_is_refused() {
 #[test]
 fn address_of_a_value_nothing_names_holds_it_both_tiers() {
     for (f, args, expect) in [
-        ("w := type ( pub x := i64 ? ), g := fn () -> i64 ( p := &w(7), p@.x )", "g()", 7),
+        ("w := type ( x := pub i64 ? ), g := fn () -> i64 ( p := &w(7), p@.x )", "g()", 7),
         ("f := fn () -> i32 ( 7 ), g := fn () -> i32 ( p := &(f()), p@ )", "g()", 7),
         ("g := fn (a := i32 ?) -> i32 ( p := &(a + 1), q := &(a + 2), p@ * 10 + q@ )", "g(3)", 45),
         (
-            "g := fn (a := i32 ?) -> i32 ( mut s := i32 0, \
+            "g := fn (a := i32 ?) -> i32 ( s := mut i32 0, \
              for i in 0..3 ( p := &(a + i), s = s + p@ ), s )",
             "g(1)",
             6,
@@ -2655,10 +2655,10 @@ fn address_of_a_value_nothing_names_holds_it_both_tiers() {
         (
             "get := fn (p := @i32 ?) -> i32 ( return p@ ), \
              g := fn (a := @i32 ?) -> i32 ( p := &(get(a)), p@ = 9, a@ )",
-            "mut x := i32 3, g(&x)",
+            "x := mut i32 3, g(&x)",
             3,
         ),
-        ("g := fn (a := @i32 ?) -> i32 ( p := &(a + 1), (p@ - 1)@ )", "mut x := i32 4, g(&x)", 4),
+        ("g := fn (a := @i32 ?) -> i32 ( p := &(a + 1), (p@ - 1)@ )", "x := mut i32 4, g(&x)", 4),
     ] {
         for compile in ["", "g.compile(), "] {
             assert_eq!(run_script(&format!("{f}, {compile}{args}")), expect, "{f} / {compile}");
@@ -2679,10 +2679,10 @@ fn a_pointer_steps_by_whole_cells_both_tiers() {
         48
     );
     assert_eq!(
-        run_script("holder := type (pub r := @i32 ?), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
+        run_script("holder := type (r := pub @i32 ?), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
         12
     );
-    let walk = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), mut s := i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
+    let walk = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), s := mut i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
     assert_eq!(run_script(&format!("{walk}, a := alloc 4 of i32 0, f(a, 4)")), 60);
     assert_eq!(run_script(&format!("{walk}, f.compile(), a := alloc 4 of i32 0, f(a, 4)")), 60);
     // A step of any integer type counts cells: an unsigned one too.
@@ -2707,7 +2707,7 @@ fn a_pointer_steps_only_by_an_integer_on_its_right() {
 
 #[test]
 fn parameter_reassignment_works_both_tiers() {
-    diff_typed_call("fn (mut a := i32 ?) -> i32 ( a = a + 1, a )", "f(41)", 42);
+    diff_typed_call("fn (a := mut i32 ?) -> i32 ( a = a + 1, a )", "f(41)", 42);
 }
 
 /// Parse `src` as a whole script and run it with the compiler attached, so `f.compile()` works.
@@ -2822,7 +2822,7 @@ fn code_retired_under_a_live_jump_is_freed_when_the_jump_returns() {
 #[test]
 fn interpreted_recursion_stacks_frames() {
     // 1..=500 sums right only if no call's frame aliases another's.
-    let src = "f := fn (n := i64 ?) -> i64 ( mut m := i64 0, m = n, if (n == 0) (0) else (m + f(n - 1)) ),\nf(500)";
+    let src = "f := fn (n := i64 ?) -> i64 ( m := mut i64 0, m = n, if (n == 0) (0) else (m + f(n - 1)) ),\nf(500)";
     assert_eq!(on_work_stack(|| run_script(src)), 125_250);
 }
 
@@ -2860,17 +2860,17 @@ fn compile_member_before_and_after_agree() {
 /// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol,
 /// minting through a function of its own by the base's type.
 const POW_TYPE: &str = "pw := type (\n\
-     static get_mint := fn (l := type ?) -> type (\n\
+     get_mint := static fn (l := type ?) -> type (\n\
          place := type_mint.step(type_mint.step(0, pw), l),\n\
-         mut mint := type type_mint.kept(place),\n\
+         mint := mut type type_mint.kept(place),\n\
          if mint != ? return mint,\n\
-         mint = type ( pub a := l ?, pub b := i32 ?, static output_type := type l, static run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ) ),\n\
+         mint = type ( a := pub l ?, b := pub i32 ?, output_type := static type l, run = ( r := mut output_type 1, for 0..b ( r = r * a ), r ) ),\n\
          type_mint.keep(place, mint),\n\
          mint\n\
      ),\n\
-     static parse_rank = *.parse_rank + 1,\n\
-     static associativity = right,\n\
-     static parse = (\n\
+     parse_rank = *.parse_rank + 1,\n\
+     associativity = right,\n\
+     parse = (\n\
          if tape[-1].type == void abort «pw takes a left operand»,\n\
          tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1],\n\
          tape[0].b = tape[1],\n\
@@ -2920,7 +2920,7 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
     assert_eq!(run_script(&format!("{POW_TYPE}2 pw 3 pw 2")), 512);
     // A type with a run and no parse of its own has no call form.
     assert_eq!(
-        parse_err_after(&["sq2 := type ( a := i32 ?, static run = ( a * a ) )"], "sq2(5)"),
+        parse_err_after(&["sq2 := type ( a := i32 ?, run = ( a * a ) )"], "sq2(5)"),
         ParseError::RunTypeApplied
     );
 }
@@ -2929,8 +2929,8 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
 fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
     let (mut store, mut trie, core) = new_core();
     for def in [
-        "q := type ( static parse_rank = dyad.parse_rank, static parse = ( tape.is_constructed[0] = true ) )",
-        "chooser := type ( static parse_rank = fn.parse_rank, static parse = ( tape.is_constructed[0] = true ) )",
+        "q := type ( parse_rank = dyad.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
+        "chooser := type ( parse_rank = fn.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
     ] {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
@@ -2951,8 +2951,8 @@ fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
 fn a_run_hands_a_bare_static_call_its_own_value_in_both_tiers() {
     let (mut store, mut trie, core) = new_core();
     let src = "inc := type ( a := i32 ?, output_type := type ?, \
-        static twice := fn () -> i32 ( a * 2 ), static run = ( twice() + 1 ), \
-        static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = inc, \
+        twice := static fn () -> i32 ( a * 2 ), run = ( twice() + 1 ), \
+        parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
         tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
         tape.remove(-1) ) ),\nf := fn (y := i32 ?) -> i32 ( y inc ),\nf(5)";
     let seq = {
@@ -3004,15 +3004,10 @@ fn a_node_of_a_run_type_compiles_as_a_call_of_its_function() {
 
 #[test]
 fn a_body_slot_takes_a_bracket_and_a_run_type_has_no_place() {
-    assert_eq!(parse_err("t := type (static run = 5)"), ParseError::SlotNeedsBody(SlotKind::Run));
+    assert_eq!(parse_err("t := type (run = 5)"), ParseError::SlotNeedsBody(SlotKind::Run));
+    assert_eq!(parse_err("t := type (parse = 5)"), ParseError::SlotNeedsBody(SlotKind::Parse));
     assert_eq!(
-        parse_err("t := type (static parse = 5)"),
-        ParseError::SlotNeedsBody(SlotKind::Parse)
-    );
-    assert_eq!(
-        parse_err(
-            "t := type (static parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))"
-        ),
+        parse_err("t := type (parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))"),
         ParseError::SlotNeedsBody(SlotKind::Parse)
     );
     // `pw` is an infix still waiting for its operands, not a type applied to `?`.
@@ -3093,7 +3088,7 @@ fn an_addressed_local_stays_in_memory_under_promotion() {
 fn a_promoted_loop_matches_the_interpreter() {
     assert_eq!(
         run_script(
-            "sum_to := fn (n := i64 ?) -> i64 ( mut i := i64 0, mut s := i64 0, while (i < n) ( s = s + i, i = i + 1 ), s ),\nbefore := sum_to(1000),\nsum_to.compile(),\nbefore + sum_to(1000)"
+            "sum_to := fn (n := i64 ?) -> i64 ( i := mut i64 0, s := mut i64 0, while (i < n) ( s = s + i, i = i + 1 ), s ),\nbefore := sum_to(1000),\nsum_to.compile(),\nbefore + sum_to(1000)"
         ),
         999_000
     );
@@ -3101,7 +3096,7 @@ fn a_promoted_loop_matches_the_interpreter() {
 
 #[test]
 fn compile_is_reserved_only_on_fn_typed_values() {
-    assert_eq!(run_script("point := type (pub compile := i32 ?),\np := point(7),\np.compile"), 7);
+    assert_eq!(run_script("point := type (compile := pub i32 ?),\np := point(7),\np.compile"), 7);
 }
 
 #[test]
@@ -3140,12 +3135,12 @@ fn a_literal_into_a_pointer_parameter_is_rejected() {
     assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
 }
 
-/// Declare `point := type (mut x := i32 ?, y := i32 ?)` in the root scope.
+/// Declare `point := type (x := mut i32 ?, y := i32 ?)` in the root scope.
 fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p =
-        Parser::new("point := type (pub mut x := i32 ?, pub y := i32 ?)", store, trie, core, s);
+        Parser::new("point := type (x := pub mut i32 ?, y := pub i32 ?)", store, trie, core, s);
     p.parse_expression().unwrap();
 }
 
@@ -3158,7 +3153,7 @@ fn record_instances_construct_read_and_write_fields_both_tiers() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn () -> i32 ( mut p := point(3, 4), p.x = p.x + 36, p.x + p.y + 2 )",
+            "fn () -> i32 ( p := mut point(3, 4), p.x = p.x + 36, p.x + p.y + 2 )",
             &mut store,
             &mut trie,
             &core,
@@ -3186,7 +3181,7 @@ fn record_fields_lay_out_mixed_widths() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "cell := type (pub a := u8 ?, pub b := i64 ?, pub c := i32 ?)",
+            "cell := type (a := pub u8 ?, b := pub i64 ?, c := pub i32 ?)",
             &mut store,
             &mut trie,
             &core,
@@ -3248,11 +3243,11 @@ fn construction_and_field_access_are_checked() {
 #[test]
 fn assigning_into_a_comptime_binding_is_rejected() {
     assert_eq!(
-        parse_err("( mut x := 5, x = 7 )"),
+        parse_err("( x := mut 5, x = 7 )"),
         ParseError::AssignToLiteral(Box::new("5".into()))
     );
     assert_eq!(
-        parse_err("( mut x := 5/2, x = 7 )"),
+        parse_err("( x := mut 5/2, x = 7 )"),
         ParseError::AssignToLiteral(Box::new("5/2".into()))
     );
     assert_eq!(parse_err("( 5 = 7 )"), ParseError::AssignToLiteral(Box::new("5".into())));
@@ -3425,7 +3420,7 @@ fn pub_marks_the_names_binding() {
     let decl = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("pub x := 5", &mut store, &mut trie, &core, s);
+        let mut p = Parser::new("x := pub 5", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
     // SAFETY: `decl` is the declare node just parsed.
@@ -3464,7 +3459,7 @@ fn pub_gates_a_typed_declaration() {
     let decl = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("pub x := i32 5", &mut store, &mut trie, &core, s);
+        let mut p = Parser::new("x := pub i32 5", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
     // SAFETY: `decl` is the declare node just parsed.
@@ -3486,7 +3481,7 @@ fn pub_gates_a_fn_declaration() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "pub double := fn (x := i32 ?) -> i32 ( x + x )",
+            "double := pub fn (x := i32 ?) -> i32 ( x + x )",
             &mut store,
             &mut trie,
             &core,
@@ -3513,8 +3508,8 @@ fn a_members_gates_are_one_gate_node_in_its_type_however_they_are_written() {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p = Parser::new(
-        "t := type (static y := i32 3, static mut z := i32 4, static pub mut a := i32 5, \
-         pub static mut b := i32 6, pub mut v := i32 ?, mut pub w := i32 ?, u := i32 ?)",
+        "t := type (y := static i32 3, z := static mut i32 4, a := static pub mut i32 5, \
+         b := pub static mut i32 6, v := pub mut i32 ?, w := mut pub i32 ?, u := i32 ?)",
         &mut store,
         &mut trie,
         &core,
@@ -3559,63 +3554,63 @@ fn a_members_gates_are_one_gate_node_in_its_type_however_they_are_written() {
         assert_eq!(under(both), core.i32_);
         assert_eq!(set_of(both).len(), 2);
     }
-    assert_eq!(parse_err("f := fn (static x := i32 ?) -> i32 ( x )"), ParseError::StaticMisplaced);
+    assert_eq!(parse_err("f := fn (x := static i32 ?) -> i32 ( x )"), ParseError::StaticMisplaced);
 }
 
 #[test]
 fn a_static_name_at_top_level_is_one_place_for_the_run() {
-    assert_eq!(run_script("static mut n := i32 0,\nn = n + 1,\nn = n + 1,\nn"), 2);
-    assert_eq!(run_script("static m := hashmap i32 -> i32,\nm[2] = 4,\nm[2]"), 4);
+    assert_eq!(run_script("n := static mut i32 0,\nn = n + 1,\nn = n + 1,\nn"), 2);
+    assert_eq!(run_script("m := static hashmap i32 -> i32,\nm[2] = 4,\nm[2]"), 4);
     // In a loop the line names one place across the passes, made once.
     assert_eq!(
         run_script(
-            "mut t := i32 0,\nfor i in 0..5 ( static mut k := i32 0, k = k + 1, t = k ),\nt"
+            "t := mut i32 0,\nfor i in 0..5 ( k := static mut i32 0, k = k + 1, t = k ),\nt"
         ),
         5
     );
     assert_eq!(
         run_script(
-            "mut j := i32 0, mut t := i32 0,\n\
-             while j < 4 ( static mut k := i32 0, k = k + 1, t = k, j = j + 1 ),\nt"
+            "j := mut i32 0, t := mut i32 0,\n\
+             while j < 4 ( k := static mut i32 0, k = k + 1, t = k, j = j + 1 ),\nt"
         ),
         4
     );
     // An unmarked name in the same loop is made again on every pass.
     assert_eq!(
         run_script(
-            "mut t := i32 0,\n\
-             for i in 0..3 ( static mut k := i32 0, mut x := i32 0, k = k + 1, x = x + 1, t = t + k * 10 + x ),\nt"
+            "t := mut i32 0,\n\
+             for i in 0..3 ( k := static mut i32 0, x := mut i32 0, k = k + 1, x = x + 1, t = t + k * 10 + x ),\nt"
         ),
         63
     );
     // Its value is made at the definition, so it reads names made before it.
     assert_eq!(
         run_script(
-            "a := i32 7,\nmut t := i32 0,\nfor i in 0..3 ( static k := a + 1, t = t + k ),\nt"
+            "a := i32 7,\nt := mut i32 0,\nfor i in 0..3 ( k := static a + 1, t = t + k ),\nt"
         ),
         24
     );
-    assert_eq!(script_parse_err("for i in 0..3 ( static k := i, k )"), ParseError::OnceReadsUnmade);
+    assert_eq!(script_parse_err("for i in 0..3 ( k := static i, k )"), ParseError::OnceReadsUnmade);
     assert_eq!(
-        script_parse_err("for i in 0..3 ( x := i32 1, static k := x, k )"),
+        script_parse_err("for i in 0..3 ( x := i32 1, k := static x, k )"),
         ParseError::OnceReadsUnmade
     );
     assert_eq!(
-        script_parse_err("mut c := i32 1,\nif c == 1 ( x := i32 5, static k := x, k )"),
+        script_parse_err("c := mut i32 1,\nif c == 1 ( x := i32 5, k := static x, k )"),
         ParseError::OnceReadsUnmade
     );
 }
 
 #[test]
 fn a_static_name_in_a_function_is_one_place_across_its_calls() {
-    let counter = "f := fn () -> i32 ( static mut n := i32 0, n = n + 1, n ),\n";
+    let counter = "f := fn () -> i32 ( n := static mut i32 0, n = n + 1, n ),\n";
     assert_eq!(run_script(&format!("{counter}free (f()), free (f()), f()")), 3);
     assert_eq!(run_script(&format!("{counter}f.compile(), free (f()), free (f()), f()")), 3);
     // Each function owns its own place, whatever the name.
     assert_eq!(
         run_script(
-            "f := fn () -> i32 ( static mut n := i32 0, n = n + 1, n ),\n\
-             g := fn () -> i32 ( static mut n := i32 100, n = n + 1, n ),\n\
+            "f := fn () -> i32 ( n := static mut i32 0, n = n + 1, n ),\n\
+             g := fn () -> i32 ( n := static mut i32 100, n = n + 1, n ),\n\
              free (f()), free (g()), free (f()), g() + f()"
         ),
         105
@@ -3623,7 +3618,7 @@ fn a_static_name_in_a_function_is_one_place_across_its_calls() {
     // A loop body inside the function names the function's place too.
     assert_eq!(
         run_script(
-            "f := fn () -> i32 ( mut t := i32 0, for i in 0..3 ( static mut n := i32 0, n = n + 1, t = n ), t ),\n\
+            "f := fn () -> i32 ( t := mut i32 0, for i in 0..3 ( n := static mut i32 0, n = n + 1, t = n ), t ),\n\
              free (f()), f()"
         ),
         6
@@ -3631,29 +3626,29 @@ fn a_static_name_in_a_function_is_one_place_across_its_calls() {
     // Without `mut` the name is not written, but a map behind it is.
     assert_eq!(
         run_script(
-            "f := fn (k := i32 ?, put := i32 ?) -> i32 ( static m := hashmap i32 -> i32, if put == 1 ( m[k] = k * k ), m[k] ),\n\
+            "f := fn (k := i32 ?, put := i32 ?) -> i32 ( m := static hashmap i32 -> i32, if put == 1 ( m[k] = k * k ), m[k] ),\n\
              free (f(3, 1)), free (f(4, 1)), f(3, 0)"
         ),
         9
     );
     assert!(matches!(
-        script_parse_err("f := fn () -> i32 ( static n := i32 0, n = 1, n )"),
+        script_parse_err("f := fn () -> i32 ( n := static i32 0, n = 1, n )"),
         ParseError::NotMutable(_)
     ));
     assert_eq!(
-        script_parse_err("f := fn (k := i32 ?) -> i32 ( static n := k, n )"),
+        script_parse_err("f := fn (k := i32 ?) -> i32 ( n := static k, n )"),
         ParseError::OnceReadsUnmade
     );
     assert_eq!(
-        script_parse_err("f := fn () -> i32 ( x := i32 1, static n := x, n )"),
+        script_parse_err("f := fn () -> i32 ( x := i32 1, n := static x, n )"),
         ParseError::OnceReadsUnmade
     );
 }
 
 #[test]
 fn a_name_is_written_only_if_declared_mut() {
-    assert_eq!(run_script("mut x := i32 5,\nx = 6,\nx"), 6);
-    assert_eq!(run_script("pub mut x := i32 5,\nx = 6,\nx"), 6);
+    assert_eq!(run_script("x := mut i32 5,\nx = 6,\nx"), 6);
+    assert_eq!(run_script("x := pub mut i32 5,\nx = 6,\nx"), 6);
     assert_eq!(
         parse_err_after(&["x := i32 5"], "x = 6"),
         ParseError::NotMutable(Box::new("x".into()))
@@ -3667,14 +3662,15 @@ fn a_name_is_written_only_if_declared_mut() {
         parse_err_after(&["x := i32 5"], "x = nope"),
         ParseError::NotMutable(Box::new("x".into()))
     );
-    assert_eq!(parse_err("mut mut x := 5"), ParseError::DoubleGate);
+    assert_eq!(parse_err("x := mut mut 5"), ParseError::DoubleGate);
     // `immut` is no word, so the name it stands before is one nobody declared.
     assert_eq!(
         parse_err("immut x := i32 5"),
         ParseError::Resolve(crate::parse::ResolveError::Unknown("immut".into()))
     );
-    assert_eq!(parse_err("mut 5"), ParseError::GateNeedsDeclaration);
-    assert_eq!(run_script("f := fn (mut a := i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
+    // A gate word gates the value to its right, named or not.
+    assert_eq!(run_script("mut 5"), 5);
+    assert_eq!(run_script("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
     assert_eq!(
         parse_err("f := fn (a := i32 ?) -> i32 ( a = a + 1, a )"),
         ParseError::NotMutable(Box::new("a".into()))
@@ -3682,13 +3678,29 @@ fn a_name_is_written_only_if_declared_mut() {
 }
 
 #[test]
-fn pub_without_a_declaration_is_an_error() {
-    let (mut store, mut trie, core) = new_core();
-
-    let mut s = ScopeStack::new();
-    s.push(core.root_scope);
-    let mut p = Parser::new("pub 5", &mut store, &mut trie, &core, s);
-    assert!(matches!(p.parse_expression(), Err(crate::parse::ParseError::GateNeedsDeclaration)));
+fn a_gate_word_reads_the_whole_value_to_its_right() {
+    // ›A gate word reads the whole value to its right and gives it with its type gated‹ [[R102]]
+    assert_eq!(run_script("pub 5"), 5);
+    assert_eq!(run_script("x := mut i32 5,\nx = 6,\nx"), 6);
+    assert_eq!(run_script("x := pub mut i32 5,\nx = 6,\nx"), 6);
+    assert_eq!(run_script("a := i32 1,\nb := i32 2,\nx := mut a + b,\nx = x + 1,\nx"), 4);
+    assert_eq!(run_script("x := mut i32,\nx = 4,\nx"), 4);
+    assert_eq!(run_script("x := mut i32 ?,\nx = 4,\nx"), 4);
+    assert_eq!(run_script("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
+    assert_eq!(parse_err("x := mut mut i32 5"), ParseError::DoubleGate);
+    assert_eq!(parse_err("x := mut"), ParseError::MissingOperand);
+    assert_eq!(parse_err("mut x := i32 5"), ParseError::GateNeedsValue);
+    assert_eq!(parse_err("x := mut (y := i32 1)"), ParseError::GateNeedsValue);
+    assert_eq!(parse_err("mut print «a»"), ParseError::StatementAsValue);
+    assert_eq!(parse_err("x := pub (y := i32 1, print «a»)"), ParseError::StatementAsValue);
+    assert_eq!(parse_err("f := fn (a := pub i32 ?) -> i32 ( a )"), ParseError::PubParameter);
+    assert_eq!(parse_err("f := fn (a := static i32 ?) -> i32 ( a )"), ParseError::StaticMisplaced);
+    // A copy takes no gate: the name's gates are those written in its own declaration.
+    assert_eq!(
+        parse_err_after(&["x := mut i32 5", "y := x"], "y = 2"),
+        ParseError::NotMutable(Box::new("y".into()))
+    );
+    assert_eq!(run_script("x := i32 5,\ny := mut x,\ny = 2,\nx + y"), 7);
 }
 
 #[test]
@@ -3697,7 +3709,7 @@ fn double_pub_is_an_error() {
 
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
-    let mut p = Parser::new("pub pub x := 5", &mut store, &mut trie, &core, s);
+    let mut p = Parser::new("x := pub pub 5", &mut store, &mut trie, &core, s);
     assert!(matches!(p.parse_expression(), Err(crate::parse::ParseError::DoubleGate)));
 }
 
@@ -3876,7 +3888,7 @@ fn recursion_with_a_record_local_is_per_activation_both_tiers() {
     unsafe {
         assert_recursion_both_tiers(
             &[
-                "point := type ( pub x := i32 ?, y := i32 ? )",
+                "point := type ( x := pub i32 ?, y := i32 ? )",
                 "h := fn (n := i32 ?) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (free (h(n - 1)), pt.x) )",
             ],
             "h",
@@ -3890,7 +3902,7 @@ fn recursion_with_a_local_accumulator_both_tiers() {
     // SAFETY: a self-contained recursive definition and literal calls.
     unsafe {
         assert_recursion_both_tiers(
-            &["fact := fn (n := i32 ?) -> i32 ( mut acc := i32 1, if (n < 1) (acc) else (acc = n * fact(n - 1), acc) )"],
+            &["fact := fn (n := i32 ?) -> i32 ( acc := mut i32 1, if (n < 1) (acc) else (acc = n * fact(n - 1), acc) )"],
             "fact",
             &[(0, 1), (1, 1), (5, 120), (7, 5040)],
         );
@@ -3902,7 +3914,7 @@ fn recursion_with_a_typed_declaration_local_both_tiers() {
     // SAFETY: a self-contained recursive definition and literal calls.
     unsafe {
         assert_recursion_both_tiers(
-            &["f := fn (n := i32 ?) -> i32 ( mut a := i32 ?, a = n, if (n < 1) (a) else (free (f(n - 1)), a) )"],
+            &["f := fn (n := i32 ?) -> i32 ( a := mut i32 ?, a = n, if (n < 1) (a) else (free (f(n - 1)), a) )"],
             "f",
             &[(0, 0), (1, 1), (5, 5)],
         );
@@ -3981,14 +3993,14 @@ fn parse_err_after(defs: &[&str], src: &str) -> ParseError {
 
 #[test]
 fn assignment_converts_only_into_a_type_that_holds_the_value() {
-    let defs = &["mut a := i64 1", "mut b := i32 2"];
+    let defs = &["a := mut i64 1", "b := mut i32 2"];
     assert_eq!(parse_err_after(defs, "b = a"), ParseError::TypeMismatch);
-    assert_eq!(run_script("mut a := i64 1, mut b := i32 -2, a = b, a"), -2);
+    assert_eq!(run_script("a := mut i64 1, b := mut i32 -2, a = b, a"), -2);
 }
 
 #[test]
 fn assignment_rejects_pointer_type_mismatches() {
-    let defs = &["x := i32 7", "y := f64 2.5", "mut p := &x", "mut b := i32 2"];
+    let defs = &["x := i32 7", "y := f64 2.5", "p := mut &x", "b := mut i32 2"];
     assert_eq!(parse_err_after(defs, "p = &y"), ParseError::TypeMismatch);
     assert_eq!(parse_err_after(defs, "p = b"), ParseError::TypeMismatch);
     assert_eq!(parse_err_after(defs, "b = p"), ParseError::TypeMismatch);
@@ -4000,7 +4012,7 @@ fn assignment_accepts_a_matching_pointer_and_rewires() {
     let (mut store, mut trie, core) = new_core();
     let mut rt = Runtime::new(&core, &mut store);
     let mut result = 0;
-    for line in ["x := i32 7", "y := i32 9", "mut p := &x", "p@", "p = &y", "p@"] {
+    for line in ["x := i32 7", "y := i32 9", "p := mut &x", "p@", "p = &y", "p@"] {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(line, rt.store, &mut trie, &core, s);
@@ -4372,7 +4384,7 @@ fn a_lossy_value_converts_where_a_comparison_or_an_operation_reads_it() {
         ("x := f64 2.5, if i32 2 == i32 lossy (x) (1) else (0)", 1),
         ("x := f64 2.5, if i32 2 == i32 lossy x (1) else (0)", 1),
         ("x := f64 2.5, if i32 lossy (x) == i32 2 (1) else (0)", 1),
-        ("mut x := f64 0.5, mut n := i32 0, while i32 3 > i32 lossy (x) (x = x + 1, n = n + 1), n", 3),
+        ("x := mut f64 0.5, n := mut i32 0, while i32 3 > i32 lossy (x) (x = x + 1, n = n + 1), n", 3),
         ("x := f64 2.5, i32 1 + i32 lossy x", 3),
         ("x := f64 2.5, y := i32 lossy x, y", 2),
     ] {
@@ -4393,7 +4405,7 @@ fn a_number_type_takes_the_name_to_its_right() {
     diff_typed_call("fn (n := i32 ?) -> i64 ( i64 n + i64 1 )", "f(4)", 5);
     diff_typed_call("fn (n := f64 ?) -> i32 ( i32 lossy n )", "f(2.5)", 2);
     assert_eq!(run_script("m := i32 3, x := alloc 1 of i32 m, x@"), 3);
-    assert_eq!(run_script("m := i32 3, mut y := i32 0, y = i32 m, y"), 3);
+    assert_eq!(run_script("m := i32 3, y := mut i32 0, y = i32 m, y"), 3);
     assert_eq!(run_script("r := 3, i32 r"), 3);
     assert_eq!(run_script("r := rational_number 1/3, i32 lossy r"), 0);
     for src in [
@@ -4410,7 +4422,7 @@ fn a_number_type_takes_the_name_to_its_right() {
 
 #[test]
 fn a_type_takes_the_value_built_at_discovery_before_it() {
-    let pt = "pt := type (pub a := i32 ?, b := i32 ?), p := pt(7, 8)";
+    let pt = "pt := type (a := pub i32 ?, b := i32 ?), p := pt(7, 8)";
     for (src, want) in [
         (format!("{pt}, i32 p.a"), 7),
         (format!("{pt}, i32 lossy p.a"), 7),
@@ -4476,7 +4488,7 @@ fn a_run_time_rational_operation_makes_no_node() {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let src = "a := rational_number 1,\nb := rational_number 3,\nmut acc := rational_number 0,\n\
+    let src = "a := rational_number 1,\nb := rational_number 3,\nacc := mut rational_number 0,\n\
                for 0..100 ( acc = acc + a / b ),\nacc";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
     let root = p.parse_sequence().unwrap();
@@ -4580,8 +4592,8 @@ fn a_line_the_pass_ran_keeps_its_node_and_is_not_run_again() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     // The box read at `t 5` runs the block's first three lines while it is still being parsed.
-    let src = "mut x := i32 0, bump := fn () -> void ( x = x + 1 ), \
-               y := ( mut t := type ?, t = i32, bump(), z := t 5, z + x ), y + x";
+    let src = "x := mut i32 0, bump := fn () -> void ( x = x + 1 ), \
+               y := ( t := mut type ?, t = i32, bump(), z := t 5, z + x ), y + x";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
     let root = p.parse_sequence().unwrap();
     // SAFETY: `root` is the sequence just parsed; its third line declares `y` over the block.
@@ -4609,8 +4621,8 @@ fn a_line_the_pass_ran_keeps_its_node_and_is_not_run_again() {
 /// A `q` whose `parse` runs `body` and then takes its bracket off the tape.
 fn tape_line_q(body: &str) -> String {
     format!(
-        "pt := type ( pub mut a := u64 ?, pub mut b := u64 ? ), \
-         q := type ( pub v := u64 ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
+        "pt := type ( a := pub mut u64 ?, b := pub mut u64 ? ), \
+         q := type ( v := pub u64 ?, parse_rank = 61, parse = ( tape[0].type = q, \
          {body}, tape.remove(1), tape.is_constructed[0] = true ) )"
     )
 }
@@ -4619,12 +4631,12 @@ fn tape_line_q(body: &str) -> String {
 fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_place_is_reached() {
     let constant = "holds no literal or constant of it";
     for body in [
-        "mut n := u64 0, n = tape[1].dyads[0], tape[0].v = n",
-        "mut n := u64 ?, n = tape[1].dyads[0], tape[0].v = n",
-        "mut r := pt ?, r.b = 0, r.a = tape[1].dyads[0], tape[0].v = r.a",
+        "n := mut u64 0, n = tape[1].dyads[0], tape[0].v = n",
+        "n := mut u64 ?, n = tape[1].dyads[0], tape[0].v = n",
+        "r := mut pt ?, r.b = 0, r.a = tape[1].dyads[0], tape[0].v = r.a",
         "p := alloc 1 of u64 0, p@ = tape[1].dyads[0], tape[0].v = p@",
-        "mut n := u64 0, p := &n, p@ = tape[1].dyads[0], tape[0].v = n",
-        "id := fn (k := u64 ?) -> u64 ( k ), mut n := u64 0, n = id(tape[1].dyads[0]), \
+        "n := mut u64 0, p := &n, p@ = tape[1].dyads[0], tape[0].v = n",
+        "id := fn (k := u64 ?) -> u64 ( k ), n := mut u64 0, n = id(tape[1].dyads[0]), \
          tape[0].v = n",
     ] {
         let q = tape_line_q(body);
@@ -4642,7 +4654,7 @@ fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_plac
         }
     }
     // The whole cell, `q 5`, as a line of one.
-    let q = tape_line_q("mut n := u64 0, n = tape[1], tape[0].v = n");
+    let q = tape_line_q("n := mut u64 0, n = tape[1], tape[0].v = n");
     assert_eq!(run_script(&format!("{q}, x := q 5, x.v")), 5);
     let compiled = format!("{q}, h := fn () -> u64 ( x := q 5, x.v ), h.compile(), h()");
     assert_eq!(run_script(&compiled), 5, "compiled");
@@ -4658,7 +4670,7 @@ fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_plac
 #[test]
 fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     // A `bool` takes `true` and `false`, and no number lies inside it.
-    for (place, read) in [("mut b := bool ?, b", "b"), ("p := alloc 1 of bool ?, p@", "p@")] {
+    for (place, read) in [("b := mut bool ?, b", "b"), ("p := alloc 1 of bool ?, p@", "p@")] {
         let q = tape_line_q(&format!(
             "{place} = tape[1].dyads[0], if {read} ( tape[0].v = 1 ) else ( tape[0].v = 2 )"
         ));
@@ -4676,7 +4688,7 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     // The message names the type the place has, a pointer as it is written.
     for (field, named) in [("@u64", "@u64"), ("@bool", "@bool")] {
         let src = format!(
-            "q := type ( p := {field} ?, static parse_rank = 61, static parse = ( tape[0].type = q, \
+            "q := type ( p := {field} ?, parse_rank = 61, parse = ( tape[0].type = q, \
              tape[0].p = tape[1].dyads[0], r := tape[0].p, tape.remove(1), \
              tape.is_constructed[0] = true ) ), n := u64 3, x := q [&n]"
         );
@@ -4688,7 +4700,7 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     }
     // Any other place refuses the line where the parse body is read, by name as through a pointer.
     for (place, err) in [
-        ("mut r := rational_number ?, r", ParseError::TypeMismatch),
+        ("r := mut rational_number ?, r", ParseError::TypeMismatch),
         ("p := alloc 1 of rational_number 0, p@", ParseError::TypeMismatch),
         ("p := alloc 1 of dyad ?, p@", ParseError::DyadTakesNode),
         ("p := alloc 1 of @u64 ?, p@", ParseError::TypeMismatch),
@@ -4705,9 +4717,9 @@ fn a_tape_line_no_check_narrowed_is_checked_where_a_type_is_wanted_when_the_pars
     // A line of a bracket cell, `q [i32]`, and the whole cell, `q i32`.
     for (line, write) in [("tape[1].dyads[0]", "q [{}]"), ("tape[1]", "q {}")] {
         for place in [
-            format!("mut t := type ?, t = {line}, tape[0].v = g(t)"),
+            format!("t := mut type ?, t = {line}, tape[0].v = g(t)"),
             format!("p := alloc 1 of type ?, p@ = {line}, tape[0].v = g(p@)"),
-            format!("mut n := u64 0, n = g({line}), tape[0].v = n"),
+            format!("n := mut u64 0, n = g({line}), tape[0].v = n"),
         ] {
             let q = format!("{g}{}", tape_line_q(&place));
             let at = |v: &str| write.replace("{}", v);
@@ -4735,7 +4747,7 @@ fn not_pub(name: &str) -> ParseError {
 
 #[test]
 fn a_field_is_read_from_outside_its_type_only_when_it_is_pub_both_tiers() {
-    let pt = "pt := type ( pub x := i32 ?, y := i32 ? )";
+    let pt = "pt := type ( x := pub i32 ?, y := i32 ? )";
     for compile in ["", "f.compile(), "] {
         let read = |field: &str| {
             format!("{pt}, f := fn () -> i32 ( p := pt(1, 2), p.{field} ), {compile}f()")
@@ -4752,31 +4764,31 @@ fn a_field_is_read_from_outside_its_type_only_when_it_is_pub_both_tiers() {
     }
     // A write through `.` needs the read, and `mut` besides.
     assert_eq!(
-        script_parse_err("pt := type ( mut x := i32 ? ), mut p := pt(1), p.x = 5, 1"),
+        script_parse_err("pt := type ( x := mut i32 ? ), p := mut pt(1), p.x = 5, 1"),
         not_pub("x")
     );
-    assert_eq!(run_script("pt := type ( pub mut x := i32 ? ), mut p := pt(1), p.x = 5, p.x"), 5);
+    assert_eq!(run_script("pt := type ( x := pub mut i32 ? ), p := mut pt(1), p.x = 5, p.x"), 5);
 }
 
 #[test]
 fn a_types_own_bodies_read_every_field_and_member() {
     assert_eq!(
         run_script(
-            "pt := type ( x := i32 ?, y := i32 ?, pub static sum := fn () -> i32 ( x + y ) ), \
+            "pt := type ( x := i32 ?, y := i32 ?, sum := pub static fn () -> i32 ( x + y ) ), \
              p := pt(1, 2), p.sum()"
         ),
         3
     );
     assert_eq!(
         run_script(
-            "mk := type ( static tag := i32 7, pub static get := fn () -> i32 ( tag ) ), mk.get()"
+            "mk := type ( tag := static i32 7, get := pub static fn () -> i32 ( tag ) ), mk.get()"
         ),
         7
     );
     // `run`, and a `parse` that writes its own type's fields through the tape.
     let inc = "inc := type ( a := i32 ?, output_type := type ?, \
-               static twice := fn () -> i32 ( a * 2 ), static run = ( twice() + 1 ), \
-               static parse_rank = *.parse_rank + 1, static parse = ( tape[0].type = inc, \
+               twice := static fn () -> i32 ( a * 2 ), run = ( twice() + 1 ), \
+               parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
                tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
                tape.remove(-1) ) ), f := fn (y := i32 ?) -> i32 ( y inc )";
     for compile in ["", "f.compile(), "] {
@@ -4786,17 +4798,17 @@ fn a_types_own_bodies_read_every_field_and_member() {
 
 #[test]
 fn a_static_member_is_read_through_its_type_or_a_value_only_when_it_is_pub() {
-    assert_eq!(script_parse_err("mk := type ( static tag := i32 7 ), mk.tag"), not_pub("tag"));
+    assert_eq!(script_parse_err("mk := type ( tag := static i32 7 ), mk.tag"), not_pub("tag"));
     for gates in ["pub static", "static pub"] {
         assert_eq!(
-            run_script(&format!("mk := type ( {gates} tag := i32 7 ), mk.tag")),
+            run_script(&format!("mk := type ( tag := {gates} i32 7 ), mk.tag")),
             7,
             "{gates}"
         );
     }
     let pt = |gate: &str| {
         format!(
-            "pt := type ( x := i32 ?, {gate}static s := fn () -> i32 ( x ) ), p := pt(3), p.s()"
+            "pt := type ( x := i32 ?, s := {gate}static fn () -> i32 ( x ) ), p := pt(3), p.s()"
         )
     };
     assert_eq!(script_parse_err(&pt("")), not_pub("s"));
@@ -4804,9 +4816,9 @@ fn a_static_member_is_read_through_its_type_or_a_value_only_when_it_is_pub() {
     // A function called through the type, a chooser as any other.
     let chooser = |gate: &str, call: &str| {
         format!(
-            "p := type ( {gate}static get_mint := fn (l := type ?) -> type ( \
-             place := type_mint.step(type_mint.step(0, p), l), mut m := type type_mint.kept(place), \
-             if m != ? return m, m = type ( pub v := l ? ), type_mint.keep(place, m), m ) ), {call}"
+            "p := type ( get_mint := {gate}static fn (l := type ?) -> type ( \
+             place := type_mint.step(type_mint.step(0, p), l), m := mut type type_mint.kept(place), \
+             if m != ? return m, m = type ( v := pub l ? ), type_mint.keep(place, m), m ) ), {call}"
         )
     };
     let twice = "p.get_mint(i32) == p.get_mint(i32)";
@@ -4820,11 +4832,11 @@ fn a_static_member_is_read_through_its_type_or_a_value_only_when_it_is_pub() {
 fn a_kept_scopes_entries_are_read_from_outside_only_when_pub_both_tiers() {
     assert_eq!(script_parse_err("m := { a := i32 1 }, m.a"), not_pub("a"));
     for compile in ["", "f.compile(), "] {
-        let src = format!("m := {{ pub a := i32 1 }}, f := fn () -> i32 ( m.a ), {compile}f()");
+        let src = format!("m := {{ a := pub i32 1 }}, f := fn () -> i32 ( m.a ), {compile}f()");
         assert_eq!(run_script(&src), 1, "{compile}");
     }
     // A `fn` entry reads its siblings bare.
-    let m = "m := { a := i32 1, pub f := fn () -> i32 ( a + 1 ) }";
+    let m = "m := { a := i32 1, f := pub fn () -> i32 ( a + 1 ) }";
     assert_eq!(run_script(&format!("{m}, m.f()")), 2);
     assert_eq!(script_parse_err(&format!("{m}, m.a")), not_pub("a"));
 }
@@ -4832,11 +4844,11 @@ fn a_kept_scopes_entries_are_read_from_outside_only_when_pub_both_tiers() {
 #[test]
 fn a_hashmap_takes_only_the_pub_entries_of_a_scope() {
     assert_eq!(
-        run_script("h := hashmap string -> i32 { pub a := 1, pub b := 2 }, h[«a»] + h[«b»]"),
+        run_script("h := hashmap string -> i32 { a := pub 1, b := pub 2 }, h[«a»] + h[«b»]"),
         3
     );
     assert_eq!(
-        script_parse_err("h := hashmap string -> i32 { pub a := 1, b := 2 }, 1"),
+        script_parse_err("h := hashmap string -> i32 { a := pub 1, b := 2 }, 1"),
         not_pub("b")
     );
 }
@@ -4845,9 +4857,9 @@ fn a_hashmap_takes_only_the_pub_entries_of_a_scope() {
 fn a_parse_that_stamps_another_type_writes_only_its_pub_fields() {
     let src = |gate: &str, stamp: &str| {
         format!(
-            "box := type ( {gate}v := i32 ?, static output_type := type i32, static run = ( v + 1 ) ), \
+            "box := type ( v := {gate}i32 ?, output_type := static type i32, run = ( v + 1 ) ), \
              get := fn () -> type ( box ), \
-             wrap := type ( static parse_rank = *.parse_rank + 1, static parse = ( \
+             wrap := type ( parse_rank = *.parse_rank + 1, parse = ( \
              tape[0].type = {stamp}, tape[0].v = tape[-1], tape.is_constructed[0] = true, \
              tape.remove(-1) ) ), 4 wrap"
         )

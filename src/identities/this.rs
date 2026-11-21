@@ -627,7 +627,7 @@ unsafe fn behind_place(
 }
 
 /// [`field_of`] for a write: a place of a record kept behind its pointer that holds none yet takes
-/// a new block first, its other fields zero, so `mut a := bag ?` holds 0 until a write gives it a
+/// a new block first, its other fields zero, so `a := mut bag ?` holds 0 until a write gives it a
 /// value.
 ///
 /// # Safety

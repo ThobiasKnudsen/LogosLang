@@ -703,6 +703,18 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
             if name == "type" {
+                // A name's type is read with its gate node, a field's too (›`x.type` reads the
+                // type word of the node a name or an expression stands for‹ [[R279]]).
+                let named = match left.target.1 {
+                    field if field.is_null() => self.cx.member_root,
+                    field => field,
+                };
+                if !named.is_null() {
+                    let word = crate::identities::gate::word_of_name(self.types, named);
+                    if crate::identities::gate::is_node(word) {
+                        self.cx.member_gates = dyad::ty(word);
+                    }
+                }
                 return self.type_read(lhs).map(|t| (t, 0));
             }
             // A member the read of a tape node answers where it is written; any other one the
@@ -1129,6 +1141,7 @@ impl<'a> Parser<'a> {
         });
         self.cx.member_root = std::ptr::null_mut();
         let path = std::mem::take(&mut self.cx.member_path);
+        let gates = std::mem::replace(&mut self.cx.member_gates, std::ptr::null_mut());
         let (node, consumed) = access?;
         let end = tape.at(1 + consumed as isize).map_or(nstart + nlen, Cell::end);
         for _ in 0..(1 + consumed) {
@@ -1144,6 +1157,7 @@ impl<'a> Parser<'a> {
         tape.span_center(left.start, end);
         let cell = tape.at_mut(0).expect("placed above");
         cell.path = path;
+        cell.gates = gates;
         if plain && !through {
             cell.target = reached;
             cell.root = path_root;

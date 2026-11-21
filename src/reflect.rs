@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn describe_reads_a_program_from_the_graph_alone() {
         let (_store, core, roots) = parse_all(&[
-            "mut x := i32 41",
+            "x := mut i32 41",
             "point := type (a := i32 ?, b := i64 ?)",
             "pt := point(3, 4)",
             "x = x * 1",
@@ -730,7 +730,7 @@ mod tests {
             "pt := point(3, 4)",
             "q := &pt",
             "f := fn (v := i64 ?) -> i64 ( if (v < 2) ( 1 ) else ( v * 2 ) )",
-            "mut y := i64 1",
+            "y := mut i64 1",
             "y = f(21)",
             "for i in 0..10 ( y = y + 1 )",
             "( «text», # prose\n 3.5 )",

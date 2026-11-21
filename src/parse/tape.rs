@@ -44,6 +44,10 @@ pub struct Cell {
     /// The value `type` made of what stood after it, `type i32` or `type ( … )`: a type held as a
     /// value of `type`, where any other cell that gives a type is that type with nothing after it.
     pub type_value: bool,
+    /// The gate mint of the gate words read over the value, null for none: what its type is
+    /// gated by where it lands (›A gate word reads the whole value to its right and gives it
+    /// with its type gated‹ [[R102]]).
+    pub gates: DyadPtr,
 }
 
 impl Cell {
@@ -63,6 +67,7 @@ impl Cell {
         self.hole = from.hole;
         self.owning = from.owning;
         self.type_value = from.type_value;
+        self.gates = from.gates;
     }
 
     /// The cell placed over `dyad`, its facts cleared.
@@ -77,6 +82,7 @@ impl Cell {
         self.hole = hole;
         self.owning = owning;
         self.type_value = type_value;
+        self.gates = std::ptr::null_mut();
     }
 }
 
@@ -99,6 +105,7 @@ impl Cell {
             hole,
             owning,
             type_value,
+            gates: std::ptr::null_mut(),
         }
     }
 
@@ -119,6 +126,7 @@ impl Cell {
             hole,
             owning,
             type_value,
+            gates: std::ptr::null_mut(),
         }
     }
 
@@ -543,6 +551,16 @@ impl ParsingTape {
     pub fn place_type_value(&mut self, dyad: DyadPtr) {
         self.place(dyad);
         self.at_mut(0).expect("placed above").type_value = true;
+    }
+
+    /// The value `cell` stands at the center as it is, a name still a name, its type gated by
+    /// `mint`.
+    pub fn place_gated(&mut self, cell: Cell, mint: DyadPtr) {
+        self.edits += 1;
+        let center = self.at_mut(0).expect("the construct's cell is at the center");
+        *center = cell;
+        center.bracket = false;
+        center.gates = mint;
     }
 
     /// A bracket standing as its one expression stands with that expression's facts.
