@@ -8022,13 +8022,30 @@ fn free_of_a_cell_runs_the_free_of_the_record_it_holds() {
 /// place never written frees nothing, and a copy is a block of its own, on both tiers.
 #[test]
 fn a_value_whose_type_fills_free_lives_behind_a_pointer() {
-    let g = "g := fn () -> i32 ( error «stop» )";
+    let g = "g := fn () -> i32 ( error «stop» ), k := fn (q := @bag ?) -> i32 ( q@.n )";
     let fails = "f := fn () -> i32 ( a := bag(1), x := ( free a, g() ), x )";
-    for (tail, printed) in [
+    let mut faults = vec![
         (format!("{g}, a := bag(1), x := immediate ( free a, g() ), 1"), "freed 1\n"),
         (format!("{g}, {fails}, f()"), "freed 1\n"),
         (format!("{g}, {fails}, f.compile(), f()"), "freed 1\n"),
+    ];
+    // A value `&` landed on the line that fails is freed once; one it never reached, never.
+    for (body, printed) in [
+        ("x := k(&bag(3)) + g(), x", "freed 3\n"),
+        ("x := g() + k(&bag(3)), x", ""),
+        ("for i in 0..2 ( x := (if i == 1 g() else i32 0) + k(&bag(i)) ), 0", "freed 0\n"),
+        (
+            "for i in 0..2 ( a := bag(i), b := move a, x := (if i == 1 g() else i32 0) + \
+             k(&bag(9)) ), 0",
+            "freed 9\nfreed 0\nfreed 1\n",
+        ),
     ] {
+        faults.push((format!("{g}, {body}"), printed));
+        for c in ["", "f.compile(), "] {
+            faults.push((format!("{g}, f := fn () -> i32 ( {body} ), {c}f()"), printed));
+        }
+    }
+    for (tail, printed) in faults {
         let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(1), printed), "{tail}: stderr: {stderr}");
         assert!(stderr.contains("run error: stop"), "{tail}: stderr: {stderr}");

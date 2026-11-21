@@ -1221,16 +1221,19 @@ impl ExitItem {
         self.end.is_none_or(|end| end > self.from)
     }
 
-    /// Whether the end of a scope whose line `failed` faulted runs it: held there, or ended by
-    /// that line, which may have stopped before its own `free` or `move`; the place says which,
-    /// being NULL once one ran (DESIGN ›`free` and `move` end a name; no drop flag‹).
+    /// Whether the end of a scope whose line `failed` faulted runs it: held there, or made or
+    /// ended by that line, which may have stopped before or after the `&`, `free` or `move`; the
+    /// place says which, NULL until the value lands and once one ran (DESIGN ›`free` and `move`
+    /// end a name; no drop flag‹ [[R60]]).
     ///
     /// # Safety
-    /// `what` must be a `defer` node or a place from the store.
+    /// `what` must be a `defer` node or a place from the store; a place made by line `failed`
+    /// holds 0 until it is written, as a frame starts zeroed and an end leaves 0.
     pub(crate) unsafe fn held_at_fault(&self, types: &Core, failed: usize) -> bool {
+        let touched = self.from == failed + 1 || self.from <= failed && self.end == Some(failed);
         self.held_at(failed)
-            || self.from <= failed
-                && self.end == Some(failed)
+            || touched
+                && dyad::ty(self.what) != types.defer_
                 && holds_by_address(types, types.type_of(self.what))
     }
 
@@ -2651,12 +2654,18 @@ mod tests {
         ] {
             assert_eq!(run(&format!("{KEPT}{tail}")), (want, 0), "{tail}");
         }
-        let g = "g := fn () -> i32 ( error «stop» ),\n";
-        let f = "f := fn () -> i32 ( a := r(1), x := ( free a, g() ), x ),\n";
-        for c in ["", "f.compile(),\n"] {
-            let (e, live) = fault(&format!("{KEPT}{g}{f}{c}f()"));
-            assert!(matches!(e, RunError::Raised(_)), "{c}{e:?}");
-            assert_eq!(live, 0, "{c}");
+        let g = "g := fn () -> i32 ( error «stop» ),\nk := fn (q := @r ?) -> i32 ( q@.n ),\n";
+        for body in [
+            "a := r(1), x := ( free a, g() ), x",
+            "x := k(&r(3)) + g(), x",
+            "x := g() + k(&r(3)), x",
+            "for i in 0..2 ( x := (if i == 1 g() else i32 0) + k(&r(i)) ), 0",
+        ] {
+            for c in ["", "f.compile(),\n"] {
+                let (e, live) = fault(&format!("{KEPT}{g}f := fn () -> i32 ( {body} ),\n{c}f()"));
+                assert!(matches!(e, RunError::Raised(_)), "{body} {c}{e:?}");
+                assert_eq!(live, 0, "{body} {c}");
+            }
         }
     }
 
