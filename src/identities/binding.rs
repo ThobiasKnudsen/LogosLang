@@ -54,6 +54,9 @@ pub struct Binding {
     /// The copies made of this record, an `array` of bindings, one that a failed line or a
     /// refused import left in no scope included; null while none.
     pub copies: DyadPtr,
+    /// On the spelling-less place an `x:f` read lays over `x`'s record, `x`'s binding; null on
+    /// every other binding.
+    pub over: DyadPtr,
     /// Declared outside any function in a body the pass does not run in parse order, a loop
     /// or a branch: at parse the name holds no value yet.
     pub unmade: bool,
@@ -87,6 +90,7 @@ impl Binding {
             paths: std::ptr::null_mut(),
             origin: std::ptr::null_mut(),
             copies: std::ptr::null_mut(),
+            over: std::ptr::null_mut(),
             unmade: false,
             pattern: false,
         }

@@ -171,6 +171,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::NotMutable(name) => {
             format!("`{name}` is not `mut`: a name is written after its declaration only when declared `mut {name} := …`")
         }
+        ParseError::LexOutsideScope(name) => format!(
+            "`{name}:lex_rank` is written only from the scope that declares `{name}` or a scope inside it"
+        ),
         ParseError::ImportTakesFile => {
             "`import` reads the file it is given: write `import file «path»`".into()
         }
@@ -218,10 +221,6 @@ pub fn parse_message(e: &ParseError) -> String {
              another identity, remove it, or set the flag on the untouched cell to stand as itself"
         ),
         ParseError::BadPattern(why) => format!("this pattern does not compile: {why}"),
-        ParseError::LoadInRuntimeBody(word) => format!(
-            "`{word}` reads a file as Logos at parse time, so it cannot stand inside a \
-             function body, loop, or runtime branch"
-        ),
         ParseError::FileRead(detail) => format!("cannot read {detail}"),
         ParseError::ImportCycle(path) => format!(
             "reading `{path}` as Logos here closes a cycle: the graph of files reaching files \

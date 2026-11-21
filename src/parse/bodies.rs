@@ -1094,7 +1094,7 @@ impl<'a> Parser<'a> {
         node: DyadPtr,
         binding: DyadPtr,
     ) -> Result<(), ParseError> {
-        if self.cx.scopes.crosses_barrier(Binding::read(binding).scope) {
+        if self.ends_outer_name(Binding::read(binding).scope, binding) {
             return Err(ParseError::MoveOfOuterName);
         }
         let moved = crate::identities::drop_model::build_move(self.rt.store, self.types, binding);
@@ -1695,13 +1695,8 @@ impl<'a> Parser<'a> {
             // SAFETY: `callee` is a reduced dyad.
             if unsafe { self.returns_type(callee) } {
                 self.check_call_reads(callee)?;
-                // Inside a body an argument known only at run leaves the call
-                // to run with it, its result a type value at run.
-                let comptime = args.iter().all(|&a| {
-                    // SAFETY: `args` are reduced dyads from the store.
-                    unsafe { crate::identities::is_comptime_arg(types, a) }
-                });
-                if self.cx.runtime_depth > 0 && !comptime {
+                // A call that waits for the run gives a type value then.
+                if !self.runs_in_pass(&args) {
                     return Ok(call);
                 }
                 // SAFETY: `call` was just built over reduced dyads.
@@ -1897,7 +1892,7 @@ impl<'a> Parser<'a> {
             return Ok(());
         };
         // SAFETY: `place` is a binding an open scope holds.
-        if self.cx.scopes.crosses_barrier(unsafe { Binding::read(place) }.scope) {
+        if self.ends_outer_name(unsafe { Binding::read(place) }.scope, place) {
             return Err(ParseError::MoveOfOuterName);
         }
         // SAFETY: as above.
@@ -2348,6 +2343,32 @@ impl<'a> Parser<'a> {
         self.cx.feed.as_ref().is_none_or(|f| f.in_run_order) && self.cx.runtime_depth == 0
     }
 
+    /// Whether a part whose value the parse needs to go on reading runs now, in the pass, its
+    /// value standing in for it (›The pass runs only as far as it must, in order, and never twice‹
+    /// [[R288]]): outside a body it does, and inside one when everything it reads is known while
+    /// the program is parsed, each of `reads` a type, a literal or the no value a call through a
+    /// type works on; a part that reads a parameter or a local waits for the run. A file read as
+    /// Logos reads only its address, written as plain text, so it always runs in the pass and asks
+    /// nothing here. `immediate` and a `static` initializer ask for the pass where the parse would
+    /// not need it ([`Self::parse_in_pass`]).
+    pub(super) fn runs_in_pass(&self, reads: &[DyadPtr]) -> bool {
+        self.cx.runtime_depth == 0
+            // SAFETY: each read is a reduced dyad from the store.
+            || reads.iter().all(|&r| unsafe { crate::identities::is_comptime_arg(self.types, r) })
+    }
+
+    /// `parse`, a part the author asks the pass to run once where it is written, an `immediate`
+    /// operand or a `static` initializer: every part of it runs in the pass, and a read of a name
+    /// that only the run gives a value is refused (`once_at`).
+    pub(super) fn parse_in_pass<T>(&mut self, parse: impl FnOnce(&mut Self) -> T) -> T {
+        let once_at = self.cx.once_at.replace(self.cx.frames.len());
+        let depth = std::mem::replace(&mut self.cx.runtime_depth, 0);
+        let parsed = parse(self);
+        self.cx.once_at = once_at;
+        self.cx.runtime_depth = depth;
+        parsed
+    }
+
     /// Something took `value`, a name, a parameter, `free`, `&`, a `return` or the scope it is
     /// the last value of: no line's end frees it, nor anything it hands on.
     pub(crate) fn take(&mut self, value: DyadPtr) {
@@ -2610,11 +2631,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let saved_once = self.cx.once_at.replace(self.cx.frames.len());
-        let saved_depth = std::mem::replace(&mut self.cx.runtime_depth, 0);
-        let operand = self.parse_expression();
-        self.cx.once_at = saved_once;
-        self.cx.runtime_depth = saved_depth;
+        let operand = self.parse_in_pass(Self::parse_expression);
         // SAFETY: the operand was just parsed into this parser's store.
         let value = unsafe { self.immediate_value(operand?) }?;
         tape.place(value);

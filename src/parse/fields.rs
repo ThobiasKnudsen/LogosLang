@@ -1551,7 +1551,10 @@ impl<'a> Parser<'a> {
         let record = Binding::alloc(
             self.rt.store,
             types.binding_,
-            Binding::new(types.binding_, types.root_scope, std::ptr::null_mut()),
+            Binding {
+                over: binding,
+                ..Binding::new(types.binding_, types.root_scope, std::ptr::null_mut())
+            },
         );
         Binding::lay_out(record, types.binding_, types.root_scope, offset);
         record

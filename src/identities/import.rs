@@ -7,8 +7,11 @@
 //! ›`file «path»` and `url «address»` reach a file; `import` sets its `pub` names where it stands‹
 //! [[R375]]
 
+use cranelift_codegen::ir::Value;
+
 use super::callable::{self, Callables};
 use super::{meta, Cx};
+use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
@@ -20,10 +23,15 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("import", id);
     cx.metas.insert(id, |p, _id, tape| p.construct_import(tape));
+    cx.lower.insert(id, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)
 }
 
 fn run(_rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunError> {
     Ok(0)
+}
+
+fn lower(lw: &mut Lowerer, _node: DyadPtr) -> Result<Value, CompileError> {
+    Ok(lw.const_i32(0))
 }
