@@ -8330,6 +8330,48 @@ fn an_if_frees_what_one_arm_moved_at_the_end_of_the_other() {
     }
 }
 
+/// ›A binding is live while its scope is open and it is not dead; it carries a range‹ [[R337]]:
+/// each arm of an `if` starts from the names as they stood when the `if` began, so the arms
+/// written after one that ends a name still read and end it, and each path frees it once.
+#[test]
+fn a_name_one_arm_of_an_if_ends_is_live_in_the_others_compiled_or_not() {
+    for (body, printed) in [
+        ("if (c == 1) ( free a ) else ( free a )", "free\ngot 0\nfree\ngot 0\n"),
+        (
+            "if (c == 1) ( b := move a, print «moved» ) else ( free a )",
+            "free\ngot 0\nmoved\nfree\ngot 0\n",
+        ),
+        (
+            "if (c != 1) ( free a ) else ( print «kept {(a.p + 0)@}» )",
+            "free\ngot 0\nkept 7\nfree\ngot 0\n",
+        ),
+    ] {
+        for compile in ["", "f.compile(), "] {
+            let (code, stdout, stderr) = run_line(&format!(
+                "{BOX}, f := fn (c := i32 ?) -> i32 ( a := box (7, 1), {body}, 0 ), \
+                 {compile}print «got {{f(0)}}», print «got {{f(1)}}»"
+            ));
+            assert_eq!(code, Some(0), "{compile}{body}: stderr: {stderr}");
+            assert_eq!(stdout, printed, "{compile}{body}");
+        }
+    }
+    // A REPL line whose later arm declares the name again is refused and rolled back, so the
+    // session's end still frees the name.
+    let lines = BOX.replacen("), box := ", ")\nbox := ", 1);
+    for (tail, last) in [
+        ("a := box (1, 2)\nc := i32 0\nif (c == 1) ( b := move a ) else ( free a )\nprint «end»\n", "end"),
+        ("a := box (1, 2)\nc := i32 0\nif (c == 1) ( free a ) else ( a := i32 3 )\nprint «end»\n", "free"),
+    ] {
+        let (echoes, stderr) = repl(format!("{lines}\n{tail}").as_bytes());
+        assert_eq!(
+            echoes.iter().filter(|l| *l == "free").count(),
+            1,
+            "{tail}: {echoes:?} {stderr}"
+        );
+        assert_eq!(echoes.last().map(String::as_str), Some(last), "{tail}: {echoes:?}");
+    }
+}
+
 #[test]
 fn and_and_or_run_both_sides() {
     for (tail, printed) in [
@@ -8417,6 +8459,13 @@ fn a_return_ends_what_each_scope_if_and_call_it_leaves_holds_compiled_or_not() {
              if (c == 1) (return 5) else (free a), say(1) ) else ( say(2) ), 9 )",
             "print «got {g(1)}», print «got {g(2)}», print «got {g(0)}»",
             "freed 7\nfreed 8\ngot 5\nfreed 7\nsay 1\nfreed 8\ngot 9\nsay 2\nfreed 7\ngot 9\n",
+        ),
+        // An else arm still reads what the then arm freed, and frees it on the `return`'s way out.
+        (
+            "g := fn (c := i32 ?) -> i32 ( a := bag(7), \
+             if (c == 1) ( free a ) else ( say(a.n), return 2 ), 9 )",
+            "print «got {g(1)}», print «got {g(0)}»",
+            "freed 7\ngot 9\nsay 7\nfreed 7\ngot 2\n",
         ),
         // A condition the `return` leaves frees what either arm would have.
         (

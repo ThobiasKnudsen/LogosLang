@@ -1158,6 +1158,8 @@ impl<'a> Parser<'a> {
         self.cx.narrow_next = check.filter(|&(_, _, holds)| holds).map(|(key, ty, _)| (key, ty));
         let (if_depth, log_start) = (self.cx.open.len(), self.cx.ended_log.len());
         let returns_then = self.returns_len();
+        let ends_mark = self.cx.scopes.ends_mark();
+        let mut ended_by_then = Vec::new();
         self.cx.next_passes_out = alone;
         let then = self.parse_branch();
         self.cx.handed_tail = None;
@@ -1167,6 +1169,8 @@ impl<'a> Parser<'a> {
         // else-branch directly, so a chain nests right-associatively.
         let branches = then.and_then(|then| {
             let els = if self.consume_else() {
+                // SAFETY: the journal holds the bindings this parse ended.
+                ended_by_then = unsafe { self.cx.scopes.undo_ends(ends_mark) };
                 if self.consume_token(self.types.if_) {
                     self.parse_if(if_type, alone)
                 } else {
@@ -1183,6 +1187,14 @@ impl<'a> Parser<'a> {
         self.cx.narrow_next = None;
         self.cx.runtime_depth -= 1;
         let (then, els) = branches?;
+        // What the then arm ended is dead after the `if`, as what the else arm ended is.
+        for (name, node) in ended_by_then {
+            // SAFETY: `name` is a binding dyad the journal held.
+            if !unsafe { Binding::read(name) }.is_dead() {
+                // SAFETY: as above.
+                unsafe { self.cx.scopes.mark_dead(name, node) };
+            }
+        }
 
         // A `!=` check whose branch raises leaves the cell checked for the rest of the scope.
         if let Some((key, ty, false)) = check {
@@ -1193,16 +1205,22 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // A held name one arm moved or freed ends on every path: the other arm frees it at
-        // its end, an else-less `if` in the arm it gains, and a condition that leaves before
-        // either arm runs frees it too (DESIGN ›`move` and `free` are static: the parse marks
-        // the name dead‹, rule 2).
+        // A held name an arm moved or freed ends on every path: an arm that did not end it
+        // frees it at its end, an else-less `if` in the arm it gains, and a condition that
+        // leaves before either arm runs frees it too (DESIGN ›`move` and `free` are static: the
+        // parse marks the name dead‹, rule 2).
         let log_end = self.cx.ended_log.len();
-        let then_ends = self.ended_outside(log_then..log_end, if_depth);
-        let else_ends = self.ended_outside(log_start..log_then, if_depth);
+        let then_ended = self.ended_outside(log_start..log_then, if_depth);
+        let else_ended = self.ended_outside(log_then..log_end, if_depth);
+        let not_in = |ended: &[DyadPtr], other: &[DyadPtr]| -> Vec<DyadPtr> {
+            other.iter().copied().filter(|name| !ended.contains(name)).collect()
+        };
+        let then_ends = not_in(&then_ended, &else_ended);
+        let else_ends = not_in(&else_ended, &then_ended);
         let condition_ends = self.ended_outside(log_start..log_end, if_depth);
         // A `return` in the condition or the then arm leaves through the `if`, which frees
-        // these on its way; an else arm's `return` stands after what the then arm ended.
+        // these on its way, though its line may end them after it, in the else arm. An else
+        // arm's `return` stands after the then arm in the log, so its line never ends them.
         let returns = self.returns_from(returns_start);
         let (in_condition, in_then) = returns.split_at_mut(returns_then - returns_start);
         for r in in_condition {
@@ -1225,7 +1243,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The held names the ended log's `range` ended that a scope outside depth `inside` holds, in
-    /// the order they were declared.
+    /// the order they were declared, each once.
     fn ended_outside(&self, range: std::ops::Range<usize>, inside: usize) -> Vec<DyadPtr> {
         let mut names: Vec<(usize, usize, DyadPtr)> = self.cx.ended_log[range]
             .iter()
@@ -1238,7 +1256,13 @@ impl<'a> Parser<'a> {
             })
             .collect();
         names.sort_by_key(|&(holder, at, _)| (holder, at));
-        names.into_iter().map(|(_, _, place)| place).collect()
+        let mut once: Vec<DyadPtr> = Vec::with_capacity(names.len());
+        for (_, _, place) in names {
+            if !once.contains(&place) {
+                once.push(place);
+            }
+        }
+        once
     }
 
     fn bracketed_body(&mut self) -> Result<DyadPtr, ParseError> {
