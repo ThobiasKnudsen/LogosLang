@@ -16,7 +16,7 @@ use super::{array, meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, ParseError};
+use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
@@ -71,27 +71,6 @@ pub(crate) fn build(
 ) -> DyadPtr {
     let none = std::ptr::null_mut();
     store.alloc_words(types.if_, &[cond, then, els, none, none, none, types.ops.if_])
-}
-
-/// What an `if` gives back where it is used as a value: what its arms hand on where every arm
-/// gives a value of one type, else `void`. DESIGN ›`if` reads its own right side‹, ›A mint's
-/// output type is written in its `static output_type` declaration; a type that does not mint has
-/// its parse write it into each node‹ [[R194]].
-///
-/// # Safety
-/// `node` must be an `if` node [`build`] made.
-pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
-    value_type(types, node).unwrap_or(types.void_)
-}
-
-/// The type an `if` gives where its value is used, or why it gives none: it needs an `else`,
-/// every arm must give a value, the arms one type, and every arm make its value or every arm
-/// borrow one. DESIGN ›`if` reads its own right side‹.
-///
-/// # Safety
-/// `node` must be an `if` node [`build`] made.
-pub(crate) unsafe fn value_type(types: &Core, node: DyadPtr) -> Result<DyadPtr, ParseError> {
-    super::flow::value_type(types, node)
 }
 
 /// # Safety

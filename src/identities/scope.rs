@@ -121,16 +121,6 @@ pub(crate) unsafe fn fill(types: &Core, node: DyadPtr) {
     *(dyad::value(node) as *mut DyadPtr).add(OP) = types.ops.scope_;
 }
 
-/// What a block gives back, worked out from the lines that give it when asked, `void` for none.
-/// ›A mint's output type is written in its `static output_type` declaration; a type that does
-/// not mint has its parse write it into each node‹ [[R194]].
-///
-/// # Safety
-/// `node` must be a scope node from the store.
-pub(crate) unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
-    super::flow::value_type(types, node).unwrap_or(types.void_)
-}
-
 /// The scope's `dyads`, made empty on first read.
 ///
 /// # Safety
