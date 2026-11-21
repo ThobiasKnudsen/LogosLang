@@ -14,6 +14,7 @@ impl<'a> Parser<'a> {
     /// name's `lex_rank` is decided by the scope it is written from; a place reached no such way
     /// passes here.
     pub(crate) fn check_write(&self, target: &Cell) -> Result<(), ParseError> {
+        use crate::identities::read::{place_of, Place};
         use crate::identities::this;
         let node = target.dyad;
         // SAFETY: `target` holds a reduced dyad from the store and a null or `array` path; a
@@ -30,6 +31,11 @@ impl<'a> Parser<'a> {
             }
             if target.path.is_null() && dyad::ty(node) == self.types.binding_ {
                 return self.check_gates(&[node]);
+            }
+            // A call's place lies behind the dereference its body ends in, so the path before the
+            // call grants nothing (›`a[k]` is an application, exactly as `a(k)`‹ [[R227]]).
+            if let Some(Place::Call(_)) = place_of(self.types, node) {
+                return self.check_through_pointer(node);
             }
             self.check_gates(&self.path_of(target))?;
             self.check_through_pointer(node)

@@ -1118,7 +1118,7 @@ impl<'a> Parser<'a> {
                 return Err(e);
             }
         };
-        self.cx.member_root = root;
+        self.cx.member_root = named;
         self.cx.member_path.clear();
         // A member of a `dyad` value is the member of the node it holds, `.type` included, and a
         // record a `dyad` place holds is reached through the place each time the line runs, so

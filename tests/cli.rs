@@ -5125,6 +5125,25 @@ fn a_write_along_a_path_needs_mut_on_every_step() {
     assert_eq!(echoes, ["4", "5"], "stderr: {stderr}");
 }
 
+/// ›An access along a path needs every gate on the path to grant it‹ [[R122]]: a field of an
+/// array is a step from the name that holds it, a name its value's parse woke as any other.
+#[test]
+fn a_field_of_an_array_is_written_only_through_a_mut_name() {
+    let arrays = "import file «./identities/array.logos», ";
+    for tail in [
+        "a := array i32 [1, 2, 3], a.size = 9, 0",
+        "a := array i32 [1, 2, 3], a.ptr = alloc 1 of i32 ?, 0",
+        "f := fn (a := array i32 ?) -> u64 ( a.size = 7, a.size ), 0",
+    ] {
+        let (code, _, stderr) = run_line(&format!("{arrays}{tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("`a` is not `mut`"), "{tail}: stderr: {stderr}");
+    }
+    let written = "a := mut array i32 [1, 2, 3], a.size = 2, a.size";
+    let (code, stdout, stderr) = run_line(&format!("{arrays}{written}"));
+    assert_eq!((code, stdout.trim()), (Some(0), "2"), "stderr: {stderr}");
+}
+
 #[test]
 fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
     let t = |gate: &str| format!("t := type ( n := pub {gate}i64 ? )");
@@ -10380,7 +10399,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ),
         ("g := bag (), h := g, print «copied»", "copied\nbag\nfree\nbag\nfree\n"),
         // `=` frees the box it displaces before the write.
-        ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "free\nset\nbag\nfree\n"),
+        ("g := mut bag (), x := box (8, 1), g.b = move x, print «set»", "free\nset\nbag\nfree\n"),
         ("l := array bagged [bag (), bag ()], print «made»", "made\nbag\nfree\nbag\nfree\n"),
         ("g := bag (), l := array bagged [move g], print «made»", "made\nbag\nfree\n"),
         ("g := bag (), l := array bagged [g], print «made»", "made\nbag\nfree\nbag\nfree\n"),
@@ -10395,9 +10414,9 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("g := bag (), g.items[1] + g.items.at(2)", "11"),
         ("g := bag (), g.items[0] = i32 9, g.items[0]", "9"),
         ("f := fn (p := t ?) -> u64 ( p.size ), g := bag (), f(g.items)", "3"),
-        ("g := bag (), x := array i32 [1, 2], g.items = move x, g.items[1]", "2"),
-        ("g := bag (), x := array i32 [1], y := x, g.items = move y, g.items[0]", "1"),
-        ("g := bag (), x := array i32 [1], g.items = x, g.items[0] = i32 9, x[0]", "1"),
+        ("g := mut bag (), x := array i32 [1, 2], g.items = move x, g.items[1]", "2"),
+        ("g := mut bag (), x := array i32 [1], y := x, g.items = move y, g.items[0]", "1"),
+        ("g := mut bag (), x := array i32 [1], g.items = x, g.items[0] = i32 9, x[0]", "1"),
         ("l := array bagged [bag (), bag ()], l[1].items[0] = i32 8, l[1].items[0]", "8"),
     ] {
         let (code, stdout, stderr) = run_line(&bag_line(tail));
@@ -10405,9 +10424,12 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         assert_eq!(stdout.lines().last(), Some(printed), "{tail}: {stdout}");
     }
     for (tail, expect) in [
-        ("f := fn (p := t ?) -> i32 ( g := bag (), g.items = move p, 1 )", "only its owner can"),
+        (
+            "f := fn (p := t ?) -> i32 ( g := mut bag (), g.items = move p, 1 )",
+            "only its owner can",
+        ),
         ("nd := type ( items := mut t ? )", "must be freed by the type's `free = (…)`"),
-        ("g := bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
+        ("g := mut bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
         ("mk := fn () -> own t ( array i32 [1] ), 1", "`own` stands only before a pointer"),
         ("nd := type ( n := mut own i32 ? )", "`own` stands only before a pointer"),
         ("f := fn (p := own t ?) -> i32 ( 1 )", "`own` stands only before a pointer"),

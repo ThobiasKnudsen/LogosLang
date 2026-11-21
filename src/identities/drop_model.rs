@@ -2862,8 +2862,8 @@ mod tests {
         }
         // `=` into an owned field frees the array it displaces.
         for tail in [
-            "b := bag (), x := array i32 [1], b.items = move x, b.items[0]",
-            "b := bag (), b.items = array i32 [1], b.items[0]",
+            "b := mut bag (), x := array i32 [1], b.items = move x, b.items[0]",
+            "b := mut bag (), b.items = array i32 [1], b.items[0]",
             "a := mut t ?, a = array i32 [5], a = array i32 [1], a[0]",
             "a := mut array i32 [5], a = array i32 [a[0] - 4], a[0]",
         ] {
