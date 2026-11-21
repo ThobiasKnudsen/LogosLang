@@ -273,10 +273,10 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::WaitingLineHolds(word) => format!(
-            "this line reads a `dyad` value, a name's or a call's, so it is parsed only when it \
-             runs, and such a line cannot hold `{word}` yet: a `:=` there would declare a name \
-             whose type is known only then, and a `return`, `free` or `move` is checked where it \
-             is written"
+            "this line needs a type known only when it runs, a `dyad` value's or a type a name or \
+             a call gives then, so it is parsed only when it runs, and such a line cannot hold \
+             `{word}` yet: a `:=` inside it would declare a name whose type is known only then, \
+             and a `return`, `free` or `move` is checked where it is written"
         ),
         ParseError::DyadReadEachPass => {
             "a `while` condition cannot read what a call that gives a `dyad` gives through a \
@@ -323,6 +323,12 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadDyadType => {
             "`dyad (T, v)` cannot make a node of this type yet: it takes a type whose value moves \
              whole (a number, a bool, a pointer, a rational, a record kept in its bytes)"
+                .into()
+        }
+        ParseError::RunPlaceNotData => {
+            "this place's type is known only when its line runs, and a place is laid out then \
+             only for a type whose value moves whole (a number, a bool, a pointer, a rational, a \
+             record kept in its bytes)"
                 .into()
         }
         ParseError::TooDeep => {
@@ -642,7 +648,10 @@ pub fn run_message(e: &RunError) -> String {
         }
         RunError::MintFailed(rendered) => format!("building this `type (…)` failed:\n{rendered}"),
         RunError::WaitFailed(rendered) => {
-            format!("a line that reads a `dyad` value is parsed when it runs, and here it failed:\n{rendered}")
+            format!(
+                "a line that needs a type known only when it runs is parsed then, and here it \
+                 failed:\n{rendered}"
+            )
         }
         RunError::StoodTaken => {
             "a value the pass ran early was read again after its line ended it or a call took it"
@@ -685,6 +694,11 @@ fn work_stack() -> String {
 pub fn compile_message(e: &CompileError) -> String {
     match e {
         CompileError::NotLowerable(_) => "this cannot be compiled yet".into(),
+        CompileError::ParsedAtRun => {
+            "a line of this function is parsed only when it runs, since a type it needs is known \
+             only then, and compiled code cannot parse: the function stays interpreted"
+                .into()
+        }
         CompileError::Uninitialized => "a value here has no storage to compile against".into(),
         CompileError::NoActivation => "a function's local is compiled outside any call".into(),
         CompileError::NotDerefable => "only a scalar or a pointer is read through a pointer".into(),

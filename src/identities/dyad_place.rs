@@ -166,6 +166,24 @@ pub(crate) unsafe fn build_of_type(
     Ok(build_new_node(store, types, landed, ty))
 }
 
+/// `T ?`, parsed when its line runs since `T` is known only then: a new node of `T`, its bytes
+/// zeroed, which no read reaches before a write fills it (›A type known only when the program
+/// runs still works; what needs it is parsed when its line runs‹ [[R377]]).
+///
+/// # Safety
+/// `hole` must be a hole from the store.
+pub(crate) unsafe fn lay_out(
+    store: &mut Store,
+    types: &Core,
+    hole: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    let ty = super::hole::type_in(hole);
+    if !is_data(types, ty) {
+        return Err(ParseError::RunPlaceNotData);
+    }
+    Ok(build_new_node(store, types, hole, ty))
+}
+
 /// A type whose value lies in its place's bytes, a number, a pointer, a rational or a record,
 /// and moves whole.
 ///
@@ -372,6 +390,11 @@ fn run_new_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return copy(rt, held);
         }
         let carry = carry_of(rt.types(), from).ok_or(RunError::NoWholeRead)?;
+        if rt.types().is_hole(value) {
+            let node = alloc_node(rt, from, carry.width())?;
+            std::ptr::write_bytes(dyad::value(node), 0, carry.width());
+            return Ok(node as i64);
+        }
         let taken = take(rt, carry, value)?;
         make(rt, from, carry, taken)
     }
@@ -473,14 +496,23 @@ fn lower_read(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 /// # Safety
 /// `taken` must be what `take` gave for `carry`, the carry of `ty`.
 unsafe fn make(rt: &mut Runtime, ty: DyadPtr, carry: Carry, taken: i64) -> Result<i64, RunError> {
-    let node = heap_alloc(PAYLOAD_OFFSET as usize + carry.width()) as DyadPtr;
+    let node = alloc_node(rt, ty, carry.width())?;
+    put(carry, dyad::value(node), taken);
+    Ok(node as i64)
+}
+
+/// A new node of `ty` on the heap, its `width` bytes not yet written.
+///
+/// # Safety
+/// `ty` must be a type node.
+unsafe fn alloc_node(rt: &mut Runtime, ty: DyadPtr, width: usize) -> Result<DyadPtr, RunError> {
+    let node = heap_alloc(PAYLOAD_OFFSET as usize + width) as DyadPtr;
     if node.is_null() {
         return Err(RunError::OutOfMemory);
     }
     dyad::set_ty(node, ty);
-    put(carry, dyad::value(node), taken);
     rt.note_alloc();
-    Ok(node as i64)
+    Ok(node)
 }
 
 /// `held` again for a place of its own: a node the store holds as it is, one a place made

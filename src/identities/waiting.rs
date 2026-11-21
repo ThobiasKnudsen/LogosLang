@@ -1,14 +1,18 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! What waits for the run to parse it, since its value's type is known only then: a line of a
-//! body that reads a `dyad` value, or a `while` condition that reads a `dyad` name, parsed where
-//! it is written up to that read and from there each time it runs, over the nodes such values
-//! hold then (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹
-//! [[R293]]).
+//! What waits for the run to parse it, since a type its parse needs is known only then: a line of
+//! a body that reads a `dyad` value or reads after a type a name or a call gives only then, or a
+//! `while` condition that reads a `dyad` name, parsed where it is written up to that read and
+//! from there each time it runs, over the nodes and types such values hold then (›A `dyad ?`
+//! place is transparent: a placeholder for a new node of any type‹ [[R293]], ›A type known only
+//! when the program runs still works; what needs it is parsed when its line runs‹ [[R377]]).
+
+use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::{array, meta, Cx};
+use crate::compile::{CompileError, Lowerer};
 use crate::dyad::{self, DyadPtr};
 use crate::parse::{Assoc, HeldLine};
 use crate::run::{RunError, Runtime};
@@ -33,8 +37,16 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> WaitingIds {
         &["text", "cells", "scope", "frames", "into", "op", "output_type", "own"],
     );
     let line = cx.store.alloc_head(cx.type_, record);
+    cx.lower.insert(line, lower_line);
     let line_leaf = callable::mint_native(cx.store, cs.callable, run_line, cs.seed_native);
     WaitingIds { line, line_leaf }
+}
+
+/// Compiled code has baked the decisions a type's fields drive, so it cannot parse a line when it
+/// runs (›A type known only when the program runs still works; what needs it is parsed when its
+/// line runs‹ [[R377]]).
+fn lower_line(_: &mut Lowerer, _: DyadPtr) -> Result<Value, CompileError> {
+    Err(CompileError::ParsedAtRun)
 }
 
 const INTO: usize = 4;
