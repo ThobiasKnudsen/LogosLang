@@ -295,10 +295,26 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     }
 }
 
+/// The byte a place of `t` starts at a multiple of, as C aligns it (›Foreign code is a
+/// declaration, and the C ABI is the common language‹ [[R186]]): a number its own width, a
+/// record the alignment its layout kept, and every other place, a pair of `i64`s or an
+/// eight-byte box, eight.
+///
+/// # Safety
+/// `t` must be null or a valid dyad from the store.
+pub unsafe fn place_align(types: &Core, t: DyadPtr) -> usize {
+    match place_layout(types, t) {
+        Some((Read::Scalar(nt), _)) => nt.bytes(),
+        Some((Read::Aggregate, _)) => meta::record_align_of(types.through(t)),
+        _ => 8,
+    }
+}
+
 /// The bytes a value of the type `t` takes, its `size_bytes` (›`.size_bytes` is a `u64`‹
-/// [[R282]]): a type laid out from its fields, their sum; any other type, the bytes a place of it
-/// takes; `void` and an operation, whose nodes are its mints', none (›`array` is a chooser‹
-/// [[R223]]). `None` for a type the seed holds no value of, a parse-only lexeme.
+/// [[R282]]): a type laid out from its fields, the size its layout kept; any other type, the
+/// bytes a place of it takes; `void` and an operation, whose nodes are its mints', none
+/// (›`array` is a chooser‹ [[R223]]). `None` for a type the seed holds no value of, a parse-only
+/// lexeme.
 ///
 /// # Safety
 /// `t` must be a type identity node from the store.
@@ -871,6 +887,38 @@ mod tests {
             assert_eq!(place_layout(types, w), Some((Read::Aggregate, 16)));
             let c = declare::declared_of(exprs[1]);
             assert_eq!(place_layout(types, c), None);
+        }
+    }
+
+    #[test]
+    fn a_place_is_aligned_as_c_aligns_it() {
+        let (_store, _trie, core, exprs) = parse_seq(
+            "n := type ( a := u8 ?, b := i64 ?, c := u8 ? ),\n\
+             h := type ( a := u8 ?, b := u16 ? ),\n\
+             o := type ( c := u8 ?, d := h ? ),\n\
+             e := type ( ),\n\
+             k := type ( a := u8 ?, m := hashmap i32 -> i32 ? )",
+        );
+        let types = &core;
+        // SAFETY: the handles are identities Core::build allocated or the program declared.
+        unsafe {
+            let u8_ = types.numtypes[NumType::U8 as usize];
+            let scalars = [(u8_, 1), (core.i32_, 4), (core.bool_, 4), (core.rational, 8)];
+            for (t, align) in scalars.into_iter().chain([(core.type_, 8), (core.string_, 8)]) {
+                assert_eq!(place_align(types, t), align, "{t:p}");
+            }
+            assert_eq!(place_align(types, std::ptr::null_mut()), 8);
+            let offsets = |k: usize| {
+                let t = declare::declared_of(exprs[k]);
+                let at: Vec<usize> =
+                    crate::identities::instance::field_offsets(t).map(|(_, at)| at).collect();
+                (at, meta::record_size_of(t), place_align(types, t))
+            };
+            assert_eq!(offsets(0), (vec![0, 8, 16], 24, 8));
+            assert_eq!(offsets(1), (vec![0, 2], 4, 2));
+            assert_eq!(offsets(2), (vec![0, 2], 6, 2), "a record inside one takes its alignment");
+            assert_eq!(offsets(3), (vec![], 0, 1));
+            assert_eq!(offsets(4), (vec![0, 8], 16, 8), "a map's bytes are one pointer");
         }
     }
 }

@@ -444,6 +444,7 @@ fn parses_an_empty_record() {
         assert!(!meta::record_scope_of(node).is_null());
         assert!(array::items(meta::record_fields_of(node)).is_empty());
         assert_eq!(meta::record_size_of(node), 0);
+        assert_eq!(meta::record_align_of(node), 1);
     }
 }
 
@@ -463,7 +464,8 @@ fn parses_a_record_with_typed_fields() {
         assert_eq!(dyad::ty(node), core.type_);
         let fields = array::items(meta::record_fields_of(node));
         assert_eq!(fields.len(), 2);
-        assert_eq!(meta::record_size_of(node), 8); // two i32s, packed
+        assert_eq!(meta::record_size_of(node), 8); // two i32s, each at its alignment
+        assert_eq!(meta::record_align_of(node), 4);
         (meta::record_scope_of(node), fields[0], fields[1])
     };
     unsafe {

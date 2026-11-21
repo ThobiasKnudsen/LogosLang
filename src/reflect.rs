@@ -608,7 +608,11 @@ mod tests {
             };
             assert!(!scope.is_null());
             assert_eq!(fields.len(), 2);
-            assert_eq!(size_bytes, 12); // i32 + i64, packed
+            // As C lays out an `i32` then an `i64`: `b` at its alignment, byte 8.
+            assert_eq!(size_bytes, 16);
+            let offsets: Vec<usize> =
+                instance::field_offsets(slots[1].node).map(|(_, at)| at).collect();
+            assert_eq!(offsets, [0, 8]);
 
             let Shape::Tuple { slots } = describe(types, roots[2]) else {
                 panic!("a declaration should be a tuple");
@@ -625,7 +629,7 @@ mod tests {
             let Shape::RecordLogos { size_bytes, .. } = describe(types, head[1].node) else {
                 panic!("the constructed value's type should read its layout");
             };
-            assert_eq!(size_bytes, 12);
+            assert_eq!(size_bytes, 16);
 
             let Shape::Tuple { slots } = describe(types, roots[3]) else {
                 panic!("assignment should be a tuple");
