@@ -931,7 +931,13 @@ fn an_if_condition_is_its_first_complete_expression() {
     // Right of a comparison a `(` is the body, though the identity could take it.
     assert_eq!(run_script("x := i32 1, if x.type == scope (10) else (20)"), 20);
     assert_eq!(run_script("x := i32 1, if x.type == i32 (10) else (20)"), 10);
-    assert_eq!(run_script("x := i32 1, p := &x, if p.type == @i32 (10) else (20)"), 10);
+    // A pointer type takes the `(` after it, so a compared one gets brackets (›A call stays a
+    // call in a condition, and `while` reads as `if`‹ [[R266]]).
+    assert_eq!(run_script("x := i32 1, p := &x, if (p.type == @i32) (10) else (20)"), 10);
+    assert_eq!(
+        script_parse_err("x := i32 1, p := &x, if p.type == @i32 (10) else (20)"),
+        ParseError::TypeMismatch
+    );
     // A value word is still the type's, and a condition not yet complete keeps its `(`.
     assert_eq!(run_script("x := i32 1, if x == i32 1 (10) else (20)"), 10);
     assert_eq!(run_script("f := fn (a := i32 ?) -> i32 (a), if f(1) == 1 (10) else (20)"), 10);
@@ -4019,6 +4025,34 @@ fn a_pointer_lands_where_it_drops_a_gate_and_never_where_it_gains_one() {
         let src = format!("{all}, {compile}read(&a) * 100 + write(&a) * 10 + top(&pa) + a");
         assert_eq!(run_script(&src), 5 * 100 + 9 * 10 + 1 + 7, "{src}");
     }
+}
+
+/// ›A pointer points at a gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut` before a
+/// pointer gates the pointer itself‹ [[R382]]: «A read-only pointer to a writable value is a
+/// conversion of the pointer's type, `s := @i32 &a`»; a conversion gains no gate, and `==` tells
+/// `@ mut i32` from `@i32`.
+#[test]
+fn a_written_pointer_conversion_drops_a_gate_and_never_gains_one() {
+    let a = "a := mut i32 5, ";
+    assert_eq!(run_script(&format!("{a}s := @i32 &a, a = 7, s@")), 7);
+    assert_eq!(run_script(&format!("{a}s := @i32 (&a), s@")), 5);
+    assert_eq!(run_script(&format!("{a}p := &a, s := @i32 p, s@")), 5);
+    assert_eq!(run_script(&format!("{a}s := mut @i32 ?, s = @i32 &a, s@")), 5);
+    assert_eq!(run_script(&format!("{a}s := @ mut i32 &a, s@ = 9, a")), 9);
+    let typed = "s := @i32 &a, if (s.type == @i32) (1) else (0)";
+    assert_eq!(run_script(&format!("{a}{typed}")), 1);
+    let inner = "a := mut i32 5, s := @i32 &a, a = 8, s@";
+    assert_eq!(run_script(&format!("f := fn () -> i32 ( {inner} ), f.compile(), f()")), 8);
+    assert_eq!(
+        script_parse_err(&format!("{a}s := @i32 &a, s@ = 6")),
+        ParseError::PointeeNotMutable
+    );
+    assert_eq!(script_parse_err("b := i32 5, p := @ mut i32 &b"), ParseError::TypeMismatch);
+    assert_eq!(script_parse_err("x := f64 2.5, p := @i32 &x"), ParseError::TypeMismatch);
+    let q = "q := mut &a, if ";
+    assert_eq!(run_script(&format!("{a}{q}(q.type == (@ mut i32)) (1) else (0)")), 1);
+    assert_eq!(run_script(&format!("{a}{q}(q.type == (@i32)) (1) else (0)")), 0);
+    assert_eq!(run_script("if ((@ mut i32) == (@i32)) (1) else (0)"), 0);
 }
 
 #[test]

@@ -230,6 +230,8 @@ pub struct Core {
     pub dotdot_: DyadPtr,
     pub dot_: DyadPtr,
     pub at_: DyadPtr,
+    /// The constructor leaf every pointer type carries: a written conversion, `@i32 &a`.
+    pub pointer_ctor: DyadPtr,
     pub declare_tok: DyadPtr,
     pub ops: ops::OpLeaves,
     pub lower: LowerTable,
@@ -256,6 +258,7 @@ impl Core {
             binding_,
             string_,
             unknown: std::ptr::null_mut(),
+            pointer_ctor: std::ptr::null_mut(),
             metas: HashMap::new(),
             extents: HashMap::new(),
             choosers: HashMap::new(),
@@ -382,6 +385,7 @@ impl Core {
             deref_leaf,
             addr_leaf,
             at: at_,
+            convert_ctor: pointer_ctor,
         } = pointer::register(&mut cx, &callables);
         op_leaves.deref_ = deref_leaf;
         op_leaves.addr_ = addr_leaf;
@@ -584,6 +588,7 @@ impl Core {
             dotdot_,
             dot_,
             at_,
+            pointer_ctor,
             declare_tok,
             ops: op_leaves,
             lower,
@@ -733,6 +738,8 @@ pub(crate) struct Cx<'a> {
     string_: DyadPtr,
     /// `?`, the type of every hole and field node; null until `hole::register`.
     unknown: DyadPtr,
+    /// The constructor leaf every pointer type carries; null until `pointer::register`.
+    pointer_ctor: DyadPtr,
     metas: HashMap<DyadPtr, ConstructFn>,
     extents: HashMap<DyadPtr, crate::parse::ExtentFn>,
     choosers: HashMap<DyadPtr, mint::ChooseFn>,

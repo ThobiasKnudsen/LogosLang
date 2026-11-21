@@ -463,7 +463,7 @@ pub(super) fn register_type(
     let mut fields = Vec::with_capacity(8);
     let mut bindings = Vec::with_capacity(8);
     // SAFETY: `dyad_ty` is the type node `Core::build` minted.
-    let at_dyad = unsafe { super::pointer::early_pointer_type(cx.store, cx.type_, dyad_ty) };
+    let at_dyad = unsafe { super::pointer::early_pointer_type(cx, dyad_ty) };
     // `name` is a place of type `string`: eight bytes holding the string node's address.
     let typed = [
         ("dyad", at_dyad),

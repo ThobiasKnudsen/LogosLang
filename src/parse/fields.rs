@@ -1605,7 +1605,8 @@ impl<'a> Parser<'a> {
             };
         }
         tape.place(logos);
-        Ok(Constructed::Placed)
+        // The type wakes at its own rank and takes a pointer to its right: `@i32 &a`.
+        Ok(Constructed::Gave)
     }
 
     /// The gate words right of the center, taken off the tape: the gates of what a pointer points
