@@ -528,6 +528,7 @@ impl<'a> Parser<'a> {
             .ok()
             .and_then(|r| Some((items.iter().position(|&f| f == r.identity)?, r.binding)));
         if let Some((i, binding)) = found {
+            self.cx.member_path = self.field_path(&left, binding);
             let k = self.scalar_value(crate::identities::numtype::NumType::U64, i as i64);
             let ty = crate::identities::hole::type_in(items[i]);
             let node = this::build_field_read(
@@ -922,7 +923,7 @@ impl<'a> Parser<'a> {
         // The left is read as it stands: an identity's fields are read off the
         // token before its own constructor wakes (DESIGN ›Text is the quote‹),
         // so a callable to the left is the identity itself, not a call in waiting.
-        let Some(mut left) = tape.at(-1).copied() else {
+        let Some(left) = tape.at(-1).copied() else {
             return Err(ParseError::MissingOperand);
         };
         let (lhs, root) = (self.operand_dyad(left)?, left.binding(self.types));
@@ -964,11 +965,22 @@ impl<'a> Parser<'a> {
         // SAFETY: a constructed cell's dyad is a dyad from the store.
         let named = woke.filter(|&d| unsafe { dyad::ty(d) } == self.types.binding_).unwrap_or(root);
         let path_root = if named.is_null() { left.root } else { named };
-        // SAFETY: `named` and the left cell's root are null or binding dyads; `lhs` a reduced
+        // A `dyad` name stands as its place, which the read below goes through, not as the node
+        // `operand_dyad` settled it to.
+        // SAFETY: `named` is null or a binding dyad from the store.
+        let place = unsafe {
+            let place = self.types.through(named);
+            if !named.is_null() && self.is_dyad_place(place) {
+                place
+            } else {
+                lhs
+            }
+        };
+        // SAFETY: `named` and the left cell's root are null or binding dyads; `place` a reduced
         // dyad off the tape.
         let reached = match unsafe {
             let member = &source[nstart..nstart + nlen];
-            self.check_name_field(named, left.root, lhs, member, writes, dotted)
+            self.check_name_field(named, left.root, place, member, writes, dotted)
         } {
             Ok(reached) => reached,
             Err(e) => {
@@ -978,17 +990,24 @@ impl<'a> Parser<'a> {
         };
         self.cx.member_root = root;
         self.cx.member_path.clear();
-        // A member of a `dyad` value is the member of the node it holds, `.type` included (›A
-        // `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]).
-        let read = self.read_through_value(tape, -1, lhs).and_then(|read| {
-            left.held |= read != lhs;
-            if writes {
-                Self::check_held_write(&left).map_err(|e| self.fail_at(nstart, e))?;
+        // A member of a `dyad` value is the member of the node it holds, `.type` included, and a
+        // record a `dyad` place holds is reached through the place each time the line runs, so
+        // it is written in place (›A `dyad ?` place is transparent: a placeholder for a new node
+        // of any type‹ [[R293]]). A place read through to nothing stands as `lhs`.
+        let read = self.read_through_value(tape, -1, place).map(|read| {
+            // SAFETY: `place` is a reduced dyad off the tape, and a `read` other than it a node.
+            unsafe {
+                if read == place {
+                    return lhs;
+                }
+                if !self.is_dyad_place(place) {
+                    return read;
+                }
+                crate::identities::dyad_place::build_reach(self.rt.store, self.types, place, read)
             }
-            Ok(read)
         });
-        let lhs = match read {
-            Ok(read) => read,
+        let (lhs, through) = match read {
+            Ok(read) => (read, read != lhs),
             Err(e) => {
                 self.cx.member_root = std::ptr::null_mut();
                 return Err(e);
@@ -1014,9 +1033,7 @@ impl<'a> Parser<'a> {
         tape.span_center(left.start, end);
         let cell = tape.at_mut(0).expect("placed above");
         cell.path = path;
-        // A call's result is a value of its own.
-        cell.held = left.held && bracket.is_none();
-        if plain && !left.held {
+        if plain && !through {
             cell.target = reached;
             cell.root = path_root;
         }

@@ -243,7 +243,6 @@ impl<'a> Parser<'a> {
                 if let Some(held) = self.read_through(id)? {
                     self.cx.each_pass_read |= self.cx.each_pass;
                     cell.dyad = held;
-                    cell.held = true;
                 }
             } else if self.is_live_call_slot(id) {
                 // The running call's slot is that call's value (DESIGN ›A type is a
@@ -269,9 +268,11 @@ impl<'a> Parser<'a> {
     }
 
     /// What a read of `id`, a `dyad` name, stands for once the pass has run everything before
-    /// it ([`Self::held_now`]); a name `=` writes keeps its place.
+    /// it ([`Self::held_now`]); a name `=` writes keeps its place, and so does one `.` reads a
+    /// member of, which reads it through the place.
     fn read_through(&mut self, id: DyadPtr) -> Result<Option<DyadPtr>, ParseError> {
-        if matches!(self.peek_token(), Some((t, _)) if t == self.types.assign) {
+        let types = self.types;
+        if matches!(self.peek_token(), Some((t, _)) if t == types.assign || t == types.dot_) {
             return Ok(None);
         }
         self.held_now(id)

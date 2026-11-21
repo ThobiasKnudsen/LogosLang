@@ -839,35 +839,42 @@ unsafe extern "C" fn compiled_load(ctx: *mut crate::run::Context, read: DyadPtr,
 
 /// Into a plain record's bytes, the value itself. Into a slot, a number or pointer as a fresh
 /// node of the field's type holding it, the way a literal holds its own; a value moved by its
-/// bytes as the right side's node, which a read of the field takes it from.
+/// bytes as the right side's node, which a read of the field takes it from. The right side runs
+/// before the field is reached (›`=` sits beside `:=`, and returns nothing‹ [[R277]]), so one that
+/// replaces the node a `dyad` the path goes through holds is written into the node held then.
 fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_load`; the type operand is a type node a whole value of which moves.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let (value, ty) = (*ops.add(2), *ops.add(3));
+        let (value, ty, owner) = (*ops.add(2), *ops.add(3), *ops.add(4));
         let carry = carry_of(rt.types(), ty).ok_or(RunError::NoLayout(ty))?;
-        match (field_of(rt, ops, *ops.add(4), *ops.add(5))?, carry) {
-            (Field::Bytes(addr, ..), _) => {
-                let taken = super::assign::take(rt, carry, value)?;
-                super::assign::put(carry, addr, taken);
+        // A value moved by its bytes into a node's slot is its node, which runs nothing here.
+        let taken = match carry {
+            Carry::Bytes(_) if !is_plain(rt.types(), owner) => None,
+            _ => Some(super::assign::take(rt, carry, value)?),
+        };
+        match (field_of(rt, ops, owner, *ops.add(5))?, taken) {
+            (Field::Bytes(addr, ..), Some(taken)) => super::assign::put(carry, addr, taken),
+            (Field::Bytes(addr, ..), None) => {
+                super::assign::put(carry, addr, super::assign::take(rt, carry, value)?);
             }
-            (Field::Slot(slot, _), Carry::Bytes(_)) => *slot = value,
-            (Field::Slot(slot, _), Carry::Word(_)) => {
-                let bits = rt.run(value)?;
+            (Field::Slot(slot, _), Some(bits)) if matches!(carry, Carry::Word(_)) => {
                 *slot = rt.store().alloc_blob(ty, &bits.to_ne_bytes()[..carry.width()]);
             }
+            (Field::Slot(slot, _), _) => *slot = value,
         }
         Ok(0)
     }
 }
 
-/// The value written is the right side's node, the operand as graph, never a number read out of it.
+/// The value written is the right side's node, the operand as graph, never a number read out of
+/// it, run before the field is reached, as [`run_store`] runs it.
 fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_slot`; the value operand is a reduced dyad.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let (slot, _) = slot_of(rt, ops, *ops.add(3), *ops.add(4))?;
         let value = rt.run(*ops.add(2))? as DyadPtr;
+        let (slot, _) = slot_of(rt, ops, *ops.add(3), *ops.add(4))?;
         slot.write_unaligned(value);
         Ok(0)
     }
