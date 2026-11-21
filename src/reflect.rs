@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn a_name_and_its_alias_have_two_bindings_over_one_dyad() {
-        let (_store, core, roots) = parse_all(&["y := i32", "y", "i32"]);
+        let (_store, core, roots) = parse_all(&["y := type i32", "y", "i32"]);
         let types = &core;
         // SAFETY: all nodes were just parsed into the store.
         unsafe {
