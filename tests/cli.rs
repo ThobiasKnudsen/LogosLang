@@ -3271,14 +3271,49 @@ fn a_reflect_read_that_does_not_fit_is_an_error() {
 }
 
 #[test]
-fn an_import_inside_a_fn_body_is_rejected() {
-    // The load is a comptime effect; inside a fn body parse and run order do not coincide.
-    let (_echoes, stderr) = repl("g := fn () -> i32 ( import file «examples/answer.logos», 1 )\n");
-    assert!(stderr.contains("`import` reads a file as Logos at parse time"), "stderr: {stderr}");
+fn a_file_read_as_logos_in_a_body_runs_once_per_run_where_the_parse_reaches_it() {
+    let lib = "file «tests/fixtures/lib_pub.logos»";
+    for body in [
+        format!("(logos {lib}).double(2)"),
+        format!("m := logos {lib}, m.double(2)"),
+        format!("import {lib}, double(2)"),
+    ] {
+        for call in ["g()", "g.compile(), g()"] {
+            assert_eq!(line(&format!("g := fn () -> i32 ( {body} ), {call}")), "4", "{body}");
+        }
+    }
+    // `import` sets the file's `pub` names in the body's scope alone.
     let (code, _, stderr) =
-        run_line("g := fn () -> i32 ( (logos file «tests/fixtures/lib_pub.logos»).double(2) )");
+        run_line(&format!("g := fn () -> i32 ( import {lib}, double(2) ), double(2)"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("`logos` reads a file as Logos at parse time"), "stderr: {stderr}");
+    assert!(stderr.contains("1:78: error: `double` is not in scope here"), "{stderr}");
+    // The file runs where the body is written, once, and nothing before it in the body does.
+    let prints = "file «tests/fixtures/prints_pub.logos»";
+    let g = format!("g := fn () -> i32 ( print «a», (logos {prints}).v ), print «defined»");
+    assert_eq!(line(&format!("{g}, g() + g()")), "imp\ndefined\na\na\n4");
+    assert_eq!(line(&format!("{g}, g.compile(), g() + g()")), "imp\ndefined\na\na\n4");
+    assert_eq!(line(&format!("for 0..3 ( import {prints}, print «{{v}}» )")), "imp\n2\n2\n2");
+    let arm = format!("mut b := true, x := if b ( import {prints}, v + 1 ) else ( i32 0 ), x");
+    assert_eq!(line(&arm), "imp\n3");
+    let (echoes, stderr) =
+        repl("g := fn () -> i32 ( import file «examples/answer.logos», 1 )\ng()\n");
+    assert_eq!(echoes, ["42", "1"], "stderr: {stderr}");
+    // A part that reads nothing the parse needs still waits for the run.
+    assert_eq!(line("g := fn () -> i32 ( print «hi», 3 ), print «defined», g()"), "defined\nhi\n3");
+    // A file's name keeps the file's place, outside the body however it is reached there, so a
+    // body or a loop that ends it is refused, as for a name declared above it.
+    let owning = "file «./tests/fixtures/owning_pub.logos»";
+    assert_eq!(line(&format!("f := fn () -> i32 ( import {owning}, p@ ), f() + f()")), "14");
+    for src in [
+        format!("f := fn () -> i32 ( import {owning}, free p, 1 ), f() + f()"),
+        format!("f := fn () -> i32 ( import {owning}, q := move p, q@ ), f() + f()"),
+        format!("for 0..2 ( import {owning}, free p )"),
+        format!("f := fn () -> i32 ( m := logos {owning}, free m.p, 1 ), f()"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains("move or free of a name declared outside this loop"), "{stderr}");
+    }
 }
 
 #[test]
