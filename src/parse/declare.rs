@@ -194,12 +194,31 @@ impl<'a> Parser<'a> {
         binding: DyadPtr,
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
-        // SAFETY: the caller hands a binding dyad from the store.
-        if let Err(e) = unsafe { self.cx.scopes.declare(self.trie, spelling, binding) } {
+        let declared = match self.names_open_field(spelling) {
+            Ok(false) => {
+                // SAFETY: the caller hands a binding dyad from the store.
+                unsafe { self.cx.scopes.declare(self.trie, spelling, binding) }
+            }
+            Ok(true) => Err(ResolveError::Shadowed(spelling.to_string())),
+            Err(e) => Err(e),
+        };
+        if let Err(e) = declared {
             self.cx.pos = at;
             return Err(ParseError::Resolve(e));
         }
         Ok(binding)
+    }
+
+    /// Whether `spelling` is a field of a type body open here: live in the body's `static` and
+    /// slot lines, though the scope stack sets the fields aside while they are read (›A type body
+    /// describes one level‹ [[R222]]).
+    fn names_open_field(&self, spelling: &str) -> Result<bool, ResolveError> {
+        for def in &self.cx.definitions {
+            if self.cx.scopes.declared_in(self.trie, spelling, def.block.0)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Checked against its siblings alone; a failure is reported at `at`.

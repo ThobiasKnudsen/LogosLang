@@ -555,25 +555,12 @@ impl<'a> Parser<'a> {
             self.cx.pos = at;
             return Err(ParseError::StaticNeedsDeclaration);
         };
-        {
-            // SAFETY: a declaration that fills no slot is `:=`'s, its lhs the binding.
-            let name = unsafe { Binding::spelling(crate::identities::declare::binding_of(item)) };
-            if self
-                .cx
-                .scopes
-                .declared_in(self.trie, &name, field_scope)
-                .map_err(ParseError::Resolve)?
-            {
-                self.cx.pos = at;
-                return Err(ParseError::Resolve(ResolveError::Shadowed(name)));
-            }
-            let binding = self.cx.last_declared;
-            if binding.is_null() {
-                self.cx.pos = at;
-                return Err(ParseError::StaticNeedsDeclaration);
-            }
-            self.add_gate(binding, self.types.static_)?;
+        let binding = self.cx.last_declared;
+        if binding.is_null() {
+            self.cx.pos = at;
+            return Err(ParseError::StaticNeedsDeclaration);
         }
+        self.add_gate(binding, self.types.static_)?;
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.cx.scopes.settle_item(body, item) };
         Ok(())

@@ -8848,11 +8848,6 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
             "1:60: error: a nested function cannot use an outer function's local or parameter",
         ),
         (inc("k := fn () -> i32 ( a ), k() + 1"), "a nested function cannot use an outer function's local"),
-        // Refused at the use, not at the declaration: stand-in for #408.
-        (
-            format!("{t}static h := fn () -> i32 ( k := fn (x := i32 ?) -> i32 ( x ), k(3) ) ), v := t (5), v.h()"),
-            "a nested function cannot use an outer function's local or parameter",
-        ),
         (
             format!("{t}static h := fn () -> i32 ( static c := x, c ) ), v := t (5), v.h()"),
             "1:171: error: a value made once, where it is written (`static`, `immediate`), cannot use a name",
@@ -8861,6 +8856,36 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A type body describes one level‹ [[R222]]: Logos has no shadowing, so no name declared
+/// inside a type body spells one of its fields.
+#[test]
+fn a_name_declared_inside_a_type_body_reuses_none_of_its_fields() {
+    let t = "t := type ( x := i32 ?, ";
+    for compile in ["", "v.h.compile(), "] {
+        let src = format!(
+            "{t}static h := fn (y := i32 ?) -> i32 ( x + y ) ), v := t (5), {compile}v.h(3)"
+        );
+        assert_eq!(run_line(&src), (Some(0), "8\n".to_string(), String::new()), "{src}");
+    }
+    for (rest, at) in [
+        ("static h := fn (x := i32 ?) -> i32 ( x ) ), v := t (5), v.h(3)", "1:41"),
+        ("static h := fn (x := i32 ?) -> i32 ( x ) ), v := t (5), v.h.compile(), v.h(3)", "1:41"),
+        ("static h := fn () -> i32 ( x := i32 4, x ) ), v := t (5), v.h()", "1:52"),
+        ("static h := fn () -> i32 ( k := fn (x := i32 ?) -> i32 ( x ), k(3) ) ), v := t (5), v.h()", "1:61"),
+        ("static h := fn () -> i32 ( for x in 0..3 ( ), 1 ) ), v := t (5), v.h()", "1:56"),
+        ("static h := fn () -> i32 ( if true ( x := i32 3, x ) else ( 4 ) ) ), v := t (5), v.h()", "1:62"),
+        ("static free = ( x := i32 3 ) ), v := t (5)", "1:41"),
+        ("static x := i32 1 )", "1:32"),
+        ("static u := type ( y := i32 ?, static k := fn (x := i32 ?) -> i32 ( x + y ) ) )", "1:72"),
+    ] {
+        let src = format!("{t}{rest}");
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        let expect = format!("{at}: error: `x` is already declared and still in scope");
+        assert!(stderr.contains(&expect), "{src}: stderr: {stderr}");
     }
 }
 
