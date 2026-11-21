@@ -54,6 +54,9 @@ pub array := type (
         mint
     ),
 
+    # The parse asks through a call, so the branch it guards is built where it is written: stand-in for #455.
+    static bytes_of := fn (t := type ?) -> u64 ( t.size_bytes ),
+
     elements := square_brackets ?,
     output_type := type ?,
 
@@ -72,35 +75,38 @@ pub array := type (
     static parse_rank = fn.parse_rank,
     static associativity = right,
     static parse = (
-        # Where `tape[1]` is `void`, nothing to its right, no branch runs: it touches nothing, and so
-        # stands as its own value (›`parse_rank` and `associativity` are data, and the only triggers‹ [[R215]]).
+        # Nothing to its right (`tape[1]` is `void`), or a type with no instance bytes, as `void` and an
+        # operation such as `==` are: no branch builds, so `array` touches nothing and stands as its own
+        # value (›`array` is a chooser‹ [[R223]]).
         if tape[1] == ? (
             tape.is_constructed[0] = true
         ) else if tape[1].type != void (
             if tape[1].type != type
                 error «id after array is not a type»,
             t := type tape[1],
-            mint := type get_mint(t),
-            if tape[2].type == scope
-                error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
-            # Right of another `array` this one is the element type, and the list is the outer one's.
-            if tape[2].type == square_brackets and tape[-1] != array (
-                # A bracket line is checked when the run's `=` builds it.
-                for i in 0..tape[2].dyads.size (
-                    if tape[2].dyads[i].type != square_brackets and tape[2].dyads[i].type != scope (
-                        if not (tape[2].dyads[i].type ⊆ t)
-                            error «an element does not fit the element type»
-                    )
-                ),
-                tape[0].type = array,
-                tape[0].elements = tape[2],
-                tape[0].output_type = mint,
-                tape.is_constructed[0] = true,
-                tape.remove(2),
-                tape.remove(1)
-            ) else (
-                tape[0] = mint,
-                tape.remove(1)
+            if bytes_of(t) != 0 (
+                mint := type get_mint(t),
+                if tape[2].type == scope
+                    error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
+                # Right of another `array` this one is the element type, and the list is the outer one's.
+                if tape[2].type == square_brackets and tape[-1] != array (
+                    # A bracket line is checked when the run's `=` builds it.
+                    for i in 0..tape[2].dyads.size (
+                        if tape[2].dyads[i].type != square_brackets and tape[2].dyads[i].type != scope (
+                            if not (tape[2].dyads[i].type ⊆ t)
+                                error «an element does not fit the element type»
+                        )
+                    ),
+                    tape[0].type = array,
+                    tape[0].elements = tape[2],
+                    tape[0].output_type = mint,
+                    tape.is_constructed[0] = true,
+                    tape.remove(2),
+                    tape.remove(1)
+                ) else (
+                    tape[0] = mint,
+                    tape.remove(1)
+                )
             )
         )
     )
