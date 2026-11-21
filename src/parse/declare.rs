@@ -984,10 +984,10 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: as above; `named` saw the binding name a type.
         let t = unsafe { types.through(cell.dyad) };
-        let (place, hole) = self.valueless_place(t).map_err(|e| self.fail_at(cell.start, e))?;
+        let place = self.valueless_place(t).map_err(|e| self.fail_at(cell.start, e))?;
         let mut cell = cell;
         cell.dyad = place;
-        cell.hole = hole;
+        cell.hole = true;
         cell.constructed = true;
         Ok(cell)
     }
@@ -1071,17 +1071,19 @@ impl<'a> Parser<'a> {
         // A bare name as the value is its binding (a use); the declaration inspects
         // the dyad behind it and keeps `value` as what the initializer stores.
         let read = self.types.through(value);
+        let declared = if hole {
+            crate::identities::hole::declared_type(self.types.unknown, value)
+        } else {
+            std::ptr::null_mut()
+        };
         Ok({
             let empty_node = hole
                 && !owning
-                && crate::identities::meta::is_node_valued(
-                    crate::identities::hole::type_in(value),
-                    self.types.fn_type,
-                );
+                && crate::identities::meta::is_node_valued(declared, self.types.fn_type);
             if empty_node {
                 // `v := T ?` of a type whose values are nodes: a new empty node each time the
                 // declaration runs, its fields filled one by one as a parse fills `tape[0]`.
-                let t = crate::identities::hole::type_in(value);
+                let t = declared;
                 let template = crate::identities::this::empty_node(self.rt.store, t);
                 let node = crate::identities::this::build_copy(self.rt.store, self.types, template);
                 let place = self.place_for(binding, t, 8);
@@ -1096,8 +1098,9 @@ impl<'a> Parser<'a> {
                 // `x := i32 ?`: the name gets the hole's type at the type's width; nothing
                 // initializes it, and `?`'s entry refuses a read until a sibling write fills
                 // it. A hashmap's zeroed place is already its empty map, so nothing is
-                // unknown to refuse.
-                let t = crate::identities::hole::type_in(value);
+                // unknown to refuse. A type whose nodes run has no value until one is written,
+                // so its empty node runs nothing here.
+                let t = declared;
                 let width = crate::identities::by_copy::place_width(self.types, t);
                 let place = self.place_for(binding, t, width);
                 // Whatever is written into it later is the name's to end: `a := own t ?`, `a := r ?`
@@ -1268,10 +1271,10 @@ impl<'a> Parser<'a> {
             tape.place(value);
             return Ok(Constructed::Placed);
         };
-        let (node, hole) = self.valueless_place(t)?;
+        let node = self.valueless_place(t)?;
         tape.remove(-1);
         tape.place(node);
-        tape.at_mut(0).expect("placed above").hole = hole;
+        tape.at_mut(0).expect("placed above").hole = true;
         Ok(Constructed::Placed)
     }
 
@@ -1288,23 +1291,24 @@ impl<'a> Parser<'a> {
         if !self.is_bare_unknown(operand) {
             return Ok(false);
         }
-        let (node, hole) = self.valueless_place(t)?;
+        let node = self.valueless_place(t)?;
         tape.remove(1);
         tape.place(node);
-        tape.at_mut(0).expect("placed above").hole = hole;
+        tape.at_mut(0).expect("placed above").hole = true;
         Ok(true)
     }
 
-    /// What `T ?` makes of the type `t`, and whether it is the valueless marker: a type whose
-    /// nodes run has no place, so it is an empty node of it.
-    fn valueless_place(&mut self, t: DyadPtr) -> Result<(DyadPtr, bool), ParseError> {
+    /// What `T ?` makes of the type `t`, the valueless form a declaration takes, whose type
+    /// `hole::declared_type` reads: an empty node of a type whose nodes run (›`array` is a
+    /// chooser‹ [[R223]]), else the valueless marker.
+    fn valueless_place(&mut self, t: DyadPtr) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         // SAFETY: `t` is a type node from the store.
         unsafe {
             if crate::identities::meta::is_record_type(t)
                 && !crate::identities::meta::run_body_of(t).is_null()
             {
-                return Ok((crate::identities::this::empty_node(self.rt.store, t), false));
+                return Ok(crate::identities::this::empty_node(self.rt.store, t));
             }
             // The valueless marker `[T][null]`: the name `:=` gives it is laid out at the type's
             // width by the reading rule, so allocation and read cannot disagree.
@@ -1312,8 +1316,6 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::NonNumericDeclaredType);
             }
         }
-        let hole =
-            crate::identities::hole::build(self.rt.store, types.unknown, t, std::ptr::null_mut());
-        Ok((hole, true))
+        Ok(crate::identities::hole::build(self.rt.store, types.unknown, t, std::ptr::null_mut()))
     }
 }

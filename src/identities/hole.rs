@@ -30,6 +30,19 @@ pub(crate) unsafe fn type_in(node: DyadPtr) -> DyadPtr {
     *(dyad::value(node) as *const DyadPtr)
 }
 
+/// The type the valueless form `T ?` made declares: a hole's, or the type of the empty node `?`
+/// makes of a type whose nodes run (›`array` is a chooser‹ [[R223]]).
+///
+/// # Safety
+/// `place` must be what `T ?` made: a hole built by [`build`], or an empty node of a record type.
+pub(crate) unsafe fn declared_type(unknown: DyadPtr, place: DyadPtr) -> DyadPtr {
+    if is_hole(unknown, place) {
+        type_in(place)
+    } else {
+        dyad::ty(place)
+    }
+}
+
 /// # Safety
 /// As [`type_in`].
 pub(crate) unsafe fn set_type(node: DyadPtr, ty: DyadPtr) {
