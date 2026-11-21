@@ -45,6 +45,33 @@ impl<'a> Parser<'a> {
         self.check_gates(&self.path_of(target))
     }
 
+    /// `value`, written into `place`: where `place` is a name whose type its declaring line gives
+    /// when it runs, `value` landed in the type of the node it holds now, as into a place
+    /// declared with that type (›A type known only when the program runs still works; what needs
+    /// it is parsed when its line runs‹ [[R377]]); any other value as it is. The pass knows no
+    /// such type, so there the write is the checked error: its line waits for the run.
+    ///
+    /// # Safety
+    /// `place` and `value` must be reduced dyads from the store.
+    pub(crate) unsafe fn land_in_run_type(
+        &mut self,
+        place: DyadPtr,
+        value: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        if place.is_null()
+            || dyad::ty(place) != types.binding_
+            || !Binding::has_gate(place, types.waiting.line)
+        {
+            return Ok(value);
+        }
+        let held = self.settled_type(place);
+        if held == place {
+            return Err(ParseError::TypeKnownOnlyAtRun);
+        }
+        crate::identities::land(self.rt.store, types, value, dyad::ty(held))
+    }
+
     /// The bindings a write into the cell's node must be granted by: the cell's path, or
     /// for a field read outside the type's own parse the field's binding and those of the fields
     /// it is read through, `p.x` both `p`'s and `x`'s.
@@ -866,10 +893,10 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = binding;
         self.cx.filling.push(binding);
         self.cx.filling_at.push(self.cx.pos);
-        let mut unwritten = false;
+        let (mut typed_at_run, mut unwritten) = (false, false);
         let value = self.waiting_value().and_then(|held| match held {
             Some((held, hole)) => {
-                unwritten = hole;
+                (typed_at_run, unwritten) = (true, hole);
                 Ok(held)
             }
             None => self.parse_expression_cell(),
@@ -885,13 +912,18 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `binding` is the binding just declared; `value` a reduced dyad from the store.
         let declared = unsafe { self.land_at_binding(binding, value, cell.hole, cell.owning) }?;
-        // A place laid out when its line runs holds no value until a write fills it, as one
-        // declared `T ?` does.
-        if unwritten {
-            // SAFETY: `binding` is the binding just declared.
-            unsafe {
-                Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.unknown)
-            };
+        // A place whose type its line gives when it runs keeps that type, which a write converts
+        // into ([`Self::land_in_run_type`]); one laid out then holds no value until a write fills
+        // it, as one declared `T ?` does.
+        // SAFETY: `binding` is the binding just declared.
+        unsafe {
+            let (store, array) = (&mut *self.rt.store, self.types.array_);
+            if typed_at_run {
+                Binding::add_gate(store, array, binding, self.types.waiting.line);
+            }
+            if unwritten {
+                Binding::add_gate(store, array, binding, self.types.unknown);
+            }
         }
         let node =
             crate::identities::declare::build(self.rt.store, self.types, binding, value, declared);

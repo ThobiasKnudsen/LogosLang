@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! A line whose parse needs a type known only when it runs: one that reads a `dyad` name, or a
-//! `-> dyad` call as an infix's operand or through `.`, and one that reads a value, a `?` or a
-//! field after a type a name or a call gives only then. Found before it is lexed, parsed where it
+//! `-> dyad` call as an infix's operand or through `.`, one that reads a value, a `?` or a field
+//! after a type a name or a call gives only then, and one that writes a name whose type its own
+//! line gave when it ran. Found before it is lexed, parsed where it
 //! is written up to that read or a reader before it, and from there each time it runs, over the
 //! nodes and types such values hold then (`identities::waiting`, ›A `dyad ?` place is
 //! transparent: a placeholder for a new node of any type‹ [[R293]], ›A type known only when the
@@ -244,6 +245,8 @@ impl<'a> Parser<'a> {
         // A type known only when the line runs, just scanned: a name holding a type, or a call
         // for a type over an argument the pass may not know; where the cells built with it start.
         let mut run_type: Option<usize> = None;
+        // A name just scanned whose type its line gave when it ran, with an `=` next.
+        let mut run_write = false;
         // At the top, the tokens before the first `:=` that are no gate word; in a bracket, the
         // tokens of the line being scanned.
         let (mut lead, mut line_tokens) = (0, 0);
@@ -281,7 +284,7 @@ impl<'a> Parser<'a> {
                 (line_reads, assigns, declares, prev, before_prev, skipping) =
                     (false, false, None, None, None, false);
                 (callee, after_call, type_member) = (None, false, false);
-                (type_callee, run_type, line_tokens) = (false, None, 0);
+                (type_callee, run_type, run_write, line_tokens) = (false, None, false, 0);
                 (reached, path_start) = (None, (None, None));
                 continue;
             }
@@ -300,6 +303,14 @@ impl<'a> Parser<'a> {
                 }
                 if self.reads_past_next(id) {
                     found.reader_at.get_or_insert((chain, id == types.assign));
+                }
+            }
+            // What is written into a place whose type its line gave when it ran converts into
+            // that type, so the line waits from its `=`, the place read where it is written.
+            if std::mem::take(&mut run_write) {
+                line_reads = true;
+                if top {
+                    found.read_at.get_or_insert(at + r.matched);
                 }
             }
             // A value, a `?` or a field read after a type known only at run needs that type.
@@ -408,6 +419,9 @@ impl<'a> Parser<'a> {
                     if read_kind(types, id) == Read::Container(types.type_) {
                         run_type = Some(chain);
                     }
+                    run_write = crate::dyad::ty(id) == types.binding_
+                        && Binding::has_gate(id, types.waiting.line)
+                        && self.peek_token().is_some_and(|(next, _)| next == types.assign);
                 }
                 if prev != Some(types.dot_) && self.needs_value(id) {
                     found.needs += 1;

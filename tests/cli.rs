@@ -3746,9 +3746,26 @@ fn what_needs_a_type_known_only_at_run_is_parsed_when_its_line_runs() {
         ("-> type ( u := pick(n), x := u 5, x.type ), print «{f(1)} {f(0)}»", "i64 i32"),
         ("-> i64 ( x := pick(n) 5, x + 1 ), print «{f(1)}»", "6"),
         ("-> i64 ( pick(n) 5 ), print «{f(1)}»", "5"),
-        // A place laid out when its line runs, unwritten until a write fills it.
+        // A place laid out when its line runs, unwritten until a write fills it, is a place of
+        // that type: a write converts into it, its line waiting too.
         ("-> i32 ( x := pick(n) ?, 1 ), print «{f(1)}»", "1"),
         ("-> i32 ( mut x := pick(n) ?, x = 5, x ), print «{f(0)}»", "5"),
+        ("-> i64 ( mut x := pick(n) ?, x = 5, x + 1 ), print «{f(1)}»", "6"),
+        (
+            "-> bool ( mut x := pick(n) ?, x = 5, x.type == i64 ), print «{f(1)} {f(0)}»",
+            "true false",
+        ),
+        (
+            "-> bool ( mut x := pick(n) ?, x = 5, x.type == i32 ), print «{f(1)} {f(0)}»",
+            "false true",
+        ),
+        ("-> type ( mut x := pick(n) 5, x = 7, x.type ), print «{f(1)} {f(0)}»", "i64 i32"),
+        ("-> i64 ( mut x := pick(n) ?, x = 1, for 0..3 ( x = x + 1 ), x ), print «{f(1)}»", "4"),
+        (
+            "-> bool ( mut x := pick(n) 1, if n > 0 ( x = 5 ) else ( x = 6 ), x.type == i64 ), \
+             print «{f(1)} {f(0)}»",
+            "true false",
+        ),
         // A field of such a type.
         ("-> bool ( pick(n).parse_rank == i64.parse_rank ), print «{f(1)}»", "true"),
         ("-> bool ( u := pick(n), u.parse_rank == i64.parse_rank ), print «{f(1)}»", "true"),
@@ -3780,6 +3797,29 @@ fn what_needs_a_type_known_only_at_run_is_parsed_when_its_line_runs() {
     let (code, _, stderr) = run_line(&src);
     assert_eq!(code, Some(1), "{src}");
     assert!(stderr.contains("`x` is read before it is written"), "{stderr}");
+    // A write the place's type does not hold is refused as it is into a place declared with that
+    // type, when its line runs.
+    for (body, call) in [
+        ("( mut x := pick(n) ?, x = f64 2.5, x.type == f64 )", "f(1)"),
+        ("( mut x := pick(n) 5, x = i64 7, x.type == i64 )", "f(0)"),
+    ] {
+        let src = format!("{pick}, f := fn (n := i32 ?) -> bool {body}, print «{{{call}}}»");
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(
+            stderr.contains("is parsed then, and here it failed")
+                && stderr.contains("these types do not match"),
+            "{src}: {stderr}"
+        );
+    }
+    // That pass checks the write's gates where it is written.
+    let src = format!("{pick}, f := fn (n := i32 ?) -> i32 ( x := pick(n) ?, x = 5, 1 ), 0");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}");
+    assert!(stderr.contains("`x` is not `mut`") && !stderr.contains("run error"), "{stderr}");
+    // A name declared `dyad ?` takes a node of any type.
+    let src = "f := fn () -> type ( mut d := dyad ?, d = i64 5, d = f64 2.5, d.type ), f()";
+    assert_eq!(run_line(src), (Some(0), "f64\n".into(), String::new()), "{src}");
     // A type no place of which is laid out at run, refused when its line runs.
     let (code, _, stderr) = run_line("f := fn (t := type ?) -> i32 ( x := t ?, 1 ), f(dyad)");
     assert_eq!(code, Some(1));
