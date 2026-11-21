@@ -157,7 +157,7 @@ impl<'a> Parser<'a> {
 
     /// What the tape holds where `lhs`, the cell at `tape[-1]`, is a read of a tape node or of
     /// its type word and `.name` is a member that read does not answer itself: the member is
-    /// that node's or that type's, read through its type as any value's is (›`x.type` reads the
+    /// that node's or that type's, the node read as a node a path reaches is (›`x.type` reads the
     /// type word of the node a name or an expression stands for‹ [[R279]]). It is known where
     /// the pass has reached the line, once what stands before the read has run, so a body's line
     /// reading it waits for the run (`waiting_line_end`) as one reading a `dyad` name does
@@ -182,7 +182,7 @@ impl<'a> Parser<'a> {
         self.run_first(tape, at)?;
         let held = crate::identities::tape::held_now(&mut self.rt, lhs).map_err(ParseError::Run)?;
         self.cx.each_pass_read |= self.cx.each_pass;
-        Ok(Some(held))
+        Ok(Some(self.path_operand(held)))
     }
 
     /// `tape[0].type = T`: a fresh node of `T` placed in the parse's own cell, from where its
@@ -694,6 +694,14 @@ impl<'a> Parser<'a> {
     ) -> Result<(DyadPtr, usize), ParseError> {
         let Member { start: nstart, len: nlen, index, key, call, writes } = member;
         let unit_call = matches!(call, Some(ref a) if a.is_empty());
+        // A call that ends in a dereference hands nothing back to a path that goes on through
+        // it, so its line holds nothing for it (›`a[k]` is an application, exactly as `a(k)`‹
+        // [[R227]]).
+        let handed = lhs;
+        let lhs = crate::identities::read::on_path(self.rt.store, self.types, handed);
+        if lhs != handed {
+            self.take(handed);
+        }
         // The member name is read as its raw spelling: a field is dot-only,
         // so what the driver resolved it to is beside the point. `index` and
         // `unit_call` are the reads that take one more cell; the count consumed is returned.
@@ -923,11 +931,12 @@ impl<'a> Parser<'a> {
                 return Ok((node, 1));
             }
         }
-        // A union's member is read through its tag, wherever the union's value lies (›A union
-        // holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]).
+        // A union's member is read through its tag, wherever the union's value lies, and from
+        // outside it with no `pub` (›A union holds one of its members at a time: `union ( a :=
+        // T, b := U )`‹ [[R379]]).
         let value_type = crate::identities::read::output_type(self.types, lhs);
         if !self.types.is_hole(lhs) && crate::identities::union::is_union(self.types, value_type) {
-            let (member, _, binding) = self.resolve_field(value_type, nstart, nlen)?;
+            let (member, binding) = self.find_field(value_type, nstart, nlen)?;
             self.cx.member_path = self.field_path(&left, binding);
             let types = self.types;
             let place = crate::identities::union::build_member(
@@ -1165,6 +1174,60 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Gave)
     }
 
+    /// `holds`'s constructor: whether the union value of `tape[-1]` holds the member the cell to
+    /// the right names, read by its spelling as `.` reads a member's (›A union holds one of its
+    /// members at a time: `union ( a := T, b := U )`‹ [[R379]]).
+    pub(crate) fn construct_holds(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let Some(left) = tape.at(-1).copied() else {
+            return Err(ParseError::MissingOperand);
+        };
+        let at = self.cx.pos;
+        let lhs = self.operand_dyad(left)?;
+        // SAFETY: `lhs` is a reduced dyad off the tape, and its output type null or a type node.
+        let (union, asks_union) = unsafe {
+            let union = crate::identities::read::output_type(self.types, lhs);
+            let is =
+                !self.types.is_hole(lhs) && crate::identities::union::is_union(self.types, union);
+            (union, is)
+        };
+        if !asks_union {
+            return Err(self.fail_at(left.start, ParseError::HoldsNeedsUnion));
+        }
+        self.cx.member_asleep = true;
+        let member = self.cell_at(tape, 1).map(|m| {
+            let save = std::mem::replace(&mut self.cx.pos, m?.start);
+            let member = self.lex_spelling();
+            self.cx.pos = save;
+            member
+        });
+        self.cx.member_asleep = false;
+        let Some((nstart, nlen)) = member? else {
+            return Err(self.fail_at(at, ParseError::HoldsNeedsMember));
+        };
+        // SAFETY: `union` is a union type, whose members are holes with bindings.
+        let node = unsafe {
+            let Ok((member, _)) = self.find_field(union, nstart, nlen) else {
+                let name = self.cx.source[nstart..nstart + nlen].to_string();
+                let members = crate::identities::array::items(
+                    crate::identities::meta::record_field_bindings_of(union),
+                );
+                let members = members.iter().map(|&b| Binding::spelling(b)).collect();
+                let e = ParseError::NotAMember(Box::new((name, members)));
+                return Err(self.fail_at(nstart, e));
+            };
+            crate::identities::union::build_holds(self.rt.store, self.types, lhs, union, member)
+        };
+        let end = tape.at(1).map_or(nstart + nlen, Cell::end);
+        tape.remove(1);
+        tape.remove(-1);
+        tape.place(node);
+        tape.span_center(left.start, end);
+        Ok(Constructed::Gave)
+    }
+
     /// `held`, the node `place` was read through to, as `.` and `[` take it: what a `dyad` place
     /// holds is reached through the place each time the line runs, so a write through the reader
     /// lands in the node the place holds then; what any other operand gave stands as it is (›A
@@ -1299,8 +1362,7 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// Against `record_logos`'s own scope alone: an enclosing binding of the
-    /// same spelling can never shadow or double a field.
+    /// The field read where its gates let the line read it, with its offset and binding.
     ///
     /// # Safety
     /// `record_logos` must be a record type node from the store.
@@ -1310,6 +1372,22 @@ impl<'a> Parser<'a> {
         nstart: usize,
         nlen: usize,
     ) -> Result<(DyadPtr, usize, DyadPtr), ParseError> {
+        let (field, binding) = self.find_field(record_logos, nstart, nlen)?;
+        self.read_gate(binding)?;
+        Ok((field, Binding::read(binding).offset, binding))
+    }
+
+    /// Against `record_logos`'s own scope alone: an enclosing binding of the
+    /// same spelling can never shadow or double a field.
+    ///
+    /// # Safety
+    /// `record_logos` must be a record type node from the store.
+    unsafe fn find_field(
+        &self,
+        record_logos: DyadPtr,
+        nstart: usize,
+        nlen: usize,
+    ) -> Result<(DyadPtr, DyadPtr), ParseError> {
         let source = self.cx.source;
         let name = &source[nstart..nstart + nlen];
         let mut field_scope = ScopeStack::new();
@@ -1322,8 +1400,7 @@ impl<'a> Parser<'a> {
         if !fields.contains(&field) {
             return Err(ParseError::ExpectedField);
         }
-        self.read_gate(resolved.binding)?;
-        Ok((field, Binding::read(resolved.binding).offset, resolved.binding))
+        Ok((field, resolved.binding))
     }
 
     /// A function whose declared return type is `type`: it yields a type,
@@ -1548,7 +1625,7 @@ impl<'a> Parser<'a> {
         };
         let scope = self.cx.scopes.current().expect("`&` parses in an open scope");
         let binding = self.mint_binding(std::ptr::null_mut(), scope, b"");
-        let declared = self.land_at_binding(binding, value, false, false)?;
+        let declared = self.land_at_binding(binding, value, false)?;
         // Only a landing that lays out bytes holds the value, so a refusal here holds nothing.
         if !types.is_storage(binding) {
             return Err(ParseError::BadAddressOf);

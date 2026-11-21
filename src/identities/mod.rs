@@ -1446,6 +1446,9 @@ pub(crate) unsafe fn commit_fn_body(
     waiting::lands_in(types, *slot, output);
     // A record result is handed back as the address of its bytes, which the call copies.
     let by_bytes = read::carry_of(types, output).and_then(read::Carry::bytes).is_some();
+    // A result whose values have an end is the caller's to end, so a value the body only borrows
+    // is handed back as its copy (›A last value moves out‹ [[R66]]).
+    let owned = drop_model::teardown_of_type(types, output).of_record();
     let flow = flow::rewrite_given(types, slot, &mut |leaf| {
         // A line held for the run lands in the result when it runs; an `out` already hands back
         // its bytes.
@@ -1453,6 +1456,7 @@ pub(crate) unsafe fn commit_fn_body(
         if out || dyad::ty(leaf) == types.waiting.line {
             return Ok(leaf);
         }
+        let leaf = if owned { copy::taken(store, types, leaf) } else { leaf };
         // The caller holds what the call gives.
         let landed = land_held(store, types, leaf, output, dyad_place::Holder::Owner)?;
         if by_bytes {

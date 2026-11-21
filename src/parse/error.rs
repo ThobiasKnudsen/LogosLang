@@ -322,20 +322,19 @@ pub enum ParseError {
     /// `move` or `free` of a field path under a holder whose type fills its own `free`, which
     /// frees the field with the rest: the path, then that holder, each spelled.
     EndUnderFree(Box<(String, String)>),
-    /// `own` over a type with nothing to own: neither a pointer nor a type whose body fills
-    /// `free`.
+    /// `own` before a type that is no plain pointer.
     OwnNeedsPointer,
     /// `own` before anything but a hole or a function's result: the word names a state, the
     /// act is `move`.
     OwnOutsideType,
     /// A function hands on a value made in it, as its last value or through a `return`, and its
-    /// result, spelled as written here, lacks `own`.
+    /// result, a pointer spelled as written here, lacks `own`.
     HandsOnMade(String),
-    /// A function whose result says `-> own` hands on a borrow, as its last value or through a
+    /// A function whose result says `-> own @T` hands on a borrow, as its last value or through a
     /// `return`.
     OwnResultBorrows,
-    /// A `return` in a type's `run` hands on a borrow, where the `run`'s last value is made there
-    /// and so marks it to hand on what it makes.
+    /// A `return` in a type's `run` hands on a borrowed pointer, where the `run`'s last value is
+    /// a pointer made there and so marks it to hand on what it makes.
     RunReturnBorrows,
     /// `w = …` in a type body where `w` is no slot and nothing declared.
     NoSuchSlot(String),
@@ -356,12 +355,18 @@ pub enum ParseError {
     UnionTooManyMembers,
     /// A line of a `union ( … )` that is no member: a `static`, a slot fill or a default.
     UnionLine,
-    /// Members of a union, named here, whose types own what they hold.
-    UnionMemberOwns(Vec<String>),
+    /// `pub` before a union's member, which every scope reads.
+    UnionMemberPub,
     /// A member of a union, named here, whose value does not move whole into a place.
     UnionMemberUnkept(Box<String>),
     /// A union type applied to values, as a type with fields is.
     UnionApplied,
+    /// `holds` after a value that is no union.
+    HoldsNeedsUnion,
+    /// `holds` with no member's name after it.
+    HoldsNeedsMember,
+    /// A name after `holds` that is no member of the union, and the union's members.
+    NotAMember(Box<(String, Vec<String>)>),
     /// A `move` or `free` inside a loop or `fn` body names a place declared
     /// outside it: the loop would read a dead name on its next pass, and a
     /// function may own only what its parameters hand it (DESIGN ›`move` and `free` are
