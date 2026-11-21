@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::dyad;
+use crate::identities::tape::NodeMember;
 
 /// The member right of `.`: the name's span in the source, and the `[i]` or `(…)` cell
 /// some reads take after it.
@@ -143,6 +144,45 @@ impl<'a> Parser<'a> {
                     t == def.tape_param && k == 0 && l == crate::identities::tape::Line::Cell
                 })
         }
+    }
+
+    /// What answers `.name` after `lhs`, where `lhs` is a read of a tape node or of its type
+    /// word (`tape::node_member`, which the line scan asks too); `None` for any other value.
+    fn tape_node_member(&self, lhs: DyadPtr, name: &str) -> Option<NodeMember> {
+        use crate::identities::tape;
+        // SAFETY: `lhs` is a reduced dyad from the store.
+        let read = unsafe { tape::node_read(self.types, lhs, || self.is_node_cell(lhs)) }?;
+        Some(tape::node_member(read, name))
+    }
+
+    /// What the tape holds where `lhs`, the cell at `tape[-1]`, is a read of a tape node or of
+    /// its type word and `.name` is a member that read does not answer itself: the member is
+    /// that node's or that type's, read through its type as any value's is (›`x.type` reads the
+    /// type word of the node a name or an expression stands for‹ [[R279]]). It is known where
+    /// the pass has reached the line, once what stands before the read has run, so a body's line
+    /// reading it waits for the run (`waiting_line_end`) as one reading a `dyad` name does
+    /// ([`Self::held_now`]); a read the line scan did not find is refused where it is written.
+    /// `None` for any other read.
+    ///
+    /// # Safety
+    /// `lhs` must be a reduced dyad from the store.
+    unsafe fn held_tape_node(
+        &mut self,
+        tape: &mut ParsingTape,
+        lhs: DyadPtr,
+        name: &str,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        if self.tape_node_member(lhs, name) != Some(NodeMember::Held) {
+            return Ok(None);
+        }
+        if !self.in_pass_order() {
+            return Err(ParseError::TypeKnownOnlyAtRun);
+        }
+        let at = tape.at(-1).map_or(self.cx.pos, |c| c.start);
+        self.run_first(tape, at)?;
+        let held = crate::identities::tape::held_now(&mut self.rt, lhs).map_err(ParseError::Run)?;
+        self.cx.each_pass_read |= self.cx.each_pass;
+        Ok(Some(held))
     }
 
     /// `tape[0].type = T`: a fresh node of `T` placed in the parse's own cell, from where its
@@ -665,9 +705,11 @@ impl<'a> Parser<'a> {
             if name == "type" {
                 return self.type_read(lhs).map(|t| (t, 0));
             }
-            // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
-            // (DESIGN ›There is no `this`‹); `.dyads` is the cell's own.
-            if name != "dyads" && self.is_node_cell(lhs) {
+            // A member the read of a tape node answers where it is written; any other one the
+            // caller read through to the node the tape holds ([`Self::held_tape_node`]).
+            if self.tape_node_member(lhs, name) == Some(NodeMember::Own) {
+                // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
+                // (DESIGN ›There is no `this`‹).
                 if self.cx.definitions.last().is_some_and(|d| d.stamps_at_run) {
                     let (types, store) = (self.types, &mut *self.rt.store);
                     let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
@@ -685,11 +727,12 @@ impl<'a> Parser<'a> {
                 }
                 return Ok((member, 0));
             }
-            // A scope cell's lines, read when the constructor runs.
             {
                 use crate::identities::tape;
+                let lines = self.tape_node_member(lhs, name) == Some(NodeMember::Lines);
                 let (types, store) = (self.types, &mut *self.rt.store);
-                if dyad::ty(lhs) == types.tape.slot && name == "dyads" {
+                // A scope cell's lines, read when the constructor runs.
+                if lines && dyad::ty(lhs) == types.tape.slot {
                     let Some(i) = key else {
                         return Ok((tape::build_cell_dyads(store, types, lhs), 0));
                     };
@@ -1064,8 +1107,13 @@ impl<'a> Parser<'a> {
             // SAFETY: `place` is a reduced dyad off the tape, and a `read` other than it a node.
             unsafe { self.through_place(place, read) }
         });
+        // SAFETY: the value read through is a reduced dyad off the tape or a node.
+        let read = read.and_then(|read| unsafe {
+            let held = self.held_tape_node(tape, read, &source[nstart..nstart + nlen])?;
+            Ok(held.map_or((read, read != lhs), |held| (held, true)))
+        });
         let (lhs, through) = match read {
-            Ok(read) => (read, read != lhs),
+            Ok(read) => read,
             Err(e) => {
                 self.cx.member_root = std::ptr::null_mut();
                 return Err(e);
