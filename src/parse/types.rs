@@ -424,12 +424,12 @@ impl<'a> Parser<'a> {
                 }
                 return Err(self.untyped(start, relaxed));
             }
-            // `name := T ?` declares the field's type through the hole `?`
-            // built. A default, `size := u64 0`, is a constant: the field's dyad
-            // is that value, and each new node starts with it in the field's slot.
+            // `name := T ?` declares the field's type through the hole `?` built, and so does
+            // `name := T`. A default, `size := u64 0`, is a constant: the field's dyad is that
+            // value, and each new node starts with it in the field's slot.
             let mut default = std::ptr::null_mut();
             let outer = std::mem::replace(&mut self.cx.field_hole, relaxed);
-            let value = self.parse_expression_cell();
+            let value = self.parse_expression_cell().and_then(|c| self.named_type_place(c));
             self.cx.field_hole = outer;
             let cell = value?;
             // A field line's comments are the body's, as a `static` line's are; a parameter's

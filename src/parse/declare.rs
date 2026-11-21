@@ -917,7 +917,7 @@ impl<'a> Parser<'a> {
         self.cx.filling_at.pop();
         self.cx.last_declared = binding;
         self.cx.pending_binding = std::ptr::null_mut();
-        let cell = value?;
+        let cell = if typed_at_run { value? } else { self.named_type_place(value?)? };
         let value = cell.dyad;
         if self.is_bare_unknown(&cell) {
             return Err(self.untyped(tok.start, false));
@@ -941,6 +941,76 @@ impl<'a> Parser<'a> {
             crate::identities::declare::build(self.rt.store, self.types, binding, value, declared);
         tape.remove(-1); // the name token, consumed
         tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// What `:=` takes from a right side that is a type's name with nothing after it: the place
+    /// `T ?` makes of that type, with no value, for a name, a field and a parameter alike (›`?` is
+    /// one value, the unknown; `key := T ?` declares without a value‹ [[R103]]). A bracket gives
+    /// what its line gives, so `(i32)` is `i32`. Any other right side stands as it is: a type
+    /// `type` gives (`type i32`, `type (…)`) is held, as is one a line computes.
+    pub(super) fn named_type_place(&mut self, cell: Cell) -> Result<Cell, ParseError> {
+        let types = self.types;
+        // SAFETY: a parsed cell holds a reduced dyad from the store.
+        let named = unsafe {
+            let d = cell.dyad;
+            cell.is_name_alone()
+                && !cell.hole
+                && !d.is_null()
+                && !self.is_bare_unknown(&cell)
+                && dyad::ty(d) == types.binding_
+                && !types.is_storage(d)
+                && crate::identities::type_identity_of(types, d)
+                    .is_some_and(|t| dyad::ty(t) == types.type_)
+        };
+        if !named {
+            return Ok(cell);
+        }
+        // SAFETY: as above; `named` saw the binding name a type.
+        let t = unsafe { types.through(cell.dyad) };
+        let (place, hole) = self.valueless_place(t).map_err(|e| self.fail_at(cell.start, e))?;
+        let mut cell = cell;
+        cell.dyad = place;
+        cell.hole = hole;
+        cell.constructed = true;
+        Ok(cell)
+    }
+
+    /// `type T`: the type `T` as a value of `type`, as `i32 1` is a value of `i32`, so a name
+    /// given it holds `T` itself (›The ground is one identity, spelled `type`; `logos` is a
+    /// language‹ [[R134]]). Read at discovery, a type not built yet is the type itself, as
+    /// `array` reads its element type (›A `tape[k]` read past the lexed frontier lexes on demand
+    /// for every constructor‹ [[R231]]). A box the pass has filled gives what it holds; a type
+    /// known only when the program runs stays the value it is, which lands in a `type` place.
+    /// `type ?` is the valueless `type` place, and with nothing to its right `type` stands as
+    /// itself.
+    pub(crate) fn construct_type_value(
+        &mut self,
+        id: DyadPtr,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        if !self.finds_right_side(tape) {
+            return Ok(Constructed::Decline);
+        }
+        let Some(operand) = self.cell_at(tape, 1)? else {
+            return Ok(Constructed::Decline);
+        };
+        if self.takes_unknown(tape, &operand, id)? {
+            return Ok(Constructed::Placed);
+        }
+        let value = self.as_operand(operand)?;
+        let types = self.types;
+        // SAFETY: `value` is a reduced dyad from the store, and `type` a type node.
+        let held = unsafe {
+            crate::identities::land(self.rt.store, types, value, types.type_)
+                .map(|landed| {
+                    let read = self.settled_type(types.through(landed));
+                    crate::identities::type_identity_of(types, read).unwrap_or(landed)
+                })
+                .map_err(|e| self.fail_at(operand.start, e))?
+        };
+        tape.remove(1);
+        tape.place(held);
         Ok(Constructed::Placed)
     }
 
@@ -1053,7 +1123,8 @@ impl<'a> Parser<'a> {
             } else if crate::identities::read::read_kind(self.types, read)
                 == crate::identities::read::Read::Identity
             {
-                // A type value: the name becomes another spelling of the type.
+                // A type held, `type i32` or one a line computes: the name is another spelling
+                // of it.
                 self.cx.scopes.rebind(binding, read);
                 read
             } else if let Some(t) = crate::identities::node_output(self.types, value) {
