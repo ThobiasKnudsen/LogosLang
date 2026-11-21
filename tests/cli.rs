@@ -1793,7 +1793,7 @@ fn the_slot_words_are_names_only_inside_a_type_body() {
 
 #[test]
 fn a_slot_body_is_read_bare() {
-    // The hidden `tape` is declared as a parameter is, so an outer `tape` is the shadowing error.
+    // A name `tape` the program declared refuses the hidden `tape`, as it would a parameter.
     let (echoes, stderr) = repl(
         b"sp := type (static parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := 1\nf := fn () -> void ( x sp )\n5\n",
@@ -1835,6 +1835,82 @@ fn a_slot_body_is_read_bare() {
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
+}
+
+/// ›`tape` is a word the `parse` slot declares into its body‹ [[R191]]: a `parse` body written
+/// inside another has its own `tape`, as a type body has its own slot words, and a name the
+/// program declares still collides with either.
+#[test]
+fn a_parse_body_inside_another_has_its_own_tape() {
+    let done = "tape.is_constructed[0] = true";
+    let inner = format!("type ( static parse = ( {done} ) )");
+    let wrap = "import file «./tests/fixtures/wrap.logos», mut w := wrap i32, w.v = 7";
+    let mut cases = vec![
+        (format!("a := type ( static parse = ( m := {inner}, {done} ) ), a"), "type\n"),
+        (
+            format!(
+                "a := type ( static parse = ( m := type ( static parse = ( n := {inner}, \
+                 {done} ) ), k := type m, {done} ) ), a"
+            ),
+            "type\n",
+        ),
+        (
+            format!(
+                "a := type ( static parse = ( mk := fn () -> type ( {inner} ), m := type mk(), \
+                 {done} ) ), a"
+            ),
+            "type\n",
+        ),
+        // The mint's parse reads the bracket after a value, the chooser's the type after it.
+        (
+            format!(
+                "{wrap}, print «{{w[0]}} {{(wrap i32) == (wrap i32)}} {{(wrap i32) == (wrap i64)}}»"
+            ),
+            "7 true false\n",
+        ),
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!("{wrap}, f := fn (x := wrap i32) -> i32 ( x[0] + 1 ), {compile}f(w)"),
+            "8\n",
+        ));
+    }
+    assert_runs(&cases);
+
+    let shadowed = |name: &str| format!("`{name}` is already declared and still in scope");
+    let no_closure = "a nested function cannot use an outer function's local or parameter";
+    for (src, want) in [
+        (format!("tape := i32 5, a := {inner}, a"), shadowed("tape")),
+        (format!("a := type ( static parse = ( tape := i32 5, {done} ) ), a"), shadowed("tape")),
+        (
+            format!(
+                "a := type ( static parse = ( m := type ( static parse = ( tape := i32 5, \
+                 {done} ) ), {done} ) ), a"
+            ),
+            shadowed("tape"),
+        ),
+        (format!("f := fn (tape := i32) -> type ( {inner} ), t := type f(1), t"), shadowed("tape")),
+        (
+            format!("a := type ( static parse = ( k := fn () -> void ( {done} ), k() ) ), a"),
+            no_closure.to_string(),
+        ),
+        (
+            format!(
+                "a := type ( static parse = ( m := type ( static k := fn () -> void ( \
+                 tape.remove(1) ) ), {done} ) ), a"
+            ),
+            no_closure.to_string(),
+        ),
+        // A slot word's spelling declared in a held body is refused where it is written.
+        (
+            "a := type ( static f := fn () -> type ( type ( run := i32 5 ) ) ), 5".to_string(),
+            shadowed("run"),
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&want), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]

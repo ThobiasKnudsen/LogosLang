@@ -581,6 +581,31 @@ impl ScopeStack {
         Ok(())
     }
 
+    /// A word a body gets from the language and no text spelled, a `parse` body's `tape` (›`tape`
+    /// is a word the `parse` slot declares into its body‹ [[R191]]): the same word of a body this
+    /// one is written in stands beside it, both live until this scope closes, and any other live
+    /// name of the spelling refuses it.
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store; this writes its `scope` and its mark.
+    pub unsafe fn declare_body_word(
+        &mut self,
+        trie: &mut RegexTrie,
+        name: &str,
+        binding: DyadPtr,
+    ) -> Result<(), ResolveError> {
+        // SAFETY: the caller's contract; `live` hands back a binding dyad from the store.
+        unsafe {
+            Binding::set_body_word(binding);
+            match self.live(trie, name, binding)? {
+                Some(outer) if Binding::read(outer).body_word => {
+                    self.declare_field(trie, name, binding)
+                }
+                _ => self.declare(trie, name, binding),
+            }
+        }
+    }
+
     /// A live binding of `name` declared in `scope` itself.
     fn declared_in(
         &self,

@@ -428,9 +428,15 @@ impl<'a> Parser<'a> {
         Ok(r)
     }
 
-    /// An unresolved cell stays fresh for the boundary to report.
+    /// A held cell is resolved where it is built when nothing was live for it where it was lexed,
+    /// or when it lexed to the word of a body around it: the body it is built in declares its
+    /// own then, which is the innermost. An unresolved cell stays as it was lexed, a fresh one
+    /// for the boundary to report.
     fn feed_resolve(&self, cell: &mut Cell) {
-        if !cell.is_fresh(self.types) {
+        let binding = cell.binding(self.types);
+        // SAFETY: a lexed cell's binding is null or a binding dyad from the store.
+        let outer_word = !binding.is_null() && unsafe { Binding::read(binding) }.body_word;
+        if !cell.is_fresh(self.types) && !outer_word {
             return;
         }
         if let Ok(r) = self.resolve_fresh(cell.spelling()) {
