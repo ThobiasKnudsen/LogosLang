@@ -274,13 +274,7 @@ pub(super) fn build_store(
     }
     // SAFETY: `rhs` is a reduced dyad from the store.
     let rhs = unsafe {
-        let line = types.through(rhs);
-        let into = if dyad::ty(line) == types.tape.cell_dyad_at {
-            super::tape::build_cell_into(store, types, line, place_type)
-        } else {
-            None
-        };
-        match into {
+        match super::tape::build_cell_into(store, types, rhs, place_type) {
             Some(into) => into,
             None if !through_pointer
                 && dyad::ty(lhs_d) == types.binding_

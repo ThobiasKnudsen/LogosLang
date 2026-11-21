@@ -4578,6 +4578,8 @@ fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_plac
         "mut r := pt ?, r.b = 0, r.a = tape[1].dyads[0], tape[0].v = r.a",
         "p := alloc 1 of u64 0, p@ = tape[1].dyads[0], tape[0].v = p@",
         "mut n := u64 0, p := &n, p@ = tape[1].dyads[0], tape[0].v = n",
+        "id := fn (k := u64 ?) -> u64 ( k ), mut n := u64 0, n = id(tape[1].dyads[0]), \
+         tape[0].v = n",
     ] {
         let q = tape_line_q(body);
         assert_eq!(run_script(&format!("{q}, 7")), 7, "{body}: the definition alone");
@@ -4592,6 +4594,18 @@ fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_plac
                 "{body}: q [{line}]"
             );
         }
+    }
+    // The whole cell, `q 5`, as a line of one.
+    let q = tape_line_q("mut n := u64 0, n = tape[1], tape[0].v = n");
+    assert_eq!(run_script(&format!("{q}, x := q 5, x.v")), 5);
+    let compiled = format!("{q}, h := fn () -> u64 ( x := q 5, x.v ), h.compile(), h()");
+    assert_eq!(run_script(&compiled), 5, "compiled");
+    for cell in ["«a»", "m", "1.5"] {
+        let src = format!("{q}, m := u64 3, x := q {cell}, x.v");
+        assert!(
+            matches!(script_parse_err(&src), ParseError::ConstructorFailed(e) if e.contains(constant)),
+            "q {cell}"
+        );
     }
 }
 
@@ -4628,8 +4642,6 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     }
     // Any other place refuses the line where the parse body is read, by name as through a pointer.
     for (place, err) in [
-        ("mut t := type ?, t", ParseError::BadDeclaredType),
-        ("p := alloc 1 of type ?, p@", ParseError::BadDeclaredType),
         ("mut r := rational_number ?, r", ParseError::TypeMismatch),
         ("p := alloc 1 of rational_number 0, p@", ParseError::TypeMismatch),
         ("p := alloc 1 of dyad ?, p@", ParseError::DyadTakesNode),
@@ -4637,5 +4649,36 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     ] {
         let q = tape_line_q(&format!("{place} = tape[1].dyads[0], tape[0].v = 1"));
         assert_eq!(script_parse_err(&format!("{q}, 7")), err, "{place}");
+    }
+}
+
+#[test]
+fn a_tape_line_no_check_narrowed_is_checked_where_a_type_is_wanted_when_the_parse_runs() {
+    let g = "g := fn (t := type ?) -> u64 ( if t == i32 ( 1 ) else ( 2 ) ), ";
+    let constant = "this is read as `type`, but it holds no literal or constant of it";
+    // A line of a bracket cell, `q [i32]`, and the whole cell, `q i32`.
+    for (line, write) in [("tape[1].dyads[0]", "q [{}]"), ("tape[1]", "q {}")] {
+        for place in [
+            format!("mut t := type ?, t = {line}, tape[0].v = g(t)"),
+            format!("p := alloc 1 of type ?, p@ = {line}, tape[0].v = g(p@)"),
+            format!("mut n := u64 0, n = g({line}), tape[0].v = n"),
+        ] {
+            let q = format!("{g}{}", tape_line_q(&place));
+            let at = |v: &str| write.replace("{}", v);
+            assert_eq!(run_script(&format!("{q}, 7")), 7, "{place}: the definition alone");
+            let both = format!("{q}, x := {}, y := {}, x.v * 10 + y.v", at("i32"), at("u8"));
+            assert_eq!(run_script(&both), 12, "{place}");
+            let compiled =
+                format!("{q}, h := fn () -> u64 ( x := {}, x.v ), h.compile(), h()", at("i32"));
+            assert_eq!(run_script(&compiled), 1, "{place}: compiled");
+            for v in ["5", "«a»", "m"] {
+                let src = format!("{q}, m := u64 3, x := {}, x.v", at(v));
+                assert!(
+                    matches!(script_parse_err(&src), ParseError::ConstructorFailed(e) if e.contains(constant)),
+                    "{place}: {}",
+                    at(v)
+                );
+            }
+        }
     }
 }

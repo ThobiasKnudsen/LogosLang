@@ -2512,10 +2512,10 @@ fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
     // A block's plain number is a `rational_number` too, which no `i32` holds whole.
     for (src, expect) in [
         ("x := ( free (1), 7 ) + i32 1".to_string(), "do not match"),
-        (format!("{}, x := q [1/2, 7], x.v", q("i32")), "only a constant is read as its number"),
+        (format!("{}, x := q [1/2, 7], x.v", q("i32")), "only a constant is read as its value"),
         (
             format!("{}, x := q [(free (1), 7), 7], x.v", q("i32")),
-            "only a constant is read as its number",
+            "only a constant is read as its value",
         ),
     ] {
         let (code, _, stderr) = run_line(&src);
@@ -3644,17 +3644,31 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout).lines().next(), Some("true"), "{src}");
     }
-    // Unchecked, or checked and then the tape edited, the cell is still refused as a type.
-    for body in [
-        "t := tape[1], u := g(t),",
-        "if tape[1].type != type error «no», tape.remove(1), u := g(tape[1]),",
-        "if tape[1].type == type print «x», u := g(tape[1]),",
+    // Unchecked, or checked and then the tape edited, the cell is checked when the parse runs:
+    // a type passes, and anything else is refused where it is written.
+    let unchecked = "u := g(tape[1]), print «{u == i32}»,";
+    let outside = "if tape[1].type == type print «x», u := g(tape[1]), print «{u == i32}»,";
+    let edited = "if tape[1].type != type error «no», tape.remove(1), u := g(tape[1]),";
+    for (body, arg, refused) in [
+        (unchecked, "i32", None),
+        (outside, "i32", None),
+        (unchecked, "5", Some("this is read as `type`, but it holds no literal or constant")),
+        (edited, "i32", Some("this is read as `type`, but it holds no literal or constant")),
+        // A name holding the cell is no type.
+        ("t := tape[1], u := g(t),", "i32", Some("must be a type value")),
     ] {
         let src =
-            format!("{g}, r := type ( static parse_rank = fn.parse_rank, static parse = ( {body} {tail}, r i32");
+            format!("{g}, r := type ( static parse_rank = fn.parse_rank, static parse = ( {body} {tail}, r {arg}");
         let out = logos().args([&src]).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("must be a type value"), "{src}: stderr: {stderr}");
+        match refused {
+            Some(refused) => assert!(stderr.contains(refused), "{src}: stderr: {stderr}"),
+            None => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                assert!(out.status.success(), "{src}: stderr: {stderr}");
+                assert!(stdout.lines().any(|l| l == "true"), "{src}: stdout: {stdout}");
+            }
+        }
     }
     // A loop edits the tape after the read was checked: the read checks again when it runs.
     let src = format!(
@@ -6593,6 +6607,15 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
                 + ", mut x := i32 7, f := fn () -> i32 ( x sq ), x = 10, f()",
             "10",
         ),
+        // An unnarrowed cell passed to a number parameter of a placed call is that line itself,
+        // landed in the parameter's type where the parse runs.
+        (cell("tape[0] = w(tape[-1]), tape.is_constructed[0] = true") + ", x := i32 7, x sq", "8"),
+        (sq("*.parse_rank + 1", "tape[0].v = w(tape[-1])") + ", x := i32 7, x sq", "8"),
+        (
+            sq("*.parse_rank + 1", "tape[0].v = w(tape[-1])")
+                + ", mut x := i32 7, f := fn () -> i32 ( x sq ), x = 10, f.compile(), f()",
+            "11",
+        ),
         // A `dyad` field is a number only inside a check of its type.
         (format!("{checked_n}, q (1, 2, 3)"), "6"),
         (format!("{checked_n}, f := fn () -> u64 ( q (1, 2, 3) ), f()"), "6"),
@@ -6614,13 +6637,13 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
     let constant = "this is read as `i32`, but it holds no literal or constant of it";
     let used = ", q (1, 2, 3)";
     for (src, refused) in [
-        // An unnarrowed line is no number.
+        // An unnarrowed line of another type is refused where it is written.
         (
-            cell("tape[0] = w(tape[-1]), tape.is_constructed[0] = true") + ", x := i32 7, x sq",
+            cell("tape[0] = w(tape[-1]), tape.is_constructed[0] = true") + ", x := u64 7, x sq",
             "do not match",
         ),
-        (sq("*.parse_rank + 1", "tape[0].v = w(tape[-1])") + ", x := i32 7, x sq", "do not match"),
-        // While the parse runs, only a constant is read as its number.
+        (sq("*.parse_rank + 1", "tape[0].v = w(tape[-1])") + ", «a» sq", "do not match"),
+        // While the parse runs, only a constant is read as its value.
         (
             "big := fn (a := i32 ?) -> bool ( a > 5 ), ".to_string()
                 + &narrowed("if big(tape[-1]) ( tape[0] = i32 1 ) else ( tape[0] = i32 0 )")

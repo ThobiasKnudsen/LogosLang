@@ -1334,6 +1334,8 @@ pub(crate) unsafe fn commit_call_args(
         let pty = params.get(i).map_or(std::ptr::null_mut(), |&p| hole::type_in(p));
         if pty.is_null() {
             read::value_type(types, *arg)?;
+        } else if let Some(into) = tape::build_cell_into(store, types, *arg, pty) {
+            *arg = into;
         } else if drop_model::param_holds(types, callee, i) && !is_receiver(callee, i) {
             *arg = land_held(store, types, *arg, pty, dyad_place::Holder::Call)?;
         } else {
@@ -1418,7 +1420,7 @@ pub(crate) unsafe fn build_cast(
     let [operand] = args else {
         return Err(ParseError::BadCast);
     };
-    if tape::checked_number(types, *operand) == Some(target) {
+    if tape::checked_type(types, *operand) == Some(target) {
         return Ok(convert::build_convert(store, types, *operand, target, target));
     }
     land_as(store, types, *operand, target, lossy)
