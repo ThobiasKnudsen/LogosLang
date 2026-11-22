@@ -254,6 +254,20 @@ pub(super) struct LineNotes {
     prose: Vec<DyadPtr>,
 }
 
+impl crate::start_graph::Carry for LineNotes {
+    fn carry(&self, out: &mut crate::start_graph::Out) {
+        let LineNotes { made, prose } = self;
+        made.carry(out);
+        prose.carry(out);
+    }
+
+    fn uncarry(inp: &mut crate::start_graph::In) -> Self {
+        use crate::start_graph::Carry;
+        let made = Carry::uncarry(inp);
+        LineNotes { made, prose: Carry::uncarry(inp) }
+    }
+}
+
 impl OpenScope {
     /// A program's or an imported file's top level (›A scope's value is what it evaluates to, and
     /// `return` is an optional early exit from the enclosing function‹ [[R207]]).

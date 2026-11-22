@@ -7,6 +7,7 @@
 //! DESIGN ›The command line is Logos source‹.
 
 use std::io::{BufRead, Write};
+use std::path::Path;
 use std::process::ExitCode;
 
 use seed::identities::dyad::DyadPtr;
@@ -17,21 +18,28 @@ use seed::report;
 use seed::run::Runtime;
 use seed::store::{Store, StoreStats};
 
+/// The start graph this binary was built with; empty where its build was handed none
+/// (›The seed carries its start graph inside its binary‹ [[R386]]).
+static CARRIED: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/start_graph.bin"));
+
 /// One per process; the REPL reuses it across lines.
 struct Engine {
     store: Store,
     trie: RegexTrie,
     core: Core,
+    /// Whether the start was read from the carried graph rather than built from source.
+    carried: bool,
 }
 
 impl Engine {
     /// Never dropped: the process ends with it, and the system takes its memory back at once,
     /// where dropping it would free the store piece by piece first.
     fn new() -> &'static mut Engine {
-        let mut store = Store::new();
-        let mut trie = RegexTrie::new();
-        let core = Core::build(&mut store, &mut trie);
-        Box::leak(Box::new(Engine { store, trie, core }))
+        // Its place is read through `black_box`, so the code is the same whatever graph the
+        // build put there: its length is read at run time, never an operand of the code.
+        let place: &&[u8] = std::hint::black_box(&CARRIED);
+        let ((store, trie, core), carried) = seed::start_graph::start(place);
+        Box::leak(Box::new(Engine { store, trie, core, carried }))
     }
 }
 
@@ -40,6 +48,10 @@ fn main() -> ExitCode {
 }
 
 fn work() -> ExitCode {
+    // An environment variable, since the command line takes no flags: the build's own step.
+    if let Some(path) = std::env::var_os("LOGOS_WRITE_START_GRAPH") {
+        return write_start_graph(Path::new(&path));
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [] => repl(),
@@ -50,6 +62,21 @@ fn work() -> ExitCode {
         // No arm rejects a leading `-`: `logos '-5 + 3'` is Logos source; only
         // an exact `--help` or `-h` is a flag.
         line => run_line(&line.join(" ")),
+    }
+}
+
+/// The start graph this binary builds, written to `path` for the build that carries it.
+fn write_start_graph(path: &Path) -> ExitCode {
+    let first = seed::start_graph::build();
+    let second = seed::start_graph::build();
+    let written = seed::start_graph::write(&first, &second)
+        .and_then(|image| std::fs::write(path, image).map_err(|e| e.to_string()));
+    match written {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("the start graph is not written to {}: {e}", path.display());
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -181,6 +208,8 @@ fn print_stats(engine: &mut Engine, core: StoreStats, after: StoreStats, sources
     let source_bytes: usize = sources.iter().map(|s| s.len()).sum();
     let code_bytes: usize = sources.iter().map(|s| code_bytes(engine, s)).sum();
     let per = |n: usize, d: usize| if d == 0 { 0.0 } else { n as f64 / d as f64 };
+    let start = if engine.carried { "the carried graph" } else { "built from source" };
+    eprintln!("store start: {start}");
     eprintln!("store core:  {core}");
     eprintln!("store after: {after}");
     eprintln!("store delta: {delta}");

@@ -54,8 +54,29 @@ jobs:
       - name: Build the seed
         run: cargo build --release --locked
 
+      # ›The seed carries its start graph inside its binary‹ [[R386]]: the seed just built
+      # writes its start graph, and is built again with it inside.
+      - name: Build the seed with its start graph
+        env:
+          LOGOS_START_GRAPH: ${{ github.workspace }}/target/start_graph.bin
+        run: |
+          set -euo pipefail
+          LOGOS_WRITE_START_GRAPH="$LOGOS_START_GRAPH" target/release/logos
+          cargo build --release --locked
+
+      # With the graph in the environment, a test fails where the binary does not start from it.
       - name: Test
+        env:
+          LOGOS_START_GRAPH: ${{ github.workspace }}/target/start_graph.bin
         run: cargo test --release --locked
+
+      # The graph's natives are offsets into the code of the binary that wrote it: the binary
+      # that carries it must write it again byte for byte.
+      - name: The binary carries the graph it writes
+        run: |
+          set -euo pipefail
+          LOGOS_WRITE_START_GRAPH="$PWD/target/start_graph.again" target/release/logos
+          cmp target/start_graph.bin target/start_graph.again
 
       # Only the debug profile fires debug_assert!.
       - name: Test (debug)
