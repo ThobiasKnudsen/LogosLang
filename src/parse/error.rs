@@ -363,6 +363,8 @@ pub enum ParseError {
     UnionApplied,
     /// `holds` after a value that is no union.
     HoldsNeedsUnion,
+    /// `!` after something that is no type.
+    FallibleNeedsType,
     /// `holds` with no member's name after it.
     HoldsNeedsMember,
     /// A name after `holds` that is no member of the union, and the union's members.

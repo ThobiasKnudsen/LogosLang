@@ -7401,6 +7401,122 @@ fn a_union_ends_the_member_it_holds() {
     assert!(stderr.contains("error: `v.b` is dead here: it was moved or freed above"), "{stderr}");
 }
 
+/// R140: «Errors are tagged unions, `union ( value := T, err := error )`, spelled `T!`»; R143:
+/// «no type of its own». `error` with no category, where a type is wanted, is the error value's
+/// type, the array of R144.
+#[test]
+fn t_bang_is_the_union_of_value_and_err() {
+    assert_eq!(
+        line(
+            "print «{i32! == union ( value := i32, err := error )} {i32! == i32!} \
+             {i32! == f64!} {i32! == union ( value := i32, err := i32 )}»"
+        ),
+        "true true false false"
+    );
+    assert_eq!(line("x := error ?, print «{x.size}»"), "0");
+    let (code, stdout, stderr) = run_line("x := i32 5, y := x!, 0");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(
+        stderr.contains(
+            "1:18: error: `!` makes a type that holds a value or an error, `i32!`, and what \
+             stands to its left is no type"
+        ),
+        "stderr: {stderr}"
+    );
+}
+
+/// R140: «A function that gives `T!` fills the union itself, and the program writes neither
+/// member: its last value of type `T` fills `value`», on both tiers, for a number, a record and
+/// a value whose type fills `free`, each `if` arm and a `return` alike.
+#[test]
+fn a_function_that_gives_t_bang_fills_value_with_its_last_value() {
+    let half = "half := fn (n := i32 ?) -> i32! ( n / 2 )";
+    let pt = "pt := type ( x := pub i32 ?, y := pub i32 ? )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    for compile in ["", "half.compile(), f.compile(), "] {
+        for (fns, body, want) in [
+            (half, "r := half(8), print «{r holds value} {r holds err} {r.value}»", "true false 4"),
+            ("half := fn () -> f64! ( 5 )", "print «{half().value}»", "5.0"),
+            (
+                "half := fn (n := i32 ?) -> i32! ( if n > 0 ( n ) else ( return i32 0 ) )",
+                "print «{half(4).value} {half(-1).value}»",
+                "4 0",
+            ),
+            (
+                &format!("{pt}, half := fn (n := i32 ?) -> pt! ( pt(n, 2) )"),
+                "print «{half(3).value.x} {half(3).value.y}»",
+                "3 2",
+            ),
+            (
+                &format!("{bag}, half := fn (k := i32 ?) -> bag! ( b := bag(k), b )"),
+                "r := half(3), print «{r.value.n}»",
+                "3\nfreed 3",
+            ),
+            (
+                "h := fn (n := i32 ?) -> i32! ( n / 2 ), half := fn (n := i32 ?) -> i32! ( h(n) )",
+                "print «{half(10).value}»",
+                "5",
+            ),
+        ] {
+            let src = format!("{fns}, f := fn () -> void ( {body} ), {compile}f()");
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let (code, stdout, stderr) = run_line(&format!("{half}, r := half(8), r.err"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("run error: this union holds `value`, not `err`"), "stderr: {stderr}");
+    // The program writes neither member.
+    let (code, _, stderr) = run_line(&format!("{half}, r := mut half(8), r.value = 1, 0"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("error: `value` is not `mut`"), "stderr: {stderr}");
+}
+
+/// R140: «a raise inside it fills `err` and leaves the function»; R144: the error value is an
+/// array with one element per hop, each holding its category and its message, «`{…}` read as
+/// `print` reads it». A raise ends what the function holds as it leaves, from an `if` arm and
+/// from a loop alike, on both tiers; one in a function that gives no `T!` is still a fault.
+#[test]
+fn a_raise_inside_a_function_that_gives_t_bang_fills_err_and_leaves() {
+    let too_big = "error.too_big := «a number is too big»";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    for compile in ["", "half.compile(), f.compile(), "] {
+        for (fns, body, want) in [
+            (
+                "half := fn (n := i32 ?) -> i32! ( if n > 100 ( error.too_big «{n} is too big» ), \
+                 n / 2 )",
+                "r := half(300), print «{r holds err} {r.err.size} {r.err[0].message}», \
+                 print «{half(8).value}»",
+                "true 1 300 is too big\n4",
+            ),
+            (
+                &format!(
+                    "{bag}, half := fn (n := i32 ?) -> i32! ( b := bag(n), \
+                     if n > 1 ( error.too_big «too big» ), b.n )"
+                ),
+                "r := half(5), print «{r.err[0].message}»",
+                "freed 5\ntoo big",
+            ),
+            (
+                "half := fn (n := i32 ?) -> i32! ( for i in 0..n ( if i == 2 ( \
+                 error.too_big «at {i}» ) ), n )",
+                "print «{half(1).value} {half(5).err[0].message}»",
+                "1 at 2",
+            ),
+        ] {
+            let src = format!("{too_big}, {fns}, f := fn () -> void ( {body} ), {compile}f()");
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let half = "half := fn (n := i32 ?) -> i32! ( error.too_big «{n} is too big» )";
+    let (code, stdout, stderr) = run_line(&format!("{too_big}, {half}, r := half(300), r.value"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("run error: this union holds `err`, not `value`"), "stderr: {stderr}");
+    let plain = "f := fn (n := i32 ?) -> i32 ( error.too_big «{n} does not fit» )";
+    let (code, stdout, stderr) = run_line(&format!("{too_big}, {plain}, f.compile(), f(300)"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("run error: error.too_big: 300 does not fit"), "stderr: {stderr}");
+}
+
 /// A declaration of an empty place runs nothing on either tier, a record's as a number's.
 #[test]
 fn an_empty_place_of_a_record_compiles() {

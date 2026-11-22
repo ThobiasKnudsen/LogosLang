@@ -127,15 +127,24 @@ pub(crate) unsafe fn lower_shown(
     node: DyadPtr,
     entry: ShowEntry,
 ) -> Result<Value, CompileError> {
+    let values = lower_parts(lw, node)?;
+    let node = lw.node_addr(node);
+    lw.call_seed(entry as usize, &[node, values])?;
+    Ok(lw.const_i32(0))
+}
+
+/// The block of one container per part of such a node, each part run in order, which
+/// [`render_compiled`] reads.
+///
+/// # Safety
+/// `node` must be a node whose first slot is its parts, each a reduced dyad.
+pub(crate) unsafe fn lower_parts(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     let mut values = Vec::new();
     for &part in parts_of(node) {
         let v = lw.lower(part)?;
         values.push(lw.container(part, v));
     }
-    let values = lw.spill(&values);
-    let node = lw.node_addr(node);
-    lw.call_seed(entry as usize, &[node, values])?;
-    Ok(lw.const_i32(0))
+    Ok(lw.spill(&values))
 }
 
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {

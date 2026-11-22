@@ -34,6 +34,9 @@ pub struct UnionIds {
     pub holds: DyadPtr,
     pub asks: DyadPtr,
     pub asks_leaf: DyadPtr,
+    /// A new value of a union, holding one member a value fills.
+    pub fill: DyadPtr,
+    pub fill_leaf: DyadPtr,
 }
 
 /// The tag's width in a value.
@@ -74,7 +77,144 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> UnionIds {
     let asks = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(asks, lower_holds);
     let asks_leaf = callable::mint_native(cx.store, cs.callable, run_holds, cs.seed_native);
-    UnionIds { union, member, leaf, holds, asks, asks_leaf }
+
+    // `T!` reads the type to its left as `.` reads its cell.
+    let record = meta::token_record(cx, meta::prec::TIGHT, crate::parse::Assoc::Left, &["lhs"]);
+    let fallible = cx.store.alloc_head(cx.type_, record);
+    cx.declare("!", fallible);
+    cx.metas.insert(fallible, |p, _id, tape| p.construct_fallible(tape));
+
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        crate::parse::Assoc::Left,
+        &["value", "union", "tag", "op", "output_type"],
+    );
+    let fill = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `fill` carries the record just built.
+    unsafe { meta::mark_own(fill) };
+    cx.lower.insert(fill, lower_fill);
+    let fill_leaf = callable::mint_native(cx.store, cs.callable, run_fill, cs.seed_native);
+    UnionIds { union, member, leaf, holds, asks, asks_leaf, fill, fill_leaf }
+}
+
+/// The member holes `value` and `err` of `ty` where `ty` is `T!`, `union ( value := T, err :=
+/// error )`; `None` for every other type.
+///
+/// # Safety
+/// `ty` must be null or a type node from the store.
+pub(crate) unsafe fn fallible_members(types: &Core, ty: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
+    if !is_union(types, ty) {
+        return None;
+    }
+    let members = array::items(meta::record_fields_of(ty));
+    let bindings = array::items(meta::record_field_bindings_of(ty));
+    let [value, err] = members[..] else {
+        return None;
+    };
+    let named = bindings.iter().map(|&b| Binding::spelling(b)).eq(["value", "err"]);
+    (named && hole::type_in(err) == types.error.value).then_some((value, err))
+}
+
+/// What a function that gives `ty` hands back for `value`, one of the values its body gives: where
+/// `ty` is `T!` and `value` gives no `T!`, a new `T!` whose `value` it fills, landed in `T` first
+/// (›Target: errors are values (`T!`), handled by `if`, passed on by `try`…‹ [[R140]]); `value`
+/// itself otherwise.
+///
+/// # Safety
+/// `ty` must be a type node and `value` a reduced dyad from the store.
+pub(crate) unsafe fn filled(
+    store: &mut Store,
+    types: &Core,
+    ty: DyadPtr,
+    value: DyadPtr,
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    let Some((member, _)) = fallible_members(types, ty) else {
+        return Ok(value);
+    };
+    if super::read::output_type(types, value) == ty {
+        return Ok(value);
+    }
+    let t = hole::type_in(member);
+    let value = super::land_held(store, types, value, t, super::dyad_place::Holder::Owner)?;
+    Ok(build_fill(store, types, value, ty, member))
+}
+
+/// A new value of `union` holding `member`, which `value` fills where it runs.
+///
+/// # Safety
+/// `union` must be a union type, `member` one of its member holes and `value` a reduced dyad
+/// that gives the member's type.
+pub(crate) unsafe fn build_fill(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    union: DyadPtr,
+    member: DyadPtr,
+) -> DyadPtr {
+    let tag = tag_of(store, types, union, member);
+    store.alloc_words(types.union.fill, &[value, union, tag, types.union.fill_leaf, union])
+}
+
+/// What a fill node fills, the union it makes, and how the member's value moves.
+///
+/// # Safety
+/// `node` must be a fill node from [`build_fill`].
+unsafe fn fill_parts(types: &Core, node: DyadPtr) -> (DyadPtr, DyadPtr, super::read::Carry) {
+    let ops = dyad::value(node) as *const DyadPtr;
+    let union = *ops.add(1);
+    let members = array::items(meta::record_fields_of(union));
+    let member = members[tag_in(node) as usize - 1];
+    let carry = super::read::carry_of(types, hole::type_in(member))
+        .expect("a union's member moves whole into its room");
+    (*ops, union, carry)
+}
+
+/// Starts the union value at `at`: the tag of the member a fill node fills, and an empty room.
+///
+/// # Safety
+/// `node` must be a fill node from [`build_fill`], `at` writable for its union's width.
+unsafe fn start(node: DyadPtr, at: *mut u8) {
+    let union = *(dyad::value(node) as *const DyadPtr).add(1);
+    std::ptr::write_bytes(at, 0, meta::record_size_of(union) as usize);
+    std::ptr::copy_nonoverlapping(tag_in(node).to_le_bytes().as_ptr(), at, TAG_BYTES);
+}
+
+fn run_fill(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a fill node, whose value gives its member's type.
+    unsafe {
+        let (value, union, carry) = fill_parts(rt.types(), node);
+        let taken = super::assign::take(rt, carry, value)?;
+        let at = rt.scratch(meta::record_size_of(union) as usize);
+        start(node, at);
+        super::assign::put(carry, at.add(TAG_BYTES), taken);
+        Ok(at as i64)
+    }
+}
+
+fn lower_fill(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: as [`run_fill`].
+    unsafe {
+        let (value, union, carry) = fill_parts(lw.types(), node);
+        let taken = super::assign::lower_take(lw, carry, value)?;
+        let at = lw.scratch_slot(meta::record_size_of(union) as usize);
+        let node = lw.node_addr(node);
+        lw.call_seed(compiled_start as *const () as usize, &[node, at])?;
+        super::assign::lower_put(lw, carry, at, TAG_BYTES as i64, taken);
+        Ok(at)
+    }
+}
+
+/// # Safety
+/// Called only by compiled code, with its context, a fill node `lower_fill` baked and the address
+/// of room for a value of its union.
+unsafe extern "C" fn compiled_start(ctx: *mut crate::run::Context, node: DyadPtr, at: i64) -> i64 {
+    crate::run::interpret_step(ctx, |_| {
+        // SAFETY: the caller's contract.
+        unsafe { start(node, at as usize as *mut u8) };
+        Ok(0)
+    })
 }
 
 /// Whether `t` is a union type.
