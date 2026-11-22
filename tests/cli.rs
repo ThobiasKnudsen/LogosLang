@@ -490,6 +490,61 @@ fn a_member_the_tape_s_node_does_not_have_is_refused_as_a_name_s_is() {
     }
 }
 
+/// ›A `tape[k]` read past the lexed frontier lexes on demand for every constructor‹ [[R231]]: «A
+/// reader that needs nodes to its right built before it reads them builds them itself with
+/// `tape.construct(from, to)` … giving no node or more than one is an error. The reader finds
+/// `to` itself.» A gate word builds the gated type, which reads as the type it gates for its
+/// members (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]).
+#[test]
+fn a_parse_builds_the_nodes_to_its_right_with_tape_construct() {
+    let to_the_end = "k := mut u64 1, \
+                      while (tape[k].type != square_brackets and tape[k].type != void) ( k = k + 1 ), \
+                      tape.construct(1, k), \
+                      if tape[1].type == type ( t := type tape[1], print «{t} {t.size_bytes}» )";
+    let first = "tape.construct(1, 2), \
+                 if tape[1].type == type ( t := type tape[1], print «{t} {t.size_bytes}» )";
+    let stands = "tape.construct(1, 4), tape[0] = tape[1]";
+    for (body, tail, printed) in [
+        (to_the_end, "c := type ch mut i32", "mut i32 4\n"),
+        (to_the_end, "c := type ch pub mut i64, 0", "pub mut i64 8\n0\n"),
+        (to_the_end, "c := type ch i32", "i32 4\n"),
+        (first, "c := type ch (mut i32)", "mut i32 4\n"),
+        (
+            to_the_end,
+            "f := fn () -> i32 ( c := type ch mut i32, 5 ), f.compile(), f()",
+            "mut i32 4\n5\n",
+        ),
+        (stands, "x := i32 2, c := ch x + 40, c", "42\n"),
+    ] {
+        let src = format!("{}, {tail}", tape_reader(body));
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+    for (body, tail, message) in [
+        ("tape.construct(1, 1)", "c := type ch i32", "nothing to evaluate here"),
+        ("tape.construct(1, 3)", "c := type ch 1 2", "expected one expression, found more"),
+        ("tape.construct(1, 9)", "c := type ch i32", "this index is off the tape"),
+        ("tape.construct(0, 2)", "c := type ch i32", "so `from` is 1 or more (here 0)"),
+    ] {
+        let src = format!("{}, {tail}", tape_reader(body));
+        let (code, _, stderr) = run_line(&src);
+        assert!(code != Some(0) && stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]: «A gated type
+/// reads as the type it gates … for layout».
+#[test]
+fn a_gated_type_s_members_are_the_type_s_it_gates() {
+    for (src, printed) in [
+        ("t := type mut i32, print «{t.size_bytes} {t.parse_rank == i32.parse_rank}»", "4 true\n"),
+        ("x := mut i64 5, t := type x.type, print «{t} {t.size_bytes}»", "mut i64 8\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+}
+
 /// A line of the bracket a parse takes is read as its node, as a line a path reaches is: a `:=`
 /// line's `lhs` is the binding it declares, read with `:` and `.` as the name is (›A `:=` node's
 /// fields are `lhs` and `rhs`‹ [[R274]], ›`x.type` reads the type word of the node a name or an
@@ -10721,10 +10776,6 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
         ("a := array array i32 [[1, 2], 3]", "an element does not fit the element type"),
         ("a := array array i32 [(free (1), 2)]", "the list is written in square brackets"),
         ("x := i64 5, a := array array i32 [[1], [x]]", "an element does not fit the element type"),
-        (
-            "p := type ( parse = ( tape.construct(i32, tape[1]), tape.is_constructed[0] = true ) )",
-            "unknown name `construct`",
-        ),
     ] {
         let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");

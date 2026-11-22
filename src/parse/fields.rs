@@ -858,6 +858,10 @@ impl<'a> Parser<'a> {
             // A type's fields are its identity's; a value that is no type has its node's.
             match self.type_known_now(lhs) {
                 Ok(t) => {
+                    // A gated type's members are the type's it gates: `(mut i32).size_bytes` is
+                    // `i32`'s (›Gates are type nodes: `x := mut i32 5`; the record holds no
+                    // gates‹ [[R381]]).
+                    let t = crate::identities::gate::under(t);
                     if let Some(args) = call {
                         if let Some(mint) = self.chosen_mint(t, name, &args)? {
                             return Ok((mint, 1));
@@ -926,9 +930,8 @@ impl<'a> Parser<'a> {
                     return Ok((node, 1));
                 }
                 let args = call.ok_or(ParseError::ExpectedOpen)?;
-                if op == types.tape.insert || op == types.tape.remove || op == types.tape.recenter {
-                    self.forget_narrowed();
-                }
+                // Every member called with brackets edits the tape.
+                self.forget_narrowed();
                 let node = crate::identities::tape::build_member(
                     self.rt.store,
                     types,

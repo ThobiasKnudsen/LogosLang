@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `parsing_tape` and the tape's affordances as identities: `t[k]` read and write,
-//! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, and
+//! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, `t.construct`, and
 //! the cell reads `t[k]:name`, `t[k].type`, a `t[k]` checked to hold a type as that
 //! type or checked against a number type as that number, and a scope or `[…]` cell's
 //! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does. The
@@ -49,6 +49,10 @@ pub struct TapeIds {
     pub remove_leaf: DyadPtr,
     pub recenter: DyadPtr,
     pub recenter_leaf: DyadPtr,
+    /// `t.construct(from, to)`: `[tape, from, to, op]`, the nodes from `from` up to `to` built
+    /// as one line.
+    pub construct: DyadPtr,
+    pub construct_leaf: DyadPtr,
     /// `t[k]:name`: the spelling of the binding the cell holds, a string node.
     pub slot_name: DyadPtr,
     pub slot_name_leaf: DyadPtr,
@@ -146,6 +150,7 @@ pub(super) fn register(
     let (insert, insert_leaf) = op(cx, &["tape", "k", "cells", "op"], run_insert);
     let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
+    let (construct, construct_leaf) = op(cx, &["tape", "k", "to", "op"], run_construct);
     let (slot_name, slot_name_leaf) = read(cx, &["tape", "k"], run_slot_name);
     let (cell_type, cell_type_leaf) = read(cx, &["tape", "k", "i"], run_line_type);
     let (cell_value, cell_value_leaf) = read(cx, &["tape", "k", "i"], run_cell_value);
@@ -165,6 +170,7 @@ pub(super) fn register(
         ("insert", insert),
         ("remove", remove),
         ("recenter", recenter),
+        ("construct", construct),
     ] {
         // SAFETY: `pub_mint` is a gate mint and `id` an identity just built.
         let gated = unsafe { super::gate::over_node(cx.store, pub_mint, id) };
@@ -190,6 +196,8 @@ pub(super) fn register(
         remove_leaf,
         recenter,
         recenter_leaf,
+        construct,
+        construct_leaf,
         slot_name,
         slot_name_leaf,
         cell_type,
@@ -223,6 +231,7 @@ pub(crate) fn member(ids: &TapeIds, name: &str) -> Option<(DyadPtr, DyadPtr)> {
         "insert" => Some((ids.insert, ids.insert_leaf)),
         "remove" => Some((ids.remove, ids.remove_leaf)),
         "recenter" => Some((ids.recenter, ids.recenter_leaf)),
+        "construct" => Some((ids.construct, ids.construct_leaf)),
         _ => None,
     }
 }
@@ -627,6 +636,13 @@ pub(crate) unsafe fn build_member(
         };
         return Ok(act(store, op, leaf, &[recv, k, cells]));
     }
+    if op == ids.construct {
+        let [from, to] = args[..] else {
+            return Err(ParseError::CtorArity);
+        };
+        let (from, to) = (index(store, types, from)?, index(store, types, to)?);
+        return Ok(act(store, op, leaf, &[recv, from, to]));
+    }
     let [k] = args[..] else {
         return Err(ParseError::CtorArity);
     };
@@ -805,6 +821,24 @@ fn run_recenter(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
+/// The tape is lexed on to the node before `to` first, so a `to` past the line's end is off it.
+fn run_construct(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe {
+        let ops = dyad::value(node) as *const DyadPtr;
+        let (tape, from) = tape_at(rt, ops)?;
+        let to = rt.run(*ops.add(2))? as isize;
+        if to > from {
+            rt.reach(tape, to - 1)?;
+            if (*tape).at(to - 1).is_none() {
+                return Err(RunError::OffTape);
+            }
+        }
+        rt.construct_on_tape(tape, from, to)?;
+        Ok(0)
+    }
+}
+
 /// The cell, read through a binding to the dyad it names; with no cell index, the bracket
 /// the receiver holds, a bracket handed to a call.
 unsafe fn slot_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<DyadPtr, RunError> {
@@ -928,7 +962,9 @@ fn run_cell_value(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let cell = read_target(rt, dyad::value(node) as *const DyadPtr)?;
-        if dyad::ty(cell) == rt.types().type_ {
+        // A gated type, `mut i32`, is a type (›Gates are type nodes: `x := mut i32 5`; the record
+        // holds no gates‹ [[R381]]).
+        if dyad::ty(super::gate::under(cell)) == rt.types().type_ {
             rt.run(cell)
         } else {
             Err(RunError::CellNotAType)

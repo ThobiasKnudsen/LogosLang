@@ -1118,6 +1118,7 @@ impl<'a> Parser<'a> {
             construct: Self::construct_host,
             parse_waiting: Self::parse_waiting_host,
             read_tape: Self::read_tape_host,
+            construct_tape: Self::construct_tape_host,
         };
         self.rt.hosting(&self.cx.scopes, self.trie, Some(host), f)
     }
@@ -1215,21 +1216,77 @@ impl<'a> Parser<'a> {
     }
 
     fn construct_cells(&mut self, cells: Vec<Cell>) -> Result<DyadPtr, ParseError> {
+        // These cells stand on no line: what they run, the node that asked for them runs.
+        let depth = self.cx.open.len() - 1;
+        let runs = std::mem::take(&mut self.cx.open[depth].runs);
+        let built = self.construct_line(cells);
+        if let Some(open) = self.cx.open.get_mut(depth) {
+            open.runs = runs;
+        }
+        built.map(|c| c.dyad)
+    }
+
+    /// `cells` built as one line that ends after them, as the driver builds a segment: the one
+    /// node they give, or the error a line giving none or more than one is.
+    fn construct_line(&mut self, cells: Vec<Cell>) -> Result<Cell, ParseError> {
         let mut tape = ParsingTape::new();
         for cell in cells {
             tape.push(cell);
         }
         tape.center = tape.head;
         tape.sealed = true;
-        // These cells stand on no line: what they run, the node that asked for them runs.
-        let depth = self.cx.open.len() - 1;
-        let runs = std::mem::take(&mut self.cx.open[depth].runs);
-        let built = self.construct_segment(&mut tape);
-        if let Some(open) = self.cx.open.get_mut(depth) {
-            open.runs = runs;
+        let built = self.construct_segment(&mut tape)?;
+        let items = self.hand_to_line(built);
+        self.one_of(items)
+    }
+
+    /// A Logos constructor's `tape.construct(from, to)` ([`Parser::construct_range`]).
+    ///
+    /// # Safety
+    /// As `lex_on`.
+    unsafe fn construct_tape_host(
+        parser: *mut (),
+        tape: *mut ParsingTape,
+        from: isize,
+        to: isize,
+    ) -> Result<(), crate::run::RunError> {
+        // SAFETY: as this function's own contract.
+        let (parser, tape) = unsafe { (&mut *(parser as *mut Self), &mut *tape) };
+        let built = parser.on_tape_host(|p| p.construct_range(tape, from, to));
+        built.map_err(|e| crate::run::RunError::Parse(Box::new(e)))
+    }
+
+    /// The nodes `from` up to, not including, `to` right of `tape`'s center, lexed already, built
+    /// as one line that ends there, each by its own constructor; the one node they give stands
+    /// at `from` (›A `tape[k]` read past the lexed frontier lexes on demand for every
+    /// constructor‹ [[R231]]). They stand on the line being parsed, so what they run, it runs.
+    fn construct_range(
+        &mut self,
+        tape: &mut ParsingTape,
+        from: isize,
+        to: isize,
+    ) -> Result<(), ParseError> {
+        use crate::identities::read::{read_kind, Read};
+        let cells: Vec<Cell> = (from..to).map_while(|k| tape.at(k).copied()).collect();
+        let taken = cells.len();
+        let mut built = self.construct_line(cells)?;
+        // A type its gate words read stands as the gated type, so a parse reading it is handed
+        // `mut i32`.
+        // SAFETY: a built cell holds a node from the store, and its gates are null or a gate mint.
+        unsafe {
+            let types = self.types;
+            let id = built.identity(types);
+            if !built.gates.is_null() && read_kind(types, id) == Read::Identity {
+                built.dyad = crate::identities::gate::gated(self.rt.store, types, built.gates, id);
+                built.gates = std::ptr::null_mut();
+            }
         }
-        let items = self.hand_to_line(built?);
-        self.one_of(items).map(|c| c.dyad)
+        for _ in 1..taken {
+            tape.remove(from + 1);
+        }
+        let placed = tape.set_cell(from, built);
+        debug_assert!(placed, "a line of at least one node began at `from`");
+        Ok(())
     }
 
     /// A square bracket taken into a place of a type of node values: the node of the run

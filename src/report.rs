@@ -660,6 +660,13 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::NoFragment => "insert takes a tape fragment".into(),
+        RunError::ConstructOffPass => "`tape.construct` builds nodes only on the tape a running \
+                                       parse was handed, never on a `lex «…»` fragment"
+            .into(),
+        RunError::ConstructFrom(from) => format!(
+            "`tape.construct(from, to)` builds the nodes right of the parse's own, so `from` is 1 \
+             or more (here {from})"
+        ),
         RunError::NoThis => "no value holds this field here".into(),
         RunError::FieldBeforeStamp => {
             "`tape[0]` still holds the type: `tape[0].type = T` makes it a new node first".into()

@@ -58,6 +58,10 @@ pub enum RunError {
     CellNotANode,
     /// `insert` of a null fragment.
     NoFragment,
+    /// `tape.construct` over a tape no running constructor was handed.
+    ConstructOffPass,
+    /// `tape.construct` from a node at or left of the parse's own; the `from` given.
+    ConstructFrom(i64),
     /// The receiver holds no node, or the node has no slots.
     NoThis,
     /// A parse read or wrote a field of `tape[0]` while the cell still held the type.
@@ -497,6 +501,10 @@ pub(crate) struct Host {
         isize,
         crate::parse::TapeRead,
     ) -> Result<i64, RunError>,
+    /// Builds the nodes `from` up to, not including, `to` right of a tape's center as one line,
+    /// the one node they give standing at `from`.
+    pub(crate) construct_tape:
+        unsafe fn(*mut (), *mut crate::parse::ParsingTape, isize, isize) -> Result<(), RunError>,
 }
 
 /// Puts back the lexer a [`Runtime::hosting`] call found, by return or by unwinding.
@@ -687,6 +695,30 @@ impl<'a> Runtime<'a> {
         let Some(host) = self.lexer.and_then(|l| l.host) else { return Ok(None) };
         // SAFETY: as `reach`.
         (host.read_tape)(host.parser, tape, k, read).map(|p| Some(p as usize as DyadPtr))
+    }
+
+    /// Build the nodes `from` up to `to` of `tape` through the parser running the pass, which
+    /// only the tape the running constructor was handed has.
+    ///
+    /// # Safety
+    /// `tape` must be a live `ParsingTape`.
+    pub(crate) unsafe fn construct_on_tape(
+        &mut self,
+        tape: *mut crate::parse::ParsingTape,
+        from: isize,
+        to: isize,
+    ) -> Result<(), RunError> {
+        if self.ctor_tape != Some(tape) {
+            return Err(RunError::ConstructOffPass);
+        }
+        if from < 1 {
+            return Err(RunError::ConstructFrom(from as i64));
+        }
+        let Some(host) = self.lexer.and_then(|l| l.host) else {
+            return Err(RunError::NoParser);
+        };
+        // SAFETY: as `reach`.
+        (host.construct_tape)(host.parser, tape, from, to)
     }
 
     /// Construct `ty` applied to `value` through the parser running the pass.
