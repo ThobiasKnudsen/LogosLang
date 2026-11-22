@@ -28,9 +28,12 @@ const CATEGORY: usize = 3;
 pub struct ErrorIds {
     pub error: DyadPtr,
     pub leaf: DyadPtr,
-    /// The error value's type, `array hop`, which `error` names where a type is wanted; null
-    /// until identities/error.logos is read.
+    /// The error value's type, `array hop`, which `error` names where a type is wanted; the
+    /// native one until identities/error.logos is read.
     pub value: DyadPtr,
+    /// The error value's native type, which `value` is until identities/error.logos is read, and
+    /// which a `T!` made before then holds as `err`.
+    pub native: DyadPtr,
     /// The type of one element of the error value.
     pub hop: DyadPtr,
     /// error.logos's function that makes the error value of one raise.
@@ -104,7 +107,41 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
     cx.lower.insert(raised, lower_raised);
     let raised_leaf = callable::mint_native(cx.store, cs.callable, run_raised, cs.seed_native);
     let null = std::ptr::null_mut();
-    ErrorIds { error, leaf, value: null, hop: null, one_hop: null, raised, raised_leaf }
+    ErrorIds {
+        error,
+        leaf,
+        value: null,
+        native: null,
+        hop: null,
+        one_hop: null,
+        raised,
+        raised_leaf,
+    }
+}
+
+/// The error value's native type: the address of a block of 16 bytes, where error.logos's
+/// `hops` keeps `ptr`, then `size`, so a place of either holds the same word. `array`, which
+/// `hops` is built from, has `parse` bodies that give `void!`, whose `err` is the error value, so
+/// the native type is made before any file is read and the `T!`s made before error.logos is
+/// read hold it (›A dependency cycle among core identities is broken with native versions
+/// first‹ [[R16]]). No program reaches a value of it: only the driver reads one, which it ends
+/// as error.logos's `hops`.
+pub(super) fn native(store: &mut Store, core: &Core) -> ErrorIds {
+    let scope = super::scope::mint(store, core.scope, std::ptr::null_mut());
+    let none = super::array::build(store, core.array_, &[]);
+    let extent = meta::Extent { size_bytes: 16, align: 8 };
+    let (rank, assoc, parse) = (meta::prec::APPLY, crate::parse::Assoc::Left, core.derived_parse);
+    let record = meta::record_layout(store, scope, none, none, extent, scope, rank, assoc, parse);
+    let block = store.alloc_head(core.type_, record);
+    // SAFETY: `block` is the type node just made.
+    let value = unsafe { super::pointer::make_pointer_type(store, core, block) };
+    ErrorIds { value, native: value, ..core.error }
+}
+
+/// Whether `t` is the error value's type: error.logos's `hops`, or the native type that stands
+/// for it in the `T!`s made before error.logos is read.
+pub(crate) fn is_value(types: &Core, t: DyadPtr) -> bool {
+    t == types.error.value || t == types.error.native
 }
 
 /// A raise of `category`, the binding record its declaration made.
@@ -225,4 +262,44 @@ unsafe extern "C" fn compiled_raise(
         // SAFETY: the caller's contract is `render_compiled`'s and `fault`'s.
         Err(unsafe { fault(node, print::render_compiled(rt, node, values)?) })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identities::{by_copy, numtype, read};
+
+    #[test]
+    fn the_native_error_value_holds_what_hops_holds() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let (native, hops) = (core.error.native, core.error.value);
+        assert_ne!(native, hops, "error.logos's `hops` replaces the native type");
+        // SAFETY: both are type nodes `Core::build` made, `native` a pointer type.
+        unsafe {
+            assert_eq!(read::carry_of(&core, native), read::carry_of(&core, hops));
+            assert_eq!(by_copy::place_width(&core, native), by_copy::place_width(&core, hops));
+            let block = numtype::pointee_of(native);
+            assert_eq!(meta::record_size_of(block), meta::record_size_of(hops));
+            assert_eq!(meta::record_align_of(block), meta::record_align_of(hops));
+            let laid: Vec<(String, usize)> =
+                super::super::array::items(meta::record_field_bindings_of(hops))
+                    .iter()
+                    .map(|&b| (Binding::spelling(b), Binding::read(b).offset))
+                    .filter(|(name, _)| name == "ptr" || name == "size")
+                    .collect();
+            assert_eq!(laid, [("ptr".to_string(), 0), ("size".to_string(), 8)]);
+        }
+    }
+
+    #[test]
+    fn either_error_value_type_is_the_error_value() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        assert!(is_value(&core, core.error.value));
+        assert!(is_value(&core, core.error.native));
+        assert!(!is_value(&core, core.error.hop));
+    }
 }
