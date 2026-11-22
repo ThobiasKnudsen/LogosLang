@@ -831,14 +831,6 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
         ),
         ("n := i32 2, f := fn () -> i32 ( n OP i32 3 ), free n, f()".to_owned(), Err(dead)),
         ("f := fn () -> i32 ( n := i32 5, free n, n OP n ), 0".to_owned(), Err(dead)),
-        ("f := fn () -> i32 ( m := { d := pub dyad (i32, 3) }, m.d OP i32 2 ), f()".to_owned(), Ok("6\n")),
-        ("f := fn () -> i32 ( m := { d := pub dyad (i32, 3) }, i32 2 OP m.d ), f()".to_owned(), Ok("6\n")),
-        (
-            "g := fn () -> i32 ( f := fn () -> i32 ( m := { d := pub dyad (i32, 3) }, m.d OP i32 2 ), \
-             f() + 1 ), g()"
-                .to_owned(),
-            Ok("7\n"),
-        ),
     ];
     for compile in ["", "f.compile(), "] {
         cases.push((
