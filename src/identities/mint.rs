@@ -118,12 +118,34 @@ pub(crate) unsafe fn output_type_of(t: DyadPtr) -> Option<DyadPtr> {
     is_mint(t).then(|| meta::mint_output_of(t))
 }
 
-/// What every node of the mint `t` runs; `None` when `t` is no mint.
+/// What every node of the mint `t` runs, a built-in operation's or the instruction a mint made in
+/// Logos keeps; `None` for any other type.
 ///
 /// # Safety
 /// As `is_mint`.
 pub(crate) unsafe fn operation_of(t: DyadPtr) -> Option<DyadPtr> {
-    is_mint(t).then(|| meta::mint_op_of(t))
+    match kept_instruction(t) {
+        Some(instruction) => Some(meta::mint_op_of(instruction)),
+        None => is_mint(t).then(|| meta::mint_op_of(t)),
+    }
+}
+
+/// The type whose lowering rule lowers a node of `t`: the instruction's family for a mint made in
+/// Logos that keeps one, else what `t` is a mint of.
+///
+/// # Safety
+/// As `is_mint`.
+pub(crate) unsafe fn lowered_as(t: DyadPtr) -> DyadPtr {
+    origin(kept_instruction(t).unwrap_or(t))
+}
+
+/// # Safety
+/// As `is_mint`.
+unsafe fn kept_instruction(t: DyadPtr) -> Option<DyadPtr> {
+    Some(t)
+        .filter(|&t| meta::is_record_type(t))
+        .map(|t| meta::instruction_of(t))
+        .filter(|i| !i.is_null())
 }
 
 /// The field types the mint `t` was made for; `None` when `t` is no mint.

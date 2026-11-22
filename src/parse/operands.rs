@@ -217,6 +217,11 @@ impl<'a> Parser<'a> {
     /// A quote, a `(`, a gate word or `else` names none, so it starts what follows it.
     fn reads_left(&self, id: DyadPtr) -> bool {
         use crate::identities::meta;
+        // An operation written in Logos reads to its left as the native version whose name it
+        // took: stand-in for #500.
+        if let Some(native) = self.types.native_of(id) {
+            return self.reads_left(native);
+        }
         // SAFETY: `id` is null or a resolved identity; roles are read only off an operand or
         // token record, fields only off a record type.
         unsafe {

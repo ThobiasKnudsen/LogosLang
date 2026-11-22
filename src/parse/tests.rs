@@ -261,7 +261,9 @@ fn lex_hands_back_the_tape_unconstructed() {
     assert_eq!(plus.len(), 1);
     let cell = *plus.at(0).unwrap();
     assert!(!cell.constructed);
-    assert_eq!(cell.identity(types), types.plus, "the cell points at `+`'s binding");
+    let written =
+        types.written.iter().find(|w| w.native == types.plus).expect("the seed writes `+`");
+    assert_eq!(cell.identity(types), written.written, "the cell points at `+`'s binding");
     assert!(!cell.binding(types).is_null());
     assert_eq!(plus.spelling(0), Some("+"));
 

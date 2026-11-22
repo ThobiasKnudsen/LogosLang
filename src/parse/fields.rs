@@ -1440,8 +1440,9 @@ impl<'a> Parser<'a> {
     }
 
     /// The call runs on the pass and the result bits are the produced type
-    /// node's address (DESIGN ›Build and run are one self-directing pass‹); a
-    /// run failure or a non-type result is `NonComptimeTypeCall`.
+    /// node's address (DESIGN ›Build and run are one self-directing pass‹); an error the call
+    /// raised, or a mint it failed to build, is its own; any other run failure or a non-type
+    /// result is `NonComptimeTypeCall`.
     ///
     /// # Safety
     /// `call` must be a reduced call node from the store.
@@ -1449,7 +1450,9 @@ impl<'a> Parser<'a> {
         // What stands before the call runs first, so the call reads committed state.
         self.drain()?;
         let bits = self.run_on_pass(call).map_err(|e| match e {
-            crate::run::RunError::MintFailed(_) => ParseError::Run(e),
+            crate::run::RunError::MintFailed(_) | crate::run::RunError::Raised(_) => {
+                ParseError::Run(e)
+            }
             _ => ParseError::NonComptimeTypeCall,
         })?;
         // A call declared `-> type` yields a node's address (DESIGN ›The store is keyed by address‹).
@@ -2030,8 +2033,8 @@ impl<'a> Parser<'a> {
         name: &str,
         index: Option<usize>,
     ) -> Result<DyadPtr, ParseError> {
-        use crate::identities::meta;
         use crate::identities::numtype::NumType;
+        use crate::identities::{instruction, meta};
         if meta::kind_of(logos).is_none() {
             return Err(ParseError::BadReflectRead);
         }
@@ -2089,13 +2092,18 @@ impl<'a> Parser<'a> {
                 .rt
                 .store
                 .alloc_head(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
-            _ => match self.static_member_read(logos, name)? {
-                Some(member) => Ok(member),
-                None if self.per_node_field_of(logos, name) => {
-                    Err(ParseError::PerNodeThroughType(name.to_string()))
+            _ => {
+                if let Some(step) = instruction::member(self.types, logos, name) {
+                    return Ok(step);
                 }
-                None => Err(ParseError::BadReflectRead),
-            },
+                match self.static_member_read(logos, name)? {
+                    Some(member) => Ok(member),
+                    None if self.per_node_field_of(logos, name) => {
+                        Err(ParseError::PerNodeThroughType(name.to_string()))
+                    }
+                    None => Err(ParseError::BadReflectRead),
+                }
+            }
         }
     }
 

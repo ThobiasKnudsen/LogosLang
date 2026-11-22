@@ -70,7 +70,7 @@ impl Cell {
     }
 
     /// The cell placed over `dyad`, its facts cleared.
-    fn over(&mut self, dyad: DyadPtr) {
+    pub(super) fn over(&mut self, dyad: DyadPtr) {
         let (path, target, root, hole, type_value) = Self::NO_FACTS;
         self.dyad = dyad;
         self.constructed = true;
