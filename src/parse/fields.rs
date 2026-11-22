@@ -1491,18 +1491,15 @@ impl<'a> Parser<'a> {
     /// `&`'s constructor: an `addr` node that resolves the place's address at
     /// run/lower time, so a frame-relative local yields a per-activation
     /// address. Of the places, a frame's and a dereference's cell have an address
-    /// to hand out; a value nothing names is held first, in a place of its own.
+    /// to hand out; a value nothing names is held first, in a place of its own. A word to its
+    /// right still to be built is started first.
     pub(crate) fn construct_address_of(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let Some(&cell) = tape.at(1) else {
+        let Some(cell) = self.side_at(tape, 1)? else {
             return Err(ParseError::BadAddressOf);
         };
-        // A value not built yet, a call or a literal, is waited for, as `free` waits for it.
-        if !cell.constructed && self.ctor_of(self.cell_identity(&cell)).is_some() {
-            return Err(ParseError::MissingOperand);
-        }
         let operand = self.as_operand(cell)?;
         // SAFETY: `operand` is a dyad from the store.
         let (named, node) = unsafe {

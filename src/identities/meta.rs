@@ -114,29 +114,35 @@ pub(crate) mod prec {
     /// Application (`f(x)`, `pt(1, 2)`): reads its bracket lazily in source order, so the
     /// tight reads sit above it and the bracket readers above those.
     pub const APPLY: f64 = 91.0;
+    /// `&`: built at discovery below the reads after a node (`.`, `:`, `@`, a call), so it takes
+    /// the node to its right once they are built: `&p.x` is `&(p.x)` (›Every identity has a
+    /// `parse_rank`, and `(` works in two steps‹ [[R259]]).
+    pub const ADDRESS: f64 = 90.5;
     /// `?`: above a type that takes a value, so in `i32 ?` the unknown stands before `i32` takes it.
     pub const HOLE: f64 = 87.0;
     /// A type taking the value to its right, `i64 m`, and `lossy` between it and the value: below
-    /// `(` and `?`, above `&` and the prefix words. ›A parse is ranked by what it takes from its
-    /// right‹ [[R116]].
+    /// `(` and `?`, above the pointer types and the prefix words. ›A parse is ranked by what it
+    /// takes from its right‹ [[R116]].
     pub const CONVERT: f64 = 86.0;
     /// `.`, `:`, `@`: the tight reads of the cell to their left, above the readers and
     /// below `:=`/`=`; the right cell is lexed lazily inside the constructor.
     pub const TIGHT: f64 = 92.5;
-    /// `&`.
-    pub const ADDRESS: f64 = 85.0;
     /// The prefix words over a place: `own`, `alloc`, `pub`, and `free` (stand-in for #384).
     pub const PREFIX: f64 = 82.0;
     /// A pointer type taking the pointer to its right, `@i32 &a`: below `&`, whose pointer it
     /// takes, above the prefix words, which take its hole whole, `own @i32 ?`. ›A parse is ranked
     /// by what it takes from its right‹ [[R116]].
     pub const POINTER_TYPE: f64 = 84.0;
+    /// A negating `-`, built after `^`, whose rank is `*`'s and one, and before `*`, so `-x ^ 2`
+    /// is `-(x ^ 2)` and `-a * b` is `(-a) * b` (›`-` negates where a space stands before it and
+    /// none after, or no value stands to its left; any other `-` subtracts‹ [[R157]]).
+    pub const NEGATE: f64 = 70.5;
     pub const MULTIPLICATIVE: f64 = 70.0;
     pub const ADDITIVE: f64 = 60.0;
-    /// `..`, the range infix `for` reads.
-    pub const RANGE: f64 = 55.0;
+    /// The comparisons `==`, `!=`, `<`, `>`, `<=`, `>=` and `⊆`, and `..`, the range `for`
+    /// reads: one rank, built from the left (›Every identity has a `parse_rank`, and `(` works in
+    /// two steps‹ [[R259]]).
     pub const COMPARE: f64 = 50.0;
-    pub const EQUALITY: f64 = 40.0;
     /// Above `and` so `a and not b` reads as in Python; below the comparisons so `not a == b`
     /// negates the comparison.
     pub const NOT: f64 = 35.0;
@@ -158,6 +164,12 @@ pub(crate) mod prec {
     /// these are built when a constructor's read lexes them.
     pub fn built_as_lexed(rank: f64) -> bool {
         rank == OPEN || rank >= IMPORT
+    }
+
+    /// A word built at discovery once the node to its right stands with the reads after it,
+    /// which outrank it: `&`.
+    pub fn waits_for_reads(rank: f64) -> bool {
+        OPEN < rank && rank < APPLY
     }
 }
 

@@ -163,14 +163,15 @@ impl<'a> Parser<'a> {
             && self.ctor_of(id).is_some()
     }
 
-    /// An infix ranked among the comparisons, below the range and above `not`:
-    /// its operands may be any value, types included, and a type standing
-    /// right of it is a whole operand, where right of `+` it must still read its bracket.
-    /// The rank is a stand-in for #137: whether the result is `bool` is known only once built.
+    /// An infix ranked among the comparisons: its operands may be any value, types included, and
+    /// a type standing right of it is a whole operand, where right of `+` it must still read its
+    /// bracket. The rank is a stand-in for #137: whether the result is `bool` is known only once
+    /// built.
     fn compares(&self, id: DyadPtr) -> bool {
         use crate::identities::meta::prec;
-        let rank = self.precedence_of_cell(id);
-        self.ctor_of(id).is_some() && self.reads_left(id) && prec::NOT < rank && rank < prec::RANGE
+        self.ctor_of(id).is_some()
+            && self.reads_left(id)
+            && self.precedence_of_cell(id) == prec::COMPARE
     }
 
     /// An infix that reads a value on each side, `+` or `==`, whose operands `binary_operands`
@@ -1105,14 +1106,22 @@ impl<'a> Parser<'a> {
     /// What a type at the center takes from its right, the cell at `k` (›A type's `parse` decides
     /// what converts into it; unwritten, a value converts only into a type that holds it
     /// exactly‹ [[R155]]): a built value or a bare name, what is built at discovery (`.`, `@`, a
-    /// call, an `if`) finished before it. `None` where the type stands as itself: nothing there,
-    /// or a cell still to be built that is no value of its own (`+`, `->`).
+    /// call, an `if`) finished before it, and a negating `-` there started first, so `i32 -m`
+    /// negates `m` before `i32` converts it (›`-` negates where a space stands before it and none
+    /// after, or no value stands to its left; any other `-` subtracts‹ [[R157]]). `None` where
+    /// the type stands as itself: nothing there, or a cell still to be built that is no value of
+    /// its own (`+`, `->`).
     pub(crate) fn type_operand(
         &mut self,
         tape: &mut ParsingTape,
         k: isize,
     ) -> Result<Option<Cell>, ParseError> {
-        let Some(cell) = self.cell_at(tape, k)? else { return Ok(None) };
+        let Some(mut cell) = self.cell_at(tape, k)? else { return Ok(None) };
+        // Any other word not built yet leaves the type standing as itself: stand-in for #535.
+        if !cell.constructed && self.cell_identity(&cell) == self.types.negate {
+            let Some(started) = self.side_at(tape, k)? else { return Ok(None) };
+            cell = started;
+        }
         Ok(self.is_operand_cell(&cell).then_some(cell))
     }
 

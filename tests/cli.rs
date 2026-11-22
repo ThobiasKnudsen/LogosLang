@@ -755,13 +755,14 @@ fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
         ("2 ^ 0.5", "1.4142135623730954"),
         ("g := fn (x := f64 ?) -> f64 ( x ^ 1.5 ), g.compile(), g(f64 4.0)", "8.0"),
         ("f(2) + 2 ^ 3 ^ 2", "521"),
-        // Negation ranks with the number types, above `^` (›`-` negates where a space stands
-        // before it and none after, or no value stands to its left; any other `-` subtracts‹
-        // [[R157]]).
-        ("y := i32 3, -y ^ 2", "9"),
+        // Negation is built after `^`, and a literal folds its `-` (›`-` negates where a space
+        // stands before it and none after, or no value stands to its left; any other `-`
+        // subtracts‹ [[R157]]).
+        ("y := i32 3, -y ^ 2", "-9"),
         ("y := i32 3, 0 - y ^ 2", "-9"),
         ("-3 ^ 2", "9"),
-        ("g := fn (y := i32 ?) -> i32 ( -y ^ 2 ), g.compile(), g(3)", "9"),
+        ("g := fn (y := i32 ?) -> i32 ( -y ^ 2 ), g.compile(), g(3)", "-9"),
+        ("y := i32 2, 3 ^ -y", "1/9"),
         ("x := f64 2.0, x ^ (f64 0.0 / 0.0)", "NaN"),
         ("x := f64 2.0, x ^ (f64 1.0 / 0.0)", "inf"),
         ("x := f64 2.0, x ^ (f64 -1.0 / 0.0)", "0.0"),

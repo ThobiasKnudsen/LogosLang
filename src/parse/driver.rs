@@ -205,7 +205,8 @@ impl<'a> Parser<'a> {
                     || prec == crate::identities::meta::prec::DECLARE;
                 let asleep = (self.cx.lex_mode == Some(RightSide::ReturnType) && reader)
                     || self.cx.member_asleep
-                    || self.tight_read_takes(id);
+                    || self.tight_read_takes(id)
+                    || self.waits_for_reads(id, tape.at(1), tape.at(2).is_some());
                 if prec >= crate::identities::meta::prec::OPEN
                     && !asleep
                     && (!lazy
@@ -263,11 +264,12 @@ impl<'a> Parser<'a> {
         let mark = tape.mark();
         loop {
             let mut found = None;
-            for (n, c) in tape.iter() {
+            let cells: Vec<(usize, Cell)> = tape.iter().map(|(n, c)| (n, *c)).collect();
+            for (i, &(n, c)) in cells.iter().enumerate() {
                 if c.constructed || c.held.is_some() {
                     continue;
                 }
-                let id = self.cell_identity(c);
+                let id = self.cell_identity(&c);
                 let Some(construct) = self.ctor_of(id) else { continue };
                 let prec = self.precedence_of_cell(id);
                 if prec < crate::identities::meta::prec::OPEN {
@@ -275,8 +277,10 @@ impl<'a> Parser<'a> {
                 }
                 let reader = prec == crate::identities::meta::prec::READER
                     || prec == crate::identities::meta::prec::DECLARE;
+                let side = cells.get(i + 1).map(|(_, c)| c);
                 let asleep = (self.cx.lex_mode == Some(RightSide::ReturnType) && reader)
-                    || self.tight_read_takes(id);
+                    || self.tight_read_takes(id)
+                    || self.waits_for_reads(id, side, cells.len() > i + 2);
                 if asleep {
                     continue;
                 }
@@ -292,6 +296,24 @@ impl<'a> Parser<'a> {
         }
         tape.restore(mark);
         Ok(())
+    }
+
+    /// Whether `id`, built at discovery below the reads after a node (`&`), waits there: until
+    /// `side`, the cell to its right, is lexed and built and no `.`, `:`, `@` or bracket reads
+    /// after it, so `&p.x` takes `p.x` (›Every identity has a `parse_rank`, and `(` works in two
+    /// steps‹ [[R259]]). `lexed_after`: a cell already stands after `side`. A held bracket or a
+    /// word still to be built there it takes at the boundary.
+    fn waits_for_reads(&mut self, id: DyadPtr, side: Option<&Cell>, lexed_after: bool) -> bool {
+        if !crate::identities::meta::prec::waits_for_reads(self.precedence_of_cell(id)) {
+            return false;
+        }
+        let Some(side) = side else { return true };
+        if side.held.is_some() || !self.is_operand_cell(side) {
+            return true;
+        }
+        let t = self.types;
+        let reads = [t.dot_, t.colon_, t.at_, t.open_, t.open_sq_];
+        !lexed_after && self.peek_token().is_some_and(|(n, _)| reads.contains(&n))
     }
 
     /// The cell `offset` links right of the center, lexed on demand (DESIGN

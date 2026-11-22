@@ -954,6 +954,29 @@ fn move_is_built_after_if_and_return() {
 }
 
 #[test]
+fn address_comparison_and_negation_stand_in_the_order() {
+    // `&` is built at discovery after the reads after its node, so `=` takes `&x` whole.
+    for (src, want) in [
+        ("x := i32 5, p := &x, q := &p@, q@", 5),
+        ("w := fn (n := i32 ?) -> i32 ( n + 1 ), p := &w(7), p@", 8),
+        ("q := i32 7, p := &(q), p@", 7),
+        ("p := &i32 7, p@", 7),
+    ] {
+        assert_eq!(run_script(src), want, "{src}");
+    }
+    assert_eq!(script_parse_err("x := i32 5, &x = 3"), ParseError::BadAssignTarget);
+    // The comparisons are one rank, built from the left.
+    assert_eq!(run_script("a := i32 1, b := i32 2, a < b == true"), 1);
+    assert_eq!(
+        script_parse_err("a := i32 1, b := i32 2, true == a < b"),
+        ParseError::UnsupportedOperands
+    );
+    // A negating `-` is built before `*`, and a number type starts it.
+    assert_eq!(run_script("y := i32 3, -y * 2"), -6);
+    diff_nullary_fn("fn () -> i32 ( m := i32 3, i32 -m * 2 + 1 )", -5);
+}
+
+#[test]
 fn less_than_is_abstract_and_resolves_to_lt_i32() {
     let (mut store, mut trie, core) = new_core();
 
