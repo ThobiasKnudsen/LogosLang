@@ -403,6 +403,12 @@ impl Activation {
     }
 }
 
+/// The frames in flight above `depth`, set aside by [`Runtime::set_aside_frames`].
+pub(crate) struct SetAside {
+    depth: usize,
+    frames: Vec<Activation>,
+}
+
 /// The record a call of the `fn` node `f` is an instance of: its input record, which each
 /// `fn` parses for itself and a copy of `f` shares. ›A scope lays out its declarations; a
 /// use reaches the offset through its binding‹ [[R294]].
@@ -608,6 +614,24 @@ impl<'a> Runtime<'a> {
             }
             None => false,
         }
+    }
+
+    /// How many frames are in flight, the program's included.
+    pub(crate) fn frame_depth(&self) -> usize {
+        self.activations.len()
+    }
+
+    /// Sets aside the frames calls pushed above `depth`, so the frame in flight at `depth` is the
+    /// innermost again until [`Runtime::restore_frames`] puts them back.
+    pub(crate) fn set_aside_frames(&mut self, depth: usize) -> SetAside {
+        SetAside { depth, frames: self.activations.split_off(depth) }
+    }
+
+    /// Puts back the frames [`Runtime::set_aside_frames`] set aside, above the frame in flight
+    /// where they were set aside.
+    pub(crate) fn restore_frames(&mut self, aside: &mut SetAside) {
+        self.activations.truncate(aside.depth);
+        self.activations.append(&mut aside.frames);
     }
 
     /// The innermost frame: the program's outside any call.
