@@ -923,6 +923,37 @@ fn an_operation_starts_the_word_at_its_side_that_is_not_built_yet() {
 }
 
 #[test]
+fn a_bare_for_body_reads_as_a_bracketed_one() {
+    // The range is the first node after `in`; the body is built in the loop's scope.
+    assert_eq!(run_script("x := mut i32 0, for i in 0..3 x = x + i, x"), 3);
+    assert_eq!(run_script("x := mut i32 0, for i in 0..3 (x = x + i), x"), 3);
+    assert_eq!(run_script("x := mut i32 0, n := i32 3, for i in 0..n + 1 x = x + i, x"), 6);
+    assert_eq!(run_script("x := mut i32 0, for i in 0..6..2 x = x + i, x"), 6);
+    assert_eq!(run_script("x := mut i32 0, for 0..3 x = x + 1, x"), 3);
+    diff_nullary_fn("fn () -> i32 ( y := mut i32 0, for i in 0..4 y = y + i, y )", 6);
+}
+
+#[test]
+fn move_is_built_after_if_and_return() {
+    // A bare arm starts `move` as its own, so the else arm finds the name alive.
+    assert_eq!(
+        run_script("a := alloc 1 of i32 7, c := mut i32 0, d := mut i32 0, if c == 1 move a else (d = a@), d"),
+        7
+    );
+    assert_eq!(
+        run_script("a := alloc 1 of i32 7, c := mut i32 1, b := if c == 1 move a else (alloc 1 of i32 8), b@"),
+        7
+    );
+    // `return` finds `move` unbuilt to its right and starts it.
+    assert_eq!(
+        run_script(
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, return move p ), q := mk(), q@"
+        ),
+        7
+    );
+}
+
+#[test]
 fn less_than_is_abstract_and_resolves_to_lt_i32() {
     let (mut store, mut trie, core) = new_core();
 

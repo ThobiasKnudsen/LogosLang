@@ -120,7 +120,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let move_ = keyword(cx, "move", meta::prec::PREFIX, &["place"], |p, _id, tape| {
+    let move_ = keyword(cx, "move", meta::prec::ENDS, &["place"], |p, _id, tape| {
         let (place, ended) = match p.place_operand_cell(tape)? {
             Taken::Place(place, ended) => (place, ended),
             Taken::Value(_, at) | Taken::Hole(at) => {

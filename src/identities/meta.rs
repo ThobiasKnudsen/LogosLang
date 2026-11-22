@@ -125,7 +125,7 @@ pub(crate) mod prec {
     pub const TIGHT: f64 = 92.5;
     /// `&`.
     pub const ADDRESS: f64 = 85.0;
-    /// The prefix words over a place: `own`, `move`, `free`, `alloc`, `pub`.
+    /// The prefix words over a place: `own`, `alloc`, `pub`, and `free` (stand-in for #384).
     pub const PREFIX: f64 = 82.0;
     /// A pointer type taking the pointer to its right, `@i32 &a`: below `&`, whose pointer it
     /// takes, above the prefix words, which take its hole whole, `own @i32 ?`. ›A parse is ranked
@@ -145,7 +145,12 @@ pub(crate) mod prec {
     /// Below every operator, so a gate word reads the whole value to its right: `pub a + b`
     /// gates the sum.
     pub const GATE: f64 = 15.0;
+    /// `return` and `try`.
     pub const RETURN: f64 = 10.0;
+    /// `move`, the act that ends a name, built last, so a bare arm of `if`, `while` or `for`
+    /// starts it as its own (›Every identity has a `parse_rank`, and `(` works in two steps‹
+    /// [[R259]]).
+    pub const ENDS: f64 = 5.0;
     /// No constructor: a delimiter, a data type, a node record; never constructed by the driver.
     pub const INERT: f64 = 0.0;
 

@@ -7939,7 +7939,7 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
                 "5 true 2 300 is too big [] true",
             ),
             (
-                "m := fn (n := i32 ?) -> i32! ( try half(n) + 1 ), \
+                "m := fn (n := i32 ?) -> i32! ( (try half(n)) + 1 ), \
                  g := fn (n := i32 ?) -> i32! ( try m(n) )"
                     .to_string(),
                 "print «{g(8).value} {g(300).err.size} {g(300).err[0].message}»",
@@ -7980,7 +7980,7 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
                 "5 2 40 is over 30 2",
             ),
             (
-                "g := fn (n := i32 ?) -> i32! ( try half(n) + try half(n + 2) )".to_string(),
+                "g := fn (n := i32 ?) -> i32! ( (try half(n)) + try half(n + 2) )".to_string(),
                 "print «{g(8).value} {g(99).err[0].message} {g(300).err[0].message}»",
                 "9 101 is too big 300 is too big",
             ),

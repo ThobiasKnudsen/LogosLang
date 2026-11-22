@@ -181,22 +181,16 @@ impl<'a> Parser<'a> {
                 self.cx.pos = start;
                 return Ok(Some(boundary));
             }
-            if let Some(mode) = self.cx.lex_mode {
-                if mode != RightSide::Condition && id == self.types.open_ && !tape.is_empty() {
-                    // In a range a `(` after an unconstructed identity with
-                    // a constructor is that identity's (DESIGN ›`X (…)` is one
-                    // spelling, and X's constructor decides‹); a return type takes no bracket, so there the first `(` is the body.
-                    let owner_pending = mode == RightSide::Range
-                        && matches!(tape.last(), Some(l) if !self.is_operand_cell(l));
-                    if !owner_pending {
-                        self.cx.pos = start;
-                        return Ok(Some(Boundary::Open));
-                    }
-                }
+            // A return type takes no bracket, so there the first `(` is the body.
+            if self.cx.lex_mode == Some(RightSide::ReturnType)
+                && id == self.types.open_
+                && !tape.is_empty()
+            {
+                self.cx.pos = start;
+                return Ok(Some(Boundary::Open));
             }
         }
-        if self.cx.lex_mode == Some(RightSide::Condition) && self.condition_ends(tape, Some(&cell))
-        {
+        if self.reads_first_node() && self.condition_ends(tape, Some(&cell)) {
             self.cx.pos = start;
             return Ok(Some(Boundary::Open));
         }
