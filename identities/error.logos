@@ -16,4 +16,20 @@ hops := type array hop,
 # category, the message and the node of the raise; no raise writes a value yet.
 one_hop := fn (category := @binding ?, message := string ?, location := @dyad ?) -> hops (
     array hop [hop(category, message, location, ?)]
+),
+
+# The error value a `try` passes on, which the seed calls where the `try` runs: the hops it was
+# handed, then the `try`'s own, which names the category of the hop below it and writes no message
+# and no value.
+passed := fn (below := hops ?, location := @dyad ?) -> hops (
+    count := below.size + 1,
+    longer := mut hops ?,
+    longer.ptr = mut alloc count of hop ?,
+    for hop_at in 0..below.size (
+        (longer.ptr + hop_at)@ = below[hop_at],
+        longer.size = hop_at + 1
+    ),
+    (longer.ptr + below.size)@ = hop(below[below.size - 1].category, «», location, ?),
+    longer.size = count,
+    move longer
 )

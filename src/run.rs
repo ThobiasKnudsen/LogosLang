@@ -134,6 +134,8 @@ pub enum RunError {
     WaitFailed(Box<String>),
     /// A value the pass ran early, with an end of its own, read again after something took it.
     StoodTaken,
+    /// A read of the value a line holds for a node, where no line holds one.
+    NotKept,
 }
 
 /// What compiled code reaches the run through, its first argument. The fields
@@ -1100,6 +1102,16 @@ impl<'a> Runtime<'a> {
         // SAFETY: a plan is a scope's `held` array in the store, or the pass's line's list,
         // live until its pop.
         self.plans.last().is_some_and(|&plan| (*plan).contains(&node))
+    }
+
+    /// The value a line being run holds for `node`, which ran in it before: read again there
+    /// without running twice. `None` where no line holds one.
+    ///
+    /// # Safety
+    /// `node` must be a valid dyad from the store.
+    pub(crate) unsafe fn kept_value(&self, node: DyadPtr) -> Option<i64> {
+        let node = self.through(node);
+        self.line_values.iter().rev().find(|&&(made, _)| made == node).map(|&(_, value)| value)
     }
 
     /// [`Runtime::run`]'s one thing, for `node` read through.
