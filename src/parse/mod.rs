@@ -53,10 +53,9 @@ pub struct Parser<'a> {
     /// The sub-parse being driven now; `outer` holds the ones it interrupted, innermost last.
     cx: Context<'a>,
     outer: Vec<Context<'a>>,
-    /// For each constructor written in Logos that is running, innermost last: how many
-    /// sub-parses were set aside when it was handed its tape, which is lexed on in the one
-    /// driven then ([`Parser::lex_on`]).
-    tape_hosts: Vec<usize>,
+    /// For each constructor written in Logos that is running, innermost last: where it was
+    /// handed its tape, which is lexed on and read there ([`Parser::lex_on`]).
+    tape_hosts: Vec<Handed>,
     trie: &'a mut RegexTrie,
     types: &'a Core,
     imports: Imports,
@@ -309,20 +308,41 @@ impl Drop for Entered<'_, '_> {
     }
 }
 
-/// Drives the sub-parse a running constructor's tape belongs to, set aside at `outer[.1]` by a
-/// sub-parse entered since, and puts both back where they were, by return or by unwinding.
-struct TapeHost<'p, 'a>(&'p mut Parser<'a>, usize);
+/// Where a running constructor written in Logos was handed its tape: how many sub-parses were
+/// set aside then, and how many frames were in flight, the innermost the one its line runs in.
+#[derive(Clone, Copy)]
+struct Handed {
+    outer: usize,
+    frames: usize,
+}
+
+/// Drives the sub-parse a running constructor's tape belongs to, in the frame its line runs in:
+/// the sub-parse is set aside at `outer[at]` where one was entered since, and the frames calls
+/// pushed since, the constructor's own first, are set aside too. Puts both back where they were,
+/// by return or by unwinding.
+struct TapeHost<'p, 'a> {
+    parser: &'p mut Parser<'a>,
+    at: Option<usize>,
+    frames: crate::run::SetAside,
+}
 
 impl<'p, 'a> TapeHost<'p, 'a> {
-    fn new(parser: &'p mut Parser<'a>, at: usize) -> Self {
-        std::mem::swap(&mut parser.cx, &mut parser.outer[at]);
-        TapeHost(parser, at)
+    fn new(parser: &'p mut Parser<'a>, handed: Handed) -> Self {
+        let at = Some(handed.outer).filter(|&at| at < parser.outer.len());
+        if let Some(at) = at {
+            std::mem::swap(&mut parser.cx, &mut parser.outer[at]);
+        }
+        let frames = parser.rt.set_aside_frames(handed.frames);
+        TapeHost { parser, at, frames }
     }
 }
 
 impl Drop for TapeHost<'_, '_> {
     fn drop(&mut self) {
-        std::mem::swap(&mut self.0.cx, &mut self.0.outer[self.1]);
+        self.parser.rt.restore_frames(&mut self.frames);
+        if let Some(at) = self.at {
+            std::mem::swap(&mut self.parser.cx, &mut self.parser.outer[at]);
+        }
     }
 }
 
