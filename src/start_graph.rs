@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The start graph the seed carries inside its binary: the store, the name index and the core a
-//! start builds, written with every address as an offset and fixed up at load (›The seed carries
-//! its start graph inside its binary‹ [[R386]]). The writer builds the start twice and compares
-//! the two: a word that moved by its target's own shift is an address, and anything else that
-//! differs is refused, so the graph holds no address the writer did not see.
+//! start builds, every address written as an offset and fixed up at load (›The seed carries its
+//! start graph inside its binary‹ [[R386]]). The writer builds the start twice, the second one
+//! frame deeper, and compares the two: a word that moved with its part is an address, a word both
+//! share is data, and anything else that differs is refused.
 
 use std::collections::{HashMap, HashSet};
 use std::mem::{offset_of, size_of, MaybeUninit};
 
 use crate::compile::{LowerFn, LowerTable};
 use crate::dyad::DyadPtr;
+use crate::identities::callable;
 use crate::parse::{Assoc, HeldLine, ParsingTape};
 use crate::regex_trie::RegexTrie;
 use crate::store::{Rebuilt, Sides, Store};
@@ -57,6 +58,31 @@ pub fn build() -> Start {
     (store, trie, core)
 }
 
+/// The graph this binary carries: two starts built from source, the second one frame deeper on
+/// the stack, so that an address into the stack either start keeps differs between the two and is
+/// refused.
+pub fn write_built() -> Result<Vec<u8>, String> {
+    let [first, second] = built_twice(build);
+    write(&first, &second)
+}
+
+/// Two starts `build` makes, the second one frame deeper than the first.
+fn built_twice(build: impl Fn() -> Start) -> [Start; 2] {
+    let first = beneath(&build);
+    let second = beneath(|| beneath(&build));
+    [first, second]
+}
+
+/// `f` run in a frame of its own, kept live across the call so that no tail call drops it.
+#[inline(never)]
+fn beneath<T>(f: impl FnOnce() -> T) -> T {
+    let pad = [0u8; 256];
+    std::hint::black_box(&pad);
+    let out = f();
+    std::hint::black_box(&pad);
+    out
+}
+
 /// The graph two starts of this binary left, each built on its own: refused where they differ in
 /// anything but where their parts lie.
 pub fn write(first: &Start, second: &Start) -> Result<Vec<u8>, String> {
@@ -68,7 +94,8 @@ pub fn write(first: &Start, second: &Start) -> Result<Vec<u8>, String> {
     out.bytes(KEY.as_bytes());
 
     let mut arena = first.0.arena_bytes().to_vec();
-    let sites = relocate("the arena", &mut arena, second.0.arena_bytes(), &places)?;
+    let entries = &places[0].entries;
+    let sites = relocate("the arena", &mut arena, second.0.arena_bytes(), entries, &places)?;
     out.bytes(&arena);
     sites.carry(&mut out);
     let s = &sides[0];
@@ -85,7 +112,7 @@ pub fn write(first: &Start, second: &Start) -> Result<Vec<u8>, String> {
     }
 
     let mut core = core_bytes(&first.2);
-    let sites = relocate("the core", &mut core, &core_bytes(&second.2), &places)?;
+    let sites = relocate("the core", &mut core, &core_bytes(&second.2), &[], &places)?;
     out.bytes(&core);
     sites.carry(&mut out);
     Ok(out.buf)
@@ -134,10 +161,7 @@ pub fn load(image: &[u8]) -> Option<Start> {
     for line in &mut lines {
         **line = HeldLine::uncarry(&mut inp);
     }
-    let natives = Vec::<usize>::uncarry(&mut inp)
-        .into_iter()
-        .map(|offset| anchor().wrapping_add(offset))
-        .collect();
+    let natives = Vec::<DyadPtr>::uncarry(&mut inp);
     let trie = RegexTrie::uncarry(&mut inp);
     let lower = Vec::<(DyadPtr, usize)>::uncarry(&mut inp);
 
@@ -262,12 +286,7 @@ fn sides_of(
     })?;
     part("the tapes", &mut |out| sides.tapes.iter().for_each(|tape| tape.carry(out)))?;
     part("the held lines", &mut |out| sides.lines.iter().for_each(|line| line.carry(out)))?;
-    part("the natives", &mut |out| {
-        out.usize(sides.natives.len());
-        for &entry in sides.natives {
-            out.usize(entry.wrapping_sub(out.places.anchor));
-        }
-    })?;
+    part("the natives", &mut |out| sides.natives.to_vec().carry(out))?;
     part("the name index", &mut |out| start.1.carry(out))?;
     part("the lowerings", &mut |out| {
         let mut lower: Vec<(DyadPtr, usize)> =
@@ -288,10 +307,10 @@ struct Places {
     used: usize,
     anchor: usize,
     natives: HashSet<usize>,
+    /// The arena byte of each native's entry, in order: its callable leaf's first value word.
+    entries: Vec<usize>,
     /// Each object the store keeps outside its arena, by its address.
     objects: HashMap<usize, u32>,
-    /// The process's mapped memory, where no word the two starts share may point but at a native.
-    mapped: Vec<std::ops::Range<usize>>,
 }
 
 impl Places {
@@ -301,13 +320,24 @@ impl Places {
         let lines = sides.lines.iter().map(|&l| l as *const HeldLine as usize);
         let objects =
             tables.chain(tapes).chain(lines).enumerate().map(|(i, a)| (a, OBJECT + i as u32));
+        let arena = store.arena_base() as usize;
+        // SAFETY: each is a callable leaf the store minted, in its arena.
+        let value_at = |leaf: DyadPtr| unsafe { crate::dyad::value(leaf) } as usize - arena;
+        let mut entries: Vec<usize> =
+            sides.natives.iter().map(|&leaf| value_at(leaf) + callable::ENTRY_OFF).collect();
+        entries.sort_unstable();
         Places {
-            arena: store.arena_base() as usize,
+            arena,
             used: store.arena_bytes().len(),
             anchor: anchor(),
-            natives: sides.natives.iter().copied().collect(),
+            // SAFETY: as above.
+            natives: sides
+                .natives
+                .iter()
+                .map(|&leaf| unsafe { callable::entry_of(leaf) })
+                .collect(),
+            entries,
             objects: objects.collect(),
-            mapped: mapped(),
         }
     }
 
@@ -326,41 +356,18 @@ impl Places {
         }
         self.moved(addr)
     }
-
-    /// Whether `addr` points into the process's memory outside every part of the start: at its
-    /// stack, a block it freed, or the binary's own code and statics, which lie near the anchor
-    /// on every system, the memory map listed or not.
-    fn stray(&self, addr: usize) -> bool {
-        self.place(addr).is_none()
-            && (addr.abs_diff(self.anchor) < IMAGE_REACH
-                || self.mapped.iter().any(|range| range.contains(&addr)))
-    }
 }
 
-/// How far from the anchor the binary's own image may reach. Windows moves an executable once
-/// per boot, not once per run, so two runs of the writer may share an address into it.
-const IMAGE_REACH: usize = 1 << 28;
-
-/// The ranges of the process's memory map; none where the system does not list them.
-fn mapped() -> Vec<std::ops::Range<usize>> {
-    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
-        return Vec::new();
-    };
-    let range = |line: &str| {
-        let (start, end) = line.split_whitespace().next()?.split_once('-')?;
-        Some(usize::from_str_radix(start, 16).ok()?..usize::from_str_radix(end, 16).ok()?)
-    };
-    maps.lines().filter_map(range).collect()
-}
-
-/// The sites in `a` that hold an address, found by comparing it with `b`, the same part of
-/// another start: each `(offset, target)`, its eight bytes in `a` rewritten as the offset into the
-/// target. A byte that differs between the two and lies in no such site is refused, and so is a
-/// word they share that is a stray address ([`Places::stray`]).
+/// The sites in `a` that hold an address, each `(offset, target)`, its eight bytes in `a`
+/// rewritten as the offset into the target: a native's entry at its byte in `entries`, and any
+/// other address found by comparing `a` with `b`, the same part of another start, as a word that
+/// moved with its part. A word the two share is data, whatever its value; a byte that differs
+/// between them and lies in no site is refused: stand-in for #548.
 fn relocate(
     part: &str,
     a: &mut [u8],
     b: &[u8],
+    entries: &[usize],
     places: &[Places; 2],
 ) -> Result<Vec<(u32, u32)>, String> {
     if a.len() != b.len() {
@@ -374,19 +381,19 @@ fn relocate(
         |bytes: &[u8], at: usize| usize::from_ne_bytes(bytes[at..at + 8].try_into().unwrap());
     let mut sites = Vec::new();
     let mut covered = vec![false; a.len()];
+    let mut entries = entries.iter().copied().peekable();
     let mut at = 0;
     while at + 8 <= a.len() {
         let (x, y) = (word(a, at), word(b, at));
-        let site = if x == y {
-            if places[0].stray(x) {
-                return Err(format!("{part} holds the stray address {x:#x} at byte {at:#x}"));
-            }
-            places[0].natives.contains(&x).then(|| (NATIVE, x.wrapping_sub(places[0].anchor)))
-        } else {
+        let site = if entries.next_if_eq(&at).is_some() {
+            (x == y).then(|| (NATIVE, x.wrapping_sub(places[0].anchor)))
+        } else if x != y {
             match (places[0].moved(x), places[1].moved(y)) {
                 (Some(p), Some(q)) if p == q => Some(p),
                 _ => None,
             }
+        } else {
+            None
         };
         let Some((target, offset)) = site else {
             at += 1;
@@ -396,6 +403,9 @@ fn relocate(
         covered[at..at + 8].fill(true);
         sites.push((at as u32, target));
         at += 8;
+    }
+    if let Some(entry) = entries.next() {
+        return Err(format!("{part} holds an address over the native entry at byte {entry:#x}"));
     }
     if let Some(i) = (0..b.len()).find(|&i| !covered[i] && a[i] != b[i]) {
         return Err(format!("two starts differ in {part} at byte {i:#x}, where no address lies"));
@@ -458,9 +468,6 @@ impl<'a> Out<'a> {
                 self.usize(offset);
             }
             None => {
-                if self.places.stray(w as usize) {
-                    self.unplaced.get_or_insert(w as usize);
-                }
                 self.u8(0);
                 self.usize(w as usize);
             }
@@ -730,9 +737,22 @@ mod tests {
         "point := type ( x := pub i32 ?, y := pub i32 ? ), p := point(3, 4), p.x * p.y",
     ];
 
+    /// Two starts, the second one frame deeper, each built from source and then given one `u64`
+    /// node for each of the words `words` gives where that start is built.
+    fn holding(words: impl Fn() -> Vec<u64>) -> [Start; 2] {
+        built_twice(|| {
+            let mut start = build();
+            let u64_ty = start.2.numtypes[crate::identities::numtype::NumType::U64 as usize];
+            for word in words() {
+                start.0.alloc_blob(u64_ty, &word.to_ne_bytes());
+            }
+            start
+        })
+    }
+
     #[test]
     fn a_start_from_the_carried_graph_is_the_start_built_from_source() {
-        let image = write(&build(), &build()).expect("two starts write one graph");
+        let image = write_built().expect("two starts write one graph");
         let loaded = load(&image).expect("this build reads the graph it wrote");
         let again = write(&loaded, &build()).expect("a carried start writes its graph");
         assert!(again == image, "the carried start writes the graph it was read from");
@@ -740,7 +760,7 @@ mod tests {
 
     #[test]
     fn a_program_runs_alike_over_the_carried_graph_and_the_built_one() {
-        let image = write(&build(), &build()).expect("two starts write one graph");
+        let image = write_built().expect("two starts write one graph");
         for program in PROGRAMS {
             let built = shown(&mut build(), program);
             // Two carried starts at once, each fixed up to its own arena.
@@ -753,27 +773,41 @@ mod tests {
 
     #[test]
     fn a_graph_another_build_wrote_is_not_read() {
-        let mut image = write(&build(), &build()).expect("two starts write one graph");
+        let mut image = write_built().expect("two starts write one graph");
         let key = MAGIC.len() + 4 + 8;
         image[key] ^= 1;
         assert!(load(&image).is_none());
         assert!(load(&[]).is_none());
     }
 
+    /// Texts between zero bytes, an address into the binary and one into the heap: each is data
+    /// where both starts hold it, whatever the memory map.
     #[test]
-    fn a_start_holding_an_address_into_the_binary_is_refused() {
+    fn a_word_both_starts_share_is_carried_as_it_is_whatever_its_value() {
         static IN_THE_BINARY: u8 = 0;
-        let addr = &IN_THE_BINARY as *const u8 as u64;
-        let [mut first, mut second] = [build(), build()];
-        for (store, _, core) in [&mut first, &mut second] {
-            let u64_ty = core.numtypes[crate::identities::numtype::NumType::U64 as usize];
-            store.alloc_blob(u64_ty, &addr.to_ne_bytes());
+        let on_the_heap = Box::new(0u8);
+        let words = vec![
+            u64::from_le_bytes(*b"\0below\0\0"),
+            u64::from_le_bytes(*b"\0\0left\0\0"),
+            &IN_THE_BINARY as *const u8 as u64,
+            &*on_the_heap as *const u8 as u64,
+        ];
+        let [first, second] = holding(|| words.clone());
+        let image = write(&first, &second).expect("data is carried as it is");
+        let loaded = load(&image).expect("this build reads the graph it wrote");
+        let base = first.0.arena_base() as usize;
+        let planted = first.0.iter().skip(first.0.len() - words.len());
+        for (node, word) in planted.zip(&words) {
+            let at = node as usize - base + size_of::<crate::dyad::Dyad>();
+            assert_eq!(loaded.0.arena_bytes()[at..at + 8], word.to_ne_bytes(), "{word:#x}");
         }
-        let refused = write(&first, &second).expect_err("an address into the binary is refused");
-        assert!(refused.contains("stray address"), "{refused}");
-        let mut empty = Places::of(&first.0, &first.0.sides().expect("a start's sides"));
-        empty.mapped.clear();
-        assert!(empty.stray(addr as usize), "refused where the memory map is not listed");
+    }
+
+    #[test]
+    fn a_start_holding_an_address_of_the_stack_is_refused() {
+        let [first, second] = holding(|| vec![crate::stack::here() as u64]);
+        let refused = write(&first, &second).expect_err("an address of the stack is refused");
+        assert!(refused.contains("where no address lies"), "{refused}");
     }
 
     #[test]
