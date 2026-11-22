@@ -77,10 +77,9 @@ pub(crate) fn read_target(
         }
     };
     tape.remove(-1);
-    // The `=` gives nothing, so all its line built before it is its place, reached when the `=`
-    // runs, after its right side.
+    // The place is reached when the `=` runs, after its right side.
     if let Some(at) = at {
-        p.runs_inside(at);
+        p.runs_inside(target.start, at);
     }
     // SAFETY: `target` holds the reduced dyad of the cell to the left.
     let slot = unsafe { p.slot_of(target.dyad) };
