@@ -3950,7 +3950,7 @@ fn a_condition_ending_in_a_type_is_bracketed_before_a_name_body() {
         .unwrap();
     assert!(!out.status.success(), "the type takes `y`: {}", String::from_utf8_lossy(&out.stdout));
     let src = "y := mut i32 0, t := type f32, \
-               if (t == f64) (y = 1) else if (t == f32) (y = 2) else (y = 3), y";
+               if (t == f64) y = 1 else if (t == f32) y = 2 else y = 3, y";
     let out = logos().args([src]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n");
