@@ -295,9 +295,9 @@ fn the_repl_imports_once_per_session_and_keeps_pub_names() {
 
 #[test]
 fn a_value_reads_its_type_and_a_reached_node_its_operands() {
-    // `(x + x)` has arity 2, its operands: the type it gives back is its mint's.
+    // `(x - x)` has arity 2, its operands: the type it gives back is its mint's.
     let (echoes, stderr) = repl(
-        "x := i32 5\nprint «{x.type == i32}»\nb := x + x\nprint «{b:start.rhs.type.arity}»\n\
+        "x := i32 5\nprint «{x.type == i32}»\nb := x - x\nprint «{b:start.rhs.type.arity}»\n\
           print «{b:start.rhs.lhs.type == i32}»\nprint «{b:start.rhs.lhs}»\n\
           b:start.rhs.output_type == i32\n",
     );
@@ -650,7 +650,14 @@ fn a_parse_reads_a_static_member_through_the_node_its_tape_holds() {
             format!("{}, x := i32 3, (x + 2) p", static_reader(statics, "tape[-1].output_type")),
             "i32\n1\n",
         ),
-        ("print «{(+.mint(i32, i32)).output_type} {(i32 3 + 2).output_type}»".into(), "i32 i32\n"),
+        // A name, not a literal, so the node stays a node: one of literals alone runs where it
+        // is built (›Deferral is authored, and unfinished work is visible‹ [[R298]]).
+        (
+            "x := i32 3, print «{(+.mint(i32, i32)).output_type} {(x + 2).output_type} \
+             {(x - 2).output_type}»"
+                .into(),
+            "i32 i32 i32\n",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
@@ -1157,7 +1164,8 @@ fn type_reads_a_nodes_own_type_and_gives_the_type_it_gives() {
                  {tape[1].dyads[1].gives == i32} {tape[1].dyads[0].gives == void}», \
                  tape.remove(1), tape[0] = i32 0, tape.is_constructed[0] = true ) ), \
                  x := i32 3, y := w ( print «a», x + 2 ), 0";
-    cases.push((lines.to_owned(), "false true true\n0\n"));
+    // `+`'s parse is written in Logos, so the line before it runs first, as the parse runs.
+    cases.push((lines.to_owned(), "a\nfalse true true\n0\n"));
     let field = "q := type ( v := pub dyad ?, parse_rank = 60, parse = ( tape[0].type = q, \
                  tape[0].v = tape[-1], print «{tape[0].v.type == i32} {tape[0].v.gives == i32}», \
                  tape.remove(-1), tape.is_constructed[0] = true ) ), x := i32 3, y := (x + 2) q, 0";
@@ -1691,7 +1699,7 @@ fn the_array_chooser_stands_as_itself_before_a_type_with_no_instance_bytes() {
     let power =
         power.trim_end().rsplit_once('\n').unwrap().0.replace("file «", "file «identities/");
     for (src, said) in [
-        (format!("{array}, b := array + 1, b"), "this operator cannot compute over these operands"),
+        (format!("{array}, b := array + 1, b"), "`+` takes numbers, and this type is none"),
         (
             format!("{power} {array}, b := array ^ 2, b"),
             "the run body of `^` could not be constructed",
@@ -2121,13 +2129,34 @@ fn rational_places_and_operators_run_interpreted_and_are_refused_compiled() {
         ("q := mut rational_number 2, q + i32 1", "do not match"),
         ("k := fn () -> i32 ( q := mut rational_number 2, q ), k()", "do not match"),
         ("q := mut rational_number 2, z := mut i32 4, z = q", "do not match"),
-        ("g := fn () -> i32 ( q := mut rational_number 2, q = q * 2, 4 ), g.compile()", "compiled"),
+        ("g := fn () -> i32 ( q := mut rational_number 2, q = q - 2, 4 ), g.compile()", "compiled"),
     ] {
         let out = logos().args([src]).output().unwrap();
         assert!(!out.status.success(), "{src} succeeded");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
     }
+}
+
+/// An operation written in Logos runs `rational_number`'s own instruction, which compiles: ›Which
+/// machine operation an operator is (`+` over `i32` → `add_i32`) is named by its mint when it is
+/// made, through the operand type's own member‹ [[R185]].
+#[test]
+fn an_operation_written_in_logos_runs_over_rationals_on_both_tiers() {
+    let g = "g := fn (a := rational_number ?) -> rational_number ( a * a / 2 + a % 2 )";
+    let mut cases = Vec::new();
+    for compile in ["", "g.compile(), "] {
+        cases.push((format!("{g}, {compile}print «{{g(3)}}»"), "11/2\n"));
+    }
+    assert_runs(&cases);
+    let (code, _, stderr) = run_line(
+        "g := fn (a := rational_number ?) -> rational_number ( a / 0 ), g.compile(), g(3)",
+    );
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.contains("this arithmetic on `rational_number` values has no value"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -2591,7 +2620,7 @@ fn every_operator_applied_to_a_group_applies_to_each_member() {
 
 #[test]
 fn a_collection_member_demands_its_index_brackets() {
-    let (_echoes, stderr) = repl(b"+.roles(0)\n");
+    let (_echoes, stderr) = repl(b"<.roles(0)\n");
     assert!(stderr.contains("element access is `[…]`"), "stderr: {stderr}");
 }
 
@@ -3298,7 +3327,7 @@ fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
     }
     // A block's plain number is a `rational_number` too, which no `i32` holds whole.
     for (src, expect) in [
-        ("x := ( free (1), 7 ) + i32 1".to_string(), "do not match"),
+        ("x := ( free (1), 7 ) + i32 1".to_string(), "`+` takes two values of one type"),
         (format!("{}, x := q [1/2, 7], x.v", q("i32")), "only a constant is read as its value"),
         (
             format!("{}, x := q [(free (1), 7), 7], x.v", q("i32")),
@@ -3363,7 +3392,7 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
     for (src, refusal) in [
         ("f := fn (a := dyad ?) -> i64 ( a ), f(f64 2.5)", "these types do not match"),
         ("f := fn (a := dyad ?) -> i64 ( a ), f(1/2)", "no exact value"),
-        ("f := fn (a := dyad ?) -> i64 ( a + «x» ), f(i64 1)", "cannot compute"),
+        ("f := fn (a := dyad ?) -> i64 ( a + «x» ), f(i64 1)", "`+` takes numbers"),
         ("f := fn (a := dyad ?) -> i64 ( g(x := a + 1), 2 ), f(i64 2)", "cannot hold `:=` yet"),
         (
             "f := fn (a := dyad ?) -> i64 ( if a > 0 ( return 1 ), 2 ), f(i64 2)",
@@ -5376,7 +5405,6 @@ fn a_line_that_gives_nothing_echoes_nothing_and_no_value_reads_it() {
     for tail in [
         "x := f(), x",
         "print «{f()}»",
-        "f() + 1",
         "g := fn () -> i32 ( y := (return n), y ), g()",
         "f().type",
         "g := fn (a := i32 ?) -> i32 ( a ), g(f())",
@@ -5387,6 +5415,10 @@ fn a_line_that_gives_nothing_echoes_nothing_and_no_value_reads_it() {
         assert_eq!(code, Some(1), "{tail}");
         assert!(stderr.contains("gives nothing"), "{tail}: stderr: {stderr}");
     }
+    // `+`, written in Logos, is handed the call as `void` and refuses it in its own words.
+    let (code, _, stderr) = run_line(&format!("{void_fn}, f() + 1"));
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("`+` needs a value on each side"), "stderr: {stderr}");
 }
 
 #[test]
@@ -8728,22 +8760,23 @@ fn every_operation_is_typed_by_its_mint() {
 #[test]
 fn a_mint_is_named_through_its_operations_chooser() {
     let mut cases = Vec::new();
+    let f = |body: &str| format!("f := fn (x := i32 ?, y := i32 ?, w := i64 ?) -> bool ( {body} )");
     for (body, want) in [
-        ("(x + x).type == +.mint(i32, i32)", "true\n"),
-        ("(x + x).type == +.mint(i64, i64)", "false\n"),
-        ("(x + 1).type == +.mint(i32, i32)", "true\n"),
-        ("(x + w).type == +.mint(i64, i64)", "true\n"),
-        ("(x * y).type == +.mint(i32, i32)", "false\n"),
         ("(x < y).type == <.mint(i32, i32)", "true\n"),
         ("(-x).type == -.mint(i32)", "true\n"),
         ("(&x).type == &.mint(i32)", "true\n"),
         ("+.mint(i32, i32).output_type == i32", "true\n"),
         ("<.mint(i64, i64).output_type == bool", "true\n"),
+        ("+.mint(i32, i32) == (x + x).type", "true\n"),
+        ("(x + x).type == +.mint(i32, i32)", "true\n"),
+        ("(x + x).type == +.mint(i64, i64)", "false\n"),
+        ("(x + 1).type == +.mint(i32, i32)", "true\n"),
+        ("(x + w).type == +.mint(i64, i64)", "true\n"),
+        ("(x * y).type == +.mint(i32, i32)", "false\n"),
     ] {
         cases.push((format!("x := i32 3, y := i32 4, w := i64 5, {body}"), want));
-        let f = format!("f := fn (x := i32 ?, y := i32 ?, w := i64 ?) -> bool ( {body} )");
-        cases.push((format!("{f}, f(3, 4, 5)"), want));
-        cases.push((format!("{f}, f.compile(), f(3, 4, 5)"), want));
+        cases.push((format!("{}, f(3, 4, 5)", f(body)), want));
+        cases.push((format!("{}, f.compile(), f(3, 4, 5)", f(body)), want));
     }
     // Named before any node of it is parsed, the mint is the one the parse then takes.
     cases.push((
@@ -8769,14 +8802,27 @@ fn a_mint_is_named_through_its_operations_chooser() {
     ));
     assert_runs(&cases);
     for src in [
-        "+.mint(i32, i64)",
-        "%.mint(f64, f64)",
-        "+.mint(i32)",
-        "f := fn () -> bool ( +.mint(i32, i64) == +.mint(i64, i64) ), f.compile(), f()",
+        "<.mint(i32, i64)",
+        "<.mint(i32)",
+        "f := fn () -> bool ( <.mint(i32, i64) == <.mint(i64, i64) ), f.compile(), f()",
     ] {
         let (code, stdout, stderr) = run_line(src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains("has no mint for these field types"), "{src}: stderr: {stderr}");
+    }
+    for (src, words) in [
+        ("+.mint(i32, i64)", "`+` takes two values of one type"),
+        ("*.mint(i32, i64)", "`*` takes two values of one type"),
+        ("%.mint(f64, f64)", "`%` has no instruction for a float"),
+        ("/.mint(rational_number, «a».type)", "`/` takes numbers, and this type is none"),
+        (
+            "f := fn () -> bool ( *.mint(i32, i64) == *.mint(i64, i64) ), f.compile(), f()",
+            "`*` takes two values of one type",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(words), "{src}: stderr: {stderr}");
     }
 }
 
@@ -9119,6 +9165,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: stderr: {stderr}");
     }
     let constant = "this is read as `i32`, but it holds no literal or constant of it";
+    let no_number = "`*` takes numbers, and this type is none";
     let used = ", q (1, 2, 3)";
     for (src, refused) in [
         // An unnarrowed line of another type is refused where it is written.
@@ -9142,14 +9189,14 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
             constant,
         ),
         // A `?` field unchecked, or after a write of it or a tape edit, is no number.
-        (counted("tape[0].m = tape[0].n * 2") + used, "cannot compute over these operands"),
+        (counted("tape[0].m = tape[0].n * 2") + used, no_number),
         (
             counted("if tape[0].n.type ⊆ u64 ( tape[0].n = 2, tape[0].m = tape[0].n * 2 )") + used,
-            "cannot compute over these operands",
+            no_number,
         ),
         (
             counted("if tape[0].n.type ⊆ u64 ( tape.remove(1), tape[0].m = tape[0].n * 2 )") + used,
-            "cannot compute over these operands",
+            no_number,
         ),
     ] {
         let (code, _, stderr) = run_line(&src);
@@ -13024,11 +13071,14 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
     }
     // A comparison gives back a `bool`, which is no number and no `i32`.
     for (src, error) in [
-        ("x := i32 1, (x == 1) + 1", "this operator cannot compute over these operands"),
+        ("x := i32 1, (x == 1) + 1", "`+` takes numbers, and this type is none"),
         ("x := i32 1, a := mut i32 0, a = x == 1, a", "these types do not match"),
         ("x := i32 1, a := mut x == 1, a = i32 1, a", "these types do not match"),
-        // A `return` gives its own line nothing.
-        ("f := fn (x := f64 ?) -> f64 ( (return x) + 1.0 ), f(2.5)", "gives nothing"),
+        // A `return` gives its own line nothing, which `+` is handed as `void`.
+        (
+            "f := fn (x := f64 ?) -> f64 ( (return x) + 1.0 ), f(2.5)",
+            "`+` needs a value on each side",
+        ),
         ("f := fn (x := f64 ?) -> f64 ( y := (return x), y ), f(2.5)", "gives nothing"),
     ] {
         let (code, _, stderr) = run_line(src);
@@ -14535,8 +14585,8 @@ fn a_place_keeps_one_mint_on_both_tiers() {
             "g := fn () -> bool ( {place}, type_mint.keep(p, i32), type_mint.keep(p, i64), true ), \
              g.compile(), g()"
         ),
-        "x := i32 1, y := x + x, \
-         p := type_mint.step(type_mint.step(type_mint.step(0, +), i32), i32), \
+        "x := i32 1, y := x < x, \
+         p := type_mint.step(type_mint.step(type_mint.step(0, <), i32), i32), \
          type_mint.keep(p, f64)"
             .to_string(),
     ] {

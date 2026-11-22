@@ -108,7 +108,9 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
         meta::TYPEREC_TAG => Read::Identity,
         meta::DYAD_TAG => Read::Address,
         meta::RECORD_TAG => {
-            if !meta::run_body_of(op).is_null() {
+            if let Some(leaf) = super::mint::operation_of(op) {
+                Read::Executable(Dispatch::Leaf(leaf))
+            } else if !meta::run_body_of(op).is_null() {
                 // The node runs as the function built for its field-type set,
                 // and not at all until one exists.
                 let spec = super::run_body::spec_of(node);
@@ -693,7 +695,7 @@ mod tests {
              e9 := «hi»,\n\
              # prose\n\
              e11 := w.scope,\n\
-             e12 := i32 1 + i32 2,\n\
+             e12 := x + i32 2,\n\
              e13 := f(1, 2),\n\
              ?",
         );

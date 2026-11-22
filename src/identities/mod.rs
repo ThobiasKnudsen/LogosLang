@@ -57,6 +57,7 @@ pub(crate) mod if_mod;
 mod immediate;
 pub mod import;
 pub(crate) mod instance;
+pub(crate) mod instruction;
 pub mod lex;
 mod logos;
 pub(crate) mod lossy;
@@ -90,6 +91,7 @@ pub(crate) mod union;
 pub(crate) mod waiting;
 #[path = "while.rs"]
 mod while_mod;
+pub(crate) mod written;
 
 pub struct Core {
     /// The root type, the one node whose type is itself.
@@ -192,6 +194,9 @@ pub struct Core {
     pub type_mint: type_mint::Members,
     /// The section the files the seed carries stand in, whose names live for the run.
     pub carried: DyadPtr,
+    /// The operations written in Logos, each with the native version whose name it took.
+    pub written: written::Written,
+    pub(crate) instructions: instruction::Instructions,
     pub held_type: held_type::HeldTypeIds,
     pub this: this::ThisIds,
     pub place: place::PlaceIds,
@@ -354,6 +359,15 @@ impl Core {
             ge,
             ne,
         } = binary::register_all(&mut cx);
+        let instructions = instruction::register(
+            &mut cx,
+            type_,
+            array_,
+            &numtypes,
+            rational,
+            &op_leaves,
+            [plus, minus, times, div_, rem_],
+        );
         let (and_, and_leaf) = and::register(&mut cx, &callables);
         op_leaves.and_ = and_leaf;
         let (or_, or_leaf) = or::register(&mut cx, &callables);
@@ -578,6 +592,8 @@ impl Core {
             hashmap,
             type_mint: type_mint::Members::unread(),
             carried: std::ptr::null_mut(),
+            written: written::unread(),
+            instructions,
             held_type,
             this,
             place,
@@ -627,7 +643,14 @@ impl Core {
         core.type_mint = type_mint::load(store, trie, &core, core.carried);
         type_mint::keep_early(store, &core);
         core.error = error::load(store, trie, &core, core.carried);
+        core.written = written::load(store, trie, &core, core.carried);
         core
+    }
+
+    /// The native version whose name the operation `written`, written in Logos, took; `None` for
+    /// any other identity.
+    pub(crate) fn native_of(&self, written: DyadPtr) -> Option<DyadPtr> {
+        self.written.iter().find(|r| r.written == written).map(|r| r.native)
     }
 
     /// Each opener with the closer that ends its bracket: `( )`, `[ ]` and `{ }`, one mechanism
