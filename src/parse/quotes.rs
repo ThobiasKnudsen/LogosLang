@@ -397,15 +397,8 @@ impl<'a> Parser<'a> {
         at: usize,
     ) -> Result<Constructed, ParseError> {
         let parts = self.interpolated_quote("error")?;
+        let fallible = self.fallible_output();
         let (store, types) = (&mut *self.rt.store, self.types);
-        let output = self.cx.frames.last().map(|f| {
-            // SAFETY: an open frame is a `fn` node, its signature written before its body parses.
-            unsafe { *(dyad::value(f.frame) as *const DyadPtr).add(super::FN_OUTPUT) }
-        });
-        // SAFETY: a function's result is a type node from the store.
-        let fallible = output.and_then(|t| unsafe {
-            Some((t, crate::identities::union::fallible_members(types, t)?.1))
-        });
         let Some((output, err)) = fallible else {
             let node = crate::identities::error::build(store, types, &parts, category);
             tape.place(node);
@@ -419,6 +412,59 @@ impl<'a> Parser<'a> {
             store.alloc_words(types.return_, &[filled, std::ptr::null_mut(), types.ops.return_]);
         // SAFETY: `node` is the `return` node just built.
         unsafe { self.note_return(node, at) }?;
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// The result of the innermost function being parsed and its `err` member, where that result
+    /// is a `T!`: what a raise and a `try` there fill.
+    pub(super) fn fallible_output(&self) -> Option<(DyadPtr, DyadPtr)> {
+        let frame = self.cx.frames.last()?;
+        // SAFETY: an open frame is a `fn` node, its signature written before its body parses,
+        // and its result a type node from the store.
+        unsafe {
+            let output = *(dyad::value(frame.frame) as *const DyadPtr).add(super::FN_OUTPUT);
+            Some((output, crate::identities::union::fallible_members(self.types, output)?.1))
+        }
+    }
+
+    /// `try` and the value to its right, which gives a `T!`, inside a function that gives one
+    /// (›Target: errors are values (`T!`), handled by `if`, passed on by `try`…‹ [[R140]]).
+    pub(crate) fn construct_try(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let at = tape.at(0).map_or(self.cx.pos, |c| c.start);
+        let Some(&right) = tape.at(1) else {
+            return Err(ParseError::MissingOperand);
+        };
+        let operand = self.take_right(tape)?;
+        let types = self.types;
+        // SAFETY: `operand` is a reduced dyad off the tape, its output type null or a type node.
+        let members = unsafe {
+            let fallible = crate::identities::read::output_type(types, operand);
+            let members = crate::identities::union::fallible_members(types, fallible);
+            members.filter(|_| !types.is_hole(operand)).map(|m| (fallible, m))
+        };
+        let Some((fallible, (value, err))) = members else {
+            return Err(self.fail_at(right.start, ParseError::TryNeedsFallible));
+        };
+        let Some(output) = self.fallible_output() else {
+            return Err(self.fail_at(at, ParseError::TryOutsideFallible));
+        };
+        // SAFETY: as above.
+        let kept = unsafe {
+            let path = crate::identities::drop_model::handed_through(types, operand);
+            self.line_made().contains(&path[0])
+        };
+        // SAFETY: `operand` gives `fallible`, whose members are `value` and `err`, and `output`
+        // is a `T!` with its `err` member.
+        let (node, ret) = unsafe {
+            let fallible = [fallible, value, err];
+            crate::identities::try_mod::build(self.rt.store, types, operand, fallible, output, kept)
+        };
+        // SAFETY: `ret` is the `return` node just built.
+        unsafe { self.note_return(ret, at) }?;
         tape.place(node);
         Ok(Constructed::Placed)
     }
