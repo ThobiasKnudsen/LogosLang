@@ -667,7 +667,7 @@ impl Carry for Cell {
 
 impl Carry for ParsingTape {
     fn carry(&self, out: &mut Out) {
-        let ParsingTape { nodes, head, tail, center, len, edits, sealed, inner } = self;
+        let ParsingTape { nodes, head, tail, center, len, edits, sealed, inner, taken } = self;
         out.usize(nodes.len());
         for &Node { cell, prev, next, linked } in nodes {
             cell.carry(out);
@@ -676,6 +676,7 @@ impl Carry for ParsingTape {
         (*head, *tail, *center).carry(out);
         (*len, *edits, *sealed).carry(out);
         inner.carry(out);
+        taken.carry(out);
     }
 
     fn uncarry(inp: &mut In) -> Self {
@@ -689,6 +690,17 @@ impl Carry for ParsingTape {
             .collect();
         let (head, tail, center) = Carry::uncarry(inp);
         let (len, edits, sealed) = Carry::uncarry(inp);
-        ParsingTape { nodes, head, tail, center, len, edits, sealed, inner: Carry::uncarry(inp) }
+        let inner = Carry::uncarry(inp);
+        ParsingTape {
+            nodes,
+            head,
+            tail,
+            center,
+            len,
+            edits,
+            sealed,
+            inner,
+            taken: Carry::uncarry(inp),
+        }
     }
 }

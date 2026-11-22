@@ -328,11 +328,18 @@ impl Places {
     }
 
     /// Whether `addr` points into the process's memory outside every part of the start: at its
-    /// stack, a block it freed or a static of the binary.
+    /// stack, a block it freed, or the binary's own code and statics, which lie near the anchor
+    /// on every system, the memory map listed or not.
     fn stray(&self, addr: usize) -> bool {
-        self.place(addr).is_none() && self.mapped.iter().any(|range| range.contains(&addr))
+        self.place(addr).is_none()
+            && (addr.abs_diff(self.anchor) < IMAGE_REACH
+                || self.mapped.iter().any(|range| range.contains(&addr)))
     }
 }
+
+/// How far from the anchor the binary's own image may reach. Windows moves an executable once
+/// per boot, not once per run, so two runs of the writer may share an address into it.
+const IMAGE_REACH: usize = 1 << 28;
 
 /// The ranges of the process's memory map; none where the system does not list them.
 fn mapped() -> Vec<std::ops::Range<usize>> {
@@ -751,6 +758,22 @@ mod tests {
         image[key] ^= 1;
         assert!(load(&image).is_none());
         assert!(load(&[]).is_none());
+    }
+
+    #[test]
+    fn a_start_holding_an_address_into_the_binary_is_refused() {
+        static IN_THE_BINARY: u8 = 0;
+        let addr = &IN_THE_BINARY as *const u8 as u64;
+        let [mut first, mut second] = [build(), build()];
+        for (store, _, core) in [&mut first, &mut second] {
+            let u64_ty = core.numtypes[crate::identities::numtype::NumType::U64 as usize];
+            store.alloc_blob(u64_ty, &addr.to_ne_bytes());
+        }
+        let refused = write(&first, &second).expect_err("an address into the binary is refused");
+        assert!(refused.contains("stray address"), "{refused}");
+        let mut empty = Places::of(&first.0, &first.0.sides().expect("a start's sides"));
+        empty.mapped.clear();
+        assert!(empty.stray(addr as usize), "refused where the memory map is not listed");
     }
 
     #[test]
