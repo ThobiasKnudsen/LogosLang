@@ -1668,22 +1668,19 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Every further `@` cell to the right, then the base type cell, any type
-    /// identity (DESIGN ›Pointer types are prefix `@T`‹), built into the
-    /// pointer type. What a place of `@T` reads as never depends on `T`.
+    /// The type to the right, any type identity (›Pointer types are prefix `@T`; dereference is
+    /// postfix `x@`; `&x` is address-of‹ [[R162]]), built into the pointer type. What a place of
+    /// `@T` reads as never depends on `T`.
     pub(crate) fn construct_pointer_type(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        // One gate set per `@`, gating what that `@` points at: `@ mut @ i32` is a pointer to a
-        // writable `@i32` (›A pointer points at a gated type: `&a` of a `mut i32` is
-        // `@ mut i32`, and `mut` before a pointer gates the pointer itself‹ [[R382]]).
-        let mut levels = vec![self.take_gate_words(tape)?];
-        while self.marker_right(tape, self.types.at_) {
-            tape.remove(1);
-            levels.push(self.take_gate_words(tape)?);
-        }
-        let Some(cell) = self.cell_at(tape, 1)? else {
+        // The gates before the type gate what this `@` points at, and a further `@` builds its
+        // own: `@ mut @ i32` is a pointer to a writable `@i32` (›A pointer points at a gated type:
+        // `&a` of a `mut i32` is `@ mut i32`, and `mut` before a pointer gates the pointer
+        // itself‹ [[R382]]).
+        self.build_right_side(tape)?;
+        let Some(cell) = tape.at(1).copied() else {
             return Err(ParseError::UnsupportedOperands);
         };
         let base = self.operand_dyad(cell)?;
@@ -1692,43 +1689,32 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnsupportedOperands);
         }
         tape.remove(1);
-        let mut logos = base;
-        for gates in levels.iter().rev() {
-            use crate::identities::{gate, pointer};
-            // SAFETY: `logos` is the base type node, or the pointer type minted in the previous
-            // round; `gates` are gate words.
-            logos = unsafe {
-                if !gates.is_empty() {
-                    let mint = gate::mint_of(self.rt.store, self.types, gates);
-                    logos = gate::over(self.rt.store, self.types, mint, gate::under(logos));
-                }
-                pointer::make_pointer_type(self.rt.store, self.types, logos)
-            };
-        }
+        // SAFETY: `base` is a type node from the store, gated or not.
+        let logos = unsafe {
+            crate::identities::pointer::make_pointer_type(self.rt.store, self.types, base)
+        };
         tape.place(logos);
         // The type wakes at its own rank and takes a pointer to its right: `@i32 &a`.
         Ok(Constructed::Gave)
     }
 
-    /// The gate words right of the center, taken off the tape: the gates of what a pointer points
-    /// at, read by the word before them, `@` or `alloc`'s `of`, which builds before they would.
-    pub(crate) fn take_gate_words(
-        &mut self,
-        tape: &mut ParsingTape,
-    ) -> Result<Vec<DyadPtr>, ParseError> {
-        let mut gates = Vec::new();
-        while let Some(c) = self.cell_at(tape, 1)? {
-            let id = self.cell_identity(&c);
-            if c.constructed || !self.is_gate_word(id) {
+    /// The nodes right of the center up to the first that is a value or a type, built as one
+    /// line that ends there, each by its own constructor (›A `tape[k]` read past the lexed
+    /// frontier lexes on demand for every constructor‹ [[R231]]), so a gate word before it is
+    /// built by the gate's constructor alone: what `@` and `alloc`'s `of` read. A word of which
+    /// no value exists, a gate word or a further `@`, reads what comes after it.
+    pub(crate) fn build_right_side(&mut self, tape: &mut ParsingTape) -> Result<(), ParseError> {
+        let mut to = 1;
+        while let Some(cell) = self.cell_at(tape, to)? {
+            to += 1;
+            if cell.constructed || !self.is_delimiter(self.cell_identity(&cell)) {
                 break;
             }
-            if gates.contains(&id) {
-                return Err(self.fail_at(c.start, ParseError::DoubleGate));
-            }
-            gates.push(id);
-            tape.remove(1);
         }
-        Ok(gates)
+        if to == 1 {
+            return Ok(());
+        }
+        self.construct_range(tape, 1, to)
     }
 
     /// `:`'s constructor (DESIGN ›The dyad's read surface‹): a field of the

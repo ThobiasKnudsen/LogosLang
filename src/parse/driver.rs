@@ -1263,7 +1263,7 @@ impl<'a> Parser<'a> {
     /// as one line that ends there, each by its own constructor; the one node they give stands
     /// at `from` (›A `tape[k]` read past the lexed frontier lexes on demand for every
     /// constructor‹ [[R231]]). They stand on the line being parsed, so what they run, it runs.
-    fn construct_range(
+    pub(super) fn construct_range(
         &mut self,
         tape: &mut ParsingTape,
         from: isize,

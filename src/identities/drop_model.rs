@@ -77,16 +77,18 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         let count = p.take_right(tape)?;
         let (gates, init) = if p.marker_right(tape, of_) {
             tape.remove(1);
-            (p.take_gate_words(tape)?, Some(p.take_right(tape)?))
+            p.build_right_side(tape)?;
+            let gates = tape.at(1).map_or(std::ptr::null_mut(), |c| c.gates);
+            (gates, Some(p.take_right(tape)?))
         } else {
-            (Vec::new(), None)
+            (std::ptr::null_mut(), None)
         };
         // The cells keep the value in their bytes, so the block holds it, not the line.
         if let Some(init) = init {
             p.take(init);
         }
         let types = p.types();
-        let node = build_alloc(p.store(), types, count, init, &gates)?;
+        let node = build_alloc(p.store(), types, count, init, gates)?;
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)
     });
@@ -346,7 +348,7 @@ pub(super) fn build_alloc(
     types: &Core,
     count: DyadPtr,
     init: Option<DyadPtr>,
-    gates: &[DyadPtr],
+    gates: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     use crate::identities::Operand;
     // SAFETY: `count` and `init` are reduced dyads just parsed.
@@ -385,15 +387,10 @@ pub(super) fn build_alloc(
             init
         }
     };
-    // SAFETY: `count` is a reduced dyad and `pointee` a type node with no gate, both from the
-    // store; `gates` are gate words.
+    // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store; `gates`
+    // null or a gate mint.
     unsafe {
-        let pointee = if gates.is_empty() {
-            pointee
-        } else {
-            let mint = super::gate::mint_of(store, types, gates);
-            super::gate::over(store, types, mint, pointee)
-        };
+        let pointee = super::gate::gated(store, types, gates, pointee);
         let key = [super::read::output_type(types, count), pointee];
         super::mint::node(store, types, types.alloc_, &key, &[count, init])
     }

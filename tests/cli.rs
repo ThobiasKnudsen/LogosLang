@@ -3568,6 +3568,43 @@ fn a_gated_type_is_a_value_that_builds_gated_values() {
     assert!(stderr.contains("`x` is not `mut`"), "stderr: {stderr}");
 }
 
+/// `@` and `alloc … of` build the nodes to their right as `tape.construct` does, each by its own
+/// constructor (›A `tape[k]` read past the lexed frontier lexes on demand for every
+/// constructor‹ [[R231]]): a gate word, a further `@`, a bracket and a gated alias alike give
+/// what the pointer points at (›A pointer points at a gated type: `&a` of a `mut i32` is
+/// `@ mut i32`, and `mut` before a pointer gates the pointer itself‹ [[R382]]).
+#[test]
+fn a_pointer_s_right_side_is_built_by_its_own_constructors() {
+    let pointer_param = "a := mut i32 1, b := mut &a, \
+                         f := fn (p := @ mut @ mut i32 ?) -> i32 ( p@@ = 3, a )";
+    for (src, printed) in [
+        ("t := type mut i32, p := alloc 1 of t 5, p@ = 6, p@".to_string(), "6"),
+        ("r := alloc 1 of pub mut i32 4, r@ = 5, r@".into(), "5"),
+        ("t := type mut i32, a := mut i32 2, p := mut @t ?, p = &a, p@ = 9, a".into(), "9"),
+        (
+            "k := fn (t := type ?) -> type ( t ), x := type k(@ (mut i32)), \
+             y := type k(@ mut i32), print «{x == y}»"
+                .into(),
+            "true",
+        ),
+        (format!("{pointer_param}, f(&b)"), "3"),
+        (format!("{pointer_param}, f.compile(), f(&b)"), "3"),
+    ] {
+        assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    for (src, message) in [
+        ("p := @ mut mut i32 ?", "1:8: error: this gate word already gates the value"),
+        ("r := alloc 1 of mut mut i32 5", "1:17: error: this gate word already gates the value"),
+        (
+            "a := i32 1, b := mut &a, f := fn (p := @ mut @ i32 ?) -> i32 ( p@@ = 3, 0 ), f(&b)",
+            "points at a value that is not `mut`",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert!(code == Some(1) && stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
     let q = "q := type ( size := static u64 0, parse_rank = 60, parse = ( \
