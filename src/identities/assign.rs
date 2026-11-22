@@ -53,33 +53,33 @@ unsafe fn choose(_: &mut Store, types: &Core, key: &[DyadPtr]) -> Option<mint::M
     Some(mint::Made { output_type: types.void_, op: types.ops.put_leaf(carry) })
 }
 
-/// The place an `=` at the center of `tape` writes, read before its right side: the cells before
-/// it built to one and removed, with the slot it fills where it names one. A write into any other
-/// place is checked against the gates that grant it here, since whether a place may be written
-/// needs nothing from the right side.
+/// The place an `=` at the center of `tape` writes, read before its right side: the nearest node
+/// to its left, a word there not built yet built first, and removed, with the slot it fills where
+/// it names one. A write into any other place is checked against the gates that grant it here,
+/// since whether a place may be written needs nothing from the right side.
 pub(crate) fn read_target(
     p: &mut crate::parse::Parser,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<(crate::parse::Cell, Option<crate::parse::SlotKind>), ParseError> {
     let types = p.types();
     let at = tape.at(0).map(|c| c.start);
-    // A lone `free` constructed on its own would read an operand to its
+    // A `free` constructed on its own would read an operand to its
     // right, so `=` takes the keyword's use as the slot's name unconstructed.
     let target = match tape.at(-1) {
-        Some(c) if tape.cursor() == 1 && !c.constructed && c.identity(types) == types.free_ => {
-            let name = *c;
-            tape.remove(-1);
-            name
+        Some(c) if !c.constructed && c.identity(types) == types.free_ => *c,
+        _ => {
+            let Some(mut place) = p.side_at(tape, -1)? else {
+                return Err(ParseError::MissingOperand);
+            };
+            place.dyad = p.as_operand(place)?;
+            place.constructed = true;
+            place
         }
-        _ => match p.construct_left(tape)? {
-            Some(target) => target,
-            None => return Err(ParseError::MissingOperand),
-        },
     };
-    // The `=` gives nothing, so all its line built before it is its place, reached when the `=`
-    // runs, after its right side.
+    tape.remove(-1);
+    // The place is reached when the `=` runs, after its right side.
     if let Some(at) = at {
-        p.runs_inside(at);
+        p.runs_inside(target.start, at);
     }
     // SAFETY: `target` holds the reduced dyad of the cell to the left.
     let slot = unsafe { p.slot_of(target.dyad) };

@@ -1480,12 +1480,18 @@ impl<'a> Parser<'a> {
         };
         // A repeated body: parse-time rebinding is off inside.
         self.cx.runtime_depth += 1;
+        let body = self.loop_body(alone);
+        self.cx.runtime_depth -= 1;
+        Ok((cond, body?))
+    }
+
+    /// The body of `while` or `for`, a bracket or the next expression, as an `if` arm is read.
+    fn loop_body(&mut self, alone: bool) -> Result<DyadPtr, ParseError> {
         self.cx.next_block = BlockValue::Body;
         self.cx.next_passes_out = alone;
         let body = self.parse_branch();
         self.cx.next_block = BlockValue::Used;
-        self.cx.runtime_depth -= 1;
-        Ok((cond, body?))
+        body
     }
 
     /// `for i in a..b ( body )`, with an optional `..step` and optionally no
@@ -1565,15 +1571,11 @@ impl<'a> Parser<'a> {
                     |binding| {
                         // SAFETY: `binding` was just declared; `logos` is a type node.
                         var = unsafe { self.place_for(binding, logos, width) };
-                        self.cx.next_passes_out = alone;
-                        self.body_as(BlockValue::Body)
+                        self.loop_body(alone)
                     },
                 )
             }
-            None => {
-                self.cx.next_passes_out = alone;
-                self.body_as(BlockValue::Body)
-            }
+            None => self.loop_body(alone),
         };
         self.cx.runtime_depth -= 1;
         self.cx.scopes.pop();
@@ -2428,11 +2430,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// What the line being parsed noted as running before `at` runs inside the node built at
-    /// `at`, where that node runs it: an `=`'s place, which it reaches after its right side.
-    pub(crate) fn runs_inside(&mut self, at: usize) {
+    /// What the line being parsed noted as running from `from` up to `at` runs inside the node
+    /// built at `at`, where that node runs it: an `=`'s place, which it reaches after its right
+    /// side.
+    pub(crate) fn runs_inside(&mut self, from: usize, at: usize) {
         let open = self.cx.open.last_mut().expect("a node is built in an open scope");
-        open.runs.retain(|&s| s >= at);
+        open.runs.retain(|&s| s < from || s >= at);
     }
 
     /// Where the pass runs each line once it has parsed it: the top level, or a held line

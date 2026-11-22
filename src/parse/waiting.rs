@@ -260,7 +260,9 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: a resolved token's identity is a dyad from the store.
         let function = unsafe { !prev.is_null() && crate::dyad::ty(prev) == self.types.fn_type };
-        let operator = self.ctor_of(prev).is_some() && self.precedence_of_cell(prev) < prec::OPEN;
+        let rank = self.precedence_of_cell(prev);
+        let operator =
+            self.ctor_of(prev).is_some() && (rank < prec::OPEN || prec::waits_for_reads(rank));
         !function && !operator
     }
 

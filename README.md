@@ -20,14 +20,14 @@ Every snippet in this section runs on today's seed. Try them with `logos '…'` 
 
 ```logos
 x := i32 5,      # declare x: a type followed by a value
-y := mut x + 1,  # declare y: the type is read from the value; mut lets = write it
+y := mut (x + 1),  # declare y: the type is read from the value; mut lets = write it
 y = 7,
 z := mut i32 ?,  # declare with no value yet: ? is a hole
 z = 9,
 x + y + z        # 21
 ```
 
-`:=` declares and `=` writes a name declared `mut`. Writing `=` to a name that was never declared, or to one declared without `mut`, is an error, so a typo cannot create a variable and a name is only ever changed where its declaration says so. A name cannot be declared twice while the first is alive: there is no shadowing. `:=` copies, so after `y := x` a write to `y` leaves `x` alone. Left of `:=` stands the name, nothing else, and right of it the value with the gate words that gate it, `mut` and `pub`: `x := i32 5` reads as "x is an i32 holding 5", and `x := mut i32 ?` as "x is a writable i32 with nothing in it yet". A copy takes none of them along: after `x := mut i32 5`, `y := x` is not `mut` and `y := mut x` is.
+`:=` declares and `=` writes a name declared `mut`. Writing `=` to a name that was never declared, or to one declared without `mut`, is an error, so a typo cannot create a variable and a name is only ever changed where its declaration says so. A name cannot be declared twice while the first is alive: there is no shadowing. `:=` copies, so after `y := x` a write to `y` leaves `x` alone. Left of `:=` stands the name, nothing else, and right of it the value with the gate words that gate it, `mut` and `pub`: `x := i32 5` reads as "x is an i32 holding 5", and `x := mut i32 ?` as "x is a writable i32 with nothing in it yet". A gate word takes the nearest value to its right, so a gated sum is written in brackets, `mut (x + 1)`. A copy takes none of them along: after `x := mut i32 5`, `y := x` is not `mut` and `y := mut x` is.
 
 ### The comma
 

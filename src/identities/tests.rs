@@ -916,6 +916,67 @@ fn less_than_matches_between_tiers() {
 }
 
 #[test]
+fn an_operation_starts_the_word_at_its_side_that_is_not_built_yet() {
+    // `==` is built before `not`, finds it unbuilt to its right and starts it.
+    assert_eq!(run_script("a := true, b := false, c := a == not b, c"), 1);
+    diff_nullary_fn("fn () -> bool ( a := true, b := false, a == not b )", 1);
+}
+
+#[test]
+fn a_bare_for_body_reads_as_a_bracketed_one() {
+    // The range is the first node after `in`; the body is built in the loop's scope.
+    assert_eq!(run_script("x := mut i32 0, for i in 0..3 x = x + i, x"), 3);
+    assert_eq!(run_script("x := mut i32 0, for i in 0..3 (x = x + i), x"), 3);
+    assert_eq!(run_script("x := mut i32 0, n := i32 3, for i in 0..n + 1 x = x + i, x"), 6);
+    assert_eq!(run_script("x := mut i32 0, for i in 0..6..2 x = x + i, x"), 6);
+    assert_eq!(run_script("x := mut i32 0, for 0..3 x = x + 1, x"), 3);
+    diff_nullary_fn("fn () -> i32 ( y := mut i32 0, for i in 0..4 y = y + i, y )", 6);
+}
+
+#[test]
+fn move_is_built_after_if_and_return() {
+    // A bare arm starts `move` as its own, so the else arm finds the name alive.
+    assert_eq!(
+        run_script("a := alloc 1 of i32 7, c := mut i32 0, d := mut i32 0, if c == 1 move a else (d = a@), d"),
+        7
+    );
+    assert_eq!(
+        run_script("a := alloc 1 of i32 7, c := mut i32 1, b := if c == 1 move a else (alloc 1 of i32 8), b@"),
+        7
+    );
+    // `return` finds `move` unbuilt to its right and starts it.
+    assert_eq!(
+        run_script(
+            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, return move p ), q := mk(), q@"
+        ),
+        7
+    );
+}
+
+#[test]
+fn address_comparison_and_negation_stand_in_the_order() {
+    // `&` is built at discovery after the reads after its node, so `=` takes `&x` whole.
+    for (src, want) in [
+        ("x := i32 5, p := &x, q := &p@, q@", 5),
+        ("w := fn (n := i32 ?) -> i32 ( n + 1 ), p := &w(7), p@", 8),
+        ("q := i32 7, p := &(q), p@", 7),
+        ("p := &i32 7, p@", 7),
+    ] {
+        assert_eq!(run_script(src), want, "{src}");
+    }
+    assert_eq!(script_parse_err("x := i32 5, &x = 3"), ParseError::BadAssignTarget);
+    // The comparisons are one rank, built from the left.
+    assert_eq!(run_script("a := i32 1, b := i32 2, a < b == true"), 1);
+    assert_eq!(
+        script_parse_err("a := i32 1, b := i32 2, true == a < b"),
+        ParseError::UnsupportedOperands
+    );
+    // A negating `-` is built before `*`, and a number type starts it.
+    assert_eq!(run_script("y := i32 3, -y * 2"), -6);
+    diff_nullary_fn("fn () -> i32 ( m := i32 3, i32 -m * 2 + 1 )", -5);
+}
+
+#[test]
 fn less_than_is_abstract_and_resolves_to_lt_i32() {
     let (mut store, mut trie, core) = new_core();
 
@@ -983,11 +1044,10 @@ fn an_if_needs_no_brackets_in_both_tiers() {
 fn an_if_condition_is_its_first_complete_expression() {
     assert_eq!(run_script("m := mut type ?, m = ?, if m != ? (1) else (2)"), 2);
     assert_eq!(run_script("m := mut type ?, m = i32, if m != ? 1 else 2"), 1);
-    // Right of a comparison a `(` is the body, though the identity could take it.
-    assert_eq!(run_script("x := i32 1, if x.type == scope (10) else (20)"), 20);
-    assert_eq!(run_script("x := i32 1, if x.type == i32 (10) else (20)"), 10);
-    // A pointer type takes the `(` after it, so a compared one gets brackets (›A call stays a
-    // call in a condition, and `while` reads as `if`‹ [[R266]]).
+    // A type takes the `(` after it, so a compared type gets brackets around the condition
+    // (›A call stays a call in a condition, and `while` reads as `if`‹ [[R266]]).
+    assert_eq!(run_script("x := i32 1, if (x.type == scope) (10) else (20)"), 20);
+    assert_eq!(run_script("x := i32 1, if (x.type == i32) (10) else (20)"), 10);
     assert_eq!(run_script("x := i32 1, p := &x, if (p.type == @i32) (10) else (20)"), 10);
     assert_eq!(
         script_parse_err("x := i32 1, p := &x, if p.type == @i32 (10) else (20)"),
@@ -1014,8 +1074,8 @@ fn an_if_condition_is_its_first_complete_expression() {
         ParseError::NonBoolCondition
     );
     // Bare bodies on their own lines, as identities/array.logos writes them.
-    assert_eq!(run_script("x := i32 1,\nif not x.type == i32\n    abort «not i32»,\n5"), 5);
-    assert!(run_script_result("x := i32 1,\nif x.type == i32\n    abort «is i32»,\n5").is_err());
+    assert_eq!(run_script("x := i32 1,\nif (not x.type == i32)\n    abort «not i32»,\n5"), 5);
+    assert!(run_script_result("x := i32 1,\nif (x.type == i32)\n    abort «is i32»,\n5").is_err());
     // A bare branch is a scope, as a bracket is.
     assert!(matches!(script_parse_err("x := i32 1, if x == 1 y := 2, y"), ParseError::Resolve(_)));
     assert_eq!(script_parse_err("if 1 == 1 else 2"), ParseError::Empty);
@@ -1062,8 +1122,8 @@ fn a_comparison_written_in_logos_ends_a_bare_condition() {
     let g = "g := fn (y := i32 ?) -> i32 ( n := mut i32 0, while not n ≈ y n = n + 1, n ),\n";
     assert_eq!(run_script(&format!("{eq}{g}before := g(4), g.compile(), before * 10 + g(4)")), 44);
     let types = logos_comparison("type", "==.parse_rank");
-    assert_eq!(run_script(&format!("{types}x := i32 1, if x.type ≈ i32 (10) else (20)")), 10);
-    assert_eq!(run_script(&format!("{types}x := i32 1, if x.type ≈ scope (10) else (20)")), 20);
+    assert_eq!(run_script(&format!("{types}x := i32 1, if (x.type ≈ i32) (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{types}x := i32 1, if (x.type ≈ scope) (10) else (20)")), 20);
 }
 
 /// A type standing right of an infix ranked outside the comparisons takes the `(` after it, as
@@ -3304,7 +3364,7 @@ fn assigning_into_a_comptime_binding_is_rejected() {
         ParseError::AssignToLiteral(Box::new("5".into()))
     );
     assert_eq!(
-        parse_err("( x := mut 5/2, x = 7 )"),
+        parse_err("( x := mut (5/2), x = 7 )"),
         ParseError::AssignToLiteral(Box::new("5/2".into()))
     );
     assert_eq!(parse_err("( 5 = 7 )"), ParseError::AssignToLiteral(Box::new("5".into())));
@@ -3643,7 +3703,7 @@ fn a_static_name_at_top_level_is_one_place_for_the_run() {
     // Its value is made at the definition, so it reads names made before it.
     assert_eq!(
         run_script(
-            "a := i32 7,\nt := mut i32 0,\nfor i in 0..3 ( k := static a + 1, t = t + k ),\nt"
+            "a := i32 7,\nt := mut i32 0,\nfor i in 0..3 ( k := static (a + 1), t = t + k ),\nt"
         ),
         24
     );
@@ -3735,12 +3795,17 @@ fn a_name_is_written_only_if_declared_mut() {
 }
 
 #[test]
-fn a_gate_word_reads_the_whole_value_to_its_right() {
-    // ›A gate word reads the whole value to its right and gives it with its type gated‹ [[R102]]
+fn a_gate_word_reads_the_nearest_value_to_its_right() {
+    // ›A gate word reads the nearest value to its right and gives it with its type gated‹ [[R102]]
     assert_eq!(run_script("pub 5"), 5);
     assert_eq!(run_script("x := mut i32 5,\nx = 6,\nx"), 6);
     assert_eq!(run_script("x := pub mut i32 5,\nx = 6,\nx"), 6);
-    assert_eq!(run_script("a := i32 1,\nb := i32 2,\nx := mut a + b,\nx = x + 1,\nx"), 4);
+    assert_eq!(run_script("a := i32 1,\nb := i32 2,\nx := mut (a + b),\nx = x + 1,\nx"), 4);
+    assert_eq!(run_script("a := i32 1,\nb := i32 2,\nx := mut a + b,\nx"), 3);
+    assert_eq!(
+        script_parse_err("a := i32 1,\nb := i32 2,\nx := mut a + b,\nx = x + 1,\nx"),
+        ParseError::NotMutable(Box::new("x".to_string()))
+    );
     assert_eq!(run_script("x := mut i32,\nx = 4,\nx"), 4);
     assert_eq!(run_script("x := mut i32 ?,\nx = 4,\nx"), 4);
     assert_eq!(run_script("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
@@ -4831,7 +4896,7 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
 
 #[test]
 fn a_tape_line_no_check_narrowed_is_checked_where_a_type_is_wanted_when_the_parse_runs() {
-    let g = "g := fn (t := type ?) -> u64 ( if t == i32 ( 1 ) else ( 2 ) ), ";
+    let g = "g := fn (t := type ?) -> u64 ( if (t == i32) ( 1 ) else ( 2 ) ), ";
     let constant = "this is read as `type`, but it holds no literal or constant of it";
     // A line of a bracket cell, `q [i32]`, and the whole cell, `q i32`.
     for (line, write) in [("tape[1].dyads[0]", "q [{}]"), ("tape[1]", "q {}")] {
