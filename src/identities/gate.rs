@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `pub`, `mut` and `static`, the gate words, and where a gate lives: in the type of the
+//! `pub`, `mut`, `static` and `lossy`, the gate words, and where a gate lives: in the type of the
 //! value it gates. Each set of gate words is one gate mint, a type, and the gates over `X`
 //! are one gate node, `[gate mint | X]`, where `X` is never a gate node itself. `type_mint`
 //! keeps the gate mints and the gate nodes over a type, the gated types. A name's gate node
@@ -19,18 +19,39 @@ use crate::parse::{Constructed, ParseError};
 use crate::store::Store;
 use crate::Core;
 
-/// Returns `pub`, `mut`, `static`, and the former every gate mint is kept under, the type of
-/// the gate mints.
-pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
-    let pub_ = word(cx, "pub", meta::prec::GATE);
-    cx.metas.insert(pub_, construct);
-    let mut_ = word(cx, "mut", meta::prec::GATE);
-    cx.metas.insert(mut_, construct);
-    let static_ = word(cx, "static", meta::prec::GATE);
-    cx.metas.insert(static_, construct);
+/// The gate words: `pub`, `mut`, `static`, `lossy`, and the former every gate mint is kept under,
+/// the type of the gate mints.
+pub(super) struct GateIds {
+    pub(super) words: [DyadPtr; 4],
+    pub(super) gate_: DyadPtr,
+}
+
+/// The gate words as written, with their ranks, in the order [`GateIds::words`] and [`words`]
+/// keep them. `lossy` stands with the number types, whose rank it shares (›Every identity has a
+/// `parse_rank`, and `(` works in two steps‹ [[R259]]): in `i32 lossy f64 2.5`, `f64` is built
+/// first, then `lossy`, then `i32`.
+const WORDS: [(&str, f64); 4] = [
+    ("pub", meta::prec::GATE),
+    ("mut", meta::prec::GATE),
+    ("static", meta::prec::GATE),
+    ("lossy", meta::prec::CONVERT),
+];
+
+pub(super) fn register(cx: &mut Cx) -> GateIds {
+    let words = WORDS.map(|(spelling, rank)| {
+        let id = word(cx, spelling, rank);
+        cx.metas.insert(id, construct);
+        id
+    });
     let former = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::INERT);
     let gate_ = cx.store.alloc_head(cx.type_, former);
-    (pub_, mut_, static_, gate_)
+    GateIds { words, gate_ }
+}
+
+/// Every gate word with its spelling.
+pub(crate) fn words(types: &Core) -> [(DyadPtr, &'static str); 4] {
+    let ids = [types.pub_, types.mut_, types.static_, types.lossy];
+    std::array::from_fn(|i| (ids[i], WORDS[i].0))
 }
 
 /// No node is ever typed by a gate word; its identity stands in a gate mint's record.
@@ -50,18 +71,36 @@ pub(crate) unsafe fn written(types: &Core, t: DyadPtr) -> Option<String> {
     if !is_node(t) {
         return None;
     }
-    let words: Vec<&str> = set_of(t)
+    let all = words(types);
+    let written: Vec<&str> = set_of(t)
         .into_iter()
-        .map(|g| match g {
-            g if g == types.pub_ => "pub",
-            g if g == types.mut_ => "mut",
-            g => {
-                debug_assert_eq!(g, types.static_, "a gate mint holds only gate words");
-                "static"
-            }
+        .map(|g| {
+            let word = all.iter().find(|&&(id, _)| id == g);
+            word.expect("a gate mint holds only gate words").1
         })
         .collect();
-    Some(words.join(" "))
+    Some(written.join(" "))
+}
+
+/// Whether the value `node` gives is of a type gated `lossy`, which a number type takes with
+/// loss (›A type's `parse` decides what converts into it; unwritten, a value converts only into
+/// a type that holds it exactly‹ [[R155]]): a name, a parameter or a field declared so, or a
+/// call whose result is.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn is_lossy(types: &Core, node: DyadPtr) -> bool {
+    let node = types.through(node);
+    let t = if node.is_null() {
+        node
+    } else if dyad::ty(node) == types.binding_ {
+        word_of_name(types, node)
+    } else if dyad::ty(node) == types.field_ {
+        word_of_name(types, super::instance::field_parts(node).1)
+    } else {
+        super::read::given_type(types, node)
+    };
+    has(t, types.lossy)
 }
 
 /// Whether `p` is a gate node, a node typed by a gate mint.

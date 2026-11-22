@@ -923,8 +923,7 @@ impl<'a> Parser<'a> {
 
     /// A word that gates the value to its right.
     pub(super) fn is_gate_word(&self, id: DyadPtr) -> bool {
-        let t = self.types;
-        [t.static_, t.mut_, t.pub_].contains(&id)
+        crate::identities::gate::words(self.types).iter().any(|&(word, _)| word == id)
     }
 
     /// `name := value`: the binding is made before the value parses and points at the

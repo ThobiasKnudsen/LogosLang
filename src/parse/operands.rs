@@ -243,11 +243,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A literal, a plain name, or a data type: what a type standing to its
-    /// left may take as its value.
+    /// A literal, a plain name, a data type, or a gate word, which gates the value after it: what
+    /// a type standing to its left may take as its value.
     fn is_value_word(&self, cell: &Cell, id: DyadPtr) -> bool {
         use crate::identities::meta;
-        if cell.constructed || self.is_operand_cell(cell) {
+        if cell.constructed || self.is_operand_cell(cell) || self.is_gate_word(id) {
             return true;
         }
         if self.precedence_of_cell(id) == meta::prec::LITERAL {
