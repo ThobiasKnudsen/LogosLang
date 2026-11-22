@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::dyad;
-use crate::identities::tape::NodeMember;
+use crate::identities::tape::{NodeMember, TypeRead};
 
 /// The member right of `.`: the name's span in the source, and the `[i]` or `(…)` cell
 /// some reads take after it.
@@ -710,20 +710,20 @@ impl<'a> Parser<'a> {
             // member reads then need.
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
-            if name == "type" {
+            if let Some(which) = TypeRead::of_member(name) {
                 // A name's type is read with its gate node, a field's too (›`x.type` reads the
                 // type word of the node a name or an expression stands for‹ [[R279]]).
                 let named = match left.target.1 {
                     field if field.is_null() => self.cx.member_root,
                     field => field,
                 };
-                if !named.is_null() {
+                if which == TypeRead::Own && !named.is_null() {
                     let word = crate::identities::gate::word_of_name(self.types, named);
                     if crate::identities::gate::is_node(word) {
                         self.cx.member_gates = dyad::ty(word);
                     }
                 }
-                return self.type_read(lhs).map(|t| (t, 0));
+                return self.type_read(lhs, which).map(|t| (t, 0));
             }
             // A member the read of a tape node answers where it is written; any other one the
             // caller read through to the node the tape holds ([`Self::held_tape_node`]).
@@ -790,7 +790,7 @@ impl<'a> Parser<'a> {
             }
             // An operator expression is read through its own type alone, never through what it
             // gives.
-            if let Some(node) = self.operator_node(lhs) {
+            if let Some(node) = crate::identities::read::operator_node(self.types, lhs) {
                 if let Some(field) = self.node_field(node, name)? {
                     return Ok((field, 0));
                 }
@@ -1864,15 +1864,17 @@ impl<'a> Parser<'a> {
     /// `.type`, read on every value (DESIGN ›`x.type` reads the type word of the node a name or
     /// an expression stands for‹): a tape cell's when the constructor runs, a field's declared
     /// type through `tape[0]`, a node reached by path or an operator expression its own type word,
-    /// a view the viewed node's, a name its own and a call the type it returns.
+    /// a view the viewed node's, a name its own and a call the type it returns. `.gives` is read
+    /// on every value the same way, as the type the node gives when it runs (›`.gives` reads the
+    /// type a node gives when it runs, on any node; `.type` stays the node's own type‹ [[R387]]).
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store.
-    unsafe fn type_read(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+    unsafe fn type_read(&mut self, lhs: DyadPtr, which: TypeRead) -> Result<DyadPtr, ParseError> {
         use crate::identities::{dyad_place, read, tape, this};
         let types = self.types;
         if dyad::ty(lhs) == types.tape.cell_dyad_at || tape::is_cell_read(types, lhs) {
-            return Ok(tape::build_cell_type(self.rt.store, types, lhs));
+            return Ok(tape::build_cell_type(self.rt.store, types, lhs, which));
         }
         // A `dyad` field of the parse's own node has the type of the node it holds, read when
         // the constructor runs (›A `dyad ?` place is transparent: a placeholder for a new node
@@ -1885,47 +1887,34 @@ impl<'a> Parser<'a> {
                 Binding::read(this::field_binding_of(types, lhs)).dyad,
             );
             return Ok(if declared == types.dyad_ {
-                this::build_field_type(self.rt.store, types, lhs)
+                this::build_field_type(self.rt.store, types, lhs, which)
             } else {
                 declared
             });
         }
         if let Some(node) = self.known_node(lhs, self.cx.member_root) {
-            return Ok(types.type_of(node));
+            return match which {
+                TypeRead::Own => Ok(types.type_of(node)),
+                TypeRead::Gives => read::gives(types, node),
+            };
         }
-        if dyad::ty(lhs) == types.dyad_ {
+        if which == TypeRead::Own && dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
         if dyad_place::known_only_at_run(types, lhs) {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }
-        if let Some(node) = self.operator_node(lhs) {
-            return Ok(dyad::ty(node));
-        }
-        let t = read::value_type(types, lhs)?;
+        let t = match which {
+            TypeRead::Own => match read::operator_node(types, lhs) {
+                Some(node) => return Ok(dyad::ty(node)),
+                None => read::value_type(types, lhs)?,
+            },
+            TypeRead::Gives => read::gives(types, lhs)?,
+        };
         if t.is_null() {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }
         Ok(t)
-    }
-
-    /// The operator expression `node` is, which `.` reads as its node (›`x.type` reads the type
-    /// word of the node a name or an expression stands for‹ [[R279]]), reached through the copy
-    /// that carries its record result (`y mk`): a node that runs, whose type word is a type with a
-    /// `run` body, the one a parse stamped (`x ^ 3`, its type minted by `^`'s chooser), or an
-    /// identity with a parse of its own (`&x`), or a mint of one (`x + 2`). `None` for a call,
-    /// whose type word is a function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and
-    /// which stands for what it returns.
-    ///
-    /// # Safety
-    /// `node` must be a reduced dyad from the store.
-    unsafe fn operator_node(&self, node: DyadPtr) -> Option<DyadPtr> {
-        use crate::identities::{by_copy, meta, mint, read};
-        let node = by_copy::carried(self.types, node);
-        let ty = self.identity_head(mint::origin(dyad::ty(node)))?;
-        let operator = matches!(read::read_kind(self.types, node), read::Read::Executable(_))
-            && (meta::kind_of(ty) == Some(meta::RECORD_TAG) || !meta::constructor_of(ty).is_null());
-        operator.then_some(node)
     }
 
     /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's read surface‹), the
@@ -1947,7 +1936,7 @@ impl<'a> Parser<'a> {
             "type" if named => {
                 let root = std::mem::replace(&mut self.cx.member_root, viewed);
                 let lhs = self.settled_type(types.through(viewed));
-                let t = self.type_read(lhs);
+                let t = self.type_read(lhs, TypeRead::Own);
                 self.cx.member_root = root;
                 t
             }

@@ -689,7 +689,8 @@ fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
 }
 
 /// A postfix operator `name` that mints through a function of its own: `get_mint` builds one type
-/// per type `t` of the operand to its left, whose field `a` holds the operand, kept by `type_mint`.
+/// per type `t` the operand to its left gives, whose field `a` holds the operand, kept by
+/// `type_mint`.
 fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
     format!(
         "{name} := type ( \
@@ -698,7 +699,7 @@ fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
          if mint != ? return mint, mint = type ( a := pub t ?, output_type := pub static {output}, \
          run = ( {run} ) ), type_mint.keep(place, mint), mint ), \
          parse_rank = *.parse_rank + 1, associativity = left, \
-         parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1], \
+         parse = ( tape[0].type = get_mint(tape[-1].gives), tape[0].a = tape[-1], \
          tape.is_constructed[0] = true, tape.remove(-1) ) )"
     )
 }
@@ -796,8 +797,8 @@ fn a_fresh_spelling_on_the_tape_is_a_node_of_type_unknown_name() {
     assert!(stderr.contains("this node is not a scope"), "stderr: {stderr}");
 }
 
-/// A multiplication written in Logos: its parse mints from `tape[-1].type` and `tape[1].type`
-/// and takes both sides through `tape[k]`.
+/// A multiplication written in Logos: its parse mints from what its sides give, `tape[-1].gives`
+/// and `tape[1].gives`, and takes both sides through `tape[k]`.
 const TIMES: &str = "⊗ := type ( \
     get_mint := static fn (l := type ?, r := type ?) -> type ( \
     place := type_mint.step(type_mint.step(type_mint.step(0, ⊗), l), r), \
@@ -805,18 +806,25 @@ const TIMES: &str = "⊗ := type ( \
     mint = type ( lhs := pub l ?, rhs := pub r ?, output_type := static type l, \
     run = ( lhs * rhs ) ), type_mint.keep(place, mint), mint ), \
     parse_rank = *.parse_rank, \
-    parse = ( tape[0].type = get_mint(tape[-1].type, tape[1].type), tape[0].lhs = tape[-1], \
+    parse = ( tape[0].type = get_mint(tape[-1].gives, tape[1].gives), tape[0].lhs = tape[-1], \
     tape[0].rhs = tape[1], tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
 
-/// A parse written in Logos reads its operands through `tape[k]` and `tape[k].type` as a built-in
+/// A parse written in Logos reads its operands through `tape[k]` and `tape[k].gives` as a built-in
 /// operation reads them: a dead name is refused (›A dead name takes nothing until `:=` redeclares
 /// it‹ [[R72]]) and noted as a read of the function it is read in, a `dyad` is read through to the
 /// node it gives (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹
-/// [[R293]]), and a value refused anywhere is refused, so `⊗` gives what `*` gives, on both tiers.
+/// [[R293]]), a bracket gives what its lines that give its value give (›A scope's value is what it
+/// evaluates to, and `return` is an optional early exit from the enclosing function‹ [[R207]]),
+/// and a value refused anywhere is refused, so `⊗` gives what `*` gives, on both tiers.
 #[test]
 fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
     let dead = "`n` is dead here: it was moved or freed above";
+    let arms = "the arms of this `if`, or the lines that give this block its value, give different";
     let mut cases = vec![
+        ("x := ( free (1), i32 7 ) OP i32 1, x".to_owned(), Ok("7\n")),
+        ("x := mut i32 0, y := ( x = 10, x ) OP i32 1, y".to_owned(), Ok("10\n")),
+        ("c := true, x := ( if c (i32 1), i32 2 ) OP i32 5, x".to_owned(), Ok("5\n")),
+        ("c := true, x := ( if c (i32 1), i64 2 ) OP i32 1, x".to_owned(), Err(arms)),
         ("n := i32 5, free n, x := n OP n".to_owned(), Err(dead)),
         ("x := dyad (i32, 7) OP dyad (i32, 7), x".to_owned(), Ok("49\n")),
         ("g := fn () -> dyad ( i32 5 ), x := g() OP g(), x".to_owned(), Ok("25\n")),
@@ -837,6 +845,10 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
             format!("f := fn () -> i32 ( dyad (i32, 7) OP dyad (i32, 7) ), {compile}f()"),
             Ok("49\n"),
         ));
+        cases.push((
+            format!("f := fn () -> i32 ( x := mut i32 0, ( x = 10, x ) OP i32 1 ), {compile}f()"),
+            Ok("10\n"),
+        ));
     }
     for (tail, want) in &cases {
         for src in [format!("{TIMES}, {}", tail.replace("OP", "⊗")), tail.replace("OP", "*")] {
@@ -855,9 +867,11 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
 }
 
 /// What gives no value is the reader's to decide (›A `tape[k]` read past the lexed frontier lexes
-/// on demand for every constructor‹ [[R231]]): a parse written in Logos reads a side that gives
-/// nothing as `void` and a spelling no live name has as `unknown_name`, while a dead name is
-/// refused wherever the parse reads it, `tape[k]` too.
+/// on demand for every constructor‹ [[R231]]): to a parse written in Logos a side that gives
+/// nothing gives `void`, while its own type stays its node's (›`.gives` reads the type a node
+/// gives when it runs, on any node; `.type` stays the node's own type‹ [[R387]]), a spelling no
+/// live name has is an `unknown_name`, and a dead name is refused wherever the parse reads it,
+/// `tape[k]` too.
 #[test]
 fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
     let k = |body: &str, operand: &str| {
@@ -866,11 +880,15 @@ fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
              tape.is_constructed[0] = true ) ), k {operand}"
         )
     };
-    let is = |t: &str| format!("print «{{tape[1].type == {t}}}»");
-    for (operand, t) in
-        [("(print «a»)", "void"), ("(if c (i32 1))", "void"), ("zz", "unknown_name")]
-    {
-        let (code, stdout, stderr) = run_line(&k(&is(t), operand));
+    let read_is = |read: &str, t: &str| format!("print «{{tape[1].{read} == {t}}}»");
+    let is = |t: &str| read_is("type", t);
+    for (operand, read, t) in [
+        ("(print «a»)", "gives", "void"),
+        ("(if c (i32 1))", "gives", "void"),
+        ("(if c (i32 1))", "type", "if"),
+        ("zz", "type", "unknown_name"),
+    ] {
+        let (code, stdout, stderr) = run_line(&k(&read_is(read, t), operand));
         assert_eq!(
             (code, stdout.as_str()),
             (Some(0), "true\ntype\n"),
@@ -890,6 +908,74 @@ fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
         assert_eq!(code, Some(1), "{src}");
         assert!(stderr.contains("`n` is dead here"), "{src}: stderr: {stderr}");
     }
+}
+
+/// ›`.gives` reads the type a node gives when it runs, on any node; `.type` stays the node's own
+/// type‹ [[R387]]: inside a parse as outside it, `.type` of an operation is its mint, of an `if`
+/// `if` and of a bracket `scope`, while `.gives` of each is what it gives when it runs, worked out
+/// as `:=` works it out (›A scope's value is what it evaluates to, and `return` is an optional
+/// early exit from the enclosing function‹ [[R207]]); a value and a call give their own type.
+#[test]
+fn type_reads_a_nodes_own_type_and_gives_the_type_it_gives() {
+    let after = |reads: &str, operand: &str| {
+        format!(
+            "x := i32 3, c := true, g := fn () -> i64 ( i64 1 ), \
+             v := type ( parse_rank = 60, parse = ( print «{reads}», tape.remove(-1), \
+             tape[0] = i32 0, tape.is_constructed[0] = true ) ), y := {operand} v, 0"
+        )
+    };
+    let both = |own: &str, gives: &str| {
+        format!("{{tape[-1].type == {own}}} {{tape[-1].gives == {gives}}}")
+    };
+    let mut cases = vec![
+        (after(&both("i32", "i32"), "(x + 2)"), "false true\n0\n"),
+        (after("{tape[-1].output_type == i32}", "(x + 2)"), "true\n0\n"),
+        (after(&both("if", "i32"), "(if c (x) else (i32 2))"), "true true\n0\n"),
+        (after(&both("scope", "i32"), "( print «a», x )"), "true true\n0\n"),
+        (after(&both("scope", "void"), "( print «a», print «b» )"), "true true\n0\n"),
+        (after(&both("i64", "i64"), "g()"), "true true\n0\n"),
+        (after(&both("i32", "i32"), "x"), "true true\n0\n"),
+        (after(&both("rational_number", "rational_number"), "2"), "true true\n0\n"),
+    ];
+    let lines = "w := type ( parse_rank = 60, parse = ( print «{tape[1].dyads[1].type == i32} \
+                 {tape[1].dyads[1].gives == i32} {tape[1].dyads[0].gives == void}», \
+                 tape.remove(1), tape[0] = i32 0, tape.is_constructed[0] = true ) ), \
+                 x := i32 3, y := w ( print «a», x + 2 ), 0";
+    cases.push((lines.to_owned(), "false true true\n0\n"));
+    let field = "q := type ( v := pub dyad ?, parse_rank = 60, parse = ( tape[0].type = q, \
+                 tape[0].v = tape[-1], print «{tape[0].v.type == i32} {tape[0].v.gives == i32}», \
+                 tape.remove(-1), tape.is_constructed[0] = true ) ), x := i32 3, y := (x + 2) q, 0";
+    cases.push((field.to_owned(), "false true\n0\n"));
+    let made = "m := type ( lhs := pub i32 ?, output_type := pub static type i32, \
+                run = ( lhs ) ), q := type ( parse_rank = 60, parse = ( tape[0].type = m, \
+                tape[0].lhs = tape[1], tape.is_constructed[0] = true, tape.remove(1) ) ), \
+                p := type ( parse_rank = 50, parse = ( print «{tape[-1].type == m} \
+                {tape[-1].type.output_type == i32} {tape[-1].gives == i32}», tape.remove(-1), \
+                tape[0] = i32 1, tape.is_constructed[0] = true ) ), x := i32 3";
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!("{made}, f := fn () -> i32 ( (q x) p ), {compile}f()"),
+            "true true true\n1\n",
+        ));
+        cases.push((
+            format!(
+                "f := fn () -> bool ( x := i32 3, c := true, \
+                 (x + 2).gives == i32 and (x + 2).type != i32 and x.gives == i32 \
+                 and (if c (x) else (x)).gives == i32 and (if c (x) else (x)).type == if \
+                 and ( print «a», x ).gives == i32 and (print «a»).gives == void ), {compile}f()"
+            ),
+            "true\n",
+        ));
+    }
+    cases.push((
+        "f := fn (a := dyad ?) -> type ( a.gives ), x := i32 3, print «{f(x) == i32} {f(i64 4) == i64}»"
+            .to_owned(),
+        "true true\n",
+    ));
+    assert_runs(&cases);
+    let (code, _, stderr) = run_line(&after("{tape[-1].gives}", "( if c (i32 1), i64 2 )"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("give different types"), "stderr: {stderr}");
 }
 
 #[test]
@@ -8367,7 +8453,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         (field("tape[0].v = tape[-1] + 1") + ", x := i32 7, x sq", "8"),
         (field("tape[0].v = w(w(tape[-1]))") + ", x := i32 7, x sq", "9"),
         (
-            sq("+.parse_rank - 1", "if tape[-1].type == i32 ( tape[0].v = w(tape[-1]) )")
+            sq("+.parse_rank - 1", "if tape[-1].gives == i32 ( tape[0].v = w(tape[-1]) )")
                 + ", x := i32 7, x + 1 sq",
             "9",
         ),

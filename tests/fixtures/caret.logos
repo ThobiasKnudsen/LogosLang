@@ -25,7 +25,7 @@
     parse_rank = *.parse_rank + 1,
     associativity = right,
     parse = (
-        tape[0].type = get_mint(tape[-1].type),
+        tape[0].type = get_mint(tape[-1].gives),
         tape[0].lhs = tape[-1],
         tape[0].rhs = tape[1],
         tape.is_constructed[0] = true,
