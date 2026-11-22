@@ -362,7 +362,7 @@ impl Places {
 /// rewritten as the offset into the target: a native's entry at its byte in `entries`, and any
 /// other address found by comparing `a` with `b`, the same part of another start, as a word that
 /// moved with its part. A word the two share is data, whatever its value; a byte that differs
-/// between them and lies in no site is refused. Stand-in for #548.
+/// between them and lies in no site is refused: stand-in for #548.
 fn relocate(
     part: &str,
     a: &mut [u8],
