@@ -74,10 +74,10 @@ error.needs_float := «a power needs a float result»,
     parse_rank = *.parse_rank + 1,
     associativity = right,
     parse = (
-        exponent := type if tape[1].gives ⊆ i64 (i64) else (tape[1].gives),
+        exponent := type if (tape[1].gives ⊆ i64) (i64) else (tape[1].gives),
         tape[0].type = get_mint(tape[-1].gives, exponent),
         tape[0].lhs = tape[-1],
-        if tape[1].gives ⊆ i64 (
+        if (tape[1].gives ⊆ i64) (
             tape[0].rhs = i64 (tape[1])
         ) else (
             tape[0].rhs = tape[1]

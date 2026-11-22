@@ -809,7 +809,7 @@ fn a_parse_stamps_a_type_a_function_chooses_and_fills_its_fields_by_name() {
         "v := pub i64 ?",
         "type i64",
         "v * 3",
-        "if tape[1].type ⊆ i64 ( tape[0].v = i64 (tape[1]) )",
+        "if (tape[1].type ⊆ i64) ( tape[0].v = i64 (tape[1]) )",
     );
     for (src, want) in [
         (format!("{q}, x := i32 4, print «{{q x}}»"), "8"),
@@ -867,7 +867,7 @@ fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
 fn a_chooser_hands_its_cell_to_a_type_minted_at_run() {
     let src = "mk := fn (t := type ?) -> type ( type ( parse = ( tape.is_constructed[0] = true ) ) ), \
                c := type ( parse_rank = fn.parse_rank, associativity = right, parse = ( \
-                 if tape[1].type != type abort «no», t := type tape[1], tape[0] = mk(t), tape.remove(1) ) ), \
+                 if (tape[1].type != type) abort «no», t := type tape[1], tape[0] = mk(t), tape.remove(1) ) ), \
                x := type c i32, x";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -1122,17 +1122,17 @@ fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
         )
     };
     for (src, expect) in [
-        (q("u64", "if not tape[1].dyads[0].type ⊆ u64 abort «no», tape[0].v = tape[1].dyads[0] + 1") + ", x := q [5], x.v", "6"),
+        (q("u64", "if (not tape[1].dyads[0].type ⊆ u64) abort «no», tape[0].v = tape[1].dyads[0] + 1") + ", x := q [5], x.v", "6"),
         (q("i32", "if (tape[1].dyads[1].type == i32) ( tape[0].v = tape[1].dyads[1] * 2 ) else ( tape[0].v = i32 0 )") + ", x := q [5, i32 7], x.v", "14"),
-        (q("u8", "if tape[1].dyads[0].type ⊆ u8 ( tape[0].v = tape[1].dyads[0] ) else ( tape[0].v = u8 1 )") + ", x := q [300], x.v", "1"),
-        (q("i32", "s := mut i32 0, for i in 0..tape[1].dyads.size ( if not tape[1].dyads[i].type ⊆ i32 abort «no», s = s + tape[1].dyads[i] ), tape[0].v = s") + ", x := q [4, 5, 6], x.v", "15"),
-        (q("u64", "if not tape[1].type ⊆ u64 abort «no», tape[0].v = tape[1] * 3") + ", x := q 5, x.v", "15"),
+        (q("u8", "if (tape[1].dyads[0].type ⊆ u8) ( tape[0].v = tape[1].dyads[0] ) else ( tape[0].v = u8 1 )") + ", x := q [300], x.v", "1"),
+        (q("i32", "s := mut i32 0, for i in 0..tape[1].dyads.size ( if (not tape[1].dyads[i].type ⊆ i32) abort «no», s = s + tape[1].dyads[i] ), tape[0].v = s") + ", x := q [4, 5, 6], x.v", "15"),
+        (q("u64", "if (not tape[1].type ⊆ u64) abort «no», tape[0].v = tape[1] * 3") + ", x := q 5, x.v", "15"),
         // A line that is no constant is the line itself, read when the field is.
         (
             "y := i32 3, ".to_owned()
                 + &q(
                     "i32",
-                    "if not tape[1].dyads[0].type ⊆ i32 abort «no», tape[0].v = tape[1].dyads[0]",
+                    "if (not tape[1].dyads[0].type ⊆ i32) abort «no», tape[0].v = tape[1].dyads[0]",
                 )
                 + ", x := q [y], x.v",
             "3",
@@ -1145,7 +1145,7 @@ fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
     // A literal that does not fit fails the check.
     let src = q(
         "u64",
-        "if not tape[1].dyads[0].type ⊆ u64 abort «not a u64», tape[0].v = tape[1].dyads[0]",
+        "if (not tape[1].dyads[0].type ⊆ u64) abort «not a u64», tape[0].v = tape[1].dyads[0]",
     ) + ", x := q [-5]";
     let out = logos().arg(&src).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1164,7 +1164,8 @@ fn a_typed_field_read_through_a_name_gives_its_value_on_both_tiers() {
     let f = |ty: &str, body: &str, read: &str| {
         format!("{}, f := fn () -> {ty} ( x := q [5], {read} )", q(ty, body))
     };
-    let checked = "if not tape[1].dyads[0].type ⊆ u64 abort «no», tape[0].v = tape[1].dyads[0] + 1";
+    let checked =
+        "if (not tape[1].dyads[0].type ⊆ u64) abort «no», tape[0].v = tape[1].dyads[0] + 1";
     for (src, want) in [
         (f("u64", checked, "x.v"), "6"),
         (f("u64", "tape[0].v = 5 + 1", "x.v + x.v"), "12"),
@@ -1196,7 +1197,7 @@ fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
              parse_rank = 61, parse = ( \
                if (tape[0].type == type) ( tape[0].type = q, tape[0].n = tape[1], tape.remove(1) ) \
                else ( if (tape[1].type == square_brackets) ( \
-                 if not tape[1].dyads[0].type ⊆ u64 abort «no», \
+                 if (not tape[1].dyads[0].type ⊆ u64) abort «no», \
                  tape[0] = tape[0].get(tape[1].dyads[0]), tape.remove(1) ) ), \
                tape.is_constructed[0] = true ) ), x := q u64 10, y := q u64 20";
     for (tail, expect) in [
@@ -3925,14 +3926,14 @@ fn a_constructor_writes_its_ifs_without_brackets() {
 }
 
 #[test]
-fn an_inclusion_ends_a_bare_if_condition_as_a_comparison_does() {
-    let src = "x := u8 3, if x.type ⊆ u16 print «inside», \
-               if not x.type ⊆ i8\n    print «outside» else print «inside», 7";
+fn an_inclusion_of_a_type_gets_brackets_as_a_comparison_does() {
+    let src = "x := u8 3, if (x.type ⊆ u16) print «inside», \
+               if (not x.type ⊆ i8)\n    print «outside» else print «inside», 7";
     let out = logos().args([src]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "inside\noutside\n7\n");
     let src =
-        "y := i8 3, if not y.type ⊆ u64\n    abort «the index type is not within the size type»";
+        "y := i8 3, if (not y.type ⊆ u64)\n    abort «the index type is not within the size type»";
     let out = logos().args([src]).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -3949,7 +3950,7 @@ fn a_condition_ending_in_a_type_is_bracketed_before_a_name_body() {
         .unwrap();
     assert!(!out.status.success(), "the type takes `y`: {}", String::from_utf8_lossy(&out.stdout));
     let src = "y := mut i32 0, t := type f32, \
-               if (t == f64) y = 1 else if (t == f32) y = 2 else y = 3, y";
+               if (t == f64) (y = 1) else if (t == f32) (y = 2) else (y = 3), y";
     let out = logos().args([src]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n");
@@ -3958,7 +3959,8 @@ fn a_condition_ending_in_a_type_is_bracketed_before_a_name_body() {
 #[test]
 fn a_condition_ending_in_a_member_ends_before_its_body() {
     for src in [
-        "x := i32 3, if i32 == x.type ( print «yes» ), 7",
+        // A type read through a member takes the `(` after it, as a type does.
+        "x := i32 3, if (i32 == x.type) ( print «yes» ), 7",
         "if here.scope == here.scope ( print «yes» ), 7",
     ] {
         let out = logos().args([src]).output().unwrap();
@@ -4512,7 +4514,7 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
     let tail = "tape.remove(1), tape.is_constructed[0] = true ) )";
     // After a raising `!=` check, for the rest of the scope; inside an `==` branch.
     for (check, arg) in [
-        ("if tape[1].type != type abort «no», t := type tape[1], print «{g(t) == i64}»,", "i64"),
+        ("if (tape[1].type != type) abort «no», t := type tape[1], print «{g(t) == i64}»,", "i64"),
         ("if (tape[1].type == type) ( print «{g(tape[1]) == i64}» ),", "i64"),
         ("if (tape[1].type != type) ( print «no» ) else print «{g(tape[1]) == u8}»,", "u8"),
     ] {
@@ -4526,8 +4528,8 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
     // Unchecked, or checked and then the tape edited, the cell is checked when the parse runs:
     // a type passes, and anything else is refused where it is written.
     let unchecked = "u := type g(tape[1]), print «{u == i32}»,";
-    let outside = "if tape[1].type == type print «x», u := type g(tape[1]), print «{u == i32}»,";
-    let edited = "if tape[1].type != type abort «no», tape.remove(1), u := type g(tape[1]),";
+    let outside = "if (tape[1].type == type) print «x», u := type g(tape[1]), print «{u == i32}»,";
+    let edited = "if (tape[1].type != type) abort «no», tape.remove(1), u := type g(tape[1]),";
     for (body, arg, refused) in [
         (unchecked, "i32", None),
         (outside, "i32", None),
@@ -4553,7 +4555,7 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
     // A loop edits the tape after the read was checked: the read checks again when it runs.
     let src = format!(
         "{g}, r := type ( parse_rank = fn.parse_rank, parse = ( \
-         if tape[1].type != type abort «no», i := mut i32 0, \
+         if (tape[1].type != type) abort «no», i := mut i32 0, \
          while i < 2 ( u := type g(tape[1]), tape.remove(1), i = i + 1 ), \
          tape.is_constructed[0] = true ) ), r i32 [1]"
     );
@@ -6795,7 +6797,7 @@ fn a_comment_is_a_line_of_the_scope_its_text_is_in() {
     let q = "q := type ( v := pub i32 ?, parse_rank = 61, parse = ( tape[0].type = q, \
              tape[0].v = tape[1].dyads[0], tape.remove(1), tape.is_constructed[0] = true ) )";
     let narrowed = "q := type ( v := pub i32 ?, parse_rank = 61, parse = ( \
-                    tape[0].type = q, if tape[1].dyads[1].type == i32 # «c» \
+                    tape[0].type = q, if (tape[1].dyads[1].type == i32) # «c» \
                     ( tape[0].v = tape[1].dyads[1] * 2 ) else ( tape[0].v = i32 0 ), \
                     tape.remove(1), tape.is_constructed[0] = true ) ), x := q [5, i32 7], x.v";
     let mut rows = vec![
@@ -6871,7 +6873,7 @@ fn a_comment_before_a_bare_condition_s_value_is_read_through() {
         ("if # «a» (true) ( 1 ) else ( u64 0 )".to_owned(), "1\n"),
         ("if # «a» true ( free (1), here.scope.dyads.size ) else ( u64 0 )".to_owned(), "1\n"),
         ("x := i32 3, if x == # «a» i32 3 ( print «yes» ) else ( print «no» )".to_owned(), "yes\n"),
-        ("x := i32 3, if x.type == # «a» i32 ( 10 ) else ( 20 )".to_owned(), "10\n"),
+        ("x := i32 3, if (x.type == # «a» i32) ( 10 ) else ( 20 )".to_owned(), "10\n"),
         (
             "i := mut i32 0, n := mut u64 0, while # «c» i < 1 \
              ( i = i + 1, n = here.scope.dyads.size ), n"
@@ -8694,7 +8696,8 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
              tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )"
         )
     };
-    let field = |body: &str| sq("*.parse_rank + 1", &format!("if (tape[-1].type == i32) ( {body} )"));
+    let field =
+        |body: &str| sq("*.parse_rank + 1", &format!("if (tape[-1].type == i32) ( {body} )"));
     let cell = |body: &str| {
         format!(
             "{w}, sq := type ( parse_rank = *.parse_rank + 1, parse = ( {body}, \
@@ -8721,10 +8724,10 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
              tape.is_constructed[0] = true ) )"
         )
     };
-    let checked_n = counted("if tape[0].n.type ⊆ u64 ( tape[0].m = tape[0].n * 2 )");
+    let checked_n = counted("if (tape[0].n.type ⊆ u64) ( tape[0].m = tape[0].n * 2 )");
     let wide = "p := type ( rhs := i64 ?, output_type := static type i64, run = ( rhs ), \
                 parse_rank = 60, parse = ( tape[0].type = p, \
-                if tape[1].type ⊆ i64 ( tape[0].rhs = i64 (tape[1]) ), \
+                if (tape[1].type ⊆ i64) ( tape[0].rhs = i64 (tape[1]) ), \
                 tape.remove(1), tape.is_constructed[0] = true ) )";
     for (src, want) in [
         // A narrowed line into a number field, at any depth.
@@ -8749,7 +8752,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         (narrowed("tape[0] = tape[-1] + 1") + ", x := i32 7, x sq", "8"),
         (
             cell(
-                "if tape[-1].type ⊆ i32 ( tape[0] = tape[-1] + 1, tape.is_constructed[0] = true )",
+                "if (tape[-1].type ⊆ i32) ( tape[0] = tape[-1] + 1, tape.is_constructed[0] = true )",
             ) + ", 7 sq",
             "8",
         ),
@@ -8769,7 +8772,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         (
             "q := type ( v := u64 ?, output_type := static type u64, run = ( v ), \
              parse_rank = 61, parse = ( tape[0].type = q, \
-             if not tape[1].dyads[0].type ⊆ u64 abort «no», tape[0].v = tape[1].dyads[0] + 1, \
+             if (not tape[1].dyads[0].type ⊆ u64) abort «no», tape[0].v = tape[1].dyads[0] + 1, \
              tape.remove(1), tape.is_constructed[0] = true ) ), q [5]"
                 .to_string(),
             "6",
@@ -8833,11 +8836,13 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         // A `?` field unchecked, or after a write of it or a tape edit, is no number.
         (counted("tape[0].m = tape[0].n * 2") + used, "cannot compute over these operands"),
         (
-            counted("if tape[0].n.type ⊆ u64 ( tape[0].n = 2, tape[0].m = tape[0].n * 2 )") + used,
+            counted("if (tape[0].n.type ⊆ u64) ( tape[0].n = 2, tape[0].m = tape[0].n * 2 )")
+                + used,
             "cannot compute over these operands",
         ),
         (
-            counted("if tape[0].n.type ⊆ u64 ( tape.remove(1), tape[0].m = tape[0].n * 2 )") + used,
+            counted("if (tape[0].n.type ⊆ u64) ( tape.remove(1), tape[0].m = tape[0].n * 2 )")
+                + used,
             "cannot compute over these operands",
         ),
     ] {

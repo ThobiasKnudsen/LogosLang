@@ -919,7 +919,7 @@ fn an_if_needs_no_brackets_in_both_tiers() {
     diff_typed_call(chain, "f(0)", 0);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 2 return 7, n + 1 )", "f(5)", 7);
     diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 2 return 7, n + 1 )", "f(1)", 2);
-    let assign = "fn (n := i32 ?) -> i32 ( k := mut i32 0, if n > 2 k = 1 else k = 2, k )";
+    let assign = "fn (n := i32 ?) -> i32 ( k := mut i32 0, if n > 2 (k = 1) else (k = 2), k )";
     diff_typed_call(assign, "f(5)", 1);
     diff_typed_call(assign, "f(1)", 2);
     // A bare `else` binds to the nearest `if`.
@@ -930,10 +930,10 @@ fn an_if_needs_no_brackets_in_both_tiers() {
 fn an_if_condition_is_its_first_complete_expression() {
     assert_eq!(run_script("m := mut type ?, m = ?, if m != ? (1) else (2)"), 2);
     assert_eq!(run_script("m := mut type ?, m = i32, if m != ? 1 else 2"), 1);
-    // Right of a comparison a `(` is the body, though the identity could take it.
+    // A type takes the `(` after it, so a compared type gets brackets around the condition.
     assert_eq!(run_script("x := i32 1, if (x.type == scope) (10) else (20)"), 20);
     assert_eq!(run_script("x := i32 1, if (x.type == i32) (10) else (20)"), 10);
-    assert_eq!(run_script("x := i32 1, p := &x, if p.type == @i32 (10) else (20)"), 10);
+    assert_eq!(run_script("x := i32 1, p := &x, if (p.type == @i32) (10) else (20)"), 10);
     // A value word is still the type's, and a condition not yet complete keeps its `(`.
     assert_eq!(run_script("x := i32 1, if x == i32 1 (10) else (20)"), 10);
     assert_eq!(run_script("f := fn (a := i32 ?) -> i32 (a), if f(1) == 1 (10) else (20)"), 10);
@@ -955,8 +955,8 @@ fn an_if_condition_is_its_first_complete_expression() {
         ParseError::NonBoolCondition
     );
     // Bare bodies on their own lines, as identities/array.logos writes them.
-    assert_eq!(run_script("x := i32 1,\nif not x.type == i32\n    abort «not i32»,\n5"), 5);
-    assert!(run_script_result("x := i32 1,\nif x.type == i32\n    abort «is i32»,\n5").is_err());
+    assert_eq!(run_script("x := i32 1,\nif (not x.type == i32)\n    abort «not i32»,\n5"), 5);
+    assert!(run_script_result("x := i32 1,\nif (x.type == i32)\n    abort «is i32»,\n5").is_err());
     // A bare branch is a scope, as a bracket is.
     assert!(matches!(script_parse_err("x := i32 1, if x == 1 y := 2, y"), ParseError::Resolve(_)));
     assert_eq!(script_parse_err("if 1 == 1 else 2"), ParseError::Empty);
@@ -1000,11 +1000,11 @@ fn a_comparison_written_in_logos_ends_a_bare_condition() {
     let eq = logos_comparison("i32", "==.parse_rank");
     assert_eq!(run_script(&format!("{eq}x := i32 3, if x ≈ 3 (10) else (20)")), 10);
     assert_eq!(run_script(&format!("{eq}x := i32 3, if x ≈ 4 10 else 20")), 20);
-    let g = "g := fn (y := i32 ?) -> i32 ( n := mut i32 0, while not n ≈ y n = n + 1, n ),\n";
+    let g = "g := fn (y := i32 ?) -> i32 ( n := mut i32 0, while not n ≈ y (n = n + 1), n ),\n";
     assert_eq!(run_script(&format!("{eq}{g}before := g(4), g.compile(), before * 10 + g(4)")), 44);
     let types = logos_comparison("type", "==.parse_rank");
-    assert_eq!(run_script(&format!("{types}x := i32 1, if x.type ≈ i32 (10) else (20)")), 10);
-    assert_eq!(run_script(&format!("{types}x := i32 1, if x.type ≈ scope (10) else (20)")), 20);
+    assert_eq!(run_script(&format!("{types}x := i32 1, if (x.type ≈ i32) (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{types}x := i32 1, if (x.type ≈ scope) (10) else (20)")), 20);
 }
 
 /// A type standing right of an infix ranked outside the comparisons takes the `(` after it, as
@@ -1023,24 +1023,25 @@ fn a_type_right_of_an_infix_outside_the_comparisons_takes_its_bracket() {
 }
 
 #[test]
-fn a_while_body_needs_no_brackets() {
-    assert_eq!(run_script("i := mut i32 0, while i < 5 i = i + 1, i"), 5);
+fn a_while_body_holding_an_assignment_is_written_in_brackets() {
     assert_eq!(run_script("i := mut i32 0, while i < 5 (i = i + 1), i"), 5);
     assert_eq!(run_script("i := mut i32 0, while (i < 5) (i = i + 1), i"), 5);
     let f = "f := fn (a := i32 ?) -> i32 (a), ";
-    assert_eq!(run_script(&format!("{f}i := mut i32 0, while f(i) < 5 i = i + 1, i")), 5);
+    assert_eq!(run_script(&format!("{f}i := mut i32 0, while f(i) < 5 (i = i + 1), i")), 5);
     assert_eq!(run_script(&format!("{f}i := mut i32 0, while 5 > f(i) (i = i + 2), i")), 6);
-    // Nested, and a bare `while` as a bare `if` branch ending at the `else`.
     assert_eq!(
         run_script(
             "i := mut i32 0, n := mut i32 0,\n\
-             while i < 3 (i = i + 1, j := mut i32 0, while j < 2 j = j + 1, n = n + j), n"
+             while i < 3 (i = i + 1, j := mut i32 0, while j < 2 (j = j + 1), n = n + j), n"
         ),
         6
     );
-    assert_eq!(run_script("i := mut i32 0, if i == 0 while i < 3 i = i + 1 else i = 9, i"), 3);
+    assert_eq!(
+        run_script("i := mut i32 0, if i == 0 (while i < 3 (i = i + 1)) else (i = 9), i"),
+        3
+    );
     assert_eq!(script_parse_err("while 1 2"), ParseError::NonBoolCondition);
-    diff_nullary_fn("fn () -> i32 ( i := mut i32 0, while i < 5 i = i + 1, i )", 5);
+    diff_nullary_fn("fn () -> i32 ( i := mut i32 0, while i < 5 (i = i + 1), i )", 5);
     diff_nullary_fn(
         "fn () -> i32 ( a := mut i32 0, i := mut i32 0, while i < 5 ( a = a + i, i = i + 1 ), a )",
         10,
