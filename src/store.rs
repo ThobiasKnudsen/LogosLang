@@ -89,9 +89,9 @@ pub struct Store {
     /// The lines held for the run, each behind its `waiting` node.
     #[allow(clippy::vec_box)]
     lines: Vec<Box<HeldLine>>,
-    /// The entry of every callable minted over native code: what a start graph writes as an
-    /// offset into the binary.
-    natives: Vec<usize>,
+    /// Every callable leaf minted over native code, whose entry a start graph writes as an offset
+    /// into the binary.
+    natives: Vec<DyadPtr>,
 }
 
 /// A store's parts besides its arena, as a start graph carries them (›The seed carries its start
@@ -106,7 +106,7 @@ pub(crate) struct Sides<'a> {
     pub(crate) texts: Vec<(&'a [u8], DyadPtr)>,
     pub(crate) tapes: Vec<&'a ParsingTape>,
     pub(crate) lines: Vec<&'a HeldLine>,
-    pub(crate) natives: &'a [usize],
+    pub(crate) natives: &'a [DyadPtr],
 }
 
 /// What a start graph rebuilds a store from: the arena's bytes, already at their new base, and the
@@ -118,7 +118,7 @@ pub(crate) struct Rebuilt {
     #[cfg(test)]
     pub(crate) node_list: Vec<DyadPtr>,
     pub(crate) texts: Vec<(Box<[u8]>, DyadPtr)>,
-    pub(crate) natives: Vec<usize>,
+    pub(crate) natives: Vec<DyadPtr>,
 }
 
 /// The store's size, counted by hand: malloc's own per-block overhead is left out.
@@ -207,8 +207,8 @@ impl Store {
         ptr
     }
 
-    pub(crate) fn note_native(&mut self, entry: usize) {
-        self.natives.push(entry);
+    pub(crate) fn note_native(&mut self, leaf: DyadPtr) {
+        self.natives.push(leaf);
     }
 
     /// The arena's bytes in use: every node and what hangs off them.
