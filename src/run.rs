@@ -495,8 +495,8 @@ pub(crate) struct Host {
     /// Parses a line that waits for the run (`identities::waiting`) over the nodes its `dyad`
     /// names hold now, yielding the node to run.
     pub(crate) parse_waiting: unsafe fn(*mut (), DyadPtr) -> Result<i64, RunError>,
-    /// Reads the cell `k` right of a tape's center, or its type, as the parse reads what an
-    /// operation takes, yielding the node it stands for.
+    /// Reads the cell `k` right of a tape's center, for itself, its type or what it gives, as the
+    /// parse reads what an operation takes, yielding the node it stands for.
     pub(crate) read_tape: unsafe fn(
         *mut (),
         *mut crate::parse::ParsingTape,

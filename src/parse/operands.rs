@@ -34,8 +34,12 @@ enum Taker {
 pub(crate) enum TapeRead {
     /// The cell, `tape[k]`: a name in it read as every reader of an operand reads one.
     Cell,
-    /// Its type, `tape[k].type`: the cell read as an operation reads its operand.
+    /// The node whose own type `tape[k].type` is: the name read as for `Cell`, a `dyad` read
+    /// through to the node it holds.
     Type,
+    /// The node whose type `tape[k].gives` is what it gives: the cell, a bracket too, read as an
+    /// operation reads its operand.
+    Gives,
 }
 
 impl<'a> Parser<'a> {
@@ -477,11 +481,14 @@ impl<'a> Parser<'a> {
         self.as_operand(cell)
     }
 
-    /// What a running constructor reads at `k` of its tape: a bracket, whose lines it reads, and
-    /// a cell that is no operand, an identity still to be built, as they stand; the tape's `void`
-    /// node past its reach (›A `tape[k]` read past the lexed frontier lexes on demand for every
-    /// constructor‹ [[R231]]); any other cell as an operation takes its operand, `tape[k]` by its
-    /// name read alone and `tape[k].type` by the whole read.
+    /// What a running constructor reads at `k` of its tape: a cell that is no operand, an
+    /// identity still to be built, as it stands, and so does a bracket, whose lines it reads,
+    /// unless it asks what the bracket gives; the tape's `void` node past its reach (›A `tape[k]`
+    /// read past the lexed frontier lexes on demand for every constructor‹ [[R231]]); any other
+    /// cell as an operation takes its operand, `tape[k]` by its name read alone, `tape[k].type`
+    /// read through a `dyad` to the node it holds, and `tape[k].gives` by the whole read
+    /// (›`.gives` reads the type a node gives when it runs, on any node; `.type` stays the node's
+    /// own type‹ [[R387]]).
     pub(crate) fn read_tape(
         &mut self,
         tape: &mut ParsingTape,
@@ -492,12 +499,16 @@ impl<'a> Parser<'a> {
         let Some(cell) = tape.at(k).copied() else { return Ok(types.tape.nothing) };
         // SAFETY: a lexed or built cell holds a dyad from the store.
         let bracket = unsafe { crate::identities::tape::bracket_kind(types, cell.dyad) }.is_some();
-        if bracket || !self.is_operand_cell(&cell) {
+        if !self.is_operand_cell(&cell) || bracket && read != TapeRead::Gives {
             return Ok(cell.dyad);
         }
         match read {
             TapeRead::Cell => self.name_read(cell, Taker::Parse),
             TapeRead::Type => {
+                let name = self.name_read(cell, Taker::Parse)?;
+                self.read_through_value(tape, k, name)
+            }
+            TapeRead::Gives => {
                 Ok(self.operands(tape, [k], Taker::Parse)?.map_or(cell.dyad, |[operand]| operand))
             }
         }
