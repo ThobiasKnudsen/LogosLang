@@ -118,16 +118,6 @@ pub(crate) unsafe fn output_type_of(t: DyadPtr) -> Option<DyadPtr> {
     is_mint(t).then(|| meta::mint_output_of(t))
 }
 
-/// The field `name` of a node of the mint `t` that lives on the mint: `output_type`, the one a
-/// program reads there (›`x.type` reads the type word of the node a name or an expression stands
-/// for‹ [[R279]]). `None` when `t` is no mint or keeps no such field.
-///
-/// # Safety
-/// As `is_mint`.
-pub(crate) unsafe fn static_field(t: DyadPtr, name: &str) -> Option<DyadPtr> {
-    output_type_of(t).filter(|t| name == STATIC_FIELD && !t.is_null())
-}
-
 /// What every node of the mint `t` runs, a built-in operation's or the instruction a mint made in
 /// Logos keeps; `None` for any other type.
 ///

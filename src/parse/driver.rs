@@ -4,7 +4,6 @@
 //! The segment driver: lex a segment whole, construct it highest parse_rank first, and
 //! hand out the items; which constructor a cell wakes and how a Logos constructor runs.
 
-use super::operands::Before;
 use super::*;
 use crate::dyad;
 
@@ -596,6 +595,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(), ParseError> {
         let own = tape.mark();
         let edits = tape.edits();
+        let taken = tape.taken_mark();
         let logos = self.is_logos_ctor(id);
         // Dispatching the cell's identity is the body's read of its name: a
         // callee, an operator, a keyword alike.
@@ -609,11 +609,13 @@ impl<'a> Parser<'a> {
         self.cx.reader = reader;
         self.cx.discovering = was;
         let outcome = outcome?;
+        let taken = tape.taken_since(taken);
         // Removed itself: the splice is the outcome.
         let Some(cell) = tape.cell_at_mark(own).copied() else {
             return Ok(());
         };
         tape.restore(own);
+        self.runs_moved_to(&taken, cell.start);
         // The driver's rule (DESIGN ›Execution is function application‹): flag
         // true, done; flag false and another identity, its turn; flag false and
         // the same identity, the checked error. Any constructor, built-in or written in Logos,
@@ -1095,12 +1097,8 @@ impl<'a> Parser<'a> {
     ) -> Result<Constructed, ParseError> {
         // A constructor runs now, by nature, so what stands before it runs first, but its left
         // operand, which it reads as written (›How a Logos constructor builds its node‹ [[R362]]).
-        // Where a part before it cannot run first yet, only the lines before its own run:
-        // stand-in for #379.
         let from = tape.at(-1).or(tape.at(0)).map_or(self.cx.pos, |c| c.start);
-        if let Before::Waits(_) = self.ran_first(tape, from)? {
-            self.drain()?;
-        }
+        self.run_first(tape, from)?;
         // Its run is a call: a use of every outer name its body reads.
         if let Err(e) = self.check_call_reads(f) {
             if let Some(c) = tape.at(0) {
@@ -1117,7 +1115,8 @@ impl<'a> Parser<'a> {
         let call = build_call(self.rt.store, f, &[handle, this_arg]);
         // Inside the call, `caller.scope` reads the pass's position.
         let outer = self.rt.enter_constructor(tape);
-        self.tape_hosts.push(self.outer.len());
+        self.tape_hosts
+            .push(super::Handed { outer: self.outer.len(), frames: self.rt.frame_depth() });
         // SAFETY: `call` was just built into the store; the tape and the store are reached only through the natives until `run` returns.
         let out = unsafe { self.run_on_pass(call) };
         self.tape_hosts.pop();
@@ -1142,7 +1141,7 @@ impl<'a> Parser<'a> {
         parser.on_tape_host(|p| p.cell_at(tape, k).map(|_| ()))
     }
 
-    /// A Logos constructor's `tape[k]` or `tape[k].type` ([`Parser::read_tape`]).
+    /// A Logos constructor's `tape[k]`, `tape[k].type` or `tape[k].gives` ([`Parser::read_tape`]).
     ///
     /// # Safety
     /// As `lex_on`.
@@ -1158,11 +1157,13 @@ impl<'a> Parser<'a> {
         node.map(|d| d as i64).map_err(|e| crate::run::RunError::Parse(Box::new(e)))
     }
 
-    /// `f` in the sub-parse the running constructor's tape was handed out in: a read made while
-    /// a line of the constructor is parsed as it runs reads the tape's source, not that line's.
+    /// `f` in the sub-parse and the frame the running constructor's tape was handed out in: a
+    /// read made while a line of the constructor is parsed as it runs reads the tape's source,
+    /// not that line's, and a place of the tape's line, a local of the call it runs in, is read
+    /// in that call's frame, not the constructor's.
     fn on_tape_host<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        match self.tape_hosts.last().copied().filter(|&at| at < self.outer.len()) {
-            Some(at) => f(&mut *TapeHost::new(self, at).0),
+        match self.tape_hosts.last().copied() {
+            Some(handed) => f(&mut *TapeHost::new(self, handed).parser),
             None => f(self),
         }
     }

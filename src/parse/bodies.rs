@@ -2366,18 +2366,39 @@ impl<'a> Parser<'a> {
     }
 
     /// `cell` was just built where the pass runs a line once it has parsed it: a node that runs,
-    /// a call or an operator, runs only then.
+    /// a call or an operator, runs only then. A node that runs nothing holds nothing that runs, so
+    /// what the line noted inside it, the cells it took among it, left the line.
     pub(super) fn note_runs(&mut self, cell: &Cell) {
         use crate::identities::read::{read_kind, Read};
         if !self.in_pass_order() {
             return;
         }
+        let open = self.cx.open.last_mut().expect("a node is built in an open scope");
         // SAFETY: a constructed cell holds null or a node from the store.
-        if !matches!(unsafe { read_kind(self.types, cell.dyad) }, Read::Executable(_)) {
+        if matches!(unsafe { read_kind(self.types, cell.dyad) }, Read::Executable(_)) {
+            open.runs.push(cell.start);
+        } else {
+            open.runs.retain(|&s| !holds_offset((cell.start, cell.end()), s));
+        }
+    }
+
+    /// A constructor took `taken` off the tape into its own cell, which starts at `to`, each with
+    /// where the cell after it started: what the line noted as running inside them, from where
+    /// each starts to there, runs where that cell stands, or not at all.
+    pub(super) fn runs_moved_to(&mut self, taken: &[(Cell, usize)], to: usize) {
+        let source = self.cx.source;
+        let spans: Vec<(usize, usize)> = taken
+            .iter()
+            .filter_map(|(c, until)| c.span_in(source).map(|(start, end)| (start, end.max(*until))))
+            .collect();
+        if spans.is_empty() {
             return;
         }
         let open = self.cx.open.last_mut().expect("a node is built in an open scope");
-        open.runs.push(cell.start);
+        for s in open.runs.iter_mut().filter(|s| spans.iter().any(|&span| holds_offset(span, **s)))
+        {
+            *s = to;
+        }
     }
 
     /// What the line being parsed noted as running before `at` runs inside the node built at
@@ -2893,4 +2914,10 @@ impl<'a> Parser<'a> {
             .retain(|&name| reached.contains(&name) && unsafe { ended_at_run(rt, name) });
         self.end_earlier_holds()
     }
+}
+
+/// Whether the source `start..end` holds `offset`; its start always does, so a cell of no length
+/// holds the notes moved to it.
+fn holds_offset((start, end): (usize, usize), offset: usize) -> bool {
+    offset == start || (start <= offset && offset < end)
 }

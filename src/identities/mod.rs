@@ -30,6 +30,7 @@ pub(crate) mod binary;
 pub(crate) mod bool_mod;
 pub(crate) mod by_copy;
 pub(crate) mod callable;
+mod carried;
 mod colon;
 mod comment;
 mod convert;
@@ -189,6 +190,8 @@ pub struct Core {
     pub tape: tape::TapeIds,
     pub hashmap: hashmap::HashmapIds,
     pub type_mint: type_mint::Members,
+    /// The section the files the seed carries stand in, whose names live for the run.
+    pub carried: DyadPtr,
     /// The operations written in Logos, each with the native version whose name it took.
     pub written: Vec<written::Replaced>,
     pub(crate) instructions: instruction::Instructions,
@@ -580,6 +583,7 @@ impl Core {
             tape,
             hashmap,
             type_mint: type_mint::Members::unread(),
+            carried: std::ptr::null_mut(),
             written: Vec::new(),
             instructions,
             held_type,
@@ -624,9 +628,11 @@ impl Core {
             ops: op_leaves,
             lower,
         };
-        core.type_mint = type_mint::load(store, trie, &core);
+        core.carried = carried::section(store, &core);
+        core.type_mint = type_mint::load(store, trie, &core, core.carried);
         type_mint::keep_early(store, &core);
-        core.written = written::load(store, trie, &core);
+        core.error = error::load(store, trie, &core, core.carried);
+        core.written = written::load(store, trie, &core, core.carried);
         core
     }
 
@@ -634,12 +640,6 @@ impl Core {
     /// any other identity.
     pub(crate) fn native_of(&self, written: DyadPtr) -> Option<DyadPtr> {
         self.written.iter().find(|r| r.written == written).map(|r| r.native)
-    }
-
-    /// Whether `scope` is the scope of a file the seed read at its start, whose names live for
-    /// the run.
-    pub(crate) fn is_seed_file(&self, scope: DyadPtr) -> bool {
-        scope == self.type_mint.file || self.written.iter().any(|r| r.file == scope)
     }
 
     /// Each opener with the closer that ends its bracket: `( )`, `[ ]` and `{ }`, one mechanism
@@ -1501,6 +1501,7 @@ pub(crate) unsafe fn commit_fn_body(
             return Ok(leaf);
         }
         let leaf = if owned { copy::taken(store, types, leaf) } else { leaf };
+        let leaf = union::filled(store, types, output, leaf)?;
         // The caller holds what the call gives.
         let landed = land_held(store, types, leaf, output, dyad_place::Holder::Owner)?;
         if by_bytes {

@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::dyad;
-use crate::identities::tape::NodeMember;
+use crate::identities::tape::{NodeMember, TypeRead};
 
 /// The member right of `.`: the name's span in the source, and the `[i]` or `(…)` cell
 /// some reads take after it.
@@ -407,10 +407,8 @@ impl<'a> Parser<'a> {
         let Some(index) = index else {
             // A `static` member is one place read through every node, so
             // `tape[0].element_type` is the member itself, known here.
-            let mut members = ScopeStack::new();
-            members.push(body);
-            if let Ok(r) = members.resolve(self.trie, name) {
-                return Ok(r.identity);
+            if let Some((identity, _)) = self.static_in(body, name) {
+                return Ok(identity);
             }
             self.cx.pos = at;
             return Err(ParseError::NoSuchField(Box::new(name.to_string())));
@@ -463,8 +461,7 @@ impl<'a> Parser<'a> {
 
     /// A field of a node reached by path, itself reached (DESIGN ›The dyad's
     /// read surface‹: a node's fields get you more nodes): a scope's `dyads`
-    /// and `dyads[k]`, an array's `size`, an operator node's operand by its
-    /// role. `None` leaves the read to the rules for any `@dyad` value.
+    /// and `dyads[k]`, an array's `size`. `None` leaves the read to [`Self::node_member`].
     ///
     /// # Safety
     /// `node` must be a node from the store.
@@ -497,7 +494,7 @@ impl<'a> Parser<'a> {
             let size = array::items(node).len() as i64;
             return Ok(Some((self.scalar_value(NumType::U64, size), 0)));
         }
-        Ok(self.node_field(node, name)?.map(|n| (n, 0)))
+        Ok(None)
     }
 
     /// Field `name` of a node, as [`Parser::path_operand`] yields it: an
@@ -538,15 +535,33 @@ impl<'a> Parser<'a> {
             _ => None,
         };
         let Some(i) = slot else {
-            return Ok(
-                crate::identities::mint::static_field(ty, name).map(|f| self.path_operand(f))
-            );
+            return Ok(None);
         };
         let field = *(value as *const DyadPtr).add(i);
         if field.is_null() {
             return Err(ParseError::BadReflectRead);
         }
         Ok(Some(self.path_operand(field)))
+    }
+
+    /// `node.name`, where `.` reads `node` as itself: a field of the node, else a `static` member
+    /// of its type, the place `t.name` reads through the type (›A type body describes one level‹
+    /// [[R222]]). `None` when neither has `name`.
+    ///
+    /// # Safety
+    /// `node` must be a node from the store.
+    unsafe fn node_member(
+        &mut self,
+        tape: &mut ParsingTape,
+        node: DyadPtr,
+        left: &Cell,
+        name: &str,
+        call: Option<Vec<DyadPtr>>,
+    ) -> Result<Option<(DyadPtr, usize)>, ParseError> {
+        if let Some(field) = self.node_field(node, name)? {
+            return Ok(Some((field, 0)));
+        }
+        self.static_member_access(tape, node, left, dyad::ty(node), name, call)
     }
 
     /// Whether a read of `t`'s field `name` moves a whole value of its declared type
@@ -710,20 +725,20 @@ impl<'a> Parser<'a> {
             // member reads then need.
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
-            if name == "type" {
+            if let Some(which) = TypeRead::of_member(name) {
                 // A name's type is read with its gate node, a field's too (›`x.type` reads the
                 // type word of the node a name or an expression stands for‹ [[R279]]).
                 let named = match left.target.1 {
                     field if field.is_null() => self.cx.member_root,
                     field => field,
                 };
-                if !named.is_null() {
+                if which == TypeRead::Own && !named.is_null() {
                     let word = crate::identities::gate::word_of_name(self.types, named);
                     if crate::identities::gate::is_node(word) {
                         self.cx.member_gates = dyad::ty(word);
                     }
                 }
-                return self.type_read(lhs).map(|t| (t, 0));
+                return self.type_read(lhs, which).map(|t| (t, 0));
             }
             // A member the read of a tape node answers where it is written; any other one the
             // caller read through to the node the tape holds ([`Self::held_tape_node`]).
@@ -790,13 +805,9 @@ impl<'a> Parser<'a> {
             }
             // An operator expression is read through its own type alone, never through what it
             // gives.
-            if let Some(node) = self.operator_node(lhs) {
-                if let Some(field) = self.node_field(node, name)? {
-                    return Ok((field, 0));
-                }
-                let ty = dyad::ty(node);
+            if let Some(node) = crate::identities::read::operator_node(self.types, lhs) {
                 return self
-                    .static_member_access(tape, node, &left, ty, name, call)?
+                    .node_member(tape, node, &left, name, call)?
                     .ok_or(ParseError::BadReflectRead);
             }
             // A field whose declared type gives a value is read when the code runs, even through a
@@ -828,6 +839,9 @@ impl<'a> Parser<'a> {
                     return Ok(applied.map_or((member, 0), |node| (node, 1)));
                 }
                 if let Some(read) = self.reached_member(node, name, index, key.is_some())? {
+                    return Ok(read);
+                }
+                if let Some(read) = self.node_member(tape, node, &left, name, call.clone())? {
                     return Ok(read);
                 }
             }
@@ -1155,7 +1169,6 @@ impl<'a> Parser<'a> {
         let path = std::mem::take(&mut self.cx.member_path);
         let gates = std::mem::replace(&mut self.cx.member_gates, std::ptr::null_mut());
         let (node, consumed) = access?;
-        let end = tape.at(1 + consumed as isize).map_or(nstart + nlen, Cell::end);
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
@@ -1166,7 +1179,6 @@ impl<'a> Parser<'a> {
             crate::identities::array::build(self.rt.store, self.types.array_, &path)
         };
         tape.place(node);
-        tape.span_center(left.start, end);
         let cell = tape.at_mut(0).expect("placed above");
         cell.path = path;
         cell.gates = gates;
@@ -1223,11 +1235,9 @@ impl<'a> Parser<'a> {
             };
             crate::identities::union::build_holds(self.rt.store, self.types, lhs, union, member)
         };
-        let end = tape.at(1).map_or(nstart + nlen, Cell::end);
         tape.remove(1);
         tape.remove(-1);
         tape.place(node);
-        tape.span_center(left.start, end);
         Ok(Constructed::Gave)
     }
 
@@ -1867,15 +1877,17 @@ impl<'a> Parser<'a> {
     /// `.type`, read on every value (DESIGN ›`x.type` reads the type word of the node a name or
     /// an expression stands for‹): a tape cell's when the constructor runs, a field's declared
     /// type through `tape[0]`, a node reached by path or an operator expression its own type word,
-    /// a view the viewed node's, a name its own and a call the type it returns.
+    /// a view the viewed node's, a name its own and a call the type it returns. `.gives` is read
+    /// on every value the same way, as the type the node gives when it runs (›`.gives` reads the
+    /// type a node gives when it runs, on any node; `.type` stays the node's own type‹ [[R387]]).
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store.
-    unsafe fn type_read(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+    unsafe fn type_read(&mut self, lhs: DyadPtr, which: TypeRead) -> Result<DyadPtr, ParseError> {
         use crate::identities::{dyad_place, read, tape, this};
         let types = self.types;
         if dyad::ty(lhs) == types.tape.cell_dyad_at || tape::is_cell_read(types, lhs) {
-            return Ok(tape::build_cell_type(self.rt.store, types, lhs));
+            return Ok(tape::build_cell_type(self.rt.store, types, lhs, which));
         }
         // A `dyad` field of the parse's own node has the type of the node it holds, read when
         // the constructor runs (›A `dyad ?` place is transparent: a placeholder for a new node
@@ -1888,47 +1900,34 @@ impl<'a> Parser<'a> {
                 Binding::read(this::field_binding_of(types, lhs)).dyad,
             );
             return Ok(if declared == types.dyad_ {
-                this::build_field_type(self.rt.store, types, lhs)
+                this::build_field_type(self.rt.store, types, lhs, which)
             } else {
                 declared
             });
         }
         if let Some(node) = self.known_node(lhs, self.cx.member_root) {
-            return Ok(types.type_of(node));
+            return match which {
+                TypeRead::Own => Ok(types.type_of(node)),
+                TypeRead::Gives => read::gives(types, node),
+            };
         }
-        if dyad::ty(lhs) == types.dyad_ {
+        if which == TypeRead::Own && dyad::ty(lhs) == types.dyad_ {
             return self.view_member(lhs, "type");
         }
         if dyad_place::known_only_at_run(types, lhs) {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }
-        if let Some(node) = self.operator_node(lhs) {
-            return Ok(dyad::ty(node));
-        }
-        let t = read::value_type(types, lhs)?;
+        let t = match which {
+            TypeRead::Own => match read::operator_node(types, lhs) {
+                Some(node) => return Ok(dyad::ty(node)),
+                None => read::value_type(types, lhs)?,
+            },
+            TypeRead::Gives => read::gives(types, lhs)?,
+        };
         if t.is_null() {
             return Err(ParseError::TypeKnownOnlyAtRun);
         }
         Ok(t)
-    }
-
-    /// The operator expression `node` is, which `.` reads as its node (›`x.type` reads the type
-    /// word of the node a name or an expression stands for‹ [[R279]]), reached through the copy
-    /// that carries its record result (`y mk`): a node that runs, whose type word is a type with a
-    /// `run` body, the one a parse stamped (`x ^ 3`, its type minted by `^`'s chooser), or an
-    /// identity with a parse of its own (`&x`), or a mint of one (`x + 2`). `None` for a call,
-    /// whose type word is a function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and
-    /// which stands for what it returns.
-    ///
-    /// # Safety
-    /// `node` must be a reduced dyad from the store.
-    unsafe fn operator_node(&self, node: DyadPtr) -> Option<DyadPtr> {
-        use crate::identities::{by_copy, meta, mint, read};
-        let node = by_copy::carried(self.types, node);
-        let ty = self.identity_head(mint::origin(dyad::ty(node)))?;
-        let operator = matches!(read::read_kind(self.types, node), read::Read::Executable(_))
-            && (meta::kind_of(ty) == Some(meta::RECORD_TAG) || !meta::constructor_of(ty).is_null());
-        operator.then_some(node)
     }
 
     /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's read surface‹), the
@@ -1950,7 +1949,7 @@ impl<'a> Parser<'a> {
             "type" if named => {
                 let root = std::mem::replace(&mut self.cx.member_root, viewed);
                 let lhs = self.settled_type(types.through(viewed));
-                let t = self.type_read(lhs);
+                let t = self.type_read(lhs, TypeRead::Own);
                 self.cx.member_root = root;
                 t
             }
@@ -1982,10 +1981,6 @@ impl<'a> Parser<'a> {
         use crate::identities::numtype::NumType;
         if meta::kind_of(logos).is_none() {
             return Err(ParseError::BadReflectRead);
-        }
-        // A built-in mint's `static` member, read through the mint as through its nodes.
-        if let Some(field) = crate::identities::mint::static_field(logos, name) {
-            return Ok(self.path_operand(field));
         }
         let operand_kind = matches!(meta::kind_of(logos), Some(meta::TUPLE_TAG | meta::LIST_TAG));
         match name {
@@ -2045,13 +2040,13 @@ impl<'a> Parser<'a> {
                 .rt
                 .store
                 .alloc_head(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
-            _ if self.static_member_of(logos, name).is_some() => {
-                Ok(self.static_member_read(logos, name)?.expect("found just above"))
-            }
-            _ if self.per_node_field_of(logos, name) => {
-                Err(ParseError::PerNodeThroughType(name.to_string()))
-            }
-            _ => Err(ParseError::BadReflectRead),
+            _ => match self.static_member_read(logos, name)? {
+                Some(member) => Ok(member),
+                None if self.per_node_field_of(logos, name) => {
+                    Err(ParseError::PerNodeThroughType(name.to_string()))
+                }
+                None => Err(ParseError::BadReflectRead),
+            },
         }
     }
 
@@ -2076,17 +2071,25 @@ impl<'a> Parser<'a> {
         mint::of(self.rt.store, self.types, t, &key).map(Some).ok_or(ParseError::NoMint)
     }
 
-    /// A `static` member of `logos`, one place stored with the type, read
-    /// through the type or a node alike: the member's own gate decides a
+    /// A `static` member of `logos`, one place stored with the type, read through the type or a
+    /// node alike (›A type body describes one level‹ [[R222]]): the member's own gate decides a
     /// read and a write, since the place is no node's. `None` when `logos` has no such member.
     ///
     /// # Safety
-    /// `logos` must be a type identity node from the store.
+    /// `logos` must be a valid dyad from the store.
     unsafe fn static_member_read(
         &mut self,
         logos: DyadPtr,
         name: &str,
     ) -> Result<Option<DyadPtr>, ParseError> {
+        use crate::identities::mint;
+        // A built-in operation's mint, a stand-in for [[R301]], keeps its one member in its record,
+        // with no scope to resolve it in.
+        if name == mint::STATIC_FIELD {
+            if let Some(output) = mint::output_type_of(logos).filter(|t| !t.is_null()) {
+                return Ok(Some(self.path_operand(output)));
+            }
+        }
         let Some((identity, binding)) = self.static_member_of(logos, name) else {
             return Ok(None);
         };
@@ -2136,7 +2139,7 @@ impl<'a> Parser<'a> {
     /// in the definition body's scope.
     ///
     /// # Safety
-    /// `logos` must be a type identity node from the store.
+    /// `logos` must be a valid dyad from the store.
     unsafe fn static_member_of(&self, logos: DyadPtr, name: &str) -> Option<(DyadPtr, DyadPtr)> {
         use crate::identities::meta;
         if !meta::is_record_type(logos) {
@@ -2146,6 +2149,12 @@ impl<'a> Parser<'a> {
         if body.is_null() {
             return None;
         }
+        self.static_in(body, name)
+    }
+
+    /// The identity and binding of the member `name` a type body `body` declares, resolved in that
+    /// scope alone.
+    fn static_in(&self, body: DyadPtr, name: &str) -> Option<(DyadPtr, DyadPtr)> {
         let mut members = ScopeStack::new();
         members.push(body);
         let r = members.resolve(self.trie, name).ok()?;

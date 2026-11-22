@@ -68,10 +68,8 @@ unsafe fn arithmetic_mint(
     step: &str,
     t: DyadPtr,
 ) -> DyadPtr {
-    let file =
-        core.written.iter().find(|w| w.native == core.plus).expect("the seed writes `+`").file;
     let mut scopes = ScopeStack::new();
-    scopes.push(file);
+    scopes.push(core.carried);
     let arithmetic = scopes.resolve(trie, "arithmetic").expect("the file names its maker").identity;
     let which = instruction::member(core, core.rational, step).expect("`rational_number`'s member");
     type_mint::mint_of(store, core, arithmetic, &[which, t, t], |_| None)

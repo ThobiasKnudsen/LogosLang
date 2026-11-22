@@ -224,6 +224,58 @@ pub(crate) unsafe fn value_type(
     }
 }
 
+/// What `node` gives when it runs, as `.gives` reads it (›`.gives` reads the type a node gives
+/// when it runs, on any node; `.type` stays the node's own type‹ [[R387]]): the type
+/// [`value_type`] works out, `void` where it gives nothing; a value refused anywhere is refused.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn gives(
+    types: &Core,
+    node: DyadPtr,
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    match value_type(types, node) {
+        Err(e) if gives_nothing(&e) => Ok(types.void_),
+        given => given,
+    }
+}
+
+/// The type word of the node `node` is, as `.type` reads it (›`x.type` reads the type word of the
+/// node a name or an expression stands for‹ [[R279]]): an operation's mint, an `if`'s `if`, a
+/// bracket's kind; a value's own type, and a call's the type it returns.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn own_type(types: &Core, node: DyadPtr) -> DyadPtr {
+    let node = types.through(node);
+    if let Some(bracket) = super::tape::bracket_kind(types, node) {
+        return bracket;
+    }
+    match operator_node(types, node) {
+        Some(node) => dyad::ty(node),
+        None => output_type(types, node),
+    }
+}
+
+/// The operation `node` is, read as its node, reached through the copy that carries its record
+/// result (`y mk`): a node that runs, whose type word is a type with a `run` body, the one a parse
+/// stamped (`x ^ 3`, its type minted by `^`'s chooser), or an identity with a parse of its own
+/// (`&x`, an `if`, a bracket), or a mint of one (`x + 2`). `None` for a call, whose type word is a
+/// function or an inner node with no parse (`pt(3, 4)`, `m[k]`), and which stands for what it
+/// returns.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn operator_node(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    let node = super::by_copy::carried(types, node);
+    let ty = super::mint::origin(dyad::ty(node));
+    let kind = if ty.is_null() { None } else { meta::kind_of(ty) };
+    let operator = kind.is_some()
+        && matches!(read_kind(types, node), Read::Executable(_))
+        && (kind == Some(meta::RECORD_TAG) || !meta::constructor_of(ty).is_null());
+    operator.then_some(node)
+}
+
 /// Whether a node gives a value where giving none is allowed, at the echo: a node that gives
 /// nothing gives none, and a value refused anywhere, as an `if` whose arms give two types, is
 /// refused here. DESIGN ›A value is shown as the text its type's `print` slot gives

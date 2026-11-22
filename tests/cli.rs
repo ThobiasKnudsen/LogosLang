@@ -490,6 +490,75 @@ fn a_member_the_tape_s_node_does_not_have_is_refused_as_a_name_s_is() {
     }
 }
 
+/// `m`, a type written in Logos with `static` members and a `run`; `q`, a prefix whose parse makes
+/// a node of `m`; and `p`, a postfix whose parse prints `read` of the node to its left.
+fn static_reader(m_body: &str, read: &str) -> String {
+    format!(
+        "m := type ( lhs := pub i32 ?, {m_body}, run = ( lhs ) ), \
+         q := type ( parse_rank = 60, parse = ( tape[0].type = m, tape[0].lhs = tape[1], \
+         tape.is_constructed[0] = true, tape.remove(1) ) ), \
+         p := type ( parse_rank = 50, parse = ( print «{{{read}}}», tape.remove(-1), \
+         tape[0] = i32 1, tape.is_constructed[0] = true ) )"
+    )
+}
+
+/// A `static` member is one place of its type, read through a node of the type as through the
+/// type's name (›A type body describes one level‹ [[R222]]): a type written in Logos, a plain record
+/// and a built-in operation's mint alike.
+#[test]
+fn a_parse_reads_a_static_member_through_the_node_its_tape_holds() {
+    let statics = "output_type := pub static type i32, k := pub static i32 7, \
+                   f := pub static fn () -> i32 ( 9 )";
+    for (src, printed) in [
+        (format!("{}, x := i32 3, (q x) p", static_reader(statics, "tape[-1].lhs")), "3\n1\n"),
+        (format!("{}, x := i32 3, (q x) p", static_reader(statics, "tape[-1].k")), "7\n1\n"),
+        (
+            format!("{}, x := i32 3, (q x) p", static_reader(statics, "tape[-1].output_type")),
+            "i32\n1\n",
+        ),
+        (format!("{}, x := i32 3, (q x) p", static_reader(statics, "tape[-1].f()")), "9\n1\n"),
+        // The parse runs where its line is parsed, on either tier.
+        (
+            format!(
+                "{}, x := i32 3, f := fn () -> i32 ( (q x) p ), f.compile(), f()",
+                static_reader(statics, "tape[-1].k")
+            ),
+            "7\n1\n",
+        ),
+        (
+            format!(
+                "{}, x := i32 3, print «{{m.k}} {{(q x).k}} {{(q x).type.output_type}}»",
+                static_reader(statics, "0")
+            ),
+            "7 7 i32\n",
+        ),
+        (
+            format!(
+                "w := type ( a := pub i32 ?, k := pub static i32 7 ), {}, x := w(1), x p",
+                static_reader(statics, "tape[-1].k")
+            ),
+            "7\n1\n",
+        ),
+        (
+            format!("{}, x := i32 3, (x + 2) p", static_reader(statics, "tape[-1].output_type")),
+            "i32\n1\n",
+        ),
+        ("print «{(+.mint(i32, i32)).output_type} {(i32 3 + 2).output_type}»".into(), "i32 i32\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+    // The member's own gate decides, through a node as through the type.
+    let hidden = "output_type := pub static type i32, k := static i32 7";
+    for src in [
+        format!("{}, x := i32 3, (q x) p", static_reader(hidden, "tape[-1].k")),
+        format!("{}, m.k", static_reader(hidden, "0")),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert!(code != Some(0) && stderr.contains("`k` is not `pub`"), "{src}: stderr: {stderr}");
+    }
+}
+
 /// A line of the bracket a parse takes is read as its node, as a line a path reaches is: a `:=`
 /// line's `lhs` is the binding it declares, read with `:` and `.` as the name is (›A `:=` node's
 /// fields are `lhs` and `rhs`‹ [[R274]], ›`x.type` reads the type word of the node a name or an
@@ -689,7 +758,8 @@ fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
 }
 
 /// A postfix operator `name` that mints through a function of its own: `get_mint` builds one type
-/// per type `t` of the operand to its left, whose field `a` holds the operand, kept by `type_mint`.
+/// per type `t` the operand to its left gives, whose field `a` holds the operand, kept by
+/// `type_mint`.
 fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
     format!(
         "{name} := type ( \
@@ -698,7 +768,7 @@ fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
          if mint != ? return mint, mint = type ( a := pub t ?, output_type := pub static {output}, \
          run = ( {run} ) ), type_mint.keep(place, mint), mint ), \
          parse_rank = *.parse_rank + 1, associativity = left, \
-         parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1], \
+         parse = ( tape[0].type = get_mint(tape[-1].gives), tape[0].a = tape[-1], \
          tape.is_constructed[0] = true, tape.remove(-1) ) )"
     )
 }
@@ -796,8 +866,8 @@ fn a_fresh_spelling_on_the_tape_is_a_node_of_type_unknown_name() {
     assert!(stderr.contains("this node is not a scope"), "stderr: {stderr}");
 }
 
-/// A multiplication written in Logos: its parse mints from `tape[-1].type` and `tape[1].type`
-/// and takes both sides through `tape[k]`.
+/// A multiplication written in Logos: its parse mints from what its sides give, `tape[-1].gives`
+/// and `tape[1].gives`, and takes both sides through `tape[k]`.
 const TIMES: &str = "⊗ := type ( \
     get_mint := static fn (l := type ?, r := type ?) -> type ( \
     place := type_mint.step(type_mint.step(type_mint.step(0, ⊗), l), r), \
@@ -805,18 +875,25 @@ const TIMES: &str = "⊗ := type ( \
     mint = type ( lhs := pub l ?, rhs := pub r ?, output_type := static type l, \
     run = ( lhs * rhs ) ), type_mint.keep(place, mint), mint ), \
     parse_rank = *.parse_rank, \
-    parse = ( tape[0].type = get_mint(tape[-1].type, tape[1].type), tape[0].lhs = tape[-1], \
+    parse = ( tape[0].type = get_mint(tape[-1].gives, tape[1].gives), tape[0].lhs = tape[-1], \
     tape[0].rhs = tape[1], tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
 
-/// A parse written in Logos reads its operands through `tape[k]` and `tape[k].type` as a built-in
+/// A parse written in Logos reads its operands through `tape[k]` and `tape[k].gives` as a built-in
 /// operation reads them: a dead name is refused (›A dead name takes nothing until `:=` redeclares
 /// it‹ [[R72]]) and noted as a read of the function it is read in, a `dyad` is read through to the
 /// node it gives (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹
-/// [[R293]]), and a value refused anywhere is refused, so `⊗` gives what `*` gives, on both tiers.
+/// [[R293]]), a bracket gives what its lines that give its value give (›A scope's value is what it
+/// evaluates to, and `return` is an optional early exit from the enclosing function‹ [[R207]]),
+/// and a value refused anywhere is refused, so `⊗` gives what `*` gives, on both tiers.
 #[test]
 fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
     let dead = "`n` is dead here: it was moved or freed above";
+    let arms = "the arms of this `if`, or the lines that give this block its value, give different";
     let mut cases = vec![
+        ("x := ( free (1), i32 7 ) OP i32 1, x".to_owned(), Ok("7\n")),
+        ("x := mut i32 0, y := ( x = 10, x ) OP i32 1, y".to_owned(), Ok("10\n")),
+        ("c := true, x := ( if c (i32 1), i32 2 ) OP i32 5, x".to_owned(), Ok("5\n")),
+        ("c := true, x := ( if c (i32 1), i64 2 ) OP i32 1, x".to_owned(), Err(arms)),
         ("n := i32 5, free n, x := n OP n".to_owned(), Err(dead)),
         ("x := dyad (i32, 7) OP dyad (i32, 7), x".to_owned(), Ok("49\n")),
         ("g := fn () -> dyad ( i32 5 ), x := g() OP g(), x".to_owned(), Ok("25\n")),
@@ -837,6 +914,10 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
             format!("f := fn () -> i32 ( dyad (i32, 7) OP dyad (i32, 7) ), {compile}f()"),
             Ok("49\n"),
         ));
+        cases.push((
+            format!("f := fn () -> i32 ( x := mut i32 0, ( x = 10, x ) OP i32 1 ), {compile}f()"),
+            Ok("10\n"),
+        ));
     }
     for (tail, want) in &cases {
         for src in [format!("{TIMES}, {}", tail.replace("OP", "⊗")), tail.replace("OP", "*")] {
@@ -854,10 +935,47 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
     }
 }
 
+/// A parse written in Logos reads its tape in the frame of the call whose line it parses, not in
+/// its own: `tape[k].type` of a `dyad` entry of a `{ … }` declared in a `fn` body is the type of
+/// the node the entry holds (›`x.type` reads the type word of the node a name or an expression
+/// stands for‹ [[R279]]), as it is at the top level, and the parse's own local reads its own frame
+/// again after.
+#[test]
+fn a_parse_written_in_logos_reads_a_local_of_the_call_whose_line_it_parses() {
+    let parse = |k: &str, at: &str| {
+        format!(
+            "{k} := type ( parse_rank = 60, parse = ( n := i32 40, print «{{tape[{at}].type}} {{n}}», \
+             tape.remove({at}), tape[0] = i32 1, tape.is_constructed[0] = true ) )"
+        )
+    };
+    let entry = "m := { d := pub dyad (i64, 3) }";
+    for (src, out) in [
+        (format!("{}, f := fn () -> i32 ( {entry}, m.d k ), f()", parse("k", "-1")), "i64 40\n1\n"),
+        (
+            format!("{}, f := fn () -> i32 ( {entry}, (m.d) k ), f()", parse("k", "-1")),
+            "i64 40\n1\n",
+        ),
+        (format!("{}, {entry}, m.d k", parse("k", "-1")), "i64 40\n1\n"),
+        (format!("{}, f := fn () -> i32 ( {entry}, j m.d ), f()", parse("j", "1")), "i64 40\n1\n"),
+        (
+            format!(
+                "{}, g := fn () -> i32 ( f := fn () -> i32 ( {entry}, m.d k ), f() + 1 ), g()",
+                parse("k", "-1")
+            ),
+            "i64 40\n2\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), out), "{src}: stderr: {stderr}");
+    }
+}
+
 /// What gives no value is the reader's to decide (›A `tape[k]` read past the lexed frontier lexes
-/// on demand for every constructor‹ [[R231]]): a parse written in Logos reads a side that gives
-/// nothing as `void` and a spelling no live name has as `unknown_name`, while a dead name is
-/// refused wherever the parse reads it, `tape[k]` too.
+/// on demand for every constructor‹ [[R231]]): to a parse written in Logos a side that gives
+/// nothing gives `void`, while its own type stays its node's (›`.gives` reads the type a node
+/// gives when it runs, on any node; `.type` stays the node's own type‹ [[R387]]), a spelling no
+/// live name has is an `unknown_name`, and a dead name is refused wherever the parse reads it,
+/// `tape[k]` too.
 #[test]
 fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
     let k = |body: &str, operand: &str| {
@@ -866,11 +984,15 @@ fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
              tape.is_constructed[0] = true ) ), k {operand}"
         )
     };
-    let is = |t: &str| format!("print «{{tape[1].type == {t}}}»");
-    for (operand, t) in
-        [("(print «a»)", "void"), ("(if c (i32 1))", "void"), ("zz", "unknown_name")]
-    {
-        let (code, stdout, stderr) = run_line(&k(&is(t), operand));
+    let read_is = |read: &str, t: &str| format!("print «{{tape[1].{read} == {t}}}»");
+    let is = |t: &str| read_is("type", t);
+    for (operand, read, t) in [
+        ("(print «a»)", "gives", "void"),
+        ("(if c (i32 1))", "gives", "void"),
+        ("(if c (i32 1))", "type", "if"),
+        ("zz", "type", "unknown_name"),
+    ] {
+        let (code, stdout, stderr) = run_line(&k(&read_is(read, t), operand));
         assert_eq!(
             (code, stdout.as_str()),
             (Some(0), "true\ntype\n"),
@@ -890,6 +1012,75 @@ fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
         assert_eq!(code, Some(1), "{src}");
         assert!(stderr.contains("`n` is dead here"), "{src}: stderr: {stderr}");
     }
+}
+
+/// ›`.gives` reads the type a node gives when it runs, on any node; `.type` stays the node's own
+/// type‹ [[R387]]: inside a parse as outside it, `.type` of an operation is its mint, of an `if`
+/// `if` and of a bracket `scope`, while `.gives` of each is what it gives when it runs, worked out
+/// as `:=` works it out (›A scope's value is what it evaluates to, and `return` is an optional
+/// early exit from the enclosing function‹ [[R207]]); a value and a call give their own type.
+#[test]
+fn type_reads_a_nodes_own_type_and_gives_the_type_it_gives() {
+    let after = |reads: &str, operand: &str| {
+        format!(
+            "x := i32 3, c := true, g := fn () -> i64 ( i64 1 ), \
+             v := type ( parse_rank = 60, parse = ( print «{reads}», tape.remove(-1), \
+             tape[0] = i32 0, tape.is_constructed[0] = true ) ), y := {operand} v, 0"
+        )
+    };
+    let both = |own: &str, gives: &str| {
+        format!("{{tape[-1].type == {own}}} {{tape[-1].gives == {gives}}}")
+    };
+    let mut cases = vec![
+        (after(&both("i32", "i32"), "(x + 2)"), "false true\n0\n"),
+        (after("{tape[-1].output_type == i32}", "(x + 2)"), "true\n0\n"),
+        (after("{tape[-1].type.output_type == i32}", "(x + 2)"), "true\n0\n"),
+        (after(&both("if", "i32"), "(if c (x) else (i32 2))"), "true true\n0\n"),
+        (after(&both("scope", "i32"), "( print «a», x )"), "true true\n0\n"),
+        (after(&both("scope", "void"), "( print «a», print «b» )"), "true true\n0\n"),
+        (after(&both("i64", "i64"), "g()"), "true true\n0\n"),
+        (after(&both("i32", "i32"), "x"), "true true\n0\n"),
+        (after(&both("rational_number", "rational_number"), "2"), "true true\n0\n"),
+    ];
+    let lines = "w := type ( parse_rank = 60, parse = ( print «{tape[1].dyads[1].type == i32} \
+                 {tape[1].dyads[1].gives == i32} {tape[1].dyads[0].gives == void}», \
+                 tape.remove(1), tape[0] = i32 0, tape.is_constructed[0] = true ) ), \
+                 x := i32 3, y := w ( print «a», x + 2 ), 0";
+    cases.push((lines.to_owned(), "false true true\n0\n"));
+    let field = "q := type ( v := pub dyad ?, parse_rank = 60, parse = ( tape[0].type = q, \
+                 tape[0].v = tape[-1], print «{tape[0].v.type == i32} {tape[0].v.gives == i32}», \
+                 tape.remove(-1), tape.is_constructed[0] = true ) ), x := i32 3, y := (x + 2) q, 0";
+    cases.push((field.to_owned(), "false true\n0\n"));
+    let made = "m := type ( lhs := pub i32 ?, output_type := pub static type i32, \
+                run = ( lhs ) ), q := type ( parse_rank = 60, parse = ( tape[0].type = m, \
+                tape[0].lhs = tape[1], tape.is_constructed[0] = true, tape.remove(1) ) ), \
+                p := type ( parse_rank = 50, parse = ( print «{tape[-1].type == m} \
+                {tape[-1].type.output_type == i32} {tape[-1].gives == i32}», tape.remove(-1), \
+                tape[0] = i32 1, tape.is_constructed[0] = true ) ), x := i32 3";
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!("{made}, f := fn () -> i32 ( (q x) p ), {compile}f()"),
+            "true true true\n1\n",
+        ));
+        cases.push((
+            format!(
+                "f := fn () -> bool ( x := i32 3, c := true, \
+                 (x + 2).gives == i32 and (x + 2).type != i32 and x.gives == i32 \
+                 and (if c (x) else (x)).gives == i32 and (if c (x) else (x)).type == if \
+                 and ( print «a», x ).gives == i32 and (print «a»).gives == void ), {compile}f()"
+            ),
+            "true\n",
+        ));
+    }
+    cases.push((
+        "f := fn (a := dyad ?) -> type ( a.gives ), x := i32 3, print «{f(x) == i32} {f(i64 4) == i64}»"
+            .to_owned(),
+        "true true\n",
+    ));
+    assert_runs(&cases);
+    let (code, _, stderr) = run_line(&after("{tape[-1].gives}", "( if c (i32 1), i64 2 )"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("give different types"), "stderr: {stderr}");
 }
 
 #[test]
@@ -7337,6 +7528,122 @@ fn a_union_ends_the_member_it_holds() {
     assert!(stderr.contains("error: `v.b` is dead here: it was moved or freed above"), "{stderr}");
 }
 
+/// R140: «Errors are tagged unions, `union ( value := T, err := error )`, spelled `T!`»; R143:
+/// «no type of its own». `error` with no category, where a type is wanted, is the error value's
+/// type, the array of R144.
+#[test]
+fn t_bang_is_the_union_of_value_and_err() {
+    assert_eq!(
+        line(
+            "print «{i32! == union ( value := i32, err := error )} {i32! == i32!} \
+             {i32! == f64!} {i32! == union ( value := i32, err := i32 )}»"
+        ),
+        "true true false false"
+    );
+    assert_eq!(line("x := error ?, print «{x.size}»"), "0");
+    let (code, stdout, stderr) = run_line("x := i32 5, y := x!, 0");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(
+        stderr.contains(
+            "1:18: error: `!` makes a type that holds a value or an error, `i32!`, and what \
+             stands to its left is no type"
+        ),
+        "stderr: {stderr}"
+    );
+}
+
+/// R140: «A function that gives `T!` fills the union itself, and the program writes neither
+/// member: its last value of type `T` fills `value`», on both tiers, for a number, a record and
+/// a value whose type fills `free`, each `if` arm and a `return` alike.
+#[test]
+fn a_function_that_gives_t_bang_fills_value_with_its_last_value() {
+    let half = "half := fn (n := i32 ?) -> i32! ( n / 2 )";
+    let pt = "pt := type ( x := pub i32 ?, y := pub i32 ? )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    for compile in ["", "half.compile(), f.compile(), "] {
+        for (fns, body, want) in [
+            (half, "r := half(8), print «{r holds value} {r holds err} {r.value}»", "true false 4"),
+            ("half := fn () -> f64! ( 5 )", "print «{half().value}»", "5.0"),
+            (
+                "half := fn (n := i32 ?) -> i32! ( if n > 0 ( n ) else ( return i32 0 ) )",
+                "print «{half(4).value} {half(-1).value}»",
+                "4 0",
+            ),
+            (
+                &format!("{pt}, half := fn (n := i32 ?) -> pt! ( pt(n, 2) )"),
+                "print «{half(3).value.x} {half(3).value.y}»",
+                "3 2",
+            ),
+            (
+                &format!("{bag}, half := fn (k := i32 ?) -> bag! ( b := bag(k), b )"),
+                "r := half(3), print «{r.value.n}»",
+                "3\nfreed 3",
+            ),
+            (
+                "h := fn (n := i32 ?) -> i32! ( n / 2 ), half := fn (n := i32 ?) -> i32! ( h(n) )",
+                "print «{half(10).value}»",
+                "5",
+            ),
+        ] {
+            let src = format!("{fns}, f := fn () -> void ( {body} ), {compile}f()");
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let (code, stdout, stderr) = run_line(&format!("{half}, r := half(8), r.err"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("run error: this union holds `value`, not `err`"), "stderr: {stderr}");
+    // The program writes neither member.
+    let (code, _, stderr) = run_line(&format!("{half}, r := mut half(8), r.value = 1, 0"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("error: `value` is not `mut`"), "stderr: {stderr}");
+}
+
+/// R140: «a raise inside it fills `err` and leaves the function»; R144: the error value is an
+/// array with one element per hop, each holding its category and its message, «`{…}` read as
+/// `print` reads it». A raise ends what the function holds as it leaves, from an `if` arm and
+/// from a loop alike, on both tiers; one in a function that gives no `T!` is still a fault.
+#[test]
+fn a_raise_inside_a_function_that_gives_t_bang_fills_err_and_leaves() {
+    let too_big = "error.too_big := «a number is too big»";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    for compile in ["", "half.compile(), f.compile(), "] {
+        for (fns, body, want) in [
+            (
+                "half := fn (n := i32 ?) -> i32! ( if n > 100 ( error.too_big «{n} is too big» ), \
+                 n / 2 )",
+                "r := half(300), print «{r holds err} {r.err.size} {r.err[0].message}», \
+                 print «{half(8).value}»",
+                "true 1 300 is too big\n4",
+            ),
+            (
+                &format!(
+                    "{bag}, half := fn (n := i32 ?) -> i32! ( b := bag(n), \
+                     if n > 1 ( error.too_big «too big» ), b.n )"
+                ),
+                "r := half(5), print «{r.err[0].message}»",
+                "freed 5\ntoo big",
+            ),
+            (
+                "half := fn (n := i32 ?) -> i32! ( for i in 0..n ( if i == 2 ( \
+                 error.too_big «at {i}» ) ), n )",
+                "print «{half(1).value} {half(5).err[0].message}»",
+                "1 at 2",
+            ),
+        ] {
+            let src = format!("{too_big}, {fns}, f := fn () -> void ( {body} ), {compile}f()");
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let half = "half := fn (n := i32 ?) -> i32! ( error.too_big «{n} is too big» )";
+    let (code, stdout, stderr) = run_line(&format!("{too_big}, {half}, r := half(300), r.value"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("run error: this union holds `err`, not `value`"), "stderr: {stderr}");
+    let plain = "f := fn (n := i32 ?) -> i32 ( error.too_big «{n} does not fit» )";
+    let (code, stdout, stderr) = run_line(&format!("{too_big}, {plain}, f.compile(), f(300)"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("run error: error.too_big: 300 does not fit"), "stderr: {stderr}");
+}
+
 /// A declaration of an empty place runs nothing on either tier, a record's as a number's.
 #[test]
 fn an_empty_place_of_a_record_compiles() {
@@ -7752,6 +8059,27 @@ fn a_constructor_reads_the_scope_cell_to_its_right_line_by_line() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains(want), "{line}: {stderr}");
     }
+}
+
+/// ›The pass runs only as far as it must, in order, and never twice‹ [[R288]]: what a constructor
+/// took off the tape runs where its node stands, so a point after it that needs a value runs it
+/// first, a constructor written in Logos and a call for a type included.
+#[test]
+fn what_a_constructor_took_runs_first_where_its_node_stands() {
+    let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 )";
+    let times = "times := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, \
+                 run = ( lhs * rhs ), parse_rank = 60, parse = ( tape[0].type = times, \
+                 tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = i32, \
+                 tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
+    let lib = "import file «tests/fixtures/scope_cell_lines.logos»";
+    let k = "k := fn () -> type ( i32 )";
+    assert_runs(&[
+        (format!("{times}, {calls}, x := h() times 2 + g(), print «x {{x}}»"), "h\ng\nx 4\n"),
+        (format!("{lib}, {calls}, x := first (h(), 8) + g(), print «x {{x}}»"), "h\ng\nx 3\n"),
+        (format!("{POWER}, x := i32 3, print «{{(x ^ 2).type == ^.get_mint(i32)}}»"), "true\n"),
+        (format!("{k}, print «{{k() == k()}} {{k() == i64}}»"), "true false\n"),
+        (format!("{k}, f := fn () -> bool ( k() == k() ), f.compile(), f()"), "true\n"),
+    ]);
 }
 
 #[test]
@@ -8296,7 +8624,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         (field("tape[0].v = tape[-1] + 1") + ", x := i32 7, x sq", "8"),
         (field("tape[0].v = w(w(tape[-1]))") + ", x := i32 7, x sq", "9"),
         (
-            sq("+.parse_rank - 1", "if tape[-1].type == i32 ( tape[0].v = w(tape[-1]) )")
+            sq("+.parse_rank - 1", "if tape[-1].gives == i32 ( tape[0].v = w(tape[-1]) )")
                 + ", x := i32 7, x + 1 sq",
             "9",
         ),

@@ -74,13 +74,13 @@ array := pub type (
                         parse = (
                             if tape[0].type != type and tape[1].type == square_brackets (
                                 # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
-                                if tape[1].dyads[0].type ⊆ tape[0].size.type (
+                                if tape[1].dyads[0].gives ⊆ tape[0].size.type (
                                     tape[0] = tape[0].at(tape[1].dyads[0])
                                 ) else (
                                     # A literal's value is known now, so one outside the size type is refused now.
                                     if tape[1].dyads[0].type == rational_number
                                         error.index_type «the index type is not within the size type, so the index could lie outside the array»,
-                                    if not tape[1].dyads[0].type ⊆ i64
+                                    if not tape[1].dyads[0].gives ⊆ i64
                                         error.index_type «the index is not an integer»,
                                     tape[0] = tape[0].at_signed(tape[1].dyads[0])
                                 ),
@@ -98,7 +98,7 @@ array := pub type (
                     # A bracket line is checked when the run's `=` builds it.
                     for i in 0..tape[2].dyads.size (
                         if tape[2].dyads[i].type != square_brackets and tape[2].dyads[i].type != scope (
-                            if not (tape[2].dyads[i].type ⊆ t)
+                            if not (tape[2].dyads[i].gives ⊆ t)
                                 error.element_type «an element does not fit the element type»
                         )
                     ),
