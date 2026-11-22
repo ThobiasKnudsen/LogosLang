@@ -67,9 +67,7 @@ fn work() -> ExitCode {
 
 /// The start graph this binary builds, written to `path` for the build that carries it.
 fn write_start_graph(path: &Path) -> ExitCode {
-    let first = seed::start_graph::build();
-    let second = seed::start_graph::build();
-    let written = seed::start_graph::write(&first, &second)
+    let written = seed::start_graph::write_built()
         .and_then(|image| std::fs::write(path, image).map_err(|e| e.to_string()));
     match written {
         Ok(()) => ExitCode::SUCCESS,
