@@ -85,10 +85,12 @@ impl RegexEntry {
     }
 }
 
-/// The chunk as `regex::bytes` builds a pattern: leftmost-first, over any bytes.
+/// The chunk as `regex::bytes` builds a pattern: leftmost-first, over any bytes. Every search is
+/// anchored at one place, where a prefilter never helps and the one-pass DFA only backs up the
+/// lazy one, so neither is built: every start builds its patterns anew.
 fn compile(pattern: &str) -> Result<Regex, RegexTrieError> {
     Regex::builder()
-        .configure(meta::Config::new().utf8_empty(false))
+        .configure(meta::Config::new().utf8_empty(false).onepass(false).auto_prefilter(false))
         .syntax(syntax::Config::new().utf8(false))
         .build(pattern)
         .map_err(|err| RegexTrieError::BadPattern(format!("{pattern}: {err}")))
