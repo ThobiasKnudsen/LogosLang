@@ -633,6 +633,7 @@ impl Core {
             ops: op_leaves,
             lower,
         };
+        core.error = error::native(store, &core);
         core.carried = carried::section(store, &core);
         core.type_mint = type_mint::load(store, trie, &core, core.carried);
         type_mint::keep_early(store, &core);
