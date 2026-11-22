@@ -56,11 +56,12 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = pending;
     }
 
-    /// A reduced dyad, or a token that does not extend: a resolved operand or
-    /// a fresh name in waiting. A pending extender token is not an operand.
+    /// A reduced dyad, or a token that does not extend: a resolved operand, a bracket held for
+    /// the word that takes it, or a fresh name in waiting. A pending extender token is not an
+    /// operand.
     pub(crate) fn is_operand_cell(&self, cell: &Cell) -> bool {
         match cell {
-            c if c.constructed => true,
+            c if c.constructed || c.held.is_some() => true,
             // A resolved token is an operand only when nothing would construct
             // it and it is not a bare delimiter, which no operator takes.
             c => {
@@ -641,6 +642,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         at: usize,
     ) -> Result<Before, ParseError> {
+        self.take_held_before(tape, at)?;
         let standing = self.standing_runs(tape, at);
         let covered = |s: usize| standing.iter().any(|&(_, from, to)| from <= s && s < to);
         let blocked =

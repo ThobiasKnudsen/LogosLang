@@ -19,6 +19,9 @@ pub struct Cell {
     /// left may claim it (`X (…)` is X's decision); goes when the seed stops
     /// unwrapping a one-expression group to its expression.
     pub bracket: bool,
+    /// One past the closer of a bracket paired and not built: the word that takes it builds it
+    /// (›Every identity has a `parse_rank`, and `(` works in two steps‹ [[R259]]).
+    pub held: Option<usize>,
     /// The text `start..start + len` indexes; `None` for a cell nothing lexed.
     /// It must outlive every read of the cell.
     text: Option<std::ptr::NonNull<str>>,
@@ -71,6 +74,7 @@ impl Cell {
         self.dyad = dyad;
         self.constructed = true;
         self.bracket = false;
+        self.held = None;
         self.path = path;
         self.target = target;
         self.root = root;
@@ -90,6 +94,7 @@ impl Cell {
             dyad,
             constructed: false,
             bracket: false,
+            held: None,
             text: Some(std::ptr::NonNull::from(text)),
             start,
             len,
@@ -110,6 +115,7 @@ impl Cell {
             dyad,
             constructed: true,
             bracket: false,
+            held: None,
             text: None,
             start: 0,
             len: 0,
@@ -365,6 +371,11 @@ impl ParsingTape {
     }
 
     /// `handle` is one `iter` handed out for a cell still on the tape.
+    /// The handle of the first bracket held unbuilt that starts before `before`.
+    pub(crate) fn first_held(&self, before: usize) -> Option<usize> {
+        self.iter().find(|(_, c)| c.held.is_some() && c.start < before).map(|(n, _)| n)
+    }
+
     pub(crate) fn center_on(&mut self, handle: usize) {
         debug_assert!(self.nodes[handle].linked, "a handle names a cell on the tape");
         self.center = Some(handle);

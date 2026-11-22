@@ -1321,6 +1321,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether the bracket at `tape`'s center is a `[` right after a value, which reads an element
+    /// of it as it is lexed, as a call reads its arguments; a fresh spelling to its left is a
+    /// member name after `.`, never a value.
+    pub(super) fn reads_element(&self, tape: &ParsingTape) -> bool {
+        let square = tape.at(0).is_some_and(|c| self.cell_identity(c) == self.types.open_sq_);
+        square && tape.at(-1).is_some_and(|l| !l.is_fresh(self.types) && self.is_operand_cell(l))
+    }
+
     /// `[` is `(` in square brackets: the interior parsed as any bracket's,
     /// closed by its `]`. It lands a `square_brackets` cell (DESIGN ›The
     /// scope's constructor is the driver‹), or right after a tape value the element read
@@ -1334,35 +1342,31 @@ impl<'a> Parser<'a> {
         self.take_closer(self.types.open_sq_)?;
         // An index right after a tape value is the element read, a slot node
         // the identity to its left owns; after a `.` it stays a passive cell.
-        if let Some(left) = tape.at(-1).copied() {
-            // A fresh spelling to the left is a member name after `.`, never a tape.
-            if !left.is_fresh(self.types) && self.is_operand_cell(&left) {
-                let lhs = self.operand_dyad(left)?;
-                let types = self.types;
-                // SAFETY: `lhs` is a reduced dyad from the store.
-                let recv =
-                    unsafe { crate::identities::tape::receiver_addr(self.rt.store, types, lhs) };
-                if let Some(recv) = recv {
-                    // SAFETY: `recv` and `key` are reduced dyads from the store.
-                    let slot = unsafe {
-                        crate::identities::tape::build_slot(self.rt.store, types, recv, key)
-                    }?;
-                    // SAFETY: `slot` is the slot node just built.
-                    let node = unsafe { self.narrowed_read(slot) };
-                    tape.remove(-1);
-                    tape.place(node);
-                    return Ok(Constructed::Placed);
-                }
-                let map = self.element_owner(tape, &left, lhs)?;
-                // SAFETY: `map` and `key` are reduced dyads from the store.
-                let get = unsafe {
-                    crate::identities::hashmap::build_get(self.rt.store, types, map, key)
+        if self.reads_element(tape) {
+            let left = *tape.at(-1).expect("an element read has a value to its left");
+            let lhs = self.operand_dyad(left)?;
+            let types = self.types;
+            // SAFETY: `lhs` is a reduced dyad from the store.
+            let recv = unsafe { crate::identities::tape::receiver_addr(self.rt.store, types, lhs) };
+            if let Some(recv) = recv {
+                // SAFETY: `recv` and `key` are reduced dyads from the store.
+                let slot = unsafe {
+                    crate::identities::tape::build_slot(self.rt.store, types, recv, key)
                 }?;
-                if let Some(node) = get {
-                    tape.remove(-1);
-                    tape.place(node);
-                    return Ok(Constructed::Placed);
-                }
+                // SAFETY: `slot` is the slot node just built.
+                let node = unsafe { self.narrowed_read(slot) };
+                tape.remove(-1);
+                tape.place(node);
+                return Ok(Constructed::Placed);
+            }
+            let map = self.element_owner(tape, &left, lhs)?;
+            // SAFETY: `map` and `key` are reduced dyads from the store.
+            let get =
+                unsafe { crate::identities::hashmap::build_get(self.rt.store, types, map, key) }?;
+            if let Some(node) = get {
+                tape.remove(-1);
+                tape.place(node);
+                return Ok(Constructed::Placed);
             }
         }
         // SAFETY: `scope` is the block `parse_block` minted, closed.

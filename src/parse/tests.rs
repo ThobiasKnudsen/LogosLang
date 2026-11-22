@@ -192,6 +192,29 @@ fn a_scope_carries_its_enclosing_scope() {
 }
 
 #[test]
+fn a_bracket_is_held_until_a_word_takes_it() {
+    let mut store = crate::store::Store::new();
+    let mut trie = crate::regex_trie::RegexTrie::new();
+    let core = crate::identities::Core::build(&mut store, &mut trie);
+    let types = &core;
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let src = "i32 1 + (i32 2) * (i32 3)";
+    let mut p = Parser::new(src, &mut store, &mut trie, types, scopes);
+    let mut tape = ParsingTape::new();
+    p.lex_segment(&mut tape).unwrap();
+    let held: Vec<(usize, usize)> =
+        tape.cells().iter().filter_map(|c| c.held.map(|end| (c.start, end))).collect();
+    assert_eq!(held, [(8, 15), (18, 25)], "each bracket is paired, its closer past it");
+    assert!(tape.cells().iter().all(|c| c.held.is_none() || !c.constructed));
+    p.construct_segment(&mut tape).unwrap();
+    assert!(tape.cells().iter().all(|c| c.held.is_none()), "the words took both");
+    let scopes = p.into_scopes();
+    let (v, _) = go("i32 1 + (i32 2) * (i32 3)", &mut store, &mut trie, types, scopes);
+    assert_eq!(v, 7);
+}
+
+#[test]
 fn here_is_where_the_line_is_written() {
     let mut store = crate::store::Store::new();
     let mut trie = crate::regex_trie::RegexTrie::new();
