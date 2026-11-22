@@ -515,6 +515,9 @@ fn a_parse_builds_the_nodes_to_its_right_with_tape_construct() {
             "mut i32 4\n5\n",
         ),
         (stands, "x := i32 2, c := ch x + 40, c", "42\n"),
+        // A local of the call whose line the parse builds is read in that call's frame.
+        (stands, "f := fn (x := i32 ?) -> i32 ( c := ch x + 40, c ), f(2)", "42\n"),
+        (stands, "f := fn (x := i32 ?) -> i32 ( c := ch x + 40, c ), f.compile(), f(2)", "42\n"),
     ] {
         let src = format!("{}, {tail}", tape_reader(body));
         let (code, stdout, stderr) = run_line(&src);
