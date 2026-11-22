@@ -129,8 +129,8 @@ pub(crate) mod prec {
     pub const TIGHT: f64 = 92.5;
     /// The prefix words, built before every operation: the gate words `mut`, `pub` and `static`,
     /// so each takes the nearest value to its right (›A gate word reads the nearest value to its
-    /// right and gives it with its type gated‹ [[R102]]), `own`, `alloc`, and `free` (stand-in for
-    /// #384).
+    /// right and gives it with its type gated‹ [[R102]]), `own`, `alloc`, and `free`
+    /// (stand-in for #384).
     pub const PREFIX: f64 = 82.0;
     /// A pointer type taking the pointer to its right, `@i32 &a`: below `&`, whose pointer it
     /// takes, above the prefix words, which take its hole whole, `own @i32 ?`. ›A parse is ranked
