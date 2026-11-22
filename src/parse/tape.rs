@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::dyad;
+use crate::start_graph::{Carry, In, Out};
 
 /// One cell of the tape: a dyad pointer (a binding, or a node: the built one, or for a fresh
 /// spelling an `unknown_name` holding it) plus the tape's own two facts, the flag and the
@@ -606,5 +607,100 @@ impl ParsingTape {
         cell.bracket = false;
         cell.start = left.start;
         cell.len = right.end().saturating_sub(left.start);
+    }
+}
+
+impl Carry for Cell {
+    fn carry(&self, out: &mut Out) {
+        let Cell {
+            dyad,
+            constructed,
+            bracket,
+            text,
+            start,
+            len,
+            path,
+            target,
+            root,
+            hole,
+            type_value,
+            gates,
+        } = *self;
+        dyad.carry(out);
+        constructed.carry(out);
+        bracket.carry(out);
+        text.map(|t| (t.as_ptr() as *mut u8, (t.as_ptr() as *const [u8]).len())).carry(out);
+        (start, len).carry(out);
+        (path, target.0, target.1).carry(out);
+        root.carry(out);
+        (hole, type_value).carry(out);
+        gates.carry(out);
+    }
+
+    fn uncarry(inp: &mut In) -> Self {
+        let dyad = DyadPtr::uncarry(inp);
+        let (constructed, bracket) = (bool::uncarry(inp), bool::uncarry(inp));
+        let text = Option::<(*mut u8, usize)>::uncarry(inp).and_then(|(at, len)| {
+            std::ptr::NonNull::new(std::ptr::slice_from_raw_parts_mut(at, len) as *mut str)
+        });
+        let (start, len) = <(usize, usize)>::uncarry(inp);
+        let (path, t0, t1) = <(DyadPtr, DyadPtr, DyadPtr)>::uncarry(inp);
+        let root = DyadPtr::uncarry(inp);
+        let (hole, type_value) = <(bool, bool)>::uncarry(inp);
+        let gates = DyadPtr::uncarry(inp);
+        Cell {
+            dyad,
+            constructed,
+            bracket,
+            text,
+            start,
+            len,
+            path,
+            target: (t0, t1),
+            root,
+            hole,
+            type_value,
+            gates,
+        }
+    }
+}
+
+impl Carry for ParsingTape {
+    fn carry(&self, out: &mut Out) {
+        let ParsingTape { nodes, head, tail, center, len, edits, sealed, inner, taken } = self;
+        out.usize(nodes.len());
+        for &Node { cell, prev, next, linked } in nodes {
+            cell.carry(out);
+            (prev, next, linked).carry(out);
+        }
+        (*head, *tail, *center).carry(out);
+        (*len, *edits, *sealed).carry(out);
+        inner.carry(out);
+        taken.carry(out);
+    }
+
+    fn uncarry(inp: &mut In) -> Self {
+        let n = inp.usize();
+        let nodes = (0..n)
+            .map(|_| {
+                let cell = Cell::uncarry(inp);
+                let (prev, next, linked) = Carry::uncarry(inp);
+                Node { cell, prev, next, linked }
+            })
+            .collect();
+        let (head, tail, center) = Carry::uncarry(inp);
+        let (len, edits, sealed) = Carry::uncarry(inp);
+        let inner = Carry::uncarry(inp);
+        ParsingTape {
+            nodes,
+            head,
+            tail,
+            center,
+            len,
+            edits,
+            sealed,
+            inner,
+            taken: Carry::uncarry(inp),
+        }
     }
 }

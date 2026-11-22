@@ -69,6 +69,35 @@ fn importing_a_library_alone_is_silent_and_clean() {
     assert!(out.stdout.is_empty());
 }
 
+/// A build handed a start graph starts from it, and one that was not builds its start: a graph
+/// older than the files it was built from is never read, so this fails (›The seed carries its
+/// start graph inside its binary‹ [[R386]]).
+#[test]
+fn a_binary_built_with_a_start_graph_starts_from_it() {
+    let out = logos().env("LOGOS_STATS", "1").arg("1 + 1").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n");
+    let built_with_one = std::env::var_os("LOGOS_START_GRAPH").is_some_and(|path| !path.is_empty());
+    let start = if built_with_one { "the carried graph" } else { "built from source" };
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&format!("store start: {start}\n")), "stderr: {err}");
+}
+
+/// Two runs lay their start out at addresses of their own, and write one graph.
+#[test]
+fn every_run_writes_one_start_graph() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let paths = [dir.join("start_graph.first"), dir.join("start_graph.second")];
+    for path in &paths {
+        let out = logos().env("LOGOS_WRITE_START_GRAPH", path).output().unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.stdout.is_empty());
+    }
+    let [first, second] = paths.map(|path| std::fs::read(path).unwrap());
+    assert!(!first.is_empty());
+    assert!(first == second, "two runs wrote two graphs");
+}
+
 #[test]
 fn logos_stats_measures_the_store_on_stderr() {
     let out = logos()

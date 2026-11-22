@@ -7,6 +7,7 @@
 use super::*;
 use crate::dyad;
 use crate::identities::type_mint::{self, KeyPart};
+use crate::start_graph::{Carry, In, Out};
 
 /// What a `type (…)` body's lines have filled so far: the head the type node
 /// takes at the close, its one set of slots, and its values' fields. Also the `{ … }` a `fn`
@@ -53,6 +54,71 @@ pub(super) struct OpenType {
     pub(super) self_type: DyadPtr,
     /// The `static` members declared so far, in written order.
     statics: Vec<DyadPtr>,
+}
+
+impl Carry for OpenType {
+    fn carry(&self, out: &mut Out) {
+        let OpenType {
+            scope,
+            slots,
+            free_marker,
+            parse_rank,
+            lex_rank,
+            assoc,
+            ctor,
+            run_body,
+            this_param,
+            in_parse,
+            in_free,
+            tape_param,
+            stamps_at_run,
+            read_receiver,
+            wrote_receiver,
+            block,
+            instances_free,
+            self_type,
+            statics,
+        } = self;
+        (*scope, *slots, *free_marker).carry(out);
+        (*parse_rank, *lex_rank, *assoc).carry(out);
+        (*ctor, *run_body, *this_param).carry(out);
+        (*in_parse, *in_free, *tape_param).carry(out);
+        (*stamps_at_run, *read_receiver, *wrote_receiver).carry(out);
+        block.carry(out);
+        (*instances_free, *self_type).carry(out);
+        statics.carry(out);
+    }
+
+    fn uncarry(inp: &mut In) -> Self {
+        let (scope, slots, free_marker) = Carry::uncarry(inp);
+        let (parse_rank, lex_rank, assoc) = Carry::uncarry(inp);
+        let (ctor, run_body, this_param) = Carry::uncarry(inp);
+        let (in_parse, in_free, tape_param) = Carry::uncarry(inp);
+        let (stamps_at_run, read_receiver, wrote_receiver) = Carry::uncarry(inp);
+        let block = Carry::uncarry(inp);
+        let (instances_free, self_type) = Carry::uncarry(inp);
+        OpenType {
+            scope,
+            slots,
+            free_marker,
+            parse_rank,
+            lex_rank,
+            assoc,
+            ctor,
+            run_body,
+            this_param,
+            in_parse,
+            in_free,
+            tape_param,
+            stamps_at_run,
+            read_receiver,
+            wrote_receiver,
+            block,
+            instances_free,
+            self_type,
+            statics: Carry::uncarry(inp),
+        }
+    }
 }
 
 impl OpenType {
@@ -1283,7 +1349,7 @@ impl<'a> Parser<'a> {
         let fragment = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held)
             .map_err(ParseError::Resolve)?;
         self.refuse_held_shadowing(&fragment.held_cells(), start - 1)?;
-        let cells = Box::into_raw(Box::new(fragment));
+        let cells = self.rt.store.keep_tape(fragment);
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
         let frames: Vec<DyadPtr> = self.cx.frames.iter().map(|f| f.frame).collect();
         Ok(crate::identities::held_type::build(
@@ -1583,7 +1649,7 @@ impl<'a> Parser<'a> {
                 let held = std::str::from_utf8(held).expect("copied from the source text");
                 let fragment = lex_fragment(&self.cx.scopes, self.trie, self.rt.store, types, held)
                     .map_err(ParseError::Resolve)?;
-                let cells = Box::into_raw(Box::new(fragment));
+                let cells = self.rt.store.keep_tape(fragment);
                 let body = crate::identities::run_body::build(self.rt.store, types, text, cells);
                 self.cx.definitions.last_mut().expect("checked above").run_body = body;
                 Ok(self.slot_declare(SlotKind::Run, target, body))
