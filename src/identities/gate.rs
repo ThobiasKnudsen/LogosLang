@@ -22,11 +22,11 @@ use crate::Core;
 /// Returns `pub`, `mut`, `static`, and the former every gate mint is kept under, the type of
 /// the gate mints.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
-    let pub_ = word(cx, "pub", meta::prec::GATE);
+    let pub_ = word(cx, "pub", meta::prec::PREFIX);
     cx.metas.insert(pub_, construct);
-    let mut_ = word(cx, "mut", meta::prec::GATE);
+    let mut_ = word(cx, "mut", meta::prec::PREFIX);
     cx.metas.insert(mut_, construct);
-    let static_ = word(cx, "static", meta::prec::GATE);
+    let static_ = word(cx, "static", meta::prec::PREFIX);
     cx.metas.insert(static_, construct);
     let former = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::INERT);
     let gate_ = cx.store.alloc_head(cx.type_, former);
@@ -200,7 +200,7 @@ pub(crate) unsafe fn with(store: &mut Store, types: &Core, p: DyadPtr, gate: Dya
 
 /// The type `t` with the gates of `mint` among its own, `t` itself where `mint` is null: a gate
 /// word over a type with nothing after it gives the gated type, `mut i32`, as `i32` alone gives
-/// `i32` (›A gate word reads the whole value to its right and gives it with its type gated‹
+/// `i32` (›A gate word reads the nearest value to its right and gives it with its type gated‹
 /// [[R102]]).
 ///
 /// # Safety
@@ -350,9 +350,9 @@ pub(crate) unsafe fn words_of(mint: DyadPtr) -> Vec<DyadPtr> {
     }
 }
 
-/// A gate word reads the whole value to its right, everything there having reduced to one
-/// value before it, and gives it with `id` among the gates of its type (›A gate word reads the
-/// whole value to its right and gives it with its type gated‹ [[R102]]). A declaration is no
+/// A gate word reads the nearest value to its right, a word there not built yet started first,
+/// and gives it with `id` among the gates of its type (›A gate word reads the nearest value to
+/// its right and gives it with its type gated‹ [[R102]]). A declaration is no
 /// value to gate, its gate standing right of its own `:=` (›Left of `:=` stands one name (or
 /// regex), and nothing else‹ [[R101]]), and neither is any other line that gives nothing; a
 /// place is one, whatever its type.

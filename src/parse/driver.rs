@@ -181,22 +181,16 @@ impl<'a> Parser<'a> {
                 self.cx.pos = start;
                 return Ok(Some(boundary));
             }
-            if let Some(mode) = self.cx.lex_mode {
-                if mode != RightSide::Condition && id == self.types.open_ && !tape.is_empty() {
-                    // In a range a `(` after an unconstructed identity with
-                    // a constructor is that identity's (DESIGN ›`X (…)` is one
-                    // spelling, and X's constructor decides‹); a return type takes no bracket, so there the first `(` is the body.
-                    let owner_pending = mode == RightSide::Range
-                        && matches!(tape.last(), Some(l) if !self.is_operand_cell(l));
-                    if !owner_pending {
-                        self.cx.pos = start;
-                        return Ok(Some(Boundary::Open));
-                    }
-                }
+            // A return type takes no bracket, so there the first `(` is the body.
+            if self.cx.lex_mode == Some(RightSide::ReturnType)
+                && id == self.types.open_
+                && !tape.is_empty()
+            {
+                self.cx.pos = start;
+                return Ok(Some(Boundary::Open));
             }
         }
-        if self.cx.lex_mode == Some(RightSide::Condition) && self.condition_ends(tape, Some(&cell))
-        {
+        if self.reads_first_node() && self.condition_ends(tape, Some(&cell)) {
             self.cx.pos = start;
             return Ok(Some(Boundary::Open));
         }
@@ -211,17 +205,24 @@ impl<'a> Parser<'a> {
                     || prec == crate::identities::meta::prec::DECLARE;
                 let asleep = (self.cx.lex_mode == Some(RightSide::ReturnType) && reader)
                     || self.cx.member_asleep
-                    || self.tight_read_takes(id);
+                    || self.tight_read_takes(id)
+                    || self.waits_for_reads(id, tape.at(1), tape.at(2).is_some());
                 if prec >= crate::identities::meta::prec::OPEN
                     && !asleep
                     && (!lazy
                         || crate::identities::meta::prec::built_as_lexed(prec)
                         || self.goes_before_reader(id, prec))
                 {
-                    if self.is_opener(id) {
-                        self.cut_at(tape, cell.start)?;
+                    let opener = self.is_opener(id);
+                    if opener && !lazy && !self.reads_element(tape) {
+                        self.skip_bracket(id)?;
+                        tape.at_mut(0).expect("pushed above").held = Some(self.cx.pos);
+                    } else {
+                        if opener {
+                            self.cut_at(tape, cell.start)?;
+                        }
+                        self.run_ctor(construct, id, tape, true)?;
                     }
-                    self.run_ctor(construct, id, tape, true)?;
                 }
             }
         }
@@ -263,11 +264,12 @@ impl<'a> Parser<'a> {
         let mark = tape.mark();
         loop {
             let mut found = None;
-            for (n, c) in tape.iter() {
-                if c.constructed {
+            let cells: Vec<(usize, Cell)> = tape.iter().map(|(n, c)| (n, *c)).collect();
+            for (i, &(n, c)) in cells.iter().enumerate() {
+                if c.constructed || c.held.is_some() {
                     continue;
                 }
-                let id = self.cell_identity(c);
+                let id = self.cell_identity(&c);
                 let Some(construct) = self.ctor_of(id) else { continue };
                 let prec = self.precedence_of_cell(id);
                 if prec < crate::identities::meta::prec::OPEN {
@@ -275,8 +277,10 @@ impl<'a> Parser<'a> {
                 }
                 let reader = prec == crate::identities::meta::prec::READER
                     || prec == crate::identities::meta::prec::DECLARE;
+                let side = cells.get(i + 1).map(|(_, c)| c);
                 let asleep = (self.cx.lex_mode == Some(RightSide::ReturnType) && reader)
-                    || self.tight_read_takes(id);
+                    || self.tight_read_takes(id)
+                    || self.waits_for_reads(id, side, cells.len() > i + 2);
                 if asleep {
                     continue;
                 }
@@ -292,6 +296,24 @@ impl<'a> Parser<'a> {
         }
         tape.restore(mark);
         Ok(())
+    }
+
+    /// Whether `id`, built at discovery below the reads after a node (`&`), waits there: until
+    /// `side`, the cell to its right, is lexed and built and no `.`, `:`, `@` or bracket reads
+    /// after it, so `&p.x` takes `p.x` (›Every identity has a `parse_rank`, and `(` works in two
+    /// steps‹ [[R259]]). `lexed_after`: a cell already stands after `side`. A held bracket or a
+    /// word still to be built there it takes at the boundary.
+    fn waits_for_reads(&mut self, id: DyadPtr, side: Option<&Cell>, lexed_after: bool) -> bool {
+        if !crate::identities::meta::prec::waits_for_reads(self.precedence_of_cell(id)) {
+            return false;
+        }
+        let Some(side) = side else { return true };
+        if side.held.is_some() || !self.is_operand_cell(side) {
+            return true;
+        }
+        let t = self.types;
+        let reads = [t.dot_, t.colon_, t.at_, t.open_, t.open_sq_];
+        !lexed_after && self.peek_token().is_some_and(|(n, _)| reads.contains(&n))
     }
 
     /// The cell `offset` links right of the center, lexed on demand (DESIGN
@@ -354,7 +376,7 @@ impl<'a> Parser<'a> {
             }
             let mut best: Option<(usize, f64, ConstructFn, DyadPtr)> = None;
             for (n, c) in tape.iter() {
-                if c.constructed {
+                if c.constructed || c.held.is_some() {
                     continue;
                 }
                 let id = self.cell_identity(c);
@@ -370,6 +392,12 @@ impl<'a> Parser<'a> {
                 }
             }
             let Some((n, _, construct, id)) = best else {
+                // A bracket no word took is built at the segment's end, in written order.
+                if let Some(n) = tape.first_held(usize::MAX) {
+                    tape.center_on(n);
+                    self.take_held(tape, 0)?;
+                    continue;
+                }
                 // A bracket no identity claimed, standing before another cell, gives its value
                 // as any expression does, a type included.
                 let last = tape.iter().last().map(|(n, _)| n);
@@ -603,13 +631,25 @@ impl<'a> Parser<'a> {
     /// Settle `construct`'s outcome on the cell at the cursor, judged by its
     /// handle whatever the center is after (DESIGN ›The scope's constructor is
     /// the driver‹): constructed, gone, handed on, standing as its value, or the checked error.
-    fn run_ctor(
+    pub(super) fn run_ctor(
         &mut self,
         construct: ConstructFn,
         id: DyadPtr,
         tape: &mut ParsingTape,
         discovery: bool,
     ) -> Result<(), ParseError> {
+        // A word built as it is lexed reads what is written before it, so the brackets held there
+        // are built first, in order; at the boundary a word takes the nearest node on each side,
+        // and a bracket only the one to its left.
+        if discovery {
+            let at = tape.at(0).map_or(usize::MAX, |c| c.start);
+            self.take_held_before(tape, at)?;
+        } else {
+            self.take_held(tape, -1)?;
+            if !self.is_opener(id) {
+                self.take_held(tape, 1)?;
+            }
+        }
         let own = tape.mark();
         let edits = tape.edits();
         let taken = tape.taken_mark();
@@ -719,6 +759,62 @@ impl<'a> Parser<'a> {
         let value = self.stand_as_value(tape, id);
         tape.place(value);
         tape.at_mut(0).expect("placed above").gates = cell.gates;
+        Ok(())
+    }
+
+    /// The bracket held at `k` of `tape`, built as the word beside it takes it: its lines are read
+    /// from after its opener, and the lexer goes on from where it stood.
+    pub(super) fn take_held(&mut self, tape: &mut ParsingTape, k: isize) -> Result<(), ParseError> {
+        let Some(&cell) = tape.at(k) else { return Ok(()) };
+        if cell.held.is_none() {
+            return Ok(());
+        }
+        let id = self.cell_identity(&cell);
+        let construct = self.ctor_of(id).expect("a held bracket's opener has a constructor");
+        let center = tape.mark();
+        let handle = tape.handle_at(k).expect("read above");
+        tape.at_mut(k).expect("read above").held = None;
+        tape.center_on(handle);
+        let frontier = std::mem::replace(&mut self.cx.pos, cell.end());
+        self.cut_at(tape, cell.start)?;
+        self.run_ctor(construct, id, tape, false)?;
+        self.ended_after(tape, cell.start)?;
+        self.cx.pos = frontier;
+        tape.restore(center);
+        Ok(())
+    }
+
+    /// A name lexed on `tape` after `from`, where a bracket was built late: one the bracket moved
+    /// or freed is dead there, as it would be had the bracket been built before it was lexed.
+    fn ended_after(&mut self, tape: &ParsingTape, from: usize) -> Result<(), ParseError> {
+        for (_, c) in tape.iter() {
+            let binding = c.binding(self.types);
+            // SAFETY: a lexed binding cell holds a binding dyad from the store.
+            let ended = !binding.is_null()
+                && c.start > from
+                && unsafe { Binding::read(binding).is_dead() || Binding::has_ended_path(binding) };
+            if ended {
+                self.cx.pos = c.start;
+                let name = c.spelling().to_string();
+                return Err(ParseError::Resolve(ResolveError::Dead(name)));
+            }
+        }
+        Ok(())
+    }
+
+    /// Every bracket held on `tape` that starts before `at`, built in written order.
+    pub(super) fn take_held_before(
+        &mut self,
+        tape: &mut ParsingTape,
+        at: usize,
+    ) -> Result<(), ParseError> {
+        let center = tape.mark();
+        while let Some(n) = tape.first_held(at) {
+            tape.center_on(n);
+            let taken = self.take_held(tape, 0);
+            tape.restore(center);
+            taken?;
+        }
         Ok(())
     }
 
@@ -1407,7 +1503,7 @@ impl<'a> Parser<'a> {
         to: isize,
     ) -> Result<(), ParseError> {
         use crate::identities::read::{read_kind, Read};
-        let cells: Vec<Cell> = (from..to).map_while(|k| tape.at(k).copied()).collect();
+        let cells: Vec<Cell> = (from..to).map_while(|k| tape.in_reach(k).copied()).collect();
         let taken = cells.len();
         let mut built = self.construct_line(cells)?;
         // A type its gate words read stands as the gated type, so a parse reading it is handed

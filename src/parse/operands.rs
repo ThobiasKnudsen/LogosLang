@@ -56,11 +56,12 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = pending;
     }
 
-    /// A reduced dyad, or a token that does not extend: a resolved operand or
-    /// a fresh name in waiting. A pending extender token is not an operand.
+    /// A reduced dyad, or a token that does not extend: a resolved operand, a bracket held for
+    /// the word that takes it, or a fresh name in waiting. A pending extender token is not an
+    /// operand.
     pub(crate) fn is_operand_cell(&self, cell: &Cell) -> bool {
         match cell {
-            c if c.constructed => true,
+            c if c.constructed || c.held.is_some() => true,
             // A resolved token is an operand only when nothing would construct
             // it and it is not a bare delimiter, which no operator takes.
             c => {
@@ -90,7 +91,14 @@ impl<'a> Parser<'a> {
             && unsafe { dyad::ty(cell.dyad) } == self.types.comment_
     }
 
-    /// Whether an `if` or `while` condition ends before `next` (DESIGN
+    /// Whether the side read now is one that `if`, `while` or `for` takes its first node from,
+    /// building its arm after it: a condition, or a `for` range (›Every identity has a
+    /// `parse_rank`, and `(` works in two steps‹ [[R259]]).
+    pub(super) fn reads_first_node(&self) -> bool {
+        matches!(self.cx.lex_mode, Some(RightSide::Condition | RightSide::Range))
+    }
+
+    /// Whether an `if` or `while` condition, or a `for` range, ends before `next` (DESIGN
     /// ›Expressions are self-delimiting‹): it is the first complete expression,
     /// so it ends once complete at a token that does not read to its left. It is
     /// complete when it ends in a value, or in identities that could still read
@@ -155,14 +163,15 @@ impl<'a> Parser<'a> {
             && self.ctor_of(id).is_some()
     }
 
-    /// An infix ranked among the comparisons, below the range and above `not`:
-    /// its operands may be any value, types included, and a type standing
-    /// right of it is a whole operand, where right of `+` it must still read its bracket.
-    /// The rank is a stand-in for #137: whether the result is `bool` is known only once built.
+    /// An infix ranked among the comparisons: its operands may be any value, types included, and
+    /// a type standing right of it is a whole operand, where right of `+` it must still read its
+    /// bracket. The rank is a stand-in for #137: whether the result is `bool` is known only once
+    /// built.
     fn compares(&self, id: DyadPtr) -> bool {
         use crate::identities::meta::prec;
-        let rank = self.precedence_of_cell(id);
-        self.ctor_of(id).is_some() && self.reads_left(id) && prec::NOT < rank && rank < prec::RANGE
+        self.ctor_of(id).is_some()
+            && self.reads_left(id)
+            && self.precedence_of_cell(id) == prec::COMPARE
     }
 
     /// An infix that reads a value on each side, `+` or `==`, whose operands `binary_operands`
@@ -190,7 +199,7 @@ impl<'a> Parser<'a> {
             None => false,
             Some(None) => true,
             Some(Some(id)) if id == self.types.open_ => {
-                !(self.cx.lex_mode == Some(RightSide::Condition) && self.condition_ends(tape, None))
+                !(self.reads_first_node() && self.condition_ends(tape, None))
             }
             Some(Some(id)) => {
                 let operator = self.ctor_of(id).is_some() && self.reads_left(id);
@@ -301,40 +310,6 @@ impl<'a> Parser<'a> {
         matches!(self.peek_token(), Some((n, _)) if n == self.types.colon_ || n == self.types.dot_)
     }
 
-    /// The segment since the last boundary constructed to exactly one operand
-    /// and removed from the tape: the place `=` reads before it drives its
-    /// right side. `None` when nothing stands to the left.
-    pub(crate) fn construct_left(
-        &mut self,
-        tape: &mut ParsingTape,
-    ) -> Result<Option<Cell>, ParseError> {
-        let n = tape.cursor();
-        if n == 0 {
-            return Ok(None);
-        }
-        let mut left = ParsingTape::new();
-        for (_, c) in tape.iter().take(n) {
-            left.push(*c);
-        }
-        // Lexed to the `=`: a read past it is no part of the place.
-        left.sealed = true;
-        let built = self.construct_segment(&mut left)?;
-        let items = self.hand_to_line(built);
-        let target = match items.as_slice() {
-            [(one, _)] => *one,
-            [] => return Ok(None),
-            [(first, _), (_, start), ..] => {
-                let e = self.leftover_error(first.dyad);
-                self.cx.pos = *start;
-                return Err(e);
-            }
-        };
-        for _ in 0..n {
-            tape.remove(-1);
-        }
-        Ok(Some(target))
-    }
-
     /// What a constructor places when it "stands as its own value" (DESIGN
     /// ›The scope's constructor is the driver‹): the use of the name, its
     /// binding, when the cell was lexed; the bare identity for a minted token.
@@ -436,9 +411,9 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let mut cells = Vec::with_capacity(N);
         for k in ks {
-            match tape.at(k) {
-                Some(&cell) if self.is_operand_cell(&cell) => cells.push(cell),
-                _ => return Ok(None),
+            match self.side_at(tape, k)? {
+                Some(cell) => cells.push(cell),
+                None => return Ok(None),
             }
         }
         let mut names = Vec::with_capacity(N);
@@ -473,6 +448,33 @@ impl<'a> Parser<'a> {
         Ok(Some(read))
     }
 
+    /// The cell an operation takes at `k` of `tape`: a word there not built yet is started first
+    /// and builds what it takes (›Every identity has a `parse_rank`, and `(` works in two steps‹
+    /// [[R259]]). `None` where no operand stands within reach.
+    pub(crate) fn side_at(
+        &mut self,
+        tape: &mut ParsingTape,
+        k: isize,
+    ) -> Result<Option<Cell>, ParseError> {
+        loop {
+            let Some(&cell) = tape.in_reach(k) else { return Ok(None) };
+            if self.is_operand_cell(&cell) {
+                return Ok(Some(cell));
+            }
+            let id = self.cell_identity(&cell);
+            let Some(construct) = self.ctor_of(id) else { return Ok(None) };
+            let handle = tape.handle_at(k).expect("read above");
+            let taker = tape.taking();
+            tape.center_on(handle);
+            let started = self.run_ctor(construct, id, tape, false);
+            tape.restore(taker);
+            if let Some(taker) = taker {
+                tape.took(taker);
+            }
+            started?;
+        }
+    }
+
     /// The read of a name every reader of an operand makes ([`Self::as_operand`]), a dead one
     /// refused; a parse is handed a spelling no live name has as its `unknown_name` node
     /// (›Unknown spellings are two pattern identities‹ [[R252]]).
@@ -486,14 +488,14 @@ impl<'a> Parser<'a> {
         self.as_operand(cell)
     }
 
-    /// What a running constructor reads at `k` of its tape: a cell that is no operand, an
-    /// identity still to be built, as it stands, and so does a bracket, whose lines it reads,
-    /// unless it asks what the bracket gives; the tape's `void` node past its reach (›A `tape[k]`
-    /// read past the lexed frontier lexes on demand for every constructor‹ [[R231]]); any other
-    /// cell as an operation takes its operand, `tape[k]` by its name read alone, `tape[k].type`
-    /// read through a `dyad` to the node it holds, and `tape[k].gives` by the whole read
-    /// (›`.gives` reads the type a node gives when it runs, on any node; `.type` stays the node's
-    /// own type‹ [[R387]]).
+    /// What a running constructor reads at `k` of its tape: the tape's `void` node past its reach
+    /// (›A `tape[k]` read past the lexed frontier lexes on demand for every constructor‹
+    /// [[R231]]); `tape[k].gives` by the whole read an operation makes of its operand, which
+    /// builds an identity there still to be built first (›`.gives` reads the type a node gives
+    /// when it runs, on any node; `.type` stays the node's own type‹ [[R387]]); otherwise a cell
+    /// that is no operand, an identity still to be built, as it stands, and so a bracket, whose
+    /// lines it reads, and any other cell as an operation takes its operand, `tape[k]` by its name
+    /// read alone and `tape[k].type` read through a `dyad` to the node it holds.
     pub(crate) fn read_tape(
         &mut self,
         tape: &mut ParsingTape,
@@ -501,10 +503,10 @@ impl<'a> Parser<'a> {
         read: TapeRead,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        let Some(cell) = tape.at(k).copied() else { return Ok(types.tape.nothing) };
+        let Some(cell) = tape.in_reach(k).copied() else { return Ok(types.tape.nothing) };
         // SAFETY: a lexed or built cell holds a dyad from the store.
         let bracket = unsafe { crate::identities::tape::bracket_kind(types, cell.dyad) }.is_some();
-        if !self.is_operand_cell(&cell) || bracket && read != TapeRead::Gives {
+        if read != TapeRead::Gives && (!self.is_operand_cell(&cell) || bracket) {
             return Ok(cell.dyad);
         }
         match read {
@@ -646,6 +648,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         at: usize,
     ) -> Result<Before, ParseError> {
+        self.take_held_before(tape, at)?;
         let standing = self.standing_runs(tape, at);
         let covered = |s: usize| standing.iter().any(|&(_, from, to)| from <= s && s < to);
         let blocked =
@@ -684,7 +687,7 @@ impl<'a> Parser<'a> {
     /// Whether the line runs `cell` when it runs: a node that runs, a bracket's scope, which runs
     /// its lines, and a read of a place holding a number or a pointer, which a call after it may
     /// write. A node whose operation is not built yet is none of them. An `=`'s target is not on
-    /// the tape its right side is read on (`construct_left`).
+    /// the tape its right side is read on (`assign::read_target`).
     fn runs_standing(&self, cell: &Cell) -> bool {
         use crate::identities::read::{read_kind, Dispatch, Read};
         let types = self.types;
@@ -1089,14 +1092,12 @@ impl<'a> Parser<'a> {
     }
 
     /// The one read every prefix constructor makes (`return x`, `not x`, a
-    /// prefix `-`).
+    /// prefix `-`): its side, read as an operation reads one, so a word there not built yet is
+    /// built first, as `move p` in `return move p`.
     pub(crate) fn take_right(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
-        let Some(&cell) = tape.at(1) else {
+        let Some(cell) = self.side_at(tape, 1)? else {
             return Err(ParseError::MissingOperand);
         };
-        if !self.is_operand_cell(&cell) {
-            return Err(ParseError::MissingOperand);
-        }
         let node = self.as_operand(cell)?;
         tape.remove(1);
         Ok(node)
@@ -1105,14 +1106,22 @@ impl<'a> Parser<'a> {
     /// What a type at the center takes from its right, the cell at `k` (›A type's `parse` decides
     /// what converts into it; unwritten, a value converts only into a type that holds it
     /// exactly‹ [[R155]]): a built value or a bare name, what is built at discovery (`.`, `@`, a
-    /// call, an `if`) finished before it. `None` where the type stands as itself: nothing there,
-    /// or a cell still to be built that is no value of its own (`+`, `->`).
+    /// call, an `if`) finished before it, and a negating `-` there started first, so `i32 -m`
+    /// negates `m` before `i32` converts it (›`-` negates where a space stands before it and none
+    /// after, or no value stands to its left; any other `-` subtracts‹ [[R157]]). `None` where
+    /// the type stands as itself: nothing there, or a cell still to be built that is no value of
+    /// its own (`+`, `->`).
     pub(crate) fn type_operand(
         &mut self,
         tape: &mut ParsingTape,
         k: isize,
     ) -> Result<Option<Cell>, ParseError> {
-        let Some(cell) = self.cell_at(tape, k)? else { return Ok(None) };
+        let Some(mut cell) = self.cell_at(tape, k)? else { return Ok(None) };
+        // Any other word not built yet leaves the type standing as itself: stand-in for #535.
+        if !cell.constructed && self.cell_identity(&cell) == self.types.negate {
+            let Some(started) = self.side_at(tape, k)? else { return Ok(None) };
+            cell = started;
+        }
         Ok(self.is_operand_cell(&cell).then_some(cell))
     }
 

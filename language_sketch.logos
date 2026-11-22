@@ -48,8 +48,9 @@ caller := type ?  # where it was called from: for a constructor the appearance o
 
 mut := type (
     # a gate word (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹, ruled 21 November 2026, superseding
-    # the gate on the binding of 5-15 September): it stands right of :=, reads the whole value to its right and gives it
-    # with its type gated: x := mut i32 5 is [mut i32 | 5], x := pub (a + b) gates the sum. The gates over a type are one
+    # the gate on the binding of 5-15 September): it stands right of :=, reads the nearest value to its right and gives it
+    # with its type gated: x := mut i32 5 is [mut i32 | 5], x := mut a + b is (mut a) + b, and x := pub (a + b) gates
+    # the sum. The gates over a type are one
     # gate node, [gate mint | the type it gates], one mint per set of gates, so pub mut i32 is mut pub i32, and a gate
     # node never points at another. A gated type reads as the type it gates; a write and a gate's check act on the
     # gate, and x.type gives it. No gate node is the default gates: read from its own scope and below, written nowhere.

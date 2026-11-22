@@ -29,11 +29,11 @@ pub struct TryIds {
     pub kept_leaf: DyadPtr,
 }
 
-/// At the rank of every word that takes a value from its right (›A parse is ranked by what it
-/// takes from its right‹ [[R116]]).
+/// At the rank of `return` (›Every identity has a `parse_rank`, and `(` works in two steps‹
+/// [[R259]]).
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> TryIds {
     let roles = &["operand", "check", "value", "op", "output_type"];
-    let try_ = super::drop_model::keyword(cx, "try", meta::prec::PREFIX, roles, |p, _id, tape| {
+    let try_ = super::drop_model::keyword(cx, "try", meta::prec::RETURN, roles, |p, _id, tape| {
         p.construct_try(tape)
     });
     // SAFETY: `try_` carries the record `keyword` built, whose roles name `value`.

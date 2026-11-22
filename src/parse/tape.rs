@@ -20,6 +20,9 @@ pub struct Cell {
     /// left may claim it (`X (…)` is X's decision); goes when the seed stops
     /// unwrapping a one-expression group to its expression.
     pub bracket: bool,
+    /// One past the closer of a bracket paired and not built: the word that takes it builds it
+    /// (›Every identity has a `parse_rank`, and `(` works in two steps‹ [[R259]]).
+    pub held: Option<usize>,
     /// The text `start..start + len` indexes; `None` for a cell nothing lexed.
     /// It must outlive every read of the cell.
     text: Option<std::ptr::NonNull<str>>,
@@ -43,7 +46,7 @@ pub struct Cell {
     /// value of `type`, where any other cell that gives a type is that type with nothing after it.
     pub type_value: bool,
     /// The gate mint of the gate words read over the value, null for none: what its type is
-    /// gated by where it lands (›A gate word reads the whole value to its right and gives it
+    /// gated by where it lands (›A gate word reads the nearest value to its right and gives it
     /// with its type gated‹ [[R102]]).
     pub gates: DyadPtr,
 }
@@ -72,6 +75,7 @@ impl Cell {
         self.dyad = dyad;
         self.constructed = true;
         self.bracket = false;
+        self.held = None;
         self.path = path;
         self.target = target;
         self.root = root;
@@ -91,6 +95,7 @@ impl Cell {
             dyad,
             constructed: false,
             bracket: false,
+            held: None,
             text: Some(std::ptr::NonNull::from(text)),
             start,
             len,
@@ -111,6 +116,7 @@ impl Cell {
             dyad,
             constructed: true,
             bracket: false,
+            held: None,
             text: None,
             start: 0,
             len: 0,
@@ -224,6 +230,9 @@ pub struct ParsingTape {
     /// Each removed cell, in the order removed, with where the cell after it started then, so
     /// with the source up to there, which holds what it was built from: what a constructor took.
     taken: Vec<(Cell, usize)>,
+    /// The words that started a word standing at their side, to take it, the innermost last:
+    /// each is being built, so no side of the word it started.
+    takers: Vec<usize>,
 }
 
 impl ParsingTape {
@@ -260,11 +269,12 @@ impl ParsingTape {
     }
 
     /// A native's `tape[k] = …`: the pointer alone; the flag and the spelling
-    /// stay. `false` off the tape.
+    /// stay. `false` off the tape or past its reach.
     pub fn set_dyad(&mut self, offset: isize, dyad: DyadPtr) -> bool {
-        let Some(c) = self.at_mut(offset) else {
+        let Some(n) = self.reach_node(offset) else {
             return false;
         };
+        let c = &mut self.nodes[n].cell;
         c.dyad = dyad;
         c.bracket = false;
         self.edits += 1;
@@ -272,24 +282,57 @@ impl ParsingTape {
     }
 
     /// `tape.construct`'s node, standing whole where the nodes it was built of began. `false`
-    /// off the tape.
+    /// off the tape or past its reach.
     pub fn set_cell(&mut self, offset: isize, cell: Cell) -> bool {
-        let Some(c) = self.at_mut(offset) else {
+        let Some(n) = self.reach_node(offset) else {
             return false;
         };
-        *c = cell;
+        self.nodes[n].cell = cell;
         self.edits += 1;
         true
     }
 
-    /// A native's `tape.is_constructed[k] = flag`. `false` off the tape.
+    /// A native's `tape.is_constructed[k] = flag`. `false` off the tape or past its reach.
     pub fn set_constructed(&mut self, offset: isize, flag: bool) -> bool {
-        let Some(c) = self.at_mut(offset) else {
+        let Some(n) = self.reach_node(offset) else {
             return false;
         };
-        c.constructed = flag;
+        self.nodes[n].cell.constructed = flag;
         self.edits += 1;
         true
+    }
+
+    /// The word at the center starts a word at its side, until [`Self::took`] is called with the
+    /// handle this gives.
+    pub(crate) fn taking(&mut self) -> Option<usize> {
+        let n = self.center?;
+        self.takers.push(n);
+        Some(n)
+    }
+
+    /// The word it started, the innermost, is built: `handle` is what [`Self::taking`] gave.
+    pub(crate) fn took(&mut self, handle: usize) {
+        let ended = self.takers.pop();
+        debug_assert_eq!(ended, Some(handle), "started words are built innermost first");
+    }
+
+    /// The cell at `offset` as the running constructor reaches it: a word that started it is
+    /// being built, so it is no side of it, nor is any cell past it (›A `tape[k]` read past the
+    /// lexed frontier lexes on demand for every constructor‹ [[R231]]).
+    pub fn in_reach(&self, offset: isize) -> Option<&Cell> {
+        self.reach_node(offset).map(|n| &self.nodes[n].cell)
+    }
+
+    fn reach_node(&self, offset: isize) -> Option<usize> {
+        let step = offset.signum();
+        let mut k = 0;
+        while k != offset {
+            k += step;
+            if self.takers.contains(&self.node_at(k)?) {
+                return None;
+            }
+        }
+        self.node_at(offset)
     }
 
     /// A tape over `cells`, center on the first.
@@ -374,6 +417,11 @@ impl ParsingTape {
     pub(crate) fn iter(&self) -> impl Iterator<Item = (usize, &Cell)> + '_ {
         std::iter::successors(self.head, move |&n| self.nodes[n].next)
             .map(move |n| (n, &self.nodes[n].cell))
+    }
+
+    /// The handle of the first bracket held unbuilt that starts before `before`.
+    pub(crate) fn first_held(&self, before: usize) -> Option<usize> {
+        self.iter().find(|(_, c)| c.held.is_some() && c.start < before).map(|(n, _)| n)
     }
 
     /// `handle` is one `iter` handed out for a cell still on the tape.
@@ -627,6 +675,7 @@ impl Carry for Cell {
             dyad,
             constructed,
             bracket,
+            held,
             text,
             start,
             len,
@@ -640,6 +689,7 @@ impl Carry for Cell {
         dyad.carry(out);
         constructed.carry(out);
         bracket.carry(out);
+        held.carry(out);
         text.map(|t| (t.as_ptr() as *mut u8, (t.as_ptr() as *const [u8]).len())).carry(out);
         (start, len).carry(out);
         (path, target.0, target.1).carry(out);
@@ -651,6 +701,7 @@ impl Carry for Cell {
     fn uncarry(inp: &mut In) -> Self {
         let dyad = DyadPtr::uncarry(inp);
         let (constructed, bracket) = (bool::uncarry(inp), bool::uncarry(inp));
+        let held = Option::<usize>::uncarry(inp);
         let text = Option::<(*mut u8, usize)>::uncarry(inp).and_then(|(at, len)| {
             std::ptr::NonNull::new(std::ptr::slice_from_raw_parts_mut(at, len) as *mut str)
         });
@@ -663,6 +714,7 @@ impl Carry for Cell {
             dyad,
             constructed,
             bracket,
+            held,
             text,
             start,
             len,
@@ -678,7 +730,9 @@ impl Carry for Cell {
 
 impl Carry for ParsingTape {
     fn carry(&self, out: &mut Out) {
-        let ParsingTape { nodes, head, tail, center, len, edits, sealed, inner, taken } = self;
+        let ParsingTape { nodes, head, tail, center, len, edits, sealed, inner, taken, takers } =
+            self;
+        debug_assert!(takers.is_empty(), "a tape is carried while no constructor runs on it");
         out.usize(nodes.len());
         for &Node { cell, prev, next, linked } in nodes {
             cell.carry(out);
@@ -712,6 +766,7 @@ impl Carry for ParsingTape {
             sealed,
             inner,
             taken: Carry::uncarry(inp),
+            takers: Vec::new(),
         }
     }
 }
