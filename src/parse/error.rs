@@ -168,6 +168,8 @@ pub enum ParseError {
     DoubleGate,
     /// `x = …` on a name not declared `mut`; carries the name.
     NotMutable(Box<String>),
+    /// `p@ = …` through a pointer whose target type is not `mut`, an `@i32`.
+    PointeeNotMutable,
     /// `x:lex_rank = …` written outside the scope that declares `x`; carries the name.
     LexOutsideScope(Box<String>),
     /// A read of a name declared `T ?` before a sibling write filled it; carries the name.

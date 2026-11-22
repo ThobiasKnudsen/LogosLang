@@ -14,6 +14,7 @@ impl<'a> Parser<'a> {
     /// name's `lex_rank` is decided by the scope it is written from; a place reached no such way
     /// passes here.
     pub(crate) fn check_write(&self, target: &Cell) -> Result<(), ParseError> {
+        use crate::identities::read::{place_of, Place};
         use crate::identities::this;
         let node = target.dyad;
         // SAFETY: `target` holds a reduced dyad from the store and a null or `array` path; a
@@ -31,8 +32,37 @@ impl<'a> Parser<'a> {
             if target.path.is_null() && dyad::ty(node) == self.types.binding_ {
                 return self.check_gates(&[node]);
             }
+            // A call's place lies behind the dereference its body ends in, so the path before the
+            // call grants nothing (›`a[k]` is an application, exactly as `a(k)`‹ [[R227]]).
+            if let Some(Place::Call(_)) = place_of(self.types, node) {
+                return self.check_through_pointer(node);
+            }
+            self.check_gates(&self.path_of(target))?;
+            self.check_through_pointer(node)
         }
-        self.check_gates(&self.path_of(target))
+    }
+
+    /// A write into a place a path reaches from a dereference, `p@ = …` or `p@.f.g = …`, is
+    /// granted by what the pointer points at, as each field after it grants its own step
+    /// (›An access along a path needs every gate on the path to grant it‹ [[R122]]).
+    ///
+    /// # Safety
+    /// `node` must be null or a reduced dyad from the store.
+    unsafe fn check_through_pointer(&self, node: DyadPtr) -> Result<(), ParseError> {
+        use crate::identities::{pointer, this};
+        let types = self.types;
+        let mut at = node;
+        while !at.is_null() {
+            if dyad::ty(at) == types.deref_ {
+                if pointer::writes_through(types, at) {
+                    return Ok(());
+                }
+                return Err(ParseError::PointeeNotMutable);
+            }
+            let Some((into, _)) = this::field_step(types, at) else { break };
+            at = into;
+        }
+        Ok(())
     }
 
     /// A write at a name's lex level, admitted from the scope that declares it and the scopes
@@ -135,12 +165,11 @@ impl<'a> Parser<'a> {
         }
         let path = self.path_of(receiver);
         if !path.is_empty() {
-            self.check_gates(&path)
+            self.check_gates(&path)?;
         } else if !self.cx.member_root.is_null() {
-            self.check_gates(&[self.cx.member_root])
-        } else {
-            Ok(())
+            self.check_gates(&[self.cx.member_root])?;
         }
+        self.check_through_pointer(receiver.dyad)
     }
 
     /// `=` over a field of the value a `static` function is reading.
@@ -999,17 +1028,24 @@ impl<'a> Parser<'a> {
             return Ok(cell);
         }
         let place = self.empty_place_of(cell.dyad).map_err(|e| self.fail_at(cell.start, e))?;
-        let Some(place) = place else { return Ok(cell) };
+        let Some((place, gates)) = place else { return Ok(cell) };
         let mut cell = cell;
         cell.dyad = place;
         cell.hole = true;
         cell.constructed = true;
+        // SAFETY: a cell's gates are null or a gate mint, and so are `gates`.
+        cell.gates =
+            unsafe { crate::identities::gate::union(self.rt.store, self.types, cell.gates, gates) };
         Ok(cell)
     }
 
-    /// The place `T ?` makes of the type `value` gives, read as `?` reads the type to its left;
-    /// `None` for a value whose own type is not `type`, and for `?` itself.
-    pub(super) fn empty_place_of(&mut self, value: DyadPtr) -> Result<Option<DyadPtr>, ParseError> {
+    /// The place `T ?` makes of the type `value` gives, read as `?` reads the type to its left,
+    /// with the gates of a gated `T`; `None` for a value whose own type is not `type`, and for `?`
+    /// itself.
+    pub(super) fn empty_place_of(
+        &mut self,
+        value: DyadPtr,
+    ) -> Result<Option<(DyadPtr, DyadPtr)>, ParseError> {
         let types = self.types;
         // SAFETY: a parsed value is null or a reduced dyad from the store.
         let gives_type = unsafe {
@@ -1043,7 +1079,7 @@ impl<'a> Parser<'a> {
             return Ok(Constructed::Decline);
         };
         if self.is_bare_unknown(&operand) {
-            let place = self.valueless_place(id)?;
+            let (place, _) = self.valueless_place(id)?;
             tape.place(place);
             tape.at_mut(0).expect("placed above").hole = true;
             return Ok(Constructed::Placed);
@@ -1051,13 +1087,21 @@ impl<'a> Parser<'a> {
         let value = self.as_operand(operand)?;
         let types = self.types;
         // SAFETY: `value` is a reduced dyad from the store, and `type` a type node.
-        let held = unsafe {
-            crate::identities::land(self.rt.store, types, value, types.type_)
-                .map(|landed| {
-                    let read = self.settled_type(types.through(landed));
-                    crate::identities::type_identity_of(types, read).unwrap_or(landed)
-                })
-                .map_err(|e| self.fail_at(operand.start, e))?
+        let landed = unsafe { crate::identities::land(self.rt.store, types, value, types.type_) }
+            .map_err(|e| self.fail_at(operand.start, e))?;
+        // SAFETY: `landed` is a reduced dyad from the store.
+        let known = unsafe {
+            let read = self.settled_type(types.through(landed));
+            crate::identities::type_identity_of(types, read)
+        };
+        // The gates a gate word put on the type are the type's own: `type mut i32` is `mut i32`.
+        let held = match known {
+            // SAFETY: `t` is a type node, and a cell's gates null or a gate mint.
+            Some(t) => unsafe {
+                crate::identities::gate::gated(self.rt.store, types, operand.gates, t)
+            },
+            None if operand.gates.is_null() => landed,
+            None => return Err(self.fail_at(operand.start, ParseError::TypeKnownOnlyAtRun)),
         };
         tape.place_type_value(held);
         Ok(Constructed::Placed)
@@ -1182,8 +1226,11 @@ impl<'a> Parser<'a> {
                 value
             } else if crate::identities::read::read_kind(self.types, read)
                 == crate::identities::read::Read::Identity
+                && !crate::identities::gate::is_node(read)
             {
-                // A type held, `type i32`: the name is another spelling of it.
+                // A type held, `type i32`: the name is another spelling of it. A gated type,
+                // `type mut i32`, is held in a `type` place instead, since a gate node where the
+                // binding points is the name's own.
                 self.cx.scopes.rebind(binding, read);
                 read
             } else if let Some(t) = crate::identities::node_output(self.types, value) {
@@ -1205,12 +1252,15 @@ impl<'a> Parser<'a> {
                     }
                     init
                 }
-            } else if let Teardown::Block(pointee) = teardown_of(self.types, value) {
-                // An owning value lands in a place of an owning `@pointee`, which the scope holds.
+            } else if let Teardown::Block(_) = teardown_of(self.types, value) {
+                // An owning value lands in a place of an owning `@pointee`, which the scope holds,
+                // the gates under the pointer kept.
+                let ty = crate::identities::read::output_type(self.types, value);
+                let ty = crate::identities::type_identity_of(self.types, ty).unwrap_or(ty);
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
                     self.rt.store,
                     self.types.type_,
-                    pointee,
+                    crate::identities::numtype::gated_pointee_of(ty),
                     self.types.ops.teardown_,
                 );
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
@@ -1269,7 +1319,7 @@ impl<'a> Parser<'a> {
             return Ok(Constructed::Decline);
         };
         // SAFETY: the bracket cell holds a node from the store; its arguments are reduced dyads.
-        let node = unsafe {
+        let (node, gates) = unsafe {
             let args = self.args_of(bracket.dyad);
             let [ty, value] = args[..] else {
                 return Err(ParseError::CtorArity);
@@ -1277,14 +1327,18 @@ impl<'a> Parser<'a> {
             // A box the pass has not filled holds its type only when the program runs, and the
             // line does not wait for it: stand-in for #292.
             let ty = self.type_known_now(ty)?;
+            // A gated type gives a node of the type it gates, standing with its gates as
+            // `mut i32 5` does.
+            let (ty, gates) = crate::identities::gate::parts(ty);
             let node =
                 crate::identities::dyad_place::build_of_type(self.rt.store, types, ty, value)?;
             // The node holds the value, and ends it with itself.
             self.take(value);
-            node
+            (node, gates)
         };
         tape.remove(1);
         tape.place(node);
+        tape.at_mut(0).expect("placed above").gates = gates;
         Ok(Constructed::Placed)
     }
 
@@ -1311,9 +1365,12 @@ impl<'a> Parser<'a> {
             tape.place(value);
             return Ok(Constructed::Placed);
         };
-        let node = self.valueless_place(t)?;
+        let (node, own) = self.valueless_place(t)?;
         // The place of a gated type, `x.type ?`, has that type's gates.
         let gates = tape.at(-1).map_or(std::ptr::null_mut(), |cell| cell.gates);
+        // SAFETY: a cell's gates are null or a gate mint, and so are `own`.
+        let gates =
+            unsafe { crate::identities::gate::union(self.rt.store, self.types, gates, own) };
         tape.remove(-1);
         tape.place(node);
         let cell = tape.at_mut(0).expect("placed above");
@@ -1335,8 +1392,11 @@ impl<'a> Parser<'a> {
         if !self.is_bare_unknown(operand) {
             return Ok(false);
         }
-        let node = self.valueless_place(t)?;
+        let (node, own) = self.valueless_place(t)?;
         let gates = tape.at(0).map_or(std::ptr::null_mut(), |cell| cell.gates);
+        // SAFETY: a cell's gates are null or a gate mint, and so are `own`.
+        let gates =
+            unsafe { crate::identities::gate::union(self.rt.store, self.types, gates, own) };
         tape.remove(1);
         tape.place(node);
         let cell = tape.at_mut(0).expect("placed above");
@@ -1347,22 +1407,31 @@ impl<'a> Parser<'a> {
 
     /// What `T ?` makes of the type `t`, the valueless form a declaration takes, whose type
     /// `hole::declared_type` reads: an empty node of a type whose nodes run (›`array` is a
-    /// chooser‹ [[R223]]), else the valueless marker.
-    pub(super) fn valueless_place(&mut self, t: DyadPtr) -> Result<DyadPtr, ParseError> {
+    /// chooser‹ [[R223]]), else the valueless marker; with the gate mint of a gated `t`, which
+    /// the place's cell carries, `mut i32 ?` as `i32 ?` gated.
+    pub(super) fn valueless_place(&mut self, t: DyadPtr) -> Result<(DyadPtr, DyadPtr), ParseError> {
         let types = self.types;
         // SAFETY: `t` is a type node from the store.
         unsafe {
-            if crate::identities::meta::is_record_type(t)
-                && !crate::identities::meta::run_body_of(t).is_null()
+            let (under, gates) = crate::identities::gate::parts(t);
+            if crate::identities::meta::is_record_type(under)
+                && !crate::identities::meta::run_body_of(under).is_null()
             {
-                return Ok(crate::identities::this::empty_node(self.rt.store, t));
+                return Ok((crate::identities::this::empty_node(self.rt.store, under), gates));
             }
             // The valueless marker `[T][null]`: the name `:=` gives it is laid out at the type's
             // width by the reading rule, so allocation and read cannot disagree.
-            if crate::identities::read::place_layout(types, t).is_none() && !self.cx.field_hole {
+            if crate::identities::read::place_layout(types, under).is_none() && !self.cx.field_hole
+            {
                 return Err(ParseError::NonNumericDeclaredType);
             }
+            let hole = crate::identities::hole::build(
+                self.rt.store,
+                types.unknown,
+                t,
+                std::ptr::null_mut(),
+            );
+            Ok((hole, gates))
         }
-        Ok(crate::identities::hole::build(self.rt.store, types.unknown, t, std::ptr::null_mut()))
     }
 }

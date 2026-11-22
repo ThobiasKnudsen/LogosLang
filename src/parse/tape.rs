@@ -277,6 +277,17 @@ impl ParsingTape {
         true
     }
 
+    /// `tape.construct`'s node, standing whole where the nodes it was built of began. `false`
+    /// off the tape.
+    pub fn set_cell(&mut self, offset: isize, cell: Cell) -> bool {
+        let Some(c) = self.at_mut(offset) else {
+            return false;
+        };
+        *c = cell;
+        self.edits += 1;
+        true
+    }
+
     /// A native's `tape.is_constructed[k] = flag`. `false` off the tape.
     pub fn set_constructed(&mut self, offset: isize, flag: bool) -> bool {
         let Some(c) = self.at_mut(offset) else {

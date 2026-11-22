@@ -585,7 +585,7 @@ mod tests {
             "if (x < 2) ( 3 ) else ( 4 )",
             "for i in 0..10 ( x = x + 1 )",
             "( 5, # prose\n 6 )",
-            "inc := fn (p := @i32 ?) -> void ( p@ = p@ + 1 )",
+            "inc := fn (p := @ mut i32 ?) -> void ( p@ = p@ + 1 )",
         ]);
         let types = &core;
 

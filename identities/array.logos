@@ -20,10 +20,13 @@ array := pub type (
 
     run = (
         v := mut output_type ?,
-        v.ptr = mut alloc elements.dyads.size of v.element_type ?,
+        # `ptr` owns the block and reads it only; `w`, a plain pointer into it, writes it.
+        p := alloc elements.dyads.size of mut v.element_type ?,
+        w := p + 0,
+        v.ptr = move p,
         # size counts only written elements, so a failed `=` leaves free nothing unwritten to walk.
         for i in 0..elements.dyads.size (
-            (v.ptr + i)@ = elements.dyads[i],
+            (w + i)@ = elements.dyads[i],
             v.size = i + 1
         ),
         move v

@@ -60,11 +60,14 @@ pub unsafe fn set_ty(p: DyadPtr, t: DyadPtr) {
 /// Whether two types read the same, which is what `==` of two types asks: one dyad, or two
 /// dyads whose type word and value are the same, as two names of one mint are (›Every type is
 /// minted by its contents through `type_mint`; the name that holds a `type ( … )` gives it its
-/// identity‹ [[R383]]). A dyad that holds no value yet equals only itself.
+/// identity‹ [[R383]]), each read through its top gate node only, `mut i32` as `i32` (›Gates
+/// are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]). A dyad that holds no
+/// value yet equals only itself.
 ///
 /// # Safety
 /// `l` and `r` must each be null or a type node from the store.
 pub unsafe fn types_read_the_same(l: DyadPtr, r: DyadPtr) -> bool {
+    let (l, r) = (super::gate::under(l), super::gate::under(r));
     l == r
         || (!l.is_null()
             && !r.is_null()

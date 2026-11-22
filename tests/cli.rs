@@ -519,6 +519,84 @@ fn a_member_the_tape_s_node_does_not_have_is_refused_as_a_name_s_is() {
     }
 }
 
+/// ›A `tape[k]` read past the lexed frontier lexes on demand for every constructor‹ [[R231]]: «A
+/// reader that needs nodes to its right built before it reads them builds them itself with
+/// `tape.construct(from, to)` … giving no node or more than one is an error. The reader finds
+/// `to` itself.» A gate word builds the gated type, which reads as the type it gates for its
+/// members (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]).
+#[test]
+fn a_parse_builds_the_nodes_to_its_right_with_tape_construct() {
+    let to_the_end = "k := mut u64 1, \
+                      while (tape[k].type != square_brackets and tape[k].type != void) ( k = k + 1 ), \
+                      tape.construct(1, k), \
+                      if tape[1].type == type ( t := type tape[1], print «{t} {t.size_bytes}» )";
+    let first = "tape.construct(1, 2), \
+                 if tape[1].type == type ( t := type tape[1], print «{t} {t.size_bytes}» )";
+    let stands = "tape.construct(1, 4), tape[0] = tape[1]";
+    for (body, tail, printed) in [
+        (to_the_end, "c := type ch mut i32", "mut i32 4\n"),
+        (to_the_end, "c := type ch pub mut i64, 0", "pub mut i64 8\n0\n"),
+        (to_the_end, "c := type ch i32", "i32 4\n"),
+        (first, "c := type ch (mut i32)", "mut i32 4\n"),
+        (
+            to_the_end,
+            "f := fn () -> i32 ( c := type ch mut i32, 5 ), f.compile(), f()",
+            "mut i32 4\n5\n",
+        ),
+        (stands, "x := i32 2, c := ch x + 40, c", "42\n"),
+        // A local of the call whose line the parse builds is read in that call's frame.
+        (stands, "f := fn (x := i32 ?) -> i32 ( c := ch x + 40, c ), f(2)", "42\n"),
+        (stands, "f := fn (x := i32 ?) -> i32 ( c := ch x + 40, c ), f.compile(), f(2)", "42\n"),
+    ] {
+        let src = format!("{}, {tail}", tape_reader(body));
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+    // A call among the built nodes runs once, in the line's order, whether the parse takes the
+    // node it built or removes itself and leaves that node standing.
+    let rest = "k := mut u64 1, while (tape[k].type != void) ( k = k + 1 ), tape.construct(1, k)";
+    let calls = "h := fn () -> i32 ( print «h», 2 ), g := fn () -> i32 ( print «g», 1 )";
+    let takes = tape_reader(&format!("{rest}, tape[0] = tape[1]"));
+    let leaves = format!(
+        "ch := type ( parse_rank = fn.parse_rank, associativity = right, \
+         parse = ( {rest}, tape.remove(0) ) )"
+    );
+    for reader in [&takes, &leaves] {
+        for (tail, printed) in [
+            ("c := ch h() + g(), c", "h\ng\n3\n"),
+            ("c := g() + ch h() + 40, c", "g\nh\n43\n"),
+            ("f := fn () -> i32 ( c := ch h() + g(), c ), f.compile(), f()", "h\ng\n3\n"),
+        ] {
+            let src = format!("{calls}, {reader}, {tail}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+        }
+    }
+    for (body, tail, message) in [
+        ("tape.construct(1, 1)", "c := type ch i32", "nothing to evaluate here"),
+        ("tape.construct(1, 3)", "c := type ch 1 2", "expected one expression, found more"),
+        ("tape.construct(1, 9)", "c := type ch i32", "this index is off the tape"),
+        ("tape.construct(0, 2)", "c := type ch i32", "so `from` is 1 or more (here 0)"),
+    ] {
+        let src = format!("{}, {tail}", tape_reader(body));
+        let (code, _, stderr) = run_line(&src);
+        assert!(code != Some(0) && stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]: «A gated type
+/// reads as the type it gates … for layout».
+#[test]
+fn a_gated_type_s_members_are_the_type_s_it_gates() {
+    for (src, printed) in [
+        ("t := type mut i32, print «{t.size_bytes} {t.parse_rank == i32.parse_rank}»", "4 true\n"),
+        ("x := mut i64 5, t := type x.type, print «{t} {t.size_bytes}»", "mut i64 8\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+}
+
 /// `m`, a type written in Logos with `static` members and a `run`; `q`, a prefix whose parse makes
 /// a node of `m`; and `p`, a postfix whose parse prints `read` of the node to its left.
 fn static_reader(m_body: &str, read: &str) -> String {
@@ -597,7 +675,11 @@ fn a_parse_reads_the_name_and_type_a_line_of_its_bracket_declares() {
     let members = "c := type ch ( i := pub mut i32, f := f64 )";
     for (body, tail, printed) in [
         ("print «{tape[1].dyads[0].lhs:name} {tape[1].dyads[1].lhs:name}»", members, "i f\n"),
-        ("print «{tape[1].dyads[0].lhs.type} {tape[1].dyads[1].lhs.type}»", members, "i32 f64\n"),
+        (
+            "print «{tape[1].dyads[0].lhs.type} {tape[1].dyads[1].lhs.type}»",
+            members,
+            "pub mut i32 f64\n",
+        ),
         (
             "print «{(tape[1].dyads[0].lhs.type) == i32} {(tape[1].dyads[1].lhs.type) == i32}»",
             members,
@@ -1301,10 +1383,6 @@ fn an_array_travels_as_its_address() {
         ("f := fn (p := array i32 ?) -> i32 ( p[1] ), f(a)", "2"),
         ("f := fn (p := array i32 ?) -> i32 ( p[1] + p[2] ), f.compile(), f(a)", "5"),
         ("f := fn (p := array i32 ?) -> u64 ( p.size_bytes() + p.size ), f(a)", "15"),
-        // `b := a` copies the array: a write through `b` is not seen through `a`, while one
-        // through a parameter is.
-        ("b := a, b.ptr@ = i32 9, a[0]", "1"),
-        ("b := a, b.ptr@ = i32 9, b[0]", "9"),
         ("f := fn (p := array i32 ?) -> i32 ( p[0] = i32 9, 0 ), free (f(a)), a[0]", "9"),
         (
             "t := type array i32, mk := fn (v := i32 ?) -> t ( c := array i32 [v, 1], c ), \
@@ -1333,6 +1411,13 @@ fn an_array_travels_as_its_address() {
             !out.status.success() && stderr.contains("these types do not match"),
             "{tail}: {stderr}"
         );
+    }
+    // ›`a[k]` is an application, exactly as `a(k)`‹ [[R227]]: an `array i32`'s `ptr` is a
+    // `@i32`, so its elements are not written through it, by a copy's `ptr` either.
+    for tail in ["a.ptr@ = i32 9, 0", "b := a, b.ptr@ = i32 9, 0", "(a.ptr + 1)@ = i32 9, 0"] {
+        let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("points at a value that is not `mut`"), "{tail}: {stderr}");
     }
 }
 
@@ -1901,7 +1986,7 @@ fn a_static_function_is_called_on_the_record_behind_a_pointer() {
     let t = "u := type ( a := i64 ?, s := pub static fn () -> i64 ( a ) ), \
              t := type ( n := pub mut i64 ?, inner := pub u ?, k := pub static fn () -> i64 ( 1 ), \
              get := pub static fn () -> i64 ( n ), bump := pub static fn () -> i64 ( n = n + 10, n ) ), \
-             p := alloc 2 of t (i64 3, u (i64 7))";
+             p := alloc 2 of mut t (i64 3, u (i64 7))";
     for (tail, want) in [
         ("p@.k()", "1\n"),
         ("p@.get()", "3\n"),
@@ -1910,7 +1995,7 @@ fn a_static_function_is_called_on_the_record_behind_a_pointer() {
         ("g := fn (q := @t ?) -> i64 ( q@.get() + q@.inner.s() ), g.compile(), g(p)", "10\n"),
         // The write reaches the record behind the pointer.
         ("free (p@.bump()), p@.n", "13\n"),
-        ("g := fn (q := @t ?) -> i64 ( free (q@.bump()), q@.n ), g.compile(), g(p)", "13\n"),
+        ("g := fn (q := @ mut t ?) -> i64 ( free (q@.bump()), q@.n ), g.compile(), g(p)", "13\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{t}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
@@ -2925,7 +3010,7 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
     // A number in a place no name holds.
     for src in [
         "f := fn (q := mut dyad ?) -> i32 ( 1 ), f(5)",
-        "p := alloc 1 of dyad ?, p@ = 5",
+        "p := alloc 1 of mut dyad ?, p@ = 5",
         "r := type ( v := dyad ? ), x := r (5)",
     ] {
         let out = logos().arg(src).output().unwrap();
@@ -3573,6 +3658,96 @@ fn inclusion_the_design_leaves_open_is_a_checked_error() {
     assert!(echoes.is_empty() && stderr.contains("cannot compute"), "stderr: {stderr}");
 }
 
+/// ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type
+/// that holds it exactly‹ [[R155]]: «`⊆` answers the same question», so a pointer type lies inside
+/// another exactly where its pointer lands, and an array of the one takes a pointer of the other.
+#[test]
+fn a_pointer_type_lies_inside_another_where_its_pointer_lands() {
+    let types = "print «{(@ mut i32) ⊆ (@i32)} {(@i32) ⊆ (@ mut i32)} {(@i32) ⊆ (@i64)}»";
+    let named =
+        "a := mut i32 5, p := &a, b := i32 6, q := &b, print «{p.type ⊆ q.type} {q.type ⊆ p.type}»";
+    for (src, printed) in [(types, "true false false"), (named, "true false")] {
+        assert_eq!(run_line(src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    let arrays = "import file «./identities/array.logos», ";
+    let (code, stdout, stderr) =
+        run_line(&format!("{arrays}a := mut i32 5, p := &a, l := array (@i32) [p], l[0]@"));
+    assert_eq!((code, stdout.trim()), (Some(0), "5"), "stderr: {stderr}");
+    let (code, _, stderr) =
+        run_line(&format!("{arrays}b := i32 6, q := &b, l := array (@ mut i32) [q], 0"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("an element does not fit the element type"), "stderr: {stderr}");
+}
+
+/// A gate word over a type with nothing after it gives the gated type, which a name holds and
+/// builds gated values with; `.type` gives a name's type with its gates, and `==` and `⊆` read a
+/// gated type as the type it gates (›Gates are type nodes: `x := mut i32 5`; the record holds no
+/// gates‹ [[R381]]).
+#[test]
+fn a_gated_type_is_a_value_that_builds_gated_values() {
+    for (src, printed) in [
+        ("t := type mut i32, x := t 5, x = 6, x", "6"),
+        ("t := type mut i32, x := t ?, x = 6, x", "6"),
+        ("t := type pub mut i32, x := t 5, x = 7, x", "7"),
+        ("t := type mut i32, f := fn (a := t ?) -> i32 ( a = 3, a ), f(1)", "3"),
+        ("t := type mut i32, f := fn (a := t ?) -> i32 ( a = 3, a ), f.compile(), f(1)", "3"),
+        ("t := type mut @ mut i32, a := mut i32 1, p := t &a, p@ = 4, a", "4"),
+        ("t := type mut i32, print «{t} {t == i32} {t == f64}»", "mut i32 true false"),
+        ("x := mut i32 5, print «{x.type} {x.type == i32}»", "mut i32 true"),
+        ("x := mut i32 5, t := x.type, t = 9, t", "9"),
+        // What a name gives is its value, not its place.
+        ("x := mut i32 5, print «{x.type} {x.gives}»", "mut i32 i32"),
+        ("f := fn () -> bool ( x := mut i32 5, x.type == i32 ), f.compile(), f()", "true"),
+        ("print «{(u32) ⊆ (static u64)} {(mut i32) ⊆ (i32)}»", "true true"),
+    ] {
+        assert_eq!(run_line(src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    for (src, message) in [
+        ("t := type i32, x := t 5, x = 6", "`x` is not `mut`"),
+        ("x := mut i32 5, y := x.gives ?, y = 3", "`y` is not `mut`"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert!(code == Some(1) && stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+}
+
+/// `@` and `alloc … of` build the nodes to their right as `tape.construct` does, each by its own
+/// constructor (›A `tape[k]` read past the lexed frontier lexes on demand for every
+/// constructor‹ [[R231]]): a gate word, a further `@`, a bracket and a gated alias alike give
+/// what the pointer points at (›A pointer points at a gated type: `&a` of a `mut i32` is
+/// `@ mut i32`, and `mut` before a pointer gates the pointer itself‹ [[R382]]).
+#[test]
+fn a_pointer_s_right_side_is_built_by_its_own_constructors() {
+    let pointer_param = "a := mut i32 1, b := mut &a, \
+                         f := fn (p := @ mut @ mut i32 ?) -> i32 ( p@@ = 3, a )";
+    for (src, printed) in [
+        ("t := type mut i32, p := alloc 1 of t 5, p@ = 6, p@".to_string(), "6"),
+        ("r := alloc 1 of pub mut i32 4, r@ = 5, r@".into(), "5"),
+        ("t := type mut i32, a := mut i32 2, p := mut @t ?, p = &a, p@ = 9, a".into(), "9"),
+        (
+            "k := fn (t := type ?) -> type ( t ), x := type k(@ (mut i32)), \
+             y := type k(@ mut i32), print «{x == y}»"
+                .into(),
+            "true",
+        ),
+        (format!("{pointer_param}, f(&b)"), "3"),
+        (format!("{pointer_param}, f.compile(), f(&b)"), "3"),
+    ] {
+        assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    for (src, message) in [
+        ("p := @ mut mut i32 ?", "1:8: error: this gate word already gates the value"),
+        ("r := alloc 1 of mut mut i32 5", "1:17: error: this gate word already gates the value"),
+        (
+            "a := i32 1, b := mut &a, f := fn (p := @ mut @ i32 ?) -> i32 ( p@@ = 3, 0 ), f(&b)",
+            "points at a value that is not `mut`",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert!(code == Some(1) && stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
     let q = "q := type ( size := static u64 0, parse_rank = 60, parse = ( \
@@ -3801,7 +3976,8 @@ fn a_map_a_dyad_place_holds_is_read_and_written_by_key() {
             ),
             "2\n",
         ),
-        (format!("{e}, m := mut {{ d := pub mut dyad (e.type, e) }}, (m.d)[0] = 5, (m.d)[0]"), "5\n"),
+        // `e.type` is `mut hashmap u64 -> u64`, so the node it makes is gated `mut` already.
+        (format!("{e}, m := mut {{ d := pub dyad (e.type, e) }}, (m.d)[0] = 5, (m.d)[0]"), "5\n"),
         // The right side runs first, so a map it puts in the `dyad` is the one written.
         (
             format!(
@@ -5042,7 +5218,7 @@ fn a_binding_reads_its_frame_and_offset() {
 fn a_binding_s_fields_are_read_and_only_lex_rank_is_written() {
     // A write into `frame` or `offset` would move where `s` reads; `lex_rank` is the one
     // field a program sets after the declaration. `&` of a field holds a copy of what the line
-    // read, so a write through its address moves nothing.
+    // read, which no gate makes writable, so a write through its address is refused.
     let (echoes, stderr) = repl(
         "s := i32 5
 s:offset = 7
@@ -5058,7 +5234,8 @@ s
     );
     assert_eq!(echoes, ["7.0", "5"], "stderr: {stderr}");
     assert_eq!(stderr.matches("not an assignable place").count(), 4, "stderr: {stderr}");
-    assert_eq!(stderr.matches("error").count(), 4, "stderr: {stderr}");
+    assert_eq!(stderr.matches("points at a value that is not `mut`").count(), 1, "{stderr}");
+    assert_eq!(stderr.matches("error").count(), 5, "stderr: {stderr}");
 }
 
 #[test]
@@ -5343,35 +5520,62 @@ fn a_write_along_a_path_needs_mut_on_every_step() {
     assert_eq!(echoes, ["4", "5"], "stderr: {stderr}");
 }
 
+/// ›An access along a path needs every gate on the path to grant it‹ [[R122]]: a field of an
+/// array is a step from the name that holds it, a name its value's parse woke as any other.
+#[test]
+fn a_field_of_an_array_is_written_only_through_a_mut_name() {
+    let arrays = "import file «./identities/array.logos», ";
+    for tail in [
+        "a := array i32 [1, 2, 3], a.size = 9, 0",
+        "a := array i32 [1, 2, 3], a.ptr = alloc 1 of i32 ?, 0",
+        "f := fn (a := array i32 ?) -> u64 ( a.size = 7, a.size ), 0",
+    ] {
+        let (code, _, stderr) = run_line(&format!("{arrays}{tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("`a` is not `mut`"), "{tail}: stderr: {stderr}");
+    }
+    let written = "a := mut array i32 [1, 2, 3], a.size = 2, a.size";
+    let (code, stdout, stderr) = run_line(&format!("{arrays}{written}"));
+    assert_eq!((code, stdout.trim()), (Some(0), "2"), "stderr: {stderr}");
+}
+
 #[test]
 fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
     let t = |gate: &str| format!("t := type ( n := pub {gate}i64 ? )");
     let u = |a: &str, b: &str| {
         format!(
             "u := type ( a := pub {a}i64 ?, bump := pub static fn () -> void ( a = a + 1 ) ), \
-             t := type ( b := pub {b}u ? ), p := alloc 1 of t (u (5))"
+             t := type ( b := pub {b}u ? ), p := alloc 1 of mut t (u (5))"
         )
     };
+    let read_only = "points at a value that is not `mut`";
     for (src, expect) in [
-        (format!("{}, p := alloc 1 of t (5), p@.n = 7", t("")), "`n` is not `mut`"),
+        (format!("{}, p := alloc 1 of mut t (5), p@.n = 7", t("")), "`n` is not `mut`"),
         (format!("{}, v := mut t (5), q := &v, q@.n = 7", t("")), "`n` is not `mut`"),
-        (format!("{}, p := alloc 2 of t (5), (p + 1)@.n = 7", t("")), "`n` is not `mut`"),
+        (format!("{}, p := alloc 2 of mut t (5), (p + 1)@.n = 7", t("")), "`n` is not `mut`"),
         (
-            format!("{}, f := fn (p := @t ?) -> i64 ( p@.n = 7, p@.n ), f.compile()", t("")),
+            format!("{}, f := fn (p := @ mut t ?) -> i64 ( p@.n = 7, p@.n ), f.compile()", t("")),
             "`n` is not `mut`",
         ),
         (format!("{}, p@.b.a = 7", u("mut ", "")), "`b` is not `mut`"),
         (format!("{}, p@.b.a = 7", u("", "mut ")), "`a` is not `mut`"),
         (format!("{}, p@.b.bump()", u("mut ", "")), "`b` is not `mut`"),
+        // Every field grants the write, and the pointer does not.
+        (format!("{}, p := alloc 1 of t (5), p@.n = 7", t("mut ")), read_only),
+        (format!("{}, v := t (5), q := &v, q@.n = 7", t("mut ")), read_only),
+        (format!("{}, f := fn (p := @t ?) -> i64 ( p@.n = 7, p@.n ), 0", t("mut ")), read_only),
+        (format!("{}, q := alloc 1 of t (u (5)), q@.b.bump()", u("mut ", "mut ")), read_only),
     ] {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
     }
-    // The name holding the pointer grants nothing: the path starts at the `@`.
+    // The name holding the pointer grants nothing: the path starts at the `@`, whose pointer
+    // grants the write by the `mut` under it.
     for (src, want) in [
-        (format!("{}, p := alloc 1 of t (5), p@.n = 7, p@.n", t("mut ")), "7\n"),
-        (format!("{}, p := alloc 2 of t (5), (p + 1)@.n = 7, (p + 1)@.n", t("mut ")), "7\n"),
+        (format!("{}, p := alloc 1 of mut t (5), p@.n = 7, p@.n", t("mut ")), "7\n"),
+        (format!("{}, p := alloc 2 of mut t (5), (p + 1)@.n = 7, (p + 1)@.n", t("mut ")), "7\n"),
+        (format!("{}, v := mut t (5), q := &v, q@.n = 7, v.n", t("mut ")), "7\n"),
         (format!("{}, p@.b.a = 7, p@.b.a", u("mut ", "mut ")), "7\n"),
         (format!("{}, p@.b.bump(), p@.b.a", u("mut ", "mut ")), "6\n"),
     ] {
@@ -5380,7 +5584,7 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
     }
     for compile in ["", "f.compile(), "] {
         let src = format!(
-            "{}, f := fn (p := @t ?) -> i64 ( p@.n = 7, p@.n ), {compile}p := alloc 1 of t (5), f(p)",
+            "{}, f := fn (p := @ mut t ?) -> i64 ( p@.n = 7, p@.n ), {compile}p := alloc 1 of mut t (5), f(p)",
             t("mut ")
         );
         let (code, stdout, stderr) = run_line(&src);
@@ -5591,7 +5795,12 @@ fn only_a_marked_place_is_written_or_addressed() {
 #[test]
 fn an_element_has_an_address_and_taking_it_checks_the_index() {
     let arr = "import file «./identities/array.logos»";
-    assert_eq!(line(&format!("{arr}, a := array i32 [1, 2], p := &(a[1]), p@ = 8, a[1]")), "8");
+    // An `array i32`'s element is an `i32`, so its address is an `@i32`, read through only.
+    let src = format!("{arr}, a := array i32 [1, 2], p := &(a[1]), p@ = 8, a[1]");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("points at a value that is not `mut`"), "{src}: stderr: {stderr}");
+    assert_eq!(line(&format!("{arr}, a := array i32 [1, 2], p := &(a[1]), p@")), "2");
     assert_eq!(
         line(&format!(
             "{arr}, g := fn () -> i32 ( a := array i32 [1, 2], p := &(a[1]), p@ ), g.compile(), g()"
@@ -5608,7 +5817,7 @@ fn an_element_has_an_address_and_taking_it_checks_the_index() {
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains("error.index_out_of_range"), "{src}: stderr: {stderr}");
     }
-    let (echoes, stderr) = repl(b"a := alloc 1 of i32 3\np := &(a@)\np@ = 9\na@\n");
+    let (echoes, stderr) = repl(b"a := alloc 1 of mut i32 3\np := &(a@)\np@ = 9\na@\n");
     assert_eq!(echoes, ["9"], "stderr: {stderr}");
 }
 
@@ -5855,7 +6064,7 @@ fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them
         (format!("{h}, {mk_of}, h() == 1 and mk(t) == i32"), "h\nmk\ntrue"),
         (format!("{h}, h() == 1 and t == i32"), "h\ntrue"),
         (format!("{h}, print «{{h()}} {{t}}»"), "h\n1 i32"),
-        (format!("{h}, print «{{h()}} {{t}} {{t.type}}»"), "h\n1 i32 type"),
+        (format!("{h}, print «{{h()}} {{t}} {{t.type}}»"), "h\n1 i32 mut type"),
         (format!("{h}, print «{{h()}} {{u := type t, u}}»"), "h\n1 i32"),
         (format!("{h}, {is_i32}, print «{{h()}} {{is_i32(t)}}»"), "h\n1 true"),
         (format!("{h}, print «{{h()}} {{t}}», x := t 5, x.type"), "h\n1 i32\ni32"),
@@ -8990,7 +9199,7 @@ fn a_free_body_fills_the_values_free() {
 /// run shows each teardown: `box (…)` is a node whose run makes a new `boxed`, and `box`
 /// with no bracket is `boxed`.
 const BOX: &str = "boxed := type ( \
-    p := pub mut own @i32 ?, \
+    p := pub mut own @ mut i32 ?, \
     size := pub mut u64 0, \
     free = ( print «free», free p ), \
     parse_rank = dyad.parse_rank, \
@@ -9001,7 +9210,7 @@ box := type ( \
     output_type := type ?, \
     run = ( \
         v := mut output_type ?, \
-        v.p = mut alloc elements.dyads.size of i32 ?, \
+        v.p = alloc elements.dyads.size of mut i32 ?, \
         for i in 0..elements.dyads.size ( \
             (v.p + i)@ = elements.dyads[i], \
             v.size = i + 1 \
@@ -9277,7 +9486,7 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
     assert!(stderr.contains("file stops"), "stderr: {stderr}");
     // The stopped function's `defer` runs, the line after the fault does not.
     let (echoes, stderr) = repl(
-        "p := alloc 1 of i32 5\n\
+        "p := alloc 1 of mut i32 5\n\
          g := fn () -> i32 ( abort «stop» )\n\
          f := fn () -> i32 ( defer (p@ = p@ + 100), free (g()), p@ = 9, 1 )\n\
          f()\n\
@@ -10098,7 +10307,7 @@ fn free_of_a_cell_runs_the_free_of_the_record_it_holds() {
     for (tail, printed) in [
         ("p := alloc 1 of bag (5), free p@, 0".to_string(), "freed 5\n0\n"),
         (
-            "p := alloc 2 of bag (5), (p + 1)@.n = 6, free (p + 1)@, free (p + 2 - 2)@, 0"
+            "p := alloc 2 of mut bag (5), (p + 1)@.n = 6, free (p + 1)@, free (p + 2 - 2)@, 0"
                 .to_string(),
             "freed 6\nfreed 5\n0\n",
         ),
@@ -10347,7 +10556,7 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
     // `return` hands on as its copy, as a function's does.
     let run = "g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, \
                run = ( if (elements.dyads.size == 3) (return g), v := mut output_type ?, \
-               v.p = mut alloc 1 of i32 ?, v.size = 1, move v ), \
+               v.p = alloc 1 of mut i32 ?, v.size = 1, move v ), \
                parse_rank = dyad.parse_rank, associativity = left, \
                parse = ( tape[0].type = pk, tape[0].elements = tape[1], \
                tape[0].output_type = boxed, tape.remove(1), tape.is_constructed[0] = true ) ), \
@@ -10431,7 +10640,7 @@ fn a_result_whose_type_fills_free_hands_on_what_it_makes_and_a_copy_of_what_it_b
                     f.compile(), f()";
     let (code, stdout, stderr) = run_line(compiled);
     assert_eq!((code, stdout.trim()), (Some(0), "10"), "stderr: {stderr}");
-    let through = "p := alloc 1 of bag(1), g := fn (q := @bag ?) -> bag ( q@ ), \
+    let through = "p := alloc 1 of mut bag(1), g := fn (q := @ mut bag ?) -> bag ( q@ ), \
                    print «{g(p).n}», g(p).n = 5, print «{p@.n}», free p@, free p";
     let (code, stdout, stderr) = run_line(&format!("{RECORD}, {through}"));
     assert_eq!((code, stdout.as_str()), (Some(0), "1\n5\nfreed 5\n"), "stderr: {stderr}");
@@ -10995,7 +11204,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ),
         ("g := bag (), h := g, print «copied»", "copied\nbag\nfree\nbag\nfree\n"),
         // `=` frees the box it displaces before the write.
-        ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "free\nset\nbag\nfree\n"),
+        ("g := mut bag (), x := box (8, 1), g.b = move x, print «set»", "free\nset\nbag\nfree\n"),
         ("l := array bagged [bag (), bag ()], print «made»", "made\nbag\nfree\nbag\nfree\n"),
         ("g := bag (), l := array bagged [move g], print «made»", "made\nbag\nfree\n"),
         ("g := bag (), l := array bagged [g], print «made»", "made\nbag\nfree\nbag\nfree\n"),
@@ -11010,9 +11219,9 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("g := bag (), g.items[1] + g.items.at(2)", "11"),
         ("g := bag (), g.items[0] = i32 9, g.items[0]", "9"),
         ("f := fn (p := t ?) -> u64 ( p.size ), g := bag (), f(g.items)", "3"),
-        ("g := bag (), x := array i32 [1, 2], g.items = move x, g.items[1]", "2"),
-        ("g := bag (), x := array i32 [1], y := x, g.items = move y, g.items[0]", "1"),
-        ("g := bag (), x := array i32 [1], g.items = x, g.items[0] = i32 9, x[0]", "1"),
+        ("g := mut bag (), x := array i32 [1, 2], g.items = move x, g.items[1]", "2"),
+        ("g := mut bag (), x := array i32 [1], y := x, g.items = move y, g.items[0]", "1"),
+        ("g := mut bag (), x := array i32 [1], g.items = x, g.items[0] = i32 9, x[0]", "1"),
         ("l := array bagged [bag (), bag ()], l[1].items[0] = i32 8, l[1].items[0]", "8"),
     ] {
         let (code, stdout, stderr) = run_line(&bag_line(tail));
@@ -11020,9 +11229,12 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         assert_eq!(stdout.lines().last(), Some(printed), "{tail}: {stdout}");
     }
     for (tail, expect) in [
-        ("f := fn (p := t ?) -> i32 ( g := bag (), g.items = move p, 1 )", "only its owner can"),
+        (
+            "f := fn (p := t ?) -> i32 ( g := mut bag (), g.items = move p, 1 )",
+            "only its owner can",
+        ),
         ("nd := type ( items := mut t ? )", "must be freed by the type's `free = (…)`"),
-        ("g := bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
+        ("g := mut bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
         ("mk := fn () -> own t ( array i32 [1] ), 1", "`own` stands only before a pointer"),
         ("nd := type ( n := mut own i32 ? )", "`own` stands only before a pointer"),
         ("f := fn (p := own t ?) -> i32 ( 1 )", "`own` stands only before a pointer"),
@@ -11103,10 +11315,6 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
         ("a := array array i32 [[1, 2], 3]", "an element does not fit the element type"),
         ("a := array array i32 [(free (1), 2)]", "the list is written in square brackets"),
         ("x := i64 5, a := array array i32 [[1], [x]]", "an element does not fit the element type"),
-        (
-            "p := type ( parse = ( tape.construct(i32, tape[1]), tape.is_constructed[0] = true ) )",
-            "unknown name `construct`",
-        ),
     ] {
         let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -11327,7 +11535,7 @@ fn a_value_left_unwritten_is_filled_one_field_at_a_time() {
         (format!("{pt}, v := mut pt ?, v.x = 3, v.y = 4, v.x * v.y"), "12\n"),
         // A field with a default already holds it.
         (
-            format!("{bx}, f := fn (n := u64 ?) -> u64 ( v := mut bx ?, v.p = mut alloc n of i32 ?, v.size ), f(2)"),
+            format!("{bx}, f := fn (n := u64 ?) -> u64 ( v := mut bx ?, v.p = alloc n of i32 ?, v.size ), f(2)"),
             "0\n",
         ),
     ] {
@@ -11760,10 +11968,10 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
     let run_pick =
         format!("{pick}, f := fn (n := i32 ?) -> type ( u := mut pick(n), u = 5, u.type )");
     for (src, want) in [
-        (format!("{pick}, u := mut pick(1), u = 5, u.type"), "i64"),
+        (format!("{pick}, u := mut pick(1), u = 5, u.type"), "mut i64"),
         (
             format!("{k}, g := fn () -> type ( u := mut k(i64), u = 5, u.type ), g.compile(), g()"),
-            "i64",
+            "mut i64",
         ),
         (format!("{array}, t := mut array i32, t = [4, 5], t[1]"), "5"),
         (
@@ -11786,9 +11994,9 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
             format!(
                 "{pick}, pt := type ( a := pub pick(1), b := pub i32 ), p := pt(1, 2), p.a.type"
             ),
-            "i64",
+            "pub i64",
         ),
-        (format!("{k}, pt := type ( e := pub static k(i64) ), pt.e.type"), "i64"),
+        (format!("{k}, pt := type ( e := pub static k(i64) ), pt.e.type"), "pub static i64"),
         (format!("{pick}, f := fn (a := pick(1)) -> type ( a.type ), f(1)"), "i64"),
         (
             format!(
@@ -12134,7 +12342,8 @@ fn an_assignment_copies_a_value_that_owns_memory() {
             "9\n",
         ),
         (
-            "p := alloc 1 of i32 5, q := mut alloc 1 of i32 6, q = p, q@ = i32 9, p@".to_string(),
+            "p := alloc 1 of mut i32 5, q := mut alloc 1 of mut i32 6, q = p, q@ = i32 9, p@"
+                .to_string(),
             "5\n",
         ),
     ]);
@@ -12175,36 +12384,36 @@ fn a_cell_through_a_pointer_moves_any_type_with_a_layout() {
     let pt =
         "pt := type ( a := mut i64 ?, b := pub mut i32 ? ), g := fn (v := pt ?) -> i32 ( v.b )";
     let mut cases = vec![
-        (format!("{pt}, p := alloc 1 of pt ?, p@.b = 7, p@.b"), "7\n"),
+        (format!("{pt}, p := alloc 1 of mut pt ?, p@.b = 7, p@.b"), "7\n"),
         (format!("{pt}, p := alloc 2 of pt (1, 2), (p + 1)@.b"), "2\n"),
-        (format!("{pt}, p := alloc 2 of pt (1, 2), (p + 1)@ = pt(5, 6), p@.b * 10 + (p + 1)@.b"), "26\n"),
+        (format!("{pt}, p := alloc 2 of mut pt (1, 2), (p + 1)@ = pt(5, 6), p@.b * 10 + (p + 1)@.b"), "26\n"),
         (format!("{pt}, f := fn (p := @pt ?) -> pt ( p@ ), w := pt(1, 2), r := f(&w), r.b"), "2\n"),
         (
             format!("{pt}, f := fn (p := @pt ?) -> pt ( p@ ), f.compile(), w := pt(1, 2), r := f(&w), r.b"),
             "2\n",
         ),
-        ("p := alloc 1 of rational_number ?, p@ = rational_number 1/2, p@".to_string(), "1/2\n"),
+        ("p := alloc 1 of mut rational_number ?, p@ = rational_number 1/2, p@".to_string(), "1/2\n"),
         ("p := alloc 2 of rational_number (1/3), (p + 1)@".to_string(), "1/3\n"),
         (
-            "f := fn (p := @rational_number ?) -> i32 ( p@ = rational_number 1/2, 1 ), \
-             q := alloc 1 of rational_number ?, free (f(q)), q@"
+            "f := fn (p := @ mut rational_number ?) -> i32 ( p@ = rational_number 1/2, 1 ), \
+             q := alloc 1 of mut rational_number ?, free (f(q)), q@"
                 .to_string(),
             "1/2\n",
         ),
         (
-            "f := fn (p := @rational_number ?, r := rational_number ?) -> i32 ( p@ = r, 1 ), \
-             f.compile(), q := alloc 1 of rational_number ?, free (f(q, 1/2)), q@"
+            "f := fn (p := @ mut rational_number ?, r := rational_number ?) -> i32 ( p@ = r, 1 ), \
+             f.compile(), q := alloc 1 of mut rational_number ?, free (f(q, 1/2)), q@"
                 .to_string(),
             "1/2\n",
         ),
         (
             "f := fn (p := @rational_number ?) -> rational_number ( p@ ), f.compile(), \
-             q := alloc 1 of rational_number ?, q@ = rational_number 2/3, f(q)"
+             q := alloc 1 of mut rational_number ?, q@ = rational_number 2/3, f(q)"
                 .to_string(),
             "2/3\n",
         ),
-        ("p := alloc 1 of type ?, p@ = i32, t := type p@, t".to_string(), "i32\n"),
-        ("p := alloc 1 of dyad ?, p@ = i32, d := p@, d == i32".to_string(), "true\n"),
+        ("p := alloc 1 of mut type ?, p@ = i32, t := type p@, t".to_string(), "i32\n"),
+        ("p := alloc 1 of mut dyad ?, p@ = i32, d := p@, d == i32".to_string(), "true\n"),
         (
             "pt := type ( t := pub mut type ?, b := pub mut i32 ? ), v := mut pt ?, v.t = i32, v.b = 1, \
              p := &v, p@.t = i64, v.t"
@@ -12447,24 +12656,24 @@ fn a_record_written_through_a_pointer_frees_the_one_it_displaces() {
             "freed 1\nfreed 2\nfreed 2\n0\n",
         ),
         (
-            format!("{r}, p := alloc 1 of r(1), p@ = r(2), print «end», free p@"),
+            format!("{r}, p := alloc 1 of mut r(1), p@ = r(2), print «end», free p@"),
             "freed 1\nend\nfreed 2\n",
         ),
         // A named owner written into a cell is copied: the cell and the name each free their own.
         (
             format!(
-                "{r}, p := alloc 1 of r(1), a := mut r(5), p@ = a, a.n = 6, print «end {{p@.n}}», \
-                 free p@, print «after»"
+                "{r}, p := alloc 1 of mut r(1), a := mut r(5), p@ = a, a.n = 6, \
+                 print «end {{p@.n}}», free p@, print «after»"
             ),
             "freed 1\nend 5\nfreed 5\nafter\nfreed 6\n",
         ),
         (
-            format!("{r}, p := alloc 1 of r(1), f := fn () -> i32 ( {body} ), x := f(), free p@"),
+            format!("{r}, p := alloc 1 of mut r(1), f := fn () -> i32 ( {body} ), x := f(), free p@"),
             "freed 1\nend\nfreed 2\n",
         ),
         (
             format!(
-                "{r}, p := alloc 1 of r(1), f := fn () -> i32 ( {body} ), f.compile(), x := f(), \
+                "{r}, p := alloc 1 of mut r(1), f := fn () -> i32 ( {body} ), f.compile(), x := f(), \
                  free p@"
             ),
             "freed 1\nend\nfreed 2\n",
@@ -12537,11 +12746,11 @@ fn a_field_takes_the_width_a_place_of_its_type_takes() {
             "1/3 9\n",
         ),
         (
-            format!("{ab}, p := alloc 1 of pt ?, p@.b = 7, p@.a = rational_number 1/2, print «{{p@.a}} {{p@.b}}»"),
+            format!("{ab}, p := alloc 1 of mut pt ?, p@.b = 7, p@.a = rational_number 1/2, print «{{p@.a}} {{p@.b}}»"),
             "1/2 7\n",
         ),
         (
-            "pt := type ( b := mut i32 ?, a := pub mut rational_number ? ), p := alloc 1 of pt ?, \
+            "pt := type ( b := mut i32 ?, a := pub mut rational_number ? ), p := alloc 1 of mut pt ?, \
              p@.a = rational_number 1/2, p@.a"
                 .to_string(),
             "1/2\n",
@@ -12747,7 +12956,7 @@ fn a_static_function_reaches_each_field_of_a_plain_record_whole() {
 fn the_repl_writes_and_copies_whole_records() {
     let (echoes, stderr) = repl(
         "q := type ( x := pub mut i32 ? )\nv := mut q ?\nv = q(3)\nprint «{v.x}»\nw := q(4)\nu := mut w\n\
-          u.x = 9\nprint «{w.x}»\npt := type ( a := mut i64 ?, b := pub mut i32 ? )\np := alloc 1 of pt ?\n\
+          u.x = 9\nprint «{w.x}»\npt := type ( a := mut i64 ?, b := pub mut i32 ? )\np := alloc 1 of mut pt ?\n\
           p@.b = 7\nprint «{p@.b}»\nr := &v\nr@ = q(5)\nv.x\n",
     );
     assert_eq!(echoes, ["3", "4", "7", "5"], "stderr: {stderr}");
@@ -12856,7 +13065,7 @@ fn a_bool_hole_is_a_bool_place_on_both_tiers() {
         ("a := mut true, a = 2, a", "no exact value in the type it lands in"),
         ("pt := type ( ok := pub bool ?, n := i32 ? ), p := pt(7, 3), p.ok", "no exact value"),
         ("f := fn (b := bool ?) -> i32 ( if b (1) else (2) ), f(2)", "no exact value"),
-        ("b := alloc 1 of bool ?, b@ = 7, b@", "no exact value"),
+        ("b := alloc 1 of mut bool ?, b@ = 7, b@", "no exact value"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}");
@@ -12867,7 +13076,7 @@ fn a_bool_hole_is_a_bool_place_on_both_tiers() {
 #[test]
 fn free_and_move_read_the_type_a_dereference_gives_back() {
     let r = "r := type ( p := pub mut own @i32 ?, free = ( free p ) )";
-    let q = "q := alloc 1 of own @i32 ?, a := alloc 1 of i32 5, q@ = move a";
+    let q = "q := alloc 1 of mut own @i32 ?, a := alloc 1 of i32 5, q@ = move a";
     let x = "x := mut r ?, a := alloc 1 of i32 5, x.p = move a";
     let src = format!("{q}, free q@, q@@");
     let (code, _, stderr) = run_line(&src);
@@ -13957,7 +14166,7 @@ fn a_hashmap_reads_a_curly_bracket_each_name_s_spelling_a_text_key() {
 fn a_tape_line_no_check_narrowed_is_checked_through_a_record_pointer() {
     let q = "pt := type ( a := pub mut u64 ?, b := mut u64 ? ), \
              q := type ( v := pub u64 ?, parse_rank = 61, parse = ( tape[0].type = q, \
-             p := alloc 1 of pt ?, p@.a = tape[1].dyads[0], tape[0].v = p@.a, \
+             p := alloc 1 of mut pt ?, p@.a = tape[1].dyads[0], tape[0].v = p@.a, \
              tape.remove(1), tape.is_constructed[0] = true ) )";
     let src = format!("{q}, x := q [5], x.v");
     assert_eq!(run_line(&src), (Some(0), "5\n".to_string(), String::new()), "{src}");

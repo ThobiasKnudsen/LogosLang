@@ -726,19 +726,25 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
             if let Some(which) = TypeRead::of_member(name) {
-                // A name's type is read with its gate node, a field's too (›`x.type` reads the
-                // type word of the node a name or an expression stands for‹ [[R279]]).
+                // A name's type is read with its gate node, a field's too: with `x := mut i32 5`,
+                // `x.type` is `mut i32` (›`x.type` reads the type word of the node a name or an
+                // expression stands for‹ [[R279]], ›Gates are type nodes: `x := mut i32 5`; the
+                // record holds no gates‹ [[R381]]). What a name gives is its value, not its place.
                 let named = match left.target.1 {
                     field if field.is_null() => self.cx.member_root,
                     field => field,
                 };
-                if which == TypeRead::Own && !named.is_null() {
-                    let word = crate::identities::gate::word_of_name(self.types, named);
-                    if crate::identities::gate::is_node(word) {
-                        self.cx.member_gates = dyad::ty(word);
-                    }
+                let t = self.type_read(lhs, which)?;
+                if which == TypeRead::Gives || named.is_null() {
+                    return Ok((t, 0));
                 }
-                return self.type_read(lhs, which).map(|t| (t, 0));
+                // Only the name's own type is gated by it: a `dyad` place's `.type` is the type of
+                // the node it holds, which the place's gates do not reach.
+                use crate::identities::gate;
+                let (own, gates) = gate::parts(gate::word_of_name(self.types, named));
+                let gated =
+                    if own == t { gate::gated(self.rt.store, self.types, gates, t) } else { t };
+                return Ok((gated, 0));
             }
             // A member the read of a tape node answers where it is written; any other one the
             // caller read through to the node the tape holds ([`Self::held_tape_node`]).
@@ -866,6 +872,10 @@ impl<'a> Parser<'a> {
             // A type's fields are its identity's; a value that is no type has its node's.
             match self.type_known_now(lhs) {
                 Ok(t) => {
+                    // A gated type's members are the type's it gates: `(mut i32).size_bytes` is
+                    // `i32`'s (›Gates are type nodes: `x := mut i32 5`; the record holds no
+                    // gates‹ [[R381]]).
+                    let t = crate::identities::gate::under(t);
                     if let Some(args) = call {
                         if let Some(mint) = self.chosen_mint(t, name, &args)? {
                             return Ok((mint, 1));
@@ -934,9 +944,8 @@ impl<'a> Parser<'a> {
                     return Ok((node, 1));
                 }
                 let args = call.ok_or(ParseError::ExpectedOpen)?;
-                if op == types.tape.insert || op == types.tape.remove || op == types.tape.recenter {
-                    self.forget_narrowed();
-                }
+                // Every member called with brackets edits the tape.
+                self.forget_narrowed();
                 let node = crate::identities::tape::build_member(
                     self.rt.store,
                     types,
@@ -1132,7 +1141,7 @@ impl<'a> Parser<'a> {
                 return Err(e);
             }
         };
-        self.cx.member_root = root;
+        self.cx.member_root = named;
         self.cx.member_path.clear();
         // A member of a `dyad` value is the member of the node it holds, `.type` included, and a
         // record a `dyad` place holds is reached through the place each time the line runs, so
@@ -1167,7 +1176,6 @@ impl<'a> Parser<'a> {
         });
         self.cx.member_root = std::ptr::null_mut();
         let path = std::mem::take(&mut self.cx.member_path);
-        let gates = std::mem::replace(&mut self.cx.member_gates, std::ptr::null_mut());
         let (node, consumed) = access?;
         for _ in 0..(1 + consumed) {
             tape.remove(1);
@@ -1181,7 +1189,6 @@ impl<'a> Parser<'a> {
         tape.place(node);
         let cell = tape.at_mut(0).expect("placed above");
         cell.path = path;
-        cell.gates = gates;
         if plain && !through {
             cell.target = reached;
             cell.root = path_root;
@@ -1533,7 +1540,7 @@ impl<'a> Parser<'a> {
                     if !has_address(types, place) {
                         return Err(ParseError::BadAddressOf);
                     }
-                    let pointee = crate::identities::read::output_type(types, place);
+                    let pointee = self.address_pointee(&cell, operand, place);
                     self.place_address(types.amp_, place, node, pointee)?
                 }
                 // A node's field, a map entry, a tape cell: a place with no address to hand out.
@@ -1590,6 +1597,35 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// What `&` of a place points at: the place's type with the gates of the name or field that
+    /// holds it, or of the pointer it is read through, keeping `mut` only where `=` into the place
+    /// is granted (›A pointer points at a gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut`
+    /// before a pointer gates the pointer itself‹ [[R382]], ›An access along a path needs every
+    /// gate on the path to grant it‹ [[R122]]).
+    ///
+    /// # Safety
+    /// `operand` must be `cell`'s reduced dyad and `place` the frame's place or deref node it
+    /// reads.
+    unsafe fn address_pointee(&mut self, cell: &Cell, operand: DyadPtr, place: DyadPtr) -> DyadPtr {
+        use crate::identities::{gate, pointer};
+        let types = self.types;
+        let name = if dyad::ty(operand) == types.binding_ {
+            operand
+        } else {
+            self.path_of(cell).last().copied().unwrap_or(std::ptr::null_mut())
+        };
+        let leaf = pointer::gated_place_type(types, name, place);
+        if !gate::has(leaf, types.mut_) || self.check_write(cell).is_ok() {
+            return leaf;
+        }
+        let gates: Vec<_> = gate::set_of(leaf).into_iter().filter(|&g| g != types.mut_).collect();
+        if gates.is_empty() {
+            return gate::under(leaf);
+        }
+        let mint = gate::mint_of(self.rt.store, types, &gates);
+        gate::over(self.rt.store, types, mint, gate::under(leaf))
+    }
+
     /// `&` of a value nothing names: the value lands in an unspelled name of the open scope, as
     /// `:=` lands it, which holds it to the scope's end, and `&` hands out that name's address
     /// (DESIGN ›Holding is decided at the binding site, parameters included‹ [[R61]]).
@@ -1632,20 +1668,19 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Every further `@` cell to the right, then the base type cell, any type
-    /// identity (DESIGN ›Pointer types are prefix `@T`‹), built into the
-    /// pointer type. What a place of `@T` reads as never depends on `T`.
+    /// The type to the right, any type identity (›Pointer types are prefix `@T`; dereference is
+    /// postfix `x@`; `&x` is address-of‹ [[R162]]), built into the pointer type. What a place of
+    /// `@T` reads as never depends on `T`.
     pub(crate) fn construct_pointer_type(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let mut depth = 1usize;
-        while matches!(self.cell_at(tape, 1)?, Some(c) if !c.constructed && self.cell_identity(&c) == self.types.at_)
-        {
-            tape.remove(1);
-            depth += 1;
-        }
-        let Some(cell) = self.cell_at(tape, 1)? else {
+        // The gates before the type gate what this `@` points at, and a further `@` builds its
+        // own: `@ mut @ i32` is a pointer to a writable `@i32` (›A pointer points at a gated type:
+        // `&a` of a `mut i32` is `@ mut i32`, and `mut` before a pointer gates the pointer
+        // itself‹ [[R382]]).
+        self.build_right_side(tape)?;
+        let Some(cell) = tape.at(1).copied() else {
             return Err(ParseError::UnsupportedOperands);
         };
         let base = self.operand_dyad(cell)?;
@@ -1654,15 +1689,32 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnsupportedOperands);
         }
         tape.remove(1);
-        let mut logos = base;
-        for _ in 0..depth {
-            // SAFETY: `logos` is the base type node, or the pointer type minted in the previous round.
-            logos = unsafe {
-                crate::identities::pointer::make_pointer_type(self.rt.store, self.types, logos)
-            };
-        }
+        // SAFETY: `base` is a type node from the store, gated or not.
+        let logos = unsafe {
+            crate::identities::pointer::make_pointer_type(self.rt.store, self.types, base)
+        };
         tape.place(logos);
-        Ok(Constructed::Placed)
+        // The type wakes at its own rank and takes a pointer to its right: `@i32 &a`.
+        Ok(Constructed::Gave)
+    }
+
+    /// The nodes right of the center up to the first that is a value or a type, built as one
+    /// line that ends there, each by its own constructor (›A `tape[k]` read past the lexed
+    /// frontier lexes on demand for every constructor‹ [[R231]]), so a gate word before it is
+    /// built by the gate's constructor alone: what `@` and `alloc`'s `of` read. A word of which
+    /// no value exists, a gate word or a further `@`, reads what comes after it.
+    pub(crate) fn build_right_side(&mut self, tape: &mut ParsingTape) -> Result<(), ParseError> {
+        let mut to = 1;
+        while let Some(cell) = self.cell_at(tape, to)? {
+            to += 1;
+            if cell.constructed || !self.is_delimiter(self.cell_identity(&cell)) {
+                break;
+            }
+        }
+        if to == 1 {
+            return Ok(());
+        }
+        self.construct_range(tape, 1, to)
     }
 
     /// `:`'s constructor (DESIGN ›The dyad's read surface‹): a field of the

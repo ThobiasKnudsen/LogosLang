@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `parsing_tape` and the tape's affordances as identities: `t[k]` read and write,
-//! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, and
+//! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, `t.construct`, and
 //! the cell reads `t[k]:name`, `t[k].type`, `t[k].gives`, a `t[k]` checked to hold a type as
 //! that type or checked against a number type as that number, and a scope or `[…]` cell's
 //! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does. The
@@ -49,6 +49,10 @@ pub struct TapeIds {
     pub remove_leaf: DyadPtr,
     pub recenter: DyadPtr,
     pub recenter_leaf: DyadPtr,
+    /// `t.construct(from, to)`: `[tape, from, to, op]`, the nodes from `from` up to `to` built
+    /// as one line.
+    pub construct: DyadPtr,
+    pub construct_leaf: DyadPtr,
     /// `t[k]:name`: the spelling of the binding the cell holds, a string node.
     pub slot_name: DyadPtr,
     pub slot_name_leaf: DyadPtr,
@@ -106,7 +110,7 @@ pub(super) fn register(
 ) -> TapeIds {
     let scope = super::scope::mint(cx.store, scope_ty, std::ptr::null_mut());
     // SAFETY: `void_ty` is the type node `Core::build` minted.
-    let at_void = unsafe { super::pointer::early_pointer_type(cx.store, cx.type_, void_ty) };
+    let at_void = unsafe { super::pointer::early_pointer_type(cx, void_ty) };
     let cells = super::hole::build(cx.store, cx.unknown, at_void, std::ptr::null_mut());
     let binding = cx.declare_in(scope, "cells", cells);
     let fields = super::array::build(cx.store, array_ty, &[cells]);
@@ -150,6 +154,7 @@ pub(super) fn register(
     let (insert, insert_leaf) = op(cx, &["tape", "k", "cells", "op"], run_insert);
     let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
+    let (construct, construct_leaf) = op(cx, &["tape", "k", "to", "op"], run_construct);
     let (slot_name, slot_name_leaf) = read(cx, &["tape", "k"], run_slot_name);
     let (cell_type, cell_type_leaf) = read(cx, &["tape", "k", "i"], run_line_type);
     let (cell_gives, cell_gives_leaf) = read(cx, &["tape", "k", "i"], run_line_type);
@@ -170,6 +175,7 @@ pub(super) fn register(
         ("insert", insert),
         ("remove", remove),
         ("recenter", recenter),
+        ("construct", construct),
     ] {
         // SAFETY: `pub_mint` is a gate mint and `id` an identity just built.
         let gated = unsafe { super::gate::over_node(cx.store, pub_mint, id) };
@@ -195,6 +201,8 @@ pub(super) fn register(
         remove_leaf,
         recenter,
         recenter_leaf,
+        construct,
+        construct_leaf,
         slot_name,
         slot_name_leaf,
         cell_type,
@@ -230,6 +238,7 @@ pub(crate) fn member(ids: &TapeIds, name: &str) -> Option<(DyadPtr, DyadPtr)> {
         "insert" => Some((ids.insert, ids.insert_leaf)),
         "remove" => Some((ids.remove, ids.remove_leaf)),
         "recenter" => Some((ids.recenter, ids.recenter_leaf)),
+        "construct" => Some((ids.construct, ids.construct_leaf)),
         _ => None,
     }
 }
@@ -665,6 +674,13 @@ pub(crate) unsafe fn build_member(
         };
         return Ok(act(store, op, leaf, &[recv, k, cells]));
     }
+    if op == ids.construct {
+        let [from, to] = args[..] else {
+            return Err(ParseError::CtorArity);
+        };
+        let (from, to) = (index(store, types, from)?, index(store, types, to)?);
+        return Ok(act(store, op, leaf, &[recv, from, to]));
+    }
     let [k] = args[..] else {
         return Err(ParseError::CtorArity);
     };
@@ -843,6 +859,24 @@ fn run_recenter(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
+/// The tape is lexed on to the node before `to` first, so a `to` past the line's end is off it.
+fn run_construct(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe {
+        let ops = dyad::value(node) as *const DyadPtr;
+        let (tape, from) = tape_at(rt, ops)?;
+        let to = rt.run(*ops.add(2))? as isize;
+        if to > from {
+            rt.reach(tape, to - 1)?;
+            if (*tape).at(to - 1).is_none() {
+                return Err(RunError::OffTape);
+            }
+        }
+        rt.construct_on_tape(tape, from, to)?;
+        Ok(0)
+    }
+}
+
 /// The cell, read through a binding to the dyad it names; with no cell index, the bracket
 /// the receiver holds, a bracket handed to a call.
 unsafe fn slot_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<DyadPtr, RunError> {
@@ -998,7 +1032,9 @@ fn run_cell_value(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let cell = read_target(rt, dyad::value(node) as *const DyadPtr)?;
-        if dyad::ty(cell) == rt.types().type_ {
+        // A gated type, `mut i32`, is a type (›Gates are type nodes: `x := mut i32 5`; the record
+        // holds no gates‹ [[R381]]).
+        if dyad::ty(super::gate::under(cell)) == rt.types().type_ {
             rt.run(cell)
         } else {
             Err(RunError::CellNotAType)
@@ -1137,8 +1173,12 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let mut line = read_target(rt, ops)?;
         let ty = *ops.add(3);
         if !super::meta::is_node_valued(ty, rt.types().fn_type) {
-            if let Some(carry) = made_value(rt.types(), line, ty) {
-                return super::assign::take(rt, carry, line);
+            if let Some((from, carry)) = made_value(rt.types(), line, ty) {
+                let v = super::assign::take(rt, carry, line)?;
+                if from == ty {
+                    return Ok(v);
+                }
+                return super::convert::converted(rt.types(), from, ty, v);
             }
             return constant_value(rt.types(), line, ty);
         }
@@ -1153,18 +1193,22 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// How `line` moves into a place of `ty` when it is a value of `ty` the pass has made, a constant
-/// or one that ran: such a line is taken as it is. `None` for any other line, a name among them,
-/// whose value is not read while the parse runs.
+/// The type of `line` and how it moves, when it is a value the pass has made, a constant or one
+/// that ran, of a type that lies inside `ty`: such a line is taken, and converted into `ty` as
+/// a conversion left unwritten converts it (›A type's `parse` decides what converts into it;
+/// unwritten, a value converts only into a type that holds it exactly‹ [[R155]]). `None` for
+/// any other line, a name among them, whose value is not read while the parse runs.
 ///
 /// # Safety
 /// `line` must be a reduced dyad from the store; `ty` a type node.
-unsafe fn made_value(types: &Core, line: DyadPtr, ty: DyadPtr) -> Option<Carry> {
-    let made = dyad::ty(line) == ty || dyad::ty(line) == types.ran.node;
-    if !made || super::read::output_type(types, line) != ty {
+unsafe fn made_value(types: &Core, line: DyadPtr, ty: DyadPtr) -> Option<(DyadPtr, Carry)> {
+    let from = super::read::output_type(types, line);
+    let made = dyad::ty(line) == from || dyad::ty(line) == types.ran.node;
+    let inside = from == ty || super::subset::includes(types, from, ty) == Some(true);
+    if !made || !inside {
         return None;
     }
-    super::read::carry_of(types, ty)
+    Some((from, super::read::carry_of(types, from)?))
 }
 
 unsafe fn is_bracket(types: &Core, d: DyadPtr) -> bool {

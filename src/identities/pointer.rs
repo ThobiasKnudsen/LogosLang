@@ -29,6 +29,7 @@ pub(super) struct PointerIds {
     pub(super) deref_leaf: DyadPtr,
     pub(super) addr_leaf: DyadPtr,
     pub(super) at: DyadPtr,
+    pub(super) convert_ctor: DyadPtr,
 }
 
 /// `deref` has no spelling: the parser builds deref nodes from postfix `@`.
@@ -80,7 +81,65 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> PointerIds {
     cx.choosers.insert(addr, choose_address);
     let addr_leaf = callable::mint_native(cx.store, cs.callable, run_addr, cs.seed_native);
 
-    PointerIds { deref, amp, addr, deref_leaf, addr_leaf, at }
+    // Every pointer type a program writes has this constructor, minted with the type.
+    let entry = construct_conversion as crate::parse::ConstructFn as usize;
+    let convert_ctor = callable::mint(cx.store, cs.callable, entry, cs.seed_parse);
+    cx.pointer_ctor = convert_ctor;
+
+    PointerIds { deref, amp, addr, deref_leaf, addr_leaf, at, convert_ctor }
+}
+
+/// A pointer type at the center takes the pointer to its right as a written conversion, landing
+/// it as an unwritten one lands and giving it this type: with `a := mut i32 5`, `s := @i32 &a`
+/// points at `a` read only, and `@ mut i32 &b` of a read-only `b` is refused (›A pointer points
+/// at a gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut` before a pointer gates the
+/// pointer itself‹ [[R382]]). Nothing to take, and the type stands as itself.
+fn construct_conversion(
+    p: &mut crate::parse::Parser,
+    id: DyadPtr,
+    tape: &mut crate::parse::ParsingTape,
+) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
+    use crate::parse::{Constructed, ParseError};
+    let types = p.types();
+    let Some(operand) = p.type_operand(tape, 1)? else {
+        return Ok(Constructed::Decline);
+    };
+    if p.takes_unknown(tape, &operand, id)? {
+        return Ok(Constructed::Placed);
+    }
+    let value = if operand.is_bracket() {
+        // SAFETY: a bracket cell holds its node from the store.
+        match unsafe { p.args_of(operand.dyad) }[..] {
+            [value] => value,
+            _ => return Err(p.fail_at(operand.start, ParseError::UnsupportedOperands)),
+        }
+    } else {
+        p.as_operand(operand)?
+    };
+    tape.remove(1);
+    // SAFETY: `value` is a reduced dyad from the store; `id` is this pointer type's node.
+    let node = unsafe { convert_to(p.store(), types, value, id) }
+        .map_err(|e| p.fail_at(operand.start, e))?;
+    tape.place(node);
+    Ok(Constructed::Placed)
+}
+
+/// `value` landed in the pointer type `ty`, under a conversion where its own type differs.
+///
+/// # Safety
+/// `value` must be a reduced dyad and `ty` a pointer type node, both from the store.
+unsafe fn convert_to(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    ty: DyadPtr,
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    let landed = super::land(store, types, value, ty)?;
+    let from = super::read::output_type(types, landed);
+    if from == ty {
+        return Ok(landed);
+    }
+    Ok(super::convert::build_convert(store, types, landed, from, ty))
 }
 
 fn address_record(cx: &mut Cx, parse_rank: f64, assoc: Assoc) -> *mut u8 {
@@ -207,32 +266,41 @@ pub(crate) unsafe fn make_pointer_type(
     pointee: DyadPtr,
 ) -> DyadPtr {
     let type_ = types.type_;
-    if super::meta::kind_of(pointee).is_none() {
-        return new_pointer_type(store, type_, pointee);
+    // A gated pointee is one node per gated type already, kept by `type_mint`.
+    let ctor = types.pointer_ctor;
+    if super::meta::kind_of(pointee).is_none() && !super::gate::is_node(pointee) {
+        return new_pointer_type(store, type_, pointee, ctor);
     }
-    let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee));
+    let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee, ctor));
     type_mint::mint_of(store, types, types.at_, &[pointee], made).expect("a pointer type is made")
 }
 
-unsafe fn new_pointer_type(store: &mut Store, type_: DyadPtr, pointee: DyadPtr) -> DyadPtr {
-    let value = super::meta::pointer_record(store, pointee);
-    store.alloc_head(type_, value)
+/// A pointer type taking the value to its right as [`construct_conversion`] takes it, ranked as
+/// ›A parse is ranked by what it takes from its right‹ [[R116]] ranks a parse that takes a value.
+unsafe fn new_pointer_type(
+    store: &mut Store,
+    type_: DyadPtr,
+    pointee: DyadPtr,
+    ctor: DyadPtr,
+) -> DyadPtr {
+    let value = super::meta::pointer_record(store, pointee, Assoc::Right, meta::prec::POINTER_TYPE);
+    let node = store.alloc_head(type_, value);
+    meta::install_constructor(node, ctor);
+    node
 }
 
 /// `@pointee` while the seed registers its identities, before `@` itself is one.
 ///
 /// # Safety
 /// `pointee` must be a type node from the store.
-pub(super) unsafe fn early_pointer_type(
-    store: &mut Store,
-    type_: DyadPtr,
-    pointee: DyadPtr,
-) -> DyadPtr {
+pub(super) unsafe fn early_pointer_type(cx: &mut Cx, pointee: DyadPtr) -> DyadPtr {
+    let (type_, ctor) = (cx.type_, cx.pointer_ctor);
     if super::meta::kind_of(pointee).is_none() {
-        return new_pointer_type(store, type_, pointee);
+        return new_pointer_type(cx.store, type_, pointee, ctor);
     }
-    let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee));
-    type_mint::early(store, std::ptr::null_mut(), &[pointee], made).expect("a pointer type is made")
+    let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee, ctor));
+    type_mint::early(cx.store, std::ptr::null_mut(), &[pointee], made)
+        .expect("a pointer type is made")
 }
 
 /// `@dyad`, what a read of a cell, a line, a field, a name or a scope gives back.
@@ -253,7 +321,7 @@ pub(crate) unsafe fn make_owning_pointer_type(
     pointee: DyadPtr,
     destructor: DyadPtr,
 ) -> DyadPtr {
-    let value = super::meta::pointer_record(store, pointee);
+    let value = super::meta::pointer_record(store, pointee, Assoc::Left, meta::prec::INERT);
     let node = store.alloc_head(type_, value);
     super::meta::install_destructor(node, destructor);
     node
@@ -296,6 +364,65 @@ pub(crate) unsafe fn reads_folded_field(types: &Core, node: DyadPtr) -> bool {
     }
     let record = super::numtype::pointee_of(target);
     !record.is_null() && record != pointee && meta::is_record_type(record)
+}
+
+/// The type of `place` with its gates, what `&place` points at: the gated type of `name`, the
+/// name `place` was read from, or what the pointer a dereference reads through points at. A
+/// place reached any other way, a field read through a dereference among them, gives its type
+/// with no gate.
+///
+/// # Safety
+/// `name` must be null or a binding dyad, and `place` a frame's place or a deref node, from the
+/// store.
+pub(crate) unsafe fn gated_place_type(types: &Core, name: DyadPtr, place: DyadPtr) -> DyadPtr {
+    let plain = super::read::output_type(types, place);
+    let gated = if !name.is_null() {
+        super::gate::word_of_name(types, name)
+    } else if dyad::ty(place) == types.deref_ && !reads_folded_field(types, place) {
+        let target = super::read::output_type(types, deref_parts(place).0);
+        if super::numtype::is_pointer_type(target) {
+            super::numtype::gated_pointee_of(target)
+        } else {
+            plain
+        }
+    } else {
+        plain
+    };
+    if super::gate::under(gated) == plain {
+        gated
+    } else {
+        plain
+    }
+}
+
+/// Whether a value of the pointer type `from` lands in a place of the pointer type `to`: both
+/// point at one type, and what `to` points at has no gate that what `from` points at lacks, so
+/// a pointer drops a gate under it, written or not, and never gains one (›A pointer points at a
+/// gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut` before a pointer gates the pointer
+/// itself‹ [[R382]], ›A type's `parse` decides what converts into it; unwritten, a value converts
+/// only into a type that holds it exactly‹ [[R155]]).
+///
+/// # Safety
+/// `from` and `to` must be pointer type nodes from the store.
+pub(crate) unsafe fn lands_in(from: DyadPtr, to: DyadPtr) -> bool {
+    use super::{gate, numtype::gated_pointee_of};
+    let (from, to) = (gated_pointee_of(from), gated_pointee_of(to));
+    // A gate further down stays: through a `@ mut @ i32` made of a `@ mut @ mut i32`, a `@i32`
+    // could be stored where a `@ mut i32` is read.
+    super::same_type(gate::under(from), gate::under(to))
+        && gate::set_of(to).into_iter().all(|g| gate::has(from, g))
+}
+
+/// Whether a write through the dereference `node` is granted: what its pointer points at is
+/// `mut` (›A pointer points at a gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut`
+/// before a pointer gates the pointer itself‹ [[R382]]).
+///
+/// # Safety
+/// `node` must be a deref node from `build_deref`.
+pub(crate) unsafe fn writes_through(types: &Core, node: DyadPtr) -> bool {
+    let target = super::read::output_type(types, deref_parts(node).0);
+    super::numtype::is_pointer_type(target)
+        && super::gate::has(super::numtype::gated_pointee_of(target), types.mut_)
 }
 
 /// Where a place's bytes lie: a dereference's cell, its base checked as `run_deref` checks it;

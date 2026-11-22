@@ -24,12 +24,15 @@ one_hop := fn (category := @binding ?, message := string ?, location := @dyad ?)
 passed := fn (below := hops ?, location := @dyad ?) -> hops (
     count := below.size + 1,
     longer := mut hops ?,
-    longer.ptr = mut alloc count of hop ?,
+    # `ptr` owns the block and reads it only; `w`, a plain pointer into it, writes it.
+    p := alloc count of mut hop ?,
+    w := p + 0,
+    longer.ptr = move p,
     for hop_at in 0..below.size (
-        (longer.ptr + hop_at)@ = below[hop_at],
+        (w + hop_at)@ = below[hop_at],
         longer.size = hop_at + 1
     ),
-    (longer.ptr + below.size)@ = hop(below[below.size - 1].category, «», location, ?),
+    (w + below.size)@ = hop(below[below.size - 1].category, «», location, ?),
     longer.size = count,
     move longer
 )
