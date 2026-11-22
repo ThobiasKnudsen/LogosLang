@@ -548,6 +548,16 @@ pub fn parse_message(e: &ParseError) -> String {
              is no type"
                 .into()
         }
+        ParseError::TryNeedsFallible => {
+            "`try` passes on the error of a value that holds a value or an error, `T!`, and this \
+             value is no `T!`"
+                .into()
+        }
+        ParseError::TryOutsideFallible => {
+            "`try` passes an error on to the caller, so it is written inside a function that gives \
+             a value or an error, `-> i32!`"
+                .into()
+        }
         ParseError::HoldsNeedsMember => {
             "`holds` is followed by the name of a member of the union: `v holds a`".into()
         }
@@ -725,6 +735,7 @@ pub fn run_message(e: &RunError) -> String {
             "a value the pass ran early was read again after its line ended it or a call took it"
                 .into()
         }
+        RunError::NotKept => "a value its line holds was read where no line holds it".into(),
         RunError::Lex(why) => format!("this text will not lex: {why}"),
         RunError::NoCaller => {
             "`caller` can be read only inside a constructor the parser runs".into()

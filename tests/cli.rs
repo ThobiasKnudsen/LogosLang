@@ -69,6 +69,35 @@ fn importing_a_library_alone_is_silent_and_clean() {
     assert!(out.stdout.is_empty());
 }
 
+/// A build handed a start graph starts from it, and one that was not builds its start: a graph
+/// older than the files it was built from is never read, so this fails (›The seed carries its
+/// start graph inside its binary‹ [[R386]]).
+#[test]
+fn a_binary_built_with_a_start_graph_starts_from_it() {
+    let out = logos().env("LOGOS_STATS", "1").arg("1 + 1").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n");
+    let built_with_one = std::env::var_os("LOGOS_START_GRAPH").is_some_and(|path| !path.is_empty());
+    let start = if built_with_one { "the carried graph" } else { "built from source" };
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&format!("store start: {start}\n")), "stderr: {err}");
+}
+
+/// Two runs lay their start out at addresses of their own, and write one graph.
+#[test]
+fn every_run_writes_one_start_graph() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let paths = [dir.join("start_graph.first"), dir.join("start_graph.second")];
+    for path in &paths {
+        let out = logos().env("LOGOS_WRITE_START_GRAPH", path).output().unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.stdout.is_empty());
+    }
+    let [first, second] = paths.map(|path| std::fs::read(path).unwrap());
+    assert!(!first.is_empty());
+    assert!(first == second, "two runs wrote two graphs");
+}
+
 #[test]
 fn logos_stats_measures_the_store_on_stderr() {
     let out = logos()
@@ -7827,6 +7856,131 @@ fn a_raise_inside_a_function_that_gives_t_bang_fills_err_and_leaves() {
     let (code, stdout, stderr) = run_line(&format!("{too_big}, {plain}, f.compile(), f(300)"));
     assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
     assert!(stderr.contains("run error: error.too_big: 300 does not fit"), "stderr: {stderr}");
+}
+
+/// R140: «`try f()` inside a `!` function hands the callee's error to the enclosing function's
+/// caller»; R144: «Every `try` that passes the error up adds its own element with its own
+/// location», holding the category of the element below it, no message and no value. Over a value
+/// it gives the value; over a call, a name and a record whose type fills `free` alike; from an
+/// `if` arm, a loop, a `print`, inside another `try` and twice in one line; ending what the
+/// function holds as it leaves; on both tiers.
+#[test]
+fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
+    let too_big = "error.too_big := «a number is too big»";
+    let half = "half := fn (n := i32 ?) -> i32! ( if n > 100 ( error.too_big «{n} is too big» ), \
+                n / 2 )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    for tier in ["interpreted", "compiled"] {
+        for (fns, body, want) in [
+            (
+                "g := fn (n := i32 ?) -> i32! ( x := try half(n), x + 1 )".to_string(),
+                "r := g(300), print «{g(8).value} {r holds err} {r.err.size} {r.err[0].message} \
+                 [{r.err[1].message}] {r.err[1].category == r.err[0].category}»",
+                "5 true 2 300 is too big [] true",
+            ),
+            (
+                "m := fn (n := i32 ?) -> i32! ( try half(n) + 1 ), \
+                 g := fn (n := i32 ?) -> i32! ( try m(n) )"
+                    .to_string(),
+                "print «{g(8).value} {g(300).err.size} {g(300).err[0].message}»",
+                "5 3 300 is too big",
+            ),
+            (
+                "g := fn (n := i32 ?) -> i32! ( r := half(n), x := try r, x + 1 )".to_string(),
+                "print «{g(8).value} {g(300).err.size}»",
+                "5 2",
+            ),
+            (
+                "g := fn (n := i32 ?) -> f64! ( x := try half(n), f64 (x) )".to_string(),
+                "print «{g(8).value} {g(300).err.size}»",
+                "4.0 2",
+            ),
+            (
+                "g := fn (n := i32 ?) -> i32! ( if n > 0 ( try half(n) ) else ( 0 ) )".to_string(),
+                "print «{g(8).value} {g(0).value} {g(300).err.size}»",
+                "4 0 2",
+            ),
+            (
+                "g := fn (n := i32 ?) -> i32! ( s := mut i32 0, \
+                 for i in 0..3 ( s = s + try half(n + i) ), s )"
+                    .to_string(),
+                "print «{g(8).value} {g(99).err.size} {g(99).err[0].message}»",
+                "13 2 101 is too big",
+            ),
+            (
+                "g := fn (n := i32 ?) -> i32! ( print «half is {try half(n)}», 1 )".to_string(),
+                "print «{g(8).value} {g(300).err.size}»",
+                "half is 4\n1 2",
+            ),
+            (
+                "m := fn (n := i32 ?) -> i32! ( if n > 30 ( error.too_big «{n} is over 30» ), \
+                 n + 1 ), g := fn (n := i32 ?) -> i32! ( try m(try half(n)) )"
+                    .to_string(),
+                "print «{g(8).value} {g(80).err.size} {g(80).err[0].message} {g(300).err.size}»",
+                "5 2 40 is over 30 2",
+            ),
+            (
+                "g := fn (n := i32 ?) -> i32! ( try half(n) + try half(n + 2) )".to_string(),
+                "print «{g(8).value} {g(99).err[0].message} {g(300).err[0].message}»",
+                "9 101 is too big 300 is too big",
+            ),
+            (
+                format!(
+                    "{bag}, g := fn (n := i32 ?) -> i32! ( keep := bag(1), x := try half(n), \
+                     print «kept {{keep.n}}», x )"
+                ),
+                "print «{g(300).err.size}», print «{g(8).value}»",
+                "freed 1\n2\nkept 1\nfreed 1\n4",
+            ),
+            (
+                format!(
+                    "{bag}, m := fn (n := i32 ?) -> bag! ( if n > 100 ( error.too_big «{{n}}» ), \
+                     bag(n) ), g := fn (n := i32 ?) -> bag! ( b := try m(n), \
+                     print «got {{b.n}}», b )"
+                ),
+                "r := g(5), print «{r.value.n} {g(300).err.size}»",
+                "freed 5\ngot 5\n5 2\nfreed 5",
+            ),
+        ] {
+            let compile = if tier == "compiled" {
+                ["half", "m", "g"]
+                    .iter()
+                    .filter(|name| fns.contains(&format!("{name} := fn")) || **name == "half")
+                    .map(|name| format!("{name}.compile(), "))
+                    .collect::<String>()
+                    + "f.compile(), "
+            } else {
+                String::new()
+            };
+            let src =
+                format!("{too_big}, {half}, {fns}, f := fn () -> void ( {body} ), {compile}f()");
+            assert_eq!(line(&src), want, "{tier}: {src}");
+        }
+    }
+}
+
+/// `try` passes an error on to the caller, so its operand gives a `T!` and it stands inside a
+/// function that gives one (R140).
+#[test]
+fn try_is_refused_over_no_t_bang_and_outside_a_function_that_gives_one() {
+    let half = "half := fn (n := i32 ?) -> i32! ( n / 2 )";
+    let outside =
+        "`try` passes an error on to the caller, so it is written inside a function that \
+                   gives a value or an error, `-> i32!`";
+    for (src, at, message) in [
+        (format!("{half}, g := fn (n := i32 ?) -> i32 ( try half(n) ), g(8)"), "1:74:", outside),
+        (format!("{half}, x := try half(8)"), "1:49:", outside),
+        (
+            "g := fn (n := i32 ?) -> i32! ( try n ), 0".to_string(),
+            "1:36:",
+            "`try` passes on the error of a value that holds a value or an error, `T!`, and this \
+             value is no `T!`",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}\nstderr: {stderr}");
+        assert!(stderr.contains(&format!("{at} error: {message}")), "{src}\nstderr: {stderr}");
+    }
 }
 
 /// A declaration of an empty place runs nothing on either tier, a record's as a number's.

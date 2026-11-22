@@ -114,7 +114,7 @@ pub(crate) unsafe fn fallible_members(types: &Core, ty: DyadPtr) -> Option<(Dyad
         return None;
     };
     let named = bindings.iter().map(|&b| Binding::spelling(b)).eq(["value", "err"]);
-    (named && hole::type_in(err) == types.error.value).then_some((value, err))
+    (named && super::error::is_value(types, hole::type_in(err))).then_some((value, err))
 }
 
 /// What a function that gives `ty` hands back for `value`, one of the values its body gives: where

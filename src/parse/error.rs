@@ -365,6 +365,10 @@ pub enum ParseError {
     HoldsNeedsUnion,
     /// `!` after something that is no type.
     FallibleNeedsType,
+    /// `try` before a value that gives no `T!`.
+    TryNeedsFallible,
+    /// `try` where no function that gives a `T!` is being written.
+    TryOutsideFallible,
     /// `holds` with no member's name after it.
     HoldsNeedsMember,
     /// A name after `holds` that is no member of the union, and the union's members.

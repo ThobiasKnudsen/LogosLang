@@ -15,6 +15,7 @@ use super::*;
 use crate::identities::meta::prec;
 use crate::identities::read::{read_kind, Read};
 use crate::identities::tape::{NodeMember, NodeRead};
+use crate::start_graph::{Carry, In, Out};
 
 /// What the scan of a line found: where the first top-level cell whose build reaches a read
 /// starts, what stands before it that the parse cannot stop after, and the first word such a
@@ -69,6 +70,7 @@ pub(super) struct Kept {
 /// bare field or a bare call there needs to reach the value its body is about: the type
 /// definitions open there and a `run` body's fields, and whether the line is the `T ?` a `:=`
 /// declares its name with, which lays out a new node of `T`.
+#[derive(Default)]
 pub(crate) struct HeldLine {
     cells: ParsingTape,
     cut: usize,
@@ -76,6 +78,40 @@ pub(crate) struct HeldLine {
     definitions: Vec<OpenType>,
     run_fields: Option<(DyadPtr, Vec<DyadPtr>, DyadPtr)>,
     lays_out: bool,
+}
+
+impl Carry for Kept {
+    fn carry(&self, out: &mut Out) {
+        let Kept { cells, notes } = self;
+        cells.carry(out);
+        notes.carry(out);
+    }
+
+    fn uncarry(inp: &mut In) -> Self {
+        let cells = Carry::uncarry(inp);
+        Kept { cells, notes: Carry::uncarry(inp) }
+    }
+}
+
+impl Carry for HeldLine {
+    fn carry(&self, out: &mut Out) {
+        let HeldLine { cells, cut, kept, definitions, run_fields, lays_out } = self;
+        cells.carry(out);
+        cut.carry(out);
+        kept.carry(out);
+        definitions.carry(out);
+        run_fields.carry(out);
+        lays_out.carry(out);
+    }
+
+    fn uncarry(inp: &mut In) -> Self {
+        let cells = Carry::uncarry(inp);
+        let cut = Carry::uncarry(inp);
+        let kept = Carry::uncarry(inp);
+        let definitions = Carry::uncarry(inp);
+        let run_fields = Carry::uncarry(inp);
+        HeldLine { cells, cut, kept, definitions, run_fields, lays_out: Carry::uncarry(inp) }
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -707,7 +743,7 @@ impl<'a> Parser<'a> {
             run_fields: self.cx.run_fields.clone(),
             lays_out,
         };
-        let line = Box::into_raw(Box::new(line));
+        let line = self.rt.store.keep_line(line);
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
         let frames: Vec<DyadPtr> = self.cx.frames.iter().map(|f| f.frame).collect();
         let node = crate::identities::waiting::build_line(

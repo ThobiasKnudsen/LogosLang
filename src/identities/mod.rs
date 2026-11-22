@@ -6,7 +6,7 @@
 //! the graph; parse and run behaviour ride the graph as callable leaves, and only
 //! the Cranelift lowering is still a native table.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::binding::Binding;
 use crate::compile::LowerTable;
@@ -81,6 +81,8 @@ pub(crate) mod string;
 mod subset;
 pub mod tape;
 pub mod this;
+#[path = "try.rs"]
+pub(crate) mod try_mod;
 pub(crate) mod type_mint;
 #[path = "type.rs"]
 mod type_mod;
@@ -198,6 +200,7 @@ pub struct Core {
     pub error: error::ErrorIds,
     pub abort: abort::AbortIds,
     pub union: union::UnionIds,
+    pub try_: try_mod::TryIds,
     pub run_body: run_body::RunBodyIds,
     pub by_copy: by_copy::ByCopyIds,
     pub here: here::HereIds,
@@ -267,9 +270,9 @@ impl Core {
             unknown: std::ptr::null_mut(),
             pointer_ctor: std::ptr::null_mut(),
             derived_parse: std::ptr::null_mut(),
-            metas: HashMap::new(),
-            extents: HashMap::new(),
-            choosers: HashMap::new(),
+            metas: BTreeMap::new(),
+            extents: BTreeMap::new(),
+            choosers: BTreeMap::new(),
             lower: HashMap::new(),
         };
         let mut numtypes: [DyadPtr; 10] = [std::ptr::null_mut(); 10];
@@ -446,6 +449,7 @@ impl Core {
         let error = error::register(&mut cx, &callables);
         let abort = abort::register(&mut cx, &callables);
         let union = union::register(&mut cx, &callables);
+        let try_ = try_mod::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let by_copy = by_copy::register(&mut cx, &callables);
         let (copy_, copy_leaf) = copy::register(&mut cx, &callables);
@@ -582,6 +586,7 @@ impl Core {
             error,
             abort,
             union,
+            try_,
             run_body,
             by_copy,
             here,
@@ -617,6 +622,7 @@ impl Core {
             ops: op_leaves,
             lower,
         };
+        core.error = error::native(store, &core);
         core.carried = carried::section(store, &core);
         core.type_mint = type_mint::load(store, trie, &core, core.carried);
         type_mint::keep_early(store, &core);
@@ -772,9 +778,11 @@ pub(crate) struct Cx<'a> {
     pointer_ctor: DyadPtr,
     /// `Core::derived_parse`; null until the callables are registered.
     derived_parse: DyadPtr,
-    metas: HashMap<DyadPtr, ConstructFn>,
-    extents: HashMap<DyadPtr, crate::parse::ExtentFn>,
-    choosers: HashMap<DyadPtr, mint::ChooseFn>,
+    /// Ordered by address, so the leaves are minted in one order wherever the arena lies, and
+    /// two starts lay out one graph (›The seed carries its start graph inside its binary‹ [[R386]]).
+    metas: BTreeMap<DyadPtr, ConstructFn>,
+    extents: BTreeMap<DyadPtr, crate::parse::ExtentFn>,
+    choosers: BTreeMap<DyadPtr, mint::ChooseFn>,
     lower: LowerTable,
 }
 
