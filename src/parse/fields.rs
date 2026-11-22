@@ -1177,7 +1177,6 @@ impl<'a> Parser<'a> {
         self.cx.member_root = std::ptr::null_mut();
         let path = std::mem::take(&mut self.cx.member_path);
         let (node, consumed) = access?;
-        let end = tape.at(1 + consumed as isize).map_or(nstart + nlen, Cell::end);
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
@@ -1188,7 +1187,6 @@ impl<'a> Parser<'a> {
             crate::identities::array::build(self.rt.store, self.types.array_, &path)
         };
         tape.place(node);
-        tape.span_center(left.start, end);
         let cell = tape.at_mut(0).expect("placed above");
         cell.path = path;
         if plain && !through {
@@ -1244,11 +1242,9 @@ impl<'a> Parser<'a> {
             };
             crate::identities::union::build_holds(self.rt.store, self.types, lhs, union, member)
         };
-        let end = tape.at(1).map_or(nstart + nlen, Cell::end);
         tape.remove(1);
         tape.remove(-1);
         tape.place(node);
-        tape.span_center(left.start, end);
         Ok(Constructed::Gave)
     }
 

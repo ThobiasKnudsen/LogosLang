@@ -150,6 +150,12 @@ impl Cell {
         self.start + self.len
     }
 
+    /// Where the cell stands in `text`, `start..end`, when it was lexed from `text`.
+    pub(crate) fn span_in(&self, text: &str) -> Option<(usize, usize)> {
+        let lexed = self.text.is_some_and(|p| std::ptr::eq(p.as_ptr(), text));
+        lexed.then(|| (self.start, self.end()))
+    }
+
     /// The binding read through to its dyad, or a node itself.
     pub fn identity(&self, types: &Core) -> DyadPtr {
         // SAFETY: a cell's dyad is null or a dyad from the store.
@@ -214,6 +220,9 @@ pub struct ParsingTape {
     /// The cells of the `{…}` scopes its quotes opened, lexed with them: no frontier holds
     /// them, a held body's construction reads them by position.
     pub(crate) inner: Vec<Cell>,
+    /// Each removed cell, in the order removed, with where the cell after it started then, so
+    /// with the source up to there, which holds what it was built from: what a constructor took.
+    taken: Vec<(Cell, usize)>,
 }
 
 impl ParsingTape {
@@ -223,6 +232,16 @@ impl ParsingTape {
 
     pub fn edits(&self) -> u64 {
         self.edits
+    }
+
+    /// How many cells have been removed so far, for [`Self::taken_since`].
+    pub(super) fn taken_mark(&self) -> usize {
+        self.taken.len()
+    }
+
+    /// The cells removed since `mark`, which no later call hands out again.
+    pub(super) fn taken_since(&mut self, mark: usize) -> Vec<(Cell, usize)> {
+        self.taken.split_off(mark.min(self.taken.len()))
     }
 
     /// A read lexed on from a count of `edits`: what it lexed, and built as it lexed it, stood in
@@ -523,6 +542,8 @@ impl ParsingTape {
         self.nodes[n].linked = false;
         self.len -= 1;
         self.edits += 1;
+        let until = next.map_or(usize::MAX, |x| self.nodes[x].cell.start);
+        self.taken.push((cell, until));
         Some(cell)
     }
 
@@ -594,14 +615,7 @@ impl ParsingTape {
         cell.dyad = dyad;
         cell.constructed = true;
         cell.bracket = false;
-        self.span_center(left.start, right.end());
-    }
-
-    /// The center cell, which took the cells around it, spans the source from `start` to `end`,
-    /// so a point after it that runs it first runs what they held.
-    pub fn span_center(&mut self, start: usize, end: usize) {
-        let cell = self.at_mut(0).expect("the construct's cell is at the center");
-        cell.start = start;
-        cell.len = end.saturating_sub(start);
+        cell.start = left.start;
+        cell.len = right.end().saturating_sub(left.start);
     }
 }

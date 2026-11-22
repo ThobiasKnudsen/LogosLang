@@ -8133,6 +8133,27 @@ fn a_constructor_reads_the_scope_cell_to_its_right_line_by_line() {
     }
 }
 
+/// ›The pass runs only as far as it must, in order, and never twice‹ [[R288]]: what a constructor
+/// took off the tape runs where its node stands, so a point after it that needs a value runs it
+/// first, a constructor written in Logos and a call for a type included.
+#[test]
+fn what_a_constructor_took_runs_first_where_its_node_stands() {
+    let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 )";
+    let times = "times := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, \
+                 run = ( lhs * rhs ), parse_rank = 60, parse = ( tape[0].type = times, \
+                 tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = i32, \
+                 tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
+    let lib = "import file «tests/fixtures/scope_cell_lines.logos»";
+    let k = "k := fn () -> type ( i32 )";
+    assert_runs(&[
+        (format!("{times}, {calls}, x := h() times 2 + g(), print «x {{x}}»"), "h\ng\nx 4\n"),
+        (format!("{lib}, {calls}, x := first (h(), 8) + g(), print «x {{x}}»"), "h\ng\nx 3\n"),
+        (format!("{POWER}, x := i32 3, print «{{(x ^ 2).type == ^.get_mint(i32)}}»"), "true\n"),
+        (format!("{k}, print «{{k() == k()}} {{k() == i64}}»"), "true false\n"),
+        (format!("{k}, f := fn () -> bool ( k() == k() ), f.compile(), f()"), "true\n"),
+    ]);
+}
+
 #[test]
 fn scope_by_name_is_the_bracket_and_alone_is_the_type() {
     for (line, want) in [

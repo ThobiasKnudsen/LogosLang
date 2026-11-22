@@ -400,7 +400,6 @@ impl<'a> Parser<'a> {
         let Some(left) = tape.at(-1).copied() else {
             return Err(ParseError::MissingOperand);
         };
-        let end = self.cx.pos;
         let lhs = self.operand_dyad(left)?;
         // SAFETY: `lhs` is a reduced dyad off the tape.
         let Some(value) = (unsafe { crate::identities::type_identity_of(self.types, lhs) }) else {
@@ -436,7 +435,6 @@ impl<'a> Parser<'a> {
         };
         tape.remove(-1);
         tape.place(mint);
-        tape.span_center(left.start, end);
         Ok(Constructed::Gave)
     }
 
