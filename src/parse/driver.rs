@@ -1197,10 +1197,9 @@ impl<'a> Parser<'a> {
         };
         let value = std::ptr::read_unaligned(room as *const i64);
         let shown: Result<_, crate::run::RunError> = self.hosted(|rt| {
-            let hop = error::first_hop(rt, value as DyadPtr);
+            let shown = error::handed_on(rt, value as DyadPtr);
             crate::identities::drop_model::end_of_type(rt, types.error.value, value)?;
-            let hop = hop?.expect("a raise makes the first hop");
-            Ok(crate::run::RunError::Raised(Box::new(hop)))
+            shown
         });
         let message = crate::report::run_message(&shown.unwrap_or_else(|e| e));
         Err(ParseError::ConstructorFailed(Box::new(message)))

@@ -40,9 +40,11 @@ arithmetic := pub type (
                 place := type_mint.step(type_mint.step(type_mint.step(type_mint.step(0, arithmetic), step_of), l), r),
                 made := mut type type_mint.kept(place),
                 if made != ? return made,
-                if not number(l) or not number(r) error.operands «`{spelled}` takes numbers, and this type is none»,
-                if l != r error.operands «`{spelled}` takes two values of one type»,
-                if l == (f32 or f64) and step_of == rational_number.rem error.operands «`{spelled}` has no instruction for a float»,
+                # Operands a mint does not take are a checked error: the parse refuses them first
+                # (›A checked error is a fault: the task that hit it is cancelled‹ [[R141]]).
+                if not number(l) or not number(r) abort «`{spelled}` takes numbers, and this type is none»,
+                if l != r abort «`{spelled}` takes two values of one type»,
+                if l == (f32 or f64) and step_of == rational_number.rem abort «`{spelled}` has no instruction for a float»,
                 made = type (
                     lhs := pub l ?,
                     rhs := pub r ?,
@@ -72,6 +74,7 @@ arithmetic := pub type (
                     plain_r := tape[1].type == rational_number,
                     if not plain_l and not plain_r and l != r and (l == rational_number or r == rational_number) error.operands «`{spelled}` takes two values of one type»,
                     t := type if plain_l (r) else if plain_r (l) else if l ⊆ r (r) else (l),
+                    if t == (f32 or f64) and step_of == rational_number.rem error.operands «`{spelled}` has no instruction for a float»,
                     tape[0].type = mint(t, t),
                     tape[0].lhs = tape[-1],
                     tape[0].rhs = tape[1],

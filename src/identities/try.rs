@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `try`: over a `T!`, its `value`, and over one that holds `err`, a `return` from the function,
-//! whose own `T!` it fills with that error, one hop longer. The node is `[operand, check, value,
-//! op, output_type]`, run in that order: `operand`, a value the line makes and keeps, null where
-//! the `T!` is a place; `check`, `if v holds err ( return … )`; and `value`, `v.value`, each over
-//! the kept value or the place. ›Target: errors are values (`T!`), handled by `if`, passed on by
+//! whose own `T!` it fills with that error, one hop longer; at the top level, the error handed to
+//! the command line, which stops the run. The node is `[operand, check, value, op,
+//! output_type]`, run in that order: `operand`, a value the line makes and keeps, null where the
+//! `T!` is a place; `check`, `if v holds err ( return … )`; and `value`, `v.value`, each over the
+//! kept value or the place. ›Target: errors are values (`T!`), handled by `if`, passed on by
 //! `try`…‹ [[R140]]
 
 use cranelift_codegen::ir::Value;
@@ -54,10 +55,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> TryIds {
 }
 
 /// `try` over `operand`, a value of the union `fallible` whose members are `value` and `err`,
-/// inside a function that gives `output`, whose `err` member is `output_err`: the `try` node, and
-/// the `return` it leaves by, for the parse to note as a written one. A `kept` operand is a value
-/// its line makes and holds, which runs once and is read again where the line holds it; any
-/// other is a place, read where it is needed.
+/// inside a function that gives `output`, whose `err` member is `output_err`, or at the top level
+/// where `receiver` is `None`: the `try` node, and the `return` it leaves the function by, for the
+/// parse to note as a written one. A `kept` operand is a value its line makes and holds, which
+/// runs once and is read again where the line holds it; any other is a place, read where it is
+/// needed.
 ///
 /// # Safety
 /// `operand` must be a reduced dyad of the type `fallible`, a `T!` whose member holes are `value`
@@ -67,9 +69,9 @@ pub(crate) unsafe fn build(
     types: &Core,
     operand: DyadPtr,
     [fallible, value, err]: [DyadPtr; 3],
-    (output, output_err): (DyadPtr, DyadPtr),
+    receiver: Option<(DyadPtr, DyadPtr)>,
     kept: bool,
-) -> (DyadPtr, DyadPtr) {
+) -> (DyadPtr, Option<DyadPtr>) {
     let none = std::ptr::null_mut();
     // Built first, so the hop it adds can name it as its location; its parts are written below.
     let node = store.alloc_words(types.try_.try_, &[none; 5]);
@@ -80,11 +82,17 @@ pub(crate) unsafe fn build(
         (none, operand)
     };
     let error = union::build_member(store, types, read, fallible, err, false);
-    let passing = super::error::build_passing(store, types, error, node);
-    let filled = union::build_fill(store, types, passing, output, output_err);
-    let ret = store.alloc_words(types.return_, &[filled, none, types.ops.return_]);
+    let (leave, ret) = match receiver {
+        Some((output, output_err)) => {
+            let passing = super::error::build_passing(store, types, error, node);
+            let filled = union::build_fill(store, types, passing, output, output_err);
+            let ret = store.alloc_words(types.return_, &[filled, none, types.ops.return_]);
+            (ret, Some(ret))
+        }
+        None => (super::error::build_handed(store, types, error), None),
+    };
     let holds = union::build_holds(store, types, read, fallible, err);
-    let check = super::if_mod::build(store, types, holds, ret, none);
+    let check = super::if_mod::build(store, types, holds, leave, none);
     let given = union::build_member(store, types, read, fallible, value, false);
     let parts = [first, check, given, types.try_.leaf, super::hole::type_in(value)];
     std::ptr::copy_nonoverlapping(parts.as_ptr(), dyad::value(node) as *mut DyadPtr, parts.len());

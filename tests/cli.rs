@@ -4830,6 +4830,18 @@ fn file_mode_runs_each_expression_as_it_parses() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
 }
 
+/// A `-> type` call run at parse that stops the program with `abort «…»` shows the abort's own
+/// words, as one that raises shows its error.
+#[test]
+fn a_type_call_that_aborts_at_parse_shows_its_own_words() {
+    let (code, stdout, stderr) = run_line(
+        "k := fn (n := i32 ?) -> type ( if n > 1 ( abort «{n} names no type» ), i32 ), \
+         x := k(1) 5, y := k(3) 4",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("run error: 3 names no type"), "stderr: {stderr}");
+}
+
 #[test]
 fn a_type_call_with_a_runtime_argument_yields_a_type_at_run() {
     let (echoes, stderr) = repl(
@@ -7991,17 +8003,27 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
     }
 }
 
-/// `try` passes an error on to the caller, so its operand gives a `T!` and it stands inside a
-/// function that gives one (R140).
+/// `try` passes an error on to whoever receives it, so its operand gives a `T!` and it stands
+/// inside a function that gives one or at the top level, never in a `defer`, nor a raise there
+/// (R140).
 #[test]
-fn try_is_refused_over_no_t_bang_and_outside_a_function_that_gives_one() {
+fn try_is_refused_over_no_t_bang_and_where_nobody_receives_its_error() {
     let half = "half := fn (n := i32 ?) -> i32! ( n / 2 )";
     let outside =
         "`try` passes an error on to the caller, so it is written inside a function that \
-                   gives a value or an error, `-> i32!`";
+                   gives a value or an error, `-> i32!`, or at the top level, which hands it to the \
+                   command line";
+    let deferred = "a `defer` runs as its scope ends, where nobody receives an error, so it holds \
+                    no raise and no `try`; `abort «…»` stops the program";
     for (src, at, message) in [
         (format!("{half}, g := fn (n := i32 ?) -> i32 ( try half(n) ), g(8)"), "1:74:", outside),
-        (format!("{half}, x := try half(8)"), "1:49:", outside),
+        (format!("{half}, defer print «{{try half(4)}}», print «end»"), "1:58:", deferred),
+        (
+            "error.x := «d», f := fn () -> i32! ( defer error.x «in defer», 5 ), 0".to_string(),
+            "1:44:",
+            deferred,
+        ),
+        ("error.x := «d», defer error.x «in defer», print «end»".to_string(), "1:23:", deferred),
         (
             "g := fn (n := i32 ?) -> i32! ( try n ), 0".to_string(),
             "1:36:",
@@ -8013,6 +8035,49 @@ fn try_is_refused_over_no_t_bang_and_outside_a_function_that_gives_one() {
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}\nstderr: {stderr}");
         assert!(stderr.contains(&format!("{at} error: {message}")), "{src}\nstderr: {stderr}");
     }
+}
+
+/// R140: at the top level `try` hands an error to the command line, which prints its first hop
+/// and stops the run, each scope ending as at a fault; over a value it gives the value. A REPL
+/// line fails and the session goes on, and an imported file's top level hands it where its
+/// `import` line would.
+#[test]
+fn a_try_at_the_top_level_hands_the_error_to_the_command_line() {
+    let too_big = "error.too_big := «a number is too big»";
+    let half =
+        "half := fn (n := i32 ?) -> i32! ( if n > 100 ( error.too_big «{n} is too big» ), n / 2 )";
+    let g = "g := fn (n := i32 ?) -> i32! ( try half(n) )";
+    let refused = "run error: error.too_big: 300 is too big";
+    for compile in ["", "half.compile(), g.compile(), "] {
+        for (tail, want) in [
+            ("x := try half(8), print «{x}», y := try half(300), print «never»", "4\n"),
+            ("y := try g(300)", ""),
+            ("r := half(300), print «{r holds err}», y := try r", "true\n"),
+            ("k := i32 300, if k > 1 ( print «{try half(k)}» ), print «never»", ""),
+            ("for i in 0..3 ( print «{try half(i32 i * 150)}» )", "0\n"),
+        ] {
+            let src = format!("{too_big}, {half}, {g}, {compile}{tail}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(1), want), "{src}\nstderr: {stderr}");
+            let want_err = if tail.starts_with("for") { "150 is too big" } else { refused };
+            assert!(stderr.contains(want_err), "{src}\nstderr: {stderr}");
+        }
+    }
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let (code, stdout, stderr) = run_line(&format!(
+        "{bag}, {too_big}, {half}, b := bag(4), defer print «bye», y := try half(300)"
+    ));
+    assert_eq!((code, stdout.as_str()), (Some(1), "bye\nfreed 4\n"), "stderr: {stderr}");
+    assert!(stderr.contains(refused), "stderr: {stderr}");
+
+    let (echoes, stderr) =
+        repl(format!("{too_big}\n{half}\ny := try half(300)\nprint «after»\ntry half(8)\n"));
+    assert_eq!(echoes, ["after", "4"], "stderr: {stderr}");
+    assert!(stderr.contains(&format!("<repl>: {refused}")), "stderr: {stderr}");
+
+    let (code, stdout, stderr) = run_line("import file «tests/fixtures/top_level_try.logos»");
+    assert_eq!((code, stdout.as_str()), (Some(1), "4\n"), "stderr: {stderr}");
+    assert!(stderr.contains(refused), "stderr: {stderr}");
 }
 
 /// R140: a function that gives `void!` holds `value` where its body ends and `err` where a raise
@@ -14567,12 +14632,12 @@ fn an_operation_s_mint_and_a_map_s_type_are_one_per_key_on_both_tiers() {
     assert_runs(&cases);
 }
 
-/// A key's mint is made once: `type_mint` refuses a second `keep` at a place, a key of the seed's
-/// own among them, so no type already handed out is replaced ([[R383]]). A place nothing is kept
-/// at yet takes a `keep` from any program.
+/// A key's mint is made once: `type_mint` stops the program at a second `keep` at a place, a key
+/// of the seed's own among them, so no type already handed out is replaced ([[R383]]). A place
+/// nothing is kept at yet takes a `keep` from any program.
 #[test]
 fn a_place_keeps_one_mint_on_both_tiers() {
-    let refused = "error.already_kept: a key's mint is made once";
+    let refused = "run error: a key's mint is made once";
     let place = "p := type_mint.step(type_mint.step(0, i32), i64)";
     let (code, stdout, stderr) = run_line(&format!(
         "{place}, type_mint.keep(p, i32), print «{{type_mint.kept(p) == i32}}», \
@@ -14594,9 +14659,6 @@ fn a_place_keeps_one_mint_on_both_tiers() {
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "src: {src}, stderr: {stderr}");
         assert!(stderr.contains(refused), "src: {src}, stderr: {stderr}");
     }
-    // The category is the keeper's file's own: a program declares the name for itself.
-    let (code, stdout, stderr) = run_line("error.already_kept := «mine», 0");
-    assert_eq!((code, stdout.as_str()), (Some(0), "0\n"), "stderr: {stderr}");
 }
 
 /// R383's rules (2) and (3): a writable `static` is never shared, so a type that holds one is

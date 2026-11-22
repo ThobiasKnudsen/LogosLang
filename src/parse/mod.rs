@@ -99,6 +99,9 @@ struct Context<'a> {
     /// declarations get global storage; inside a function each local claims
     /// the next byte offset in the top frame.
     frames: Vec<OpenFn>,
+    /// The frame depth of each `defer` body open around the position, innermost last: an error
+    /// raised or passed on at that depth reaches nobody.
+    deferring: Vec<usize>,
     /// How many deferred-or-repeated bodies enclose the position, where parse order and run order
     /// do not coincide, so a part runs in the pass only by [`Parser::runs_in_pass`]. Comptime-taken
     /// `if` branches do not count.
@@ -216,6 +219,7 @@ impl<'a> Context<'a> {
             member_path: Vec::new(),
             run_fields: None,
             frames: Vec::new(),
+            deferring: Vec::new(),
             runtime_depth: 0,
             each_pass: false,
             each_pass_read: false,

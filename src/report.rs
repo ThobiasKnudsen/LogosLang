@@ -555,7 +555,13 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::TryOutsideFallible => {
             "`try` passes an error on to the caller, so it is written inside a function that gives \
-             a value or an error, `-> i32!`"
+             a value or an error, `-> i32!`, or at the top level, which hands it to the command \
+             line"
+                .into()
+        }
+        ParseError::ErrorInDefer => {
+            "a `defer` runs as its scope ends, where nobody receives an error, so it holds no raise \
+             and no `try`; `abort «…»` stops the program"
                 .into()
         }
         ParseError::HoldsNeedsMember => {

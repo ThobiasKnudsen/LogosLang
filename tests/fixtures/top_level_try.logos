@@ -1,0 +1,8 @@
+# A `try` at a file's top level hands the error where the file's `import` line would hand one:
+# at the command line's top level, to the command line, which prints it and stops the run.
+error.too_big := «a number is too big»,
+half := fn (n := i32 ?) -> i32! ( if n > 100 ( error.too_big «{n} is too big» ), n / 2 ),
+x := try half(8),
+print «{x}»,
+y := try half(300),
+print «never»

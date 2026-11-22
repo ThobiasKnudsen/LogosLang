@@ -5,7 +5,8 @@
 //! name of the scope it stands in, and `error.X «message»` raises it, `{…}` read as `print`
 //! reads it. Inside a function that gives `T!` the raise fills the result's `err` and leaves the
 //! function; anywhere else it is the node `[parts, op, output_type, category]`, whose run ends the
-//! run as a fault. A `try` that passes an error on makes it one hop longer here.
+//! run as a fault. A `try` that passes an error on makes it one hop longer here, and one at the
+//! top level hands it to the command line.
 //! ›Error values are in v0.1.0; an error names a category, which is a scoped name‹ [[R143]]
 
 use cranelift_codegen::ir::Value;
@@ -50,6 +51,10 @@ pub struct ErrorIds {
     /// it was handed and `location` the `try`.
     pub passing: DyadPtr,
     pub passing_leaf: DyadPtr,
+    /// The error value a `try` at the top level hands to the command line, `[source, op,
+    /// output_type]`, `source` the one it was handed: its run stops the run with that error.
+    pub handed: DyadPtr,
+    pub handed_leaf: DyadPtr,
 }
 
 const ARRAY: carried::File = carried::File {
@@ -135,6 +140,15 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
     unsafe { meta::mark_own(passing) };
     cx.lower.insert(passing, lower_passing);
     let passing_leaf = callable::mint_native(cx.store, cs.callable, run_passing, cs.seed_native);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        crate::parse::Assoc::Left,
+        &["source", "op", "output_type"],
+    );
+    let handed = cx.store.alloc_head(cx.type_, record);
+    let handed_leaf = callable::mint_native(cx.store, cs.callable, run_handed, cs.seed_native);
     let null = std::ptr::null_mut();
     ErrorIds {
         error,
@@ -148,6 +162,8 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
         passed: null,
         passing,
         passing_leaf,
+        handed,
+        handed_leaf,
     }
 }
 
@@ -247,14 +263,38 @@ unsafe extern "C" fn compiled_raised(
     })
 }
 
-/// The category and the message of the first hop of the error value `value`, the raise's: what a
-/// parse that gives back an error shows, as a raise nobody handles does. `None` for an error
-/// value with no hop.
+/// The run error the error value `value` stops the run with where nobody receives it, at the top
+/// level and in a parse that gives one back: its first hop's category and message, the raise's,
+/// as a raise nobody handles shows (›Target: errors are values (`T!`), handled by `if`, passed on
+/// by `try`…‹ [[R140]]). `value` is only read: whoever holds it ends it.
+///
+/// # Safety
+/// As [`first_hop`].
+pub(crate) unsafe fn handed_on(rt: &mut Runtime, value: DyadPtr) -> Result<RunError, RunError> {
+    let hop = first_hop(rt, value)?.expect("an error value holds its raise's hop");
+    Ok(RunError::Raised(Box::new(hop)))
+}
+
+/// A `try` at the top level handing `source`, the error value it was handed, to the command line.
+pub(crate) fn build_handed(store: &mut Store, types: &Core, source: DyadPtr) -> DyadPtr {
+    store.alloc_words(types.error.handed, &[source, types.error.handed_leaf, types.void_])
+}
+
+fn run_handed(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a handed node, whose source gives a value of the error value's type.
+    unsafe {
+        let value = rt.run(*(dyad::value(node) as *const DyadPtr))?;
+        Err(handed_on(rt, value as DyadPtr)?)
+    }
+}
+
+/// The category and the message of the first hop of the error value `value`, the raise's. `None`
+/// for an error value with no hop.
 ///
 /// # Safety
 /// `value` must be a value of error.logos's `hops`, which is its node (›A value of a type built
 /// by a Logos `parse` travels as a pointer‹ [[R225]]).
-pub(crate) unsafe fn first_hop(
+unsafe fn first_hop(
     rt: &mut Runtime,
     value: DyadPtr,
 ) -> Result<Option<(String, String)>, RunError> {
@@ -348,9 +388,10 @@ pub(crate) unsafe fn is_category(types: &Core, binding: DyadPtr) -> bool {
         && Binding::spelling(binding).starts_with("error.")
 }
 
-/// Whether a node of type `ty` ends the run where it runs: a raise or an `abort`.
+/// Whether a node of type `ty` ends the run where it runs: a raise, an `abort`, or an error a
+/// `try` hands to the command line.
 pub(crate) fn ends_run(types: &Core, ty: DyadPtr) -> bool {
-    ty == types.error.error || ty == types.abort.abort
+    ty == types.error.error || ty == types.abort.abort || ty == types.error.handed
 }
 
 /// # Safety
