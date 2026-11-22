@@ -14,6 +14,7 @@ error.already_kept := «a mint is kept at a place that already holds one»,
 
 type_mint := pub type (
     # A place's branch, by argument; the place one level down is the one entry of the map found.
+    # The steps read and write the branches where they stand: a branch read into a name is a copy.
     branches := static hashmap u64 -> hashmap type -> hashmap u64 -> u64,
     name_branches := static hashmap u64 -> hashmap string -> hashmap u64 -> u64,
     word_branches := static hashmap u64 -> hashmap u64 -> hashmap u64 -> u64,
@@ -21,45 +22,45 @@ type_mint := pub type (
     places := static mut u64 0,
 
     step := pub static fn (at := u64 ?, argument := type ?) -> u64 (
-        branch := mut branches[at],
-        if branch == ? ( branch = hashmap type -> hashmap u64 -> u64 ),
-        next := mut branch[argument],
-        if next == ? (
-            places = places + 1,
-            next = hashmap u64 -> u64,
-            next[0] = places,
-            branch[argument] = next,
+        if branches[at] == ? (
+            branch := hashmap type -> hashmap u64 -> u64,
             branches[at] = branch
         ),
-        next[0]
+        if branches[at][argument] == ? (
+            places = places + 1,
+            next := hashmap u64 -> u64,
+            next[0] = places,
+            branches[at][argument] = next
+        ),
+        branches[at][argument][0]
     ),
 
     step_name := pub static fn (at := u64 ?, name := string ?) -> u64 (
-        branch := mut name_branches[at],
-        if branch == ? ( branch = hashmap string -> hashmap u64 -> u64 ),
-        next := mut branch[name],
-        if next == ? (
-            places = places + 1,
-            next = hashmap u64 -> u64,
-            next[0] = places,
-            branch[name] = next,
+        if name_branches[at] == ? (
+            branch := hashmap string -> hashmap u64 -> u64,
             name_branches[at] = branch
         ),
-        next[0]
+        if name_branches[at][name] == ? (
+            places = places + 1,
+            next := hashmap u64 -> u64,
+            next[0] = places,
+            name_branches[at][name] = next
+        ),
+        name_branches[at][name][0]
     ),
 
     step_word := pub static fn (at := u64 ?, word := u64 ?) -> u64 (
-        branch := mut word_branches[at],
-        if branch == ? ( branch = hashmap u64 -> hashmap u64 -> u64 ),
-        next := mut branch[word],
-        if next == ? (
-            places = places + 1,
-            next = hashmap u64 -> u64,
-            next[0] = places,
-            branch[word] = next,
+        if word_branches[at] == ? (
+            branch := hashmap u64 -> hashmap u64 -> u64,
             word_branches[at] = branch
         ),
-        next[0]
+        if word_branches[at][word] == ? (
+            places = places + 1,
+            next := hashmap u64 -> u64,
+            next[0] = places,
+            word_branches[at][word] = next
+        ),
+        word_branches[at][word][0]
     ),
 
     kept := pub static fn (at := u64 ?) -> type ( mints[at] ),

@@ -25,11 +25,13 @@ struct Engine {
 }
 
 impl Engine {
-    fn new() -> Engine {
+    /// Never dropped: the process ends with it, and the system takes its memory back at once,
+    /// where dropping it would free the store piece by piece first.
+    fn new() -> &'static mut Engine {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        Engine { store, trie, core }
+        Box::leak(Box::new(Engine { store, trie, core }))
     }
 }
 
@@ -79,7 +81,7 @@ fn help() -> String {
 /// caret; run errors are message-only, nodes carrying no positions.
 fn run_line(source: &str) -> ExitCode {
     let path = "<command line>";
-    let mut engine = Engine::new();
+    let engine = Engine::new();
     // An environment variable, since the command line takes no flags.
     let core_stats = std::env::var_os("LOGOS_STATS")
         .is_some_and(|v| !v.is_empty())
@@ -116,7 +118,7 @@ fn run_line(source: &str) -> ExitCode {
     sources.extend(imports.sources());
     if let Some(core) = core_stats {
         let after = engine.store.stats();
-        print_stats(&mut engine, core, after, &sources);
+        print_stats(engine, core, after, &sources);
     }
 
     if let Some(shown) = last {
@@ -214,7 +216,7 @@ fn repl() -> ExitCode {
          a value or at ctrl-d",
         env!("CARGO_PKG_VERSION")
     );
-    let mut engine = Engine::new();
+    let engine = Engine::new();
     let mut scopes = ScopeStack::new();
     scopes.push(engine.core.root_scope);
     // The session is its own section, like the command line.
@@ -233,7 +235,7 @@ fn repl() -> ExitCode {
             Some(Ok(line)) => line,
             _ => {
                 println!();
-                return end_session(&mut engine, session, None);
+                return end_session(engine, session, None);
             }
         };
         // SAFETY: `session` is the session's scope node.
@@ -275,7 +277,7 @@ fn repl() -> ExitCode {
                 // The session is one scope, and a line that gives a value ends it
                 // (›The command line is Logos source; the binary stays out of the way‹ [[R302]]).
                 if last.is_some() {
-                    return end_session(&mut engine, session, last);
+                    return end_session(engine, session, last);
                 }
             }
             // A failed line leaves no trace, or a typo would burn its name for the session
