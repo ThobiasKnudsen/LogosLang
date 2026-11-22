@@ -58,8 +58,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> TryIds {
 /// inside a function that gives `output`, whose `err` member is `output_err`, or at the top level
 /// where `receiver` is `None`: the `try` node, and the `return` it leaves the function by, for the
 /// parse to note as a written one. A `kept` operand is a value its line makes and holds, which
-/// runs once and is read again where the line holds it; any other is a place, read where it is
-/// needed.
+/// runs once and is read again where the line holds it, and whose `value` the `try` takes out of
+/// it; any other is a place, read where it is needed.
 ///
 /// # Safety
 /// `operand` must be a reduced dyad of the type `fallible`, a `T!` whose member holes are `value`
@@ -81,7 +81,9 @@ pub(crate) unsafe fn build(
     } else {
         (none, operand)
     };
-    let error = union::build_member(store, types, read, fallible, err, false);
+    // `passed` makes the longer error of its own and the command line only reads it, so the error
+    // is read and the union frees it.
+    let error = union::build_member(store, types, read, fallible, err, union::Access::Read);
     let (leave, ret) = match receiver {
         Some((output, output_err)) => {
             let passing = super::error::build_passing(store, types, error, node);
@@ -93,7 +95,8 @@ pub(crate) unsafe fn build(
     };
     let holds = union::build_holds(store, types, read, fallible, err);
     let check = super::if_mod::build(store, types, holds, leave, none);
-    let given = union::build_member(store, types, read, fallible, value, false);
+    let access = if kept { union::Access::Take } else { union::Access::Read };
+    let given = union::build_member(store, types, read, fallible, value, access);
     let parts = [first, check, given, types.try_.leaf, super::hole::type_in(value)];
     std::ptr::copy_nonoverlapping(parts.as_ptr(), dyad::value(node) as *mut DyadPtr, parts.len());
     (node, ret)

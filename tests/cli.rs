@@ -7983,7 +7983,7 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
                      print «got {{b.n}}», b )"
                 ),
                 "r := g(5), print «{r.value.n} {g(300).err.size}»",
-                "freed 5\ngot 5\n5 2\nfreed 5",
+                "got 5\n5 2\nfreed 5",
             ),
         ] {
             let compile = if tier == "compiled" {
@@ -8000,6 +8000,43 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
                 format!("{too_big}, {half}, {fns}, f := fn () -> void ( {body} ), {compile}f()");
             assert_eq!(line(&src), want, "{tier}: {src}");
         }
+    }
+}
+
+/// A union made for one read gives its member up to that read (›A last value moves out‹
+/// [[R66]]): `try mk()` and `mk().value` hold the very value `mk` made, freed once, where a copy
+/// was taken of it; a member nobody takes is freed at its line's end, a line that fails after the
+/// take frees it too, and a union a name holds is still read, its member copied. On both tiers.
+#[test]
+fn a_member_of_a_union_made_for_one_read_is_taken_not_copied() {
+    let array = "import file «./identities/array.logos», t := type array i32, \
+                 mk := fn () -> t! ( a := array i32 [1, 2], print «{a.ptr}», move a )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), \
+               mk := fn (k := i32 ?) -> bag! ( bag(k) )";
+    for compile in ["", "mk.compile(), g.compile(), "] {
+        for read in ["x := try mk()", "x := mk().value"] {
+            let g = format!("g := fn () -> i32! ( {read}, print «{{x.ptr}}», x[1] )");
+            let out = line(&format!("{array}, {g}, {compile}g().value"));
+            let [made, held, element] = out.lines().collect::<Vec<_>>()[..] else {
+                panic!("{compile}{read}: {out}");
+            };
+            assert_eq!((held, element), (made, "2"), "{compile}{read}");
+        }
+        for (body, want) in [
+            ("x := try mk(1), print «got {x.n}»", "got 1\nfreed 1\nend"),
+            ("x := mk(1).value, print «got {x.n}»", "got 1\nfreed 1\nend"),
+            ("print «{mk(1).value.n}»", "1\nfreed 1\nend"),
+            ("r := mk(1), b := r.value, print «got {b.n}»", "got 1\nfreed 1\nfreed 1\nend"),
+        ] {
+            let g = format!("g := fn () -> i32! ( {body}, 0 )");
+            let src = format!("{bag}, {g}, {compile}r := g(), print «end»");
+            assert_eq!(line(&src), want, "{src}");
+        }
+        let stop = "error.stop := «stop», h := fn () -> i32 ( error.stop «stop» )";
+        let g = "g := fn () -> i32 ( x := mk(1).value.n + h(), x )";
+        let (code, stdout, stderr) = run_line(&format!("{stop}, {bag}, {g}, {compile}g()"));
+        assert_eq!((code, stdout.as_str()), (Some(1), "freed 1\n"), "{compile}: {stderr}");
+        assert!(stderr.contains("run error: error.stop: stop"), "stderr: {stderr}");
     }
 }
 

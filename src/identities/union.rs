@@ -4,7 +4,7 @@
 //! `union ( a := T, b := U )`: a type whose value holds one of its members at a time. A value
 //! is `[tag: TAG_BYTES][room of the largest member]`; the tag is 0 while it holds none, else
 //! the held member's place among the members, counted from 1. A member read `v.a` is a
-//! dereference of a `member` node `{type: member, value: [base, union, tag, writes, op,
+//! dereference of a `member` node `{type: member, value: [base, union, tag, access, op,
 //! output_type]}`, which runs to the room's address: a write sets the tag, ending the member
 //! held before, and every other use checks it. `v holds a` is an `asks` node `[base, union, tag,
 //! op, output_type]`, the tag compared. ›A union holds one of its members at a time: `union (
@@ -37,6 +37,23 @@ pub struct UnionIds {
     /// A new value of a union, holding one member a value fills.
     pub fill: DyadPtr,
     pub fill_leaf: DyadPtr,
+    /// `[expr, op, output_type]`: the member `expr` reads, taken out of a union its line made,
+    /// and made for whoever takes it.
+    pub take: DyadPtr,
+    pub take_leaf: DyadPtr,
+}
+
+/// What a member node does with the member it reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Access {
+    /// Reads it, checking the tag.
+    Read = 0,
+    /// Writes it, setting the tag.
+    Write = 1,
+    /// Reads it out of a union made for this read alone, checking the tag, and leaves the union
+    /// holding none, so the union's end frees nothing and the member is its taker's (›A last
+    /// value moves out‹ [[R66]]).
+    Take = 2,
 }
 
 /// The tag's width in a value.
@@ -55,7 +72,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> UnionIds {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         crate::parse::Assoc::Left,
-        &["base", "union", "tag", "writes", "op", "output_type"],
+        &["base", "union", "tag", "access", "op", "output_type"],
     );
     let member = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(member, lower_member);
@@ -96,7 +113,20 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> UnionIds {
     unsafe { meta::mark_own(fill) };
     cx.lower.insert(fill, lower_fill);
     let fill_leaf = callable::mint_native(cx.store, cs.callable, run_fill, cs.seed_native);
-    UnionIds { union, member, leaf, holds, asks, asks_leaf, fill, fill_leaf }
+
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        crate::parse::Assoc::Left,
+        &["expr", "op", "output_type"],
+    );
+    let take = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `take` carries the record just built.
+    unsafe { meta::mark_own(take) };
+    cx.lower.insert(take, lower_take);
+    let take_leaf = callable::mint_native(cx.store, cs.callable, run_take, cs.seed_native);
+    UnionIds { union, member, leaf, holds, asks, asks_leaf, fill, fill_leaf, take, take_leaf }
 }
 
 /// The member holes `value` and `err` of `ty` where `ty` is `T!`, `union ( value := T, err :=
@@ -310,34 +340,44 @@ pub(crate) unsafe fn lay_out(
 /// The place of the member `member` of the union value `value`, of the union type `union`: a
 /// dereference of the room's address, which is checked each time it runs. `value` is a place,
 /// whose address is taken, or a value nothing names, which runs to the address of its bytes.
-/// With `writes`, the read is the left side of `=`, which makes the union hold the member. A
-/// `void` member is no place: its read checks the tag and gives nothing.
+/// `access` says what the read does with the member; a take of a member whose values have no
+/// end is a read, there being nothing to give up, and any other is no place but the value made
+/// for whoever takes it. A `void` member is no place: its read checks the tag and gives nothing.
 ///
 /// # Safety
 /// `value` must be a reduced dyad from the store whose type is `union`, a union type, and
-/// `member` one of its member holes.
+/// `member` one of its member holes; with [`Access::Take`], `value` must be a value made for this
+/// read alone.
 pub(crate) unsafe fn build_member(
     store: &mut Store,
     types: &Core,
     value: DyadPtr,
     union: DyadPtr,
     member: DyadPtr,
-    writes: bool,
+    access: Access,
 ) -> DyadPtr {
+    use super::drop_model::{teardown_of_type, Teardown};
     let base = base_of(store, types, value, union);
     let tag = tag_of(store, types, union, member);
-    let u64_ty = types.numtypes[NumType::U64 as usize];
-    let writes = store.alloc_blob(u64_ty, &u64::from(writes).to_ne_bytes());
     let member_type = hole::type_in(member);
+    let ends = teardown_of_type(types, member_type) != Teardown::Nothing;
+    let access = if access == Access::Take && !ends { Access::Read } else { access };
+    let u64_ty = types.numtypes[NumType::U64 as usize];
+    let word = store.alloc_blob(u64_ty, &(access as u64).to_ne_bytes());
     if member_type == types.void_ {
-        let ops = [base, union, tag, writes, types.union.leaf, types.void_];
+        let ops = [base, union, tag, word, types.union.leaf, types.void_];
         return store.alloc_words(types.union.member, &ops);
     }
     // The room is written as the member is, by its gates.
     let room_type = pointer::make_pointer_type(store, types, hole::gated_type_in(member));
-    let ops = [base, union, tag, writes, types.union.leaf, room_type];
+    let ops = [base, union, tag, word, types.union.leaf, room_type];
     let room = store.alloc_words(types.union.member, &ops);
-    pointer::build_deref(store, types, room, member_type, 0)
+    let read = pointer::build_deref(store, types, room, member_type, 0);
+    if access == Access::Take {
+        store.alloc_words(types.union.take, &[read, types.union.take_leaf, member_type])
+    } else {
+        read
+    }
 }
 
 /// `value holds member`: whether the union value `value`, of the union type `union`, holds the
@@ -402,10 +442,14 @@ pub(crate) unsafe fn held_member(union: DyadPtr, at: *const u8) -> Option<(DyadP
 
 /// # Safety
 /// `node` must be a member node from [`build_member`].
-unsafe fn member_parts(node: DyadPtr) -> (DyadPtr, u64, bool) {
+unsafe fn member_parts(node: DyadPtr) -> (DyadPtr, u64, Access) {
     let ops = dyad::value(node) as *const DyadPtr;
-    let writes = std::ptr::read_unaligned(dyad::value(*ops.add(3)) as *const u64);
-    (*ops.add(1), tag_in(node), writes != 0)
+    let access = match std::ptr::read_unaligned(dyad::value(*ops.add(3)) as *const u64) {
+        0 => Access::Read,
+        1 => Access::Write,
+        _ => Access::Take,
+    };
+    (*ops.add(1), tag_in(node), access)
 }
 
 /// The tag a member node or an `asks` node carries; both lay out their base, union and tag first.
@@ -434,17 +478,17 @@ unsafe fn tag_at(at: *const u8) -> u64 {
 }
 
 /// The room of the union value at `at`, for the member `node` reads: its tag set by a write,
-/// which ends the member held before it and empties the room, and checked by every other use.
-/// The one step both tiers take.
+/// which ends the member held before it and empties the room, checked by every other use, and
+/// set to hold none by a take. The one step both tiers take.
 ///
 /// # Safety
 /// `node` must be a member node from [`build_member`], `at` the address of a value of its union.
 unsafe fn enter(rt: &mut Runtime, node: DyadPtr, at: *mut u8) -> Result<i64, RunError> {
-    let (union, tag, writes) = member_parts(node);
+    let (union, tag, access) = member_parts(node);
     if at.is_null() {
         return Err(RunError::NullPointer);
     }
-    if writes {
+    if access == Access::Write {
         if tag_at(at) != tag {
             super::drop_model::end_of_type(rt, union, at as i64)?;
             let room = meta::record_size_of(union) as usize - TAG_BYTES;
@@ -457,6 +501,8 @@ unsafe fn enter(rt: &mut Runtime, node: DyadPtr, at: *mut u8) -> Result<i64, Run
         let held = Some(tag_at(at)).filter(|&held| held != 0).and_then(name);
         let read = name(tag).expect("a member node reads a member of its union");
         return Err(RunError::UnionHolds(Box::new((held, read))));
+    } else if access == Access::Take {
+        std::ptr::write_bytes(at, 0, TAG_BYTES);
     }
     Ok(at.add(TAG_BYTES) as i64)
 }
@@ -522,4 +568,20 @@ fn lower_member(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> 
 /// address of a value of its union.
 unsafe extern "C" fn compiled_enter(ctx: *mut crate::run::Context, node: DyadPtr, at: i64) -> i64 {
     crate::run::interpret_step(ctx, |rt| enter(rt, node, at as usize as *mut u8))
+}
+
+/// # Safety
+/// `node` must be a take node from [`build_member`].
+unsafe fn taken_read(node: DyadPtr) -> DyadPtr {
+    *(dyad::value(node) as *const DyadPtr)
+}
+
+fn run_take(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a take node, whose first word reads the member its union gives up.
+    unsafe { rt.run(taken_read(node)) }
+}
+
+fn lower_take(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: as [`run_take`].
+    unsafe { lw.lower(taken_read(node)) }
 }

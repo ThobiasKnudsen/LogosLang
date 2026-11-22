@@ -959,20 +959,22 @@ impl<'a> Parser<'a> {
         }
         // A union's member is read through its tag, wherever the union's value lies, and from
         // outside it with no `pub` (›A union holds one of its members at a time: `union ( a :=
-        // T, b := U )`‹ [[R379]]).
+        // T, b := U )`‹ [[R379]]); a union made for this read gives its member up.
         let value_type = crate::identities::read::output_type(self.types, lhs);
         if !self.types.is_hole(lhs) && crate::identities::union::is_union(self.types, value_type) {
+            use crate::identities::drop_model::{teardown_of, Teardown};
+            use crate::identities::union::{self, Access};
             let (member, binding) = self.find_field(value_type, nstart, nlen)?;
             self.cx.member_path = self.field_path(&left, binding);
             let types = self.types;
-            let place = crate::identities::union::build_member(
-                self.rt.store,
-                types,
-                lhs,
-                value_type,
-                member,
-                writes,
-            );
+            // SAFETY: `lhs` is a reduced dyad from the store.
+            let made = unsafe { teardown_of(types, lhs) } != Teardown::Nothing;
+            let access = match (writes, made) {
+                (true, _) => Access::Write,
+                (false, true) => Access::Take,
+                (false, false) => Access::Read,
+            };
+            let place = union::build_member(self.rt.store, types, lhs, value_type, member, access);
             return Ok((place, 0));
         }
         // Through a record pointer, `p@.x` folds the field offset into the deref; a cell holding a
