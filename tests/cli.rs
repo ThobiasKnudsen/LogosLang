@@ -543,7 +543,14 @@ fn a_parse_reads_a_static_member_through_the_node_its_tape_holds() {
             format!("{}, x := i32 3, (x + 2) p", static_reader(statics, "tape[-1].output_type")),
             "i32\n1\n",
         ),
-        ("print «{(+.mint(i32, i32)).output_type} {(i32 3 + 2).output_type}»".into(), "i32 i32\n"),
+        // A name, not a literal, so the node stays a node: one of literals alone runs where it
+        // is built (›Deferral is authored, and unfinished work is visible‹ [[R298]]).
+        (
+            "x := i32 3, print «{(+.mint(i32, i32)).output_type} {(x + 2).output_type} \
+             {(x - 2).output_type}»"
+                .into(),
+            "i32 i32 i32\n",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
@@ -1046,7 +1053,8 @@ fn type_reads_a_nodes_own_type_and_gives_the_type_it_gives() {
                  {tape[1].dyads[1].gives == i32} {tape[1].dyads[0].gives == void}», \
                  tape.remove(1), tape[0] = i32 0, tape.is_constructed[0] = true ) ), \
                  x := i32 3, y := w ( print «a», x + 2 ), 0";
-    cases.push((lines.to_owned(), "false true true\n0\n"));
+    // `+`'s parse is written in Logos, so the line before it runs first, as the parse runs.
+    cases.push((lines.to_owned(), "a\nfalse true true\n0\n"));
     let field = "q := type ( v := pub dyad ?, parse_rank = 60, parse = ( tape[0].type = q, \
                  tape[0].v = tape[-1], print «{tape[0].v.type == i32} {tape[0].v.gives == i32}», \
                  tape.remove(-1), tape.is_constructed[0] = true ) ), x := i32 3, y := (x + 2) q, 0";
@@ -3205,7 +3213,7 @@ fn a_plain_number_is_read_as_the_rational_it_is_whatever_holds_it() {
     }
     // A block's plain number is a `rational_number` too, which no `i32` holds whole.
     for (src, expect) in [
-        ("x := ( free (1), 7 ) + i32 1".to_string(), "do not match"),
+        ("x := ( free (1), 7 ) + i32 1".to_string(), "`+` takes two values of one type"),
         (format!("{}, x := q [1/2, 7], x.v", q("i32")), "only a constant is read as its value"),
         (
             format!("{}, x := q [(free (1), 7), 7], x.v", q("i32")),

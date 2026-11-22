@@ -56,8 +56,8 @@ arithmetic := pub type (
             parse_rank = rank,
             associativity = left,
             parse = (
-                l := type tape[-1].type,
-                r := type tape[1].type,
+                l := type tape[-1].gives,
+                r := type tape[1].gives,
                 # With nothing on either side, the operation stands as itself; a side nothing has
                 # declared is not taken, so its line waits for the name (›An unknown spelling is a
                 # node of type `unknown_name`; `:=` makes the binding, and the node comes with the
@@ -65,7 +65,12 @@ arithmetic := pub type (
                 if (l != void or r != void) and l != unknown_name and r != unknown_name (
                     if l == void or r == void error.operands «`{spelled}` needs a value on each side»,
                     if not number(l) or not number(r) error.operands «`{spelled}` takes numbers, and this type is none»,
-                    t := type if l == rational_number (r) else if r == rational_number (l) else if l ⊆ r (r) else (l),
+                    # A plain number is a literal, whose own type is `rational_number`; any other
+                    # rational meets only a rational.
+                    plain_l := tape[-1].type == rational_number,
+                    plain_r := tape[1].type == rational_number,
+                    if not plain_l and not plain_r and l != r and (l == rational_number or r == rational_number) error.operands «`{spelled}` takes two values of one type»,
+                    t := type if plain_l (r) else if plain_r (l) else if l ⊆ r (r) else (l),
                     tape[0].type = mint(t, t),
                     tape[0].lhs = tape[-1],
                     tape[0].rhs = tape[1],
