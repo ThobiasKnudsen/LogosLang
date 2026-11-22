@@ -348,15 +348,10 @@ impl<'a> Parser<'a> {
         Ok(self.error_value_type(tape))
     }
 
-    /// `error` with no category is the error value's type, `array hop`, once the seed has read
-    /// identities/error.logos (›A raise is `error.X «message»`; the error value is an array with
-    /// one element per hop‹ [[R144]]); until then it stands as itself.
+    /// `error` with no category is the error value's type, `array hop` (›A raise is
+    /// `error.X «message»`; the error value is an array with one element per hop‹ [[R144]]).
     fn error_value_type(&mut self, tape: &mut ParsingTape) -> Constructed {
-        let value = self.types.error.value;
-        if value.is_null() {
-            return Constructed::Decline;
-        }
-        tape.place(value);
+        tape.place(self.types.error.value);
         Constructed::Placed
     }
 
