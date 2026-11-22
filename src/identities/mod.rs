@@ -6,7 +6,7 @@
 //! the graph; parse and run behaviour ride the graph as callable leaves, and only
 //! the Cranelift lowering is still a native table.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::binding::Binding;
 use crate::compile::LowerTable;
@@ -267,9 +267,9 @@ impl Core {
             string_,
             unknown: std::ptr::null_mut(),
             derived_parse: std::ptr::null_mut(),
-            metas: HashMap::new(),
-            extents: HashMap::new(),
-            choosers: HashMap::new(),
+            metas: BTreeMap::new(),
+            extents: BTreeMap::new(),
+            choosers: BTreeMap::new(),
             lower: HashMap::new(),
         };
         let mut numtypes: [DyadPtr; 10] = [std::ptr::null_mut(); 10];
@@ -767,9 +767,11 @@ pub(crate) struct Cx<'a> {
     unknown: DyadPtr,
     /// `Core::derived_parse`; null until the callables are registered.
     derived_parse: DyadPtr,
-    metas: HashMap<DyadPtr, ConstructFn>,
-    extents: HashMap<DyadPtr, crate::parse::ExtentFn>,
-    choosers: HashMap<DyadPtr, mint::ChooseFn>,
+    /// Ordered by address, so the leaves are minted in one order wherever the arena lies, and
+    /// two starts lay out one graph (›The seed carries its start graph inside its binary‹ [[R386]]).
+    metas: BTreeMap<DyadPtr, ConstructFn>,
+    extents: BTreeMap<DyadPtr, crate::parse::ExtentFn>,
+    choosers: BTreeMap<DyadPtr, mint::ChooseFn>,
     lower: LowerTable,
 }
 

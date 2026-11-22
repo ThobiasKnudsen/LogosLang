@@ -14,6 +14,7 @@ pub mod regex_trie;
 pub mod report;
 pub mod run;
 pub mod stack;
+pub mod start_graph;
 pub mod store;
 
 pub use identities::{binding, dyad, Core};

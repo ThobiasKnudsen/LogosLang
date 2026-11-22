@@ -1034,6 +1034,10 @@ impl<'a> Parser<'a> {
         let out = unsafe { self.run_on_pass(call) };
         self.tape_hosts.pop();
         self.rt.leave_constructor(outer);
+        // The tape lives for the call alone: once it returns, the handle names none, so the
+        // store keeps no address of the parser's stack.
+        // SAFETY: `handle` is the `u64` node just built, its value eight bytes.
+        unsafe { std::ptr::write_unaligned(crate::dyad::value(handle) as *mut u64, 0) };
         match out {
             Ok(_) => Ok(Constructed::Placed),
             // A cell lexed on demand failed to parse: its own error, where it stands.
