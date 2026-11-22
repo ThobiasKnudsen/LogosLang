@@ -1079,7 +1079,7 @@ impl<'a> Parser<'a> {
         parser.on_tape_host(|p| p.cell_at(tape, k).map(|_| ()))
     }
 
-    /// A Logos constructor's `tape[k]` or `tape[k].type` ([`Parser::read_tape`]).
+    /// A Logos constructor's `tape[k]`, `tape[k].type` or `tape[k].gives` ([`Parser::read_tape`]).
     ///
     /// # Safety
     /// As `lex_on`.

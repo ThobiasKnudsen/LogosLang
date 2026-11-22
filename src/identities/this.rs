@@ -54,6 +54,9 @@ pub struct ThisIds {
     /// the node it holds, read as a tape cell's is.
     pub field_type: DyadPtr,
     pub field_type_leaf: DyadPtr,
+    /// `[read, op, output_type]`: `.gives` of such a field, the type the node it holds gives.
+    pub field_gives: DyadPtr,
+    pub field_gives_leaf: DyadPtr,
     /// A field of the node `tape[0]` holds once the parse stamped a type it got as it ran:
     /// `[cell, name, scope, op, output_type]`, the field looked up by its name then and read as
     /// the gate read lets the parse's `scope` read it, yielding the node it holds.
@@ -105,6 +108,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     cx.lower.insert(pack, lower_pack);
     let (field_type, field_type_leaf) =
         op(cx, &["read", "op", "output_type"], super::tape::run_line_type);
+    let (field_gives, field_gives_leaf) =
+        op(cx, &["read", "op", "output_type"], super::tape::run_line_type);
     let (named, named_leaf) = op(cx, &["cell", "name", "scope", "op", "output_type"], run_named);
     let (named_write, named_write_leaf) =
         op(cx, &["cell", "name", "scope", "v", "op"], run_named_write);
@@ -126,6 +131,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         pack_leaf,
         field_type,
         field_type_leaf,
+        field_gives,
+        field_gives_leaf,
         named,
         named_leaf,
         named_write,
@@ -296,12 +303,22 @@ pub(crate) unsafe fn owner_of(types: &Core, read: DyadPtr) -> DyadPtr {
     *ops.add(if dyad::ty(read) == types.this.slot { 4 } else { 5 })
 }
 
-/// `.type` of `read`, a `dyad` field of the parse's own node.
+/// `.type` or `.gives` of `read`, a `dyad` field of the parse's own node.
 ///
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.
-pub(crate) unsafe fn build_field_type(store: &mut Store, types: &Core, read: DyadPtr) -> DyadPtr {
-    node(store, types.this.field_type, types.this.field_type_leaf, &[read], types.type_)
+pub(crate) unsafe fn build_field_type(
+    store: &mut Store,
+    types: &Core,
+    read: DyadPtr,
+    which: super::tape::TypeRead,
+) -> DyadPtr {
+    let ids = &types.this;
+    let (op, leaf) = match which {
+        super::tape::TypeRead::Own => (ids.field_type, ids.field_type_leaf),
+        super::tape::TypeRead::Gives => (ids.field_gives, ids.field_gives_leaf),
+    };
+    node(store, op, leaf, &[read], types.type_)
 }
 
 /// The field a read or a write of a field reaches, keyed as a check narrows a tape cell: the

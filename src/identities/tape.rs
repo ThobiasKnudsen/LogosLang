@@ -3,8 +3,8 @@
 
 //! `parsing_tape` and the tape's affordances as identities: `t[k]` read and write,
 //! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, `t.construct`, and
-//! the cell reads `t[k]:name`, `t[k].type`, a `t[k]` checked to hold a type as that
-//! type or checked against a number type as that number, and a scope or `[…]` cell's
+//! the cell reads `t[k]:name`, `t[k].type`, `t[k].gives`, a `t[k]` checked to hold a type as
+//! that type or checked against a number type as that number, and a scope or `[…]` cell's
 //! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does. The
 //! type's one field, `cells`, is the seed's `ParsingTape` handle. The natives run interpreted;
 //! only the bracket a placed call is handed lowers.
@@ -60,6 +60,10 @@ pub struct TapeIds {
     /// for the cell itself or the line `t[k].dyads[i]`, as in the two reads below.
     pub cell_type: DyadPtr,
     pub cell_type_leaf: DyadPtr,
+    /// `t[k].gives`: the type the dyad the cell names gives when it runs; operands as
+    /// `cell_type`'s.
+    pub cell_gives: DyadPtr,
+    pub cell_gives_leaf: DyadPtr,
     /// `t[k]` after a check that the cell holds a type: the type it holds.
     pub cell_value: DyadPtr,
     pub cell_value_leaf: DyadPtr,
@@ -153,6 +157,7 @@ pub(super) fn register(
     let (construct, construct_leaf) = op(cx, &["tape", "k", "to", "op"], run_construct);
     let (slot_name, slot_name_leaf) = read(cx, &["tape", "k"], run_slot_name);
     let (cell_type, cell_type_leaf) = read(cx, &["tape", "k", "i"], run_line_type);
+    let (cell_gives, cell_gives_leaf) = read(cx, &["tape", "k", "i"], run_line_type);
     let (cell_value, cell_value_leaf) = read(cx, &["tape", "k", "i"], run_cell_value);
     let (cell_number, cell_number_leaf) = read(cx, &["tape", "k", "i", "type"], run_cell_number);
     let (cell_node, cell_node_leaf) = read(cx, &["tape", "k", "i", "type"], run_cell_node);
@@ -202,6 +207,8 @@ pub(super) fn register(
         slot_name_leaf,
         cell_type,
         cell_type_leaf,
+        cell_gives,
+        cell_gives_leaf,
         cell_value,
         cell_value_leaf,
         cell_number,
@@ -363,6 +370,7 @@ unsafe fn read_parts(types: &Core, read: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr)
     let ty = dyad::ty(read);
     let has_line = ty == types.tape.cell_dyad_at
         || ty == types.tape.cell_type
+        || ty == types.tape.cell_gives
         || ty == types.tape.cell_value
         || ty == types.tape.cell_number
         || ty == types.tape.cell_node
@@ -372,13 +380,43 @@ unsafe fn read_parts(types: &Core, read: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr)
     (recv, k, i)
 }
 
-/// `t[k].type` or `t[k].dyads[i].type`.
+/// Which type a read of a node's type gives: `.type`, the node's own, or `.gives`, the type the
+/// node gives when it runs (›`.gives` reads the type a node gives when it runs, on any node;
+/// `.type` stays the node's own type‹ [[R387]]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TypeRead {
+    Own,
+    Gives,
+}
+
+impl TypeRead {
+    /// The member that reads it, `type` or `gives`; `None` for any other.
+    pub(crate) fn of_member(name: &str) -> Option<Self> {
+        match name {
+            "type" => Some(Self::Own),
+            "gives" => Some(Self::Gives),
+            _ => None,
+        }
+    }
+}
+
+/// `t[k].type` or `t[k].dyads[i].type`, or `.gives` of either.
 ///
 /// # Safety
 /// As `read_parts`.
-pub(crate) unsafe fn build_cell_type(store: &mut Store, types: &Core, read: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn build_cell_type(
+    store: &mut Store,
+    types: &Core,
+    read: DyadPtr,
+    which: TypeRead,
+) -> DyadPtr {
     let (recv, k, i) = read_parts(types, read);
-    node(store, types.tape.cell_type, types.tape.cell_type_leaf, &[recv, k, i], types.type_)
+    let ids = &types.tape;
+    let (op, leaf) = match which {
+        TypeRead::Own => (ids.cell_type, ids.cell_type_leaf),
+        TypeRead::Gives => (ids.cell_gives, ids.cell_gives_leaf),
+    };
+    node(store, op, leaf, &[recv, k, i], types.type_)
 }
 
 /// DESIGN ›A type is a comptime value, resolved in the pass‹, a checked tape cell.
@@ -412,18 +450,18 @@ pub(crate) unsafe fn is_cell_read(types: &Core, node: DyadPtr) -> bool {
     dyad::ty(node) == types.tape.slot || dyad::ty(node) == types.tape.cell_value
 }
 
-/// A read a `.` may follow: of a node the tape holds, or of that node's type word.
+/// A read a `.` may follow: of a node the tape holds, or of a type that node is or gives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NodeRead {
     /// A cell or a line of one, `tape[k]` or `tape[k].dyads[i]`; `own` where it is the cell the
     /// parse was woken on, which holds the node the parse builds.
     Node { own: bool },
-    /// `.type` of one.
+    /// `.type` or `.gives` of one.
     Type,
 }
 
 /// Which read of a tape node `node` is, a cell or line plain or checked to hold a type, or the
-/// `.type` of one, with `own` asked for a cell; `None` for any other node.
+/// `.type` or `.gives` of one, with `own` asked for a cell; `None` for any other node.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
@@ -439,13 +477,13 @@ pub(crate) unsafe fn node_read(
     if ty == types.tape.cell_dyad_at {
         return Some(NodeRead::Node { own: false });
     }
-    (ty == types.tape.cell_type).then_some(NodeRead::Type)
+    (ty == types.tape.cell_type || ty == types.tape.cell_gives).then_some(NodeRead::Type)
 }
 
 /// What answers `.name` after a read of a tape node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NodeMember {
-    /// The type word of what the read gives, read when the parse runs.
+    /// A type the read is or gives, `.type` or `.gives`, read when the parse runs.
     Type,
     /// A bracket's lines.
     Lines,
@@ -462,7 +500,7 @@ pub(crate) enum NodeMember {
 /// The one decision the line scan and the member read share: what answers `.name` after `read`.
 pub(crate) fn node_member(read: NodeRead, name: &str) -> NodeMember {
     match (name, read) {
-        ("type", _) => NodeMember::Type,
+        _ if TypeRead::of_member(name).is_some() => NodeMember::Type,
         (_, NodeRead::Type) => NodeMember::Held,
         ("dyads", _) => NodeMember::Lines,
         (_, NodeRead::Node { own: true }) => NodeMember::Own,
@@ -471,12 +509,12 @@ pub(crate) fn node_member(read: NodeRead, name: &str) -> NodeMember {
 }
 
 /// What `read`, a read [`node_read`] knows, gives now: the node the tape holds, a name read
-/// through to the dyad it names, or that node's type.
+/// through to the dyad it names, or the type that node is or gives.
 ///
 /// # Safety
 /// `read` must be a node [`node_read`] knows; the constructor it was written in must be running.
 pub(crate) unsafe fn held_now(rt: &mut Runtime, read: DyadPtr) -> Result<DyadPtr, RunError> {
-    if dyad::ty(read) == rt.types().tape.cell_type {
+    if type_read_of(rt.types(), read).is_some() {
         return run_line_type(rt, read).map(|t| t as DyadPtr);
     }
     named_line(rt, read).expect("a read of a tape node names one")
@@ -893,15 +931,21 @@ pub(crate) unsafe fn read_target(
     }
 }
 
-/// A bracket is a `scope` or `square_brackets`, whose lines the constructor reads; any other
-/// line's type is the type of what it yields. A cell of the running constructor's tape is read as
-/// an operation reads its operand (`Parser::read_tape`).
+/// `.type` of a line a parse holds is its node's own type, a bracket's `scope` or
+/// `square_brackets`, and `.gives` the type the node gives when it runs (›`.gives` reads the type a
+/// node gives when it runs, on any node; `.type` stays the node's own type‹ [[R387]]). A cell of
+/// the running constructor's tape is read as an operation reads its operand (`Parser::read_tape`).
 pub(crate) fn run_line_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a node `is_line_type_read` accepts.
     unsafe {
+        let which = type_read_of(rt.types(), node).expect("a read of a line's type");
         let line = if is_cell_type_read(rt.types(), node) {
             let (tape, k) = tape_at(rt, dyad::value(node) as *const DyadPtr)?;
-            match rt.read_on_tape(tape, k, TapeRead::Type)? {
+            let read = match which {
+                TypeRead::Own => TapeRead::Type,
+                TypeRead::Gives => TapeRead::Gives,
+            };
+            match rt.read_on_tape(tape, k, read)? {
                 Some(operand) => operand,
                 None => rt.through(cell_on(rt, tape, k).dyad),
             }
@@ -909,30 +953,56 @@ pub(crate) fn run_line_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunE
             line_of_type_read(rt, node)?
         };
         let types = rt.types();
-        Ok(bracket_kind(types, line).unwrap_or_else(|| super::read::output_type(types, line))
-            as i64)
+        let ty = match which {
+            TypeRead::Own => super::read::own_type(types, line),
+            TypeRead::Gives => {
+                super::read::gives(types, line).map_err(|e| RunError::Parse(Box::new(e)))?
+            }
+        };
+        Ok(ty as i64)
     }
 }
 
-/// `.type` of a tape cell itself, `tape[k].type`, no line of it.
+/// A read of a tape cell itself, no line of it.
 ///
 /// # Safety
 /// `node` must be a node `is_line_type_read` accepts.
 unsafe fn is_cell_type_read(types: &Core, node: DyadPtr) -> bool {
     let ops = dyad::value(node) as *const DyadPtr;
-    dyad::ty(node) == types.tape.cell_type && !(*ops.add(1)).is_null() && (*ops.add(2)).is_null()
+    !is_field_type_read(types, node) && !(*ops.add(1)).is_null() && (*ops.add(2)).is_null()
 }
 
-/// `.type` of a line a parse holds: a tape cell, a line of one, or a `dyad` field of the parse's
-/// own node.
+/// Which type `node` reads, where it is `.type` or `.gives` of a line a parse holds: a tape cell,
+/// a line of one, or a `dyad` field of the parse's own node; `None` for any other node.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn type_read_of(types: &Core, node: DyadPtr) -> Option<TypeRead> {
+    let ty = dyad::ty(node);
+    if ty == types.tape.cell_type || ty == types.this.field_type {
+        Some(TypeRead::Own)
+    } else if ty == types.tape.cell_gives || ty == types.this.field_gives {
+        Some(TypeRead::Gives)
+    } else {
+        None
+    }
+}
+
+/// `.type` or `.gives` of a line a parse holds ([`type_read_of`]).
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_line_type_read(types: &Core, node: DyadPtr) -> bool {
-    dyad::ty(node) == types.tape.cell_type || dyad::ty(node) == types.this.field_type
+    type_read_of(types, node).is_some()
 }
 
-/// The line a `.type` read reads the type of.
+/// # Safety
+/// `read` must be a node `is_line_type_read` accepts.
+unsafe fn is_field_type_read(types: &Core, read: DyadPtr) -> bool {
+    dyad::ty(read) == types.this.field_type || dyad::ty(read) == types.this.field_gives
+}
+
+/// The line a `.type` or `.gives` read reads the type of.
 ///
 /// # Safety
 /// `read` must be a node `is_line_type_read` accepts.
@@ -940,18 +1010,18 @@ pub(crate) unsafe fn line_of_type_read(
     rt: &mut Runtime,
     read: DyadPtr,
 ) -> Result<DyadPtr, RunError> {
-    if dyad::ty(read) == rt.types().this.field_type {
+    if is_field_type_read(rt.types(), read) {
         return super::this::held(rt, *(dyad::value(read) as *const DyadPtr));
     }
     read_target(rt, dyad::value(read) as *const DyadPtr)
 }
 
-/// The cell, line or field a `.type` read names, as a check narrows it.
+/// The cell, line or field a `.type` or `.gives` read names, as a check narrows it.
 ///
 /// # Safety
 /// `read` must be a node `is_line_type_read` accepts.
 pub(crate) unsafe fn type_read_key(types: &Core, read: DyadPtr) -> Option<(DyadPtr, i32, Line)> {
-    if dyad::ty(read) == types.this.field_type {
+    if is_field_type_read(types, read) {
         return super::this::field_key(types, *(dyad::value(read) as *const DyadPtr));
     }
     cell_key(types, read)
