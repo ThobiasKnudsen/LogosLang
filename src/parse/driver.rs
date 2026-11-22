@@ -4,7 +4,6 @@
 //! The segment driver: lex a segment whole, construct it highest parse_rank first, and
 //! hand out the items; which constructor a cell wakes and how a Logos constructor runs.
 
-use super::operands::Before;
 use super::*;
 use crate::dyad;
 
@@ -591,6 +590,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(), ParseError> {
         let own = tape.mark();
         let edits = tape.edits();
+        let taken = tape.taken_mark();
         let logos = self.is_logos_ctor(id);
         // Dispatching the cell's identity is the body's read of its name: a
         // callee, an operator, a keyword alike.
@@ -604,11 +604,13 @@ impl<'a> Parser<'a> {
         self.cx.reader = reader;
         self.cx.discovering = was;
         let outcome = outcome?;
+        let taken = tape.taken_since(taken);
         // Removed itself: the splice is the outcome.
         let Some(cell) = tape.cell_at_mark(own).copied() else {
             return Ok(());
         };
         tape.restore(own);
+        self.runs_moved_to(&taken, cell.start);
         // The driver's rule (DESIGN ›Execution is function application‹): flag
         // true, done; flag false and another identity, its turn; flag false and
         // the same identity, the checked error. Any constructor, built-in or written in Logos,
@@ -1008,12 +1010,8 @@ impl<'a> Parser<'a> {
     ) -> Result<Constructed, ParseError> {
         // A constructor runs now, by nature, so what stands before it runs first, but its left
         // operand, which it reads as written (›How a Logos constructor builds its node‹ [[R362]]).
-        // Where a part before it cannot run first yet, only the lines before its own run:
-        // stand-in for #379.
         let from = tape.at(-1).or(tape.at(0)).map_or(self.cx.pos, |c| c.start);
-        if let Before::Waits(_) = self.ran_first(tape, from)? {
-            self.drain()?;
-        }
+        self.run_first(tape, from)?;
         // Its run is a call: a use of every outer name its body reads.
         if let Err(e) = self.check_call_reads(f) {
             if let Some(c) = tape.at(0) {
