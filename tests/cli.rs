@@ -523,6 +523,26 @@ fn a_parse_builds_the_nodes_to_its_right_with_tape_construct() {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
     }
+    // A call among the built nodes runs once, in the line's order, whether the parse takes the
+    // node it built or removes itself and leaves that node standing.
+    let rest = "k := mut u64 1, while (tape[k].type != void) ( k = k + 1 ), tape.construct(1, k)";
+    let calls = "h := fn () -> i32 ( print «h», 2 ), g := fn () -> i32 ( print «g», 1 )";
+    let takes = tape_reader(&format!("{rest}, tape[0] = tape[1]"));
+    let leaves = format!(
+        "ch := type ( parse_rank = fn.parse_rank, associativity = right, \
+         parse = ( {rest}, tape.remove(0) ) )"
+    );
+    for reader in [&takes, &leaves] {
+        for (tail, printed) in [
+            ("c := ch h() + g(), c", "h\ng\n3\n"),
+            ("c := g() + ch h() + 40, c", "g\nh\n43\n"),
+            ("f := fn () -> i32 ( c := ch h() + g(), c ), f.compile(), f()", "h\ng\n3\n"),
+        ] {
+            let src = format!("{calls}, {reader}, {tail}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+        }
+    }
     for (body, tail, message) in [
         ("tape.construct(1, 1)", "c := type ch i32", "nothing to evaluate here"),
         ("tape.construct(1, 3)", "c := type ch 1 2", "expected one expression, found more"),
