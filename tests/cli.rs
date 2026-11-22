@@ -313,7 +313,7 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        "g := type (y := pub static 3, z := pub static y + 3)\nprint «{g.y}»\nprint «{g.z}»\ng.parse_rank\n",
+        "g := type (y := pub static 3, z := pub static (y + 3))\nprint «{g.y}»\nprint «{g.z}»\ng.parse_rank\n",
     );
     assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
@@ -1986,7 +1986,7 @@ fn a_static_function_called_on_no_value_uses_no_field() {
     }
     // So is a bare call in a `static` member's value, made at the definition.
     let (code, stdout, stderr) = run_line(
-        "t := type ( n := i64 ?, k := static fn () -> i64 ( 1 ), c := pub static k() + 1 ), t.c",
+        "t := type ( n := i64 ?, k := static fn () -> i64 ( 1 ), c := pub static (k() + 1) ), t.c",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "2\n"), "stderr: {stderr}");
     // One that reads or writes a field, itself or through a bare call, has no value to use. The
@@ -5195,12 +5195,12 @@ fn the_binding_read_answers_scope_and_range_and_holds_no_gate() {
 }
 
 #[test]
-fn a_gate_word_stands_right_of_the_declaration_and_gates_the_whole_value() {
-    // ›A gate word reads the whole value to its right and gives it with its type gated‹ [[R102]]
+fn a_gate_word_stands_right_of_the_declaration_and_gates_the_nearest_value() {
+    // ›A gate word reads the nearest value to its right and gives it with its type gated‹ [[R102]]
     for (src, want) in [
         ("x := mut i32 5, x = 6, x", "6"),
         ("x := mut pub i32 5, x = 7, x", "7"),
-        ("a := i32 1, b := i32 2, x := mut a + b, x = x + 1, x", "4"),
+        ("a := i32 1, b := i32 2, x := mut (a + b), x = x + 1, x", "4"),
         ("a := i32 1, b := i32 2, x := pub (a + b), x", "3"),
         ("x := mut i32, x = 4, x", "4"),
         ("x := i32 5, y := mut x, y = 2, x + y", "7"),
@@ -13105,7 +13105,7 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
     for (src, error) in [
         ("x := i32 1, (x == 1) + 1", "`+` takes numbers, and this type is none"),
         ("x := i32 1, a := mut i32 0, a = x == 1, a", "these types do not match"),
-        ("x := i32 1, a := mut x == 1, a = i32 1, a", "these types do not match"),
+        ("x := i32 1, a := mut (x == 1), a = i32 1, a", "these types do not match"),
         // A `return` gives its own line nothing, which `+` is handed as `void`.
         (
             "f := fn (x := f64 ?) -> f64 ( (return x) + 1.0 ), f(2.5)",
@@ -13557,11 +13557,11 @@ fn a_curly_bracket_keeps_its_scope_as_a_value_whose_names_are_read_with_a_dot() 
         for (body, printed) in [
             ("m := { a := pub i32 1, b := pub i32 2 }, m.a + m.b", "3"),
             ("m := {a := pub i32 1}, m.a", "1"),
-            ("m := { a := i32 1, b := pub a + 1 }, m.b", "2"),
+            ("m := { a := i32 1, b := pub (a + 1) }, m.b", "2"),
             ("m := mut { a := pub mut i32 1, b := pub i32 2 }, m.a = 9, m.a * m.b", "18"),
             ("m := { inner := pub { x := pub i32 7 } }, m.inner.x", "7"),
             ("m := { a := pub i32 3, s := «hi» }, m.a", "3"),
-            ("m := { a := pub k, b := pub k * 2 }, m.a + m.b", "15"),
+            ("m := { a := pub k, b := pub (k * 2) }, m.a + m.b", "15"),
             ("m := { a := pub i32 1 }, n := m, n.a", "1"),
             ("m := { }, k", "5"),
         ] {
@@ -13571,7 +13571,7 @@ fn a_curly_bracket_keeps_its_scope_as_a_value_whose_names_are_read_with_a_dot() 
     }
     for (src, printed) in [
         ("m := { s := pub «hi», n := pub 3 }, print «{m.s} {m.n}»", "hi 3"),
-        ("m := { a := pub 1/3 }, m.a + 1/6", "1/2"),
+        ("m := { a := pub (1/3) }, m.a + 1/6", "1/2"),
         ("m := { f := pub fn (x := i32 ?) -> i32 ( x + 1 ) }, m.f(3)", "4"),
         ("m := { x := i32 1, free x, x := pub i32 2 }, m.x", "2"),
         ("m := mut { a := pub mut i32 1 }, n := m, m.a = 7, n.a", "1"),
@@ -13705,7 +13705,7 @@ fn two_curly_brackets_of_one_shape_are_one_type() {
         for (body, printed) in [
             ("m := mut { a := pub i32 1 }, m = { a := pub i32 2 }, print «{m.a}»", "2"),
             (
-                "m := mut { a := pub k, b := pub «x» }, m = { a := pub k * 2, b := pub «y» }, print «{m.a} {m.b}»",
+                "m := mut { a := pub k, b := pub «x» }, m = { a := pub (k * 2), b := pub «y» }, print «{m.a} {m.b}»",
                 "10 y",
             ),
             (
@@ -13813,7 +13813,7 @@ fn a_fn_entry_of_a_curly_bracket_reads_its_sibling_names_through_the_value() {
             ("a := i32 2, f := fn (x := i32 ?) -> i32 ( if x == 0 ( a ) else ( f(x - 1) + a ) ), {compile}b := pub f(3) }, m.b", "8"),
             ("p := alloc 1 of i32 7, f := fn () -> i32 ( p@ ), {compile}b := pub f() }, m.b", "7"),
             ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := pub f(), t := type ( x := i32 ? ) }, m.b", "2"),
-            ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := f(), s := pub static b * 10 }, m.s", "20"),
+            ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := f(), s := pub static (b * 10) }, m.s", "20"),
             ("a := i32 1, f := pub fn () -> i32 ( a + 1 ), {compile}b := pub f() }, m.f() + m.b", "4"),
         ] {
             let src = format!("m := {{ {}", body.replace("{compile}", compile));
@@ -14215,12 +14215,12 @@ fn a_hashmap_reads_a_curly_bracket_each_name_s_spelling_a_text_key() {
     for (src, printed) in [
         ("h := mut hashmap string -> i32 { a := pub 1, b := pub 2 }, h[«a»]", "1"),
         ("h := mut hashmap string -> i32 { a := pub 1, b := pub 2 }, h[«new york»] = 3, h[«new york»] + h[«b»]", "5"),
-        ("h := hashmap string -> i32 { a := pub 1, b := pub a + 1 }, h[«b»]", "2"),
+        ("h := hashmap string -> i32 { a := pub 1, b := pub (a + 1) }, h[«b»]", "2"),
         ("h := hashmap string -> i32 { }, h == ?", "false"),
         ("h := hashmap string -> type { t := pub type i32, u := pub type f64 }, h[«u»] == f64", "true"),
         ("h := hashmap string -> string { a := pub «x» }, print «{h[«a»]}»", "x"),
         ("h := hashmap string -> hashmap string -> i32 { a := pub hashmap string -> i32 { x := pub 7 } }, r := h[«a»], r[«x»]", "7"),
-        ("f := fn (k := i32 ?) -> i32 ( h := hashmap string -> i32 { a := pub k, b := pub k * 2 }, h[«b»] ), f(4)", "8"),
+        ("f := fn (k := i32 ?) -> i32 ( h := hashmap string -> i32 { a := pub k, b := pub (k * 2) }, h[«b»] ), f(4)", "8"),
         ("h := mut hashmap string -> i32 { a := pub 1 }, n := mut h, n[«a»] = 9, h[«a»]", "1"),
         ("h := mut hashmap string -> i32, h[«x»] = 4, k := «x», h[k]", "4"),
     ] {

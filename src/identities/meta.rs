@@ -127,7 +127,10 @@ pub(crate) mod prec {
     /// `.`, `:`, `@`: the tight reads of the cell to their left, above the readers and
     /// below `:=`/`=`; the right cell is lexed lazily inside the constructor.
     pub const TIGHT: f64 = 92.5;
-    /// The prefix words over a place: `own`, `alloc`, `pub`, and `free` (stand-in for #384).
+    /// The prefix words, built before every operation: the gate words `mut`, `pub` and `static`,
+    /// so each takes the nearest value to its right (›A gate word reads the nearest value to its
+    /// right and gives it with its type gated‹ [[R102]]), `own`, `alloc`, and `free` (stand-in for
+    /// #384).
     pub const PREFIX: f64 = 82.0;
     /// A pointer type taking the pointer to its right, `@i32 &a`: below `&`, whose pointer it
     /// takes, above the prefix words, which take its hole whole, `own @i32 ?`. ›A parse is ranked
@@ -148,9 +151,6 @@ pub(crate) mod prec {
     pub const NOT: f64 = 35.0;
     pub const AND: f64 = 30.0;
     pub const OR: f64 = 20.0;
-    /// Below every operator, so a gate word reads the whole value to its right: `pub a + b`
-    /// gates the sum.
-    pub const GATE: f64 = 15.0;
     /// `return` and `try`.
     pub const RETURN: f64 = 10.0;
     /// `move`, the act that ends a name, built last, so a bare arm of `if`, `while` or `for`

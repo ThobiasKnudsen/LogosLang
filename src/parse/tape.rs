@@ -46,7 +46,7 @@ pub struct Cell {
     /// value of `type`, where any other cell that gives a type is that type with nothing after it.
     pub type_value: bool,
     /// The gate mint of the gate words read over the value, null for none: what its type is
-    /// gated by where it lands (›A gate word reads the whole value to its right and gives it
+    /// gated by where it lands (›A gate word reads the nearest value to its right and gives it
     /// with its type gated‹ [[R102]]).
     pub gates: DyadPtr,
 }

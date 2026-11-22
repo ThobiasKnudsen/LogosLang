@@ -3364,7 +3364,7 @@ fn assigning_into_a_comptime_binding_is_rejected() {
         ParseError::AssignToLiteral(Box::new("5".into()))
     );
     assert_eq!(
-        parse_err("( x := mut 5/2, x = 7 )"),
+        parse_err("( x := mut (5/2), x = 7 )"),
         ParseError::AssignToLiteral(Box::new("5/2".into()))
     );
     assert_eq!(parse_err("( 5 = 7 )"), ParseError::AssignToLiteral(Box::new("5".into())));
@@ -3703,7 +3703,7 @@ fn a_static_name_at_top_level_is_one_place_for_the_run() {
     // Its value is made at the definition, so it reads names made before it.
     assert_eq!(
         run_script(
-            "a := i32 7,\nt := mut i32 0,\nfor i in 0..3 ( k := static a + 1, t = t + k ),\nt"
+            "a := i32 7,\nt := mut i32 0,\nfor i in 0..3 ( k := static (a + 1), t = t + k ),\nt"
         ),
         24
     );
@@ -3795,12 +3795,17 @@ fn a_name_is_written_only_if_declared_mut() {
 }
 
 #[test]
-fn a_gate_word_reads_the_whole_value_to_its_right() {
-    // ›A gate word reads the whole value to its right and gives it with its type gated‹ [[R102]]
+fn a_gate_word_reads_the_nearest_value_to_its_right() {
+    // ›A gate word reads the nearest value to its right and gives it with its type gated‹ [[R102]]
     assert_eq!(run_script("pub 5"), 5);
     assert_eq!(run_script("x := mut i32 5,\nx = 6,\nx"), 6);
     assert_eq!(run_script("x := pub mut i32 5,\nx = 6,\nx"), 6);
-    assert_eq!(run_script("a := i32 1,\nb := i32 2,\nx := mut a + b,\nx = x + 1,\nx"), 4);
+    assert_eq!(run_script("a := i32 1,\nb := i32 2,\nx := mut (a + b),\nx = x + 1,\nx"), 4);
+    assert_eq!(run_script("a := i32 1,\nb := i32 2,\nx := mut a + b,\nx"), 3);
+    assert_eq!(
+        script_parse_err("a := i32 1,\nb := i32 2,\nx := mut a + b,\nx = x + 1,\nx"),
+        ParseError::NotMutable(Box::new("x".to_string()))
+    );
     assert_eq!(run_script("x := mut i32,\nx = 4,\nx"), 4);
     assert_eq!(run_script("x := mut i32 ?,\nx = 4,\nx"), 4);
     assert_eq!(run_script("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
