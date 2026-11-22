@@ -932,16 +932,48 @@ unsafe fn load(rt: &mut Runtime, node: DyadPtr, this: DyadPtr) -> Result<i64, Ru
     let carry = carry_of(rt.types(), ty).ok_or(RunError::NoLayout(ty))?;
     match field_at(rt, this, ops, *ops.add(5), *ops.add(3))? {
         Field::Bytes(addr, ..) => Ok(super::assign::load(carry, addr)),
-        Field::Slot(slot, k) if (*slot).is_null() => Err(RunError::UnfilledField(k)),
-        Field::Slot(slot, _)
-            if super::numtype::is_scalar_type(ty)
-                && (is_fill(rt.types(), node)
-                    || super::read::output_type(rt.types(), *slot) == rt.types().rational) =>
-        {
-            super::tape::constant_value(rt.types(), *slot, ty)
-        }
-        Field::Slot(slot, _) => super::assign::take(rt, carry, *slot),
+        Field::Slot(slot, k) => read_slot(rt, slot, k, ty, carry, is_fill(rt.types(), node)),
     }
+}
+
+/// What the field `k` of `this` gives, of type `ty`, `this` a value of a record that is no plain
+/// one: its node, one slot per field (›A value of a type built by a Logos `parse` travels as a
+/// pointer‹ [[R225]]).
+///
+/// # Safety
+/// `this` must be such a node, holding at least `k + 1` slots.
+pub(crate) unsafe fn slot_value(
+    rt: &mut Runtime,
+    this: DyadPtr,
+    k: usize,
+    ty: DyadPtr,
+) -> Result<i64, RunError> {
+    let carry = carry_of(rt.types(), ty).ok_or(RunError::NoLayout(ty))?;
+    read_slot(rt, (dyad::value(this) as *mut DyadPtr).add(k), k, ty, carry, false)
+}
+
+/// What the field node in `slot`, the `k`th, of type `ty`, gives; `fill` for a read a fill makes.
+///
+/// # Safety
+/// `slot` must be a field slot of a node, holding null or a node this file or a constructor
+/// stored.
+unsafe fn read_slot(
+    rt: &mut Runtime,
+    slot: *mut DyadPtr,
+    k: usize,
+    ty: DyadPtr,
+    carry: Carry,
+    fill: bool,
+) -> Result<i64, RunError> {
+    if (*slot).is_null() {
+        return Err(RunError::UnfilledField(k));
+    }
+    if super::numtype::is_scalar_type(ty)
+        && (fill || super::read::output_type(rt.types(), *slot) == rt.types().rational)
+    {
+        return super::tape::constant_value(rt.types(), *slot, ty);
+    }
+    super::assign::take(rt, carry, *slot)
 }
 
 /// The receiver is read in the compiled frame and the field by [`load`], so both tiers read a
