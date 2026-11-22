@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use crate::binding::Binding;
 use crate::compile::Artifact;
 use crate::dyad::{Dyad, DyadPtr};
+use crate::parse::{HeldLine, ParsingTape};
 
 /// One span reserved up front and never grown, so a bump never moves what came
 /// before, which every in-place writer relies on.
@@ -81,6 +82,42 @@ pub struct Store {
     early_mints: Vec<(DyadPtr, Box<[DyadPtr]>, DyadPtr)>,
     /// The frame chunk a runtime made for one call into Logos left for the next such runtime.
     frame_chunk: Option<Box<[u8]>>,
+    /// The tapes a body lexed once and keeps for the run, each behind the node that holds it.
+    #[allow(clippy::vec_box)]
+    tapes: Vec<Box<ParsingTape>>,
+    /// The lines held for the run, each behind its `waiting` node.
+    #[allow(clippy::vec_box)]
+    lines: Vec<Box<HeldLine>>,
+    /// The entry of every callable minted over native code: what a start graph writes as an
+    /// offset into the binary.
+    natives: Vec<usize>,
+}
+
+/// A store's parts besides its arena, as a start graph carries them (›The seed carries its start
+/// graph inside its binary‹ [[R386]]).
+pub(crate) struct Sides<'a> {
+    pub(crate) nodes: usize,
+    pub(crate) node_bytes: usize,
+    pub(crate) hung: usize,
+    #[cfg(test)]
+    pub(crate) node_list: &'a [DyadPtr],
+    pub(crate) tables: Vec<&'a HashMap<i64, i64>>,
+    pub(crate) texts: Vec<(&'a [u8], DyadPtr)>,
+    pub(crate) tapes: Vec<&'a ParsingTape>,
+    pub(crate) lines: Vec<&'a HeldLine>,
+    pub(crate) natives: &'a [usize],
+}
+
+/// What a start graph rebuilds a store from: the arena's bytes, already at their new base, and the
+/// parts [`Sides`] gave.
+pub(crate) struct Rebuilt {
+    pub(crate) nodes: usize,
+    pub(crate) node_bytes: usize,
+    pub(crate) hung: usize,
+    #[cfg(test)]
+    pub(crate) node_list: Vec<DyadPtr>,
+    pub(crate) texts: Vec<(Box<[u8]>, DyadPtr)>,
+    pub(crate) natives: Vec<usize>,
 }
 
 /// The store's size, counted by hand: malloc's own per-block overhead is left out.
@@ -147,7 +184,92 @@ impl Store {
             live_jumps: 0,
             early_mints: Vec::new(),
             frame_chunk: None,
+            tapes: Vec::new(),
+            lines: Vec::new(),
+            natives: Vec::new(),
         }
+    }
+
+    /// `tape` lives as long as the store, at the address returned.
+    pub(crate) fn keep_tape(&mut self, tape: ParsingTape) -> *mut ParsingTape {
+        let mut boxed = Box::new(tape);
+        let ptr: *mut ParsingTape = &mut *boxed;
+        self.tapes.push(boxed);
+        ptr
+    }
+
+    /// `line` lives as long as the store, at the address returned.
+    pub(crate) fn keep_line(&mut self, line: HeldLine) -> *mut HeldLine {
+        let mut boxed = Box::new(line);
+        let ptr: *mut HeldLine = &mut *boxed;
+        self.lines.push(boxed);
+        ptr
+    }
+
+    pub(crate) fn note_native(&mut self, entry: usize) {
+        self.natives.push(entry);
+    }
+
+    /// The arena's bytes in use: every node and what hangs off them.
+    pub(crate) fn arena_bytes(&self) -> &[u8] {
+        // SAFETY: `used` bytes from the base were bumped and zeroed, so every one is initialized.
+        unsafe { std::slice::from_raw_parts(self.arena.base, self.arena.used) }
+    }
+
+    /// The store's other parts, for a start graph; refused while it holds compiled code, a jump in
+    /// flight or a mint not yet handed to `type_mint`, which no start leaves.
+    pub(crate) fn sides(&self) -> Result<Sides<'_>, &'static str> {
+        if !self.artifacts.is_empty() || !self.retired.is_empty() || self.live_jumps != 0 {
+            return Err("the store holds compiled code");
+        }
+        if !self.early_mints.is_empty() {
+            return Err("the store holds mints not yet handed to `type_mint`");
+        }
+        let mut texts: Vec<(&[u8], DyadPtr)> =
+            self.texts.iter().map(|(text, &node)| (&**text, node)).collect();
+        texts.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        Ok(Sides {
+            nodes: self.nodes,
+            node_bytes: self.node_bytes,
+            hung: self.hung,
+            #[cfg(test)]
+            node_list: &self.node_list,
+            tables: self.tables.iter().map(|t| &**t).collect(),
+            texts,
+            tapes: self.tapes.iter().map(|t| &**t).collect(),
+            lines: self.lines.iter().map(|l| &**l).collect(),
+            natives: &self.natives,
+        })
+    }
+
+    /// Fills a new store with `arena`, bytes already fixed up to this store's base, and the
+    /// `tables`, `tapes` and `lines` its words point at: what a start graph's loader made of them.
+    #[allow(clippy::vec_box)]
+    pub(crate) fn install(
+        &mut self,
+        arena: &[u8],
+        tables: Vec<Box<HashMap<i64, i64>>>,
+        tapes: Vec<Box<ParsingTape>>,
+        lines: Vec<Box<HeldLine>>,
+        parts: Rebuilt,
+    ) {
+        assert!(self.arena.used == 0 && self.tables.is_empty(), "a start graph fills a new store");
+        let at = self.arena.bump(arena.len());
+        debug_assert_eq!(at, 0, "a new arena starts at its base");
+        // SAFETY: just bumped at `arena.len()` bytes from the base.
+        unsafe { std::ptr::copy_nonoverlapping(arena.as_ptr(), self.arena.base, arena.len()) };
+        self.nodes = parts.nodes;
+        self.node_bytes = parts.node_bytes;
+        self.hung = parts.hung;
+        #[cfg(test)]
+        {
+            self.node_list = parts.node_list;
+        }
+        self.tables = tables;
+        self.texts = parts.texts.into_iter().collect();
+        self.tapes = tapes;
+        self.lines = lines;
+        self.natives = parts.natives;
     }
 
     pub(crate) fn take_frame_chunk(&mut self) -> Option<Box<[u8]>> {

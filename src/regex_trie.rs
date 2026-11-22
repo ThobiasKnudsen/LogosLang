@@ -16,6 +16,7 @@ use crate::binding::Binding;
 use crate::dyad::DyadPtr;
 
 use crate::regex_splitting::{is_pure_literal, regex_splitting, Segment};
+use crate::start_graph::{Carry, In, Out};
 
 /// `child_indices` sentinel: no child for this byte.
 const NONE: u32 = u32::MAX;
@@ -110,6 +111,54 @@ pub struct RegexTrie {
 impl Default for RegexTrie {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A branch's regex is not carried: it compiles on its first use, as it does after a start built
+/// from source.
+impl Carry for RegexTrie {
+    fn carry(&self, out: &mut Out) {
+        let RegexTrie { child_indices, children, spellings, regexes } = self;
+        let set: Vec<(u8, u32)> = (0..=u8::MAX)
+            .zip(child_indices)
+            .filter(|&(_, &slot)| slot != NONE)
+            .map(|(byte, &slot)| (byte, slot))
+            .collect();
+        set.carry(out);
+        children.carry(out);
+        out.usize(spellings.len());
+        for Spelling { key, bindings } in spellings {
+            key.carry(out);
+            bindings.carry(out);
+        }
+        out.usize(regexes.len());
+        for RegexEntry { node, pattern, matcher: _ } in regexes {
+            node.carry(out);
+            pattern.carry(out);
+        }
+    }
+
+    fn uncarry(inp: &mut In) -> Self {
+        let mut child_indices = [NONE; 256];
+        for (byte, slot) in Vec::<(u8, u32)>::uncarry(inp) {
+            child_indices[byte as usize] = slot;
+        }
+        let children = Carry::uncarry(inp);
+        let n = inp.usize();
+        let spellings = (0..n)
+            .map(|_| {
+                let key = Carry::uncarry(inp);
+                Spelling { key, bindings: Carry::uncarry(inp) }
+            })
+            .collect();
+        let n = inp.usize();
+        let regexes = (0..n)
+            .map(|_| {
+                let node = Carry::uncarry(inp);
+                RegexEntry { node, pattern: Carry::uncarry(inp), matcher: RefCell::new(None) }
+            })
+            .collect();
+        RegexTrie { child_indices, children, spellings, regexes }
     }
 }
 
