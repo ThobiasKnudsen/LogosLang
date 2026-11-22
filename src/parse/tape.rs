@@ -371,12 +371,12 @@ impl ParsingTape {
             .map(move |n| (n, &self.nodes[n].cell))
     }
 
-    /// `handle` is one `iter` handed out for a cell still on the tape.
     /// The handle of the first bracket held unbuilt that starts before `before`.
     pub(crate) fn first_held(&self, before: usize) -> Option<usize> {
         self.iter().find(|(_, c)| c.held.is_some() && c.start < before).map(|(n, _)| n)
     }
 
+    /// `handle` is one `iter` handed out for a cell still on the tape.
     pub(crate) fn center_on(&mut self, handle: usize) {
         debug_assert!(self.nodes[handle].linked, "a handle names a cell on the tape");
         self.center = Some(handle);
