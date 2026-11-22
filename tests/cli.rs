@@ -4066,7 +4066,7 @@ fn a_name_s_dyad_reads_its_type_and_its_bytes_address_on_both_tiers() {
     for (src, error) in [
         ("x := i32 5, d := x:dyad", "has no node yet"),
         ("f := fn (a := i32 ?) -> i32 ( d := a:dyad, a ), f.compile(), f(1)", "has no node yet"),
-        ("x := i32 5, x:value", "unknown name `value`"),
+        ("x := i32 5, x:value", "`value` is not in scope here"),
         ("f := fn (a := i32 ?) -> i32 ( a:dyad.value@ ), f.compile(), f(1)", "cannot compute"),
         ("x := i32 5, x:dyad.lhs", "does not fit"),
     ] {
@@ -7771,6 +7771,106 @@ fn try_is_refused_over_no_t_bang_and_outside_a_function_that_gives_one() {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}\nstderr: {stderr}");
         assert!(stderr.contains(&format!("{at} error: {message}")), "{src}\nstderr: {stderr}");
+    }
+}
+
+/// R140: a function that gives `void!` holds `value` where its body ends and `err` where a raise
+/// or a `try` leaves it; its body gives nothing, as a `-> void` one's, ending what it holds on
+/// either way out; on both tiers.
+#[test]
+fn a_function_that_gives_void_bang_holds_value_where_its_body_ends() {
+    let bad = "error.bad := «bad»";
+    let check = "check := fn (n := i32 ?) -> void! ( if n > 1 ( error.bad «{n} is bad» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    for compile in ["", "check.compile(), g.compile(), f.compile(), "] {
+        for (fns, body, want) in [
+            (
+                "g := fn (n := i32 ?) -> void! ( print «ok {n}» )".to_string(),
+                "r := check(1), s := check(5), print «{r holds value} {s holds err} \
+                 {s.err[0].message}», print «{g(1) holds value}»",
+                "true true 5 is bad\nok 1\ntrue",
+            ),
+            (
+                "g := fn (n := i32 ?) -> void! ( try check(n), print «after {n}» )".to_string(),
+                "print «{g(1) holds value}», print «{g(5).err.size} {g(5).err[0].message}»",
+                "after 1\ntrue\n2 5 is bad",
+            ),
+            (
+                "g := fn (n := i32 ?) -> i32! ( try check(n), n )".to_string(),
+                "print «{g(1).value} {g(5).err.size}»",
+                "1 2",
+            ),
+            (
+                format!(
+                    "{bag}, g := fn (n := i32 ?) -> void! ( b := bag(n), \
+                     if n > 1 ( error.bad «{{n}} is bad» ), print «kept {{b.n}}» )"
+                ),
+                "print «{g(1) holds value}», print «{g(5).err[0].message}»",
+                "kept 1\nfreed 1\ntrue\nfreed 5\n5 is bad",
+            ),
+            (
+                "g := fn () -> void! ( print «one line» )".to_string(),
+                "print «{g() holds value}»",
+                "one line\ntrue",
+            ),
+        ] {
+            let src = format!("{bad}, {check}, {fns}, f := fn () -> void ( {body} ), {compile}f()");
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let (code, stdout, stderr) = run_line("f := fn () -> void! ( 5 ), f()");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("1:23: error: this line gives a value"), "stderr: {stderr}");
+}
+
+/// R142: a `parse` gives `void!`, so a raise in it, or a `try` that passes an error on, stops
+/// the parse with that error, shown as a raise nobody handles is, after what the parse holds is
+/// ended; a `try` over a value goes on with it; and a `!=` check whose arm raises still narrows
+/// the cell for the rest of the scope (R229).
+#[test]
+fn a_parse_gives_void_bang_so_its_raise_or_try_stops_the_parse_with_that_error() {
+    let p = "error.p := «p»";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let check = "check := fn (n := i32 ?) -> i32! ( if n > 1 ( error.p «{n} is too big» ), n )";
+    let placed = "tape[0] = i32 v, tape.is_constructed[0] = true";
+    let failed = "error: this identity's constructor failed while parsing: error.p:";
+    for (src, stdout, refused) in [
+        (format!("{check}, k := type ( parse = ( v := try check(1), {placed} ) ), k"), "1\n", ""),
+        (
+            format!("{check}, k := type ( parse = ( v := try check(5), {placed} ) ), k"),
+            "",
+            "1:190: error: this identity's constructor failed while parsing: error.p: 5 is too big",
+        ),
+        (
+            format!("{bag}, k := type ( parse = ( b := bag(1), error.p «x {{b.n}}» ) ), k"),
+            "freed 1\n",
+            "x 1",
+        ),
+        (
+            "k := type ( parse_rank = 60, parse = ( if tape[1].type != type error.p «no», \
+             t := type tape[1], print «{t}», tape.remove(1), tape[0] = i32 1, \
+             tape.is_constructed[0] = true ) ), print «{k i32}»"
+                .to_string(),
+            "i32\n1\n",
+            "",
+        ),
+        (
+            "k := type ( parse_rank = 60, parse = ( if tape[1].type != type error.p «no», \
+             tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) ), print «{k 5}»"
+                .to_string(),
+            "",
+            "no",
+        ),
+    ] {
+        let src = format!("{p}, {src}");
+        let (code, out, stderr) = run_line(&src);
+        assert_eq!(out, stdout, "{src}\nstderr: {stderr}");
+        if refused.is_empty() {
+            assert_eq!(code, Some(0), "{src}\nstderr: {stderr}");
+        } else {
+            assert_eq!(code, Some(1), "{src}\nstderr: {stderr}");
+            assert!(stderr.contains(failed) && stderr.contains(refused), "{src}\nstderr: {stderr}");
+        }
     }
 }
 

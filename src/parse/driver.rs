@@ -1026,12 +1026,29 @@ impl<'a> Parser<'a> {
         let this_arg =
             self.scalar_value(crate::identities::numtype::NumType::U64, this as usize as i64);
         let call = build_call(self.rt.store, f, &[handle, this_arg]);
+        // A `parse` gives `void!`, whose value lands in `given` (›Target: a constructor returns
+        // `void!`, so a user's syntax error is a recoverable value‹ [[R142]]).
+        // SAFETY: `f` is a `fn` node, its signature written.
+        let output = unsafe { *(dyad::value(f) as *const DyadPtr).add(super::FN_OUTPUT) };
+        // SAFETY: `output` is a type node from the store.
+        let fallible = unsafe { crate::identities::union::void_value_of(self.types, output) };
+        let width = fallible.map_or(0, |_| {
+            // SAFETY: as above; `void!` is a union, laid out.
+            unsafe { crate::identities::meta::record_size_of(output) as usize }
+        });
+        let mut given = vec![0u64; width.div_ceil(8)];
         // Inside the call, `caller.scope` reads the pass's position.
         let outer = self.rt.enter_constructor(tape);
         self.tape_hosts
             .push(super::Handed { outer: self.outer.len(), frames: self.rt.frame_depth() });
-        // SAFETY: `call` was just built into the store; the tape and the store are reached only through the natives until `run` returns.
-        let out = unsafe { self.run_on_pass(call) };
+        // SAFETY: `call` was just built into the store; the tape and the store are reached only
+        // through the natives until `run` returns; `given` holds a value of `output`.
+        let out = unsafe {
+            match fallible {
+                Some(_) => self.run_on_pass_into(f, call, given.as_mut_ptr().cast()),
+                None => self.run_on_pass(call),
+            }
+        };
         self.tape_hosts.pop();
         self.rt.leave_constructor(outer);
         // The tape lives for the call alone: once it returns, the handle names none, so the
@@ -1039,11 +1056,42 @@ impl<'a> Parser<'a> {
         // SAFETY: `handle` is the `u64` node just built, its value eight bytes.
         unsafe { std::ptr::write_unaligned(crate::dyad::value(handle) as *mut u64, 0) };
         match out {
+            // SAFETY: `given` holds the `void!` the call gave.
+            Ok(_) if fallible.is_some() => unsafe {
+                self.read_given(output, given.as_ptr().cast())
+            },
             Ok(_) => Ok(Constructed::Placed),
             // A cell lexed on demand failed to parse: its own error, where it stands.
             Err(crate::run::RunError::Parse(e)) => Err(*e),
             Err(e) => Err(ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e)))),
         }
+    }
+
+    /// The `void!` a `parse` gave at `at`: its error, the diagnostic the driver records, shown as
+    /// a raise nobody handles is, then ended as error.logos's `hops`.
+    ///
+    /// # Safety
+    /// `at` must hold a value of `fallible`, a `void!`.
+    unsafe fn read_given(
+        &mut self,
+        fallible: DyadPtr,
+        at: *const u8,
+    ) -> Result<Constructed, ParseError> {
+        use crate::identities::{error, union};
+        let types = self.types;
+        let (_, err) = union::fallible_members(types, fallible).expect("a `void!` is a `T!`");
+        let Some((_, room)) = union::held_member(fallible, at).filter(|&(m, _)| m == err) else {
+            return Ok(Constructed::Placed);
+        };
+        let value = std::ptr::read_unaligned(room as *const i64);
+        let shown: Result<_, crate::run::RunError> = self.hosted(|rt| {
+            let hop = error::first_hop(rt, value as DyadPtr);
+            crate::identities::drop_model::end_of_type(rt, types.error.value, value)?;
+            let hop = hop?.expect("a raise makes the first hop");
+            Ok(crate::run::RunError::Raised(Box::new(hop)))
+        });
+        let message = crate::report::run_message(&shown.unwrap_or_else(|e| e));
+        Err(ParseError::ConstructorFailed(Box::new(message)))
     }
 
     /// A Logos constructor's read past the frontier: the driver lexes on, as for a
