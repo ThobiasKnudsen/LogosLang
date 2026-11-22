@@ -93,8 +93,8 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::VoidBodyGives => {
-            "this line gives a value, and a `-> void` function gives none; a value nobody wants \
-             is thrown away with `free`, as in `free (f())`"
+            "this line gives a value, and the lines of a `-> void` or `-> void!` function give \
+             none; a value nobody wants is thrown away with `free`, as in `free (f())`"
                 .into()
         }
         ParseError::KeptScopeGives => {

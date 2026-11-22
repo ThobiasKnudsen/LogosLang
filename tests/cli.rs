@@ -7820,7 +7820,9 @@ fn a_function_that_gives_void_bang_holds_value_where_its_body_ends() {
     }
     let (code, stdout, stderr) = run_line("f := fn () -> void! ( 5 ), f()");
     assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
-    assert!(stderr.contains("1:23: error: this line gives a value"), "stderr: {stderr}");
+    let gives = "1:23: error: this line gives a value, and the lines of a `-> void` or `-> void!` \
+                 function give none";
+    assert!(stderr.contains(gives), "stderr: {stderr}");
 }
 
 /// R142: a `parse` gives `void!`, so a raise in it, or a `try` that passes an error on, stops
