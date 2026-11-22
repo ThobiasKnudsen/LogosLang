@@ -12656,6 +12656,7 @@ fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
         ("y := lossy (f64 2.5), x := mut i32 0, x = y, x", "2\n"),
         ("y := lossy (f64 2.5), z := lossy y, i32 z", "2\n"),
         ("y := mut lossy f64 2.5, y = 3.75, i32 y", "3\n"),
+        ("y := lossy mut f64 2.5, y = 3.75, i32 y", "3\n"),
         ("p := pt(2.5), i32 p.v", "2\n"),
     ] {
         let f = format!("f := fn () -> i32 ( {body} )");
@@ -12664,6 +12665,8 @@ fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
     }
     let typed = "y := lossy (f64 2.5), t := type lossy f64, print «{y.type} {t == f64}»";
     cases.push((typed.to_string(), "lossy f64 true\n"));
+    let joined = "y := lossy mut f64 2.5, z := mut lossy f64 2.5, print «{y.type} {z.type}»";
+    cases.push((joined.to_string(), "mut lossy f64 mut lossy f64\n"));
     assert_runs(&cases);
     for (src, want) in [
         ("y := lossy (f64 2.5), z := y, i32 z", "1:35: error: these types do not match"),

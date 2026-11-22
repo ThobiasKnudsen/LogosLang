@@ -400,11 +400,14 @@ fn construct(
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    let Some(&right) = tape.at(1) else {
+    // The cell as built, so the gates a gate word of a lower rank put on it there join this one's:
+    // `lossy mut f64 2.5` is `mut lossy f64`.
+    let Some(right) = p.side_at(tape, 1)? else {
         return Err(ParseError::MissingOperand);
     };
     let word_at = tape.at(0).map_or(right.start, |word| word.start);
-    let inner = p.take_right(tape)?;
+    let inner = p.as_operand(right)?;
+    tape.remove(1);
     let types = p.types();
     // SAFETY: `inner` is a reduced dyad just parsed.
     let (declares, gives_nothing) = unsafe {
