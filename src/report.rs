@@ -539,6 +539,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::HoldsNeedsUnion => {
             "`holds` asks a union which member it holds, and this value is no union".into()
         }
+        ParseError::FallibleNeedsType => {
+            "`!` makes a type that holds a value or an error, `i32!`, and what stands to its left \
+             is no type"
+                .into()
+        }
         ParseError::HoldsNeedsMember => {
             "`holds` is followed by the name of a member of the union: `v holds a`".into()
         }
