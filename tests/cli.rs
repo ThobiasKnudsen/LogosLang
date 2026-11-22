@@ -12876,6 +12876,78 @@ fn plain_fields_lie_as_c_lays_out_a_struct() {
     assert_runs(&cases);
 }
 
+/// ›Inside a type body, `layout` gives a field its type and its byte: `a := layout (mut i32, 1)`‹
+/// [[R385]]: a `layout` field lies at its byte, a plain field after the field written before it
+/// at its alignment, and the size reaches the end of every field, rounded up to the widest
+/// alignment; both tiers read and write the fields there, and the byte is part of the mint.
+#[test]
+fn a_type_body_s_layout_gives_a_field_its_type_and_its_byte() {
+    let t = "t := type ( a := layout (pub mut i32, 1), b := pub mut u8 )";
+    let u = "u := type ( i := layout (pub mut i32, 8), f := layout (pub mut f64, 8) )";
+    let mut cases = vec![
+        ("t := type ( a := layout (pub mut i32, 1) ), t.size_bytes".to_string(), "8\n"),
+        (format!("{u}, u.size_bytes"), "16\n"),
+        (
+            "p := type ( a := layout (pub mut u8, 4), b := pub mut i32 ), p.size_bytes".to_string(),
+            "12\n",
+        ),
+        (format!("{u}, v := mut u ?, v.i = 5, v.i"), "5\n"),
+        (format!("{u}, v := mut u ?, v.i = 5, v.f = 2.5, v.f"), "2.5\n"),
+        (
+            format!(
+                "{t}, v := mut t ?, v.a = 70000, v.b = 9, print «{{v.a}} {{v.b}} {{t.size_bytes}}»"
+            ),
+            "70000 9 8\n",
+        ),
+        (format!("{t}, v := t (70000, 9), print «{{v.a}} {{v.b}}»"), "70000 9\n"),
+        (
+            "g := fn () -> i32 ( t := type ( a := layout (pub mut i32, 1), b := pub mut u8 ), \
+             v := t (70000, 9), v.a + v.b ), g()"
+                .to_string(),
+            "70009\n",
+        ),
+        ("t := type ( a := layout (i32, u64 3) ), t.size_bytes".to_string(), "8\n"),
+        (
+            "a := type ( x := layout (i32, 0) ), b := type ( x := i32 ), \
+             c := type ( x := layout (i32, 4) ), print «{a == b} {a == c}»"
+                .to_string(),
+            "true false\n",
+        ),
+        (
+            "layout := i32 5, t := type ( a := layout (i32, 2) ), print «{layout} {t.size_bytes}»"
+                .to_string(),
+            "5 8\n",
+        ),
+    ];
+    for compile in ["", "h.compile(), "] {
+        cases.push((
+            format!(
+                "{t}, h := fn (x := t ?) -> t ( y := mut t ?, y.a = x.a + 1, y.b = x.b, y ), \
+                 {compile}r := h(t (70000, 9)), print «{{r.a}} {{r.b}}»"
+            ),
+            "70001 9\n",
+        ));
+    }
+    assert_runs(&cases);
+    for (src, message) in [
+        ("t := type ( a := layout i32 ), 0", "`layout` takes the field's type, then the byte"),
+        ("t := type ( a := layout (5, 1) ), 0", "`layout` takes the field's type, then the byte"),
+        ("t := type ( a := layout (i32, 1, 2) ), 0", "`layout` takes the field's type, then the byte"),
+        ("t := type ( a := layout (i32, -1) ), 0", "is a `u64` known where the type is built"),
+        ("n := u64 3, t := type ( a := layout (i32, n) ), 0", "is a `u64` known where the type is built"),
+        (
+            "t := type ( f := static fn (a := layout (i32, 1)) -> i32 ( 1 ) ), 0",
+            "`layout` gives a field of a type body its type and its byte, and this is no such field",
+        ),
+        ("t := type ( a := layout (i32, 1073741821) ), 0", "the store's whole room"),
+        ("t := type ( a := layout (i32, 9223372036854775800) ), 0", "the store's whole room"),
+        ("x := layout (i32, 1), 0", "`layout` is not in scope here"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert!(code != Some(0) && stderr.contains(message), "{src}: stderr: {stderr}");
+    }
+}
+
 /// DESIGN ›`X (…)` is one spelling, and X's constructor decides what the bracket is‹: a type's
 /// constructor fills its holes positionally, each argument moved whole into its field at the
 /// offset the field's binding carries, a rational, a type and a record too, on both tiers.

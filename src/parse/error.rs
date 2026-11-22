@@ -361,6 +361,14 @@ pub enum ParseError {
     UnionMemberUnkept(Box<String>),
     /// A union type applied to values, as a type with fields is.
     UnionApplied,
+    /// `layout` with no `( T, byte )` after it, or with something other than a type first.
+    LayoutForm,
+    /// `layout`'s byte is no `u64` known where the type is built.
+    LayoutByte,
+    /// `layout` right of a parameter's or a union member's `:=`, which is no field of a type body.
+    LayoutOutsideField,
+    /// A field that would end past the store's whole room, which no value outgrows.
+    LayoutTooFar,
     /// `holds` after a value that is no union.
     HoldsNeedsUnion,
     /// `!` after something that is no type.

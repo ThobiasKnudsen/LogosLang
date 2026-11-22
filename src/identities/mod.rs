@@ -16,6 +16,7 @@ use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
 pub use numtype::NumType;
+pub(crate) use type_mod::layout_of;
 
 pub mod binding;
 pub mod dyad;
@@ -177,6 +178,8 @@ pub struct Core {
     pub static_: DyadPtr,
     /// The type of the gate mints, and the former `type_mint` keeps them under.
     pub gate_: DyadPtr,
+    /// `layout`, a word of a type body, and the type of the node it builds.
+    pub layout_: DyadPtr,
     /// Its node is the trace of the load; running it does nothing.
     pub import_: DyadPtr,
     pub file: DyadPtr,
@@ -402,6 +405,7 @@ impl Core {
         let unknown = hole::register(&mut cx);
         cx.unknown = unknown;
         let (sep_, left_, right_) = type_mod::register_syntax(&mut cx);
+        let layout_ = type_mod::register_layout(&mut cx);
         let logos = logos::register(&mut cx);
         let unknown_name = fresh::register(&mut cx);
         let instance::InstanceIds {
@@ -581,6 +585,7 @@ impl Core {
             mut_,
             static_,
             gate_,
+            layout_,
             import_,
             file,
             dyad_,
