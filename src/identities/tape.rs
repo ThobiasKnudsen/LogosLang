@@ -12,6 +12,7 @@
 use super::callable::{self, Callables};
 use super::numtype::NumType;
 use super::pointer::at_dyad;
+use super::read::Carry;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -111,7 +112,7 @@ pub(super) fn register(
         scope,
         fields,
         bindings,
-        8,
+        meta::Extent { size_bytes: 8, align: 8 },
         std::ptr::null_mut(),
         meta::prec::APPLY,
         crate::parse::Assoc::Left,
@@ -954,8 +955,12 @@ pub(crate) unsafe fn constant_value(
 /// As [`constant_value`].
 unsafe fn constant_of(types: &Core, cell: DyadPtr, ty: DyadPtr) -> Option<i64> {
     use super::numtype::{apply_cast, of_type_node, read_scalar};
+    use super::read::{place_layout, Read};
     if ty == types.type_ {
         return super::type_identity_of(types, cell).map(|t| t as i64);
+    }
+    if !matches!(place_layout(types, ty), Some((Read::Scalar(_) | Read::Pointer(_), _))) {
+        return None;
     }
     let nt = of_type_node(ty);
     let from = dyad::ty(cell);
@@ -1020,11 +1025,13 @@ fn run_cell_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// A cell or line no check narrowed, written by `=` into a place of `ty` or passed to a
-/// parameter of `ty`, is decided by that type when the write runs: `type` takes a type, a number
-/// type or `bool` the literal or constant the line holds, and a type a Logos `parse` builds
-/// builds a bracket by that parse. `None` for any other value, and for a place of any other type,
-/// which [`super::land`] decides. ›A tape read checked against a number type reads as that
-/// number‹ [[R229]], ›What `=` does is decided by the type of the place on its left‹ [[R192]].
+/// parameter of `ty`, is decided by that type when the write runs: a line that already is a
+/// value of `ty` is taken as it is, `type` takes a type, a number type or `bool` the literal or
+/// constant the line holds, and a type a Logos `parse` builds builds a bracket by that parse.
+/// `None` for any other value, and for a place no whole value moves into or one that holds a
+/// node, which [`super::land`] decides. ›A tape read checked against a number type reads as that
+/// number‹ [[R229]], ›What `=` does is decided by the type of the place on its left‹ [[R192]],
+/// ›An array expression is a node of `array`, and its run makes the value‹ [[R224]].
 ///
 /// # Safety
 /// `value` must be a reduced dyad from the store; `ty` null or a type node.
@@ -1034,16 +1041,19 @@ pub(crate) unsafe fn build_cell_into(
     value: DyadPtr,
     ty: DyadPtr,
 ) -> Option<DyadPtr> {
-    use super::read::{place_layout, Read};
+    use super::read::{carry_of, place_layout, Read};
     let read = types.through(value);
     if dyad::ty(read) != types.tape.cell_dyad_at && dyad::ty(read) != types.tape.slot {
         return None;
     }
     let ty = super::type_identity_of(types, ty)?;
-    match place_layout(types, ty)?.0 {
-        Read::Scalar(_) => {}
-        Read::Container(t) if t == types.type_ || meta::is_node_valued(t, types.fn_type) => {}
-        _ => return None,
+    carry_of(types, ty)?;
+    if let Read::Container(t) = place_layout(types, ty)?.0 {
+        // A `dyad` place holds the line itself (›Holding is decided at the binding site,
+        // parameters included‹ [[R61]]).
+        if t != types.type_ && !meta::is_node_valued(t, types.fn_type) {
+            return None;
+        }
     }
     let (recv, k, i) = read_parts(types, read);
     Some(node(store, types.tape.cell_into, types.tape.cell_into_leaf, &[recv, k, i, ty], ty))
@@ -1057,6 +1067,9 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let mut line = read_target(rt, ops)?;
         let ty = *ops.add(3);
         if !super::meta::is_node_valued(ty, rt.types().fn_type) {
+            if let Some(carry) = made_value(rt.types(), line, ty) {
+                return super::assign::take(rt, carry, line);
+            }
             return constant_value(rt.types(), line, ty);
         }
         if is_bracket(rt.types(), line) {
@@ -1068,6 +1081,20 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         rt.run(line)
     }
+}
+
+/// How `line` moves into a place of `ty` when it is a value of `ty` the pass has made, a constant
+/// or one that ran: such a line is taken as it is. `None` for any other line, a name among them,
+/// whose value is not read while the parse runs.
+///
+/// # Safety
+/// `line` must be a reduced dyad from the store; `ty` a type node.
+unsafe fn made_value(types: &Core, line: DyadPtr, ty: DyadPtr) -> Option<Carry> {
+    let made = dyad::ty(line) == ty || dyad::ty(line) == types.ran.node;
+    if !made || super::read::output_type(types, line) != ty {
+        return None;
+    }
+    super::read::carry_of(types, ty)
 }
 
 unsafe fn is_bracket(types: &Core, d: DyadPtr) -> bool {
@@ -1123,8 +1150,8 @@ pub(crate) unsafe fn named_line(
     None
 }
 
-/// The type a read of a cell or line takes its line as, a number type, `bool` or `type`; `None`
-/// for any other node, and for a type a Logos `parse` builds, whose bracket the call builds.
+/// The type a read of a cell or line takes its line as; `None` for any other node, and for a type
+/// a Logos `parse` builds, whose bracket the call builds.
 ///
 /// # Safety
 /// `read` must be a reduced dyad from the store.
@@ -1146,13 +1173,8 @@ pub(crate) unsafe fn checked_type(types: &Core, read: DyadPtr) -> Option<DyadPtr
 /// `bracket` must be a scope or `square_brackets` node from the store.
 unsafe fn owned_lines(store: &mut Store, types: &Core, bracket: DyadPtr) -> DyadPtr {
     let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
-    let taken: Vec<DyadPtr> = lines
-        .iter()
-        .map(|&line| match super::node_output(types, types.through(line)) {
-            Some(_) => super::copy::taken(store, types, line),
-            None => line,
-        })
-        .collect();
+    let taken: Vec<DyadPtr> =
+        lines.iter().map(|&line| super::copy::taken(store, types, line)).collect();
     if taken == lines {
         return bracket;
     }
@@ -1215,25 +1237,26 @@ pub(crate) unsafe fn bracket_kind(types: &Core, node: DyadPtr) -> Option<DyadPtr
     is_bracket(types, bracket).then(|| dyad::ty(bracket))
 }
 
-/// A line with a value to evaluate where the call runs: a number or a `bool`, or a node of a
-/// type a Logos `parse` builds, which travels as its address.
+/// The type of a line evaluated where the call runs, and how its value moves: every line a whole
+/// value moves out of, but a type or a literal, which the callee reads where it stands.
 ///
 /// # Safety
 /// `line` must be a reduced dyad from the store.
-unsafe fn has_value(types: &Core, line: DyadPtr) -> bool {
-    scalar_line(types, line).is_some() || super::node_output(types, line).is_some()
+unsafe fn evaluated_line(types: &Core, line: DyadPtr) -> Option<(DyadPtr, Carry)> {
+    if super::is_comptime_arg(types, line) {
+        return None;
+    }
+    let t = super::read::output_type(types, line);
+    Some((t, super::read::carry_of(types, t)?))
 }
 
-/// The type and machine type of a line whose value is a number or a `bool`.
+/// A value whose place holds a node's address, a type, a `dyad` or a node a Logos `parse`
+/// builds, stands in a bracket as that node.
 ///
 /// # Safety
-/// `line` must be a reduced dyad from the store.
-unsafe fn scalar_line(types: &Core, line: DyadPtr) -> Option<(DyadPtr, NumType)> {
-    let t = super::read::output_type(types, line);
-    match super::read::place_layout(types, t)? {
-        (super::read::Read::Scalar(nt), _) => Some((t, nt)),
-        _ => None,
-    }
+/// `t` must be a type node from the store.
+unsafe fn is_node_value(types: &Core, t: DyadPtr) -> bool {
+    matches!(super::read::place_layout(types, t), Some((super::read::Read::Container(_), _)))
 }
 
 /// A bracket handed to a placed call: each line is evaluated where the call runs, in its
@@ -1254,20 +1277,19 @@ unsafe fn evaluate_bracket(rt: &mut Runtime, bracket: DyadPtr) -> Result<DyadPtr
     let mut bits = Vec::with_capacity(lines.len());
     for &line in lines {
         let line = rt.through(line);
-        bits.push(if is_bracket(rt.types(), line) {
-            evaluate_bracket(rt, line)? as i64
-        } else if has_value(rt.types(), line) {
-            rt.run(line)?
-        } else {
-            0
+        bits.push(match evaluated_line(rt.types(), line) {
+            _ if is_bracket(rt.types(), line) => evaluate_bracket(rt, line)? as i64,
+            Some((_, carry)) => super::assign::take(rt, carry, line)?,
+            None => 0,
         });
     }
     let types: *const Core = rt.types();
     Ok(bracket_holding(rt.store(), &*types, bracket, &bits))
 }
 
-/// The number lines run in the compiled frame, their values in a block; only the new
-/// bracket, the store's, is made by calling back into the seed.
+/// The lines with a value run in the compiled frame, their values in a block, a value moved by
+/// its bytes as their address; only the new bracket, the store's, is made by calling back into
+/// the seed, which copies those bytes while they live.
 fn lower_bracket_arg(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `[bracket, op]` node `build_bracket_arg` built over a bracket node.
     unsafe {
@@ -1283,14 +1305,14 @@ unsafe fn lower_bracket(lw: &mut Lowerer, bracket: DyadPtr) -> Result<Value, Com
     let mut bits = Vec::with_capacity(lines.len());
     for &line in lines {
         let line = lw.through(line);
-        bits.push(match scalar_line(lw.types(), line) {
+        bits.push(match evaluated_line(lw.types(), line) {
             _ if is_bracket(lw.types(), line) => lower_bracket(lw, line)?,
-            Some((_, nt)) => {
-                let v = lw.lower(line)?;
+            Some((_, carry @ Carry::Word(nt))) => {
+                let v = super::assign::lower_take(lw, carry, line)?;
                 lw.widen(v, nt)
             }
-            _ if super::node_output(lw.types(), line).is_some() => lw.lower(line)?,
-            _ => lw.const_i64(0),
+            Some((_, carry)) => super::assign::lower_take(lw, carry, line)?,
+            None => lw.const_i64(0),
         });
     }
     let values = lw.spill(&bits);
@@ -1314,13 +1336,14 @@ unsafe extern "C" fn compiled_bracket(
     bracket_holding(rt.store(), &*types, bracket, bits) as i64
 }
 
-/// A new bracket of `bracket`'s kind whose lines are the values `bits` holds for its number
-/// lines, the nodes or brackets it holds the addresses of for its lines of a type a Logos
-/// `parse` builds and its nested brackets, and its other lines as they stand.
+/// A new bracket of `bracket`'s kind whose lines are the values `bits` holds for its evaluated
+/// lines: a node, and a nested bracket, as the node itself; a number or a pointer in a node of
+/// its own type; a value moved by its bytes copied out of the address `bits` holds, standing in
+/// its line's place as a value that ran. Its other lines stand as written.
 ///
 /// # Safety
 /// `bracket` must be a scope or `square_brackets` node from the store, `bits` one container
-/// per line.
+/// per line, each the address of a value's bytes where its line's value moves by them.
 unsafe fn bracket_holding(
     store: &mut Store,
     types: &Core,
@@ -1330,11 +1353,16 @@ unsafe fn bracket_holding(
     let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
     let mut values = Vec::with_capacity(lines.len());
     for (&line, &b) in lines.iter().zip(bits) {
-        values.push(match scalar_line(types, line) {
+        values.push(match evaluated_line(types, line) {
             _ if is_bracket(types, types.through(line)) => b as usize as DyadPtr,
-            Some((t, nt)) => store.alloc_blob(t, &b.to_ne_bytes()[..nt.bytes()]),
-            _ if super::node_output(types, line).is_some() => b as usize as DyadPtr,
-            _ => line,
+            Some((t, _)) if is_node_value(types, t) => b as usize as DyadPtr,
+            Some((t, Carry::Word(nt))) => store.alloc_blob(t, &b.to_ne_bytes()[..nt.bytes()]),
+            Some((t, Carry::Bytes(width))) => {
+                let held =
+                    store.alloc_blob(t, std::slice::from_raw_parts(b as usize as *const u8, width));
+                super::ran::build(store, types, dyad::value(held) as i64, false, t)
+            }
+            None => line,
         });
     }
     let mut slots = [std::ptr::null_mut(); super::scope::SLOTS];

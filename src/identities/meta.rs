@@ -67,8 +67,9 @@ pub(crate) const CONVENTION_TAG: u8 = 21;
 /// Values are `[len: u64][data: @dyad]`, 16 bytes; a list never lives inline in a node.
 pub(crate) const ARRAY_TAG: u8 = 22;
 /// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]
-/// [body: @dyad][free: @dyad][bracket builder: @dyad][field bindings: @dyad]`, 56 bytes, locked
-/// at definition; `body` is null where the type has none, `free` where its body fills none.
+/// [body: @dyad][free: @dyad][bracket builder: @dyad][field bindings: @dyad][align: usize]`,
+/// 64 bytes, locked at definition; `body` is null where the type has none, `free` where its body
+/// fills none.
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Values are dyad views: the value IS the viewed node's address.
 pub(crate) const DYAD_TAG: u8 = 24;
@@ -313,6 +314,15 @@ pub(crate) unsafe fn gates_of(id: DyadPtr) -> impl Iterator<Item = DyadPtr> {
     (0..usize::from(*payload)).map(move |k| unsafe { words.add(k).read_unaligned() })
 }
 
+/// What a value of a record type takes: its `size_bytes`, and the alignment a place of it
+/// starts at, as C lays out a struct (›Every name of a scope is seen from anywhere in it; written
+/// order counts in four cases only‹ [[R372]]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Extent {
+    pub(crate) size_bytes: u64,
+    pub(crate) align: usize,
+}
+
 /// `bindings` is the array of the fields' bindings, in the order of `fields`; `parse` the
 /// constructor a type body that fills none runs, `type`'s derived one.
 #[allow(clippy::too_many_arguments)]
@@ -321,13 +331,13 @@ pub(crate) fn record_layout(
     scope: DyadPtr,
     fields: DyadPtr,
     bindings: DyadPtr,
-    size_bytes: u64,
+    extent: Extent,
     body: DyadPtr,
     parse_rank: f64,
     assoc: Assoc,
     parse: DyadPtr,
 ) -> *mut u8 {
-    let blob = record_blob(scope, fields, bindings, size_bytes, body, parse_rank, assoc, parse);
+    let blob = record_blob(scope, fields, bindings, extent, body, parse_rank, assoc, parse);
     store.alloc_bytes(&blob)
 }
 
@@ -336,7 +346,7 @@ fn record_blob(
     scope: DyadPtr,
     fields: DyadPtr,
     bindings: DyadPtr,
-    size_bytes: u64,
+    extent: Extent,
     body: DyadPtr,
     parse_rank: f64,
     assoc: Assoc,
@@ -347,11 +357,12 @@ fn record_blob(
     blob[CTOR_OFF..DTOR_OFF].copy_from_slice(&(parse as usize).to_ne_bytes());
     blob.extend_from_slice(&(scope as usize).to_ne_bytes());
     blob.extend_from_slice(&(fields as usize).to_ne_bytes());
-    blob.extend_from_slice(&size_bytes.to_ne_bytes());
+    blob.extend_from_slice(&extent.size_bytes.to_ne_bytes());
     blob.extend_from_slice(&(body as usize).to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&(bindings as usize).to_ne_bytes());
+    blob.extend_from_slice(&extent.align.to_ne_bytes());
     blob
 }
 
@@ -364,18 +375,18 @@ pub(crate) fn formed_record(
     scope: DyadPtr,
     fields: DyadPtr,
     bindings: DyadPtr,
-    size_bytes: u64,
+    extent: Extent,
     body: DyadPtr,
     parse: DyadPtr,
 ) -> *mut u8 {
     let mut blob =
-        record_blob(scope, fields, bindings, size_bytes, body, prec::APPLY, Assoc::Left, parse);
+        record_blob(scope, fields, bindings, extent, body, prec::APPLY, Assoc::Left, parse);
     blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(former as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }
 
 /// Where a record type's payload ends.
-const RECORD_END: usize = PAYLOAD_OFF + 56;
+const RECORD_END: usize = ALIGN_OFF + 8;
 
 /// The record of a type with no fields that `former` mints for `arguments`: as `record_layout`
 /// lays it, `scope` its body too, with the former in its header and the arguments after its
@@ -386,11 +397,10 @@ pub(crate) fn minted_record(
     arguments: &[DyadPtr],
     scope: DyadPtr,
     none: DyadPtr,
-    size_bytes: u64,
+    extent: Extent,
     parse: DyadPtr,
 ) -> *mut u8 {
-    let mut blob =
-        record_blob(scope, none, none, size_bytes, scope, prec::APPLY, Assoc::Left, parse);
+    let mut blob = record_blob(scope, none, none, extent, scope, prec::APPLY, Assoc::Left, parse);
     blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(former as usize).to_ne_bytes());
     for &argument in arguments {
         blob.extend_from_slice(&(argument as usize).to_ne_bytes());
@@ -479,6 +489,16 @@ const FIELD_BINDINGS_OFF: usize = PAYLOAD_OFF + 48;
 /// As `record_scope_of`.
 pub(crate) unsafe fn record_field_bindings_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned(dyad::head(id).add(FIELD_BINDINGS_OFF) as *const DyadPtr)
+}
+
+const ALIGN_OFF: usize = PAYLOAD_OFF + 56;
+
+/// The alignment a place of the record type `id` starts at, kept when its fields were laid out.
+///
+/// # Safety
+/// As `record_scope_of`.
+pub(crate) unsafe fn record_align_of(id: DyadPtr) -> usize {
+    std::ptr::read_unaligned(dyad::head(id).add(ALIGN_OFF) as *const usize)
 }
 
 fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
