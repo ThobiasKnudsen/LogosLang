@@ -11,10 +11,11 @@ use cranelift_codegen::ir::Value;
 
 use super::binding::Binding;
 use super::callable::{self, Callables};
-use super::{meta, print, Cx};
+use super::{carried, meta, print, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
+use crate::regex_trie::RegexTrie;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
@@ -26,6 +27,42 @@ const CATEGORY: usize = 3;
 pub struct ErrorIds {
     pub error: DyadPtr,
     pub leaf: DyadPtr,
+    /// The error value's type, `array hop`, which `error` names where a type is wanted; null
+    /// until identities/error.logos is read.
+    pub value: DyadPtr,
+    /// The type of one element of the error value.
+    pub hop: DyadPtr,
+}
+
+const ARRAY: carried::File = carried::File {
+    path: "identities/array.logos",
+    source: include_str!("../../identities/array.logos"),
+};
+const FILE: carried::File = carried::File {
+    path: "identities/error.logos",
+    source: include_str!("../../identities/error.logos"),
+};
+
+/// Reads identities/error.logos into `section`, after the array it is built from, and gives
+/// `ids` the error value's type and its element's. Nothing of either file reaches the root.
+///
+/// # Panics
+/// Where a file the seed was built with does not parse or run: a defect of the seed.
+pub(super) fn load(
+    store: &mut Store,
+    trie: &mut RegexTrie,
+    core: &Core,
+    section: DyadPtr,
+) -> ErrorIds {
+    carried::read(store, trie, core, section, &ARRAY);
+    carried::read(store, trie, core, section, &FILE);
+    let ty = |name| {
+        let named = carried::name_in(trie, section, &FILE, name);
+        // SAFETY: a binding of the section is a binding dyad from the store.
+        unsafe { super::type_identity_of(core, Binding::read(named.binding).dyad) }
+            .unwrap_or_else(|| panic!("{}: `{name}` is no type", FILE.path))
+    };
+    ErrorIds { value: ty("hops"), hop: ty("hop"), ..core.error }
 }
 
 /// At the rank `lex` and `print` have: a word that reads its own right side at discovery.
@@ -42,7 +79,8 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
     cx.metas.insert(error, |p, _id, tape| p.construct_error(tape));
     cx.lower.insert(error, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
-    ErrorIds { error, leaf }
+    let null = std::ptr::null_mut();
+    ErrorIds { error, leaf, value: null, hop: null }
 }
 
 /// A raise of `category`, the binding record its declaration made.

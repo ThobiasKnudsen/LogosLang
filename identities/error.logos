@@ -1,0 +1,13 @@
+# The error value, written in ordinary Logos: an array with one element, a hop, per place the error
+# passed. A hop holds its category, the record of the `error.X := «…»` that declared it; its message;
+# the node of the graph that raised it; and one value the raise writes, `?` when none
+# (›A raise is `error.X «message»`; the error value is an array with one element per hop‹ [[R144]]).
+# `error`, with no `.X` after it where a type is wanted, names `hops`.
+
+hop := type (
+    category := pub @binding ?,
+    message := pub string ?,
+    location := pub @dyad ?,
+    data := pub dyad ?
+),
+hops := type array hop

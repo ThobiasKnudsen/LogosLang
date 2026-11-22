@@ -382,43 +382,107 @@ impl<'a> Parser<'a> {
         // SAFETY: the members are holes just built with their bindings, their types type nodes.
         let node = unsafe {
             self.check_members(&members, &bindings).map_err(|e| self.fail_at(opened_at, e))?;
-            let types = self.types;
-            let mut key = Vec::with_capacity(members.len() * 2);
-            for (&member, &binding) in members.iter().zip(&bindings) {
-                key.push(KeyPart::Name(Binding::spelling(binding)));
-                key.push(KeyPart::Node(crate::identities::hole::gated_type_in(member)));
-            }
-            let (place, kept) = type_mint::find(self.rt.store, types, types.union.union, &key)
-                .map_err(ParseError::Run)?;
-            let mint = match kept {
-                Some(mint) => mint,
-                None => {
-                    let mint = self.rt.store.alloc_leaf(types.type_);
-                    let extent =
-                        crate::identities::union::lay_out(types, mint, &members, &bindings);
-                    let members =
-                        crate::identities::array::build(self.rt.store, types.array_, &members);
-                    let bindings =
-                        crate::identities::array::build(self.rt.store, types.array_, &bindings);
-                    let record = crate::identities::meta::formed_record(
-                        self.rt.store,
-                        types.union.union,
-                        scope,
-                        members,
-                        bindings,
-                        extent,
-                        body,
-                        types.derived_parse,
-                    );
-                    dyad::set_head(mint, record.cast());
-                    type_mint::keep(self.rt.store, types, place, mint).map_err(ParseError::Run)?;
-                    mint
-                }
-            };
+            let mint = self.mint_union(scope, body, &members, &bindings)?;
             self.named_type(own_name, mint, std::ptr::null_mut())?
         };
         tape.place(node);
         Ok(Constructed::Placed)
+    }
+
+    /// `T!`, a value of `T` or an error: `union ( value := T, err := error )`, that very mint,
+    /// with no type of its own (›Target: errors are values (`T!`), handled by `if`, passed on by
+    /// `try`…‹ [[R140]]). The members are declared as
+    /// the written union's lines declare theirs.
+    pub(crate) fn construct_fallible(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let Some(left) = tape.at(-1).copied() else {
+            return Err(ParseError::MissingOperand);
+        };
+        let end = self.cx.pos;
+        let lhs = self.operand_dyad(left)?;
+        // SAFETY: `lhs` is a reduced dyad off the tape.
+        let Some(value) = (unsafe { crate::identities::type_identity_of(self.types, lhs) }) else {
+            return Err(self.fail_at(left.start, ParseError::FallibleNeedsType));
+        };
+        let depth = self.cx.scopes.depth();
+        let scope = self.open_scope();
+        let (mut members, mut bindings) = (Vec::new(), Vec::new());
+        let declared = [("value", value), ("err", self.types.error.value)]
+            .into_iter()
+            .try_for_each(|(name, ty)| {
+                let member = crate::identities::hole::build(
+                    self.rt.store,
+                    self.types.unknown,
+                    ty,
+                    std::ptr::null_mut(),
+                );
+                let binding = self.mint_binding(member, scope, name.as_bytes());
+                self.enter_binding_in(scope, name, binding, left.start)?;
+                members.push(member);
+                bindings.push(binding);
+                Ok(())
+            });
+        let body = self.open_scope();
+        while self.cx.scopes.depth() > depth {
+            self.cx.scopes.pop();
+        }
+        declared?;
+        // SAFETY: the members are holes just built with their bindings, their types type nodes.
+        let mint = unsafe {
+            self.check_members(&members, &bindings).map_err(|e| self.fail_at(left.start, e))?;
+            self.mint_union(scope, body, &members, &bindings)?
+        };
+        tape.remove(-1);
+        tape.place(mint);
+        tape.span_center(left.start, end);
+        Ok(Constructed::Gave)
+    }
+
+    /// The union of `members`, declared in `scope` by `bindings` with `body` below them: the mint
+    /// `type_mint` keeps under their names and types, made the first time (›Every type is minted
+    /// by its contents through `type_mint`; the name that holds a `type ( … )` gives it its
+    /// identity‹ [[R383]]).
+    ///
+    /// # Safety
+    /// `members` must be holes from the store, each over a type node, and `bindings` their
+    /// bindings in the same order.
+    unsafe fn mint_union(
+        &mut self,
+        scope: DyadPtr,
+        body: DyadPtr,
+        members: &[DyadPtr],
+        bindings: &[DyadPtr],
+    ) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        let mut key = Vec::with_capacity(members.len() * 2);
+        for (&member, &binding) in members.iter().zip(bindings) {
+            key.push(KeyPart::Name(Binding::spelling(binding)));
+            key.push(KeyPart::Node(crate::identities::hole::gated_type_in(member)));
+        }
+        let (place, kept) = type_mint::find(self.rt.store, types, types.union.union, &key)
+            .map_err(ParseError::Run)?;
+        if let Some(mint) = kept {
+            return Ok(mint);
+        }
+        let mint = self.rt.store.alloc_leaf(types.type_);
+        let extent = crate::identities::union::lay_out(types, mint, members, bindings);
+        let members = crate::identities::array::build(self.rt.store, types.array_, members);
+        let bindings = crate::identities::array::build(self.rt.store, types.array_, bindings);
+        let record = crate::identities::meta::formed_record(
+            self.rt.store,
+            types.union.union,
+            scope,
+            members,
+            bindings,
+            extent,
+            body,
+            types.derived_parse,
+        );
+        dyad::set_head(mint, record.cast());
+        type_mint::keep(self.rt.store, types, place, mint).map_err(ParseError::Run)?;
+        Ok(mint)
     }
 
     /// A union holds only members whose values move whole into its room, and a member's type

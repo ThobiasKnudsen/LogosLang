@@ -1224,7 +1224,7 @@ impl<'a> Parser<'a> {
                 && !self.cx.scopes.is_open(fields.scope)
                 && !self.outer.iter().any(|c| c.scopes.is_open(fields.scope))
                 && !self.imports.sections.contains(&fields.scope)
-                && fields.scope != self.types.type_mint.file
+                && fields.scope != self.types.carried
             {
                 return Err(ParseError::Resolve(ResolveError::OutOfScope(name())));
             }

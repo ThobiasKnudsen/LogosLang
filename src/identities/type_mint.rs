@@ -7,23 +7,22 @@
 //! calls its functions as a program does. ›Every type is minted by its contents through
 //! `type_mint`; the name that holds a `type ( … )` gives it its identity‹ [[R383]]
 
-use super::meta;
+use super::{carried, meta};
 use crate::dyad::{self, DyadPtr};
-use crate::parse::{LinesEnd, Parser, ScopeStack};
 use crate::regex_trie::RegexTrie;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
 
-const PATH: &str = "identities/type_mint.logos";
-const SOURCE: &str = include_str!("../../identities/type_mint.logos");
+const FILE: carried::File = carried::File {
+    path: "identities/type_mint.logos",
+    source: include_str!("../../identities/type_mint.logos"),
+};
 const NAME: &str = "type_mint";
 
 /// `type_mint`'s functions, which the formers written in the seed call.
 #[derive(Debug, Clone, Copy)]
 pub struct Members {
-    /// The scope the file's own lines stand in, whose names live for the run.
-    pub(crate) file: DyadPtr,
     step: DyadPtr,
     step_name: DyadPtr,
     step_word: DyadPtr,
@@ -35,7 +34,7 @@ impl Members {
     /// What a core holds until the file is read.
     pub(super) const fn unread() -> Self {
         let null = std::ptr::null_mut();
-        Self { file: null, step: null, step_name: null, step_word: null, kept: null, keep: null }
+        Self { step: null, step_name: null, step_word: null, kept: null, keep: null }
     }
 
     pub(crate) fn is_read(&self) -> bool {
@@ -43,51 +42,36 @@ impl Members {
     }
 }
 
-/// Reads the file in a scope of its own under the root, as an imported file is read, and gives
-/// the root its one `pub` name, so `type_mint` is ambient and nothing else of the file is
-/// (›Importing is dropping the text there, wrapped in its own scope‹ [[R306]]).
+/// Reads the file into `section`, the carried files' own, and gives the root its one `pub` name,
+/// so `type_mint` is ambient and nothing else of the file is.
 ///
 /// # Panics
 /// Where the file the seed was built with does not parse or run, or lacks a function the seed
 /// calls: a defect of the seed.
-pub(super) fn load(store: &mut Store, trie: &mut RegexTrie, core: &Core) -> Members {
-    let mut scopes = ScopeStack::new();
-    scopes.push(core.root_scope);
-    let file = scopes.push_section(store, core.scope);
-    let mut p = Parser::new(SOURCE, store, trie, core, scopes);
-    let read = p.read_lines(LinesEnd::TextEnd).and_then(|_| p.finish());
-    if let Err(e) = read {
-        let message = crate::report::parse_message(&e);
-        panic!("{}", crate::report::render(PATH, SOURCE, p.offset(), &message));
-    }
-    p.hand_exit();
-    let name_in = |scope: DyadPtr, name: &str| {
-        let mut members = ScopeStack::new();
-        members.push(scope);
-        members.resolve(trie, name).unwrap_or_else(|_| panic!("{PATH}: no `{name}`"))
-    };
-    let keeper = name_in(file, NAME);
+pub(super) fn load(
+    store: &mut Store,
+    trie: &mut RegexTrie,
+    core: &Core,
+    section: DyadPtr,
+) -> Members {
+    carried::read(store, trie, core, section, &FILE);
+    let keeper = carried::name_in(trie, section, &FILE, NAME);
     // SAFETY: the file declared `type_mint` as a type with a body.
     let body = unsafe { meta::record_body_of(keeper.identity) };
     let member = |name: &str| {
-        let f = name_in(body, name).identity;
+        let f = carried::name_in(trie, body, &FILE, name).identity;
         // SAFETY: `f` is the dyad a name of the body holds.
-        assert!(unsafe { dyad::ty(f) } == core.fn_type, "{PATH}: `{name}` is no function");
+        assert!(unsafe { dyad::ty(f) } == core.fn_type, "{}: `{name}` is no function", FILE.path);
         f
     };
     let members = Members {
-        file,
         step: member("step"),
         step_name: member("step_name"),
         step_word: member("step_word"),
         kept: member("kept"),
         keep: member("keep"),
     };
-    let mut root = ScopeStack::new();
-    root.push(core.root_scope);
-    Parser::new("", store, trie, core, root)
-        .publish(&[(NAME.to_string(), keeper.binding)])
-        .unwrap_or_else(|e| panic!("{PATH}: {}", crate::report::parse_message(&e)));
+    carried::publish(store, trie, core, &FILE, &[(NAME.to_string(), keeper.binding)]);
     members
 }
 

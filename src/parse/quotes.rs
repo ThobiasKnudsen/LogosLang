@@ -308,8 +308,8 @@ impl<'a> Parser<'a> {
             });
         }
         if !self.consume_token(self.types.dot_) {
-            if !self.finds_right_side(tape) {
-                return Ok(Constructed::Decline);
+            if !self.finds_right_side(tape) || self.reads_result_type() {
+                return Ok(self.error_value_type(tape));
             }
             self.cx.pos = word;
             return Err(ParseError::ErrorNeedsCategory);
@@ -345,7 +345,19 @@ impl<'a> Parser<'a> {
             }
         }
         self.cx.pos = after;
-        Ok(Constructed::Decline)
+        Ok(self.error_value_type(tape))
+    }
+
+    /// `error` with no category is the error value's type, `array hop`, once the seed has read
+    /// identities/error.logos (›A raise is `error.X «message»`; the error value is an array with
+    /// one element per hop‹ [[R144]]); until then it stands as itself.
+    fn error_value_type(&mut self, tape: &mut ParsingTape) -> Constructed {
+        let value = self.types.error.value;
+        if value.is_null() {
+            return Constructed::Decline;
+        }
+        tape.place(value);
+        Constructed::Placed
     }
 
     fn quote_follows(&mut self) -> bool {
