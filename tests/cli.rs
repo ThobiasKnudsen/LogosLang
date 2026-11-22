@@ -517,6 +517,14 @@ fn a_parse_reads_a_static_member_through_the_node_its_tape_holds() {
             "i32\n1\n",
         ),
         (format!("{}, x := i32 3, (q x) p", static_reader(statics, "tape[-1].f()")), "9\n1\n"),
+        // The parse runs where its line is parsed, on either tier.
+        (
+            format!(
+                "{}, x := i32 3, f := fn () -> i32 ( (q x) p ), f.compile(), f()",
+                static_reader(statics, "tape[-1].k")
+            ),
+            "7\n1\n",
+        ),
         (
             format!(
                 "{}, x := i32 3, print «{{m.k}} {{(q x).k}} {{(q x).type.output_type}}»",
