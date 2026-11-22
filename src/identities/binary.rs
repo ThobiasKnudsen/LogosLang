@@ -422,6 +422,7 @@ fn build_identity_compare(
         // SAFETY: as above.
         let same = unsafe {
             let (l, r) = (types.through(lhs), types.through(rhs));
+            let (l, r) = (super::gate::under(l), super::gate::under(r));
             l == r || (dyad::ty(l) == types.type_ && dyad::types_read_the_same(l, r))
         };
         let truth = if matches!(c, CmpOp::Eq) { same } else { !same };

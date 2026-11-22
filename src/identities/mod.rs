@@ -724,13 +724,17 @@ impl Core {
         self.logos_of(p)
     }
 
-    /// The type a node presents: a hole's or a field node's held type, else its type word.
+    /// The type a node presents: a hole's or a field node's held type, a gated identity's the one
+    /// its gates stand over presents, `type` for `mut i32` (›Gates are type nodes: `x := mut i32
+    /// 5`; the record holds no gates‹ [[R381]]), else its type word.
     ///
     /// # Safety
     /// `p` must be a valid dyad from the store.
     pub(crate) unsafe fn logos_of(&self, p: DyadPtr) -> DyadPtr {
         if dyad::ty(p) == self.unknown {
             hole::type_in(p)
+        } else if gate::is_node(p) && read::read_kind(self, p) == read::Read::Identity {
+            self.logos_of(gate::under(p))
         } else {
             dyad::ty(p)
         }
@@ -1028,8 +1032,10 @@ unsafe fn land_with(
     ty: DyadPtr,
     how: Landing,
 ) -> Result<DyadPtr, ParseError> {
-    let Some((ty, (place, _))) =
-        type_identity_of(types, ty).and_then(|t| Some((t, read::place_layout(types, t)?)))
+    // A gated type is landed in as the type it gates.
+    let Some((ty, (place, _))) = type_identity_of(types, ty)
+        .map(|t| gate::under(t))
+        .and_then(|t| Some((t, read::place_layout(types, t)?)))
     else {
         return Ok(value);
     };
@@ -1190,6 +1196,9 @@ unsafe fn is_no_value(types: &Core, node: DyadPtr) -> bool {
 /// # Safety
 /// `node` must be a type identity.
 unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
+    if let Some(words) = gate::written(types, node) {
+        return format!("{words} {}", type_name(types, gate::under(node)));
+    }
     if node == types.type_ {
         return "type".to_string();
     }
@@ -1213,6 +1222,9 @@ unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
 /// # Safety
 /// `node` must be a type identity.
 pub(crate) unsafe fn message_type_name(types: &Core, node: DyadPtr) -> String {
+    if let Some(words) = gate::written(types, node) {
+        return format!("{words} {}", message_type_name(types, gate::under(node)));
+    }
     if numtype::is_pointer_type(node) {
         return format!("@{}", message_type_name(types, numtype::pointee_of(node)));
     }

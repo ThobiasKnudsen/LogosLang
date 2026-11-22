@@ -471,6 +471,22 @@ impl<'a> Parser<'a> {
         self.construct_of(unsafe { self.dispatch_record(id) }?)
     }
 
+    /// A gated type as the type its gates stand over and its gate mint, built by that type's
+    /// constructor and standing with the gates, as a gate word over it leaves it (›Gates are type
+    /// nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]); any other `id` as itself,
+    /// with no gates.
+    fn gated_type_parts(&self, id: DyadPtr) -> (DyadPtr, DyadPtr) {
+        use crate::identities::read::{read_kind, Read};
+        // SAFETY: `id` is null or a resolved dyad from the store.
+        unsafe {
+            if read_kind(self.types, id) == Read::Identity {
+                crate::identities::gate::parts(id)
+            } else {
+                (id, std::ptr::null_mut())
+            }
+        }
+    }
+
     /// The record whose slots decide a cell: an identity's own, or a function's signature.
     ///
     /// # Safety
@@ -492,12 +508,13 @@ impl<'a> Parser<'a> {
         (!record.is_null()).then_some(record)
     }
 
-    /// `id` when it is an identity carrying a record, or `None` for null, a
-    /// value, an instance, a place: the one test the dispatch readers share.
+    /// `id` when it is an identity carrying a record, the type under its gates for a gated type,
+    /// or `None` for null, a value, an instance, a place: the one test the dispatch readers share.
     ///
     /// # Safety
     /// `id` must be null or a dyad from the store.
     pub(super) unsafe fn identity_head(&self, id: DyadPtr) -> Option<DyadPtr> {
+        let (id, _) = self.gated_type_parts(id);
         if id.is_null() || crate::identities::meta::kind_of(id).is_none() {
             None
         } else {
@@ -591,7 +608,8 @@ impl<'a> Parser<'a> {
     ) -> Result<(), ParseError> {
         let own = tape.mark();
         let edits = tape.edits();
-        let logos = self.is_logos_ctor(id);
+        let (built_as, gates) = self.gated_type_parts(id);
+        let logos = self.is_logos_ctor(built_as);
         // Dispatching the cell's identity is the body's read of its name: a
         // callee, an operator, a keyword alike.
         if let Some(c) = tape.at(0) {
@@ -599,13 +617,13 @@ impl<'a> Parser<'a> {
             self.note_outer_read(binding);
         }
         let was = std::mem::replace(&mut self.cx.discovering, discovery);
-        let reader = std::mem::replace(&mut self.cx.reader, id);
-        let outcome = construct(self, id, tape);
+        let reader = std::mem::replace(&mut self.cx.reader, built_as);
+        let outcome = construct(self, built_as, tape);
         self.cx.reader = reader;
         self.cx.discovering = was;
         let outcome = outcome?;
         // Removed itself: the splice is the outcome.
-        let Some(cell) = tape.cell_at_mark(own).copied() else {
+        let Some(mut cell) = tape.cell_at_mark(own).copied() else {
             return Ok(());
         };
         tape.restore(own);
@@ -616,11 +634,18 @@ impl<'a> Parser<'a> {
         // its own cell; no holding, no re-invocation‹ [[R261]]).
         let same = self.cell_identity(&cell) == id;
         if cell.constructed {
-            let instance = same && self.is_awake_instance(id);
+            let instance = same && self.is_awake_instance(built_as);
             if same && !instance {
                 // The flag set on the untouched cell: the identity stands as
                 // its own value.
                 return Ok(());
+            }
+            if !gates.is_null() {
+                // SAFETY: a cell's gates are null or a gate mint, and `gates` is one.
+                cell.gates = unsafe {
+                    crate::identities::gate::union(self.rt.store, self.types, cell.gates, gates)
+                };
+                tape.at_mut(0).expect("the cell stands at its mark").gates = cell.gates;
             }
             // A Logos-written constructor placed its node, or an instance's
             // parse let it stand: the node's run is the function built for its field-type set.
@@ -682,8 +707,8 @@ impl<'a> Parser<'a> {
             self.cx.pos = cell.start;
             return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));
         }
-        // The identity stands as its own value: the use of its name, its binding. A type read
-        // with its gates, `x.type`, stands with them.
+        // The identity stands as its own value: the use of its name, its binding. A type a gate
+        // word read, `mut i32` with nothing after it, stands with its gates.
         let value = self.stand_as_value(tape, id);
         tape.place(value);
         tape.at_mut(0).expect("placed above").gates = cell.gates;

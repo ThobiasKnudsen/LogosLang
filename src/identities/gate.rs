@@ -41,6 +41,29 @@ pub(super) fn word(cx: &mut Cx, name: &str, rank: f64) -> DyadPtr {
     id
 }
 
+/// The gate words of the gated type `t` as written before it, `pub mut`, in the order its mint
+/// keeps; `None` where `t` is no gate node.
+///
+/// # Safety
+/// As [`is_node`].
+pub(crate) unsafe fn written(types: &Core, t: DyadPtr) -> Option<String> {
+    if !is_node(t) {
+        return None;
+    }
+    let words: Vec<&str> = set_of(t)
+        .into_iter()
+        .map(|g| match g {
+            g if g == types.pub_ => "pub",
+            g if g == types.mut_ => "mut",
+            g => {
+                debug_assert_eq!(g, types.static_, "a gate mint holds only gate words");
+                "static"
+            }
+        })
+        .collect();
+    Some(words.join(" "))
+}
+
 /// Whether `p` is a gate node, a node typed by a gate mint.
 ///
 /// # Safety
@@ -62,6 +85,19 @@ pub(crate) unsafe fn under(p: DyadPtr) -> DyadPtr {
         dyad::head(p) as DyadPtr
     } else {
         p
+    }
+}
+
+/// What the gates of `p` stand over, and their mint: `p` itself and null where `p` is no gate
+/// node.
+///
+/// # Safety
+/// As [`is_node`].
+pub(crate) unsafe fn parts(p: DyadPtr) -> (DyadPtr, DyadPtr) {
+    if is_node(p) {
+        (dyad::head(p) as DyadPtr, dyad::ty(p))
+    } else {
+        (p, std::ptr::null_mut())
     }
 }
 
@@ -160,6 +196,41 @@ unsafe fn mint_with(store: &mut Store, types: &Core, p: DyadPtr, gate: DyadPtr) 
 pub(crate) unsafe fn with(store: &mut Store, types: &Core, p: DyadPtr, gate: DyadPtr) -> DyadPtr {
     let mint = mint_with(store, types, p, gate);
     over(store, types, mint, under(p))
+}
+
+/// The type `t` with the gates of `mint` among its own, `t` itself where `mint` is null: a gate
+/// word over a type with nothing after it gives the gated type, `mut i32`, as `i32` alone gives
+/// `i32` (›A gate word reads the whole value to its right and gives it with its type gated‹
+/// [[R102]]).
+///
+/// # Safety
+/// `t` must be a type node from the store; `mint` null or a gate mint.
+///
+/// # Panics
+/// As [`mint_of`].
+pub(crate) unsafe fn gated(store: &mut Store, types: &Core, mint: DyadPtr, t: DyadPtr) -> DyadPtr {
+    if mint.is_null() {
+        return t;
+    }
+    let (t, own) = parts(t);
+    let mint = union(store, types, own, mint);
+    over(store, types, mint, t)
+}
+
+/// The gate mint of the gates of the mints `a` and `b` together, either null for no gates.
+///
+/// # Safety
+/// `a` and `b` must be null or gate mints.
+///
+/// # Panics
+/// As [`mint_of`].
+pub(crate) unsafe fn union(store: &mut Store, types: &Core, a: DyadPtr, b: DyadPtr) -> DyadPtr {
+    if a.is_null() || b.is_null() {
+        return if a.is_null() { b } else { a };
+    }
+    let mut set = words_of(a);
+    set.extend(words_of(b));
+    mint_of(store, types, &set)
 }
 
 /// [`mint_of`] while the seed registers its identities, before a core stands.

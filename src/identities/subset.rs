@@ -69,13 +69,16 @@ unsafe fn type_valued(types: &Core, n: DyadPtr, k: Read) -> bool {
 /// Whether every value of `a` is a value of `b`: the one lies-inside test, which a conversion
 /// written or not asks too (DESIGN ›A type's `parse` decides what converts into it; unwritten, a
 /// value converts only into a type that holds it exactly‹); two pointer types by what a pointer
-/// lands in. `None` where DESIGN leaves the answer open: two different types that are not both
-/// pointer types, number types or `bool`, unless one is a type a Logos `parse` builds, whose
-/// values are its own nodes alone.
+/// lands in. Each is read through its top gate node, `mut i32` as `i32`, since a gate changes
+/// who reads and writes a value and not which values the type holds (›Gates are type nodes:
+/// `x := mut i32 5`; the record holds no gates‹ [[R381]]). `None` where DESIGN leaves the answer
+/// open: two different types that are not both pointer types, number types or `bool`, unless one
+/// is a type a Logos `parse` builds, whose values are its own nodes alone.
 ///
 /// # Safety
 /// `a` and `b` are null or dyads from the store.
 pub(crate) unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {
+    let (a, b) = (super::gate::under(a), super::gate::under(b));
     let is_type = |t: DyadPtr| !t.is_null() && dyad::ty(t) == types.type_;
     if !is_type(a) || !is_type(b) {
         return None;

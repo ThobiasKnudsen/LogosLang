@@ -499,7 +499,11 @@ fn a_parse_reads_the_name_and_type_a_line_of_its_bracket_declares() {
     let members = "c := type ch ( i := pub mut i32, f := f64 )";
     for (body, tail, printed) in [
         ("print «{tape[1].dyads[0].lhs:name} {tape[1].dyads[1].lhs:name}»", members, "i f\n"),
-        ("print «{tape[1].dyads[0].lhs.type} {tape[1].dyads[1].lhs.type}»", members, "i32 f64\n"),
+        (
+            "print «{tape[1].dyads[0].lhs.type} {tape[1].dyads[1].lhs.type}»",
+            members,
+            "pub mut i32 f64\n",
+        ),
         (
             "print «{(tape[1].dyads[0].lhs.type) == i32} {(tape[1].dyads[1].lhs.type) == i32}»",
             members,
@@ -3376,6 +3380,32 @@ fn a_pointer_type_lies_inside_another_where_its_pointer_lands() {
     assert!(stderr.contains("an element does not fit the element type"), "stderr: {stderr}");
 }
 
+/// A gate word over a type with nothing after it gives the gated type, which a name holds and
+/// builds gated values with; `.type` gives a name's type with its gates, and `==` and `⊆` read a
+/// gated type as the type it gates (›Gates are type nodes: `x := mut i32 5`; the record holds no
+/// gates‹ [[R381]]).
+#[test]
+fn a_gated_type_is_a_value_that_builds_gated_values() {
+    for (src, printed) in [
+        ("t := type mut i32, x := t 5, x = 6, x", "6"),
+        ("t := type mut i32, x := t ?, x = 6, x", "6"),
+        ("t := type pub mut i32, x := t 5, x = 7, x", "7"),
+        ("t := type mut i32, f := fn (a := t ?) -> i32 ( a = 3, a ), f(1)", "3"),
+        ("t := type mut i32, f := fn (a := t ?) -> i32 ( a = 3, a ), f.compile(), f(1)", "3"),
+        ("t := type mut @ mut i32, a := mut i32 1, p := t &a, p@ = 4, a", "4"),
+        ("t := type mut i32, print «{t} {t == i32} {t == f64}»", "mut i32 true false"),
+        ("x := mut i32 5, print «{x.type} {x.type == i32}»", "mut i32 true"),
+        ("x := mut i32 5, t := x.type, t = 9, t", "9"),
+        ("f := fn () -> bool ( x := mut i32 5, x.type == i32 ), f.compile(), f()", "true"),
+        ("print «{(u32) ⊆ (static u64)} {(mut i32) ⊆ (i32)}»", "true true"),
+    ] {
+        assert_eq!(run_line(src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    let (code, _, stderr) = run_line("t := type i32, x := t 5, x = 6");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`x` is not `mut`"), "stderr: {stderr}");
+}
+
 #[test]
 fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
     let q = "q := type ( size := static u64 0, parse_rank = 60, parse = ( \
@@ -3604,7 +3634,8 @@ fn a_map_a_dyad_place_holds_is_read_and_written_by_key() {
             ),
             "2\n",
         ),
-        (format!("{e}, m := mut {{ d := pub mut dyad (e.type, e) }}, (m.d)[0] = 5, (m.d)[0]"), "5\n"),
+        // `e.type` is `mut hashmap u64 -> u64`, so the node it makes is gated `mut` already.
+        (format!("{e}, m := mut {{ d := pub dyad (e.type, e) }}, (m.d)[0] = 5, (m.d)[0]"), "5\n"),
         // The right side runs first, so a map it puts in the `dyad` is the one written.
         (
             format!(
@@ -5690,7 +5721,7 @@ fn a_box_read_and_a_call_for_a_type_run_after_the_part_of_their_line_before_them
         (format!("{h}, {mk_of}, h() == 1 and mk(t) == i32"), "h\nmk\ntrue"),
         (format!("{h}, h() == 1 and t == i32"), "h\ntrue"),
         (format!("{h}, print «{{h()}} {{t}}»"), "h\n1 i32"),
-        (format!("{h}, print «{{h()}} {{t}} {{t.type}}»"), "h\n1 i32 type"),
+        (format!("{h}, print «{{h()}} {{t}} {{t.type}}»"), "h\n1 i32 mut type"),
         (format!("{h}, print «{{h()}} {{u := type t, u}}»"), "h\n1 i32"),
         (format!("{h}, {is_i32}, print «{{h()}} {{is_i32(t)}}»"), "h\n1 true"),
         (format!("{h}, print «{{h()}} {{t}}», x := t 5, x.type"), "h\n1 i32\ni32"),
@@ -11231,10 +11262,10 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
     let run_pick =
         format!("{pick}, f := fn (n := i32 ?) -> type ( u := mut pick(n), u = 5, u.type )");
     for (src, want) in [
-        (format!("{pick}, u := mut pick(1), u = 5, u.type"), "i64"),
+        (format!("{pick}, u := mut pick(1), u = 5, u.type"), "mut i64"),
         (
             format!("{k}, g := fn () -> type ( u := mut k(i64), u = 5, u.type ), g.compile(), g()"),
-            "i64",
+            "mut i64",
         ),
         (format!("{array}, t := mut array i32, t = [4, 5], t[1]"), "5"),
         (
@@ -11257,9 +11288,9 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
             format!(
                 "{pick}, pt := type ( a := pub pick(1), b := pub i32 ), p := pt(1, 2), p.a.type"
             ),
-            "i64",
+            "pub i64",
         ),
-        (format!("{k}, pt := type ( e := pub static k(i64) ), pt.e.type"), "i64"),
+        (format!("{k}, pt := type ( e := pub static k(i64) ), pt.e.type"), "pub static i64"),
         (format!("{pick}, f := fn (a := pick(1)) -> type ( a.type ), f(1)"), "i64"),
         (
             format!(

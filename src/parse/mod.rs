@@ -93,9 +93,6 @@ struct Context<'a> {
     /// The bindings the member read under construction reaches, root first: what `.` writes
     /// onto the cell it places, for the write it may be the target of.
     member_path: Vec<DyadPtr>,
-    /// The gate mint of the type `.type` read under construction gives, null for none: what `.`
-    /// writes onto the cell it places.
-    member_gates: DyadPtr,
     /// The type and field parameters of the run body being constructed, and the `fn` node whose
     /// frame they lie in.
     run_fields: Option<(DyadPtr, Vec<DyadPtr>, DyadPtr)>,
@@ -218,7 +215,6 @@ impl<'a> Context<'a> {
             last_declared: std::ptr::null_mut(),
             member_root: std::ptr::null_mut(),
             member_path: Vec::new(),
-            member_gates: std::ptr::null_mut(),
             run_fields: None,
             frames: Vec::new(),
             runtime_depth: 0,

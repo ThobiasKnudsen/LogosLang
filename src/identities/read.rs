@@ -88,6 +88,11 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     if op == types.fn_type {
         return Read::Unit;
     }
+    // A gated type is a type, `mut i32` as `i32` (›Gates are type nodes: `x := mut i32 5`; the
+    // record holds no gates‹ [[R381]]).
+    if super::gate::is_node(node) && read_kind(types, super::gate::under(node)) == Read::Identity {
+        return Read::Identity;
+    }
     let Some(kind) = meta::kind_of(op) else {
         // The roots are back-filled in `Core::build`, and holes never stand in a type
         // slot, so no reachable node is classified by a type with no record.
@@ -157,11 +162,21 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
 /// declares no `output_type`; a node of no other kind is a value and gives back its own type.
 /// Null where nothing knows it before the program runs. ›A mint's output type is written in its
 /// `output_type := static …` declaration; a type that does not mint has its parse write it into
-/// each node‹ [[R194]], ›`=` sits beside `:=`, and returns nothing‹ [[R277]].
+/// each node‹ [[R194]], ›`=` sits beside `:=`, and returns nothing‹ [[R277]]. A gated type written
+/// there reads as the type it gates, for the chooser, the mints and the layout that ask this
+/// (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]).
 ///
 /// # Safety
 /// `node` must be null or a reduced dyad from the store.
 pub unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
+    super::gate::under(given_type(types, node))
+}
+
+/// [`output_type`] as the node holds it, a gate node where one was written.
+///
+/// # Safety
+/// As [`output_type`].
+unsafe fn given_type(types: &Core, node: DyadPtr) -> DyadPtr {
     use crate::parse::FN_OUTPUT;
     let node = types.through(node);
     if node.is_null() {
