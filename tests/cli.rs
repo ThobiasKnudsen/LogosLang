@@ -913,6 +913,41 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
     }
 }
 
+/// A parse written in Logos reads its tape in the frame of the call whose line it parses, not in
+/// its own: `tape[k].type` of a `dyad` entry of a `{ … }` declared in a `fn` body is the type of
+/// the node the entry holds (›`x.type` reads the type word of the node a name or an expression
+/// stands for‹ [[R279]]), as it is at the top level, and the parse's own local reads its own frame
+/// again after.
+#[test]
+fn a_parse_written_in_logos_reads_a_local_of_the_call_whose_line_it_parses() {
+    let parse = |k: &str, at: &str| {
+        format!(
+            "{k} := type ( parse_rank = 60, parse = ( n := i32 40, print «{{tape[{at}].type}} {{n}}», \
+             tape.remove({at}), tape[0] = i32 1, tape.is_constructed[0] = true ) )"
+        )
+    };
+    let entry = "m := { d := pub dyad (i64, 3) }";
+    for (src, out) in [
+        (format!("{}, f := fn () -> i32 ( {entry}, m.d k ), f()", parse("k", "-1")), "i64 40\n1\n"),
+        (
+            format!("{}, f := fn () -> i32 ( {entry}, (m.d) k ), f()", parse("k", "-1")),
+            "i64 40\n1\n",
+        ),
+        (format!("{}, {entry}, m.d k", parse("k", "-1")), "i64 40\n1\n"),
+        (format!("{}, f := fn () -> i32 ( {entry}, j m.d ), f()", parse("j", "1")), "i64 40\n1\n"),
+        (
+            format!(
+                "{}, g := fn () -> i32 ( f := fn () -> i32 ( {entry}, m.d k ), f() + 1 ), g()",
+                parse("k", "-1")
+            ),
+            "i64 40\n2\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), out), "{src}: stderr: {stderr}");
+    }
+}
+
 /// What gives no value is the reader's to decide (›A `tape[k]` read past the lexed frontier lexes
 /// on demand for every constructor‹ [[R231]]): a parse written in Logos reads a side that gives
 /// nothing as `void` and a spelling no live name has as `unknown_name`, while a dead name is

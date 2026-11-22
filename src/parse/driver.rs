@@ -1055,7 +1055,8 @@ impl<'a> Parser<'a> {
         let call = build_call(self.rt.store, f, &[handle, this_arg]);
         // Inside the call, `caller.scope` reads the pass's position.
         let outer = self.rt.enter_constructor(tape);
-        self.tape_hosts.push(self.outer.len());
+        self.tape_hosts
+            .push(super::Handed { outer: self.outer.len(), frames: self.rt.frame_depth() });
         // SAFETY: `call` was just built into the store; the tape and the store are reached only through the natives until `run` returns.
         let out = unsafe { self.run_on_pass(call) };
         self.tape_hosts.pop();
@@ -1096,11 +1097,13 @@ impl<'a> Parser<'a> {
         node.map(|d| d as i64).map_err(|e| crate::run::RunError::Parse(Box::new(e)))
     }
 
-    /// `f` in the sub-parse the running constructor's tape was handed out in: a read made while
-    /// a line of the constructor is parsed as it runs reads the tape's source, not that line's.
+    /// `f` in the sub-parse and the frame the running constructor's tape was handed out in: a
+    /// read made while a line of the constructor is parsed as it runs reads the tape's source,
+    /// not that line's, and a place of the tape's line, a local of the call it runs in, is read
+    /// in that call's frame, not the constructor's.
     fn on_tape_host<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        match self.tape_hosts.last().copied().filter(|&at| at < self.outer.len()) {
-            Some(at) => f(&mut *TapeHost::new(self, at).0),
+        match self.tape_hosts.last().copied() {
+            Some(handed) => f(&mut *TapeHost::new(self, handed).parser),
             None => f(self),
         }
     }
