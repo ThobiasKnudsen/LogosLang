@@ -230,6 +230,9 @@ pub struct ParsingTape {
     /// Each removed cell, in the order removed, with where the cell after it started then, so
     /// with the source up to there, which holds what it was built from: what a constructor took.
     taken: Vec<(Cell, usize)>,
+    /// The words that started a word standing at their side, to take it, the innermost last:
+    /// each is being built, so no side of the word it started.
+    takers: Vec<usize>,
 }
 
 impl ParsingTape {
@@ -266,11 +269,12 @@ impl ParsingTape {
     }
 
     /// A native's `tape[k] = …`: the pointer alone; the flag and the spelling
-    /// stay. `false` off the tape.
+    /// stay. `false` off the tape or past its reach.
     pub fn set_dyad(&mut self, offset: isize, dyad: DyadPtr) -> bool {
-        let Some(c) = self.at_mut(offset) else {
+        let Some(n) = self.reach_node(offset) else {
             return false;
         };
+        let c = &mut self.nodes[n].cell;
         c.dyad = dyad;
         c.bracket = false;
         self.edits += 1;
@@ -278,24 +282,57 @@ impl ParsingTape {
     }
 
     /// `tape.construct`'s node, standing whole where the nodes it was built of began. `false`
-    /// off the tape.
+    /// off the tape or past its reach.
     pub fn set_cell(&mut self, offset: isize, cell: Cell) -> bool {
-        let Some(c) = self.at_mut(offset) else {
+        let Some(n) = self.reach_node(offset) else {
             return false;
         };
-        *c = cell;
+        self.nodes[n].cell = cell;
         self.edits += 1;
         true
     }
 
-    /// A native's `tape.is_constructed[k] = flag`. `false` off the tape.
+    /// A native's `tape.is_constructed[k] = flag`. `false` off the tape or past its reach.
     pub fn set_constructed(&mut self, offset: isize, flag: bool) -> bool {
-        let Some(c) = self.at_mut(offset) else {
+        let Some(n) = self.reach_node(offset) else {
             return false;
         };
-        c.constructed = flag;
+        self.nodes[n].cell.constructed = flag;
         self.edits += 1;
         true
+    }
+
+    /// The word at the center starts a word at its side, until [`Self::took`] is called with the
+    /// handle this gives.
+    pub(crate) fn taking(&mut self) -> Option<usize> {
+        let n = self.center?;
+        self.takers.push(n);
+        Some(n)
+    }
+
+    /// The word it started, the innermost, is built: `handle` is what [`Self::taking`] gave.
+    pub(crate) fn took(&mut self, handle: usize) {
+        let ended = self.takers.pop();
+        debug_assert_eq!(ended, Some(handle), "started words are built innermost first");
+    }
+
+    /// The cell at `offset` as the running constructor reaches it: a word that started it is
+    /// being built, so it is no side of it, nor is any cell past it (›A `tape[k]` read past the
+    /// lexed frontier lexes on demand for every constructor‹ [[R231]]).
+    pub fn in_reach(&self, offset: isize) -> Option<&Cell> {
+        self.reach_node(offset).map(|n| &self.nodes[n].cell)
+    }
+
+    fn reach_node(&self, offset: isize) -> Option<usize> {
+        let step = offset.signum();
+        let mut k = 0;
+        while k != offset {
+            k += step;
+            if self.takers.contains(&self.node_at(k)?) {
+                return None;
+            }
+        }
+        self.node_at(offset)
     }
 
     /// A tape over `cells`, center on the first.
@@ -693,7 +730,9 @@ impl Carry for Cell {
 
 impl Carry for ParsingTape {
     fn carry(&self, out: &mut Out) {
-        let ParsingTape { nodes, head, tail, center, len, edits, sealed, inner, taken } = self;
+        let ParsingTape { nodes, head, tail, center, len, edits, sealed, inner, taken, takers } =
+            self;
+        debug_assert!(takers.is_empty(), "a tape is carried while no constructor runs on it");
         out.usize(nodes.len());
         for &Node { cell, prev, next, linked } in nodes {
             cell.carry(out);
@@ -727,6 +766,7 @@ impl Carry for ParsingTape {
             sealed,
             inner,
             taken: Carry::uncarry(inp),
+            takers: Vec::new(),
         }
     }
 }

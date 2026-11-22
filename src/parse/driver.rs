@@ -610,7 +610,7 @@ impl<'a> Parser<'a> {
     /// Settle `construct`'s outcome on the cell at the cursor, judged by its
     /// handle whatever the center is after (DESIGN ›The scope's constructor is
     /// the driver‹): constructed, gone, handed on, standing as its value, or the checked error.
-    fn run_ctor(
+    pub(super) fn run_ctor(
         &mut self,
         construct: ConstructFn,
         id: DyadPtr,
@@ -1400,7 +1400,7 @@ impl<'a> Parser<'a> {
         to: isize,
     ) -> Result<(), ParseError> {
         use crate::identities::read::{read_kind, Read};
-        let cells: Vec<Cell> = (from..to).map_while(|k| tape.at(k).copied()).collect();
+        let cells: Vec<Cell> = (from..to).map_while(|k| tape.in_reach(k).copied()).collect();
         let taken = cells.len();
         let mut built = self.construct_line(cells)?;
         // A type its gate words read stands as the gated type, so a parse reading it is handed

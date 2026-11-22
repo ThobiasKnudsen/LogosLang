@@ -432,9 +432,9 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let mut cells = Vec::with_capacity(N);
         for k in ks {
-            match tape.at(k) {
-                Some(&cell) if self.is_operand_cell(&cell) => cells.push(cell),
-                _ => return Ok(None),
+            match self.side_at(tape, k)? {
+                Some(cell) => cells.push(cell),
+                None => return Ok(None),
             }
         }
         let mut names = Vec::with_capacity(N);
@@ -469,6 +469,29 @@ impl<'a> Parser<'a> {
         Ok(Some(read))
     }
 
+    /// The cell an operation takes at `k` of `tape`: a word there not built yet is started first
+    /// and builds what it takes (›Every identity has a `parse_rank`, and `(` works in two steps‹
+    /// [[R259]]). `None` where no operand stands within reach.
+    fn side_at(&mut self, tape: &mut ParsingTape, k: isize) -> Result<Option<Cell>, ParseError> {
+        loop {
+            let Some(&cell) = tape.in_reach(k) else { return Ok(None) };
+            if self.is_operand_cell(&cell) {
+                return Ok(Some(cell));
+            }
+            let id = self.cell_identity(&cell);
+            let Some(construct) = self.ctor_of(id) else { return Ok(None) };
+            let handle = tape.handle_at(k).expect("read above");
+            let taker = tape.taking();
+            tape.center_on(handle);
+            let started = self.run_ctor(construct, id, tape, false);
+            tape.restore(taker);
+            if let Some(taker) = taker {
+                tape.took(taker);
+            }
+            started?;
+        }
+    }
+
     /// The read of a name every reader of an operand makes ([`Self::as_operand`]), a dead one
     /// refused; a parse is handed a spelling no live name has as its `unknown_name` node
     /// (›Unknown spellings are two pattern identities‹ [[R252]]).
@@ -497,7 +520,7 @@ impl<'a> Parser<'a> {
         read: TapeRead,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        let Some(cell) = tape.at(k).copied() else { return Ok(types.tape.nothing) };
+        let Some(cell) = tape.in_reach(k).copied() else { return Ok(types.tape.nothing) };
         // SAFETY: a lexed or built cell holds a dyad from the store.
         let bracket = unsafe { crate::identities::tape::bracket_kind(types, cell.dyad) }.is_some();
         if !self.is_operand_cell(&cell) || bracket && read != TapeRead::Gives {

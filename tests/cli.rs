@@ -1046,6 +1046,30 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
     }
 }
 
+/// `k` ranks below `==`, so `==` starts each `k`; the left one finds `==` being built to its
+/// right, no side of it, and reaches it as it reaches the end of the source (›A `tape[k]` read
+/// past the lexed frontier lexes on demand for every constructor‹ [[R231]]).
+#[test]
+fn a_word_an_operation_starts_finds_the_operation_no_side_of_it() {
+    let k = |parse: &str| {
+        format!(
+            "k := type ( parse_rank = 30, parse = ( {parse}, tape.is_constructed[0] = true ) ), \
+             k == k"
+        )
+    };
+    let read = "print «{tape[1].type} {tape[2].type} {tape.is_constructed[1]} {tape.spelling[1]}|»";
+    let (code, stdout, stderr) = run_line(&k(read));
+    assert_eq!(
+        (code, stdout.as_str()),
+        (Some(0), "void void true |\nvoid void true |\ntrue\n"),
+        "stderr: {stderr}"
+    );
+    assert_eq!(line(&k("tape.remove(1)")), "true");
+    let (code, _, stderr) = run_line(&k("tape.is_constructed[1] = true"));
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("this index is off the tape"), "stderr: {stderr}");
+}
+
 /// A parse written in Logos reads its tape in the frame of the call whose line it parses, not in
 /// its own: `tape[k].type` of a `dyad` entry of a `{ … }` declared in a `fn` body is the type of
 /// the node the entry holds (›`x.type` reads the type word of the node a name or an expression

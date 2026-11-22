@@ -723,8 +723,9 @@ unsafe fn tape_of(rt: &mut Runtime, recv: DyadPtr) -> Result<*mut ParsingTape, R
     Ok(tape)
 }
 
-/// The cell a read names; past the end of the source, a boundary or the left edge, the
-/// constructed `void` node. DESIGN ›The scope's constructor is the driver‹.
+/// The cell a read names; past the end of the source, a boundary, the left edge or a node being
+/// built, the constructed `void` node (›A `tape[k]` read past the lexed frontier lexes on demand
+/// for every constructor‹ [[R231]]).
 unsafe fn read_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<Cell, RunError> {
     let (tape, k) = tape_at(rt, ops)?;
     Ok(cell_on(rt, tape, k))
@@ -734,7 +735,7 @@ unsafe fn read_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<Cell, RunEr
 /// `tape` must be a live `ParsingTape`.
 unsafe fn cell_on(rt: &Runtime, tape: *mut ParsingTape, k: isize) -> Cell {
     let nothing = rt.types().tape.nothing;
-    (*tape).at(k).copied().unwrap_or_else(|| Cell::built(nothing))
+    (*tape).in_reach(k).copied().unwrap_or_else(|| Cell::built(nothing))
 }
 
 /// A cell of the running constructor's tape is taken as an operation takes its operand
@@ -841,6 +842,9 @@ fn run_remove(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
         let (tape, k) = tape_at(rt, ops)?;
+        if (*tape).in_reach(k).is_none() {
+            return Ok(0);
+        }
         // A bracket taken off the tape never runs, so its lines are no scope's.
         if let Some(cell) = (*tape).remove(k) {
             rt.note_lines_read(cell.dyad);

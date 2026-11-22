@@ -863,6 +863,13 @@ fn less_than_matches_between_tiers() {
 }
 
 #[test]
+fn an_operation_starts_the_word_at_its_side_that_is_not_built_yet() {
+    // `==` is built before `not`, finds it unbuilt to its right and starts it.
+    assert_eq!(run_script("a := true, b := false, c := a == not b, c"), 1);
+    diff_nullary_fn("fn () -> bool ( a := true, b := false, a == not b )", 1);
+}
+
+#[test]
 fn less_than_is_abstract_and_resolves_to_lt_i32() {
     let (mut store, mut trie, core) = new_core();
 
