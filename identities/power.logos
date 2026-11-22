@@ -30,9 +30,9 @@ error.needs_float := «a power needs a float result»,
         mint = type (
             lhs := pub l ?,
             rhs := pub r ?,
-            output_type := static type if l == f64 or r == f64 (f64)
-                else if l == f32 or r == f32 (f32)
-                else if r == rational_number (f64)
+            output_type := static type if (l == f64 or r == f64) (f64)
+                else if (l == f32 or r == f32) (f32)
+                else if (r == rational_number) (f64)
                 else (l),
 
             # The run is built where `^` is first used, after the program's own names exist,
@@ -45,7 +45,7 @@ error.needs_float := «a power needs a float result»,
                 if (whole_exponent) (
                     power := mut output_type 1,
                     times := mut i64 lossy (rhs),
-                    factor := mut if output_type == rational_number (output_type(lhs)) else (output_type lossy (lhs)),
+                    factor := mut if (output_type == rational_number) (output_type(lhs)) else (output_type lossy (lhs)),
                     if times < 0 (
                         if not (output_type == (f64 or f32 or rational_number))
                             error.not_whole «a negative exponent of a whole number is not whole: write the base as a float»,

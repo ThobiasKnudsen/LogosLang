@@ -38,7 +38,7 @@ array := pub type (
         # value (›`array` is a chooser‹ [[R223]]).
         if tape[1] == ? (
             tape.is_constructed[0] = true
-        ) else if tape[1].type != void (
+        ) else if (tape[1].type != void) (
             if tape[1].type != type
                 error.not_a_type «id after array is not a type»,
             t := type tape[1],
@@ -72,7 +72,7 @@ array := pub type (
                         associativity = left,
                         # Its `tape` is the mint's own, not `array`'s (›`tape` is a word the `parse` slot declares into its body‹ [[R191]]).
                         parse = (
-                            if tape[0].type != type and tape[1].type == square_brackets (
+                            if (tape[0].type != type and tape[1].type == square_brackets) (
                                 # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
                                 if tape[1].dyads[0].gives ⊆ tape[0].size.type (
                                     tape[0] = tape[0].at(tape[1].dyads[0])
@@ -94,10 +94,10 @@ array := pub type (
                 if tape[2].type == scope
                     error.not_a_list «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
                 # Right of another `array` this one is the element type, and the list is the outer one's.
-                if tape[2].type == square_brackets and tape[-1] != array (
+                if (tape[2].type == square_brackets and tape[-1] != array) (
                     # A bracket line is checked when the run's `=` builds it.
                     for i in 0..tape[2].dyads.size (
-                        if tape[2].dyads[i].type != square_brackets and tape[2].dyads[i].type != scope (
+                        if (tape[2].dyads[i].type != square_brackets and tape[2].dyads[i].type != scope) (
                             if not (tape[2].dyads[i].gives ⊆ t)
                                 error.element_type «an element does not fit the element type»
                         )

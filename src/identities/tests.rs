@@ -931,8 +931,8 @@ fn an_if_condition_is_its_first_complete_expression() {
     assert_eq!(run_script("m := mut type ?, m = ?, if m != ? (1) else (2)"), 2);
     assert_eq!(run_script("m := mut type ?, m = i32, if m != ? 1 else 2"), 1);
     // Right of a comparison a `(` is the body, though the identity could take it.
-    assert_eq!(run_script("x := i32 1, if x.type == scope (10) else (20)"), 20);
-    assert_eq!(run_script("x := i32 1, if x.type == i32 (10) else (20)"), 10);
+    assert_eq!(run_script("x := i32 1, if (x.type == scope) (10) else (20)"), 20);
+    assert_eq!(run_script("x := i32 1, if (x.type == i32) (10) else (20)"), 10);
     assert_eq!(run_script("x := i32 1, p := &x, if p.type == @i32 (10) else (20)"), 10);
     // A value word is still the type's, and a condition not yet complete keeps its `(`.
     assert_eq!(run_script("x := i32 1, if x == i32 1 (10) else (20)"), 10);
@@ -4697,7 +4697,7 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
 
 #[test]
 fn a_tape_line_no_check_narrowed_is_checked_where_a_type_is_wanted_when_the_parse_runs() {
-    let g = "g := fn (t := type ?) -> u64 ( if t == i32 ( 1 ) else ( 2 ) ), ";
+    let g = "g := fn (t := type ?) -> u64 ( if (t == i32) ( 1 ) else ( 2 ) ), ";
     let constant = "this is read as `type`, but it holds no literal or constant of it";
     // A line of a bracket cell, `q [i32]`, and the whole cell, `q i32`.
     for (line, write) in [("tape[1].dyads[0]", "q [{}]"), ("tape[1]", "q {}")] {

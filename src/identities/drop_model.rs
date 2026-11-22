@@ -2809,7 +2809,7 @@ mod tests {
             parse_rank = dyad.parse_rank, \
             associativity = left, \
             parse = ( \
-                if tape[1].type == scope ( \
+                if (tape[1].type == scope) ( \
                     tape[0].type = bag, tape[0].output_type = bagged, tape.remove(1) \
                 ) else ( tape[0] = bagged ), \
                 tape.is_constructed[0] = true \

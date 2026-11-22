@@ -7,7 +7,7 @@ wrap := pub type (
     parse = (
         if tape[1] == ? (
             tape.is_constructed[0] = true
-        ) else if tape[1].type == type (
+        ) else if (tape[1].type == type) (
             t := type tape[1],
             place := type_mint.step(type_mint.step(0, wrap), t),
             mint := mut type type_mint.kept(place),
@@ -20,7 +20,7 @@ wrap := pub type (
                     parse_rank = dyad.parse_rank,
                     associativity = left,
                     parse = (
-                        if tape[0].type != type and tape[1].type == square_brackets (
+                        if (tape[0].type != type and tape[1].type == square_brackets) (
                             tape[0] = tape[0].get(),
                             tape.remove(1)
                         ),
