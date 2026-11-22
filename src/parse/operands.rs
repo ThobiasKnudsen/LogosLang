@@ -297,40 +297,6 @@ impl<'a> Parser<'a> {
         matches!(self.peek_token(), Some((n, _)) if n == self.types.colon_ || n == self.types.dot_)
     }
 
-    /// The segment since the last boundary constructed to exactly one operand
-    /// and removed from the tape: the place `=` reads before it drives its
-    /// right side. `None` when nothing stands to the left.
-    pub(crate) fn construct_left(
-        &mut self,
-        tape: &mut ParsingTape,
-    ) -> Result<Option<Cell>, ParseError> {
-        let n = tape.cursor();
-        if n == 0 {
-            return Ok(None);
-        }
-        let mut left = ParsingTape::new();
-        for (_, c) in tape.iter().take(n) {
-            left.push(*c);
-        }
-        // Lexed to the `=`: a read past it is no part of the place.
-        left.sealed = true;
-        let built = self.construct_segment(&mut left)?;
-        let items = self.hand_to_line(built);
-        let target = match items.as_slice() {
-            [(one, _)] => *one,
-            [] => return Ok(None),
-            [(first, _), (_, start), ..] => {
-                let e = self.leftover_error(first.dyad);
-                self.cx.pos = *start;
-                return Err(e);
-            }
-        };
-        for _ in 0..n {
-            tape.remove(-1);
-        }
-        Ok(Some(target))
-    }
-
     /// What a constructor places when it "stands as its own value" (DESIGN
     /// ›The scope's constructor is the driver‹): the use of the name, its
     /// binding, when the cell was lexed; the bare identity for a minted token.
@@ -472,7 +438,11 @@ impl<'a> Parser<'a> {
     /// The cell an operation takes at `k` of `tape`: a word there not built yet is started first
     /// and builds what it takes (›Every identity has a `parse_rank`, and `(` works in two steps‹
     /// [[R259]]). `None` where no operand stands within reach.
-    fn side_at(&mut self, tape: &mut ParsingTape, k: isize) -> Result<Option<Cell>, ParseError> {
+    pub(crate) fn side_at(
+        &mut self,
+        tape: &mut ParsingTape,
+        k: isize,
+    ) -> Result<Option<Cell>, ParseError> {
         loop {
             let Some(&cell) = tape.in_reach(k) else { return Ok(None) };
             if self.is_operand_cell(&cell) {
@@ -704,7 +674,7 @@ impl<'a> Parser<'a> {
     /// Whether the line runs `cell` when it runs: a node that runs, a bracket's scope, which runs
     /// its lines, and a read of a place holding a number or a pointer, which a call after it may
     /// write. A node whose operation is not built yet is none of them. An `=`'s target is not on
-    /// the tape its right side is read on (`construct_left`).
+    /// the tape its right side is read on (`assign::read_target`).
     fn runs_standing(&self, cell: &Cell) -> bool {
         use crate::identities::read::{read_kind, Dispatch, Read};
         let types = self.types;

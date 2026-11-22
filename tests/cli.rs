@@ -5796,7 +5796,9 @@ fn only_a_marked_place_is_written_or_addressed() {
               parse = ( tape[0].type = pw, tape[0].a = tape[-1], tape[0].b = tape[1], tape[0].output_type = i32, \
               tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     for (src, expect) in [
-        ("i32 5 = 3\n", "not an assignable place"),
+        ("(i32 5) = 3\n", "not an assignable place"),
+        // `=` takes the nearest node on its left, the `5`.
+        ("i32 5 = 3\n", "`5` is a literal with no storage"),
         ("a := mut 5\na = 6\n", "`5` is a literal with no storage"),
         ("a := mut 5\na = 6\n", "as in `x := mut i32 5`"),
         ("a := 5\np := mut &a\n", "needs a variable"),
