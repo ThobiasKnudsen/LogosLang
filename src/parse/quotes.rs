@@ -295,7 +295,7 @@ impl<'a> Parser<'a> {
         // SAFETY: a cell's binding is null or a binding dyad from the store.
         if unsafe { crate::identities::error::is_category(self.types, lexed) } {
             if self.quote_follows() {
-                return self.raise(tape, lexed);
+                return self.raise(tape, lexed, word);
             }
             // SAFETY: as above, and not null.
             let name = Box::new(unsafe { Binding::spelling(lexed) });
@@ -336,7 +336,7 @@ impl<'a> Parser<'a> {
                     .map(|r| r.binding)
                     .filter(|&b| unsafe { crate::identities::error::is_category(self.types, b) })
                 {
-                    Some(category) => self.raise(tape, category),
+                    Some(category) => self.raise(tape, category, word),
                     None => {
                         self.cx.pos = word;
                         Err(ParseError::UnknownCategory(Box::new(name)))
@@ -391,14 +391,39 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// `error.X «message»` over `category`, the record of a category in reach.
+    /// `error.X «message»` over `category`, the record of a category in reach, its word at `at`.
+    /// Inside a function that gives `T!` it fills the result's `err` with the error value it makes
+    /// and leaves the function, as a `return` of that `T!` does (›Target: errors are values (`T!`),
+    /// handled by `if`, passed on by `try`…‹ [[R140]]).
     fn raise(
         &mut self,
         tape: &mut ParsingTape,
         category: DyadPtr,
+        at: usize,
     ) -> Result<Constructed, ParseError> {
         let parts = self.interpolated_quote("error")?;
-        let node = crate::identities::error::build(self.rt.store, self.types, &parts, category);
+        let (store, types) = (&mut *self.rt.store, self.types);
+        let output = self.cx.frames.last().map(|f| {
+            // SAFETY: an open frame is a `fn` node, its signature written before its body parses.
+            unsafe { *(dyad::value(f.frame) as *const DyadPtr).add(super::FN_OUTPUT) }
+        });
+        // SAFETY: a function's result is a type node from the store.
+        let fallible = output.and_then(|t| unsafe {
+            Some((t, crate::identities::union::fallible_members(types, t)?.1))
+        });
+        let Some((output, err)) = fallible else {
+            let node = crate::identities::error::build(store, types, &parts, category);
+            tape.place(node);
+            return Ok(Constructed::Placed);
+        };
+        let value = crate::identities::error::build_raised(store, types, &parts, category);
+        // SAFETY: `err` is a member of the union `output`, and `value` gives its type.
+        let filled =
+            unsafe { crate::identities::union::build_fill(store, types, value, output, err) };
+        let node =
+            store.alloc_words(types.return_, &[filled, std::ptr::null_mut(), types.ops.return_]);
+        // SAFETY: `node` is the `return` node just built.
+        unsafe { self.note_return(node, at) }?;
         tape.place(node);
         Ok(Constructed::Placed)
     }

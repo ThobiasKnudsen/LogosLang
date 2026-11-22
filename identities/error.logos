@@ -10,4 +10,10 @@ hop := type (
     location := pub @dyad ?,
     data := pub dyad ?
 ),
-hops := type array hop
+hops := type array hop,
+
+# The error value a raise makes, which the seed calls where the raise runs: one hop, holding the
+# category, the message and the node of the raise; no raise writes a value yet.
+one_hop := fn (category := @binding ?, message := string ?, location := @dyad ?) -> hops (
+    array hop [hop(category, message, location, ?)]
+)

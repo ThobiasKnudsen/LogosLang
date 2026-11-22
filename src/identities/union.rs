@@ -92,17 +92,19 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> UnionIds {
         &["value", "union", "tag", "op", "output_type"],
     );
     let fill = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `fill` carries the record just built.
+    unsafe { meta::mark_own(fill) };
     cx.lower.insert(fill, lower_fill);
     let fill_leaf = callable::mint_native(cx.store, cs.callable, run_fill, cs.seed_native);
     UnionIds { union, member, leaf, holds, asks, asks_leaf, fill, fill_leaf }
 }
 
-/// The type `T` of `ty` where `ty` is `T!`, `union ( value := T, err := error )`, with the
-/// members `value` and `err`; `None` for every other type.
+/// The member holes `value` and `err` of `ty` where `ty` is `T!`, `union ( value := T, err :=
+/// error )`; `None` for every other type.
 ///
 /// # Safety
 /// `ty` must be null or a type node from the store.
-pub(crate) unsafe fn fallible_value(types: &Core, ty: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
+pub(crate) unsafe fn fallible_members(types: &Core, ty: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
     if !is_union(types, ty) {
         return None;
     }
@@ -112,7 +114,7 @@ pub(crate) unsafe fn fallible_value(types: &Core, ty: DyadPtr) -> Option<(DyadPt
         return None;
     };
     let named = bindings.iter().map(|&b| Binding::spelling(b)).eq(["value", "err"]);
-    (named && hole::type_in(err) == types.error.value).then_some((value, hole::type_in(value)))
+    (named && hole::type_in(err) == types.error.value).then_some((value, err))
 }
 
 /// What a function that gives `ty` hands back for `value`, one of the values its body gives: where
@@ -128,12 +130,13 @@ pub(crate) unsafe fn filled(
     ty: DyadPtr,
     value: DyadPtr,
 ) -> Result<DyadPtr, crate::parse::ParseError> {
-    let Some((member, t)) = fallible_value(types, ty) else {
+    let Some((member, _)) = fallible_members(types, ty) else {
         return Ok(value);
     };
     if super::read::output_type(types, value) == ty {
         return Ok(value);
     }
+    let t = hole::type_in(member);
     let value = super::land_held(store, types, value, t, super::dyad_place::Holder::Owner)?;
     Ok(build_fill(store, types, value, ty, member))
 }

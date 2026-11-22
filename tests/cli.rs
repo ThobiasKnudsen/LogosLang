@@ -7383,6 +7383,52 @@ fn a_function_that_gives_t_bang_fills_value_with_its_last_value() {
     assert!(stderr.contains("error: `value` is not `mut`"), "stderr: {stderr}");
 }
 
+/// R140: «a raise inside it fills `err` and leaves the function»; R144: the error value is an
+/// array with one element per hop, each holding its category and its message, «`{…}` read as
+/// `print` reads it». A raise ends what the function holds as it leaves, from an `if` arm and
+/// from a loop alike, on both tiers; one in a function that gives no `T!` is still a fault.
+#[test]
+fn a_raise_inside_a_function_that_gives_t_bang_fills_err_and_leaves() {
+    let too_big = "error.too_big := «a number is too big»";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    for compile in ["", "half.compile(), f.compile(), "] {
+        for (fns, body, want) in [
+            (
+                "half := fn (n := i32 ?) -> i32! ( if n > 100 ( error.too_big «{n} is too big» ), \
+                 n / 2 )",
+                "r := half(300), print «{r holds err} {r.err.size} {r.err[0].message}», \
+                 print «{half(8).value}»",
+                "true 1 300 is too big\n4",
+            ),
+            (
+                &format!(
+                    "{bag}, half := fn (n := i32 ?) -> i32! ( b := bag(n), \
+                     if n > 1 ( error.too_big «too big» ), b.n )"
+                ),
+                "r := half(5), print «{r.err[0].message}»",
+                "freed 5\ntoo big",
+            ),
+            (
+                "half := fn (n := i32 ?) -> i32! ( for i in 0..n ( if i == 2 ( \
+                 error.too_big «at {i}» ) ), n )",
+                "print «{half(1).value} {half(5).err[0].message}»",
+                "1 at 2",
+            ),
+        ] {
+            let src = format!("{too_big}, {fns}, f := fn () -> void ( {body} ), {compile}f()");
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let half = "half := fn (n := i32 ?) -> i32! ( error.too_big «{n} is too big» )";
+    let (code, stdout, stderr) = run_line(&format!("{too_big}, {half}, r := half(300), r.value"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("run error: this union holds `err`, not `value`"), "stderr: {stderr}");
+    let plain = "f := fn (n := i32 ?) -> i32 ( error.too_big «{n} does not fit» )";
+    let (code, stdout, stderr) = run_line(&format!("{too_big}, {plain}, f.compile(), f(300)"));
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("run error: error.too_big: 300 does not fit"), "stderr: {stderr}");
+}
+
 /// A declaration of an empty place runs nothing on either tier, a record's as a number's.
 #[test]
 fn an_empty_place_of_a_record_compiles() {
