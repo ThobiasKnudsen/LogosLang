@@ -930,6 +930,7 @@ fn type_reads_a_nodes_own_type_and_gives_the_type_it_gives() {
     let mut cases = vec![
         (after(&both("i32", "i32"), "(x + 2)"), "false true\n0\n"),
         (after("{tape[-1].output_type == i32}", "(x + 2)"), "true\n0\n"),
+        (after("{tape[-1].type.output_type == i32}", "(x + 2)"), "true\n0\n"),
         (after(&both("if", "i32"), "(if c (x) else (i32 2))"), "true true\n0\n"),
         (after(&both("scope", "i32"), "( print «a», x )"), "true true\n0\n"),
         (after(&both("scope", "void"), "( print «a», print «b» )"), "true true\n0\n"),
