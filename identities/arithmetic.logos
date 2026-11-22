@@ -8,7 +8,7 @@
 # [[R185]]), and `type_mint` keeps each mint once made (›An operation mints through a chooser, one
 # mint per set of operand types, so each mint's `run` body is parsed once‹ [[R301]]). The seed
 # reads this file at its start, after `type_mint`'s, and each name below holds its operation from
-# then on (›Bootstrapping‹ [[R16]]).
+# then on (›A dependency cycle among core identities is broken with native versions first‹ [[R16]]).
 
 # What an operation refuses, a category of this file.
 error.operands := «an arithmetic operation has no result for these operands»,

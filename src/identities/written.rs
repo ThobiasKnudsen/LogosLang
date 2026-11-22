@@ -4,7 +4,7 @@
 //! The operations the seed carries written in Logos, `+ * / %` in identities/arithmetic.logos:
 //! read at its start, after `type_mint`'s file, each taking its name from the native version the
 //! seed started with, which then builds only what the seed's own files wrote before
-//! (›Bootstrapping‹ [[R16]]). The native versions: stand-in for #469.
+//! (›A dependency cycle among core identities is broken with native versions first‹ [[R16]]).
 
 use super::type_mint;
 use crate::dyad::DyadPtr;

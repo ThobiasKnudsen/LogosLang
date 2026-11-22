@@ -1004,7 +1004,7 @@ impl<'a> Parser<'a> {
     /// both its operands stand built: over an `and` or `or` group it applies to each member and
     /// the results join (›A conjecture states a boolean, and calling it yields the other side of a
     /// fact‹ [[R31]]), and a pointer to its left steps through `native`, the version it replaced
-    /// (stand-in for #487). `None` where its own parse runs.
+    /// (stand-in for #462). `None` where its own parse runs.
     fn around_written(
         &mut self,
         written: DyadPtr,
