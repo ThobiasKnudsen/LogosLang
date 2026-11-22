@@ -163,7 +163,10 @@ jobs:
           LOGOS_START_GRAPH=target/start_graph.bin cargo build --release --locked --target ${{ matrix.target }}
           LOGOS_WRITE_START_GRAPH=target/start_graph.again "$BIN"
           cmp target/start_graph.bin target/start_graph.again
-          LOGOS_STATS=1 "$BIN" '1 + 1' 2>&1 >/dev/null | grep -q '^store start: the carried graph'
+          # Read whole before matching: `grep -q` stops at its match, and the run would write on
+          # into a closed pipe.
+          stats="$(LOGOS_STATS=1 "$BIN" '1 + 1' 2>&1 >/dev/null)"
+          printf '%s\n' "$stats" | grep -q '^store start: the carried graph'
 
       # Smoke-test what we are about to ship, everywhere the artifact is native to its
       # runner. Cross-compiled artifacts (aarch64 Linux, Intel macOS) cannot run here.
