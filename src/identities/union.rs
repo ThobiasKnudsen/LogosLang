@@ -141,6 +141,46 @@ pub(crate) unsafe fn filled(
     Ok(build_fill(store, types, value, ty, member))
 }
 
+/// The `value` member of `ty` where `ty` is `void!`, whose functions fill it where their body
+/// ends, the body giving nothing.
+///
+/// # Safety
+/// `ty` must be null or a type node from the store.
+pub(crate) unsafe fn void_value_of(types: &Core, ty: DyadPtr) -> Option<DyadPtr> {
+    let (value, _) = fallible_members(types, ty)?;
+    (hole::type_in(value) == types.void_).then_some(value)
+}
+
+/// `body`, which gives nothing, with one more line, which makes a value of `union` holding
+/// `member`, a `void` member: what a `void!` function gives where its body ends. A body of one
+/// line that holds nothing is the line itself, so it becomes the first line of a scope below
+/// `parent`.
+///
+/// # Safety
+/// `body` must be a closed sequence or a reduced dyad from the store, `union` a union type,
+/// `member` one of its member holes, of type `void`, and `parent` a scope node.
+pub(crate) unsafe fn end_filled(
+    store: &mut Store,
+    types: &Core,
+    body: DyadPtr,
+    [union, member]: [DyadPtr; 2],
+    parent: DyadPtr,
+) -> DyadPtr {
+    use super::scope;
+    let filled = build_fill(store, types, std::ptr::null_mut(), union, member);
+    if dyad::ty(body) == types.scope {
+        let mut lines = scope::exprs_of(body).unwrap_or_default().to_vec();
+        lines.push(filled);
+        return scope::with_exprs(store, types, body, &lines);
+    }
+    let sequence = scope::mint(store, types.scope, parent);
+    for line in [body, filled] {
+        scope::push_item(store, types.array_, sequence, line);
+    }
+    scope::fill(types, sequence);
+    sequence
+}
+
 /// A new value of `union` holding `member`, which `value` fills where it runs.
 ///
 /// # Safety
@@ -157,17 +197,21 @@ pub(crate) unsafe fn build_fill(
     store.alloc_words(types.union.fill, &[value, union, tag, types.union.fill_leaf, union])
 }
 
-/// What a fill node fills, the union it makes, and how the member's value moves.
+/// What a fill node fills, the union it makes, and how the member's value moves: `None` for a
+/// `void` member, which holds nothing, its value null or a node that gives nothing.
 ///
 /// # Safety
 /// `node` must be a fill node from [`build_fill`].
-unsafe fn fill_parts(types: &Core, node: DyadPtr) -> (DyadPtr, DyadPtr, super::read::Carry) {
+unsafe fn fill_parts(
+    types: &Core,
+    node: DyadPtr,
+) -> (DyadPtr, DyadPtr, Option<super::read::Carry>) {
     let ops = dyad::value(node) as *const DyadPtr;
     let union = *ops.add(1);
     let members = array::items(meta::record_fields_of(union));
-    let member = members[tag_in(node) as usize - 1];
-    let carry = super::read::carry_of(types, hole::type_in(member))
-        .expect("a union's member moves whole into its room");
+    let ty = hole::type_in(members[tag_in(node) as usize - 1]);
+    let carry = super::read::carry_of(types, ty);
+    debug_assert!(carry.is_some() || ty == types.void_, "a union's member moves whole");
     (*ops, union, carry)
 }
 
@@ -185,10 +229,16 @@ fn run_fill(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a fill node, whose value gives its member's type.
     unsafe {
         let (value, union, carry) = fill_parts(rt.types(), node);
-        let taken = super::assign::take(rt, carry, value)?;
+        let taken = match carry {
+            Some(carry) => Some((carry, super::assign::take(rt, carry, value)?)),
+            None if !value.is_null() => rt.run(value).map(|_| None)?,
+            None => None,
+        };
         let at = rt.scratch(meta::record_size_of(union) as usize);
         start(node, at);
-        super::assign::put(carry, at.add(TAG_BYTES), taken);
+        if let Some((carry, taken)) = taken {
+            super::assign::put(carry, at.add(TAG_BYTES), taken);
+        }
         Ok(at as i64)
     }
 }
@@ -197,11 +247,17 @@ fn lower_fill(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run_fill`].
     unsafe {
         let (value, union, carry) = fill_parts(lw.types(), node);
-        let taken = super::assign::lower_take(lw, carry, value)?;
+        let taken = match carry {
+            Some(carry) => Some((carry, super::assign::lower_take(lw, carry, value)?)),
+            None if !value.is_null() => lw.lower(value).map(|_| None)?,
+            None => None,
+        };
         let at = lw.scratch_slot(meta::record_size_of(union) as usize);
         let node = lw.node_addr(node);
         lw.call_seed(compiled_start as *const () as usize, &[node, at])?;
-        super::assign::lower_put(lw, carry, at, TAG_BYTES as i64, taken);
+        if let Some((carry, taken)) = taken {
+            super::assign::lower_put(lw, carry, at, TAG_BYTES as i64, taken);
+        }
         Ok(at)
     }
 }
@@ -242,6 +298,9 @@ pub(crate) unsafe fn lay_out(
     for (&member, &binding) in members.iter().zip(bindings) {
         Binding::set_field_offset(binding, ty, TAG_BYTES);
         let t = hole::type_in(member);
+        if t == types.void_ {
+            continue;
+        }
         room = room.max(super::by_copy::place_width(types, t));
         align = align.max(super::read::place_align(types, t));
     }
@@ -251,7 +310,8 @@ pub(crate) unsafe fn lay_out(
 /// The place of the member `member` of the union value `value`, of the union type `union`: a
 /// dereference of the room's address, which is checked each time it runs. `value` is a place,
 /// whose address is taken, or a value nothing names, which runs to the address of its bytes.
-/// With `writes`, the read is the left side of `=`, which makes the union hold the member.
+/// With `writes`, the read is the left side of `=`, which makes the union hold the member. A
+/// `void` member is no place: its read checks the tag and gives nothing.
 ///
 /// # Safety
 /// `value` must be a reduced dyad from the store whose type is `union`, a union type, and
@@ -269,6 +329,10 @@ pub(crate) unsafe fn build_member(
     let u64_ty = types.numtypes[NumType::U64 as usize];
     let writes = store.alloc_blob(u64_ty, &u64::from(writes).to_ne_bytes());
     let member_type = hole::type_in(member);
+    if member_type == types.void_ {
+        let ops = [base, union, tag, writes, types.union.leaf, types.void_];
+        return store.alloc_words(types.union.member, &ops);
+    }
     // The room is written as the member is, by its gates.
     let room_type = pointer::make_pointer_type(store, types, hole::gated_type_in(member));
     let ops = [base, union, tag, writes, types.union.leaf, room_type];
@@ -324,6 +388,16 @@ unsafe fn tag_of(store: &mut Store, types: &Core, union: DyadPtr, member: DyadPt
 /// `at` must be the address of a union value.
 pub(crate) unsafe fn held(at: *const u8) -> Option<usize> {
     (tag_at(at) as usize).checked_sub(1)
+}
+
+/// The member hole the union value at `at`, of the union type `union`, holds, and the address of
+/// its room; `None` while it holds none.
+///
+/// # Safety
+/// `at` must be the address of a value of `union`, a union type.
+pub(crate) unsafe fn held_member(union: DyadPtr, at: *const u8) -> Option<(DyadPtr, *const u8)> {
+    let members = array::items(meta::record_fields_of(union));
+    Some((*members.get(held(at)?)?, at.add(TAG_BYTES)))
 }
 
 /// # Safety

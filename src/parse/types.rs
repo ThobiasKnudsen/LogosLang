@@ -471,6 +471,15 @@ impl<'a> Parser<'a> {
         let Some(value) = (unsafe { crate::identities::type_identity_of(self.types, lhs) }) else {
             return Err(self.fail_at(left.start, ParseError::FallibleNeedsType));
         };
+        let mint = self.fallible_of(value, left.start)?;
+        tape.remove(-1);
+        tape.place(mint);
+        Ok(Constructed::Gave)
+    }
+
+    /// `value!`, `union ( value := value, err := error )` (›Target: errors are values (`T!`),
+    /// handled by `if`, passed on by `try`…‹ [[R140]]); an error is placed at `at`.
+    pub(crate) fn fallible_of(&mut self, value: DyadPtr, at: usize) -> Result<DyadPtr, ParseError> {
         let depth = self.cx.scopes.depth();
         let scope = self.open_scope();
         let (mut members, mut bindings) = (Vec::new(), Vec::new());
@@ -484,7 +493,7 @@ impl<'a> Parser<'a> {
                     std::ptr::null_mut(),
                 );
                 let binding = self.mint_binding(member, scope, name.as_bytes());
-                self.enter_binding_in(scope, name, binding, left.start)?;
+                self.enter_binding_in(scope, name, binding, at)?;
                 members.push(member);
                 bindings.push(binding);
                 Ok(())
@@ -495,13 +504,10 @@ impl<'a> Parser<'a> {
         }
         declared?;
         // SAFETY: the members are holes just built with their bindings, their types type nodes.
-        let mint = unsafe {
-            self.check_members(&members, &bindings).map_err(|e| self.fail_at(left.start, e))?;
-            self.mint_union(scope, body, &members, &bindings)?
-        };
-        tape.remove(-1);
-        tape.place(mint);
-        Ok(Constructed::Gave)
+        unsafe {
+            self.check_members(&members, &bindings).map_err(|e| self.fail_at(at, e))?;
+            self.mint_union(scope, body, &members, &bindings)
+        }
     }
 
     /// The union of `members`, declared in `scope` by `bindings` with `body` below them: the mint
@@ -549,8 +555,10 @@ impl<'a> Parser<'a> {
         Ok(mint)
     }
 
-    /// A union holds only members whose values move whole into its room, and a member's type
-    /// takes no `pub`, every member being read from outside.
+    /// A union holds only members whose values move whole into its room, or a `void` one, which
+    /// holds nothing (`void!`, ›Target: a constructor returns `void!`, so a user's syntax error is
+    /// a recoverable value‹ [[R142]]), and a member's type takes no `pub`, every member being read
+    /// from outside.
     ///
     /// # Safety
     /// `members` must be holes from the store, each over a type node, and `bindings` their
@@ -567,7 +575,8 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::UnionMemberPub);
             }
             let ty = crate::identities::hole::type_in(member);
-            if crate::identities::read::carry_of(self.types, ty).is_none() {
+            if ty != self.types.void_ && crate::identities::read::carry_of(self.types, ty).is_none()
+            {
                 return Err(ParseError::UnionMemberUnkept(Box::new(Binding::spelling(binding))));
             }
         }
@@ -1603,6 +1612,10 @@ impl<'a> Parser<'a> {
         match kind {
             SlotKind::Parse => {
                 let at = self.cx.pos;
+                // It gives `void!`, so a `try` or a raise in it hands the driver its error
+                // (›Target: a constructor returns `void!`, so a user's syntax error is a
+                // recoverable value‹ [[R142]]).
+                let output = self.fallible_of(types.void_, at)?;
                 // `tape`, centred on the appearance, and unnamed, the node `tape[0]`
                 // reaches: fresh when the type itself appeared, the value when a value did.
                 let (input, params) = self.hidden_param_record(
@@ -1619,7 +1632,7 @@ impl<'a> Parser<'a> {
                         types.fn_type,
                         input,
                         &params,
-                        types.void_,
+                        output,
                         None,
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
