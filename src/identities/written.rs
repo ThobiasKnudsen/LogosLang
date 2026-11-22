@@ -25,6 +25,16 @@ pub struct Replaced {
     pub(crate) native: DyadPtr,
 }
 
+/// Each name of the file with its native version, words only, so the core that holds them is
+/// carried in the start graph as its other fields are.
+pub type Written = [Replaced; NAMES.len()];
+
+/// What a core holds until the file is read.
+pub(super) const fn unread() -> Written {
+    let null = std::ptr::null_mut();
+    [Replaced { written: null, native: null }; NAMES.len()]
+}
+
 /// Reads the file into `section`, the carried files' own, and gives the root each of its names in
 /// place of the native version.
 ///
@@ -36,23 +46,15 @@ pub(super) fn load(
     trie: &mut RegexTrie,
     core: &Core,
     section: DyadPtr,
-) -> Vec<Replaced> {
-    let natives: Vec<DyadPtr> = NAMES
-        .iter()
-        .map(|name| {
-            trie.remove(&regex::escape(name), core.root_scope)
-                .unwrap_or_else(|_| panic!("{}: the seed declares no `{name}`", FILE.path))
-        })
-        .collect();
+) -> Written {
+    let natives = NAMES.map(|name| {
+        trie.remove(&regex::escape(name), core.root_scope)
+            .unwrap_or_else(|_| panic!("{}: the seed declares no `{name}`", FILE.path))
+    });
     carried::read(store, trie, core, section, &FILE);
-    let declared: Vec<_> =
-        NAMES.iter().map(|&name| carried::name_in(trie, section, &FILE, name)).collect();
+    let declared = NAMES.map(|name| carried::name_in(trie, section, &FILE, name));
     let published: Vec<(String, DyadPtr)> =
         NAMES.iter().zip(&declared).map(|(name, d)| ((*name).to_string(), d.binding)).collect();
     carried::publish(store, trie, core, &FILE, &published);
-    declared
-        .iter()
-        .zip(natives)
-        .map(|(d, native)| Replaced { written: d.identity, native })
-        .collect()
+    std::array::from_fn(|i| Replaced { written: declared[i].identity, native: natives[i] })
 }

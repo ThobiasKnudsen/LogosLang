@@ -195,7 +195,7 @@ pub struct Core {
     /// The section the files the seed carries stand in, whose names live for the run.
     pub carried: DyadPtr,
     /// The operations written in Logos, each with the native version whose name it took.
-    pub written: Vec<written::Replaced>,
+    pub written: written::Written,
     pub(crate) instructions: instruction::Instructions,
     pub held_type: held_type::HeldTypeIds,
     pub this: this::ThisIds,
@@ -588,7 +588,7 @@ impl Core {
             hashmap,
             type_mint: type_mint::Members::unread(),
             carried: std::ptr::null_mut(),
-            written: Vec::new(),
+            written: written::unread(),
             instructions,
             held_type,
             this,
