@@ -47,7 +47,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let in_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("in", in_);
 
-    let record = meta::token_record(cx, meta::prec::RANGE, crate::parse::Assoc::Left, sides);
+    let record = meta::token_record(cx, meta::prec::COMPARE, crate::parse::Assoc::Left, sides);
     let range = cx.store.alloc_head(cx.type_, record);
     cx.declare("..", range);
 

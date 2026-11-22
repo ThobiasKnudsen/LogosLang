@@ -321,8 +321,8 @@ mod tests {
             (">", prec::COMPARE, true),
             ("<=", prec::COMPARE, true),
             (">=", prec::COMPARE, true),
-            ("==", prec::EQUALITY, true),
-            ("!=", prec::EQUALITY, true),
+            ("==", prec::COMPARE, true),
+            ("!=", prec::COMPARE, true),
             ("and", prec::AND, true),
             ("or", prec::OR, true),
             ("=", prec::DECLARE, true),
@@ -335,7 +335,7 @@ mod tests {
             ("fn", prec::READER, true),
             ("if", prec::READER, true),
             ("not", prec::NOT, true),
-            ("⊆", prec::EQUALITY, true),
+            ("⊆", prec::COMPARE, true),
             ("while", prec::READER, true),
             ("for", prec::READER, true),
             ("&", prec::ADDRESS, true),
@@ -349,7 +349,7 @@ mod tests {
             ("else", prec::INERT, false),
             ("in", prec::INERT, false),
             ("of", prec::INERT, false),
-            ("..", prec::RANGE, false),
+            ("..", prec::COMPARE, false),
             ("i32", prec::CONVERT, true),
             ("f64", prec::CONVERT, true),
             ("rational_number", prec::CONVERT, true),
@@ -568,12 +568,14 @@ mod tests {
             assert_eq!(meta::parse_rank_of(core.times), prec::MULTIPLICATIVE);
             assert_eq!(meta::parse_rank_of(core.assign), prec::DECLARE);
             assert_eq!(meta::assoc_of(core.assign), Assoc::Right);
-            for id in [core.i32_, core.rational, core.lossy, core.negate] {
+            for id in [core.i32_, core.rational, core.lossy] {
                 assert_eq!(meta::parse_rank_of(id), prec::CONVERT);
                 assert_eq!(meta::assoc_of(id), Assoc::Right);
             }
+            assert_eq!(meta::parse_rank_of(core.negate), prec::NEGATE);
+            assert_eq!(meta::assoc_of(core.negate), Assoc::Right);
             assert_eq!(meta::parse_rank_of(core.lt), prec::COMPARE);
-            assert_eq!(meta::parse_rank_of(core.eq), prec::EQUALITY);
+            assert_eq!(meta::parse_rank_of(core.eq), prec::COMPARE);
 
             let roles: Vec<&[u8]> = (0..meta::arity_of(core.for_))
                 .map(|i| text_of(meta::role_of(core.for_, i)))

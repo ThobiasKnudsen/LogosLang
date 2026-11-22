@@ -18,11 +18,10 @@ use crate::Core;
 
 /// Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
-    // `==`'s rank, above `not`, as a stand-in for #137: DESIGN gives `⊆` no rank.
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        meta::prec::EQUALITY,
+        meta::prec::COMPARE,
         Assoc::Left,
         &["lhs", "rhs", "op", "output_type"],
     );

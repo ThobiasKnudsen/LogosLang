@@ -42,7 +42,7 @@ pub(super) struct BinaryIds {
 
 /// All left-associative; the trie longest-matches `<=` over `<` and `==` over `=`.
 pub(super) fn register_all(cx: &mut Cx) -> BinaryIds {
-    use meta::prec::{ADDITIVE, COMPARE, EQUALITY, MULTIPLICATIVE};
+    use meta::prec::{ADDITIVE, COMPARE, MULTIPLICATIVE};
     BinaryIds {
         plus: register(cx, "+", ADDITIVE, Family::Arith(ArithOp::Add)),
         minus: register(cx, "-", ADDITIVE, Family::Arith(ArithOp::Sub)),
@@ -52,10 +52,10 @@ pub(super) fn register_all(cx: &mut Cx) -> BinaryIds {
         rem: register(cx, "%", MULTIPLICATIVE, Family::Arith(ArithOp::Rem)),
         lt: register(cx, "<", COMPARE, Family::Cmp(CmpOp::Lt)),
         gt: register(cx, ">", COMPARE, Family::Cmp(CmpOp::Gt)),
-        eq: register(cx, "==", EQUALITY, Family::Cmp(CmpOp::Eq)),
+        eq: register(cx, "==", COMPARE, Family::Cmp(CmpOp::Eq)),
         le: register(cx, "<=", COMPARE, Family::Cmp(CmpOp::Le)),
         ge: register(cx, ">=", COMPARE, Family::Cmp(CmpOp::Ge)),
-        ne: register(cx, "!=", EQUALITY, Family::Cmp(CmpOp::Ne)),
+        ne: register(cx, "!=", COMPARE, Family::Cmp(CmpOp::Ne)),
     }
 }
 
@@ -71,12 +71,11 @@ fn register(cx: &mut Cx, spelling: &str, rank: f64, family: Family) -> DyadPtr {
 }
 
 /// Negation, a second identity of the spelling `-` beside subtraction, the lexer picking one by
-/// what stands left of it. It takes the value to its right, so it ranks and associates as a
-/// number type does (›`-` negates where a space stands before it and none after, or no value
-/// stands to its left; any other `-` subtracts‹ [[R157]]).
+/// what stands left of it, taking the value to its right (›`-` negates where a space stands
+/// before it and none after, or no value stands to its left; any other `-` subtracts‹ [[R157]]).
 fn register_negate(cx: &mut Cx) -> DyadPtr {
     let record =
-        meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::CONVERT, Assoc::Right, &["operand"]);
+        meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::NEGATE, Assoc::Right, &["operand"]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("-", id);
     cx.metas.insert(id, construct_negate);
