@@ -247,6 +247,41 @@ unsafe extern "C" fn compiled_raised(
     })
 }
 
+/// The category and the message of the first hop of the error value `value`, the raise's: what a
+/// parse that gives back an error shows, as a raise nobody handles does. `None` for an error
+/// value with no hop.
+///
+/// # Safety
+/// `value` must be a value of error.logos's `hops`, which is its node (›A value of a type built
+/// by a Logos `parse` travels as a pointer‹ [[R225]]).
+pub(crate) unsafe fn first_hop(
+    rt: &mut Runtime,
+    value: DyadPtr,
+) -> Result<Option<(String, String)>, RunError> {
+    let types: *const Core = rt.types();
+    // SAFETY: the runtime borrows the core, so the store's growth leaves it where it is.
+    let types = &*types;
+    let (hops, hop) = (types.error.value, types.error.hop);
+    let field = |ty: DyadPtr, name: &str| {
+        let bindings = super::array::items(meta::record_field_bindings_of(ty));
+        let k = bindings.iter().position(|&b| Binding::spelling(b) == name);
+        let k = k.expect("error.logos declares the field");
+        let field = super::array::items(meta::record_fields_of(ty))[k];
+        (k, super::hole::type_in(field), Binding::read(bindings[k]).offset)
+    };
+    let ((ptr, ptr_type, _), (size, size_type, _)) = (field(hops, "ptr"), field(hops, "size"));
+    let first = super::this::slot_value(rt, value, ptr, ptr_type)? as *const u8;
+    if first.is_null() || super::this::slot_value(rt, value, size, size_type)? == 0 {
+        return Ok(None);
+    }
+    // The hops lie one after another in `ptr`'s block, each in its own bytes.
+    debug_assert!(super::this::in_bytes(types, hop));
+    let word = |name| std::ptr::read_unaligned(first.add(field(hop, name).2) as *const usize);
+    let category = word("category") as DyadPtr;
+    let message = super::string::text(word("message") as DyadPtr);
+    Ok(Some((Binding::spelling(category), String::from_utf8_lossy(message).into_owned())))
+}
+
 /// The error value a `try` at `location` passes on where it runs: `source`'s, the error value it
 /// was handed, with one more hop, its own (›A raise is `error.X «message»`; the error value is an
 /// array with one element per hop‹ [[R144]]).

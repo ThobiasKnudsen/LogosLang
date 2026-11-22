@@ -950,8 +950,11 @@ impl<'a> Parser<'a> {
         self.cx.scopes.push_barrier();
         self.cx.scopes.push(scope);
         self.cx.runtime_depth += 1;
-        let value =
-            if output == self.types.void_ { BlockValue::Void } else { BlockValue::Returned };
+        // A `void!` body gives nothing, as a `void` one, and its end fills `value`.
+        // SAFETY: `output` is a type node from the store.
+        let filled_at_end = unsafe { crate::identities::union::void_value_of(self.types, output) };
+        let gives_nothing = output == self.types.void_ || filled_at_end.is_some();
+        let value = if gives_nothing { BlockValue::Void } else { BlockValue::Returned };
         let body = self.body_as(value);
         self.cx.runtime_depth -= 1;
         self.cx.scopes.pop();
@@ -960,11 +963,20 @@ impl<'a> Parser<'a> {
             self.cx.frames.pop().expect("parse_fn pushed a frame");
         let body = body?;
         // The value its lines give is the call's, so an `if` among them is a used one.
-        let made = if output == self.types.void_ {
+        let made = if gives_nothing {
             None
         } else {
             // SAFETY: `body` is the valid dyad just built.
             unsafe { crate::identities::drop_model::handed_ends(self.types, body) }?
+        };
+        let body = match filled_at_end {
+            // SAFETY: `body` is the body just built, giving nothing; `value` is the `void` member
+            // of `output`, and `scope` the parameters' scope, the body's.
+            Some(value) => unsafe {
+                let filled = [output, value];
+                crate::identities::union::end_filled(self.rt.store, self.types, body, filled, scope)
+            },
+            None => body,
         };
 
         // SAFETY: `body`/`output` are valid dyads just built.
@@ -1209,11 +1221,12 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // A `!=` check whose branch raises leaves the cell checked for the rest of the scope.
+        // A `!=` check whose branch always leaves, as a raise does even where it hands back a
+        // `T!`, leaves the cell checked for the rest of the scope (›A tape read checked against a
+        // number type reads as that number‹ [[R229]]).
         if let Some((key, ty, false)) = check {
             // SAFETY: `then` is the reduced dyad just parsed.
-            let then_ty = unsafe { dyad::ty(types.through(then)) };
-            if els.is_null() && crate::identities::error::ends_run(types, then_ty) {
+            if els.is_null() && unsafe { flow::of(types, then) }.ends_scope() {
                 let scope = self.cx.open.last_mut().expect("the `if` stands in an open scope");
                 scope.narrowed.push((key, ty));
             }
