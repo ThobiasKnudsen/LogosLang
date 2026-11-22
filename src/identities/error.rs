@@ -5,7 +5,7 @@
 //! name of the scope it stands in, and `error.X «message»` raises it, `{…}` read as `print`
 //! reads it. Inside a function that gives `T!` the raise fills the result's `err` and leaves the
 //! function; anywhere else it is the node `[parts, op, output_type, category]`, whose run ends the
-//! run as a fault.
+//! run as a fault. A `try` that passes an error on makes it one hop longer here.
 //! ›Error values are in v0.1.0; an error names a category, which is a scoped name‹ [[R143]]
 
 use cranelift_codegen::ir::Value;
@@ -23,6 +23,8 @@ use crate::Core;
 
 /// The binding record of the category a raise names.
 const CATEGORY: usize = 3;
+/// The `try` node a passing node stands in, its hop's location.
+const LOCATION: usize = 3;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ErrorIds {
@@ -39,6 +41,12 @@ pub struct ErrorIds {
     /// raise inside a function that gives `T!` fills `err` with.
     pub raised: DyadPtr,
     pub raised_leaf: DyadPtr,
+    /// error.logos's function that makes the error value a `try` passes on.
+    pub passed: DyadPtr,
+    /// The error value a `try` passes on, `[source, op, output_type, location]`, `source` the one
+    /// it was handed and `location` the `try`.
+    pub passing: DyadPtr,
+    pub passing_leaf: DyadPtr,
 }
 
 const ARRAY: carried::File = carried::File {
@@ -70,11 +78,20 @@ pub(super) fn load(
         unsafe { super::type_identity_of(core, Binding::read(named.binding).dyad) }
             .unwrap_or_else(|| panic!("{}: `{name}` is no type", FILE.path))
     };
-    let one_hop = carried::name_in(trie, section, &FILE, "one_hop").identity;
-    // SAFETY: `one_hop` is the dyad a name of the section holds.
-    let made_by = unsafe { dyad::ty(one_hop) };
-    assert!(made_by == core.fn_type, "{}: `one_hop` is no function", FILE.path);
-    ErrorIds { value: ty("hops"), hop: ty("hop"), one_hop, ..core.error }
+    let function = |name| {
+        let f = carried::name_in(trie, section, &FILE, name).identity;
+        // SAFETY: `f` is the dyad a name of the section holds.
+        let made_by = unsafe { dyad::ty(f) };
+        assert!(made_by == core.fn_type, "{}: `{name}` is no function", FILE.path);
+        f
+    };
+    ErrorIds {
+        value: ty("hops"),
+        hop: ty("hop"),
+        one_hop: function("one_hop"),
+        passed: function("passed"),
+        ..core.error
+    }
 }
 
 /// At the rank `lex` and `print` have: a word that reads its own right side at discovery.
@@ -103,8 +120,31 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
     unsafe { meta::mark_own(raised) };
     cx.lower.insert(raised, lower_raised);
     let raised_leaf = callable::mint_native(cx.store, cs.callable, run_raised, cs.seed_native);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        crate::parse::Assoc::Left,
+        &["source", "op", "output_type", "location"],
+    );
+    let passing = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `passing` carries the record just built.
+    unsafe { meta::mark_own(passing) };
+    cx.lower.insert(passing, lower_passing);
+    let passing_leaf = callable::mint_native(cx.store, cs.callable, run_passing, cs.seed_native);
     let null = std::ptr::null_mut();
-    ErrorIds { error, leaf, value: null, hop: null, one_hop: null, raised, raised_leaf }
+    ErrorIds {
+        error,
+        leaf,
+        value: null,
+        hop: null,
+        one_hop: null,
+        raised,
+        raised_leaf,
+        passed: null,
+        passing,
+        passing_leaf,
+    }
 }
 
 /// A raise of `category`, the binding record its declaration made.
@@ -175,6 +215,61 @@ unsafe extern "C" fn compiled_raised(
             let message = print::render_compiled(rt, node, values)?;
             made(rt, node, &message)
         }
+    })
+}
+
+/// The error value a `try` at `location` passes on where it runs: `source`'s, the error value it
+/// was handed, with one more hop, its own (›A raise is `error.X «message»`; the error value is an
+/// array with one element per hop‹ [[R144]]).
+pub(crate) fn build_passing(
+    store: &mut Store,
+    types: &Core,
+    source: DyadPtr,
+    location: DyadPtr,
+) -> DyadPtr {
+    let words = [source, types.error.passing_leaf, types.error.value, location];
+    store.alloc_words(types.error.passing, &words)
+}
+
+/// error.logos's `passed` of `below`, the error value a passing node `node` was handed, with the
+/// node's location as the new hop's: the one step both tiers take.
+///
+/// # Safety
+/// `node` must be a node [`build_passing`] built, `below` a value of the error value's type.
+unsafe fn passed_on(rt: &mut Runtime, node: DyadPtr, below: i64) -> Result<i64, RunError> {
+    let passed = rt.types().error.passed;
+    let location = *(dyad::value(node) as *const DyadPtr).add(LOCATION);
+    rt.apply_values(passed, &[below, location as i64])
+}
+
+fn run_passing(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a passing node, whose source gives the error value it was handed.
+    unsafe {
+        let below = rt.run(*(dyad::value(node) as *const DyadPtr))?;
+        passed_on(rt, node, below)
+    }
+}
+
+fn lower_passing(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: as [`run_passing`].
+    unsafe {
+        let below = lw.lower(*(dyad::value(node) as *const DyadPtr))?;
+        let node = lw.node_addr(node);
+        lw.call_seed(compiled_passing as *const () as usize, &[node, below])
+    }
+}
+
+/// # Safety
+/// Called only by compiled code, with its context, a passing node `lower_passing` baked and the
+/// error value its source gave.
+unsafe extern "C" fn compiled_passing(
+    ctx: *mut crate::run::Context,
+    node: DyadPtr,
+    below: i64,
+) -> i64 {
+    crate::run::interpret_step(ctx, |rt| {
+        // SAFETY: the caller's contract is `passed_on`'s.
+        unsafe { passed_on(rt, node, below) }
     })
 }
 

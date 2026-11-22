@@ -82,6 +82,8 @@ pub(crate) mod string;
 mod subset;
 pub mod tape;
 pub mod this;
+#[path = "try.rs"]
+pub(crate) mod try_mod;
 pub(crate) mod type_mint;
 #[path = "type.rs"]
 mod type_mod;
@@ -203,6 +205,7 @@ pub struct Core {
     pub error: error::ErrorIds,
     pub abort: abort::AbortIds,
     pub union: union::UnionIds,
+    pub try_: try_mod::TryIds,
     pub run_body: run_body::RunBodyIds,
     pub by_copy: by_copy::ByCopyIds,
     pub here: here::HereIds,
@@ -456,6 +459,7 @@ impl Core {
         let error = error::register(&mut cx, &callables);
         let abort = abort::register(&mut cx, &callables);
         let union = union::register(&mut cx, &callables);
+        let try_ = try_mod::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let by_copy = by_copy::register(&mut cx, &callables);
         let (copy_, copy_leaf) = copy::register(&mut cx, &callables);
@@ -594,6 +598,7 @@ impl Core {
             error,
             abort,
             union,
+            try_,
             run_body,
             by_copy,
             here,
