@@ -8173,6 +8173,49 @@ fn a_node_a_parse_places_inside_a_function_reads_that_functions_frame() {
 }
 
 #[test]
+fn a_parse_local_inside_a_node_of_a_type_written_in_logos_is_run_as_it_is_placed() {
+    // `times` multiplies in Logos; `sq` and `q` place a node of it over a name of their own
+    // parse, a call that has ended when the node runs (›A tape read checked against a number
+    // type reads as that number‹ [[R229]]).
+    let times = "times := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, \
+                 run = ( lhs * rhs ), parse_rank = 60, parse = ( tape[0].type = times, \
+                 tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = i32, \
+                 tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
+    let sq = |cell: &str| {
+        format!(
+            "{times}, sq := type ( parse_rank = *.parse_rank + 1, parse = ( n := i32 40, \
+             tape[0] = {cell}, tape.is_constructed[0] = true, tape.remove(-1) ) )"
+        )
+    };
+    let q = format!(
+        "{times}, q := type ( v := pub i32 ?, parse_rank = 61, parse = ( tape[0].type = q, \
+         n := i32 3, if tape[-1].type == i32 ( tape[0].v = tape[-1] times n ), \
+         tape.is_constructed[0] = true, tape.remove(-1) ) )"
+    );
+    let locals = "a := i32 91, b := i32 92";
+    for (src, want) in [
+        (format!("{}, y := i32 3, y sq", sq("n times 2")), "80\n"),
+        (format!("{}, y := i32 3, y sq", sq("i32 40 times 2")), "80\n"),
+        (format!("{}, y := i32 3, y sq", sq("n * 2")), "80\n"),
+        (
+            format!("{}, f := fn (y := i32 ?) -> i32 ( {locals}, y sq ), f(3)", sq("n times 2")),
+            "80\n",
+        ),
+        (
+            format!(
+                "{}, f := fn (y := i32 ?) -> i32 ( {locals}, y sq ), f.compile(), f(3)",
+                sq("n times 2")
+            ),
+            "80\n",
+        ),
+        (format!("{q}, f := fn (y := i32 ?) -> i32 ( x := y q, x.v ), f(5)"), "15\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
     let w = "w := fn (a := i32 ?) -> i32 ( a + 1 )";
     // `sq` writes `v` from the line before it; `cell` writes the line's cell.
