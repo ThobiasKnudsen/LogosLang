@@ -212,6 +212,17 @@ impl<'a> Lowerer<'a, '_> {
         self.plans.iter().any(|plan| plan.contains(&node))
     }
 
+    /// The value a line being lowered holds for `node`, lowered in it before: read again there
+    /// without lowering twice. `None` where no line holds one.
+    ///
+    /// # Safety
+    /// `node` must be a valid dyad from the store.
+    pub(crate) unsafe fn kept_value(&mut self, node: DyadPtr) -> Option<Value> {
+        let node = self.through(node);
+        let var = *self.planned.get(&node)?;
+        Some(self.builder.use_var(var))
+    }
+
     /// The value of planned `node`, given as `value`, joins the innermost line's, which its end
     /// frees.
     fn hold_to_line_end(&mut self, node: DyadPtr, value: Value) -> Result<(), CompileError> {

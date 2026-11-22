@@ -280,7 +280,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     }
 }
 
-fn keyword(
+pub(super) fn keyword(
     cx: &mut Cx,
     spelling: &str,
     parse_rank: f64,
