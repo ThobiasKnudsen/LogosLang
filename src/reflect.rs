@@ -317,9 +317,6 @@ mod tests {
         use crate::identities::meta::prec;
         let cases: &[(&str, f64, bool)] = &[
             ("-", prec::ADDITIVE, true),
-            ("*", prec::MULTIPLICATIVE, true),
-            ("/", prec::MULTIPLICATIVE, true),
-            ("%", prec::MULTIPLICATIVE, true),
             ("<", prec::COMPARE, true),
             (">", prec::COMPARE, true),
             ("<=", prec::COMPARE, true),
@@ -381,11 +378,19 @@ mod tests {
                 assert!(meta::destructor_of(id).is_null(), "destructor of {spelling}");
             }
         }
-        // `+` is written in Logos: its parse is a function, ranked as `-` is.
-        let plus = scopes.resolve(&trie, "+").unwrap().identity;
-        unsafe {
-            assert_eq!(meta::parse_rank_of(plus), prec::ADDITIVE);
-            assert_eq!(dyad::ty(meta::constructor_of(plus)), core.fn_type);
+        // The operations written in Logos: each parse is a function.
+        for (spelling, parse_rank) in [
+            ("+", prec::ADDITIVE),
+            ("*", prec::MULTIPLICATIVE),
+            ("/", prec::MULTIPLICATIVE),
+            ("%", prec::MULTIPLICATIVE),
+        ] {
+            let id = scopes.resolve(&trie, spelling).unwrap().identity;
+            // SAFETY: a resolved identity carries its record.
+            unsafe {
+                assert_eq!(meta::parse_rank_of(id), parse_rank, "parse_rank of {spelling}");
+                assert_eq!(dyad::ty(meta::constructor_of(id)), core.fn_type, "parse of {spelling}");
+            }
         }
     }
 
@@ -444,7 +449,7 @@ mod tests {
     #[test]
     fn the_outer_slot_lists_exactly_the_names_read_from_outside() {
         let (_store, _core, roots) =
-            parse_all(&["n := i32 0", "fn (a := i32 ?) -> i32 ( b := a, n * b * n )"]);
+            parse_all(&["n := i32 0", "fn (a := i32 ?) -> i32 ( b := a, n - b - n )"]);
         // SAFETY: the second root is the fn value just parsed; its list holds binding dyads.
         let mut names: Vec<String> = unsafe { crate::parse::fn_outer(roots[1]) }
             .iter()
@@ -454,7 +459,7 @@ mod tests {
             })
             .collect();
         names.sort();
-        assert_eq!(names, ["*", ":=", "n"]);
+        assert_eq!(names, ["-", ":=", "n"]);
     }
 
     #[test]
@@ -585,7 +590,7 @@ mod tests {
             "x := mut i32 41",
             "point := type (a := i32 ?, b := i64 ?)",
             "pt := point(3, 4)",
-            "x = x * 1",
+            "x = x - 1",
             // A runtime condition: a comptime-known one would fold the `if` away at parse.
             "if (x < 2) ( 3 ) else ( 4 )",
             "for i in 0..10 ( x = x + 1 )",
@@ -649,14 +654,14 @@ mod tests {
             };
             assert_eq!(text_of(slots[0].role), b"lhs");
             assert_eq!(text_of(slots[1].role), b"rhs");
-            let Shape::Tuple { slots: product } = describe(types, slots[1].node) else {
-                panic!("the product should be a tuple");
+            let Shape::Tuple { slots: difference } = describe(types, slots[1].node) else {
+                panic!("the difference should be a tuple");
             };
-            assert_eq!(product.len(), 2, "the product holds its operands and nothing else");
+            assert_eq!(difference.len(), 2, "the difference holds its operands and nothing else");
             let mint = dyad::ty(core.through(slots[1].node));
-            assert_eq!(crate::identities::mint::origin(mint), core.times);
-            let leaf =
-                crate::identities::mint::operation_of(mint).expect("the product's type is a mint");
+            assert_eq!(crate::identities::mint::origin(mint), core.minus);
+            let leaf = crate::identities::mint::operation_of(mint)
+                .expect("the difference's type is a mint");
             let Shape::Callable { convention } = describe(types, leaf) else {
                 panic!("the mint should hold a callable leaf");
             };

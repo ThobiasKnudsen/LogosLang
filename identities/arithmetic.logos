@@ -1,0 +1,85 @@
+# The arithmetic operations, written in ordinary Logos, all made by one maker, `operation`: its
+# parse lands both operands in one type, a plain number taking the other operand's type, makes its
+# own node a node of its mint for that type and fills the mint's typed fields by name, a write that
+# converts the operand as an unwritten conversion does (›A type's `parse` decides what converts into
+# it; unwritten, a value converts only into a type that holds it exactly‹ [[R155]]). A mint's run
+# is the operand type's own instruction (›Which machine operation an operator is (`+` over `i32` →
+# `add_i32`) is named by its mint when it is made, through the operand type's own member‹
+# [[R185]]), and `type_mint` keeps each mint once made (›An operation mints through a chooser, one
+# mint per set of operand types, so each mint's `run` body is parsed once‹ [[R301]]). The seed
+# reads this file at its start, after `type_mint`'s, and each name below holds its operation from
+# then on (›Bootstrapping‹ [[R16]]).
+
+# What an operation refuses, a category of this file.
+error.operands := «an arithmetic operation has no result for these operands»,
+
+arithmetic := pub type (
+    # `t is number`: stand-in for #487.
+    number := static fn (t := type ?) -> bool (
+        t == (i8 or i16 or i32 or i64 or u8 or u16 or u32 or u64 or f32 or f64 or rational_number)
+    ),
+
+    # `t`'s own instruction of the kind `which` names over `rational_number`. A parameter holding
+    # `fn (t := type ?) -> type ( t.mul )` would name it: stand-in for #474.
+    instruction := static fn (t := type ?, which := type ?) -> type (
+        if which == rational_number.add (t.add)
+        else if which == rational_number.sub (t.sub)
+        else if which == rational_number.mul (t.mul)
+        else if which == rational_number.div (t.div)
+        else (t.rem)
+    ),
+
+    # The operation spelled `spelling`, whose mints run the instruction `step_named` names.
+    operation := pub static fn (spelling := string ?, step_named := type ?, rank := u64 ?) -> type (
+        type (
+            spelled := static spelling,
+            step_of := static type step_named,
+
+            mint := pub static fn (l := type ?, r := type ?) -> type (
+                place := type_mint.step(type_mint.step(type_mint.step(type_mint.step(0, arithmetic), step_of), l), r),
+                made := mut type type_mint.kept(place),
+                if made != ? return made,
+                if not number(l) or not number(r) error.operands «`{spelled}` takes numbers, and this type is none»,
+                if l != r error.operands «`{spelled}` takes two values of one type»,
+                if l == (f32 or f64) and step_of == rational_number.rem error.operands «`{spelled}` has no instruction for a float»,
+                made = type (
+                    lhs := pub l ?,
+                    rhs := pub r ?,
+                    output_type := pub static type l,
+                    step := static type instruction(l, step_of),
+                    run = ( step(lhs, rhs) )
+                ),
+                type_mint.keep(place, made),
+                made
+            ),
+
+            parse_rank = rank,
+            associativity = left,
+            parse = (
+                l := type tape[-1].type,
+                r := type tape[1].type,
+                # With nothing on either side, the operation stands as itself; a side nothing has
+                # declared is not taken, so its line waits for the name (›An unknown spelling is a
+                # node of type `unknown_name`; `:=` makes the binding, and the node comes with the
+                # value‹ [[R251]]).
+                if (l != void or r != void) and l != unknown_name and r != unknown_name (
+                    if l == void or r == void error.operands «`{spelled}` needs a value on each side»,
+                    if not number(l) or not number(r) error.operands «`{spelled}` takes numbers, and this type is none»,
+                    t := type if l == rational_number (r) else if r == rational_number (l) else if l ⊆ r (r) else (l),
+                    tape[0].type = mint(t, t),
+                    tape[0].lhs = tape[-1],
+                    tape[0].rhs = tape[1],
+                    tape.is_constructed[0] = true,
+                    tape.remove(1),
+                    tape.remove(-1)
+                )
+            )
+        )
+    )
+),
+
+# Subtraction stays the seed's own, beside negation, which `-` also spells: stand-in for #500.
++ := pub type arithmetic.operation(«+», rational_number.add, u64 60),
+* := pub type arithmetic.operation(«*», rational_number.mul, u64 70),
+/ := pub type arithmetic.operation(«/», rational_number.div, u64 70),
+% := pub type arithmetic.operation(«%», rational_number.rem, u64 70),

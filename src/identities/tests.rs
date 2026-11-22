@@ -26,8 +26,8 @@ unsafe fn minted(node: DyadPtr) -> (DyadPtr, Option<DyadPtr>, Option<DyadPtr>) {
     (mint::origin(m), mint::output_type_of(m), mint::operation_of(m))
 }
 
-/// What a node of `+`, written in identities/plus.logos, is: its mint, the type it gives back and
-/// the instruction its nodes jump to.
+/// What a node of `+`, written in identities/arithmetic.logos, is: its mint, the type it gives back
+/// and the instruction its nodes jump to.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
@@ -39,7 +39,7 @@ unsafe fn added(core: &Core, node: DyadPtr) -> (DyadPtr, DyadPtr, Option<DyadPtr
 /// What `+`'s parse raises where a side is no number.
 fn no_sum() -> ParseError {
     ParseError::ConstructorFailed(Box::new(
-        "error.operands: `+` adds numbers, and this type is none".into(),
+        "error.operands: `+` takes numbers, and this type is none".into(),
     ))
 }
 
@@ -48,14 +48,34 @@ fn no_value_side() -> ParseError {
     ParseError::ConstructorFailed(Box::new("error.operands: `+` needs a value on each side".into()))
 }
 
-/// `+.mint(t, t)`, the mint identities/plus.logos made for two values of `t`.
+/// What an operation over two plain numbers raises where the exact result has no value.
+fn no_exact_value() -> ParseError {
+    ParseError::ConstructorFailed(Box::new(crate::report::run_message(
+        &crate::run::RunError::RationalArithmetic,
+    )))
+}
+
+/// The mint identities/arithmetic.logos made for two values of `t` under the operation whose
+/// instruction is `rational_number.<step>`, kept under the key its maker walks: `arithmetic`,
+/// that instruction, then `t` twice.
 ///
 /// # Safety
 /// `t` must be a type node from the store.
-unsafe fn plus_mint(store: &mut Store, core: &Core, t: DyadPtr) -> DyadPtr {
-    let plus =
-        core.written.iter().find(|w| w.native == core.plus).expect("the seed writes `+`").written;
-    type_mint::mint_of(store, core, plus, &[t, t], |_| None).expect("`+` made its mint for `t`")
+unsafe fn arithmetic_mint(
+    store: &mut Store,
+    trie: &RegexTrie,
+    core: &Core,
+    step: &str,
+    t: DyadPtr,
+) -> DyadPtr {
+    let file =
+        core.written.iter().find(|w| w.native == core.plus).expect("the seed writes `+`").file;
+    let mut scopes = ScopeStack::new();
+    scopes.push(file);
+    let arithmetic = scopes.resolve(trie, "arithmetic").expect("the file names its maker").identity;
+    let which = instruction::member(core, core.rational, step).expect("`rational_number`'s member");
+    type_mint::mint_of(store, core, arithmetic, &[which, t, t], |_| None)
+        .expect("the operation made its mint for `t`")
 }
 
 /// A binding dyad naming `identity`, for a name a test declares by hand, in the store
@@ -130,7 +150,7 @@ fn parses_a_equals_a_plus_one() {
         assert_eq!(core.through(*top), a);
         let sum = *top.add(1);
         let add = core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32);
-        let mint = plus_mint(&mut store, &core, core.i32_);
+        let mint = arithmetic_mint(&mut store, &trie, &core, "add", core.i32_);
         assert_eq!(added(&core, sum), (mint, core.i32_, Some(add)));
         let sops = dyad::value(sum) as *const DyadPtr;
         assert_eq!(core.through(*sops), a);
@@ -759,7 +779,7 @@ fn plus_is_abstract_and_resolves_to_a_concrete_op() {
     unsafe {
         let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
         let add = core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32);
-        let mint = plus_mint(&mut store, &core, core.i32_);
+        let mint = arithmetic_mint(&mut store, &trie, &core, "add", core.i32_);
         assert_eq!(added(&core, body), (mint, core.i32_, Some(add)));
     }
 
@@ -876,7 +896,8 @@ fn minus_and_times_resolve_to_concrete_ops() {
         assert_eq!(minted(body), (core.minus, Some(core.i32_), Some(sub)));
         let rhs = *(dyad::value(body) as *const DyadPtr).add(1);
         let mul = core.ops.arith_leaf(numtype::ArithOp::Mul, NumType::I32);
-        assert_eq!(minted(rhs), (core.times, Some(core.i32_), Some(mul)));
+        let times = arithmetic_mint(&mut store, &trie, &core, "mul", core.i32_);
+        assert_eq!(added(&core, rhs), (times, core.i32_, Some(mul)));
     }
 }
 
@@ -1124,11 +1145,11 @@ fn an_operation_mints_once_per_set_of_field_types() {
         let add = |nt| core.ops.arith_leaf(numtype::ArithOp::Add, nt);
         // `2` converts to `i32` where it lands, so both lines are nodes of one mint.
         assert_eq!(dyad::ty(one), dyad::ty(two));
-        let mint = plus_mint(&mut store, &core, core.i32_);
+        let mint = arithmetic_mint(&mut store, &trie, &core, "add", core.i32_);
         assert_eq!(added(&core, one), (mint, core.i32_, Some(add(NumType::I32))));
         // `x` lies inside `i64`: the mint is `+`'s for `i64`, its `lhs` the conversion of `x`.
         let i64_ = core.numtypes[NumType::I64 as usize];
-        let wide_mint = plus_mint(&mut store, &core, i64_);
+        let wide_mint = arithmetic_mint(&mut store, &trie, &core, "add", i64_);
         assert_eq!(added(&core, wide), (wide_mint, i64_, Some(add(NumType::I64))));
         let conversion = minted(operands(wide).0);
         assert_eq!(conversion, (core.convert, Some(i64_), Some(core.ops.convert_)));
@@ -1925,7 +1946,12 @@ fn float_division_is_ieee_and_float_remainder_is_rejected() {
         f64::INFINITY.to_bits() as i64,
     );
     // No Cranelift float remainder; `%` over floats is rejected at parse.
-    assert_eq!(parse_err("fn (x := f64 ?) -> f64 ( x % 2.0 )"), ParseError::UnsupportedOperands);
+    assert_eq!(
+        parse_err("fn (x := f64 ?) -> f64 ( x % 2.0 )"),
+        ParseError::ConstructorFailed(Box::new(
+            "error.operands: `%` has no instruction for a float".into()
+        ))
+    );
 }
 
 #[test]
@@ -1933,8 +1959,8 @@ fn comptime_division_is_exact_fractions() {
     diff_typed_call("fn () -> f64 ( f64(1 / 3 * 3) )", "f()", 1.0f64.to_bits() as i64);
     diff_typed_call("fn () -> i32 ( i32 lossy (10 / 3) )", "f()", 3);
     diff_typed_call("fn () -> i32 ( 10 % 3 )", "f()", 1);
-    assert_eq!(parse_err("i32(1 / 0)"), ParseError::LiteralArithmetic);
-    assert_eq!(parse_err("i32(1 % 0)"), ParseError::LiteralArithmetic);
+    assert_eq!(parse_err("i32(1 / 0)"), no_exact_value());
+    assert_eq!(parse_err("i32(1 % 0)"), no_exact_value());
     let h = "h := fn (x := rational_number ?, y := rational_number ?) -> rational_number ( x / y )";
     assert_eq!(
         run_script_result(&format!("{h}, h(1, 0)")),
@@ -3413,7 +3439,7 @@ fn a_type_read_reaches_roles_at_the_graph_level() {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
 
-    let mut p = Parser::new("*.roles[0]", &mut store, &mut trie, &core, s);
+    let mut p = Parser::new("<.roles[0]", &mut store, &mut trie, &core, s);
     let role = p.parse_expression().unwrap();
     // SAFETY: `role` is the role-name string node the read just yielded.
     unsafe {
@@ -4543,7 +4569,7 @@ fn comptime_rational_comparison_folds() {
 #[test]
 fn a_comptime_rational_that_overflows_i64_is_rejected() {
     // The seed's rationals are i64 fractions.
-    assert_eq!(parse_err("i64(10000000000 * 10000000000)"), ParseError::LiteralArithmetic);
+    assert_eq!(parse_err("i64(10000000000 * 10000000000)"), no_exact_value());
 }
 
 #[test]
