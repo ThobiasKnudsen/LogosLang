@@ -1977,8 +1977,8 @@ impl<'a> Parser<'a> {
         name: &str,
         index: Option<usize>,
     ) -> Result<DyadPtr, ParseError> {
-        use crate::identities::meta;
         use crate::identities::numtype::NumType;
+        use crate::identities::{instruction, meta};
         if meta::kind_of(logos).is_none() {
             return Err(ParseError::BadReflectRead);
         }
@@ -2032,21 +2032,22 @@ impl<'a> Parser<'a> {
                     .ok_or(ParseError::BadReflectRead)?;
                 Ok(self.scalar_value(NumType::U64, bytes as i64))
             }
-            _ if crate::identities::instruction::member(self.types, logos, name).is_some() => {
-                Ok(crate::identities::instruction::member(self.types, logos, name)
-                    .expect("found just above"))
-            }
             "scope" if meta::is_record_type(logos) => Ok(self
                 .rt
                 .store
                 .alloc_head(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
-            _ => match self.static_member_read(logos, name)? {
-                Some(member) => Ok(member),
-                None if self.per_node_field_of(logos, name) => {
-                    Err(ParseError::PerNodeThroughType(name.to_string()))
+            _ => {
+                if let Some(step) = instruction::member(self.types, logos, name) {
+                    return Ok(step);
                 }
-                None => Err(ParseError::BadReflectRead),
-            },
+                match self.static_member_read(logos, name)? {
+                    Some(member) => Ok(member),
+                    None if self.per_node_field_of(logos, name) => {
+                        Err(ParseError::PerNodeThroughType(name.to_string()))
+                    }
+                    None => Err(ParseError::BadReflectRead),
+                }
+            }
         }
     }
 

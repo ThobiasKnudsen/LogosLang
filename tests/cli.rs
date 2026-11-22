@@ -8428,20 +8428,13 @@ fn a_mint_is_named_through_its_operations_chooser() {
         ("+.mint(i32, i32).output_type == i32", "true\n"),
         ("<.mint(i64, i64).output_type == bool", "true\n"),
         ("+.mint(i32, i32) == (x + x).type", "true\n"),
-    ] {
-        cases.push((format!("x := i32 3, y := i32 4, w := i64 5, {body}"), want));
-        cases.push((format!("{}, f(3, 4, 5)", f(body)), want));
-        cases.push((format!("{}, f.compile(), f(3, 4, 5)", f(body)), want));
-    }
-    // `+`'s chooser is written in Logos, a call the parse runs after what stands before it on its
-    // line; on a top-level line a node of an operation there cannot run first yet.
-    for (body, want) in [
         ("(x + x).type == +.mint(i32, i32)", "true\n"),
         ("(x + x).type == +.mint(i64, i64)", "false\n"),
         ("(x + 1).type == +.mint(i32, i32)", "true\n"),
         ("(x + w).type == +.mint(i64, i64)", "true\n"),
         ("(x * y).type == +.mint(i32, i32)", "false\n"),
     ] {
+        cases.push((format!("x := i32 3, y := i32 4, w := i64 5, {body}"), want));
         cases.push((format!("{}, f(3, 4, 5)", f(body)), want));
         cases.push((format!("{}, f.compile(), f(3, 4, 5)", f(body)), want));
     }
