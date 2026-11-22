@@ -831,6 +831,14 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
         ),
         ("n := i32 2, f := fn () -> i32 ( n OP i32 3 ), free n, f()".to_owned(), Err(dead)),
         ("f := fn () -> i32 ( n := i32 5, free n, n OP n ), 0".to_owned(), Err(dead)),
+        ("f := fn () -> i32 ( m := { d := pub dyad (i32, 3) }, m.d OP i32 2 ), f()".to_owned(), Ok("6\n")),
+        ("f := fn () -> i32 ( m := { d := pub dyad (i32, 3) }, i32 2 OP m.d ), f()".to_owned(), Ok("6\n")),
+        (
+            "g := fn () -> i32 ( f := fn () -> i32 ( m := { d := pub dyad (i32, 3) }, m.d OP i32 2 ), \
+             f() + 1 ), g()"
+                .to_owned(),
+            Ok("7\n"),
+        ),
     ];
     for compile in ["", "f.compile(), "] {
         cases.push((
@@ -851,6 +859,41 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
                 }
             }
         }
+    }
+}
+
+/// A parse written in Logos reads its tape in the frame of the call whose line it parses, not in
+/// its own: `tape[k].type` of a `dyad` entry of a `{ … }` declared in a `fn` body is the type of
+/// the node the entry holds (›`x.type` reads the type word of the node a name or an expression
+/// stands for‹ [[R279]]), as it is at the top level, and the parse's own local reads its own frame
+/// again after.
+#[test]
+fn a_parse_written_in_logos_reads_a_local_of_the_call_whose_line_it_parses() {
+    let parse = |k: &str, at: &str| {
+        format!(
+            "{k} := type ( parse_rank = 60, parse = ( n := i32 40, print «{{tape[{at}].type}} {{n}}», \
+             tape.remove({at}), tape[0] = i32 1, tape.is_constructed[0] = true ) )"
+        )
+    };
+    let entry = "m := { d := pub dyad (i64, 3) }";
+    for (src, out) in [
+        (format!("{}, f := fn () -> i32 ( {entry}, m.d k ), f()", parse("k", "-1")), "i64 40\n1\n"),
+        (
+            format!("{}, f := fn () -> i32 ( {entry}, (m.d) k ), f()", parse("k", "-1")),
+            "i64 40\n1\n",
+        ),
+        (format!("{}, {entry}, m.d k", parse("k", "-1")), "i64 40\n1\n"),
+        (format!("{}, f := fn () -> i32 ( {entry}, j m.d ), f()", parse("j", "1")), "i64 40\n1\n"),
+        (
+            format!(
+                "{}, g := fn () -> i32 ( f := fn () -> i32 ( {entry}, m.d k ), f() + 1 ), g()",
+                parse("k", "-1")
+            ),
+            "i64 40\n2\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), out), "{src}: stderr: {stderr}");
     }
 }
 
