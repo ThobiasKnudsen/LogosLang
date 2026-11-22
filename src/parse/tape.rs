@@ -627,6 +627,7 @@ impl Carry for Cell {
             dyad,
             constructed,
             bracket,
+            held,
             text,
             start,
             len,
@@ -640,6 +641,7 @@ impl Carry for Cell {
         dyad.carry(out);
         constructed.carry(out);
         bracket.carry(out);
+        held.carry(out);
         text.map(|t| (t.as_ptr() as *mut u8, (t.as_ptr() as *const [u8]).len())).carry(out);
         (start, len).carry(out);
         (path, target.0, target.1).carry(out);
@@ -651,6 +653,7 @@ impl Carry for Cell {
     fn uncarry(inp: &mut In) -> Self {
         let dyad = DyadPtr::uncarry(inp);
         let (constructed, bracket) = (bool::uncarry(inp), bool::uncarry(inp));
+        let held = Option::<usize>::uncarry(inp);
         let text = Option::<(*mut u8, usize)>::uncarry(inp).and_then(|(at, len)| {
             std::ptr::NonNull::new(std::ptr::slice_from_raw_parts_mut(at, len) as *mut str)
         });
@@ -663,6 +666,7 @@ impl Carry for Cell {
             dyad,
             constructed,
             bracket,
+            held,
             text,
             start,
             len,
