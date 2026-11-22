@@ -1,16 +1,16 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Numeric conversion, written (`i64 (a)`, `i32 lossy (x)`) or not: one shared `convert`
-//! identity for every conversion between number types, the node `[operand]` under its mint for
-//! the source and target types, number types or `rational_number` as the source for a rational
-//! value.
+//! Conversion, written (`i64 (a)`, `i32 lossy (x)`, `@i32 &a`) or not: one shared `convert`
+//! identity for every conversion between number types and between pointer types, the node
+//! `[operand]` under its mint for the source and target types, number types or `rational_number`
+//! as the source for a rational value. A pointer keeps its address; only its type changes.
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
-use super::numtype::{apply_cast, of_type_node, NumType};
+use super::numtype::{apply_cast, is_pointer_type, of_type_node};
 use super::{meta, mint, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -59,33 +59,51 @@ unsafe fn choose(_: &mut Store, types: &Core, key: &[DyadPtr]) -> Option<mint::M
 ///
 /// # Safety
 /// `node` must be a conversion node [`build_convert`] built.
-unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, NumType) {
+unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr) {
     let operand = *(dyad::value(node) as *const DyadPtr);
     match mint::key_of(dyad::ty(node)) {
-        Some(&[from, to]) => (operand, from, of_type_node(to)),
+        Some(&[from, to]) => (operand, from, to),
         _ => unreachable!("a conversion is typed by its mint for its source and target"),
     }
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid conversion node; a rational value is the address of its
-    // sixteen bytes.
+    // SAFETY: `node` is a valid conversion node, so its operand runs to a value of `from`.
     unsafe {
         let (operand, from, to) = parts(node);
         let v = rt.run(operand)?;
-        if from == rt.types().rational {
-            let p = v as usize as *const u8;
-            if p.is_null() {
-                return Err(RunError::Uninitialized);
-            }
-            let (num, den) = super::rational::read_at(p);
-            if den == 0 {
-                return Err(RunError::Uninitialized);
-            }
-            return Ok(super::rational::cast_pair(num, den, to));
-        }
-        apply_cast(of_type_node(from), to, v).ok_or(RunError::NoWholeNumber)
+        converted(rt.types(), from, to, v)
     }
+}
+
+/// `v`, a value of `from`, as the value of `to` it converts to: a pointer keeps its address, a
+/// number is cast.
+///
+/// # Safety
+/// `from` and `to` must be type nodes a conversion is built between, `v` a value of `from`; a
+/// rational value is the address of its sixteen bytes.
+pub(crate) unsafe fn converted(
+    types: &Core,
+    from: DyadPtr,
+    to: DyadPtr,
+    v: i64,
+) -> Result<i64, RunError> {
+    if is_pointer_type(to) {
+        return Ok(v);
+    }
+    let to = of_type_node(to);
+    if from == types.rational {
+        let p = v as usize as *const u8;
+        if p.is_null() {
+            return Err(RunError::Uninitialized);
+        }
+        let (num, den) = super::rational::read_at(p);
+        if den == 0 {
+            return Err(RunError::Uninitialized);
+        }
+        return Ok(super::rational::cast_pair(num, den, to));
+    }
+    apply_cast(of_type_node(from), to, v).ok_or(RunError::NoWholeNumber)
 }
 
 /// A rational value is interpreted only, as every operator over one is.
@@ -97,6 +115,9 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             return Err(CompileError::NotLowerable(node));
         }
         let v = lw.lower(operand)?;
-        lw.emit_cast(of_type_node(from), to, v)
+        if is_pointer_type(to) {
+            return Ok(v);
+        }
+        lw.emit_cast(of_type_node(from), of_type_node(to), v)
     }
 }

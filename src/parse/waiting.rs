@@ -952,7 +952,8 @@ impl<'a> Parser<'a> {
             if !lays_out || types.is_hole(types.through(line)) {
                 return Ok(line);
             }
-            Ok(g.0.empty_place_of(line)?.unwrap_or(line))
+            // The gates of a type known only here grant nothing: the parse checked every write.
+            Ok(g.0.empty_place_of(line)?.map_or(line, |(place, _)| place))
         });
         let built_pos = g.0.cx.pos;
         drop(g);

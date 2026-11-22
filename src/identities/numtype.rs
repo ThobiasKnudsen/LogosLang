@@ -235,9 +235,21 @@ pub(crate) unsafe fn is_pointer_type(type_node: DyadPtr) -> bool {
     !v.is_null() && *(v as *const u8) == ADDR_TAG
 }
 
+/// The type a pointer type points at, as its bytes are read: under its gates.
+///
 /// # Safety
 /// `type_node` must be a pointer type node (`is_pointer_type`).
 pub(crate) unsafe fn pointee_of(type_node: DyadPtr) -> DyadPtr {
+    super::gate::under(gated_pointee_of(type_node))
+}
+
+/// The type a pointer type points at with its gates, what a write through it is judged by
+/// (›A pointer points at a gated type: `&a` of a `mut i32` is `@ mut i32`, and `mut` before a
+/// pointer gates the pointer itself‹ [[R382]]).
+///
+/// # Safety
+/// As [`pointee_of`].
+pub(crate) unsafe fn gated_pointee_of(type_node: DyadPtr) -> DyadPtr {
     let p = dyad::head(type_node).add(super::meta::PAYLOAD_OFF);
     std::ptr::read_unaligned(p as *const DyadPtr)
 }

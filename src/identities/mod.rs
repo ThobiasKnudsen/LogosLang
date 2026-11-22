@@ -240,6 +240,8 @@ pub struct Core {
     pub dotdot_: DyadPtr,
     pub dot_: DyadPtr,
     pub at_: DyadPtr,
+    /// The constructor leaf every pointer type carries: a written conversion, `@i32 &a`.
+    pub pointer_ctor: DyadPtr,
     pub declare_tok: DyadPtr,
     pub ops: ops::OpLeaves,
     pub lower: LowerTable,
@@ -266,6 +268,7 @@ impl Core {
             binding_,
             string_,
             unknown: std::ptr::null_mut(),
+            pointer_ctor: std::ptr::null_mut(),
             derived_parse: std::ptr::null_mut(),
             metas: BTreeMap::new(),
             extents: BTreeMap::new(),
@@ -406,6 +409,7 @@ impl Core {
             deref_leaf,
             addr_leaf,
             at: at_,
+            convert_ctor: pointer_ctor,
         } = pointer::register(&mut cx, &callables);
         op_leaves.deref_ = deref_leaf;
         op_leaves.addr_ = addr_leaf;
@@ -613,6 +617,7 @@ impl Core {
             dotdot_,
             dot_,
             at_,
+            pointer_ctor,
             declare_tok,
             ops: op_leaves,
             lower,
@@ -731,13 +736,17 @@ impl Core {
         self.logos_of(p)
     }
 
-    /// The type a node presents: a hole's or a field node's held type, else its type word.
+    /// The type a node presents: a hole's or a field node's held type, a gated identity's the one
+    /// its gates stand over presents, `type` for `mut i32` (›Gates are type nodes: `x := mut i32
+    /// 5`; the record holds no gates‹ [[R381]]), else its type word.
     ///
     /// # Safety
     /// `p` must be a valid dyad from the store.
     pub(crate) unsafe fn logos_of(&self, p: DyadPtr) -> DyadPtr {
         if dyad::ty(p) == self.unknown {
             hole::type_in(p)
+        } else if gate::is_node(p) && read::read_kind(self, p) == read::Read::Identity {
+            self.logos_of(gate::under(p))
         } else {
             dyad::ty(p)
         }
@@ -765,6 +774,8 @@ pub(crate) struct Cx<'a> {
     string_: DyadPtr,
     /// `?`, the type of every hole and field node; null until `hole::register`.
     unknown: DyadPtr,
+    /// The constructor leaf every pointer type carries; null until `pointer::register`.
+    pointer_ctor: DyadPtr,
     /// `Core::derived_parse`; null until the callables are registered.
     derived_parse: DyadPtr,
     /// Ordered by address, so the leaves are minted in one order wherever the arena lies, and
@@ -1035,8 +1046,10 @@ unsafe fn land_with(
     ty: DyadPtr,
     how: Landing,
 ) -> Result<DyadPtr, ParseError> {
-    let Some((ty, (place, _))) =
-        type_identity_of(types, ty).and_then(|t| Some((t, read::place_layout(types, t)?)))
+    // A gated type is landed in as the type it gates.
+    let Some((ty, (place, _))) = type_identity_of(types, ty)
+        .map(|t| gate::under(t))
+        .and_then(|t| Some((t, read::place_layout(types, t)?)))
     else {
         return Ok(value);
     };
@@ -1092,9 +1105,7 @@ unsafe fn land_leaf(
             }
             from == ty
         }
-        read::Read::Pointer(pointee) => {
-            numtype::is_pointer_type(from) && same_type(pointee, numtype::pointee_of(from))
-        }
+        read::Read::Pointer(_) => subset::includes(types, from, ty) == Some(true),
         read::Read::Container(t) if t == types.type_ => {
             if !assign::box_takes(types, t, value) {
                 return Err(ParseError::BadDeclaredType);
@@ -1199,6 +1210,9 @@ unsafe fn is_no_value(types: &Core, node: DyadPtr) -> bool {
 /// # Safety
 /// `node` must be a type identity.
 unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
+    if let Some(words) = gate::written(types, node) {
+        return format!("{words} {}", type_name(types, gate::under(node)));
+    }
     if node == types.type_ {
         return "type".to_string();
     }
@@ -1222,6 +1236,9 @@ unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
 /// # Safety
 /// `node` must be a type identity.
 pub(crate) unsafe fn message_type_name(types: &Core, node: DyadPtr) -> String {
+    if let Some(words) = gate::written(types, node) {
+        return format!("{words} {}", message_type_name(types, gate::under(node)));
+    }
     if numtype::is_pointer_type(node) {
         return format!("@{}", message_type_name(types, numtype::pointee_of(node)));
     }
@@ -1230,7 +1247,8 @@ pub(crate) unsafe fn message_type_name(types: &Core, node: DyadPtr) -> String {
 
 /// The place type and byte width a value is copied into, by a declaration or `alloc`: the type
 /// of what it gives at that type's width, a pointer as a plain `@pointee` place, the borrow,
-/// whatever the value's own pointer type. `None` for a value no place holds whole, and for a
+/// whatever the value's own pointer type, the gates under it kept. `None` for a value no place
+/// holds whole, and for a
 /// plain number, which stays the literal it is until a typed place molds it.
 ///
 /// # Safety
@@ -1246,7 +1264,8 @@ pub(crate) unsafe fn copy_place(
     let t = read::output_type(types, value);
     let width = read::carry_of(types, t)?.width();
     if numtype::is_pointer_type(t) {
-        return Some((pointer::make_pointer_type(store, types, numtype::pointee_of(t)), width));
+        let pointee = numtype::gated_pointee_of(t);
+        return Some((pointer::make_pointer_type(store, types, pointee), width));
     }
     Some((t, width))
 }
@@ -1262,7 +1281,7 @@ pub(crate) fn build_init(
     assign::build_store(store, types, types.assign, place, value)
 }
 
-/// Same type, not same node: an owning `@T` and the plain `@T` name one pointee.
+/// Same type, not same node: an owning `@T` and the plain `@T` name one pointee, gates and all.
 ///
 /// # Safety
 /// `a`/`b` must be null or type nodes from the store.
@@ -1270,7 +1289,7 @@ pub(crate) unsafe fn same_type(a: DyadPtr, b: DyadPtr) -> bool {
     a == b
         || (numtype::is_pointer_type(a)
             && numtype::is_pointer_type(b)
-            && same_type(numtype::pointee_of(a), numtype::pointee_of(b)))
+            && same_type(numtype::gated_pointee_of(a), numtype::gated_pointee_of(b)))
 }
 
 /// Render a run result through `node`'s static type, so `5.5` and `true` print as such. A record

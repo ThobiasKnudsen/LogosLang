@@ -127,6 +127,10 @@ pub(crate) mod prec {
     pub const ADDRESS: f64 = 85.0;
     /// The prefix words over a place: `own`, `move`, `free`, `alloc`, `pub`.
     pub const PREFIX: f64 = 82.0;
+    /// A pointer type taking the pointer to its right, `@i32 &a`: below `&`, whose pointer it
+    /// takes, above the prefix words, which take its hole whole, `own @i32 ?`. ›A parse is ranked
+    /// by what it takes from its right‹ [[R116]].
+    pub const POINTER_TYPE: f64 = 84.0;
     pub const MULTIPLICATIVE: f64 = 70.0;
     pub const ADDITIVE: f64 = 60.0;
     /// `..`, the range infix `for` reads.
@@ -279,8 +283,13 @@ pub(crate) unsafe fn mint_key_of(id: DyadPtr) -> DyadPtr {
     mint_word_at(id, MINT_KEY).read_unaligned()
 }
 
-pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
-    let mut blob = header(ADDR_TAG, Assoc::Left, prec::INERT).to_vec();
+pub(crate) fn pointer_record(
+    store: &mut Store,
+    pointee: DyadPtr,
+    assoc: Assoc,
+    parse_rank: f64,
+) -> *mut u8 {
+    let mut blob = header(ADDR_TAG, assoc, parse_rank).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }

@@ -333,7 +333,8 @@ pub(crate) unsafe fn build_member(
         let ops = [base, union, tag, writes, types.union.leaf, types.void_];
         return store.alloc_words(types.union.member, &ops);
     }
-    let room_type = pointer::make_pointer_type(store, types, member_type);
+    // The room is written as the member is, by its gates.
+    let room_type = pointer::make_pointer_type(store, types, hole::gated_type_in(member));
     let ops = [base, union, tag, writes, types.union.leaf, room_type];
     let room = store.alloc_words(types.union.member, &ops);
     pointer::build_deref(store, types, room, member_type, 0)
