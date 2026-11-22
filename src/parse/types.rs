@@ -227,13 +227,14 @@ impl OwnName {
 }
 
 /// Each field's offset inside a value of `ty`, written onto the field's binding, and the value's
-/// extent: a field `bytes` gives a byte starts there, and every other at the next byte its type's
-/// alignment allows after the field written before it, as C lays out a struct; the size reaches
-/// the end of the field that ends last, rounded up to the widest field's alignment, which is the
-/// record's (›Every name of a scope is seen from anywhere in it; written order counts in four
-/// cases only‹ [[R372]], ›Inside a type body, `layout` gives a field its type and its byte: `a :=
-/// layout (mut i32, 1)`‹ [[R385]], ›`.size_bytes` is a `u64`‹ [[R282]]). `None` where a field
-/// would end past the store's whole room, which no value outgrows.
+/// extent: a field that `bytes` gives a byte starts at that byte, and every other at the next
+/// byte its type's alignment allows after the field written before it, as C lays out a struct;
+/// the size reaches the end of the field that ends last, rounded up to the widest field's
+/// alignment, which is the record's (›Every name of a scope is seen from anywhere in it; written
+/// order counts in four cases only‹ [[R372]], ›Inside a type body, `layout` gives a field its
+/// type and its byte: `a := layout (mut i32, 1)`‹ [[R385]], ›`.size_bytes` is a `u64`‹
+/// [[R282]]). `None` where a field would end past the store's whole room, which no value
+/// outgrows.
 ///
 /// # Safety
 /// `ty` must be a type node from the store, `fields` its field holes and `bindings` their
