@@ -141,9 +141,24 @@ pub(crate) unsafe fn remove(store: &mut Store, types: &Core, node: DyadPtr, key:
 /// `node` must be a node minted for a type whose record carries a run body:
 /// `[field…, null, spec]`.
 unsafe fn spec_slot(node: DyadPtr) -> *mut DyadPtr {
+    tail_start(node).add(1)
+}
+
+/// # Safety
+/// `node` must be a node of a record that is not plain, laid out as `this::empty_node` lays one
+/// out: `[field…]`, then the words [`TAIL_LEN`] counts.
+unsafe fn tail_start(node: DyadPtr) -> *mut DyadPtr {
     // Counted by the type, not scanned to the first null: an unwritten field is null too.
     let n_fields = array::items(meta::record_fields_of(dyad::ty(node))).len();
-    (dyad::value(node) as *mut DyadPtr).add(n_fields + 1)
+    (dyad::value(node) as *mut DyadPtr).add(n_fields)
+}
+
+/// The words `node` keeps after its fields.
+///
+/// # Safety
+/// As `tail_start`.
+pub(crate) unsafe fn tail_of<'a>(node: DyadPtr) -> &'a [DyadPtr] {
+    std::slice::from_raw_parts(tail_start(node), TAIL_LEN)
 }
 
 /// The words a node of a Logos-written type holds after its fields: the run's terminator, then
