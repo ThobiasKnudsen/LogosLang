@@ -1085,7 +1085,7 @@ unsafe fn land_leaf(
             }
             from == ty
         }
-        read::Read::Pointer(_) => numtype::is_pointer_type(from) && pointer::lands_in(from, ty),
+        read::Read::Pointer(_) => subset::includes(types, from, ty) == Some(true),
         read::Read::Container(t) if t == types.type_ => {
             if !assign::box_takes(types, t, value) {
                 return Err(ParseError::BadDeclaredType);

@@ -1067,8 +1067,12 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let mut line = read_target(rt, ops)?;
         let ty = *ops.add(3);
         if !super::meta::is_node_valued(ty, rt.types().fn_type) {
-            if let Some(carry) = made_value(rt.types(), line, ty) {
-                return super::assign::take(rt, carry, line);
+            if let Some((from, carry)) = made_value(rt.types(), line, ty) {
+                let v = super::assign::take(rt, carry, line)?;
+                if from == ty {
+                    return Ok(v);
+                }
+                return super::convert::converted(rt.types(), from, ty, v);
             }
             return constant_value(rt.types(), line, ty);
         }
@@ -1083,18 +1087,22 @@ fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// How `line` moves into a place of `ty` when it is a value of `ty` the pass has made, a constant
-/// or one that ran: such a line is taken as it is. `None` for any other line, a name among them,
-/// whose value is not read while the parse runs.
+/// The type of `line` and how it moves, when it is a value the pass has made, a constant or one
+/// that ran, of a type that lies inside `ty`: such a line is taken, and converted into `ty` as
+/// a conversion left unwritten converts it (›A type's `parse` decides what converts into it;
+/// unwritten, a value converts only into a type that holds it exactly‹ [[R155]]). `None` for
+/// any other line, a name among them, whose value is not read while the parse runs.
 ///
 /// # Safety
 /// `line` must be a reduced dyad from the store; `ty` a type node.
-unsafe fn made_value(types: &Core, line: DyadPtr, ty: DyadPtr) -> Option<Carry> {
-    let made = dyad::ty(line) == ty || dyad::ty(line) == types.ran.node;
-    if !made || super::read::output_type(types, line) != ty {
+unsafe fn made_value(types: &Core, line: DyadPtr, ty: DyadPtr) -> Option<(DyadPtr, Carry)> {
+    let from = super::read::output_type(types, line);
+    let made = dyad::ty(line) == from || dyad::ty(line) == types.ran.node;
+    let inside = from == ty || super::subset::includes(types, from, ty) == Some(true);
+    if !made || !inside {
         return None;
     }
-    super::read::carry_of(types, ty)
+    Some((from, super::read::carry_of(types, from)?))
 }
 
 unsafe fn is_bracket(types: &Core, d: DyadPtr) -> bool {

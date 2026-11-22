@@ -68,28 +68,42 @@ unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr) {
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid conversion node; a rational value is the address of its
-    // sixteen bytes.
+    // SAFETY: `node` is a valid conversion node, so its operand runs to a value of `from`.
     unsafe {
         let (operand, from, to) = parts(node);
         let v = rt.run(operand)?;
-        if is_pointer_type(to) {
-            return Ok(v);
-        }
-        let to = of_type_node(to);
-        if from == rt.types().rational {
-            let p = v as usize as *const u8;
-            if p.is_null() {
-                return Err(RunError::Uninitialized);
-            }
-            let (num, den) = super::rational::read_at(p);
-            if den == 0 {
-                return Err(RunError::Uninitialized);
-            }
-            return Ok(super::rational::cast_pair(num, den, to));
-        }
-        apply_cast(of_type_node(from), to, v).ok_or(RunError::NoWholeNumber)
+        converted(rt.types(), from, to, v)
     }
+}
+
+/// `v`, a value of `from`, as the value of `to` it converts to: a pointer keeps its address, a
+/// number is cast.
+///
+/// # Safety
+/// `from` and `to` must be type nodes a conversion is built between, `v` a value of `from`; a
+/// rational value is the address of its sixteen bytes.
+pub(crate) unsafe fn converted(
+    types: &Core,
+    from: DyadPtr,
+    to: DyadPtr,
+    v: i64,
+) -> Result<i64, RunError> {
+    if is_pointer_type(to) {
+        return Ok(v);
+    }
+    let to = of_type_node(to);
+    if from == types.rational {
+        let p = v as usize as *const u8;
+        if p.is_null() {
+            return Err(RunError::Uninitialized);
+        }
+        let (num, den) = super::rational::read_at(p);
+        if den == 0 {
+            return Err(RunError::Uninitialized);
+        }
+        return Ok(super::rational::cast_pair(num, den, to));
+    }
+    apply_cast(of_type_node(from), to, v).ok_or(RunError::NoWholeNumber)
 }
 
 /// A rational value is interpreted only, as every operator over one is.

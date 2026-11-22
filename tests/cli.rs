@@ -3355,6 +3355,27 @@ fn inclusion_the_design_leaves_open_is_a_checked_error() {
     assert!(echoes.is_empty() && stderr.contains("cannot compute"), "stderr: {stderr}");
 }
 
+/// ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type
+/// that holds it exactly‹ [[R155]]: «`⊆` answers the same question», so a pointer type lies inside
+/// another exactly where its pointer lands, and an array of the one takes a pointer of the other.
+#[test]
+fn a_pointer_type_lies_inside_another_where_its_pointer_lands() {
+    let types = "print «{(@ mut i32) ⊆ (@i32)} {(@i32) ⊆ (@ mut i32)} {(@i32) ⊆ (@i64)}»";
+    let named =
+        "a := mut i32 5, p := &a, b := i32 6, q := &b, print «{p.type ⊆ q.type} {q.type ⊆ p.type}»";
+    for (src, printed) in [(types, "true false false"), (named, "true false")] {
+        assert_eq!(run_line(src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
+    }
+    let arrays = "import file «./identities/array.logos», ";
+    let (code, stdout, stderr) =
+        run_line(&format!("{arrays}a := mut i32 5, p := &a, l := array (@i32) [p], l[0]@"));
+    assert_eq!((code, stdout.trim()), (Some(0), "5"), "stderr: {stderr}");
+    let (code, _, stderr) =
+        run_line(&format!("{arrays}b := i32 6, q := &b, l := array (@ mut i32) [q], 0"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("an element does not fit the element type"), "stderr: {stderr}");
+}
+
 #[test]
 fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
     let q = "q := type ( size := static u64 0, parse_rank = 60, parse = ( \

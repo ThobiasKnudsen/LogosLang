@@ -6,6 +6,7 @@
 //! read at run, such as `tape[1].type`, builds `[lhs, rhs, op]`, run interpreted.
 
 use super::callable::{self, Callables};
+use super::numtype::is_pointer_type;
 use super::read::Read;
 use super::{bool_mod, meta, Cx, NumType};
 use crate::dyad;
@@ -67,9 +68,10 @@ unsafe fn type_valued(types: &Core, n: DyadPtr, k: Read) -> bool {
 
 /// Whether every value of `a` is a value of `b`: the one lies-inside test, which a conversion
 /// written or not asks too (DESIGN ›A type's `parse` decides what converts into it; unwritten, a
-/// value converts only into a type that holds it exactly‹). `None` where DESIGN leaves the answer
-/// open: two different types that are not number types or `bool`, unless one is a type a Logos
-/// `parse` builds, whose values are its own nodes alone.
+/// value converts only into a type that holds it exactly‹); two pointer types by what a pointer
+/// lands in. `None` where DESIGN leaves the answer open: two different types that are not both
+/// pointer types, number types or `bool`, unless one is a type a Logos `parse` builds, whose
+/// values are its own nodes alone.
 ///
 /// # Safety
 /// `a` and `b` are null or dyads from the store.
@@ -80,6 +82,9 @@ pub(crate) unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bo
     }
     if a == b {
         return Some(true);
+    }
+    if is_pointer_type(a) && is_pointer_type(b) {
+        return Some(super::pointer::lands_in(a, b));
     }
     if super::meta::is_node_valued(a, types.fn_type)
         || super::meta::is_node_valued(b, types.fn_type)
