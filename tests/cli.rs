@@ -548,6 +548,75 @@ fn a_gated_type_s_members_are_the_type_s_it_gates() {
     }
 }
 
+/// `m`, a type written in Logos with `static` members and a `run`; `q`, a prefix whose parse makes
+/// a node of `m`; and `p`, a postfix whose parse prints `read` of the node to its left.
+fn static_reader(m_body: &str, read: &str) -> String {
+    format!(
+        "m := type ( lhs := pub i32 ?, {m_body}, run = ( lhs ) ), \
+         q := type ( parse_rank = 60, parse = ( tape[0].type = m, tape[0].lhs = tape[1], \
+         tape.is_constructed[0] = true, tape.remove(1) ) ), \
+         p := type ( parse_rank = 50, parse = ( print «{{{read}}}», tape.remove(-1), \
+         tape[0] = i32 1, tape.is_constructed[0] = true ) )"
+    )
+}
+
+/// A `static` member is one place of its type, read through a node of the type as through the
+/// type's name (›A type body describes one level‹ [[R222]]): a type written in Logos, a plain record
+/// and a built-in operation's mint alike.
+#[test]
+fn a_parse_reads_a_static_member_through_the_node_its_tape_holds() {
+    let statics = "output_type := pub static type i32, k := pub static i32 7, \
+                   f := pub static fn () -> i32 ( 9 )";
+    for (src, printed) in [
+        (format!("{}, x := i32 3, (q x) p", static_reader(statics, "tape[-1].lhs")), "3\n1\n"),
+        (format!("{}, x := i32 3, (q x) p", static_reader(statics, "tape[-1].k")), "7\n1\n"),
+        (
+            format!("{}, x := i32 3, (q x) p", static_reader(statics, "tape[-1].output_type")),
+            "i32\n1\n",
+        ),
+        (format!("{}, x := i32 3, (q x) p", static_reader(statics, "tape[-1].f()")), "9\n1\n"),
+        // The parse runs where its line is parsed, on either tier.
+        (
+            format!(
+                "{}, x := i32 3, f := fn () -> i32 ( (q x) p ), f.compile(), f()",
+                static_reader(statics, "tape[-1].k")
+            ),
+            "7\n1\n",
+        ),
+        (
+            format!(
+                "{}, x := i32 3, print «{{m.k}} {{(q x).k}} {{(q x).type.output_type}}»",
+                static_reader(statics, "0")
+            ),
+            "7 7 i32\n",
+        ),
+        (
+            format!(
+                "w := type ( a := pub i32 ?, k := pub static i32 7 ), {}, x := w(1), x p",
+                static_reader(statics, "tape[-1].k")
+            ),
+            "7\n1\n",
+        ),
+        (
+            format!("{}, x := i32 3, (x + 2) p", static_reader(statics, "tape[-1].output_type")),
+            "i32\n1\n",
+        ),
+        ("print «{(+.mint(i32, i32)).output_type} {(i32 3 + 2).output_type}»".into(), "i32 i32\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: stderr: {stderr}");
+    }
+    // The member's own gate decides, through a node as through the type.
+    let hidden = "output_type := pub static type i32, k := static i32 7";
+    for src in [
+        format!("{}, x := i32 3, (q x) p", static_reader(hidden, "tape[-1].k")),
+        format!("{}, m.k", static_reader(hidden, "0")),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert!(code != Some(0) && stderr.contains("`k` is not `pub`"), "{src}: stderr: {stderr}");
+    }
+}
+
 /// A line of the bracket a parse takes is read as its node, as a line a path reaches is: a `:=`
 /// line's `lhs` is the binding it declares, read with `:` and `.` as the name is (›A `:=` node's
 /// fields are `lhs` and `rhs`‹ [[R274]], ›`x.type` reads the type word of the node a name or an
