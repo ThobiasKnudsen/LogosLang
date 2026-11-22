@@ -74,10 +74,11 @@ pub(crate) fn mint(
     let mut bytes = [0u8; 16];
     bytes[ENTRY_OFF..CONVENTION_OFF].copy_from_slice(&entry.to_ne_bytes());
     bytes[CONVENTION_OFF..].copy_from_slice(&(convention as usize).to_ne_bytes());
+    let leaf = store.alloc_blob(callable, &bytes);
     if entry != 0 {
-        store.note_native(entry);
+        store.note_native(leaf);
     }
-    store.alloc_blob(callable, &bytes)
+    leaf
 }
 
 /// The fn-pointer-to-address cast, done once where addresses enter the graph.
