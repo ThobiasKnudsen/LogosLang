@@ -412,6 +412,15 @@ impl ParseError {
         )
     }
 
+    /// This error met in the right side of an `=` into `place`: a wait for the run carries the
+    /// place, which its line writes when it runs.
+    pub(crate) fn written_into(self, place: &Cell) -> ParseError {
+        match self {
+            ParseError::WaitsForRun(None) => ParseError::WaitsForRun(Some(Box::new(*place))),
+            e => e,
+        }
+    }
+
     /// This error where nothing can wait for the run: the checked refusal a wait stands for.
     pub(crate) fn refused_now(self) -> ParseError {
         match self {

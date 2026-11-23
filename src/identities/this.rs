@@ -434,14 +434,19 @@ pub(crate) unsafe fn build_write(
     let binding = field_binding_of(types, read);
     let fill = is_fill(types, read);
     let write = |store: &mut Store, value: DyadPtr| {
-        let value = if fill { super::place::build(store, types, value) } else { value };
-        act(store, types.this.write, types.this.write_leaf, &[this, k, value, owner, binding])
+        let value = if fill { super::place::build(store, types, value)? } else { value };
+        Ok(act(store, types.this.write, types.this.write_leaf, &[this, k, value, owner, binding]))
     };
     if let Some(ty) = load_type(types, read) {
         if meta::is_node_valued(ty, types.fn_type) {
             let value = super::land(store, types, value, ty)?;
-            return Ok(write(store, value));
+            return write(store, value);
         }
+        // A `dyad` is read through at the field's type, as a landing reads it (›A `dyad ?`
+        // place is transparent: a placeholder for a new node of any type‹ [[R293]]); a fill
+        // places the node itself.
+        let read = (!fill).then(|| super::dyad_place::read_through(store, types, value, ty, false));
+        let value = read.flatten().unwrap_or(value);
         // An `if` whose arms give two types gives a value in each, which lands on its own.
         let arms_differ =
             super::read::value_type(types, value) == Err(crate::parse::ParseError::ArmsDiffer);
@@ -457,14 +462,14 @@ pub(crate) unsafe fn build_write(
         if yields_value {
             let value = super::land(store, types, value, ty)?;
             if fill {
-                return Ok(write(store, value));
+                return write(store, value);
             }
             let ops = [this, k, value, ty, owner, binding];
             return Ok(act(store, types.this.store, types.this.store_leaf, &ops));
         }
     }
     super::read::value_type(types, value)?;
-    let value = super::place::build(store, types, value);
+    let value = super::place::build(store, types, value)?;
     Ok(act(store, types.this.write, types.this.write_leaf, &[this, k, value, owner, binding]))
 }
 
@@ -507,7 +512,7 @@ pub(crate) unsafe fn build_named_write(
         Err(e) => return Err(e),
     }
     let ops = dyad::value(read) as *const DyadPtr;
-    let value = super::place::build(store, types, value);
+    let value = super::place::build(store, types, value)?;
     let ops = [*ops, *ops.add(1), *ops.add(2), value];
     Ok(act(store, types.this.named_write, types.this.named_write_leaf, &ops))
 }

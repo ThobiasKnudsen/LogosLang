@@ -386,14 +386,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A tight extender's left context (`.`'s value, `@`'s pointer, `(`'s
-    /// callee); `None` when the construct opens fresh.
+    /// `@`'s pointer, the cell to its left, a `dyad` read through to the node it gives as an
+    /// infix's operand is ([`Self::read_through_value`]); `None` when `@` opens fresh.
     pub(crate) fn left_operand(
         &mut self,
-        tape: &ParsingTape,
+        tape: &mut ParsingTape,
     ) -> Result<Option<DyadPtr>, ParseError> {
         match tape.at(-1) {
-            Some(&cell) if self.is_operand_cell(&cell) => self.as_operand(cell).map(Some),
+            Some(&cell) if self.is_operand_cell(&cell) => {
+                let operand = self.as_operand(cell)?;
+                self.read_through_value(tape, -1, operand).map(Some)
+            }
             _ => Ok(None),
         }
     }
@@ -434,7 +437,11 @@ impl<'a> Parser<'a> {
         }
         let mut gives = Vec::with_capacity(N);
         for (&name, cell) in names.iter().zip(&cells) {
+            // A side whose last line waits for the run gives what that line gives then, in a
+            // `dyad`, as a landing does (`identities::land`).
             // SAFETY: `name` is a reduced dyad from the store.
+            unsafe { crate::identities::waiting::lands_in(types, name, types.dyad_) };
+            // SAFETY: as above.
             gives.push(match unsafe { crate::identities::read::value_type(types, name) } {
                 Ok(_) => true,
                 Err(e) if taker == Taker::Parse && crate::identities::read::gives_nothing(&e) => {
@@ -539,12 +546,12 @@ impl<'a> Parser<'a> {
     /// type‹ [[R293]]). Where that node's type is known where the operand is written, it is read
     /// at that type each time the line runs (`dyad_place::read_through`, which every landing in a
     /// typed place reads it by too). An entry of a `{ … }` a field path reaches is read as a
-    /// `dyad` name is where the lexer meets it ([`Self::held_now`]). A call whose node's type is
-    /// known only at run runs now, where the pass has reached its line (the top level, or a
-    /// body's line parsed when it runs), after what stands before it ([`Self::run_before`]), and
-    /// its cell stands for the node it gave, as a `dyad` name read there does; a body's line
-    /// holding either waits for the run (`waiting_line_end`), and so does a `while` condition
-    /// holding one (`hold_condition`).
+    /// `dyad` name is where the lexer meets it ([`Self::held_now`]). Any other node whose node's
+    /// type is known only at run, a call or a bracket, runs now, where the pass has reached its
+    /// line (the top level, or a body's line parsed when it runs), after what stands before it
+    /// ([`Self::run_before`]), and its cell stands for the node it gave, as a `dyad` name read
+    /// there does. In a body, the read of either waits for the run ([`Self::known_at_run`]), and
+    /// a `while` condition holding a call waits as a whole (`hold_condition`).
     pub(super) fn read_through_value(
         &mut self,
         tape: &mut ParsingTape,
@@ -570,11 +577,18 @@ impl<'a> Parser<'a> {
                 self.cx.each_pass_read |= self.cx.each_pass;
                 return Ok(node);
             }
-            let call = matches!(
-                read::read_kind(types, operand),
-                read::Read::Executable(read::Dispatch::Call(_))
-            );
-            if !call || !self.in_pass_order() {
+            let runs = matches!(read::read_kind(types, operand), read::Read::Executable(_));
+            if !self.in_pass_order() {
+                // A field of the parse's own node is a number only inside a check of its type,
+                // and its line never waits (›A tape read checked against a number type reads as
+                // that number‹ [[R229]]).
+                let own_field = crate::identities::this::is_field_read(types, operand)
+                    && crate::identities::this::is_fill(types, operand);
+                let waits =
+                    self.waits_here() && !own_field && (runs || self.is_dyad_place(operand));
+                return if waits { Err(self.known_at_run()) } else { Ok(operand) };
+            }
+            if !runs {
                 return Ok(operand);
             }
         }

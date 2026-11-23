@@ -409,7 +409,10 @@ fn construct(
     let inner = p.as_operand(right)?;
     tape.remove(1);
     let types = p.types();
+    // A value that ends in a line held for the run gives a `dyad`, as a landing does (`land`).
     // SAFETY: `inner` is a reduced dyad just parsed.
+    unsafe { super::waiting::lands_in(types, inner, types.dyad_) };
+    // SAFETY: as above.
     let (declares, gives_nothing) = unsafe {
         (
             dyad::ty(inner) == types.declare_,

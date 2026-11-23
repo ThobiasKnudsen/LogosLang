@@ -3447,7 +3447,12 @@ fn a_line_that_reads_a_dyad_name_in_a_body_is_parsed_when_it_runs() {
         ("f := fn (a := dyad ?) -> i64 ( a ), f(f64 2.5)", "these types do not match"),
         ("f := fn (a := dyad ?) -> i64 ( a ), f(1/2)", "no exact value"),
         ("f := fn (a := dyad ?) -> i64 ( a + «x» ), f(i64 1)", "`+` takes numbers"),
-        ("f := fn (a := dyad ?) -> i64 ( g(x := a + 1), 2 ), f(i64 2)", "cannot hold `:=` yet"),
+        // A `:=` before the part that waits is built where it is written, as over a known type.
+        (
+            "g := fn (b := i64 ?) -> i64 ( b ), f := fn (a := dyad ?) -> i64 ( g(x := a + 1), 2 ), \
+             f(i64 2)",
+            "this gives nothing, and a value is needed here",
+        ),
         (
             "f := fn (a := dyad ?) -> i64 ( if a > 0 ( return 1 ), 2 ), f(i64 2)",
             "cannot hold `return` yet",
@@ -3723,11 +3728,11 @@ fn a_quote_part_of_a_body_that_reads_a_dyad_value_gives_it_when_it_runs() {
         run_line("f := fn (a := dyad ?) -> void ( abort «bad {a + 1}» ), f(i64 5)");
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("bad 6"), "stderr: {stderr}");
-    // A part that gives nothing is refused when its line is parsed, as it runs.
+    // A part that gives nothing is refused where it is written, as over a known type.
     let src = "x := mut i64 0, f := fn (a := dyad ?) -> void ( print «{x = a + 1}» ), f(i64 5)";
     let (code, _, stderr) = run_line(src);
     assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-    assert!(stderr.contains("held line") && stderr.contains("gives nothing"), "stderr: {stderr}");
+    assert!(!stderr.contains("held line") && stderr.contains("gives nothing"), "stderr: {stderr}");
 }
 
 #[test]
@@ -5105,6 +5110,88 @@ fn a_type_any_node_gives_at_run_is_used_in_a_body_as_one_known_in_the_pass_is() 
             "{compiled}: {stderr}"
         );
     }
+}
+
+#[test]
+fn a_node_whose_type_is_known_only_at_run_is_read_in_a_body_where_its_line_runs() {
+    let pick = "pick := fn (n := i32) -> type ( if n == 1 (i64) else (i32) )";
+    let f = "f := fn () -> dyad ( i32 5 )";
+    let k = "k := fn (a := i64) -> i64 ( a )";
+    for (src, want) in [
+        // What a bracket, a call or a name gives as a `dyad`, read by an operator, `.type` or a
+        // `while` condition.
+        (format!("{pick}, g := fn (n := i32) -> i64 ( (pick(n) 5) + 1 ), COMPILE g(1)"), "6"),
+        (format!("{pick}, g := fn (n := i32) -> i64 ( (1 + pick(n) 5) ), COMPILE g(1)"), "6"),
+        (format!("{f}, g := fn () -> i32 ( (f()) + 1 ), COMPILE g()"), "6"),
+        (format!("{f}, g := fn () -> type ( (f()).type ), COMPILE g()"), "i32"),
+        (
+            "g := fn (a := dyad ?) -> i64 ( if a > 0 ( i64 1 + a ) else ( i64 2 ) ), \
+             COMPILE g(i64 5)"
+                .into(),
+            "6",
+        ),
+        (
+            format!("{f}, g := fn () -> i32 ( n := mut i32 0, while f() > n ( n = n + 1 ), n ), COMPILE g()"),
+            "5",
+        ),
+        (
+            "p := try alloc 1 of i32 6, g := fn (a := dyad ?) -> i32 ( a@ + 1 ), COMPILE g(p)".into(),
+            "7",
+        ),
+        // A bracket whose line waits gives its value where a value is needed: a cast, `lossy`,
+        // an argument, `=`, `:=` and a condition.
+        (
+            format!(
+                "{pick}, g := fn (n := i32) -> i64 ( x := mut i64 0, x = i64 ((pick(n)) 5), x ), \
+                 COMPILE print «{{g(1)}} {{g(0)}}»"
+            ),
+            "5 5",
+        ),
+        (format!("{pick}, g := fn (n := i32) -> i32 ( i32 lossy ((pick(n)) 5) ), COMPILE g(1)"), "5"),
+        (format!("{pick}, {k}, g := fn (n := i32) -> i64 ( k(((pick(n)) 5)) ), COMPILE g(1)"), "5"),
+        (format!("{pick}, g := fn (n := i32) -> i64 ( y := ((pick(n)) 5), i64 (y) ), COMPILE g(0)"), "5"),
+        (
+            "g := fn (a := dyad ?) -> i64 ( m := mut i64 0, m = (a + 1), m ), COMPILE g(i64 5)"
+                .into(),
+            "6",
+        ),
+        (format!("{f}, g := fn () -> i32 ( if ((f()).type == i32) ( 1 ) else ( 2 ) ), COMPILE g()"), "1"),
+    ] {
+        let interpreted = src.replace("COMPILE ", "");
+        let (code, stdout, stderr) = run_line(&interpreted);
+        assert_eq!((code, stdout.trim_end()), (Some(0), want), "{interpreted}: stderr: {stderr}");
+        let compiled = src.replace("COMPILE ", "g.compile(), ");
+        let (code, _, stderr) = run_line(&compiled);
+        assert_eq!(code, Some(1), "{compiled}");
+        assert!(
+            stderr.contains("is parsed only when it runs") && stderr.contains("stays interpreted"),
+            "{compiled}: {stderr}"
+        );
+    }
+    // The value a waiting line gives converts as one known where it is written does.
+    let (code, _, stderr) =
+        run_line(&format!("{pick}, g := fn (n := i32) -> i32 ( i32 ((pick(n)) 5) ), g(1)"));
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("run error: these types do not match"), "stderr: {stderr}");
+    // A parse body reads a member of the node its tape holds, through a bracket too.
+    let r = "r := type ( parse_rank = fn.parse_rank, parse = ( print «{(tape[1]).size_bytes}», \
+             tape.remove(1), tape.is_constructed[0] = true ) ), r i64";
+    let (code, stdout, stderr) = run_line(r);
+    assert_eq!((code, stdout.as_str()), (Some(0), "8\ntype\n"), "stderr: {stderr}");
+    // A write a parse places waits whole where its right side reads a `-> dyad` call, so the
+    // call runs in the parse's own call and the node is placed over what it gave.
+    let g = "g := fn () -> dyad ( i64 6 )";
+    let cell = "q := type ( parse_rank = 60, parse = ( tape[0] = g() + 1, tape.remove(1), \
+                tape.is_constructed[0] = true ) )";
+    let field = "q := type ( m := dyad ?, parse_rank = 60, parse = ( tape[0].type = q, \
+                 tape[0].m = g() + 1, tape[0] = tape[0].m, tape.remove(1), \
+                 tape.is_constructed[0] = true ) )";
+    assert_runs(&[
+        (format!("{g}, {cell}, q 1"), "7\n"),
+        (format!("{g}, {cell}, h := fn () -> i64 ( q 1 ), h.compile(), h()"), "7\n"),
+        (format!("{g}, {field}, q 1"), "7\n"),
+        (format!("{g}, {field}, h := fn () -> i64 ( q 1 ), h.compile(), h()"), "7\n"),
+    ]);
 }
 
 #[test]
@@ -14882,7 +14969,7 @@ fn two_names_of_one_mint_in_a_body_do_not_convert_into_each_other() {
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: {stderr}");
-        assert!(stderr.contains("held line:1:6: error: these types do not match"), "{src}: {stderr}");
+        assert!(stderr.contains("these types do not match"), "{src}: {stderr}");
     }
     // A value of the name's own type is taken, at every run.
     assert_runs(&[(

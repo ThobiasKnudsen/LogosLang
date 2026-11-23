@@ -129,9 +129,6 @@ struct Context<'a> {
     /// The last `=` built, or held line that writes when it runs: what the sibling-write rule
     /// reads at the next item.
     last_write: LastWrite,
-    /// While a held line is parsed up to a cut where an `=` stands: the source ends before that
-    /// `=`, so what was read last is the place it writes.
-    cut_before_assign: bool,
     /// Whether the constructor now running was woken at discovery, its token
     /// just lexed and the source after it unread, rather than at the boundary:
     /// an identity that reads its own bracket reads source only at discovery.
@@ -229,7 +226,6 @@ impl<'a> Context<'a> {
             root: None,
             queued: std::collections::VecDeque::new(),
             last_write: LastWrite::NONE,
-            cut_before_assign: false,
             discovering: false,
             member_asleep: false,
             reader: std::ptr::null_mut(),

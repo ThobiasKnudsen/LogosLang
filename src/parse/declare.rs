@@ -919,27 +919,6 @@ impl<'a> Parser<'a> {
         self.gates_ahead().0.contains(&self.types.static_)
     }
 
-    /// The value of the `:=` at the cursor where it waits for the run, held from after the gate
-    /// words that open it, which gate the place the run fills; `None`, the cursor where it was,
-    /// for a value parsed here.
-    fn waiting_gated(&mut self) -> Result<Option<Cell>, ParseError> {
-        let at = self.cx.pos;
-        let (words, after) = self.gates_ahead();
-        self.cx.pos = after;
-        let Some(mut held) = self.waiting_value()? else {
-            self.cx.pos = at;
-            return Ok(None);
-        };
-        for gate in words {
-            // SAFETY: a cell's gates are null or a gate mint, and `gate` is a gate word.
-            let joined = unsafe {
-                crate::identities::gate::joined(self.rt.store, self.types, held.gates, gate)
-            };
-            held.gates = joined.ok_or_else(|| self.fail_at(at, ParseError::DoubleGate))?;
-        }
-        Ok(Some(held))
-    }
-
     /// A word that gates the value to its right.
     pub(super) fn is_gate_word(&self, id: DyadPtr) -> bool {
         crate::identities::gate::words(self.types).iter().any(|&(word, _)| word == id)
@@ -999,9 +978,7 @@ impl<'a> Parser<'a> {
         self.cx.filling_at.push(self.cx.pos);
         self.skip_whitespace();
         let (from, notes) = (self.cx.pos, self.cx.open.last().map(|o| o.line_notes_mark()));
-        let value = self
-            .waiting_gated()
-            .and_then(|held| held.map_or_else(|| self.parse_expression_cell(), Ok));
+        let value = self.parse_expression_cell();
         self.cx.filling.pop();
         self.cx.filling_at.pop();
         self.cx.last_declared = binding;
@@ -1183,6 +1160,7 @@ impl<'a> Parser<'a> {
         let value = if hole {
             value
         } else {
+            crate::identities::waiting::lands_in(self.types, value, self.types.dyad_);
             crate::identities::read::value_type(self.types, value)?;
             crate::identities::copy::taken(self.rt.store, self.types, value)
         };

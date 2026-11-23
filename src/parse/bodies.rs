@@ -318,10 +318,6 @@ impl OpenScope {
         stood
     }
 
-    pub(super) fn take_line_notes(&mut self) -> LineNotes {
-        LineNotes { made: std::mem::take(&mut self.made), prose: std::mem::take(&mut self.prose) }
-    }
-
     pub(super) fn add_line_notes(&mut self, notes: LineNotes) {
         self.made.extend(notes.made);
         self.prose.extend(notes.prose);
@@ -1354,7 +1350,10 @@ impl<'a> Parser<'a> {
         let cond = self.parse_block(false, LinesEnd::Condition);
         self.cx.next_block = BlockValue::Used;
         let cond = cond?.1.dyad;
+        // A condition that ends in a line held for the run lands in `bool` when it runs.
         // SAFETY: `cond` is the reduced dyad just parsed.
+        unsafe { crate::identities::waiting::lands_in(self.types, cond, self.types.bool_) };
+        // SAFETY: as above.
         if unsafe { crate::identities::read::output_type(self.types, cond) } != self.types.bool_ {
             return Err(ParseError::NonBoolCondition);
         }
@@ -1681,9 +1680,12 @@ impl<'a> Parser<'a> {
             }
         }
         for (i, &arg) in args.iter().enumerate() {
-            // An `if` whose arms give two types gives one where its parameter's type lands each
-            // arm.
+            // A value that ends in a line held for the run gives a `dyad`, as a landing does
+            // (`identities::land`). An `if` whose arms give two types gives one where its
+            // parameter's type lands each arm.
             // SAFETY: `args` are reduced dyads just parsed.
+            unsafe { crate::identities::waiting::lands_in(self.types, arg, self.types.dyad_) };
+            // SAFETY: as above.
             match unsafe { crate::identities::read::value_type(self.types, arg) } {
                 Ok(_) | Err(ParseError::ArmsDiffer) => {}
                 Err(e) => return Err(e),

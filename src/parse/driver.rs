@@ -966,21 +966,6 @@ impl<'a> Parser<'a> {
             if ended && self.cx.kept.is_none() {
                 return None;
             }
-            let waits =
-                self.waiting_line_end().and_then(|end| end.map(|e| self.hold_line(e)).transpose());
-            match waits {
-                Ok(Some(held)) => {
-                    // SAFETY: `held` holds the line `hold_line` just built.
-                    unsafe { self.fill_if_sibling_write(held.dyad) };
-                    if !bare_branch {
-                        self.consume_separator();
-                    }
-                    self.cx.queued.push_back(held);
-                    continue;
-                }
-                Ok(None) => {}
-                Err(e) => return Some(Err(e)),
-            }
             self.note_cuts();
             let mut tape = ParsingTape::new();
             tape.segment.line = self.cx.open.last().is_some_and(|o| o.own_lines());
