@@ -27,6 +27,11 @@ pub(super) struct OpenFn {
     pub(super) open_below: usize,
     /// Every `return` in the body, committed to the result type as the tail is.
     pub(super) returns: Vec<OpenReturn>,
+    /// The result place, `return` read as a name: a binding laid out in the frame the first
+    /// time the body reads it, null until then.
+    pub(super) result: DyadPtr,
+    /// The body is a type's slot, `run`, `parse` or `free`, which has no `->`.
+    pub(super) slot_body: bool,
 }
 
 /// A `return` in a function body being parsed. Its line may still end names after it, in a
@@ -183,7 +188,7 @@ pub(super) struct OpenScope {
     reached: Vec<DyadPtr>,
     /// The block node whose `dyads` hold the items, when the scope runs as one
     /// later: a drain leaves its cursor on the frame. None at the top level and in a type body.
-    scope: Option<DyadPtr>,
+    pub(super) scope: Option<DyadPtr>,
     /// A `[…]`: its items go whole to the call that takes them, never pending
     /// (DESIGN ›A bracket goes to the call whole‹).
     pub(super) list: bool,
@@ -934,6 +939,8 @@ impl<'a> Parser<'a> {
             outer: Vec::new(),
             open_below: self.cx.open.len(),
             returns: Vec::new(),
+            result: std::ptr::null_mut(),
+            slot_body: result.is_none(),
         });
         // SAFETY: `input` is the record just built, `params` its bindings.
         unsafe {
@@ -1114,6 +1121,19 @@ impl<'a> Parser<'a> {
         };
         self.cx.frames.last_mut().expect("checked above").returns.push(open);
         Ok(())
+    }
+
+    /// What the `return` at the center of `tape` leaves with: the value to its right, or where none
+    /// stands, what the result place holds (›A scope's value is what it evaluates to, and `return`
+    /// is an optional early exit from the enclosing function‹ [[R207]]).
+    pub(crate) fn return_operand(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
+        if self.side_at(tape, 1)?.is_some() {
+            return self.take_right(tape);
+        }
+        let mut cell = *tape.at(0).expect("the word's own cell");
+        cell.dyad = self.result_place(cell.start)?;
+        self.check_unwritten(&cell)?;
+        Ok(cell.dyad)
     }
 
     /// `return a` of a name a scope the `return` leaves holds: the operand becomes `move a`, and
