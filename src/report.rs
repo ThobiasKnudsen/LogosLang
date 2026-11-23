@@ -535,6 +535,11 @@ pub fn parse_message(e: &ParseError) -> String {
              still lets it be written from outside"
                 .into()
         }
+        ParseError::UnionMemberTag => {
+            "a union's own first line is `tag`, the byte that says which member it holds, so no \
+             member is named `tag`"
+                .into()
+        }
         ParseError::HoldsNeedsUnion => {
             "`holds` asks a union which member it holds, and this value is no union".into()
         }

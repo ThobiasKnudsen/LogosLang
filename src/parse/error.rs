@@ -355,6 +355,8 @@ pub enum ParseError {
     UnionLine,
     /// `pub` before a union's member, which every scope reads.
     UnionMemberPub,
+    /// A member named as the union's own line, `tag`.
+    UnionMemberTag,
     /// A member of a union, named here, whose value does not move whole into a place.
     UnionMemberUnkept(Box<String>),
     /// A union type applied to values, as a type with fields is.
