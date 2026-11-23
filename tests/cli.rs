@@ -9302,12 +9302,19 @@ fn a_float_converted_into_an_integer_type_gives_a_value_or_error_no_whole_number
         (
             "y := lossy (f64 2.5), n := mut i32 ?, n = y",
             "",
-            "its conversion into an integer type gives a value or an error, `i32!`",
+            "its conversion into `i32` gives a value or an error, `i32!`",
+        ),
+        (
+            "y := lossy (f64 2.5), n := mut u8 0, n = y",
+            "",
+            "1:43: error: a float may be no number (NaN) or infinite, so its conversion into `u8` \
+             gives a value or an error, `u8!`, which this place cannot hold: write the conversion \
+             before this value and pass its error on, `try u8 …`",
         ),
         (
             "g := fn (a := i32 ?) -> i32 ( a + 1 ), y := lossy (f64 2.5), g(y)",
             "",
-            "write the conversion, `try i32 y`",
+            "write the conversion before this value and pass its error on, `try i32 …`",
         ),
         ("g := fn (a := i32 ?) -> i32 ( a + 1 ), y := lossy (f64 2.5), g(try i32 y)", "3\n", ""),
         // A `dyad` whose type is known only when the program runs: stand-in for #452.
