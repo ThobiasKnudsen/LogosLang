@@ -1,21 +1,21 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The eleven infix operators over two operands, `+ - * / %` and `< > <= >= == !=`, and
-//! negation, which `-` spells too. Each node is `[mint, lhs, rhs]`, or negation's `[mint,
-//! operand]`: the parse converts the operands until they meet, and each operator's chooser makes
-//! its mint for their types, holding the output type and the leaf; comptime rationals fold at
-//! parse instead.
+//! The infix operators over two operands, `+ - * / %`, `< > <= >= == !=` and `and or xor
+//! implies`, and negation, which `-` spells too. Each node is `[mint, lhs, rhs]`, or negation's
+//! `[mint, operand]`: the parse converts the operands until they meet, and each operator's chooser
+//! makes its mint for their types, holding the output type and the leaf; comptime rationals and
+//! two `bool` literals fold at parse instead.
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{self, ArithOp, CmpOp, NumType};
+use super::numtype::{self, ArithOp, CmpOp, LogicOp, NumType};
 use super::read::Read;
 use super::{bool_mod, group, is_numtype_node, meta, mint, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, LowerFn, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, ConstructFn, ParseError};
+use crate::parse::{bool_literal_value, Assoc, ConstructFn, ParseError};
 use crate::store::Store;
 use crate::Core;
 
@@ -23,6 +23,7 @@ use crate::Core;
 pub(super) enum Family {
     Arith(ArithOp),
     Cmp(CmpOp),
+    Logic(LogicOp),
 }
 
 pub(super) struct BinaryIds {
@@ -38,29 +39,38 @@ pub(super) struct BinaryIds {
     pub le: DyadPtr,
     pub ge: DyadPtr,
     pub ne: DyadPtr,
+    pub and_: DyadPtr,
+    pub or_: DyadPtr,
 }
 
-/// All left-associative; the trie longest-matches `<=` over `<` and `==` over `=`.
+/// All left-associative but `implies`; the trie longest-matches `<=` over `<` and `==` over `=`.
+/// The logic words stand in four steps, `implies` last (›Every identity has a `parse_rank`, and
+/// `(` works in two steps‹ [[R259]]).
 pub(super) fn register_all(cx: &mut Cx) -> BinaryIds {
-    use meta::prec::{ADDITIVE, COMPARE, MULTIPLICATIVE};
+    use meta::prec;
+    use Assoc::{Left, Right};
+    register(cx, "xor", prec::OR, Left, Family::Logic(LogicOp::Xor));
+    register(cx, "implies", prec::IMPLIES, Right, Family::Logic(LogicOp::Implies));
     BinaryIds {
-        plus: register(cx, "+", ADDITIVE, Family::Arith(ArithOp::Add)),
-        minus: register(cx, "-", ADDITIVE, Family::Arith(ArithOp::Sub)),
+        plus: register(cx, "+", prec::ADDITIVE, Left, Family::Arith(ArithOp::Add)),
+        minus: register(cx, "-", prec::ADDITIVE, Left, Family::Arith(ArithOp::Sub)),
         negate: register_negate(cx),
-        times: register(cx, "*", MULTIPLICATIVE, Family::Arith(ArithOp::Mul)),
-        div: register(cx, "/", MULTIPLICATIVE, Family::Arith(ArithOp::Div)),
-        rem: register(cx, "%", MULTIPLICATIVE, Family::Arith(ArithOp::Rem)),
-        lt: register(cx, "<", COMPARE, Family::Cmp(CmpOp::Lt)),
-        gt: register(cx, ">", COMPARE, Family::Cmp(CmpOp::Gt)),
-        eq: register(cx, "==", COMPARE, Family::Cmp(CmpOp::Eq)),
-        le: register(cx, "<=", COMPARE, Family::Cmp(CmpOp::Le)),
-        ge: register(cx, ">=", COMPARE, Family::Cmp(CmpOp::Ge)),
-        ne: register(cx, "!=", COMPARE, Family::Cmp(CmpOp::Ne)),
+        times: register(cx, "*", prec::MULTIPLICATIVE, Left, Family::Arith(ArithOp::Mul)),
+        div: register(cx, "/", prec::MULTIPLICATIVE, Left, Family::Arith(ArithOp::Div)),
+        rem: register(cx, "%", prec::MULTIPLICATIVE, Left, Family::Arith(ArithOp::Rem)),
+        lt: register(cx, "<", prec::COMPARE, Left, Family::Cmp(CmpOp::Lt)),
+        gt: register(cx, ">", prec::COMPARE, Left, Family::Cmp(CmpOp::Gt)),
+        eq: register(cx, "==", prec::COMPARE, Left, Family::Cmp(CmpOp::Eq)),
+        le: register(cx, "<=", prec::COMPARE, Left, Family::Cmp(CmpOp::Le)),
+        ge: register(cx, ">=", prec::COMPARE, Left, Family::Cmp(CmpOp::Ge)),
+        ne: register(cx, "!=", prec::COMPARE, Left, Family::Cmp(CmpOp::Ne)),
+        and_: register(cx, "and", prec::AND, Left, Family::Logic(LogicOp::And)),
+        or_: register(cx, "or", prec::OR, Left, Family::Logic(LogicOp::Or)),
     }
 }
 
-fn register(cx: &mut Cx, spelling: &str, rank: f64, family: Family) -> DyadPtr {
-    let record = meta::operand_record(cx, meta::TUPLE_TAG, rank, Assoc::Left, &["lhs", "rhs"]);
+fn register(cx: &mut Cx, spelling: &str, rank: f64, assoc: Assoc, family: Family) -> DyadPtr {
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, rank, assoc, &["lhs", "rhs"]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(spelling, id);
     let (construct, lower, choose) = shims(family);
@@ -86,6 +96,11 @@ fn register_negate(cx: &mut Cx) -> DyadPtr {
 
 const ARITH: u8 = 0;
 const CMP: u8 = 1;
+const LOGIC: u8 = 2;
+const AND: u8 = LogicOp::And as u8;
+const OR: u8 = LogicOp::Or as u8;
+const XOR: u8 = LogicOp::Xor as u8;
+const IMPLIES: u8 = LogicOp::Implies as u8;
 const ADD: u8 = ArithOp::Add as u8;
 const SUB: u8 = ArithOp::Sub as u8;
 const MUL: u8 = ArithOp::Mul as u8;
@@ -121,14 +136,18 @@ fn shims(family: Family) -> (ConstructFn, LowerFn, mint::ChooseFn) {
         Family::Cmp(CmpOp::Ge) => entry!(CMP, GE),
         Family::Cmp(CmpOp::Eq) => entry!(CMP, EQ),
         Family::Cmp(CmpOp::Ne) => entry!(CMP, NE),
+        Family::Logic(LogicOp::And) => entry!(LOGIC, AND),
+        Family::Logic(LogicOp::Or) => entry!(LOGIC, OR),
+        Family::Logic(LogicOp::Xor) => entry!(LOGIC, XOR),
+        Family::Logic(LogicOp::Implies) => entry!(LOGIC, IMPLIES),
     }
 }
 
 fn family_of<const FAMILY: u8, const OP: u8>() -> Family {
-    if FAMILY == ARITH {
-        Family::Arith(ArithOp::from_tag(OP))
-    } else {
-        Family::Cmp(CmpOp::from_tag(OP))
+    match FAMILY {
+        ARITH => Family::Arith(ArithOp::from_tag(OP)),
+        CMP => Family::Cmp(CmpOp::from_tag(OP)),
+        _ => Family::Logic(LogicOp::from_tag(OP)),
     }
 }
 
@@ -198,7 +217,34 @@ unsafe fn build_op(
             let ([lhs, rhs], _) = resolve_binary(store, types, lhs, rhs)?;
             node(store, types, op, lhs, rhs)
         }
+        Family::Logic(l) => build_logic(store, types, op, l, lhs, rhs),
     }
+}
+
+/// Two `bool`s mint, and two literals fold; `and` and `or` over two non-booleans build a group,
+/// the node `[lhs, rhs]` typed by the operation itself, which no chooser made (›`and`/`or` on
+/// non-booleans build a group; every operator on a group applies to each member‹ [[R37]]).
+///
+/// # Safety
+/// `lhs`/`rhs` must be reduced dyads from the store.
+pub(super) unsafe fn build_logic(
+    store: &mut Store,
+    types: &Core,
+    op: DyadPtr,
+    l: LogicOp,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    let is_bool = |n: DyadPtr| super::read::output_type(types, n) == types.bool_;
+    match (is_bool(lhs), is_bool(rhs)) {
+        (true, true) => {}
+        (false, false) if l.groups() => return Ok(store.alloc_words(op, &[lhs, rhs])),
+        _ => return Err(ParseError::NonBoolOperands),
+    }
+    if let (Some(a), Some(b)) = (bool_literal_value(types, lhs), bool_literal_value(types, rhs)) {
+        return Ok(bool_mod::literal_node(store, types.bool_, l.apply(a, b)));
+    }
+    node(store, types, op, lhs, rhs)
 }
 
 /// `[mint, lhs, rhs]`, the mint `op`'s chooser makes for the types its operands give.
@@ -228,6 +274,13 @@ unsafe fn choose<const FAMILY: u8, const OP: u8>(
     match family_of::<FAMILY, OP>() {
         Family::Arith(a) => choose_arith(store, types, a, key),
         Family::Cmp(c) => choose_compare(types, c, key),
+        Family::Logic(l) => {
+            let &[a, b] = key else {
+                return None;
+            };
+            (a == types.bool_ && b == types.bool_)
+                .then(|| mint::Made { output_type: types.bool_, op: types.ops.logic_leaf(l) })
+        }
     }
 }
 
@@ -535,6 +588,7 @@ fn lower<const FAMILY: u8, const OP: u8>(
         match family_of::<FAMILY, OP>() {
             Family::Arith(a) => lw.lower_arith(node, a),
             Family::Cmp(c) => lw.lower_compare(node, c),
+            Family::Logic(l) => lw.lower_logic(node, l),
         }
     }
 }
