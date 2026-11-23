@@ -519,8 +519,9 @@ unsafe fn is_owning_slot(node: DyadPtr) -> bool {
 }
 
 /// A body holding a `return` could leave with a value where the place owes an address, and
-/// one whose end runs something would free what the address points at before the place is
-/// used.
+/// one whose end runs something, a name of its own or a parameter holding what the call passed
+/// it, would free what the address points at before the place is used (›Holding is decided at
+/// the binding site, parameters included‹ [[R61]]).
 ///
 /// # Safety
 /// As `place_of`.
@@ -529,6 +530,11 @@ unsafe fn call_tail(types: &Core, node: DyadPtr) -> Option<CallTail> {
         return None;
     };
     if dyad::ty(callee) != types.fn_type {
+        return None;
+    }
+    let call = types.through(node);
+    let args = crate::parse::null_terminated(dyad::value(call) as *const DyadPtr);
+    if args.iter().any(|&a| dyad::ty(a) == types.hold_) {
         return None;
     }
     let body = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_BODY);
@@ -555,13 +561,7 @@ unsafe fn call_tail(types: &Core, node: DyadPtr) -> Option<CallTail> {
     // A dereference of a value with an end is handed back as its copy; the place is what the
     // copy reads (›A last value moves out‹ [[R66]]).
     let tail = super::copy::copied(types, tail).map_or(tail, |copied| types.through(copied));
-    (dyad::ty(tail) == types.deref_).then_some(CallTail {
-        call: types.through(node),
-        callee,
-        body,
-        tail,
-        line,
-    })
+    (dyad::ty(tail) == types.deref_).then_some(CallTail { call, callee, body, tail, line })
 }
 
 /// The node every word meets a place as: `node` itself, or for a call that ends in a
@@ -887,6 +887,7 @@ mod tests {
              e14 := 5,\n\
              e15 := a + 1,\n\
              e16 := v:lex_rank,\n\
+             e17 := get(alloc 1 of i32 3),\n\
              @i32 ?",
         );
         let types = &core;
@@ -895,7 +896,7 @@ mod tests {
             let exprs: Vec<DyadPtr> = exprs
                 .iter()
                 .enumerate()
-                .map(|(i, &e)| if (8..=16).contains(&i) { declare::rhs_of(e) } else { e })
+                .map(|(i, &e)| if (8..=17).contains(&i) { declare::rhs_of(e) } else { e })
                 .collect();
             let a = declare::binding_of(exprs[3]);
             assert_eq!(place_of(types, a), Some(Place::Itself), "a name");
@@ -917,7 +918,8 @@ mod tests {
                 (14, "a literal"),
                 (15, "an arithmetic value"),
                 (16, "a binding's own field"),
-                (17, "a hole"),
+                (17, "a call that frees what it holds as it returns"),
+                (18, "a hole"),
             ] {
                 assert_eq!(place_of(types, exprs[k]), None, "{what}");
                 assert_eq!(place_node(&mut store, types, exprs[k]), None, "{what}");

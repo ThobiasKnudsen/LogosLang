@@ -1858,9 +1858,22 @@ fn an_array_element_is_written_where_the_read_finds_it() {
         ("b := array u8 [1, 2], b[1] = 300", "this literal has no exact value"),
         ("a[-1] = 1", "the index type is not within the size type"),
         ("g := fn () -> i32 ( 5 ), g() = 3", "this is not an assignable place"),
-        // A teardown would free the place before the write lands.
+        // A teardown would free the place before the write lands, the body's own or the call's
+        // of what it holds.
         (
             "g := fn () -> i32 ( q := alloc 1 of i32 3, q@ ), g() = 5",
+            "this is not an assignable place",
+        ),
+        (
+            "p := alloc 1 of i32 3, g := fn (q := @i32 ?) -> i32 ( q@ ), g(move p) = 5",
+            "this is not an assignable place",
+        ),
+        (
+            "p := alloc 1 of i32 3, g := fn (q := @i32 ?) -> i32 ( q@ ), g.compile(), g(move p) = 5",
+            "this is not an assignable place",
+        ),
+        (
+            "g := fn (q := @i32 ?) -> i32 ( q@ ), g(alloc 1 of i32 3) = 5",
             "this is not an assignable place",
         ),
     ] {
@@ -9561,6 +9574,17 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
             "after\nfree\n",
         ),
         (format!("{bag}, x := bag(1), free (x.get()), print «after»"), "after\nfreed 1\n"),
+        (
+            format!("{BOX}, b := box (1, 2), g := fn (q := boxed ?) -> i32 ( q.p@ ), g(b) = 5, print «{{b.p@}}»"),
+            "5\nfree\n",
+        ),
+        (
+            format!(
+                "{BOX}, b := box (1, 2), g := fn (q := boxed ?) -> i32 ( q.p@ ), g.compile(), g(b) = 5, \
+                 print «{{b.p@}}»"
+            ),
+            "5\nfree\n",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
@@ -9601,6 +9625,17 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
             stderr.contains("an owning value must be bound to a name"),
             "{tail}: stderr: {stderr}"
         );
+    }
+    // The call frees what it holds as it returns, so a write through it would land in freed
+    // memory: a call that holds an argument is no place.
+    for tail in [
+        "g := fn (q := boxed ?) -> i32 ( q.p@ ), g(box (1, 2)) = 5",
+        "b := box (1, 2), g := fn (q := boxed ?) -> i32 ( q.p@ ), g(move b) = 5",
+        "b := box (1, 2), g := fn (q := boxed ?) -> i32 ( q.p@ ), g.compile(), g(move b) = 5",
+    ] {
+        let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("this is not an assignable place"), "{tail}: stderr: {stderr}");
     }
 }
 
