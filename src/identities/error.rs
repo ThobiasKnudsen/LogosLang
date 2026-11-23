@@ -13,7 +13,7 @@ use cranelift_codegen::ir::Value;
 
 use super::binding::Binding;
 use super::callable::{self, Callables};
-use super::{carried, meta, print, Cx};
+use super::{carried, hole, meta, print, union, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -41,6 +41,9 @@ pub struct ErrorIds {
     pub hop: DyadPtr,
     /// error.logos's function that makes the error value of one raise.
     pub one_hop: DyadPtr,
+    /// The binding record of `error.out_of_memory`, the category of an `alloc` that gets no
+    /// memory; null until identities/error.logos is read.
+    pub out_of_memory: DyadPtr,
     /// A raise read as the error value it makes, `[parts, op, output_type, category]`: what a
     /// raise inside a function that gives `T!` fills `err` with.
     pub raised: DyadPtr,
@@ -55,6 +58,14 @@ pub struct ErrorIds {
     /// output_type]`, `source` the one it was handed: its run stops the run with that error.
     pub handed: DyadPtr,
     pub handed_leaf: DyadPtr,
+    /// An `alloc` read as the `@T!` it gives, `[given, refused, op, output_type]`: `given` fills
+    /// the union's `value` with the block, and `refused` its `err` where the alloc gets no memory.
+    pub refusable: DyadPtr,
+    pub refusable_leaf: DyadPtr,
+    /// The error value of an `alloc` that got no memory, `[op, output_type]`: one hop of
+    /// `error.out_of_memory`.
+    pub refused: DyadPtr,
+    pub refused_leaf: DyadPtr,
 }
 
 const ARRAY: carried::File = carried::File {
@@ -65,10 +76,11 @@ const FILE: carried::File = carried::File {
     path: "identities/error.logos",
     source: include_str!("../../identities/error.logos"),
 };
+const OUT_OF_MEMORY: &str = "error.out_of_memory";
 
 /// Reads identities/error.logos into `section`, after the array it is built from: the error
-/// value's type, its element's, and the function that makes the value of one raise. Nothing of
-/// either file reaches the root.
+/// value's type, its element's, the function that makes the value of one raise, and the category
+/// of an `alloc` that gets no memory, the one name of either file the root is given.
 ///
 /// # Panics
 /// Where a file the seed was built with does not parse or run: a defect of the seed.
@@ -93,13 +105,17 @@ pub(super) fn load(
         assert!(made_by == core.fn_type, "{}: `{name}` is no function", FILE.path);
         f
     };
-    ErrorIds {
+    let ids = ErrorIds {
         value: ty("hops"),
         hop: ty("hop"),
         one_hop: function("one_hop"),
+        out_of_memory: carried::name_in(trie, section, &FILE, OUT_OF_MEMORY).binding,
         passed: function("passed"),
         ..core.error
-    }
+    };
+    let published = [(OUT_OF_MEMORY.to_string(), ids.out_of_memory)];
+    carried::publish(store, trie, core, &FILE, &published);
+    ids
 }
 
 /// At the rank `lex` and `print` have: a word that reads its own right side at discovery.
@@ -149,6 +165,29 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
     );
     let handed = cx.store.alloc_head(cx.type_, record);
     let handed_leaf = callable::mint_native(cx.store, cs.callable, run_handed, cs.seed_native);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        crate::parse::Assoc::Left,
+        &["given", "refused", "op", "output_type"],
+    );
+    let refusable = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `refusable` carries the record just built.
+    unsafe { meta::mark_own(refusable) };
+    let refusable_leaf =
+        callable::mint_native(cx.store, cs.callable, run_refusable, cs.seed_native);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        crate::parse::Assoc::Left,
+        &["op", "output_type"],
+    );
+    let refused = cx.store.alloc_head(cx.type_, record);
+    // SAFETY: `refused` carries the record just built.
+    unsafe { meta::mark_own(refused) };
+    let refused_leaf = callable::mint_native(cx.store, cs.callable, run_refused, cs.seed_native);
     let null = std::ptr::null_mut();
     ErrorIds {
         error,
@@ -157,6 +196,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
         native: null,
         hop: null,
         one_hop: null,
+        out_of_memory: null,
         raised,
         raised_leaf,
         passed: null,
@@ -164,6 +204,10 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
         passing_leaf,
         handed,
         handed_leaf,
+        refusable,
+        refusable_leaf,
+        refused,
+        refused_leaf,
     }
 }
 
@@ -223,12 +267,24 @@ pub(crate) fn build_raised(
 /// # Safety
 /// `node` must be a node [`build_raised`] built.
 unsafe fn made(rt: &mut Runtime, node: DyadPtr, message: &[u8]) -> Result<i64, RunError> {
+    hop(rt, *(dyad::value(node) as *const DyadPtr).add(CATEGORY), node, message)
+}
+
+/// error.logos's `one_hop` of `category`'s record, `message` and the node `at` that makes it.
+///
+/// # Safety
+/// `category` must be a category's binding record, and error.logos read.
+unsafe fn hop(
+    rt: &mut Runtime,
+    category: DyadPtr,
+    at: DyadPtr,
+    message: &[u8],
+) -> Result<i64, RunError> {
     let types: *const Core = rt.types();
     // SAFETY: the runtime borrows the core, so the store's growth leaves it where it is.
     let types = &*types;
     let text = super::string::build_text(rt.store(), types.string_, message);
-    let category = *(dyad::value(node) as *const DyadPtr).add(CATEGORY);
-    rt.apply_values(types.error.one_hop, &[category as i64, text as i64, node as i64])
+    rt.apply_values(types.error.one_hop, &[category as i64, text as i64, at as i64])
 }
 
 fn run_raised(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -286,6 +342,54 @@ fn run_handed(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let value = rt.run(*(dyad::value(node) as *const DyadPtr))?;
         Err(handed_on(rt, value as DyadPtr)?)
     }
+}
+
+/// The `alloc` node `alloc` read as the `@T!` it gives, `fallible`, whose member holes are `value`
+/// and `err`: the block fills `value`, and where the alloc gets no memory, an error of
+/// `error.out_of_memory` fills `err` (›There is no bare `error «…»`; `abort «…»` stops the
+/// program; `alloc` returns `@T!`‹ [[R145]]).
+///
+/// # Safety
+/// `alloc` must be an `alloc` node, `fallible` the union `@T!` of the pointer it gives, and
+/// `value` and `err` its member holes.
+pub(crate) unsafe fn build_refusable(
+    store: &mut Store,
+    types: &Core,
+    alloc: DyadPtr,
+    [fallible, value, err]: [DyadPtr; 3],
+) -> DyadPtr {
+    let given = union::build_fill(store, types, alloc, fallible, value);
+    let made =
+        store.alloc_words(types.error.refused, &[types.error.refused_leaf, hole::type_in(err)]);
+    let refused = union::build_fill(store, types, made, fallible, err);
+    let words = [given, refused, types.error.refusable_leaf, fallible];
+    store.alloc_words(types.error.refusable, &words)
+}
+
+fn run_refusable(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a refusable node, whose `given` and `refused` are fill nodes of its union.
+    unsafe {
+        let parts = dyad::value(node) as *const DyadPtr;
+        match rt.run(*parts) {
+            Err(RunError::OutOfMemory) => {
+                let refused = *parts.add(1);
+                rt.refusing_alloc(|rt| rt.run(refused)).unwrap_or(Err(RunError::OutOfMemory))
+            }
+            given => given,
+        }
+    }
+}
+
+/// error.logos's `one_hop` of `error.out_of_memory`, its own node the hop's location. The category
+/// is read where it runs, since the `alloc`s of the files read before error.logos are built before
+/// it is declared; an `alloc` that gets no memory then stops the run.
+fn run_refused(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    let category = rt.types().error.out_of_memory;
+    if category.is_null() {
+        return Err(RunError::OutOfMemory);
+    }
+    // SAFETY: `category` is set where error.logos is read.
+    unsafe { hop(rt, category, node, b"this alloc got no memory") }
 }
 
 /// The category and the message of the first hop of the error value `value`, the raise's. `None`

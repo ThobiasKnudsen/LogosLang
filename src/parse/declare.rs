@@ -874,7 +874,7 @@ impl<'a> Parser<'a> {
 
     /// The gate words that open the value at the cursor, as written, and where they end; nothing
     /// is consumed.
-    fn gates_ahead(&mut self) -> (Vec<DyadPtr>, usize) {
+    pub(super) fn gates_ahead(&mut self) -> (Vec<DyadPtr>, usize) {
         let at = self.cx.pos;
         let (mut words, mut end) = (Vec::new(), at);
         loop {

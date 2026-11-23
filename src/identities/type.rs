@@ -53,3 +53,27 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
 
     (comma, left_, right_)
 }
+
+/// `layout`, a word only a type body knows, which declares it beside the slot words: its node
+/// `[layout | gated type, u64 byte]` gives a field its type and the byte it starts at
+/// (›Inside a type body, `layout` gives a field its type and its byte: `a := layout (mut i32,
+/// 1)`‹ [[R385]]).
+pub(super) fn register_layout(cx: &mut Cx) -> DyadPtr {
+    let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER);
+    let id = cx.store.alloc_head(cx.type_, record);
+    cx.metas.insert(id, |p, _id, tape| p.construct_layout(tape));
+    id
+}
+
+/// The gated type and the byte a `layout` node gives its field; `None` for any other node.
+///
+/// # Safety
+/// `node` must be null or a dyad from the store.
+pub(crate) unsafe fn layout_of(types: &super::Core, node: DyadPtr) -> Option<(DyadPtr, u64)> {
+    if node.is_null() || dyad::ty(node) != types.layout_ {
+        return None;
+    }
+    let words = dyad::value(node) as *const DyadPtr;
+    let byte = dyad::value(words.add(1).read_unaligned()) as *const u64;
+    Some((words.read_unaligned(), byte.read_unaligned()))
+}

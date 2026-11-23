@@ -882,7 +882,7 @@ mod tests {
              get := fn (p := @i32 ?) -> i32 ( p@ ),\n\
              seven := fn () -> i32 ( 7 ),\n\
              early := fn (p := @i32 ?) -> i32 ( return p@ ),\n\
-             kept := fn (p := @i32 ?) -> i32 ( q := alloc 1 of i32 2, p@ ),\n\
+             kept := fn (p := @i32 ?) -> i32 ( q := dyad (i32, 2), p@ ),\n\
              e8 := v.x,\n\
              e9 := a@,\n\
              e10 := get(a),\n\
