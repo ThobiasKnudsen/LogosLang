@@ -7773,11 +7773,14 @@ fn holds_asks_which_member_a_union_holds() {
                 .to_string(),
             "true false",
         ),
-        // `holds` reads the cell to its left as `.` does, so a test of it joins others.
+        // `holds` is built with the comparisons, so a test of it joins others with `and` and
+        // `not`, and stands beside `==` as `<` does.
         (
             format!("{NUM}, v := mut num ?, v.i = 5, if v holds i and v.i > 3 ( print «big» ) else ( print «no» )"),
             "big",
         ),
+        (format!("{NUM}, v := mut num ?, v.i = 5, print «{{not v holds f}} {{v holds i == true}}»"), "true true"),
+        (format!("{NUM}, v := mut num ?, v.i = 5, (v holds i) == (v holds f)"), "false"),
     ];
     let res = "res := type union ( value := mut i32, err := mut i64 ), \
                div := fn (n := i32 ?) -> res ( r := mut res ?, r.err = 7, if n > 0 ( r.value = n ), r )";
@@ -7823,6 +7826,11 @@ fn holds_asks_which_member_a_union_holds() {
         (
             format!("{NUM}, v := mut num ?, v.i = 5, v holds k"),
             "`k` is no member of this union, whose members are `i`, `f`".to_string(),
+        ),
+        // Two comparisons in a row are built from the left: `((v holds i) == v) holds f`.
+        (
+            format!("{NUM}, v := mut num ?, v.i = 5, v holds i == v holds f"),
+            "this operator cannot compute over these operands".to_string(),
         ),
     ] {
         let (code, stdout, stderr) = run_line(&src);
