@@ -22,7 +22,8 @@ struct Arena {
     used: usize,
 }
 
-const ARENA_CAP: usize = 1 << 30;
+/// The arena's whole room, so no value is larger.
+pub(crate) const ARENA_CAP: usize = 1 << 30;
 
 impl Arena {
     fn new() -> Self {
