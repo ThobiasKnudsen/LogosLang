@@ -19,7 +19,7 @@ use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
 use crate::dyad;
 use crate::dyad::DyadPtr;
-use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
+use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, LogicOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::identities::{by_copy, mint, operand_of, operands, Operand};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_OUTPUT};
@@ -1412,25 +1412,33 @@ impl<'a> Lowerer<'a, '_> {
         })
     }
 
-    /// Both sides run; a lowered `bool` is an `I32` `0` or `1`, so the bitwise `and` is the
-    /// logical one.
+    /// Both sides run; a lowered `bool` is an `I32` `0` or `1`, so each bitwise operation is the
+    /// logical one, and `a implies b` is `(a xor 1) or b`. A group, which no chooser made, has
+    /// nothing to run.
     ///
     /// # Safety
-    /// `a`/`b` must be valid dyads from the store.
-    pub unsafe fn lower_and(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
-        let va = self.lower(a)?;
-        let vb = self.lower(b)?;
-        Ok(self.builder.ins().band(va, vb))
-    }
-
-    /// Both sides run, as [`Self::lower_and`].
-    ///
-    /// # Safety
-    /// `a`/`b` must be valid dyads from the store.
-    pub unsafe fn lower_or(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
-        let va = self.lower(a)?;
-        let vb = self.lower(b)?;
-        Ok(self.builder.ins().bor(va, vb))
+    /// `node` must be a node of one of the logic words, `[lhs, rhs]`.
+    pub(crate) unsafe fn lower_logic(
+        &mut self,
+        node: DyadPtr,
+        op: LogicOp,
+    ) -> Result<Value, CompileError> {
+        if mint::operation_of(dyad::ty(node)).is_none() {
+            return Err(CompileError::NotLowerable(node));
+        }
+        let (lhs, rhs) = operands(node);
+        let a = self.lower(lhs)?;
+        let b = self.lower(rhs)?;
+        let ins = self.builder.ins();
+        Ok(match op {
+            LogicOp::And => ins.band(a, b),
+            LogicOp::Or => ins.bor(a, b),
+            LogicOp::Xor => ins.bxor(a, b),
+            LogicOp::Implies => {
+                let not_a = ins.bxor_imm(a, 1);
+                self.builder.ins().bor(not_a, b)
+            }
+        })
     }
 
     /// A self-call is a direct `call` the JIT patches to this function; a callee
