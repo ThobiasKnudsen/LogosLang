@@ -2624,6 +2624,53 @@ fn an_or_group_of_non_booleans_is_data_like_the_and_group() {
 }
 
 #[test]
+fn xor_and_implies_take_two_bools_in_the_four_logic_steps() {
+    let tables = "a := true, b := false, print «{a xor b} {a xor a} {b xor b} {b xor a} \
+                  {a implies b} {a implies a} {b implies b} {b implies a}»";
+    let compiled = "x := fn (a := bool ?, b := bool ?) -> bool ( a xor b ), \
+                    i := fn (a := bool ?, b := bool ?) -> bool ( a implies b ), \
+                    x.compile(), i.compile(), \
+                    print «{x(true, false)} {x(true, true)} {x(false, false)} {x(false, true)} \
+                    {i(true, false)} {i(true, true)} {i(false, false)} {i(false, true)}»";
+    for line in [tables, compiled] {
+        let (code, stdout, stderr) = run_line(line);
+        let want = "true false false true false true true true";
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{line}: stderr: {stderr}");
+    }
+    // `not`, then `and`, then `or` and `xor` from the left, then `implies` from the right.
+    for ([a, b, c], expr, want) in [
+        (["true", "true", "true"], "a or b xor c", "false"),
+        (["true", "false", "true"], "a and b xor c", "true"),
+        (["true", "false", "false"], "a or b implies c", "false"),
+        (["false", "false", "false"], "not a implies b", "false"),
+        (["false", "true", "false"], "a implies b implies c", "true"),
+        (["true", "false", "false"], "a == b xor true", "true"),
+        (["true", "false", "false"], "(a and b).type == and.mint(bool, bool)", "true"),
+        (["true", "false", "false"], "(a xor b).type == xor.mint(bool, bool)", "true"),
+    ] {
+        for line in [
+            format!("a := {a}, b := {b}, c := {c}, {expr}"),
+            format!(
+                "f := fn (a := bool ?, b := bool ?, c := bool ?) -> bool ( {expr} ), f.compile(), \
+                 f({a}, {b}, {c})"
+            ),
+        ] {
+            let (code, stdout, stderr) = run_line(&line);
+            assert_eq!((code, stdout.trim()), (Some(0), want), "{line}: stderr: {stderr}");
+        }
+    }
+    for line in [
+        "x := i32 1, y := i32 2, x xor y",
+        "x := i32 1, y := i32 2, x implies y",
+        "x := i32 1, y := i32 2, (x and y) xor true",
+    ] {
+        let (code, _, stderr) = run_line(line);
+        assert_eq!(code, Some(1), "{line}: stderr: {stderr}");
+        assert!(stderr.contains("must be bools"), "{line}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn every_operator_applied_to_a_group_applies_to_each_member() {
     let sq = "sq := fn (x := i32 ?) -> i32 ( x * x ), ";
     let rec = "p := type (v := pub i32 ?), a := p(2), b := p(3), ";

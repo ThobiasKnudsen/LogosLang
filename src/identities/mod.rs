@@ -23,7 +23,6 @@ pub mod dyad;
 pub mod read;
 
 pub mod abort;
-mod and;
 pub(crate) mod array;
 pub(crate) mod assign;
 pub(crate) mod binary;
@@ -66,7 +65,6 @@ pub(crate) mod mint;
 mod not;
 pub(crate) mod numtype;
 pub(crate) mod ops;
-mod or;
 mod paren;
 pub(crate) mod place;
 pub(crate) mod pointer;
@@ -359,6 +357,8 @@ impl Core {
             le,
             ge,
             ne,
+            and_,
+            or_,
         } = binary::register_all(&mut cx);
         let instructions = instruction::register(
             &mut cx,
@@ -369,10 +369,6 @@ impl Core {
             &op_leaves,
             [plus, minus, times, div_, rem_],
         );
-        let (and_, and_leaf) = and::register(&mut cx, &callables);
-        op_leaves.and_ = and_leaf;
-        let (or_, or_leaf) = or::register(&mut cx, &callables);
-        op_leaves.or_ = or_leaf;
         let (not_, not_leaf) = not::register(&mut cx, &callables);
         op_leaves.not_ = not_leaf;
         let (subset, subset_leaf) = subset::register(&mut cx, &callables);
