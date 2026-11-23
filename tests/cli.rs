@@ -1016,6 +1016,12 @@ fn a_parse_written_in_logos_reads_its_operands_as_a_built_in_operation_does() {
         ("n := i32 5, free n, x := n OP n".to_owned(), Err(dead)),
         ("x := dyad (i32, 7) OP dyad (i32, 7), x".to_owned(), Ok("49\n")),
         ("g := fn () -> dyad ( i32 5 ), x := g() OP g(), x".to_owned(), Ok("25\n")),
+        ("g := fn () -> dyad ( i32 5 ), f := fn () -> i32 ( g() OP g() ), f()".to_owned(), Ok("25\n")),
+        (
+            "g := fn () -> dyad ( i32 5 ), f := fn () -> i32 ( g() OP g() ), f.compile(), f()"
+                .to_owned(),
+            Err("the function stays interpreted"),
+        ),
         (
             "g := fn () -> dyad ( print «g», i32 2 ), h := fn () -> i32 ( print «h», 1 ), h() OP g()"
                 .to_owned(),
