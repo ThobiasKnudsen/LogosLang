@@ -728,12 +728,16 @@ impl<'a> Parser<'a> {
                     return Err(e);
                 }
             }
+            let ran = self.run_type_where_built(tape)?.is_some();
+            if ran {
+                cell = *tape.at(0).expect("the cell stands at its mark");
+            }
             // A node a parse built runs, and is never parsed again, though the value its run
             // yields is read by its own type's parse; a bracket waits for the segment's end.
             // SAFETY: `built` saw a node from the store.
             let reparsed =
-                built && self.awake_type(cell.dyad) == Some(unsafe { dyad::ty(cell.dyad) });
-            let gave = matches!(outcome, Constructed::Gave);
+                !ran && built && self.awake_type(cell.dyad) == Some(unsafe { dyad::ty(cell.dyad) });
+            let gave = ran || matches!(outcome, Constructed::Gave);
             // A value a gate word read whole has had its turn.
             let gated = !gave && !cell.gates.is_null();
             if !same && !reparsed && !gated && !cell.bracket && self.wakes(cell.dyad, gave) {
