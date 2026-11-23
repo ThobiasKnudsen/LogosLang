@@ -794,16 +794,20 @@ impl<'a> Parser<'a> {
         if member || !self.static_ahead() {
             return self.declare_here(tape);
         }
+        let before = self.line_made();
         let built = self.parse_in_pass(|p| p.declare_here(tape));
         if !matches!(built?, Constructed::Placed) {
             return Ok(Constructed::Decline);
         }
         let node = tape.at(0).expect("the declaration was just placed").dyad;
         self.drain()?;
+        let plan = self.take_made_since(&before);
+        let depth = self.cx.open.len() - 1;
         let mark = self.rt.stack_mark();
-        // SAFETY: `node` is the declare node just built; its binding is a binding dyad from the store.
+        // SAFETY: `node` is the declare node just built, `plan` what its value made; its binding
+        // is a binding dyad from the store.
         unsafe {
-            self.run_on_pass(node).map_err(ParseError::Run)?;
+            self.run_held(depth, node, &plan, |p| p.run_on_pass(node).map_err(ParseError::Run))?;
             let named = self.types.through(crate::identities::declare::binding_of(node));
             crate::identities::declare::set_declared(node, named);
         }
