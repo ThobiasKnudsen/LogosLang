@@ -8264,6 +8264,65 @@ fn one_try_covers_every_t_bang_on_its_right_in_its_expression() {
     }
 }
 
+/// R140: a `T!` nobody reads is refused where it is written: a line whose value nothing lands, at
+/// the top level, in a `-> void` or `-> void!` body, in a `{ … }` or a `defer`, or with a line
+/// after it, and one thrown away with `free`; one a function gives, a name holds or a parameter
+/// takes is read, on both tiers.
+#[test]
+fn a_t_bang_nobody_reads_is_refused_where_it_is_written() {
+    let half = "half := fn (n := i32 ?) -> i32! ( n / 2 )";
+    let unread = "error: this gives a value or an error, a `T!`, and nothing reads it";
+    let free = "error: `free` throws away a value nobody wants, and a `T!` may hold an error";
+    for (tail, mark, message) in [
+        ("half(8)", "half(8)", unread),
+        ("r := half(8), r", "r", unread),
+        ("half(8), print «x»", "half(8)", unread),
+        ("f := fn () -> void ( half(8) ), f()", "half(8)", unread),
+        ("f := fn () -> void! ( half(8) ), f()", "half(8)", unread),
+        ("for i in 0..3 ( half(i) ), print «x»", "for", unread),
+        ("m := { half(8) }, print «x»", "half(8)", unread),
+        ("defer half(8), print «x»", "half(8)", unread),
+        ("f := fn () -> i32! ( half(8), half(2) ), f()", "half(8)", unread),
+        ("if true ( half(8) ) else ( half(2) ), print «x»", "if", unread),
+        ("x := ( half(8), 1 ), print «{x}»", "half(8)", unread),
+        ("alloc 1 of i32 5, print «x»", "alloc", unread),
+        ("free (half(8)), print «x»", "(half(8))", free),
+    ] {
+        let src = format!("{half}, {tail}");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}\nstderr: {stderr}");
+        let at = half.len() + 2 + tail.rfind(mark).expect("the mark is in the line") + 1;
+        assert!(stderr.contains(&format!("1:{at}: {message}")), "{src}\nstderr: {stderr}");
+    }
+    for compile in ["", "f.compile(), "] {
+        for (f, call, want) in [
+            ("f := fn () -> i32! ( half(8) )", "print «{f().value}»", "4\n"),
+            (
+                "f := fn (c := bool ?) -> i32! ( if c ( half(8) ) else ( half(2) ) )",
+                "print «{f(true).value} {f(false).value}»",
+                "4 1\n",
+            ),
+            (
+                "f := fn () -> i32! ( for i in 0..3 ( if i == 1 ( half(10) ) ), half(2) )",
+                "print «{f().value}»",
+                "5\n",
+            ),
+            (
+                "f := fn (r := i32! ?) -> i32 ( if r holds err ( 0 ) else ( r.value ) )",
+                "print «{f(half(8))}»",
+                "4\n",
+            ),
+        ] {
+            let src = format!("{half}, {f}, {compile}{call}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}\nstderr: {stderr}");
+        }
+    }
+    let src =
+        format!("{half}, r := half(8), if r holds err ( print «e» ) else ( print «{{r.value}}» )");
+    assert_eq!(line(&src), "4", "{src}");
+}
+
 /// R140: a function that gives `void!` holds `value` where its body ends and `err` where a raise
 /// or a `try` leaves it; its body gives nothing, as a `-> void` one's, ending what it holds on
 /// either way out; on both tiers.

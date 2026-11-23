@@ -193,6 +193,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                     unsafe { super::read::value_type(types, value) }
                         .map_err(|e| p.fail_at(at, e))?;
                     // SAFETY: as above.
+                    if unsafe { super::union::is_fallible_value(types, value) } {
+                        return Err(p.fail_at(at, ParseError::FreeOfFallible));
+                    }
+                    // SAFETY: as above.
                     let teardown = unsafe { teardown_of(types, value) };
                     p.take(value);
                     let node = build_value_free(p.store(), types, value, teardown);
@@ -3087,9 +3091,14 @@ mod tests {
     fn free_of_a_value_runs_it_then_frees_what_it_owns() {
         assert_eq!(run("free (try alloc 1 of i32 5),\n1"), (1, 0));
         assert_eq!(
-            parse_err("alloc 1 of i32 5,\n1"),
+            parse_err("(try alloc 1 of i32 5),\n1"),
             ParseError::LineAfterValue,
             "the same value no word takes ends its scope, and the line after never runs"
+        );
+        assert_eq!(
+            parse_err("alloc 1 of i32 5,\n1"),
+            ParseError::FallibleUnread,
+            "an `alloc` gives `@T!`, whose error nothing reads"
         );
         assert_eq!(
             run("import file «./identities/array.logos», (array i32 [1, 2])[1]"),

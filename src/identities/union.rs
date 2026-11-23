@@ -150,6 +150,14 @@ pub(crate) unsafe fn fallible_members(types: &Core, ty: DyadPtr) -> Option<(Dyad
     (named && super::error::is_value(types, hole::type_in(err))).then_some((value, err))
 }
 
+/// Whether `node` gives a `T!`.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn is_fallible_value(types: &Core, node: DyadPtr) -> bool {
+    !types.is_hole(node) && fallible_members(types, super::read::output_type(types, node)).is_some()
+}
+
 /// What a function that gives `ty` hands back for `value`, one of the values its body gives: where
 /// `ty` is `T!` and `value` gives no `T!`, a new `T!` whose `value` it fills, landed in `T` first
 /// (›Target: errors are values (`T!`), handled by `if`, passed on by `try`…‹ [[R140]]); `value`
