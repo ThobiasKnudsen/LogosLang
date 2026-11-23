@@ -30,7 +30,7 @@ pub(super) struct OpenFn {
     /// The result place, `return` read as a name: a binding laid out in the frame the first
     /// time the body reads it, null until then.
     pub(super) result: DyadPtr,
-    /// The body is a type's slot, `run`, `parse` or `free`, which has no `->`.
+    /// The body is a type's `parse` or `free` slot, which has no result place.
     pub(super) slot_body: bool,
     /// Where the first of the body's lines that gives the body its value starts.
     pub(super) gives_at: Option<usize>,
@@ -931,6 +931,10 @@ impl<'a> Parser<'a> {
             // SAFETY: `binding` is a binding dyad from the store (the caller's contract).
             unsafe { Binding::set_dyad(binding, node) };
         }
+        // A type's `run` body is a function for `return`, its result place the node's value
+        // (›A scope's value is what it evaluates to, and `return` is an optional early exit from
+        // the enclosing function‹ [[R207]]); its `parse` and `free` bodies have none.
+        let run_body = self.cx.run_fields.as_ref().is_some_and(|r| r.2 == node);
         // A call frame is an instance of its function, so a parameter resolves
         // to a frame slot as a local does (DESIGN ›Resolution is one rule‹). The
         // barrier begins at the current depth, so a lesser depth is outside the function.
@@ -942,7 +946,7 @@ impl<'a> Parser<'a> {
             open_below: self.cx.open.len(),
             returns: Vec::new(),
             result: std::ptr::null_mut(),
-            slot_body: result.is_none(),
+            slot_body: result.is_none() && !run_body,
             gives_at: None,
         });
         // SAFETY: `input` is the record just built, `params` its bindings.

@@ -7597,15 +7597,6 @@ fn reading_a_member_a_union_does_not_hold_is_a_run_error() {
         (format!("{NUM}, v := mut num ?, v.i = 5, w := v, w.f"), "", holds("i", "f")),
         (format!("{NUM}, v := mut num ?, v.i = 5, p := &v, p@.f"), "", holds("i", "f")),
         (format!("{NUM}, v := mut num ?, v.i = 5, p := &v.f, 0"), "", holds("i", "f")),
-        // A member's field is written only while the union holds the member.
-        (
-            format!(
-                "{NUM}, big := type union ( n := mut num, s := mut string ), \
-                 v := mut big ?, v.s = «a», v.n.i = 3"
-            ),
-            "",
-            holds("s", "n"),
-        ),
         (
             format!("{NUM}, p := try alloc 1 of num ?, p@.i"),
             "",
@@ -7715,6 +7706,62 @@ fn a_union_s_members_are_read_from_outside_and_its_empty_place_is_unwritten() {
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains(&format!("error: {message}")), "{src}: stderr: {stderr}");
     }
+}
+
+/// A write path writes the member it steps through and reads nothing (R379): `v.a.x = 1` makes
+/// the union hold `a`, ending the member it held and zeroing the room first, and writes its `x`;
+/// a record's field is stepped through the same way. A sibling write fills that one field, so the
+/// place's other fields, the place itself and the name are read only once each is written (R105).
+/// On both tiers.
+#[test]
+fn a_write_path_writes_the_member_it_steps_through_and_reads_nothing() {
+    let types = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), \
+                 pt := type ( x := pub mut i32 ?, y := pub mut i32 ? ), \
+                 u := type union ( a := mut pt, b := mut i32 ), \
+                 ub := type union ( a := mut pt, c := mut bag ), \
+                 big := type union ( n := mut u, s := mut string ), \
+                 o := type ( p := pub mut pt ?, s := pub mut u ?, k := pub mut i32 ? )";
+    for (body, want) in [
+        ("v := mut u ?, v.a.x = 1, v.a.y = 2, print «{v.a.x} {v.a.y} {v.tag}»", "1 2 1"),
+        ("v := mut u ?, v.b = 5, v.a.x = 1, print «{v.a.x} {v.a.y} {v.tag}»", "1 0 1"),
+        ("v := mut ub ?, v.c = bag(7), v.a.x = 2, print «{v.a.x}»", "freed 7\n2"),
+        ("v := mut u ?, v.a = pt(1, 2), v.a.x = 7, print «{v.a.x} {v.a.y}»", "7 2"),
+        ("v := mut big ?, v.s = «a», v.n.b = 3, print «{v.n.b} {v.tag} {v.n.tag}»", "3 1 2"),
+        (
+            "r := mut o ?, r.p.x = 1, r.p.y = 2, r.s.a.x = 3, r.s.a.y = 4, r.k = 5, w := r, \
+          print «{w.p.x} {w.p.y} {w.s.a.x} {w.s.a.y} {w.k}»",
+            "1 2 3 4 5",
+        ),
+    ] {
+        for compile in ["", "f.compile(), "] {
+            let src = format!("{types}, f := fn () -> void ( {body} ), {compile}f()");
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let types = "pt := type ( x := pub mut i32 ?, y := pub mut i32 ? ), \
+                 u := type union ( a := mut pt, b := mut i32 ), \
+                 o := type ( p := pub mut pt ?, k := pub mut i32 ? )";
+    let unwritten = |path: &str| format!("`{path}` is read before it is written");
+    for (body, at, message) in [
+        ("v := mut u ?, v.a.x = 1, print «{v.a.y}»", "1:193", unwritten("v.a.y")),
+        ("v := mut u ?, v.a.x = 1, w := v.a, 0", "1:188", unwritten("v.a")),
+        ("v := mut u ?, v.a.x = 1, w := v, 0", "1:186", unwritten("v")),
+        ("v := mut u ?, w := v.a.y, 0", "1:179", unwritten("v.a")),
+        ("v := mut u ?, if true ( v.a.x = 1, v.a.y = 2 ), v.a.x", "1:208", unwritten("v.a")),
+        ("r := mut o ?, r.p.x = 1, r.k = 3, w := r.p.y, 0", "1:199", unwritten("r.p.y")),
+        ("r := mut o ?, r.p.x = 1, r.p.y = 2, w := r, 0", "1:197", unwritten("r")),
+    ] {
+        let src = format!("{types}, {body}");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        let want = format!("<command line>:{at}: error: {message}");
+        assert!(stderr.contains(&want), "{src}: stderr: {stderr}");
+    }
+    let src = "pt := type ( x := pub mut i32 ?, y := pub mut i32 ? ), \
+               u := type union ( a := pt, b := mut i32 ), v := mut u ?, v.a.x = 1, 0";
+    let (code, _, stderr) = run_line(src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("1:121: error: `a` is not `mut`"), "{src}: stderr: {stderr}");
 }
 
 /// What a union does not take is refused where it is written: a line that is no member, `pub` on
@@ -8392,6 +8439,11 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
                 "print «{g(true)} {g(false)}»",
                 "12 13",
             ),
+            (
+                "g := fn (n := i32 ?) -> pt! ( return.value.x = n, return.value.y = n + 1, return )",
+                "r := g(i32 4), print «{r.value.x} {r.value.y}»",
+                "4 5",
+            ),
         ] {
             let src =
                 format!("{odd}, {bag}, {pt}, {g}, f := fn () -> void ( {body} ), {compile}f()");
@@ -8408,9 +8460,10 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
 /// an arm filling nothing for the lines after it, as for every name (R105); an arm that always
 /// leaves still ends any other name it moves on every path (R70, rule 2). `return` is no result
 /// place outside a function, in a `defer`, in a value made once, in a `-> void` function or in a
-/// type's slot body, and no caller writes a member of a `T!` (R379); `return.tag` is read only, as
-/// a named union's `tag` is. A body that writes `return` has no line that gives it its value,
-/// before the write or after it, in a loop or an arm (R207).
+/// type's `parse` or `free` body, and no caller writes a member of a `T!` (R379); `return.tag` is
+/// read only, as a named union's `tag` is. A body that writes `return` has no line that gives it
+/// its value, before the write or after it, in a loop or an arm (R207). A field written through
+/// `return.value` leaves the member's other fields unwritten until each is written (R105).
 #[test]
 fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
     let unwritten = "error: the result is read before it is written: write it first among the \
@@ -8420,6 +8473,9 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
                  line of it gives a value";
     let q = "q := type ( v := pub mut i32 ?, parse_rank = 60, parse = ( tape.is_constructed[0] = \
              true ) )";
+    let slot = "error: `return` is read and written as the result only in a `fn` body or a type's \
+                `run` body, not in its `parse` or `free` body";
+    let pt = "pt := type ( x := pub mut i32 ?, y := pub mut i32 ? )";
     for (src, want) in [
         (
             "f := fn () -> i32! ( print «{return holds value}», return.value = 1, return ), 0"
@@ -8494,9 +8550,19 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
             "q := type ( v := i32 ?, parse_rank = 60, parse = ( return.value = 1, \
              tape.is_constructed[0] = true ) ), 0"
                 .to_string(),
-            "1:52: error: `return` is read and written as the result only in a `fn` body, not yet \
-             in a type's `run`, `parse` or `free` body"
-                .to_string(),
+            format!("1:52: {slot}"),
+        ),
+        ("k := type ( a := i32 ?, free = ( return = 1 ) ), 0".to_string(), format!("1:34: {slot}")),
+        (
+            format!("{pt}, f := fn () -> pt! ( return.value.x = 1, return ), 0"),
+            format!("1:96: {unwritten}"),
+        ),
+        (
+            format!(
+                "{pt}, f := fn () -> pt! ( return.value.x = 1, print «{{return.value.y}}», \
+                 return.value.y = 2, return ), 0"
+            ),
+            "1:117: error: `return.value.y` is read before it is written".to_string(),
         ),
         (
             format!("{q}, f := fn () -> q ( return.v = 1, return ), 0"),
@@ -8513,6 +8579,70 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains(&format!("<command line>:{want}")), "{src}: stderr: {stderr}");
+    }
+}
+
+/// R207 and R224: a type's `run` body is a function for `return`, its result place the node's
+/// value, typed by its `output_type`; it writes the place, a member's fields one by one, and
+/// leaves with `return`, and once it writes `return` no line of it gives a value. A `run` with no
+/// `output_type` gives `void`, so it has no result place. On both tiers.
+#[test]
+fn a_type_s_run_body_writes_its_result_place_and_leaves_with_return() {
+    let odd = "error.odd := «odd»";
+    let pt = "pt := type ( x := pub mut i32 ?, y := pub mut i32 ? )";
+    let parse = "parse_rank = 60, parse = ( tape[0].type = k, tape[0].a = tape[1], \
+                 tape.remove(1), tape.is_constructed[0] = true )";
+    for (output, run, call, want) in [
+        ("i32", "return = a + 1, return", "print «{g(i32 2)}»", "3"),
+        (
+            "i32!",
+            "if a % 2 == 1 ( return error.odd «not even» ), return.value = a / 2, return",
+            "print «{g(i32 8).value} {g(i32 3) holds err}»",
+            "4 true",
+        ),
+        (
+            "pt!",
+            "return.value.x = a, return.value.y = a + 1, return",
+            "r := g(i32 4), print «{r.value.x} {r.value.y}»",
+            "4 5",
+        ),
+    ] {
+        for compile in ["", "g.compile(), "] {
+            let src = format!(
+                "{odd}, {pt}, k := type ( a := i32 ?, output_type := static type {output}, \
+                 run = ( {run} ), {parse} ), g := fn (n := i32 ?) -> {output} ( k n ), \
+                 {compile}{call}"
+            );
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let failed = "error: the run body of `k` could not be constructed for these field types:";
+    for (run, output, at, inner) in [
+        (
+            "return = a + 1, i32 9",
+            "output_type := static type i32, ",
+            "1:215",
+            "run body of `k`:1:19: error: this body writes `return`, so it leaves only by \
+             `return` or a raise; no line of it gives a value",
+        ),
+        (
+            "return = a",
+            "",
+            "1:172",
+            "run body of `k`:1:3: error: a `-> void` function gives no value, so `return` has no \
+             result here to read, write or leave with",
+        ),
+    ] {
+        let src = format!(
+            "k := type ( a := i32 ?, {output}run = ( {run} ), {parse} ), print «{{k (i32 4)}}»"
+        );
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(
+            stderr.contains(&format!("<command line>:{at}: {failed}")),
+            "{src}: stderr: {stderr}"
+        );
+        assert!(stderr.contains(inner), "{src}: stderr: {stderr}");
     }
 }
 

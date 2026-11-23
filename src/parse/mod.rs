@@ -274,14 +274,16 @@ impl<'a> Context<'a> {
 }
 
 /// The last `=` node built, or held line that writes, the scope it was written in, the place it
-/// writes as `=` read it, and the name and the field's binding that place reached when it was a
-/// `v.f` over a name (nulls otherwise).
+/// writes as `=` read it, the name and the field's binding that place reached when it was a
+/// `v.f` over a name (nulls otherwise), and the bindings a path of fields from a name reached it
+/// by, the name first (null otherwise).
 #[derive(Clone, Copy)]
 struct LastWrite {
     node: DyadPtr,
     scope: DyadPtr,
     place: DyadPtr,
     fill: (DyadPtr, DyadPtr),
+    path: DyadPtr,
 }
 
 impl LastWrite {
@@ -290,6 +292,7 @@ impl LastWrite {
         scope: std::ptr::null_mut(),
         place: std::ptr::null_mut(),
         fill: (std::ptr::null_mut(), std::ptr::null_mut()),
+        path: std::ptr::null_mut(),
     };
 }
 

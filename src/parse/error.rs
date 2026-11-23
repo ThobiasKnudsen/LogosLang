@@ -151,7 +151,7 @@ pub enum ParseError {
     ReturnInDefer,
     /// `return` read as the result place in a `-> void` function.
     ResultPlaceOfVoid,
-    /// `return` read as the result place in a type's `run`, `parse` or `free` body.
+    /// `return` read as the result place in a type's `parse` or `free` body.
     ResultPlaceInSlot,
     /// `return` read as the result place of a type whose values are nodes its `parse` builds.
     ResultPlaceOfNode,

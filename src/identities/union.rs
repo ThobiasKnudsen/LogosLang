@@ -419,6 +419,35 @@ pub(crate) unsafe fn build_member(
     }
 }
 
+/// Makes each member step on the path to the place `node` reaches a write, so writing that place
+/// selects every member the path passes through: a step of a write path writes its member and is
+/// no read (›A union holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]).
+/// The walk stops at the first step that is neither a member nor a field.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn select_along(types: &Core, node: DyadPtr) {
+    let mut at = node;
+    loop {
+        if dyad::ty(at) == types.deref_ {
+            let room = pointer::deref_parts(at).0;
+            if dyad::ty(room) != types.union.member {
+                return;
+            }
+            let word = dyad::value(*(dyad::value(room) as *const DyadPtr).add(3)) as *mut u64;
+            if std::ptr::read_unaligned(word) == Access::Read as u64 {
+                std::ptr::write_unaligned(word, Access::Write as u64);
+            }
+            let base = base_in(room);
+            at = pointer::address_place(types, base).unwrap_or(base);
+        } else if let Some((into, _)) = super::this::field_step(types, at) {
+            at = into;
+        } else {
+            return;
+        }
+    }
+}
+
 /// The place whose member the dereference `node` reaches, where it reads a member of a named
 /// union value; `None` for any other dereference.
 ///
