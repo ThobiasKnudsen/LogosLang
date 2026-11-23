@@ -653,14 +653,11 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         discovery: bool,
     ) -> Result<(), ParseError> {
-        let (built_as, gates) = self.gated_type_parts(id);
-        let logos = self.is_logos_ctor(built_as);
-        // A word built as it is lexed that takes the node before it, or whose parse is written in
-        // Logos and so runs first what stands before it, reads what is written there, so the
-        // brackets held there are built first, in order; at the boundary a word takes the nearest
-        // node on each side, the bracket to its left built, the one to its right held until it
-        // reads it.
-        if discovery && (logos || self.reads_left(id)) {
+        // A word built as it is lexed that takes the node before it reads what is written there, so
+        // the brackets held there are built first, in order; at the boundary a word takes the
+        // nearest node on each side, the bracket to its left built, the one to its right held until
+        // it reads it.
+        if discovery && self.reads_left(id) {
             let at = tape.at(0).map_or(usize::MAX, |c| c.start);
             self.take_held_before(tape, at)?;
         } else {
@@ -668,6 +665,8 @@ impl<'a> Parser<'a> {
         }
         let own = tape.mark();
         let edits = tape.edits();
+        let (built_as, gates) = self.gated_type_parts(id);
+        let logos = self.is_logos_ctor(built_as);
         let taken = tape.taken_mark();
         // Dispatching the cell's identity is the body's read of its name: a
         // callee, an operator, a keyword alike.
@@ -795,7 +794,8 @@ impl<'a> Parser<'a> {
     }
 
     /// The bracket held at `k` of `tape`, built as the word beside it takes it: its lines are read
-    /// from after its opener, and the lexer goes on from where it stood.
+    /// from after its opener, and the lexer goes on from where it stood. The bracket stood in the
+    /// source already, so building it is no edit of the word that reads it.
     pub(super) fn take_held(&mut self, tape: &mut ParsingTape, k: isize) -> Result<(), ParseError> {
         let Some(&cell) = tape.at(k) else { return Ok(()) };
         if cell.held.is_none() {
@@ -803,6 +803,7 @@ impl<'a> Parser<'a> {
         }
         let id = self.cell_identity(&cell);
         let construct = self.ctor_of(id).expect("a held bracket's opener has a constructor");
+        let edits = tape.edits();
         let center = tape.mark();
         let handle = tape.handle_at(k).expect("read above");
         tape.at_mut(k).expect("read above").held = None;
@@ -813,6 +814,7 @@ impl<'a> Parser<'a> {
         self.ended_after(tape, cell.start)?;
         self.cx.pos = frontier;
         tape.restore(center);
+        tape.lexed_on(edits);
         Ok(())
     }
 

@@ -1142,6 +1142,13 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         k: isize,
     ) -> Result<Option<Cell>, ParseError> {
+        // A `[ … ]` is a list, which only `array` takes as its own.
+        let list = tape
+            .in_reach(k)
+            .is_some_and(|c| c.held.is_some() && self.cell_identity(c) == self.types.open_sq_);
+        if list {
+            return Ok(None);
+        }
         let Some(mut cell) = self.cell_at(tape, k)? else { return Ok(None) };
         // A call's result whose type has a parse of its own stands unbuilt, woken as that type's
         // word, though the call built it: `type arithmetic.operation(«+», …)`.
