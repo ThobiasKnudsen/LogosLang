@@ -219,8 +219,9 @@ pub(super) struct OpenScope {
     /// A line inside the line being parsed gave a name this scope holds, or its address, and
     /// it was not moved: the line may not give it as this scope's value.
     gives_held: bool,
-    /// How the line that ended the scope ends, once one did: every line after it is refused.
-    ended_by: Option<Flow>,
+    /// How the line that ended the scope ends, and that line, once one did: every line after it
+    /// is refused.
+    ended_by: Option<(Flow, Cell)>,
     /// A program's or an imported file's top level, which a line that gives a value ends.
     top: bool,
     /// Once a line the pass ran gave the scope its value, that line's index: the lines after
@@ -1182,7 +1183,12 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { flow::of(self.types, body.dyad) }.gives {
-            return Err(self.fail_at(body.start, ParseError::DeferGives));
+            // SAFETY: as above.
+            let e = match unsafe { flow::gives_fallible(self.types, body.dyad) } {
+                true => ParseError::FallibleUnread,
+                false => ParseError::DeferGives,
+            };
+            return Err(self.fail_at(body.start, e));
         }
         Ok(body.dyad)
     }
@@ -1984,21 +1990,34 @@ impl<'a> Parser<'a> {
         }
         let open = self.cx.open.last_mut().expect("checked above");
         let refused = match open.ended_by {
-            Some(Flow { gives: true, .. }) => Some(ParseError::LineAfterValue),
-            Some(_) => Some(ParseError::LineAfterLeave),
+            Some((Flow { gives: true, .. }, ended)) => {
+                // SAFETY: a line is a reduced dyad from the store.
+                if unsafe { flow::gives_fallible(self.types, ended.dyad) } {
+                    // Nothing reads a `T!` with a line after it, so it is refused where it stands.
+                    Some((ended.start, ParseError::FallibleUnread))
+                } else {
+                    Some((line.start, ParseError::LineAfterValue))
+                }
+            }
+            Some(_) => Some((line.start, ParseError::LineAfterLeave)),
             None => None,
         };
-        if let Some(e) = refused {
+        if let Some((at, e)) = refused {
             if open.cell {
-                open.held_back.get_or_insert((line.start, e));
+                open.held_back.get_or_insert((at, e));
                 return Ok(());
             }
-            return Err(self.fail_at(line.start, e));
+            return Err(self.fail_at(at, e));
         }
         let open = self.cx.open.last().expect("checked above");
         // SAFETY: a line is a reduced dyad from the store.
         let flow = unsafe { flow::of(self.types, line.dyad) };
         if let Some(e) = open.gives_none.clone().filter(|_| flow.gives) {
+            // SAFETY: as above.
+            let e = match unsafe { flow::gives_fallible(self.types, line.dyad) } {
+                true => ParseError::FallibleUnread,
+                false => e,
+            };
             return Err(self.fail_at(line.start, e));
         }
         let open = self.cx.open.last_mut().expect("checked above");
@@ -2024,7 +2043,7 @@ impl<'a> Parser<'a> {
             }
         }
         if flow.ends_scope() {
-            self.cx.open.last_mut().expect("checked above").ended_by = Some(flow);
+            self.cx.open.last_mut().expect("checked above").ended_by = Some((flow, *line));
         }
         Ok(())
     }

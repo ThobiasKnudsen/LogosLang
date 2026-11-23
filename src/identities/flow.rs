@@ -298,12 +298,32 @@ unsafe fn value_read(types: &Core, node: DyadPtr) -> Result<ValueRead, ParseErro
 }
 
 /// What a line gives where nothing lands it, at a program's or a file's top level: every node
-/// that gives its value one type, made alike or borrowed alike, as a block's.
+/// that gives its value one type, made alike or borrowed alike, as a block's, and no `T!`,
+/// whose error nothing would read.
 ///
 /// # Safety
 /// `line` must be a reduced dyad from the store.
 pub(crate) unsafe fn check_line_value(types: &Core, line: DyadPtr) -> Result<(), ParseError> {
-    given_read(types, line).map(|_| ())
+    match given_read(types, line)? {
+        (_, Some(read)) if super::union::fallible_members(types, read.ty).is_some() => {
+            Err(ParseError::FallibleUnread)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Whether some node that gives the value of `line` gives a `T!`.
+///
+/// # Safety
+/// `line` must be a reduced dyad from the store.
+pub(crate) unsafe fn gives_fallible(types: &Core, line: DyadPtr) -> bool {
+    let mut fallible = false;
+    let mut line = line;
+    let _ = walk(types, &mut line, &mut |slot: *mut DyadPtr| {
+        fallible |= super::union::is_fallible_value(types, *slot);
+        Ok(())
+    });
+    fallible
 }
 
 /// How `node` ends as a line, and the value its nodes that give one give together, `None` where

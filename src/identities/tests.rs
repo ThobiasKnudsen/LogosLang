@@ -1524,6 +1524,14 @@ fn a_line_after_one_that_always_gives_or_leaves_is_refused() {
     assert_eq!(run_script("m := { a := i32 1, free (5), b := pub i32 2 }, m.b"), 2);
     // A value nobody wants is thrown away, and the next line runs.
     assert_eq!(run_script("free (5), y := i32 1, y"), 1);
+    // A `T!` is refused where it stands, and `free` refuses it: its error must be handled.
+    let half = "half := fn (n := i32 ?) -> i32! ( n / 2 )";
+    for tail in ["half(8), y := i32 1", "g := fn () -> void ( half(8) )", "m := { half(8) }"] {
+        let src = format!("{half}, {tail}");
+        assert_eq!(script_parse_err(&src), ParseError::FallibleUnread, "{src}");
+    }
+    let src = format!("{half}, free (half(8)), 1");
+    assert_eq!(script_parse_err(&src), ParseError::FreeOfFallible, "{src}");
 }
 
 #[test]

@@ -394,6 +394,10 @@ pub enum ParseError {
     UnwrittenWholeNumber(Box<String>),
     /// A raise or a `try` in a `defer`, whose error nobody receives.
     ErrorInDefer,
+    /// A `T!` given where nothing reads it: a line's value that nothing lands.
+    FallibleUnread,
+    /// `free` over a `T!`, which would throw its error away.
+    FreeOfFallible,
     /// `holds` with no member's name after it.
     HoldsNeedsMember,
     /// A name after `holds` that is no member of the union, and the union's members.
