@@ -171,6 +171,13 @@ pub(crate) mod prec {
     pub fn waits_for_reads(rank: f64) -> bool {
         OPEN < rank && rank < APPLY
     }
+
+    /// The ranks of the reads after a node, which a word that waits for them lets build first:
+    /// application up to the tight reads `.`, `:` and `@`. The readers between them never
+    /// stand after a node.
+    pub fn reads_after_node(rank: f64) -> bool {
+        (APPLY..=TIGHT).contains(&rank)
+    }
 }
 
 /// A record with no payload.

@@ -2348,6 +2348,32 @@ fn spellings_ending_at_one_node_are_each_found_by_their_own_key() {
 }
 
 #[test]
+fn an_address_lets_a_read_written_in_logos_that_outranks_it_build_first() {
+    // `squared` reads the node to its left: at application's rank it takes `x` before `&`, on
+    // both tiers; at `*`'s rank and one it finds `&x` built and refuses the pointer.
+    let squared = |rank: &str| {
+        format!(
+            "sq := fn (a := i32 ?) -> i32 ( a * a ), squared := type ( a := i32 ?, \
+             output_type := type ?, run = ( sq(a) ), parse_rank = {rank}, associativity = left, \
+             parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
+             tape.is_constructed[0] = true, tape.remove(-1) ) ), "
+        )
+    };
+    let applied = squared("dyad.parse_rank");
+    for tail in [
+        "x := i32 5, p := &x squared, p@",
+        "f := fn () -> i32 ( x := i32 5, p := &x squared, p@ ), f.compile(), f()",
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{applied}{tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), "25\n"), "{tail}: stderr: {stderr}");
+    }
+    let below = squared("*.parse_rank + 1");
+    let (code, _, stderr) = run_line(&format!("{below}x := i32 5, p := &x squared, p@"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     let out = logos().arg("import file «tests/fixtures/squared.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
