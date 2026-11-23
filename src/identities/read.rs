@@ -178,7 +178,7 @@ pub unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
 ///
 /// # Safety
 /// As [`output_type`].
-unsafe fn given_type(types: &Core, node: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn given_type(types: &Core, node: DyadPtr) -> DyadPtr {
     use crate::parse::FN_OUTPUT;
     let node = types.through(node);
     if node.is_null() {

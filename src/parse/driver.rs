@@ -299,21 +299,25 @@ impl<'a> Parser<'a> {
     }
 
     /// Whether `id`, built at discovery below the reads after a node (`&`), waits there: until
-    /// `side`, the cell to its right, is lexed and built and no `.`, `:`, `@` or bracket reads
-    /// after it, so `&p.x` takes `p.x` (›Every identity has a `parse_rank`, and `(` works in two
-    /// steps‹ [[R259]]). `lexed_after`: a cell already stands after `side`. A held bracket or a
-    /// word still to be built there it takes at the boundary.
+    /// `side`, the cell to its right, is lexed and built and no read after a node follows it, a
+    /// bracket or a word of their ranks, so `&p.x` takes `p.x` (›Every identity has a
+    /// `parse_rank`, and `(` works in two steps‹ [[R259]]). `lexed_after`: a cell already stands
+    /// after `side`. A held bracket or a word still to be built there it takes at the boundary.
     fn waits_for_reads(&mut self, id: DyadPtr, side: Option<&Cell>, lexed_after: bool) -> bool {
-        if !crate::identities::meta::prec::waits_for_reads(self.precedence_of_cell(id)) {
+        use crate::identities::meta::prec;
+        if !prec::waits_for_reads(self.precedence_of_cell(id)) {
             return false;
         }
         let Some(side) = side else { return true };
         if side.held.is_some() || !self.is_operand_cell(side) {
             return true;
         }
-        let t = self.types;
-        let reads = [t.dot_, t.colon_, t.at_, t.open_, t.open_sq_];
-        !lexed_after && self.peek_token().is_some_and(|(n, _)| reads.contains(&n))
+        !lexed_after
+            && self.peek_token().is_some_and(|(n, _)| {
+                self.is_opener(n)
+                    || (self.ctor_of(n).is_some()
+                        && prec::reads_after_node(self.precedence_of_cell(n)))
+            })
     }
 
     /// The cell `offset` links right of the center, lexed on demand (DESIGN

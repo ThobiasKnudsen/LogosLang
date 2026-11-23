@@ -146,9 +146,9 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
 
 /// Juxtaposition: the value to the right (`Parser::type_operand`) converts into this type as
 /// any value lands in it; `?` makes this type's valueless place; a bracket is the written
-/// conversion `i32(x)`; a `lossy` value converts what it took, a bracket as a written
-/// conversion's, losing what this type cannot hold. With no value to the right the type stands
-/// as a value, so `f(i32, 3)` passes the type.
+/// conversion `i32(x)`; a value the gate word `lossy` gated converts as a written conversion
+/// does, losing what this type cannot hold. With no value to the right the type stands as a
+/// value, so `f(i32, 3)` passes the type.
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
@@ -161,11 +161,14 @@ fn construct(
     if p.takes_unknown(tape, &operand, id)? {
         return Ok(crate::parse::Constructed::Placed);
     }
-    let node = if let Some(taken) = super::lossy::taken(types, &operand) {
+    // SAFETY: a cell's gates are null or a gate mint.
+    let lossy = unsafe { super::gate::words_of(operand.gates) }.contains(&types.lossy);
+    let node = if lossy {
+        let value = p.as_operand(operand)?;
         tape.remove(1);
-        // SAFETY: `taken` is the reduced dyad `lossy` took; `id` is this numeric type's node.
+        // SAFETY: `value` is the reduced dyad `lossy` gated; `id` is this numeric type's node.
         unsafe {
-            let args = p.args_of(taken);
+            let args = p.args_of(value);
             p.build_conversion(id, &args, true)
         }
         .map_err(|e| p.fail_at(operand.start, e))?

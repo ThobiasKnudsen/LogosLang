@@ -60,7 +60,6 @@ pub(crate) mod instance;
 pub(crate) mod instruction;
 pub mod lex;
 mod logos;
-pub(crate) mod lossy;
 pub(crate) mod meta;
 pub(crate) mod mint;
 mod not;
@@ -296,7 +295,6 @@ impl Core {
             numtypes[nt as usize] = numtype::register_type(&mut cx, spelling, nt);
         }
         let i32_ = numtypes[NumType::I32 as usize];
-        let lossy = lossy::register(&mut cx);
         let void = numtype::register_void(&mut cx);
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
@@ -391,7 +389,7 @@ impl Core {
         op_leaves.return_ = return_leaf;
         let (declare_, declare_leaf, declare_tok) = declare::register(&mut cx, &callables);
         op_leaves.declare_ = declare_leaf;
-        let (pub_, mut_, static_, gate_) = gate::register(&mut cx);
+        let gate::GateIds { words: [pub_, mut_, static_, lossy], gate_ } = gate::register(&mut cx);
         // SAFETY: `gate_` is the former `gate::register` gave, and `pub_` a gate word.
         let pub_mint = unsafe { gate::early_mint(cx.store, gate_, &[pub_]) };
         let (import_, import_leaf) = import::register(&mut cx, &callables);
@@ -987,7 +985,8 @@ pub(crate) unsafe fn resolve_binary(
 
 /// What lands in a place of type `ty`: the value itself where its type is `ty`, a plain number
 /// converted exactly, a value whose type lies inside `ty` under the conversion node a written
-/// `ty (value)` builds; anything else is refused where it is written. An `if` lands each arm,
+/// `ty (value)` builds, and a number of a type gated `lossy` into a number type `ty` with loss;
+/// anything else is refused where it is written. An `if` lands each arm,
 /// so arms of two types meet in `ty`, and a block its last line. A type no place can have takes
 /// the value as it stands. DESIGN ›A type's `parse` decides what converts into it; unwritten, a
 /// value converts only into a type that holds it exactly‹, ›`if` reads its own right side‹.
@@ -1022,9 +1021,9 @@ pub(crate) unsafe fn land_rational(
     land(store, types, value, ty)
 }
 
-/// As [`land`]; with `lossy`, what `ty lossy (value)` gives: a number of any number type, a plain
-/// number or a rational value also converts into the number type `ty`, losing what `ty` cannot
-/// hold.
+/// As [`land`]; with `lossy`, what `ty lossy (value)` gives, the `lossy` gate standing on the
+/// value's cell: a number of any number type, a plain number or a rational value also converts
+/// into the number type `ty`, losing what `ty` cannot hold.
 ///
 /// # Safety
 /// As [`land`].
@@ -1103,7 +1102,7 @@ unsafe fn land_leaf(
     if let Some(read) = dyad_place::read_through(store, types, value, ty, how.lossy) {
         return land_leaf(store, types, read, ty, place, how);
     }
-    let lossy = how.lossy;
+    let lossy = how.lossy || gate::is_lossy(types, value);
     // A comptime name used here is its binding; the literal folds through it.
     let plain = types.through(value);
     let plain_number = dyad::ty(plain) == types.rational;

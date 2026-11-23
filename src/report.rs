@@ -140,11 +140,6 @@ pub fn parse_message(e: &ParseError) -> String {
              what a fraction of two i64s holds"
                 .into()
         }
-        ParseError::LossyOutOfPlace => {
-            "`lossy` stands between a number type and the value it converts, as `i32 lossy (x)` or \
-             `f64 lossy 0.1`"
-                .into()
-        }
         ParseError::ReturnOutsideFunction => "`return` is written only inside a function".into(),
         ParseError::ReturnInDefer => {
             "a `defer` cannot leave its function: it runs as its scope ends, once the way out is \

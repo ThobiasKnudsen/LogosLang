@@ -2350,6 +2350,32 @@ fn spellings_ending_at_one_node_are_each_found_by_their_own_key() {
 }
 
 #[test]
+fn an_address_lets_a_read_written_in_logos_that_outranks_it_build_first() {
+    // `squared` reads the node to its left: at application's rank it takes `x` before `&`, on
+    // both tiers; at `*`'s rank and one it finds `&x` built and refuses the pointer.
+    let squared = |rank: &str| {
+        format!(
+            "sq := fn (a := i32 ?) -> i32 ( a * a ), squared := type ( a := i32 ?, \
+             output_type := type ?, run = ( sq(a) ), parse_rank = {rank}, associativity = left, \
+             parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
+             tape.is_constructed[0] = true, tape.remove(-1) ) ), "
+        )
+    };
+    let applied = squared("dyad.parse_rank");
+    for tail in [
+        "x := i32 5, p := &x squared, p@",
+        "f := fn () -> i32 ( x := i32 5, p := &x squared, p@ ), f.compile(), f()",
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{applied}{tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), "25\n"), "{tail}: stderr: {stderr}");
+    }
+    let below = squared("*.parse_rank + 1");
+    let (code, _, stderr) = run_line(&format!("{below}x := i32 5, p := &x squared, p@"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     let out = logos().arg("import file «tests/fixtures/squared.logos»").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -12791,21 +12817,40 @@ fn number_types_and_lossy_take_the_value_to_their_right_rightmost_first() {
 }
 
 /// ›A type's `parse` decides what converts into it; unwritten, a value converts only into a type
-/// that holds it exactly‹ [[R155]]: `lossy` needs a number type to its left and a value to its
-/// right, and is refused where it is written.
+/// that holds it exactly‹ [[R155]], ›Gates are type nodes: `x := mut i32 5`; the record holds no
+/// gates‹ [[R381]]: `lossy` is a gate word. It gates the value to its right, which a name, a
+/// parameter or a field keeps in its type, and a number type converts a value of a `lossy` type
+/// with loss wherever it lands; a copy takes no gate. On both tiers.
 #[test]
-fn lossy_without_both_sides_is_refused_where_it_is_written() {
-    let refused = "`lossy` stands between a number type and the value it converts";
-    for (src, at) in [
-        ("x := lossy (f64 2.5), 0", "1:6:"),
-        ("lossy 2.5", "1:1:"),
-        ("x := i32 lossy, 0", "1:10:"),
-        ("rational_number lossy 2.5", "1:17:"),
-        ("f := fn () -> i32 ( x := lossy (f64 2.5), 0 ), f.compile(), f()", "1:26:"),
+fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
+    let defs = "g := fn (a := i32 ?) -> i32 ( a + 1 ), pt := type ( v := pub lossy f64 ? )";
+    let mut cases = Vec::new();
+    for (body, want) in [
+        ("x := lossy (f64 2.5), i32 0", "0\n"),
+        ("y := lossy (f64 2.5), i32 y", "2\n"),
+        ("y := lossy (f64 2.5), g(y)", "3\n"),
+        ("y := lossy (f64 2.5), x := mut i32 0, x = y, x", "2\n"),
+        ("y := lossy (f64 2.5), z := lossy y, i32 z", "2\n"),
+        ("y := mut lossy f64 2.5, y = 3.75, i32 y", "3\n"),
+        ("y := lossy mut f64 2.5, y = 3.75, i32 y", "3\n"),
+        ("p := pt(2.5), i32 p.v", "2\n"),
+    ] {
+        let f = format!("f := fn () -> i32 ( {body} )");
+        cases.push((format!("{defs}, {f}, f()"), want));
+        cases.push((format!("{defs}, {f}, g.compile(), f.compile(), f()"), want));
+    }
+    let typed = "y := lossy (f64 2.5), t := type lossy f64, print «{y.type} {t == f64}»";
+    cases.push((typed.to_string(), "lossy f64 true\n"));
+    let joined = "y := lossy mut f64 2.5, z := mut lossy f64 2.5, print «{y.type} {z.type}»";
+    cases.push((joined.to_string(), "mut lossy f64 mut lossy f64\n"));
+    assert_runs(&cases);
+    for (src, want) in [
+        ("y := lossy (f64 2.5), z := y, i32 z", "1:35: error: these types do not match"),
+        ("i32 lossy lossy (f64 2.5)", "1:5: error: this gate word already gates the value"),
     ] {
         let (code, stdout, stderr) = run_line(src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
-        assert!(stderr.contains(&format!("{at} error: {refused}")), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(want), "{src}: stderr: {stderr}");
     }
 }
 

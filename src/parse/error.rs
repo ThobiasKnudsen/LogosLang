@@ -145,8 +145,6 @@ pub enum ParseError {
     UncomputableLiteral,
     /// Arithmetic on plain numbers with no value: a division by zero, or past an `i64` fraction.
     LiteralArithmetic,
-    /// `lossy` not between a number type and the value it converts.
-    LossyOutOfPlace,
     /// A `return` with no function around it to leave.
     ReturnOutsideFunction,
     /// A `return` in a `defer`, at any depth.
