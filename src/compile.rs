@@ -1592,7 +1592,7 @@ pub unsafe fn compile_fn(
     types: &Core,
     fn_node: DyadPtr,
 ) -> Result<(), CompileError> {
-    let artifact = compile_fn_body(lower, types, fn_node)?;
+    let Some(artifact) = compile_fn_body(lower, types, fn_node)? else { return Ok(()) };
     let bcode_slot = (dyad::value(fn_node) as *mut DyadPtr).add(FN_BCODE);
     if (*bcode_slot).is_null() {
         *bcode_slot =
@@ -1614,7 +1614,8 @@ unsafe fn install(fn_node: DyadPtr, entry: usize) {
 }
 
 /// The shared work of [`compile_fn`] and [`compile_into`]: the body's machine
-/// code, nothing minted or installed.
+/// code, nothing minted or installed; `None` for a `native`, whose machine code is its
+/// body (›`undefined`, `?`, `@void` and `native`‹ [[R135]]).
 ///
 /// # Safety
 /// As [`compile_fn`].
@@ -1622,11 +1623,14 @@ unsafe fn compile_fn_body(
     lower: &LowerTable,
     types: &Core,
     fn_node: DyadPtr,
-) -> Result<Artifact, CompileError> {
+) -> Result<Option<Artifact>, CompileError> {
     let fields = dyad::value(fn_node) as *const DyadPtr;
     let body = *fields.add(FN_BODY);
+    if body.is_null() {
+        return Ok(None);
+    }
     let ret = return_kind(types, *fields.add(FN_OUTPUT))?;
-    compile_body(lower, types, fn_node, body, ret)
+    compile_body(lower, types, fn_node, body, ret).map(Some)
 }
 
 /// How the declared output travels in the container: not at all for `void`,
@@ -1667,7 +1671,7 @@ pub(crate) unsafe fn compile_into(
     fn_node: DyadPtr,
     code_leaf: DyadPtr,
 ) -> Result<(), CompileError> {
-    let artifact = compile_fn_body(lower, types, fn_node)?;
+    let Some(artifact) = compile_fn_body(lower, types, fn_node)? else { return Ok(()) };
     let bcode_slot = (dyad::value(fn_node) as *mut DyadPtr).add(FN_BCODE);
     if (*bcode_slot).is_null() {
         *bcode_slot = code_leaf;

@@ -15,11 +15,6 @@
 error.operands := «an arithmetic operation has no result for these operands»,
 
 arithmetic := pub type (
-    # `t is number`: stand-in for #487.
-    number := static fn (t := type ?) -> bool (
-        t == (i8 or i16 or i32 or i64 or u8 or u16 or u32 or u64 or f32 or f64 or rational_number)
-    ),
-
     # `t`'s own instruction of the kind `which` names over `rational_number`. A parameter holding
     # `fn (t := type ?) -> type ( t.mul )` would name it: stand-in for #474.
     instruction := static fn (t := type ?, which := type ?) -> type (
@@ -42,7 +37,7 @@ arithmetic := pub type (
                 if made != ? return made,
                 # Operands a mint does not take are a checked error: the parse refuses them first
                 # (›A checked error is a fault: the task that hit it is cancelled‹ [[R141]]).
-                if not number(l) or not number(r) abort «`{spelled}` takes numbers, and this type is none»,
+                if not (l is number) or not (r is number) abort «`{spelled}` takes numbers, and this type is none»,
                 if l != r abort «`{spelled}` takes two values of one type»,
                 if l == (f32 or f64) and step_of == rational_number.rem abort «`{spelled}` has no instruction for a float»,
                 made = type (
@@ -67,7 +62,7 @@ arithmetic := pub type (
                 # value‹ [[R251]]).
                 if (l != void or r != void) and l != unknown_name and r != unknown_name (
                     if l == void or r == void error.operands «`{spelled}` needs a value on each side»,
-                    if not number(l) or not number(r) error.operands «`{spelled}` takes numbers, and this type is none»,
+                    if not (l is number) or not (r is number) error.operands «`{spelled}` takes numbers, and this type is none»,
                     # A plain number is a literal, whose own type is `rational_number`; any other
                     # rational meets only a rational.
                     plain_l := tape[-1].type == rational_number,
