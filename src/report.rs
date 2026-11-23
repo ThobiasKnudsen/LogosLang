@@ -172,6 +172,11 @@ pub fn parse_message(e: &ParseError) -> String {
              where it gives any other type"
                 .into()
         }
+        ParseError::ResultWrittenGives => {
+            "this body writes `return`, so it leaves only by `return` or a raise; no line of it \
+             gives a value"
+                .into()
+        }
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
         ParseError::AssignToLiteral(lit) => format!(
