@@ -8318,7 +8318,8 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
 /// it leaves, and a bare `return` leaves with what it holds; `return X` and a raise still leave,
 /// ending what it holds. Under `T!` a write of `return.value` or `return.err` sets the member and
 /// the tag; any other result is written whole, `return = …`, and a record's field through it.
-/// A write ends the value written before it. On both tiers.
+/// A write ends the value written before it. An arm that always leaves ends the place for none of
+/// the lines after its `if`, as the guard arm of R207's `half` does not. On both tiers.
 #[test]
 fn the_result_place_is_written_and_read_before_the_function_leaves() {
     let odd = "error.odd := «odd»";
@@ -8367,6 +8368,24 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
                 "print «{g(i32 1)} {g(i32 5)}»",
                 "2 5",
             ),
+            (
+                "g := fn (k := i32 ?) -> bag! ( return.value = bag(k), if k > 3 ( return ), \
+                 return.value = bag(k + 10), return )",
+                "print «{g(5).value.n} {g(1).value.n}»",
+                "freed 1\n5 11\nfreed 11\nfreed 5",
+            ),
+            (
+                "g := fn (c := bool ?) -> i32! ( return.value = 1, \
+                 if c ( print «stays» ) else ( return ), return.value = 2, return )",
+                "print «{g(true).value} {g(false).value}»",
+                "stays\n2 1",
+            ),
+            (
+                "g := fn (k := i32 ?) -> pt ( return = pt(k, 0), if k > 1 ( if k > 3 ( return ) ), \
+                 return.y = 9, return )",
+                "a := g(i32 5), b := g(i32 2), print «{a.x} {a.y} {b.x} {b.y}»",
+                "5 0 2 9",
+            ),
         ] {
             let src =
                 format!("{odd}, {bag}, {pt}, {g}, f := fn () -> void ( {body} ), {compile}f()");
@@ -8380,10 +8399,11 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
 }
 
 /// R207: «A read of `return` before its first write is refused where it is written», a write in
-/// an arm filling nothing for the lines after it, as for every name (R105), and a bare `return`
-/// in an arm moving the place out on every path, as `return a` moves `a` (R66, R70). `return` is
-/// no result place outside a function, in a `defer`, in a value made once, in a `-> void`
-/// function or in a type's slot body, and no caller writes a member of a `T!` (R379).
+/// an arm filling nothing for the lines after it, as for every name (R105); an arm that always
+/// leaves still ends any other name it moves on every path (R70, rule 2). `return` is no result
+/// place outside a function, in a `defer`, in a value made once, in a `-> void` function or in a
+/// type's slot body, and no caller writes a member of a `T!` (R379); `return.tag` is read only, as
+/// a named union's `tag` is.
 #[test]
 fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
     let unwritten = "error: the result is read before it is written: write it first among the \
@@ -8410,10 +8430,16 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
             format!("1:60: {unwritten}"),
         ),
         (
-            "f := fn (c := bool ?) -> i32! ( return.value = 1, if c ( return ), \
-             return.value = 2, return ), 0"
+            "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), \
+             f := fn (c := bool ?) -> bag ( a := bag(1), if c ( return a ), a.n = 2, bag(3) ), 0"
                 .to_string(),
-            "1:68: error: `return` is dead here: it was moved or freed above".to_string(),
+            "1:130: error: `a` is dead here: it was moved or freed above".to_string(),
+        ),
+        (
+            "f := fn () -> i32! ( return.value = 1, return.tag = 2, return ), 0".to_string(),
+            "1:53: error: `tag` is not `mut`: a name is written after its declaration only when \
+             declared `tag := mut …`"
+                .to_string(),
         ),
         (
             "return.value = 1".to_string(),

@@ -512,6 +512,27 @@ impl ScopeStack {
         undone
     }
 
+    /// `binding`, which a `move` or `free` ended since `mark`, is live as if nothing had ended it:
+    /// its end goes back to what it was at `mark`, and its journal entries since then and its
+    /// pending end go, so neither a line's close nor an enclosing `if` ends it again.
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store.
+    pub unsafe fn spare(&mut self, mark: usize, binding: DyadPtr) {
+        let mut at = self.journal.len();
+        while at > mark {
+            at -= 1;
+            if let Journal::Ended { binding: ended, prev_end } = self.journal[at] {
+                if ended == binding {
+                    // SAFETY: the caller's contract.
+                    unsafe { Binding::replace_end(binding, prev_end) };
+                    self.journal.remove(at);
+                }
+            }
+        }
+        self.pending.retain(|p| p.binding != binding || p.endpoint != Endpoint::End);
+    }
+
     /// Every endpoint pending for `scope` now points at `item`, the line as a
     /// whole: a `move` inside an `if` body ends the outer name at the `if`
     /// (DESIGN ›Name resolution is scope-filtered‹).
