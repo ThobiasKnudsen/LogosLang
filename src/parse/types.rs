@@ -740,7 +740,10 @@ impl<'a> Parser<'a> {
                     unsafe { self.cx.scopes.settle_item(body.scope, comment) };
                 }
             }
-            let value = cell.dyad;
+            // SAFETY: a parsed cell holds a reduced dyad from the store.
+            let (value, gates) =
+                unsafe { crate::identities::gate::value_parts(self.types, cell.dyad) }
+                    .unwrap_or((cell.dyad, std::ptr::null_mut()));
             if self.is_bare_unknown(&cell) {
                 return Err(self.untyped(start, relaxed));
             }
@@ -791,14 +794,14 @@ impl<'a> Parser<'a> {
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = self.mint_binding(field, scope, name.as_bytes());
             self.enter_binding_in(scope, name, binding, start)?;
-            // SAFETY: a cell's gates are null or a gate mint.
+            // SAFETY: `gates` is null or a gate mint.
             let public =
-                unsafe { crate::identities::gate::words_of(cell.gates) }.contains(&self.types.pub_);
+                unsafe { crate::identities::gate::words_of(gates) }.contains(&self.types.pub_);
             if public && list == FieldList::Parameters {
                 self.cx.pos = start;
                 return Err(ParseError::PubParameter);
             }
-            self.gate_name(binding, cell.gates);
+            self.gate_name(binding, gates);
             fields.push(field);
             bindings.push(binding);
             if !self.consume_separator() {

@@ -661,11 +661,14 @@ impl Core {
         ]
     }
 
-    /// A binding yields the dyad it names; anything else passes through.
+    /// A binding yields the dyad it names, and a value a gate word gave the value it gates, whose
+    /// gates its type alone carries (›Gates are type nodes: `x := mut i32 5`; the record holds no
+    /// gates‹ [[R381]]); anything else passes through.
     ///
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     pub unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
+        let p = gate::value_parts(self, p).map_or(p, |(value, _)| value);
         binding::through(self, p)
     }
 
@@ -1099,10 +1102,10 @@ unsafe fn land_leaf(
     place: read::Read,
     how: Landing,
 ) -> Result<DyadPtr, ParseError> {
-    if let Some(read) = dyad_place::read_through(store, types, value, ty, how.lossy) {
-        return land_leaf(store, types, read, ty, place, how);
-    }
     let lossy = how.lossy || gate::is_lossy(types, value);
+    if let Some(read) = dyad_place::read_through(store, types, value, ty, lossy) {
+        return land_leaf(store, types, read, ty, place, Landing { lossy, ..how });
+    }
     // A comptime name used here is its binding; the literal folds through it.
     let plain = types.through(value);
     let plain_number = dyad::ty(plain) == types.rational;
@@ -1142,11 +1145,12 @@ unsafe fn land_leaf(
         read::Read::Aggregate | read::Read::Behind(_) => from == ty,
         _ => false,
     };
-    if fits {
-        Ok(value)
-    } else {
-        Err(ParseError::TypeMismatch)
+    if !fits {
+        return Err(ParseError::TypeMismatch);
     }
+    // Landed, the value is the place's type's, so a gate a gate word gave it has had its say:
+    // `f64 lossy (x)` of an `f64` is a plain `f64`.
+    Ok(gate::value_parts(types, value).map_or(value, |(value, _)| value))
 }
 
 /// # Safety

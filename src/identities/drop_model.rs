@@ -75,11 +75,17 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             return Err(ParseError::MissingOperand);
         }
         let count = p.take_right(tape)?;
+        let types = p.types();
         let (gates, init) = if p.marker_right(tape, of_) {
             tape.remove(1);
             p.build_right_side(tape)?;
-            let gates = tape.at(1).map_or(std::ptr::null_mut(), |c| c.gates);
-            (gates, Some(p.take_right(tape)?))
+            let init = p.take_right(tape)?;
+            // The gates a gate word wrote on the value gate the type the pointer points at.
+            // SAFETY: `init` is a reduced dyad just parsed.
+            match unsafe { super::gate::value_parts(types, init) } {
+                Some((init, gates)) => (gates, Some(init)),
+                None => (std::ptr::null_mut(), Some(init)),
+            }
         } else {
             (std::ptr::null_mut(), None)
         };
@@ -87,7 +93,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         if let Some(init) = init {
             p.take(init);
         }
-        let types = p.types();
         let node = build_alloc(p.store(), types, count, init, gates)?;
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)

@@ -174,12 +174,17 @@ pub unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
     super::gate::under(given_type(types, node))
 }
 
-/// [`output_type`] as the node holds it, a gate node where one was written.
+/// [`output_type`] as the node holds it, a gate node where one was written: a value a gate word
+/// gave has its type word, `mut i32` for `mut i32 5`.
 ///
 /// # Safety
 /// As [`output_type`].
 pub(crate) unsafe fn given_type(types: &Core, node: DyadPtr) -> DyadPtr {
     use crate::parse::FN_OUTPUT;
+    let node = crate::binding::through(types, node);
+    if super::gate::is_value(types, node) {
+        return dyad::ty(node);
+    }
     let node = types.through(node);
     if node.is_null() {
         return node;
@@ -257,18 +262,18 @@ pub(crate) unsafe fn gives(
 
 /// The type word of the node `node` is, as `.type` reads it (›`x.type` reads the type word of the
 /// node a name or an expression stands for‹ [[R279]]): an operation's mint, an `if`'s `if`, a
-/// bracket's kind; a value's own type, and a call's the type it returns.
+/// bracket's kind; a value's own type with its gate node, and a call's the type it returns.
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
 pub(crate) unsafe fn own_type(types: &Core, node: DyadPtr) -> DyadPtr {
-    let node = types.through(node);
+    let node = crate::binding::through(types, node);
     if let Some(bracket) = super::tape::bracket_kind(types, node) {
         return bracket;
     }
     match operator_node(types, node) {
         Some(node) => dyad::ty(node),
-        None => output_type(types, node),
+        None => given_type(types, node),
     }
 }
 
