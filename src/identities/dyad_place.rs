@@ -462,7 +462,7 @@ unsafe fn read_held(
         }
         _ => {
             let node = stable(rt.store(), &*types, held);
-            let landed = super::land_as(rt.store(), &*types, node, into, lossy)
+            let landed = super::land_read(rt.store(), &*types, node, into, lossy)
                 .map_err(|e| RunError::Parse(Box::new(e)))?;
             match carry {
                 Some(bytes @ Carry::Bytes(_)) => take(rt, bytes, landed)?,

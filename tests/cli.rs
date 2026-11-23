@@ -2569,7 +2569,7 @@ fn prose_may_stand_before_a_field_a_member_or_a_slot_fill() {
                y := pub static i32 2,\n\
                # a slot\n\
                parse_rank = 5\n\
-               ), q := t (4), q.x + t.y + i32 lossy (t.parse_rank)";
+               ), q := t (4), q.x + t.y + try i32 lossy (t.parse_rank)";
     let (code, stdout, stderr) = run_line(src);
     assert_eq!((code, stdout.as_str()), (Some(0), "11\n"), "stderr: {stderr}");
 }
@@ -2995,9 +2995,14 @@ fn lossy_gives_what_each_number_type_defines_on_both_tiers() {
         ("f32", "f64", huge, "inf"),
         ("i32", "i32", "i32 7", "7"),
     ] {
+        // A float into an integer type gives the integer type's `T!`.
+        let given = if from == "f64" && ty == "i32" { "!" } else { "" };
         for compile in ["", "g.compile(), "] {
-            let src =
-                format!("g := fn (x := {from} ?) -> {ty} ( {ty} lossy (x) ), {compile}g({value})");
+            let src = format!(
+                "g := fn (x := {from} ?) -> {ty}{given} ( {ty} lossy (x) ), {compile}\
+                 r := g({value}), print «{{r{}}}»",
+                if given.is_empty() { "" } else { ".value" }
+            );
             let (code, stdout, stderr) = run_line(&src);
             assert_eq!((code, stdout.trim()), (Some(0), expect), "{src}: stderr: {stderr}");
         }
@@ -3010,10 +3015,12 @@ fn lossy_gives_what_each_number_type_defines_on_both_tiers() {
     }
     for compile in ["", "g.compile(), "] {
         for x in ["f64 1.0 / 0.0", "f64 -1.0 / 0.0", "f64 0.0 / 0.0"] {
-            let src = format!("g := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), {compile}g({x})");
-            let (code, _, stderr) = run_line(&src);
-            assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-            assert!(stderr.contains("has no whole number"), "{src}: stderr: {stderr}");
+            let src = format!(
+                "g := fn (x := f64 ?) -> i32! ( i32 lossy (x) ), {compile}r := g({x}), \
+                 print «{{r holds err}}»"
+            );
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.trim()), (Some(0), "true"), "{src}: stderr: {stderr}");
         }
     }
 }
@@ -5496,7 +5503,7 @@ fn a_gate_word_stands_right_of_the_declaration_and_gates_the_nearest_value() {
         ("a := i32 1, b := i32 2, x := mut (a + b), x = x + 1, x", "4"),
         ("a := i32 1, b := i32 2, x := pub (a + b), x", "3"),
         ("a := true, b := mut (not a), b = not b, b", "true"),
-        ("m := f64 2.5, i32 lossy (-m)", "-2"),
+        ("m := f64 2.5, try i32 lossy (-m)", "-2"),
         ("x := mut i32, x = 4, x", "4"),
         ("x := i32 5, y := mut x, y = 2, x + y", "7"),
         ("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ), f(4)", "5"),
@@ -6863,7 +6870,11 @@ fn a_dyad_no_name_holds_is_read_through_as_a_named_one_is() {
         ),
         ("d := f(), x := mut i64 ?, x = d, x", "x := mut i64 ?, x = f(), x", "5"),
         ("d := dyad (i32, 7), x := i32 d, x", "x := i32 dyad (i32, 7), x", "7"),
-        ("d := dyad (f64, 5.5), x := i32 lossy (d), x", "x := i32 lossy (dyad (f64, 5.5)), x", "5"),
+        (
+            "d := dyad (f64, 5.5), x := try i32 lossy (d), x",
+            "x := try i32 lossy (dyad (f64, 5.5)), x",
+            "5",
+        ),
         (
             "d := f(), print «{d.type == i32} {d.type == dyad}»",
             "print «{f().type == i32} {f().type == dyad}»",
@@ -9359,6 +9370,76 @@ fn alloc_gives_the_block_or_error_out_of_memory() {
     }
 }
 
+/// ›A checked error is a fault: the task that hit it is cancelled‹ [[R141]]: a float converted
+/// with `lossy` into an integer type gives that type's `T!`, whose `err` holds an error of
+/// `error.no_whole_number` where the float is no number (NaN) or infinite, on both tiers. A
+/// conversion left unwritten is refused, since a place of the integer type cannot hold the `T!`
+/// (›A type's `parse` decides what converts into it; unwritten, a value converts only into a
+/// type that holds it exactly‹ [[R155]]).
+#[test]
+fn a_float_converted_into_an_integer_type_gives_a_value_or_error_no_whole_number() {
+    let refused =
+        "run error: error.no_whole_number: this float is not a number (NaN) or is infinite";
+    let g = "g := fn (x := f64 ?) -> i32! ( n := try i32 lossy (x), n + 1 )";
+    let mut cases: Vec<(String, &str, &str)> = Vec::new();
+    for compile in ["", "g.compile(), "] {
+        cases.extend([
+            (
+                format!("{g}, {compile}r := g(2.5), print «{{r holds value}} {{r.value}}»"),
+                "true 3\n",
+                "",
+            ),
+            (
+                format!(
+                    "{g}, {compile}z := f64 0.0, r := g(z / z), \
+                     print «{{r holds err}} {{r.err.size}} {{r.err[0].message}}»"
+                ),
+                "true 2 this float is not a number (NaN) or is infinite\n",
+                "",
+            ),
+            (format!("{g}, {compile}r := g(f64 1.0 / 0.0), print «{{r holds err}}»"), "true\n", ""),
+            (format!("{g}, {compile}z := f64 0.0, n := try g(z / z), print «never»"), "", refused),
+        ]);
+    }
+    for (src, printed, error) in [
+        ("z := f64 0.0, n := try i32 lossy (z / z), print «never»", "", refused),
+        ("x := f64 2.5, n := try i32 lossy (x), n", "2\n", ""),
+        ("y := lossy (f32 -7.5), n := try u8 y, n", "249\n", ""),
+        ("pt := type ( v := pub lossy f64 ? ), p := pt(2.5), try i64 p.v", "2\n", ""),
+        ("d := dyad (f64, 5.5), x := try i32 lossy (d), x", "5\n", ""),
+        ("x := try i32 lossy (dyad (f64, 5.5)), x", "5\n", ""),
+        // A source of no float type has a value of every integer type.
+        ("m := i64 7, i32 lossy (m)", "7\n", ""),
+        ("i32 lossy 2.5", "2\n", ""),
+        ("f32 lossy (f64 2.5)", "2.5\n", ""),
+        (
+            "y := lossy (f64 2.5), n := mut i32 ?, n = y",
+            "",
+            "its conversion into an integer type gives a value or an error, `i32!`",
+        ),
+        (
+            "g := fn (a := i32 ?) -> i32 ( a + 1 ), y := lossy (f64 2.5), g(y)",
+            "",
+            "write the conversion, `try i32 y`",
+        ),
+        ("g := fn (a := i32 ?) -> i32 ( a + 1 ), y := lossy (f64 2.5), g(try i32 y)", "3\n", ""),
+        // A `dyad` whose type is known only when the program runs: stand-in for #452.
+        (
+            "e := fn () -> dyad ( f64 0.0 / 0.0 ), x := i32 lossy (e()), x",
+            "",
+            "so `lossy` cannot convert it into an integer type",
+        ),
+    ] {
+        cases.push((src.to_string(), printed, error));
+    }
+    for (src, printed, error) in cases {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(if error.is_empty() { 0 } else { 1 }), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{src}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+}
+
 /// R143: «`error.X` declared in two libraries are two identities […]; categories live in the
 /// declaring library's scope, never in one global set.»
 #[test]
@@ -10372,7 +10453,7 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
     }
     // A fault in the callee, or in a later argument, ends what the call holds, on either tier.
     let raise = "f := fn (q := box ?) -> i32 ( abort «boom» )";
-    let nan = "f := fn (q := box ?, x := f64 ?) -> i32 ( i32 lossy (x) ), f.compile()";
+    let nan = "f := fn (q := box ?, x := f64 ?) -> i32 ( (i32 lossy (x)).value ), f.compile()";
     let later =
         "f2 := fn (q := box ?, n := i32 ?) -> i32 ( 1 ), g := fn () -> i32 ( abort «boom» )";
     for (tail, expect) in [
@@ -10383,10 +10464,10 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
         (format!("{later}, f2.compile(), h := fn () -> i32 ( f2(box (1, 2), g()) ), h.compile(), h()"), "boom"),
         (format!("{raise}, f(box (1, 2))"), "boom"),
         (format!("{raise}, g := fn () -> i32 ( f(box (1, 2)) ), g.compile(), g()"), "boom"),
-        (format!("{nan}, f(box (1, 2), f64 0.0 / 0.0)"), "cannot convert"),
+        (format!("{nan}, f(box (1, 2), f64 0.0 / 0.0)"), "holds `err`, not `value`"),
         (
             format!("{nan}, g := fn (x := f64 ?) -> i32 ( f(box (1, 2), x) ), g.compile(), g(f64 0.0 / 0.0)"),
-            "cannot convert",
+            "holds `err`, not `value`",
         ),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
@@ -10516,17 +10597,17 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
 
 #[test]
 fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
-    let nan = "a float that is not a number (NaN)";
+    let nan = "this union holds `err`, not `value`";
     let range = "error.index_out_of_range";
     let checked = "import file «./identities/array.logos», \
-         h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
+         h := fn (x := f64 ?) -> i32 ( (i32 lossy (x)).value ), h.compile(), \
          bag := type ( v := mut f64 ?, free = ( print «freed {h(v)}» ) ), z := f64 0.0";
     for (before, after, printed, error) in [
         // The fault's cleanup enters compiled code.
         (
             "h := fn (k := i32 ?) -> i32 ( k ), h.compile(), \
              bag := type ( n := mut i32 ?, free = ( print «freed {h(n)}» ) ), \
-             g := fn (x := f64 ?) -> i32 ( b := bag(4), n := i32 lossy (x), n )"
+             g := fn (x := f64 ?) -> i32 ( b := bag(4), n := (i32 lossy (x)).value, n )"
                 .to_string(),
             "z := f64 0.0, g(z / z)",
             "freed 4\n",
@@ -10536,7 +10617,7 @@ fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
         (
             "h := fn (k := i32 ?) -> i32 ( k ), h.compile(), \
              say := fn (k := i32 ?) -> i32 ( h(k) ), \
-             g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), say(n) )"
+             g := fn (x := f64 ?) -> i32 ( n := (i32 lossy (x)).value, say(n) )"
                 .to_string(),
             "z := f64 0.0, g(z / z)",
             "",
@@ -10576,29 +10657,33 @@ fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
 /// stopping its scope's cleanup, on both tiers.
 #[test]
 fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
-    let nan = "a float that is not a number (NaN)";
+    let nan = "this union holds `err`, not `value`";
     let range = "error.index_out_of_range";
     let checked = "import file «./identities/array.logos», \
-         h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
+         h := fn (x := f64 ?) -> i32 ( (i32 lossy (x)).value ), h.compile(), \
          bag := type ( v := mut f64 ?, free = ( print «freed {h(v)}» ) ), z := f64 0.0";
     let say = "say := fn (k := i32 ?) -> i32 ( print «say {k}», k )";
     let fault = "z := f64 0.0, g(z / z)";
     for (before, after, printed, error) in [
         // Nothing after the fault runs: a `print`, a call, a declaration.
         (
-            "g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), print «n {n}», n )".to_string(),
+            "g := fn (x := f64 ?) -> i32 ( n := (i32 lossy (x)).value, print «n {n}», n )"
+                .to_string(),
             fault,
             "",
             nan,
         ),
         (
-            format!("{say}, g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), say(n) )"),
+            format!("{say}, g := fn (x := f64 ?) -> i32 ( n := (i32 lossy (x)).value, say(n) )"),
             fault,
             "",
             nan,
         ),
         (
-            format!("{RECORD}, g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), d := bag(3), n )"),
+            format!(
+                "{RECORD}, g := fn (x := f64 ?) -> i32 ( n := (i32 lossy (x)).value, \
+                 d := bag(3), n )"
+            ),
             fault,
             "",
             nan,
@@ -10606,8 +10691,8 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         // What was declared before it ends, a `defer` and an `if` arm's included.
         (
             format!(
-                "{RECORD}, g := fn (x := f64 ?) -> i32 ( b := bag(4), n := i32 lossy (x), \
-                 d := bag(3), n )"
+                "{RECORD}, g := fn (x := f64 ?) -> i32 ( b := bag(4), \
+                 n := (i32 lossy (x)).value, d := bag(3), n )"
             ),
             fault,
             "freed 4\n",
@@ -10615,8 +10700,8 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         ),
         (
             format!(
-                "{say}, g := fn (x := f64 ?) -> i32 ( defer free (say(1)), n := i32 lossy (x), \
-                 say(n) )"
+                "{say}, g := fn (x := f64 ?) -> i32 ( defer free (say(1)), \
+                 n := (i32 lossy (x)).value, say(n) )"
             ),
             fault,
             "say 1\n",
@@ -10625,7 +10710,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         (
             format!(
                 "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), y := if (x > 0.0) \
-                 ( b := bag(2), i32 lossy (x / 0.0) ) else ( i32 0 ), d := bag(3), y )"
+                 ( b := bag(2), (i32 lossy (x / 0.0)).value ) else ( i32 0 ), d := bag(3), y )"
             ),
             "g(f64 1.0)",
             "freed 2\nfreed 1\n",
@@ -10677,7 +10762,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         (
             format!(
                 "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), y := ( b := bag(2), \
-                 w := ( c := bag(3), i32 lossy (x) ), w ), y )"
+                 w := ( c := bag(3), (i32 lossy (x)).value ), w ), y )"
             ),
             fault,
             "freed 3\nfreed 2\nfreed 1\n",
@@ -10696,7 +10781,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         // A fault in a `defer` stops the end it runs in.
         (
             format!(
-                "{RECORD}, h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), \
+                "{RECORD}, h := fn (x := f64 ?) -> i32 ( (i32 lossy (x)).value ), \
                  g := fn (x := f64 ?) -> i32 ( a := bag(1), defer free (h(x)), b := bag(2), 3 )"
             ),
             fault,
@@ -13540,7 +13625,7 @@ fn a_type_converts_the_name_to_its_right() {
     for (f, call, want) in [
         ("fn (n := i32 ?) -> i64 ( i64 n )", "f(4)", "4\n"),
         ("fn (n := i32 ?) -> f64 ( f64 n )", "f(4)", "4.0\n"),
-        ("fn (n := f64 ?) -> i32 ( i32 lossy n )", "f(2.5)", "2\n"),
+        ("fn (n := f64 ?) -> i32! ( i32 lossy n )", "f(2.5).value", "2\n"),
         ("fn (n := i32 ?, m := i32 ?) -> i64 ( i64 n * i64 m )", "f(4, 5)", "20\n"),
     ] {
         cases.push((format!("f := {f}, {call}"), want));
@@ -13604,10 +13689,14 @@ fn number_types_and_lossy_take_the_value_to_their_right_rightmost_first() {
     for (f, call, want) in [
         ("fn () -> i64 ( i64 i32 5 )", "f()", "5\n"),
         ("fn () -> f64 ( f64 i32 5 )", "f()", "5.0\n"),
-        ("fn () -> i32 ( i32 lossy f64 2.5 )", "f()", "2\n"),
+        ("fn () -> i32! ( i32 lossy f64 2.5 )", "f().value", "2\n"),
         ("fn () -> i32 ( i32 lossy i64 5000000000 )", "f()", "705032704\n"),
-        ("fn (x := f64 ?) -> i32 ( i32 lossy (x) )", "f(2.5)", "2\n"),
-        ("fn (x := f64 ?) -> i32 ( if i32 2 == i32 lossy (x) (1) else (0) )", "f(2.5)", "1\n"),
+        ("fn (x := f64 ?) -> i32! ( i32 lossy (x) )", "f(2.5).value", "2\n"),
+        (
+            "fn (x := f64 ?) -> i32! ( if i32 2 == try i32 lossy (x) (1) else (0) )",
+            "f(2.5).value",
+            "1\n",
+        ),
     ] {
         cases.push((format!("f := {f}, {call}"), want));
         cases.push((format!("f := {f}, f.compile(), {call}"), want));
@@ -13619,7 +13708,9 @@ fn number_types_and_lossy_take_the_value_to_their_right_rightmost_first() {
 /// that holds it exactly‹ [[R155]], ›Gates are type nodes: `x := mut i32 5`; the record holds no
 /// gates‹ [[R381]]: `lossy` is a gate word. It gates the value to its right, which a name, a
 /// parameter or a field keeps in its type, and a number type converts a value of a `lossy` type
-/// with loss wherever it lands; a copy takes no gate. On both tiers.
+/// with loss; a copy takes no gate. On both tiers. A float converted into an integer type gives
+/// that type's `T!` (›A checked error is a fault: the task that hit it is cancelled‹ [[R141]]),
+/// so the conversion is written there.
 #[test]
 fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
     let defs = "g := fn (a := i32 ?) -> i32 ( a + 1 ), pt := type ( v := pub lossy f64 ? )";
@@ -13627,16 +13718,17 @@ fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
     for (body, want) in [
         ("x := lossy (f64 2.5), i32 0", "0\n"),
         ("y := lossy (f64 2.5), i32 y", "2\n"),
-        ("y := lossy (f64 2.5), g(y)", "3\n"),
-        ("y := lossy (f64 2.5), x := mut i32 0, x = y, x", "2\n"),
+        ("y := lossy (f64 2.5), g(try i32 y)", "3\n"),
+        ("y := lossy (f64 2.5), x := mut i32 0, x = try i32 y, x", "2\n"),
         ("y := lossy (f64 2.5), z := lossy y, i32 z", "2\n"),
         ("y := mut lossy f64 2.5, y = 3.75, i32 y", "3\n"),
         ("y := lossy mut f64 2.5, y = 3.75, i32 y", "3\n"),
         ("p := pt(2.5), i32 p.v", "2\n"),
+        ("y := lossy (i64 4294967298), g(y)", "3\n"),
     ] {
-        let f = format!("f := fn () -> i32 ( {body} )");
-        cases.push((format!("{defs}, {f}, f()"), want));
-        cases.push((format!("{defs}, {f}, g.compile(), f.compile(), f()"), want));
+        let f = format!("f := fn () -> i32! ( {body} )");
+        cases.push((format!("{defs}, {f}, f().value"), want));
+        cases.push((format!("{defs}, {f}, g.compile(), f.compile(), f().value"), want));
     }
     let typed = "y := lossy (f64 2.5), t := type lossy f64, print «{y.type} {t == f64}»";
     cases.push((typed.to_string(), "lossy f64 true\n"));
@@ -13660,19 +13752,19 @@ fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
 /// Landed, the value is its place's type's, and a copy takes no gate. On both tiers.
 #[test]
 fn a_gated_value_nobody_names_keeps_its_gate_where_it_lands() {
-    let defs = "g := fn (a := i32 ?) -> i32 ( a + 1 )";
+    let defs = "g := fn (a := f32 ?) -> f32 ( a + 1 )";
     let mut cases = vec![
-        ("x := f64 2.5, g := fn (a := i32 ?) -> i32 ( a + 1 ), g(lossy x)".to_string(), "3\n"),
+        ("x := f64 2.5, g := fn (a := f32 ?) -> f32 ( a + 1 ), g(lossy x)".to_string(), "3.5\n"),
         ("print «{(mut i32 5).type} {(pub i32 5).type}»".to_string(), "mut i32 pub i32\n"),
         ("x := f64 2.5, print «{(lossy x).type}»".to_string(), "lossy f64\n"),
         ("x := mut i32 5, y := mut x, print «{y.type}»".to_string(), "mut i32\n"),
         ("x := i64 6, x == i64 lossy (i32 5 or i32 6)".to_string(), "true\n"),
     ];
     for (f, want) in [
-        ("fn (x := f64 ?) -> i32 ( g(lossy x) )", "3\n"),
-        ("fn (x := f64 ?) -> i32 ( n := mut i32 0, n = lossy x, n )", "2\n"),
-        ("fn (x := f64 ?) -> i32 ( lossy x )", "2\n"),
-        ("fn (x := f64 ?) -> i32 ( print «{(mut i32 5).type}», i32 lossy x )", "mut i32\n2\n"),
+        ("fn (x := f64 ?) -> f32 ( g(lossy x) )", "3.5\n"),
+        ("fn (x := f64 ?) -> f32 ( n := mut f32 0, n = lossy x, n )", "2.5\n"),
+        ("fn (x := f64 ?) -> f32 ( lossy x )", "2.5\n"),
+        ("fn (x := f64 ?) -> f32 ( print «{(mut i32 5).type}», f32 lossy x )", "mut i32\n2.5\n"),
     ] {
         cases.push((format!("{defs}, f := {f}, f(2.5)"), want));
         cases.push((format!("{defs}, f := {f}, g.compile(), f.compile(), f(2.5)"), want));
@@ -13731,7 +13823,7 @@ fn a_minus_negates_or_subtracts_by_where_it_stands() {
         ("m := i32 3, (-m)".to_string(), "-3\n"),
         ("m := i32 3, - -m".to_string(), "3\n"),
         ("m := i32 3, 2 - -m".to_string(), "5\n"),
-        ("m := f64 2.5, i32 lossy (-m)".to_string(), "-2\n"),
+        ("m := f64 2.5, try i32 lossy (-m)".to_string(), "-2\n"),
         ("x := mut i32 0, x=-1, x".to_string(), "-1\n"),
         (
             "import file «./identities/array.logos», a := array i32 [-1, 2], a[0]".to_string(),

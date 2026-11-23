@@ -394,6 +394,9 @@ pub enum ParseError {
     TryNeedsFallible,
     /// `try` where the innermost function gives no `T!`.
     TryOutsideFallible,
+    /// A float of a `lossy` type landing unwritten in an integer place: the conversion gives
+    /// `T!`, which the place does not hold.
+    UnwrittenWholeNumber,
     /// A raise or a `try` in a `defer`, whose error nobody receives.
     ErrorInDefer,
     /// `holds` with no member's name after it.
