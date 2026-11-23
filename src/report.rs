@@ -172,6 +172,11 @@ pub fn parse_message(e: &ParseError) -> String {
              where it gives any other type"
                 .into()
         }
+        ParseError::ResultWrittenGives => {
+            "this body writes `return`, so it leaves only by `return` or a raise; no line of it \
+             gives a value"
+                .into()
+        }
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
         ParseError::AssignToLiteral(lit) => format!(
@@ -586,6 +591,12 @@ pub fn parse_message(e: &ParseError) -> String {
             "`try` passes an error on to the caller, so it is written inside a function that gives \
              a value or an error, `-> i32!`, or at the top level, which hands it to the command \
              line"
+                .into()
+        }
+        ParseError::UnwrittenWholeNumber => {
+            "a float may be no number (NaN) or infinite, so its conversion into an integer type \
+             gives a value or an error, `i32!`, which this place cannot hold: write the \
+             conversion, `try i32 y`"
                 .into()
         }
         ParseError::ErrorInDefer => {

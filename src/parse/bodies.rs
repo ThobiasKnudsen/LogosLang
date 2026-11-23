@@ -32,6 +32,8 @@ pub(super) struct OpenFn {
     pub(super) result: DyadPtr,
     /// The body is a type's slot, `run`, `parse` or `free`, which has no `->`.
     pub(super) slot_body: bool,
+    /// Where the first of the body's lines that gives the body its value starts.
+    pub(super) gives_at: Option<usize>,
 }
 
 /// A `return` in a function body being parsed. Its line may still end names after it, in a
@@ -941,6 +943,7 @@ impl<'a> Parser<'a> {
             returns: Vec::new(),
             result: std::ptr::null_mut(),
             slot_body: result.is_none(),
+            gives_at: None,
         });
         // SAFETY: `input` is the record just built, `params` its bindings.
         unsafe {
@@ -975,9 +978,12 @@ impl<'a> Parser<'a> {
         self.cx.runtime_depth -= 1;
         self.cx.scopes.pop();
         self.cx.scopes.pop_barrier();
-        let OpenFn { size: frame_size, outer, returns, .. } =
+        let OpenFn { size: frame_size, outer, returns, result: place, gives_at, .. } =
             self.cx.frames.pop().expect("parse_fn pushed a frame");
         let body = body?;
+        if let Some(at) = gives_at.filter(|_| !place.is_null()) {
+            return Err(self.fail_at(at, ParseError::ResultWrittenGives));
+        }
         // The value its lines give is the call's, so an `if` among them is a used one.
         let made = if gives_nothing {
             None
@@ -1746,9 +1752,42 @@ impl<'a> Parser<'a> {
         lossy: bool,
     ) -> Result<DyadPtr, ParseError> {
         self.over_arguments(ty, args, &mut |p, args| {
+            if let &[value] = args {
+                // SAFETY: as below.
+                if let Some(checked) = unsafe { p.checked_conversion(ty, value, lossy) }? {
+                    return Ok(checked);
+                }
+            }
             // SAFETY: `ty` is a number type node; `args` are reduced dyads.
             unsafe { crate::identities::build_cast(p.rt.store, p.types, ty, args, lossy) }
         })
+    }
+
+    /// The written conversion of `value` into the number type `ty` where it may have no value of
+    /// `ty`, a float of a `lossy` type into an integer type: it gives `ty!`, whose `err` holds an
+    /// error of `error.no_whole_number` where the float is no number (NaN) or infinite (›A checked
+    /// error is a fault: the task that hit it is cancelled‹ [[R141]]). `None` for every other
+    /// conversion.
+    ///
+    /// # Safety
+    /// `ty` must be a number type node and `value` a reduced dyad from the store.
+    pub(crate) unsafe fn checked_conversion(
+        &mut self,
+        ty: DyadPtr,
+        value: DyadPtr,
+        lossy: bool,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        use crate::identities::{convert, dyad_place, gate, read};
+        let types = self.types;
+        let lossy = lossy || gate::is_lossy(types, value);
+        let value =
+            dyad_place::read_through(self.rt.store, types, value, ty, lossy).unwrap_or(value);
+        let from = read::output_type(types, value);
+        if !lossy || !convert::may_fail(types, from, ty) {
+            return Ok(None);
+        }
+        let fallible = self.fallible_of(ty, self.cx.pos)?;
+        Ok(Some(convert::build_checked(self.rt.store, types, value, from, fallible)))
     }
 
     /// `T (…)` for a record type `T` whose body fills no `parse`: a value of `T` from the
@@ -1929,6 +1968,23 @@ impl<'a> Parser<'a> {
         Ok(tail)
     }
 
+    /// A line that gives the innermost scope its value, starting at `start`: where that scope is a
+    /// function's body, a body that writes the result place leaves only by `return` or a raise,
+    /// so the line is refused once the place is written, and the body's close refuses the first
+    /// one written before it (›A scope's value is what it evaluates to, and `return` is an
+    /// optional early exit from the enclosing function‹ [[R207]]).
+    fn note_body_gives(&mut self, start: usize) -> Result<(), ParseError> {
+        let depth = self.cx.open.len() - 1;
+        let Some(frame) = self.cx.frames.last_mut().filter(|f| f.open_below == depth) else {
+            return Ok(());
+        };
+        if frame.result.is_null() {
+            frame.gives_at.get_or_insert(start);
+            return Ok(());
+        }
+        Err(self.fail_at(start, ParseError::ResultWrittenGives))
+    }
+
     /// A line of the innermost scope, read: where the scope's lines are its own, a line after one
     /// that always ends the scope never runs and is refused, as is a line that gives a value in
     /// a `-> void` body; at a program's or a file's top level, where nothing lands the value a
@@ -1967,6 +2023,9 @@ impl<'a> Parser<'a> {
         let flow = unsafe { flow::of(self.types, line.dyad) };
         if let Some(e) = open.gives_none.clone().filter(|_| flow.gives) {
             return Err(self.fail_at(line.start, e));
+        }
+        if flow.gives {
+            self.note_body_gives(line.start)?;
         }
         let open = self.cx.open.last_mut().expect("checked above");
         // SAFETY: as above.

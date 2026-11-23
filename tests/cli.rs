@@ -2564,7 +2564,7 @@ fn prose_may_stand_before_a_field_a_member_or_a_slot_fill() {
                y := pub static i32 2,\n\
                # a slot\n\
                parse_rank = 5\n\
-               ), q := t (4), q.x + t.y + i32 lossy (t.parse_rank)";
+               ), q := t (4), q.x + t.y + try i32 lossy (t.parse_rank)";
     let (code, stdout, stderr) = run_line(src);
     assert_eq!((code, stdout.as_str()), (Some(0), "11\n"), "stderr: {stderr}");
 }
@@ -3054,9 +3054,14 @@ fn lossy_gives_what_each_number_type_defines_on_both_tiers() {
         ("f32", "f64", huge, "inf"),
         ("i32", "i32", "i32 7", "7"),
     ] {
+        // A float into an integer type gives the integer type's `T!`.
+        let given = if from == "f64" && ty == "i32" { "!" } else { "" };
         for compile in ["", "g.compile(), "] {
-            let src =
-                format!("g := fn (x := {from} ?) -> {ty} ( {ty} lossy (x) ), {compile}g({value})");
+            let src = format!(
+                "g := fn (x := {from} ?) -> {ty}{given} ( {ty} lossy (x) ), {compile}\
+                 r := g({value}), print «{{r{}}}»",
+                if given.is_empty() { "" } else { ".value" }
+            );
             let (code, stdout, stderr) = run_line(&src);
             assert_eq!((code, stdout.trim()), (Some(0), expect), "{src}: stderr: {stderr}");
         }
@@ -3069,10 +3074,12 @@ fn lossy_gives_what_each_number_type_defines_on_both_tiers() {
     }
     for compile in ["", "g.compile(), "] {
         for x in ["f64 1.0 / 0.0", "f64 -1.0 / 0.0", "f64 0.0 / 0.0"] {
-            let src = format!("g := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), {compile}g({x})");
-            let (code, _, stderr) = run_line(&src);
-            assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-            assert!(stderr.contains("has no whole number"), "{src}: stderr: {stderr}");
+            let src = format!(
+                "g := fn (x := f64 ?) -> i32! ( i32 lossy (x) ), {compile}r := g({x}), \
+                 print «{{r holds err}}»"
+            );
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.trim()), (Some(0), "true"), "{src}: stderr: {stderr}");
         }
     }
 }
@@ -4002,7 +4009,8 @@ fn a_hashmap_of_types_hands_back_the_unknown_for_a_missing_key() {
     let (echoes, stderr) = repl(
         "mints := hashmap type -> type\n\
           mints[i32] = f64\n\
-          t := mut type mints[i32]\n\
+          t := mut type\n\
+          t = mints[i32]\n\
           print «{t == f64}»\n\
           t = mints[u8]\n\
           print «{t}»\n\
@@ -4018,7 +4026,8 @@ fn a_declared_hashmap_is_empty_and_readable_at_once() {
     // Before any write, with or without `?`: no read veto, as `t := i32 ?` has.
     let (echoes, stderr) = repl(
         "m := hashmap type -> type\n\
-          u := mut type m[i32]\n\
+          u := mut type\n\
+          u = m[i32]\n\
           print «{u}»\n\
           n := hashmap i32 -> i64 ?\n\
           n[1]\n\
@@ -4886,7 +4895,7 @@ fn a_type_returning_function_hands_back_a_type_box() {
           y := type f(f64)\nz := y 5\nprint «{z}»\n\
           mints := hashmap type -> type\n\
           get := fn (t := type ?) -> type ( m := mut type mints[t], if m != ? return m, m = t, mints[t] = m, m )\n\
-          print «{get(i32) == get(i32)}»\nprint «{get(i32) == get(f64)}»\nu := mut type mints[u8]\nu == ?\n",
+          print «{get(i32) == get(i32)}»\nprint «{get(i32) == get(f64)}»\nu := mut type\nu = mints[u8]\nu == ?\n",
     );
     assert_eq!(echoes, ["true", "5.0", "true", "false", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -5369,7 +5378,7 @@ fn a_gate_word_stands_right_of_the_declaration_and_gates_the_nearest_value() {
         ("a := i32 1, b := i32 2, x := mut (a + b), x = x + 1, x", "4"),
         ("a := i32 1, b := i32 2, x := pub (a + b), x", "3"),
         ("a := true, b := mut (not a), b = not b, b", "true"),
-        ("m := f64 2.5, i32 lossy (-m)", "-2"),
+        ("m := f64 2.5, try i32 lossy (-m)", "-2"),
         ("x := mut i32, x = 4, x", "4"),
         ("x := i32 5, y := mut x, y = 2, x + y", "7"),
         ("f := fn (a := mut i32 ?) -> i32 ( a = a + 1, a ), f(4)", "5"),
@@ -6736,7 +6745,11 @@ fn a_dyad_no_name_holds_is_read_through_as_a_named_one_is() {
         ),
         ("d := f(), x := mut i64 ?, x = d, x", "x := mut i64 ?, x = f(), x", "5"),
         ("d := dyad (i32, 7), x := i32 d, x", "x := i32 dyad (i32, 7), x", "7"),
-        ("d := dyad (f64, 5.5), x := i32 lossy (d), x", "x := i32 lossy (dyad (f64, 5.5)), x", "5"),
+        (
+            "d := dyad (f64, 5.5), x := try i32 lossy (d), x",
+            "x := try i32 lossy (dyad (f64, 5.5)), x",
+            "5",
+        ),
         (
             "d := f(), print «{d.type == i32} {d.type == dyad}»",
             "print «{f().type == i32} {f().type == dyad}»",
@@ -8180,6 +8193,31 @@ fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
     }
 }
 
+/// The nodes a run of `src` adds to the store after the core, as `LOGOS_STATS` reports them.
+fn store_nodes(src: &str) -> usize {
+    let out = logos().env("LOGOS_STATS", "1").arg(src).output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{src}: stderr: {err}");
+    err.lines()
+        .find_map(|line| line.strip_prefix("store delta: nodes="))
+        .and_then(|rest| rest.split(' ').next()?.parse().ok())
+        .unwrap_or_else(|| panic!("{src}: no store delta in stderr: {err}"))
+}
+
+/// R379, Thobias's Question 286: `T!`'s lines meet only one another, so an `i32!` already minted
+/// is found by its lines' names and types alone, and writing it again declares none of them. Its
+/// three lines would take nine nodes, a hole, a binding and the binding's name each, beyond what
+/// writing `i32` again takes.
+#[test]
+fn a_kept_t_bang_declares_its_lines_no_more() {
+    let again = |ty: &str| {
+        store_nodes(&format!("a := {ty}, b := {ty}, c := {ty}, 0"))
+            - store_nodes(&format!("a := {ty}, b := {ty}, 0"))
+    };
+    let (fallible, plain) = (again("i32!"), again("i32"));
+    assert!(fallible < plain + 9, "an `i32!` written again adds {fallible} nodes, `i32` {plain}");
+}
+
 /// R140: «A function that gives `T!` fills the union itself, and the program writes neither
 /// member: its last value of type `T` fills `value`», on both tiers, for a number, a record and
 /// a value whose type fills `free`, each `if` arm and a `return` alike.
@@ -8468,6 +8506,12 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
                 "a := g(i32 5), b := g(i32 2), print «{a.x} {a.y} {b.x} {b.y}»",
                 "5 0 2 9",
             ),
+            (
+                "g := fn (c := bool ?) -> i32 ( return = 1, x := ( if c ( i32 5 ) else ( i32 6 ) ), \
+                 h := fn () -> i32 ( i32 7 ), return = x + h(), return )",
+                "print «{g(true)} {g(false)}»",
+                "12 13",
+            ),
         ] {
             let src =
                 format!("{odd}, {bag}, {pt}, {g}, f := fn () -> void ( {body} ), {compile}f()");
@@ -8485,12 +8529,15 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
 /// leaves still ends any other name it moves on every path (R70, rule 2). `return` is no result
 /// place outside a function, in a `defer`, in a value made once, in a `-> void` function or in a
 /// type's slot body, and no caller writes a member of a `T!` (R379); `return.tag` is read only, as
-/// a named union's `tag` is.
+/// a named union's `tag` is. A body that writes `return` has no line that gives it its value,
+/// before the write or after it, in a loop or an arm (R207).
 #[test]
 fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
     let unwritten = "error: the result is read before it is written: write it first among the \
                      function's own lines, `return.value = …` or `return.err = …` where it gives \
                      `T!`, `return = …` where it gives any other type";
+    let gives = "error: this body writes `return`, so it leaves only by `return` or a raise; no \
+                 line of it gives a value";
     let q = "q := type ( v := pub mut i32 ?, parse_rank = 60, parse = ( tape.is_constructed[0] = \
              true ) )";
     for (src, want) in [
@@ -8516,6 +8563,26 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
              f := fn (c := bool ?) -> bag ( a := bag(1), if c ( return a ), a.n = 2, bag(3) ), 0"
                 .to_string(),
             "1:130: error: `a` is dead here: it was moved or freed above".to_string(),
+        ),
+        (
+            "f := fn () -> i32! ( return.value = 1, i32 5, return ), 0".to_string(),
+            format!("1:40: {gives}"),
+        ),
+        (
+            "f := fn (c := bool ?) -> i32! ( if c ( i32 5 ), return.value = 1, return ), 0"
+                .to_string(),
+            format!("1:33: {gives}"),
+        ),
+        (
+            "f := fn (c := bool ?) -> i32! ( return.value = 1, if c ( i32 5 ), return ), 0"
+                .to_string(),
+            format!("1:51: {gives}"),
+        ),
+        (
+            "f := fn (k := mut i32 ?) -> i32! ( while k > 0 ( if k == 1 ( i32 5 ), \
+             return.value = k, k = k - 1 ), return ), 0"
+                .to_string(),
+            format!("1:36: {gives}"),
         ),
         (
             "f := fn () -> i32! ( return.value = 1, return.tag = 2, return ), 0".to_string(),
@@ -9228,6 +9295,76 @@ fn alloc_gives_the_block_or_error_out_of_memory() {
         } else {
             assert_eq!(stdout, printed, "{src}");
         }
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A checked error is a fault: the task that hit it is cancelled‹ [[R141]]: a float converted
+/// with `lossy` into an integer type gives that type's `T!`, whose `err` holds an error of
+/// `error.no_whole_number` where the float is no number (NaN) or infinite, on both tiers. A
+/// conversion left unwritten is refused, since a place of the integer type cannot hold the `T!`
+/// (›A type's `parse` decides what converts into it; unwritten, a value converts only into a
+/// type that holds it exactly‹ [[R155]]).
+#[test]
+fn a_float_converted_into_an_integer_type_gives_a_value_or_error_no_whole_number() {
+    let refused =
+        "run error: error.no_whole_number: this float is not a number (NaN) or is infinite";
+    let g = "g := fn (x := f64 ?) -> i32! ( n := try i32 lossy (x), n + 1 )";
+    let mut cases: Vec<(String, &str, &str)> = Vec::new();
+    for compile in ["", "g.compile(), "] {
+        cases.extend([
+            (
+                format!("{g}, {compile}r := g(2.5), print «{{r holds value}} {{r.value}}»"),
+                "true 3\n",
+                "",
+            ),
+            (
+                format!(
+                    "{g}, {compile}z := f64 0.0, r := g(z / z), \
+                     print «{{r holds err}} {{r.err.size}} {{r.err[0].message}}»"
+                ),
+                "true 2 this float is not a number (NaN) or is infinite\n",
+                "",
+            ),
+            (format!("{g}, {compile}r := g(f64 1.0 / 0.0), print «{{r holds err}}»"), "true\n", ""),
+            (format!("{g}, {compile}z := f64 0.0, n := try g(z / z), print «never»"), "", refused),
+        ]);
+    }
+    for (src, printed, error) in [
+        ("z := f64 0.0, n := try i32 lossy (z / z), print «never»", "", refused),
+        ("x := f64 2.5, n := try i32 lossy (x), n", "2\n", ""),
+        ("y := lossy (f32 -7.5), n := try u8 y, n", "249\n", ""),
+        ("pt := type ( v := pub lossy f64 ? ), p := pt(2.5), try i64 p.v", "2\n", ""),
+        ("d := dyad (f64, 5.5), x := try i32 lossy (d), x", "5\n", ""),
+        ("x := try i32 lossy (dyad (f64, 5.5)), x", "5\n", ""),
+        // A source of no float type has a value of every integer type.
+        ("m := i64 7, i32 lossy (m)", "7\n", ""),
+        ("i32 lossy 2.5", "2\n", ""),
+        ("f32 lossy (f64 2.5)", "2.5\n", ""),
+        (
+            "y := lossy (f64 2.5), n := mut i32 ?, n = y",
+            "",
+            "its conversion into an integer type gives a value or an error, `i32!`",
+        ),
+        (
+            "g := fn (a := i32 ?) -> i32 ( a + 1 ), y := lossy (f64 2.5), g(y)",
+            "",
+            "write the conversion, `try i32 y`",
+        ),
+        ("g := fn (a := i32 ?) -> i32 ( a + 1 ), y := lossy (f64 2.5), g(try i32 y)", "3\n", ""),
+        // A `dyad` whose type is known only when the program runs: stand-in for #452.
+        (
+            "e := fn () -> dyad ( f64 0.0 / 0.0 ), x := i32 lossy (e()), x",
+            "",
+            "so `lossy` cannot convert it into an integer type",
+        ),
+    ] {
+        cases.push((src.to_string(), printed, error));
+    }
+    for (src, printed, error) in cases {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(if error.is_empty() { 0 } else { 1 }), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{src}");
         assert!(stderr.contains(error), "{src}: stderr: {stderr}");
     }
 }
@@ -10245,7 +10382,7 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
     }
     // A fault in the callee, or in a later argument, ends what the call holds, on either tier.
     let raise = "f := fn (q := box ?) -> i32 ( abort «boom» )";
-    let nan = "f := fn (q := box ?, x := f64 ?) -> i32 ( i32 lossy (x) ), f.compile()";
+    let nan = "f := fn (q := box ?, x := f64 ?) -> i32 ( (i32 lossy (x)).value ), f.compile()";
     let later =
         "f2 := fn (q := box ?, n := i32 ?) -> i32 ( 1 ), g := fn () -> i32 ( abort «boom» )";
     for (tail, expect) in [
@@ -10256,10 +10393,10 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
         (format!("{later}, f2.compile(), h := fn () -> i32 ( f2(box (1, 2), g()) ), h.compile(), h()"), "boom"),
         (format!("{raise}, f(box (1, 2))"), "boom"),
         (format!("{raise}, g := fn () -> i32 ( f(box (1, 2)) ), g.compile(), g()"), "boom"),
-        (format!("{nan}, f(box (1, 2), f64 0.0 / 0.0)"), "cannot convert"),
+        (format!("{nan}, f(box (1, 2), f64 0.0 / 0.0)"), "holds `err`, not `value`"),
         (
             format!("{nan}, g := fn (x := f64 ?) -> i32 ( f(box (1, 2), x) ), g.compile(), g(f64 0.0 / 0.0)"),
-            "cannot convert",
+            "holds `err`, not `value`",
         ),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
@@ -10389,17 +10526,17 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
 
 #[test]
 fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
-    let nan = "a float that is not a number (NaN)";
+    let nan = "this union holds `err`, not `value`";
     let range = "error.index_out_of_range";
     let checked = "import file «./identities/array.logos», \
-         h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
+         h := fn (x := f64 ?) -> i32 ( (i32 lossy (x)).value ), h.compile(), \
          bag := type ( v := mut f64 ?, free = ( print «freed {h(v)}» ) ), z := f64 0.0";
     for (before, after, printed, error) in [
         // The fault's cleanup enters compiled code.
         (
             "h := fn (k := i32 ?) -> i32 ( k ), h.compile(), \
              bag := type ( n := mut i32 ?, free = ( print «freed {h(n)}» ) ), \
-             g := fn (x := f64 ?) -> i32 ( b := bag(4), n := i32 lossy (x), n )"
+             g := fn (x := f64 ?) -> i32 ( b := bag(4), n := (i32 lossy (x)).value, n )"
                 .to_string(),
             "z := f64 0.0, g(z / z)",
             "freed 4\n",
@@ -10409,7 +10546,7 @@ fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
         (
             "h := fn (k := i32 ?) -> i32 ( k ), h.compile(), \
              say := fn (k := i32 ?) -> i32 ( h(k) ), \
-             g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), say(n) )"
+             g := fn (x := f64 ?) -> i32 ( n := (i32 lossy (x)).value, say(n) )"
                 .to_string(),
             "z := f64 0.0, g(z / z)",
             "",
@@ -10449,29 +10586,33 @@ fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
 /// stopping its scope's cleanup, on both tiers.
 #[test]
 fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
-    let nan = "a float that is not a number (NaN)";
+    let nan = "this union holds `err`, not `value`";
     let range = "error.index_out_of_range";
     let checked = "import file «./identities/array.logos», \
-         h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), h.compile(), \
+         h := fn (x := f64 ?) -> i32 ( (i32 lossy (x)).value ), h.compile(), \
          bag := type ( v := mut f64 ?, free = ( print «freed {h(v)}» ) ), z := f64 0.0";
     let say = "say := fn (k := i32 ?) -> i32 ( print «say {k}», k )";
     let fault = "z := f64 0.0, g(z / z)";
     for (before, after, printed, error) in [
         // Nothing after the fault runs: a `print`, a call, a declaration.
         (
-            "g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), print «n {n}», n )".to_string(),
+            "g := fn (x := f64 ?) -> i32 ( n := (i32 lossy (x)).value, print «n {n}», n )"
+                .to_string(),
             fault,
             "",
             nan,
         ),
         (
-            format!("{say}, g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), say(n) )"),
+            format!("{say}, g := fn (x := f64 ?) -> i32 ( n := (i32 lossy (x)).value, say(n) )"),
             fault,
             "",
             nan,
         ),
         (
-            format!("{RECORD}, g := fn (x := f64 ?) -> i32 ( n := i32 lossy (x), d := bag(3), n )"),
+            format!(
+                "{RECORD}, g := fn (x := f64 ?) -> i32 ( n := (i32 lossy (x)).value, \
+                 d := bag(3), n )"
+            ),
             fault,
             "",
             nan,
@@ -10479,8 +10620,8 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         // What was declared before it ends, a `defer` and an `if` arm's included.
         (
             format!(
-                "{RECORD}, g := fn (x := f64 ?) -> i32 ( b := bag(4), n := i32 lossy (x), \
-                 d := bag(3), n )"
+                "{RECORD}, g := fn (x := f64 ?) -> i32 ( b := bag(4), \
+                 n := (i32 lossy (x)).value, d := bag(3), n )"
             ),
             fault,
             "freed 4\n",
@@ -10488,8 +10629,8 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         ),
         (
             format!(
-                "{say}, g := fn (x := f64 ?) -> i32 ( defer free (say(1)), n := i32 lossy (x), \
-                 say(n) )"
+                "{say}, g := fn (x := f64 ?) -> i32 ( defer free (say(1)), \
+                 n := (i32 lossy (x)).value, say(n) )"
             ),
             fault,
             "say 1\n",
@@ -10498,7 +10639,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         (
             format!(
                 "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), y := if (x > 0.0) \
-                 ( b := bag(2), i32 lossy (x / 0.0) ) else ( i32 0 ), d := bag(3), y )"
+                 ( b := bag(2), (i32 lossy (x / 0.0)).value ) else ( i32 0 ), d := bag(3), y )"
             ),
             "g(f64 1.0)",
             "freed 2\nfreed 1\n",
@@ -10550,7 +10691,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         (
             format!(
                 "{RECORD}, g := fn (x := f64 ?) -> i32 ( a := bag(1), y := ( b := bag(2), \
-                 w := ( c := bag(3), i32 lossy (x) ), w ), y )"
+                 w := ( c := bag(3), (i32 lossy (x)).value ), w ), y )"
             ),
             fault,
             "freed 3\nfreed 2\nfreed 1\n",
@@ -10569,7 +10710,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         // A fault in a `defer` stops the end it runs in.
         (
             format!(
-                "{RECORD}, h := fn (x := f64 ?) -> i32 ( i32 lossy (x) ), \
+                "{RECORD}, h := fn (x := f64 ?) -> i32 ( (i32 lossy (x)).value ), \
                  g := fn (x := f64 ?) -> i32 ( a := bag(1), defer free (h(x)), b := bag(2), 3 )"
             ),
             fault,
@@ -12815,7 +12956,11 @@ fn type_takes_its_whole_right_side() {
         ("a := i32 5, t := type a.type, t 3".into(), "3"),
         ("f := fn () -> i32 ( a := i32 5, t := type a.type, t 3 ), f.compile(), f()".into(), "3"),
         ("n := i32 1, x := type if n == 1 (i32) else (i64), x".into(), "i32"),
-        ("m := hashmap type -> type, m[i32] = i64, x := mut type m[i32], x = f64, x".into(), "f64"),
+        ("m := hashmap type -> type, m[i32] = i64, x := type m[i32], x".into(), "i64"),
+        (
+            "m := hashmap type -> type, m[i32] = i64, x := mut type, x = m[i32], x = f64, x".into(),
+            "f64",
+        ),
         ("k := fn (t := type ?) -> type ( t ), x := type k(type i64), x".into(), "i64"),
         ("f := fn (t := type ?) -> i32 ( x := type t, y := x 5, y ), f(i32)".into(), "5"),
         // Inside a condition the value is the one lexeme before the body's bracket.
@@ -12857,6 +13002,9 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
         ("f := fn () -> i32 ( a := i32 5, t := a.type, t 3 ), f.compile(), f()".into(), "t"),
         (format!("{pick}, f := fn (n := i32 ?) -> i32 ( u := pick(n), u ), 0"), "u"),
         ("f := fn (t := type ?) -> i32 ( x := t, x ), 0".into(), "x"),
+        ("m := hashmap type -> type, m[i32] = i64, x := m[i32], x".into(), "x"),
+        ("c := true, x := if c (i32) else (i64), x".into(), "x"),
+        ("p := try alloc 1 of mut type ?, p@ = i32, t := p@, t".into(), "t"),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
@@ -12885,6 +13033,12 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
         ("a := i32 5, t := mut a.type, t = 3, t + a".into(), "8"),
         ("t := mut type ?, t = i32, x := mut t, x = 7, x".into(), "7"),
         ("x := mut (if true (i32) else (i64)), x = 3, x".into(), "3"),
+        ("c := true, x := mut (if c (i32) else (i64)), x = 3, x.type".into(), "mut i32"),
+        (
+            "m := hashmap type -> type, m[i32] = i64, x := mut m[i32], x = 5, x.type".into(),
+            "mut i64",
+        ),
+        ("p := try alloc 1 of mut type ?, p@ = i32, t := mut p@, t = 7, t.type".into(), "mut i32"),
         // A type known only when its line runs: the place is laid out then.
         (format!("{run_pick}, print «{{f(1)}} {{f(0)}}»"), "i64 i32"),
         ("f := fn (t := type ?) -> i32 ( x := mut t, x = 5, x ), f(i32)".into(), "5"),
@@ -12918,19 +13072,11 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
     ] {
         assert_eq!(line(src), want, "{src}");
     }
-    // What `T ?` refuses, `T` alone refuses: a type no place of which the seed lays out, and one
-    // known only when the program runs where the line cannot wait for it.
-    for (src, message) in [
-        ("x := scope, 1", "declarations of non-numeric types are not in the seed yet"),
-        (
-            "m := hashmap type -> type, m[i32] = i64, x := m[i32], 1",
-            "which type this is is known only when the program runs",
-        ),
-    ] {
-        let (code, stdout, stderr) = run_line(src);
-        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
-        assert!(stderr.contains(message), "{src}: stderr: {stderr}");
-    }
+    // What `T ?` refuses, `T` alone refuses: a type no place of which the seed lays out.
+    let (code, stdout, stderr) = run_line("x := scope, 1");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    let message = "declarations of non-numeric types are not in the seed yet";
+    assert!(stderr.contains(message), "stderr: {stderr}");
     let src = "f := fn (t := type ?) -> i32 ( x := mut t, x = 5, x ), f.compile(), f(i32)";
     let (code, _, stderr) = run_line(src);
     assert_eq!(code, Some(1), "{src}");
@@ -12945,6 +13091,40 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains("such a line cannot hold `move` yet"), "{src}: stderr: {stderr}");
+    }
+}
+
+/// Where the pass runs the line, a node that gives a type runs where it is built, whatever its
+/// form, after what stands before it, and its type is used as one written (›The pass runs only as
+/// far as it must, in order, and never twice‹ [[R288]], ›A type known only when the program runs
+/// still works; what needs it is parsed when its line runs‹ [[R377]]).
+#[test]
+fn a_node_that_gives_a_type_runs_where_the_pass_builds_it() {
+    let m = "m := mut hashmap type -> type, m[i32] = i64";
+    let p = "p := try alloc 1 of mut type ?, p@ = i32";
+    let pk = "pk := fn () -> bool ( print «pk», true )";
+    for (src, want) in [
+        (format!("{m}, x := m[i32] 5, x.type"), "i64"),
+        (format!("{m}, m[i32] 5"), "5"),
+        (format!("{m}, m[i32].size_bytes"), "8"),
+        (format!("{p}, x := p@ 7, x.type"), "i32"),
+        ("c := true, x := (if c (i32) else (i64)) 5, x.type".into(), "i32"),
+        (format!("{pk}, x := (if pk() (i32) else (i64)) 5, x.type"), "pk\ni32"),
+        (format!("{m}, g := fn () -> i32 ( m[i32] = f64, 2 ), x := g() + m[i32] 5, x.type"), "f64"),
+        // A gate word over it gates the type it gave, as over a type written there.
+        (format!("{m}, x := mut m[i32] 5, x = 8, x.type"), "mut i64"),
+        (format!("{m}, u := mut m[i32], u = 3, u.type"), "mut i64"),
+        (format!("{p}, x := mut p@ 7, x = 9, x.type"), "mut i32"),
+        ("c := true, x := pub ((if c (i32) else (i64)) 5), x.type".into(), "pub i32"),
+        // A function reading the type a line gave reads it as written, so it compiles.
+        (
+            format!(
+                "{m}, t := type m[i32], f := fn () -> type ( x := t 5, x.type ), f.compile(), f()"
+            ),
+            "i64",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
     }
 }
 
@@ -13356,7 +13536,7 @@ fn a_type_converts_the_name_to_its_right() {
     for (f, call, want) in [
         ("fn (n := i32 ?) -> i64 ( i64 n )", "f(4)", "4\n"),
         ("fn (n := i32 ?) -> f64 ( f64 n )", "f(4)", "4.0\n"),
-        ("fn (n := f64 ?) -> i32 ( i32 lossy n )", "f(2.5)", "2\n"),
+        ("fn (n := f64 ?) -> i32! ( i32 lossy n )", "f(2.5).value", "2\n"),
         ("fn (n := i32 ?, m := i32 ?) -> i64 ( i64 n * i64 m )", "f(4, 5)", "20\n"),
     ] {
         cases.push((format!("f := {f}, {call}"), want));
@@ -13420,10 +13600,14 @@ fn number_types_and_lossy_take_the_value_to_their_right_rightmost_first() {
     for (f, call, want) in [
         ("fn () -> i64 ( i64 i32 5 )", "f()", "5\n"),
         ("fn () -> f64 ( f64 i32 5 )", "f()", "5.0\n"),
-        ("fn () -> i32 ( i32 lossy f64 2.5 )", "f()", "2\n"),
+        ("fn () -> i32! ( i32 lossy f64 2.5 )", "f().value", "2\n"),
         ("fn () -> i32 ( i32 lossy i64 5000000000 )", "f()", "705032704\n"),
-        ("fn (x := f64 ?) -> i32 ( i32 lossy (x) )", "f(2.5)", "2\n"),
-        ("fn (x := f64 ?) -> i32 ( if i32 2 == i32 lossy (x) (1) else (0) )", "f(2.5)", "1\n"),
+        ("fn (x := f64 ?) -> i32! ( i32 lossy (x) )", "f(2.5).value", "2\n"),
+        (
+            "fn (x := f64 ?) -> i32! ( if i32 2 == try i32 lossy (x) (1) else (0) )",
+            "f(2.5).value",
+            "1\n",
+        ),
     ] {
         cases.push((format!("f := {f}, {call}"), want));
         cases.push((format!("f := {f}, f.compile(), {call}"), want));
@@ -13435,7 +13619,9 @@ fn number_types_and_lossy_take_the_value_to_their_right_rightmost_first() {
 /// that holds it exactly‹ [[R155]], ›Gates are type nodes: `x := mut i32 5`; the record holds no
 /// gates‹ [[R381]]: `lossy` is a gate word. It gates the value to its right, which a name, a
 /// parameter or a field keeps in its type, and a number type converts a value of a `lossy` type
-/// with loss wherever it lands; a copy takes no gate. On both tiers.
+/// with loss; a copy takes no gate. On both tiers. A float converted into an integer type gives
+/// that type's `T!` (›A checked error is a fault: the task that hit it is cancelled‹ [[R141]]),
+/// so the conversion is written there.
 #[test]
 fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
     let defs = "g := fn (a := i32 ?) -> i32 ( a + 1 ), pt := type ( v := pub lossy f64 ? )";
@@ -13443,16 +13629,17 @@ fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
     for (body, want) in [
         ("x := lossy (f64 2.5), i32 0", "0\n"),
         ("y := lossy (f64 2.5), i32 y", "2\n"),
-        ("y := lossy (f64 2.5), g(y)", "3\n"),
-        ("y := lossy (f64 2.5), x := mut i32 0, x = y, x", "2\n"),
+        ("y := lossy (f64 2.5), g(try i32 y)", "3\n"),
+        ("y := lossy (f64 2.5), x := mut i32 0, x = try i32 y, x", "2\n"),
         ("y := lossy (f64 2.5), z := lossy y, i32 z", "2\n"),
         ("y := mut lossy f64 2.5, y = 3.75, i32 y", "3\n"),
         ("y := lossy mut f64 2.5, y = 3.75, i32 y", "3\n"),
         ("p := pt(2.5), i32 p.v", "2\n"),
+        ("y := lossy (i64 4294967298), g(y)", "3\n"),
     ] {
-        let f = format!("f := fn () -> i32 ( {body} )");
-        cases.push((format!("{defs}, {f}, f()"), want));
-        cases.push((format!("{defs}, {f}, g.compile(), f.compile(), f()"), want));
+        let f = format!("f := fn () -> i32! ( {body} )");
+        cases.push((format!("{defs}, {f}, f().value"), want));
+        cases.push((format!("{defs}, {f}, g.compile(), f.compile(), f().value"), want));
     }
     let typed = "y := lossy (f64 2.5), t := type lossy f64, print «{y.type} {t == f64}»";
     cases.push((typed.to_string(), "lossy f64 true\n"));
@@ -13476,19 +13663,19 @@ fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
 /// Landed, the value is its place's type's, and a copy takes no gate. On both tiers.
 #[test]
 fn a_gated_value_nobody_names_keeps_its_gate_where_it_lands() {
-    let defs = "g := fn (a := i32 ?) -> i32 ( a + 1 )";
+    let defs = "g := fn (a := f32 ?) -> f32 ( a + 1 )";
     let mut cases = vec![
-        ("x := f64 2.5, g := fn (a := i32 ?) -> i32 ( a + 1 ), g(lossy x)".to_string(), "3\n"),
+        ("x := f64 2.5, g := fn (a := f32 ?) -> f32 ( a + 1 ), g(lossy x)".to_string(), "3.5\n"),
         ("print «{(mut i32 5).type} {(pub i32 5).type}»".to_string(), "mut i32 pub i32\n"),
         ("x := f64 2.5, print «{(lossy x).type}»".to_string(), "lossy f64\n"),
         ("x := mut i32 5, y := mut x, print «{y.type}»".to_string(), "mut i32\n"),
         ("x := i64 6, x == i64 lossy (i32 5 or i32 6)".to_string(), "true\n"),
     ];
     for (f, want) in [
-        ("fn (x := f64 ?) -> i32 ( g(lossy x) )", "3\n"),
-        ("fn (x := f64 ?) -> i32 ( n := mut i32 0, n = lossy x, n )", "2\n"),
-        ("fn (x := f64 ?) -> i32 ( lossy x )", "2\n"),
-        ("fn (x := f64 ?) -> i32 ( print «{(mut i32 5).type}», i32 lossy x )", "mut i32\n2\n"),
+        ("fn (x := f64 ?) -> f32 ( g(lossy x) )", "3.5\n"),
+        ("fn (x := f64 ?) -> f32 ( n := mut f32 0, n = lossy x, n )", "2.5\n"),
+        ("fn (x := f64 ?) -> f32 ( lossy x )", "2.5\n"),
+        ("fn (x := f64 ?) -> f32 ( print «{(mut i32 5).type}», f32 lossy x )", "mut i32\n2.5\n"),
     ] {
         cases.push((format!("{defs}, f := {f}, f(2.5)"), want));
         cases.push((format!("{defs}, f := {f}, g.compile(), f.compile(), f(2.5)"), want));
@@ -13547,7 +13734,7 @@ fn a_minus_negates_or_subtracts_by_where_it_stands() {
         ("m := i32 3, (-m)".to_string(), "-3\n"),
         ("m := i32 3, - -m".to_string(), "3\n"),
         ("m := i32 3, 2 - -m".to_string(), "5\n"),
-        ("m := f64 2.5, i32 lossy (-m)".to_string(), "-2\n"),
+        ("m := f64 2.5, try i32 lossy (-m)".to_string(), "-2\n"),
         ("x := mut i32 0, x=-1, x".to_string(), "-1\n"),
         (
             "import file «./identities/array.logos», a := array i32 [-1, 2], a[0]".to_string(),
@@ -14241,6 +14428,7 @@ fn a_type_field_is_a_box_its_run_reads_when_it_runs() {
         (format!("{pass}, d := mut dyad ?, d = i32, (pass d) == i32"), "true\n"),
         (format!("{pass}, f := fn (d := dyad ?) -> bool ( (pass d) == f64 ), f(f64)"), "true\n"),
         (format!("{sq}, t := mut type ?, t = i64, sq t"), "16\n"),
+        (format!("{pass}, q := mut (pass i32), q = 5, q.type"), "mut i32\n"),
         // A `run` line that reads a value after the field's type is parsed when it runs.
         (format!("{mk}, mk i32"), "7\n"),
     ] {

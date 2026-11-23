@@ -33,7 +33,7 @@ pub(crate) mod callable;
 mod carried;
 mod colon;
 mod comment;
-mod convert;
+pub(crate) mod convert;
 pub(crate) mod copy;
 pub(crate) mod declare;
 pub(crate) mod drop_model;
@@ -111,6 +111,9 @@ pub struct Core {
     pub assign: DyadPtr,
     /// The scalar numeric conversion `T(value)`; it has no spelling of its own.
     pub convert: DyadPtr,
+    /// The written conversion of a float into an integer type, read as the `T!` it gives.
+    pub checked_convert: DyadPtr,
+    pub checked_convert_leaf: DyadPtr,
     pub plus: DyadPtr,
     /// Subtraction; negation is the other identity `-` spells.
     pub minus: DyadPtr,
@@ -347,6 +350,8 @@ impl Core {
         // No spelling: the parser builds conversions from the `T(value)` call surface.
         let (convert, convert_leaf) = convert::register(&mut cx, &callables);
         op_leaves.convert_ = convert_leaf;
+        let (checked_convert, checked_convert_leaf) =
+            convert::register_checked(&mut cx, &callables);
         let binary::BinaryIds {
             plus,
             minus,
@@ -547,6 +552,8 @@ impl Core {
             void_: void,
             assign,
             convert,
+            checked_convert,
+            checked_convert_leaf,
             plus,
             minus,
             negate,
@@ -1054,7 +1061,23 @@ pub(crate) unsafe fn land_as(
     ty: DyadPtr,
     lossy: bool,
 ) -> Result<DyadPtr, ParseError> {
-    land_with(store, types, value, ty, Landing { lossy, holder: dyad_place::Holder::Nobody })
+    let how = Landing { lossy, ..Landing::default() };
+    land_with(store, types, value, ty, how)
+}
+
+/// As [`land_as`], for a `dyad` read landing in `ty` when the program runs: a float with no whole
+/// number converted into an integer type stops the run there; stand-in for #452.
+///
+/// # Safety
+/// As [`land`].
+pub(crate) unsafe fn land_read(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    ty: DyadPtr,
+    lossy: bool,
+) -> Result<DyadPtr, ParseError> {
+    land_with(store, types, value, ty, Landing { lossy, faults: true, ..Landing::default() })
 }
 
 /// As [`land`], into a place `holder` holds, which ends what it takes: a `dyad ?` place takes a
@@ -1070,13 +1093,16 @@ pub(crate) unsafe fn land_held(
     ty: DyadPtr,
     holder: dyad_place::Holder,
 ) -> Result<DyadPtr, ParseError> {
-    land_with(store, types, value, ty, Landing { lossy: false, holder })
+    land_with(store, types, value, ty, Landing { holder, ..Landing::default() })
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Landing {
     lossy: bool,
     holder: dyad_place::Holder,
+    /// A float converted into an integer type faults where it has no whole number, rather than
+    /// being refused as a `T!` the place cannot hold.
+    faults: bool,
 }
 
 /// # Safety
@@ -1143,6 +1169,12 @@ unsafe fn land_leaf(
             let converts = subset::includes(types, from, ty) == Some(true)
                 || lossy && number && is_numtype_node(types, ty);
             if from != ty && converts {
+                // The written conversion gives `ty!` here, which a place of `ty` cannot hold
+                // (›A type's `parse` decides what converts into it; unwritten, a value converts
+                // only into a type that holds it exactly‹ [[R155]]).
+                if !how.faults && convert::may_fail(types, from, ty) {
+                    return Err(ParseError::UnwrittenWholeNumber);
+                }
                 return Ok(convert::build_convert(store, types, value, from, ty));
             }
             from == ty
