@@ -295,12 +295,43 @@ unsafe fn out_of(types: &Core, node: DyadPtr) -> DyadPtr {
     super::drop_model::moved_place(types, expr).unwrap_or(expr)
 }
 
+/// The width of the place a `move` under the out node `node` empties, its bytes handed on as a
+/// copy: one whose type has an end, so a scope's end that still holds the place, as the one a
+/// bare `return` in an arm leaves through holds the result place, ends nothing there (›`free` and
+/// `move` end a name; no drop flag‹ [[R60]]). `None` for any other out node.
+///
+/// # Safety
+/// `node` must be an out node from `build_out`.
+unsafe fn emptied_width(types: &Core, node: DyadPtr) -> Option<usize> {
+    let place = super::drop_model::moved_place(types, *(dyad::value(node) as *const DyadPtr))?;
+    let ty = super::read::output_type(types, place);
+    (teardown_of_type(types, ty) != Teardown::Nothing).then(|| place_width(types, ty))
+}
+
 fn run_out(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an out node from `build_out`.
-    unsafe { record_addr(rt, out_of(rt.types(), node)).map(|addr| addr as i64) }
+    // SAFETY: `node` is an out node from `build_out`; a place it empties is `width` bytes.
+    unsafe {
+        let addr = record_addr(rt, out_of(rt.types(), node))?;
+        let Some(width) = emptied_width(rt.types(), node) else {
+            return Ok(addr as i64);
+        };
+        let copy = rt.scratch(width);
+        std::ptr::copy_nonoverlapping(addr, copy, width);
+        std::ptr::write_bytes(addr, 0, width);
+        Ok(copy as i64)
+    }
 }
 
 fn lower_out(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run_out`].
-    unsafe { lower_record_addr(lw, out_of(lw.types(), node)) }
+    unsafe {
+        let addr = lower_record_addr(lw, out_of(lw.types(), node))?;
+        let Some(width) = emptied_width(lw.types(), node) else {
+            return Ok(addr);
+        };
+        let copy = lw.scratch_slot(width);
+        lw.copy_bytes(copy, addr, width);
+        lw.zero_bytes(addr, width);
+        Ok(copy)
+    }
 }

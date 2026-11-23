@@ -11,6 +11,7 @@
 
 use super::callable::{self, Callables};
 use super::numtype::NumType;
+use super::place::{At, Placed};
 use super::pointer::at_dyad;
 use super::read::Carry;
 use super::{meta, Cx};
@@ -168,6 +169,13 @@ pub(super) fn register(
     let (cell_into, cell_into_leaf) = read(cx, &["tape", "k", "i", "type"], run_cell_into);
     let (cell_identity, cell_identity_leaf) = read(cx, &["tape", "k"], run_cell_identity);
     cx.lower.insert(bracket_arg, lower_bracket_arg);
+    for id in [slot, cell_dyad_at, cell_value, cell_number, cell_node, cell_into] {
+        cx.placings.insert(id, place_line);
+    }
+    for id in [cell_type, cell_gives] {
+        cx.placings.insert(id, super::place::run_now);
+    }
+    cx.placings.insert(bracket_arg, super::place::whole);
     let nothing = cx.store.alloc_leaf(void_ty);
     for (name, id) in [
         ("is_constructed", is_constructed),
@@ -951,7 +959,7 @@ pub(crate) fn run_line_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunE
             };
             match rt.read_on_tape(tape, k, read)? {
                 Some(operand) => operand,
-                None => rt.through(cell_on(rt, tape, k).dyad),
+                None => crate::binding::through(rt.types(), cell_on(rt, tape, k).dyad),
             }
         } else {
             line_of_type_read(rt, node)?
@@ -1266,6 +1274,19 @@ pub(crate) unsafe fn named_line(
         return Some(read_target(rt, dyad::value(read) as *const DyadPtr));
     }
     None
+}
+
+/// Placed, a read of a cell or line is that line itself, kept as graph for the placed node to run;
+/// inside the right side, a line a check narrowed lands in the type it was checked against.
+///
+/// # Safety
+/// `read` must be a reduced dyad from the store, of a read [`named_line`] names a line of.
+unsafe fn place_line(rt: &mut Runtime, read: DyadPtr, at: At) -> Result<Placed, RunError> {
+    let line = named_line(rt, read).expect("a read placed as a line names one")?;
+    Ok(Placed::New(match (at, checked_type(rt.types(), read)) {
+        (At::Inside, Some(ty)) => super::place::land(rt, line, ty)?,
+        _ => line,
+    }))
 }
 
 /// The type a read of a cell or line takes its line as; `None` for any other node, and for a type

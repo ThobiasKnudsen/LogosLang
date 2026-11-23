@@ -132,6 +132,10 @@ impl<'a> Parser<'a> {
             return false;
         }
         // A type by its rank, stand-in for #286.
+        let by_rank = |rank: f64| {
+            use crate::identities::meta::prec;
+            rank == prec::ONE_RANK || rank > prec::POINTER_TYPE
+        };
         let readers = cells
             .iter()
             .rev()
@@ -139,7 +143,7 @@ impl<'a> Parser<'a> {
                 let id = self.cell_identity(c);
                 !c.constructed
                     && !self.ends_value(c)
-                    && self.precedence_of_cell(id) >= crate::identities::meta::prec::CONVERT
+                    && by_rank(self.precedence_of_cell(id))
                     && !self.is_delimiter(id)
             })
             .count();
@@ -591,6 +595,69 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
+    /// The node just built at the center of `tape`, where it gives a type and the pass runs its
+    /// line: what stands before it runs first, then the node, and the type it gave stands in its
+    /// place, whatever the node is (›The pass runs only as far as it must, in
+    /// order, and never twice‹ [[R288]]), so a reader takes it as a type known in the pass (›A
+    /// type known only when the program runs still works; what needs it is parsed when its line
+    /// runs‹ [[R377]]). `None`, nothing run, for a node that is a type or gives none, a bracket,
+    /// a type taken as a value, a place ([`Self::takes_the_place`]), and where the pass does not
+    /// run the line: a body, a `while` condition.
+    pub(super) fn run_type_where_built(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        use crate::identities::{read, type_identity_of};
+        let types = self.types;
+        if !self.in_pass_order() || self.cx.each_pass {
+            return Ok(None);
+        }
+        let Some(cell) = tape.at(0).copied() else { return Ok(None) };
+        if !cell.constructed || cell.bracket || cell.type_value || cell.dyad.is_null() {
+            return Ok(None);
+        }
+        let node = cell.dyad;
+        // SAFETY: a constructed cell holds a node from the store.
+        let gives_type = unsafe {
+            !types.is_storage(node)
+                && !types.is_hole(types.through(node))
+                && read::output_type(types, node) == types.type_
+                && type_identity_of(types, node).is_none()
+        };
+        if !gives_type {
+            return Ok(None);
+        }
+        let prev = tape.at(-1).map(|c| self.cell_identity(c));
+        let next = match tape.at(1) {
+            Some(c) => Some(self.cell_identity(c)),
+            None => self.next_identity(),
+        };
+        if self.takes_the_place(prev, next) {
+            return Ok(None);
+        }
+        self.run_first(tape, cell.start)?;
+        let plan = self.line_made();
+        let depth = self.cx.open.len() - 1;
+        // SAFETY: `node` is a reduced dyad this parser built into its store.
+        let value = unsafe { self.run_early(depth, cell.start, node, &plan)? };
+        let handle = tape.handle_at(0).expect("the built cell stands at the center");
+        tape.stand_as_ran(handle, value);
+        self.ran_through(tape, handle);
+        Ok(Some(value))
+    }
+
+    /// Whether the operand between `prev` and `next` stands for its place, not for what it gives:
+    /// what `=` writes, `&` points at, and `free` and `move` end.
+    pub(super) fn takes_the_place(&self, prev: Option<DyadPtr>, next: Option<DyadPtr>) -> bool {
+        let types = self.types;
+        next == Some(types.assign)
+            || prev.is_some_and(|p| {
+                p == types.free_
+                    || p == types.move_
+                    || self.precedence_of_cell(p) == crate::identities::meta::prec::ADDRESS
+            })
+    }
+
     /// A point at `at` where the parse needs a value: what stands before it runs first
     /// ([`Self::ran_first`]), or the point is refused, with nothing run, where something before
     /// it cannot.
@@ -751,11 +818,8 @@ impl<'a> Parser<'a> {
     }
 
     /// `node`, a part of the line the scope open at `depth` is parsing, runs early, giving what
-    /// stands for it ([`Self::ran_value`]). What else its run made that nothing took, the value of
-    /// each node of `plan` that ran, `node`'s own aside, the line ends where it ends, last made
-    /// first, as it ends what it makes when it runs (›Holding is decided at the binding site,
-    /// parameters included‹ [[R61]]): each stands as a value the pass ran early. A fault leaves
-    /// the line, so what the run made ends before the fault shows.
+    /// stands for it ([`Self::ran_value`]); the line holds what else its run made
+    /// ([`Self::run_held`]).
     ///
     /// # Safety
     /// `node` must be a reduced dyad this parser built into its store, and `plan` the nodes whose
@@ -767,6 +831,28 @@ impl<'a> Parser<'a> {
         node: DyadPtr,
         plan: &[DyadPtr],
     ) -> Result<DyadPtr, ParseError> {
+        // SAFETY: the caller's contract.
+        self.run_held(depth, node, plan, |p| unsafe { p.ran_value(at, node) })
+    }
+
+    /// `run`, a run the pass makes of `node` before the line the scope open at `depth` is
+    /// parsing runs: an early part of it, a `static` value or an `immediate` operand (›The pass
+    /// runs only as far as it must, in order, and never twice‹ [[R288]]). The value of each node
+    /// of `plan` that runs, but for what `node`'s own value passes through, is the line's, which
+    /// holds it to its end, last made first, as if the line had run it: each stands as a value
+    /// the pass ran early (›Holding is decided at the binding site, parameters included‹
+    /// [[R61]]). A fault leaves the line, so what the run made ends before the fault shows.
+    ///
+    /// # Safety
+    /// `node` must be a reduced dyad this parser built into its store, and `plan` the nodes whose
+    /// values the line holds to its end.
+    pub(super) unsafe fn run_held<T>(
+        &mut self,
+        depth: usize,
+        node: DyadPtr,
+        plan: &[DyadPtr],
+        run: impl FnOnce(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<T, ParseError> {
         use crate::identities::drop_model::{end_line, handed_through};
         use crate::identities::{ran, read};
         let types = self.types;
@@ -775,7 +861,7 @@ impl<'a> Parser<'a> {
         let mark = self.rt.line_mark();
         let before = self.cx.open[depth].stood.len();
         self.rt.push_plan(&ends);
-        let value = self.ran_value(at, node);
+        let value = run(self);
         self.rt.pop_plan();
         let value = match value {
             Ok(value) => value,
@@ -1110,25 +1196,18 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
-    /// What a type at the center takes from its right, the cell at `k` (›A type's `parse` decides
-    /// what converts into it; unwritten, a value converts only into a type that holds it
-    /// exactly‹ [[R155]]): a built value or a bare name, what is built at discovery (`.`, `@`, a
-    /// call, an `if`) finished before it, and a negating `-` there started first, so `i32 -m`
-    /// negates `m` before `i32` converts it (›`-` negates where a space stands before it and none
-    /// after, or no value stands to its left; any other `-` subtracts‹ [[R157]]). `None` where
-    /// the type stands as itself: nothing there, or a cell still to be built that is no value of
-    /// its own (`+`, `->`).
+    /// What a type or a gate word at the center takes from its right, the cell at `k`: a built
+    /// value or a bare name, what is built at discovery (`.`, `@`, a call, a bracket) finished
+    /// before it, `?`, and a word of its own rank, built before it since each associates right.
+    /// `None` where it stands alone: nothing there, or a word of a later rank still to be built
+    /// (`+`, `not`, a negating `-`), which it does not start, so `i32 -m` is written `i32 (-m)`
+    /// (›Every identity has a `parse_rank`, and `(` works in two steps‹ [[R259]]).
     pub(crate) fn type_operand(
         &mut self,
         tape: &mut ParsingTape,
         k: isize,
     ) -> Result<Option<Cell>, ParseError> {
-        let Some(mut cell) = self.cell_at(tape, k)? else { return Ok(None) };
-        // Any other word not built yet leaves the type standing as itself: stand-in for #535.
-        if !cell.constructed && self.cell_identity(&cell) == self.types.negate {
-            let Some(started) = self.side_at(tape, k)? else { return Ok(None) };
-            cell = started;
-        }
+        let Some(cell) = self.cell_at(tape, k)? else { return Ok(None) };
         Ok(self.is_operand_cell(&cell).then_some(cell))
     }
 

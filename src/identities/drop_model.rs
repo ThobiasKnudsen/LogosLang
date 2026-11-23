@@ -70,18 +70,24 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let of_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("of", of_);
 
-    let alloc_ = keyword(cx, "alloc", meta::prec::PREFIX, &["count", "init"], |p, _id, tape| {
+    let alloc_ = keyword(cx, "alloc", meta::prec::ONE_RANK, &["count", "init"], |p, _id, tape| {
         let of_ = p.types().of_;
         if p.marker_right(tape, of_) {
             return Err(ParseError::MissingOperand);
         }
         let at = tape.at(0).map_or(0, |word| word.start);
         let count = p.take_right(tape)?;
+        let types = p.types();
         let (gates, init) = if p.marker_right(tape, of_) {
             tape.remove(1);
             p.build_right_side(tape)?;
-            let gates = tape.at(1).map_or(std::ptr::null_mut(), |c| c.gates);
-            (gates, Some(p.take_right(tape)?))
+            let init = p.take_right(tape)?;
+            // The gates a gate word wrote on the value gate the type the pointer points at.
+            // SAFETY: `init` is a reduced dyad just parsed.
+            match unsafe { super::gate::value_parts(types, init) } {
+                Some((init, gates)) => (gates, Some(init)),
+                None => (std::ptr::null_mut(), Some(init)),
+            }
         } else {
             (std::ptr::null_mut(), None)
         };
@@ -89,7 +95,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         if let Some(init) = init {
             p.take(init);
         }
-        let types = p.types();
         let node = build_alloc(p.store(), types, count, init, gates)?;
         // `alloc` gives `@T!` (›There is no bare `error «…»`; `abort «…»` stops the program;
         // `alloc` returns `@T!`‹ [[R145]]).
@@ -109,7 +114,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 
     // `own` stands only in a type position, `own @T ?` or `-> own @T`: the word makes the hole,
     // or the function's result, an owning one.
-    let own_ = super::gate::word(cx, "own", meta::prec::PREFIX);
+    let own_ = super::gate::word(cx, "own");
     cx.metas.insert(own_, |p, _id, tape| {
         let Some(&hole) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
@@ -183,7 +188,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // value no name holds is used as any value is: it runs, then its type's `free`. `free = …`
     // never reaches here: `=` constructs first and takes the lone `free` as the slot's name.
     let free_ =
-        keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
+        keyword(cx, "free", meta::prec::ONE_RANK, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = match p.place_operand_cell(tape)? {
                 Taken::Place(place, ended) => (place, ended),
                 Taken::Hole(at) => return Err(p.fail_at(at, ParseError::FreeOfHole)),
@@ -409,8 +414,7 @@ pub(super) fn build_alloc(
 }
 
 /// What `alloc`'s mint over the field types `key`, the count's and the pointee, gives back and
-/// runs: the owning `@pointee`, made with the mint, so its nodes give one type;
-/// stand-in for #462.
+/// runs: the owning `@pointee`; stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store.
@@ -422,9 +426,7 @@ unsafe fn choose_alloc(
     let &[_, pointee] = key else {
         return None;
     };
-    let teardown = types.ops.teardown_;
-    let output_type =
-        super::pointer::make_owning_pointer_type(store, types.type_, pointee, teardown);
+    let output_type = super::pointer::make_owning_pointer_type(store, types, pointee);
     Some(super::mint::Made { output_type, op: types.ops.alloc_ })
 }
 
@@ -548,12 +550,7 @@ unsafe fn owning_pointer(
     if meta::kind_of(ty) != Some(numtype::ADDR_TAG) || !meta::destructor_of(ty).is_null() {
         return Err(ParseError::OwnNeedsPointer);
     }
-    Ok(super::pointer::make_owning_pointer_type(
-        store,
-        types.type_,
-        numtype::gated_pointee_of(ty),
-        types.ops.teardown_,
-    ))
+    Ok(super::pointer::make_owning_pointer_type(store, types, numtype::gated_pointee_of(ty)))
 }
 
 /// The result type `-> own @T` gives its calls, the owning `@T` (›Three fail-closed ownership
@@ -571,8 +568,8 @@ pub(crate) unsafe fn own_result(
 
 /// `move` of a place: `[place]` under `move`'s mint for the moved value's type, which it gives,
 /// so the name that takes it learns whether it holds it. A `{ … }` value kept in its bytes moves
-/// as their address, which the taker copies; any other value as the word its place holds, NULL
-/// there from then on.
+/// as their address, which the taker copies, or where its type has an end as a copy of them, its
+/// place zeroed; any other value as the word its place holds, NULL there from then on.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
@@ -2034,12 +2031,12 @@ mod tests {
     #[test]
     fn an_owning_place_takes_only_an_owning_value() {
         assert_eq!(
-            parse_err("x := i32 1, a := mut try alloc 1 of i32 5, a = &x"),
+            parse_err("x := i32 1, a := mut (try alloc 1 of i32 5), a = &x"),
             ParseError::NonOwningIntoOwning
         );
         // A named owner is copied in: each name frees its own block.
         assert_eq!(
-            run("a := mut try alloc 1 of mut i32 5, b := try alloc 1 of mut i32 6, a = b, a@ = 9, b@"),
+            run("a := mut (try alloc 1 of mut i32 5), b := try alloc 1 of mut i32 6, a = b, a@ = 9, b@"),
             (6, 0)
         );
         assert_eq!(free_log(), vec![5, 6, 9]);
@@ -2047,16 +2044,16 @@ mod tests {
         assert_eq!(run("a := try alloc 1 of mut i32 5, a@ = 9, a@"), (9, 0));
 
         // `=` frees the block it displaces, after building the right side, before the write.
-        assert_eq!(run("a := mut try alloc 1 of i32 5, a = try alloc 1 of i32 6, a@"), (6, 0));
+        assert_eq!(run("a := mut (try alloc 1 of i32 5), a = try alloc 1 of i32 6, a@"), (6, 0));
         assert_eq!(free_log(), vec![5, 6]);
         assert_eq!(
-            run("a := mut try alloc 1 of i32 5, b := try alloc 1 of i32 6, a = move b, a@"),
+            run("a := mut (try alloc 1 of i32 5), b := try alloc 1 of i32 6, a = move b, a@"),
             (6, 0)
         );
         assert_eq!(free_log(), vec![5, 6]);
         // The right side may read what it displaces.
         assert_eq!(
-            run("a := mut try alloc 1 of i32 5, a = try alloc 1 of i32 (a@ + 1), a@"),
+            run("a := mut (try alloc 1 of i32 5), a = try alloc 1 of i32 (a@ + 1), a@"),
             (6, 0)
         );
         // An owner never written frees nothing when the first value lands.
@@ -2367,7 +2364,10 @@ mod tests {
     fn alloc_of_a_bare_count_is_that_many_zeroed_bytes() {
         assert_eq!(run("a := try alloc 8,\na@"), (0, 0));
         // An `@u8` is read through only; bytes to write are `alloc n of mut u8 0`.
-        assert_eq!(parse_err("a := mut try alloc 8,\na@ = 200,\n1"), ParseError::PointeeNotMutable);
+        assert_eq!(
+            parse_err("a := mut (try alloc 8),\na@ = 200,\n1"),
+            ParseError::PointeeNotMutable
+        );
         assert_eq!(run("a := try alloc 8 of mut u8 0,\na@ = 200,\na@"), (200, 0));
         // The count-less spelling is gone: `i32 2` is a count, so this is two bytes.
         assert_eq!(run("a := try alloc i32 2,\na@"), (0, 0));
@@ -2585,7 +2585,7 @@ mod tests {
     #[test]
     fn a_write_after_move_is_refused() {
         assert_eq!(
-            parse_err("a := mut try alloc 1 of i32 7,\nb := move a,\na = b"),
+            parse_err("a := mut (try alloc 1 of i32 7),\nb := move a,\na = b"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
@@ -3021,6 +3021,34 @@ mod tests {
                 "an owning pointer's logos carries the destructor"
             );
         }
+    }
+
+    #[test]
+    fn an_owning_pointer_type_is_one_type_per_pointee() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let i32_ = core.numtypes[numtype::NumType::I32 as usize];
+        let i64_ = core.numtypes[numtype::NumType::I64 as usize];
+        use crate::identities::pointer::{make_owning_pointer_type, make_pointer_type};
+        // SAFETY: `i32_` and `i64_` are type nodes `Core::build` minted.
+        unsafe {
+            let own = make_owning_pointer_type(&mut store, &core, i32_);
+            let again = make_owning_pointer_type(&mut store, &core, i32_);
+            let wide = make_owning_pointer_type(&mut store, &core, i64_);
+            let borrow = make_pointer_type(&mut store, &core, i32_);
+            assert_eq!(own, again, "two `own @i32` are one type");
+            assert_ne!(own, wide, "`own @i64` is another");
+            assert_ne!(own, borrow, "`@i32` is another");
+        }
+    }
+
+    #[test]
+    fn a_function_hands_on_another_s_owning_result_in_a_union() {
+        let fs = "f := fn () -> (own @i32)! ( alloc 1 of i32 5 ),\n\
+                  g := fn () -> (own @i32)! ( f() ),\n";
+        assert_eq!(run(&format!("{fs}q := try g(),\nq@")), (5, 0));
+        assert_eq!(free_log(), vec![5], "freed once, at `q`'s end");
     }
 
     #[test]

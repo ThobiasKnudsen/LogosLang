@@ -27,6 +27,11 @@ pub(super) struct OpenFn {
     pub(super) open_below: usize,
     /// Every `return` in the body, committed to the result type as the tail is.
     pub(super) returns: Vec<OpenReturn>,
+    /// The result place, `return` read as a name: a binding laid out in the frame the first
+    /// time the body reads it, null until then.
+    pub(super) result: DyadPtr,
+    /// The body is a type's slot, `run`, `parse` or `free`, which has no `->`.
+    pub(super) slot_body: bool,
 }
 
 /// A `return` in a function body being parsed. Its line may still end names after it, in a
@@ -183,7 +188,7 @@ pub(super) struct OpenScope {
     reached: Vec<DyadPtr>,
     /// The block node whose `dyads` hold the items, when the scope runs as one
     /// later: a drain leaves its cursor on the frame. None at the top level and in a type body.
-    scope: Option<DyadPtr>,
+    pub(super) scope: Option<DyadPtr>,
     /// A `[…]`: its items go whole to the call that takes them, never pending
     /// (DESIGN ›A bracket goes to the call whole‹).
     pub(super) list: bool,
@@ -934,6 +939,8 @@ impl<'a> Parser<'a> {
             outer: Vec::new(),
             open_below: self.cx.open.len(),
             returns: Vec::new(),
+            result: std::ptr::null_mut(),
+            slot_body: result.is_none(),
         });
         // SAFETY: `input` is the record just built, `params` its bindings.
         unsafe {
@@ -1116,6 +1123,19 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    /// What the `return` at the center of `tape` leaves with: the value to its right, or where none
+    /// stands, what the result place holds (›A scope's value is what it evaluates to, and `return`
+    /// is an optional early exit from the enclosing function‹ [[R207]]).
+    pub(crate) fn return_operand(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
+        if self.side_at(tape, 1)?.is_some() {
+            return self.take_right(tape);
+        }
+        let mut cell = *tape.at(0).expect("the word's own cell");
+        cell.dyad = self.result_place(cell.start)?;
+        self.check_unwritten(&cell)?;
+        Ok(cell.dyad)
+    }
+
     /// `return a` of a name a scope the `return` leaves holds: the operand becomes `move a`, and
     /// `a` is dead from this line, as a written `move a` makes it (›A last value moves out‹
     /// [[R66]]).
@@ -1225,8 +1245,18 @@ impl<'a> Parser<'a> {
         self.cx.narrow_next = None;
         self.cx.runtime_depth -= 1;
         let (then, els) = branches?;
+        let log_end = self.cx.ended_log.len();
+        let spared =
+            self.spared_by_leaving_arms([(then, log_start..log_then), (els, log_then..log_end)]);
+        for &name in &spared {
+            // SAFETY: `name` is a binding dyad the ended log held.
+            unsafe { self.cx.scopes.spare(ends_mark, name) };
+        }
         // What the then arm ended is dead after the `if`, as what the else arm ended is.
         for (name, node) in ended_by_then {
+            if spared.contains(&name) {
+                continue;
+            }
             // SAFETY: `name` is a binding dyad the journal held.
             if !unsafe { Binding::read(name) }.is_dead() {
                 // SAFETY: as above.
@@ -1249,15 +1279,29 @@ impl<'a> Parser<'a> {
         // frees it at its end, an else-less `if` in the arm it gains, and a condition that
         // leaves before either arm runs frees it too (DESIGN ›`move` and `free` are static: the
         // parse marks the name dead‹, rule 2).
-        let log_end = self.cx.ended_log.len();
-        let then_ended = self.ended_outside(log_start..log_then, if_depth);
-        let else_ended = self.ended_outside(log_then..log_end, if_depth);
         let not_in = |ended: &[DyadPtr], other: &[DyadPtr]| -> Vec<DyadPtr> {
             other.iter().copied().filter(|name| !ended.contains(name)).collect()
         };
+        let then_ended = not_in(&spared, &self.ended_outside(log_start..log_then, if_depth));
+        let else_ended = not_in(&spared, &self.ended_outside(log_then..log_end, if_depth));
         let then_ends = not_in(&then_ended, &else_ended);
         let else_ends = not_in(&else_ended, &then_ended);
-        let condition_ends = self.ended_outside(log_start..log_end, if_depth);
+        let condition_ends = not_in(&spared, &self.ended_outside(log_start..log_end, if_depth));
+        // A spared name ended nothing: no line's close settles an end for it.
+        if !spared.is_empty() {
+            let gone: Vec<usize> = (log_start..log_end)
+                .filter(|&at| spared.contains(&self.cx.ended_log[at].0))
+                .collect();
+            for &at in gone.iter().rev() {
+                self.cx.ended_log.remove(at);
+            }
+            for r in self.returns_from(returns_start) {
+                r.cursor -= gone.iter().filter(|&&at| at < r.cursor).count();
+            }
+            for scope in &mut self.cx.open[..if_depth] {
+                scope.ended.retain(|name| !spared.contains(name));
+            }
+        }
         // A `return` in the condition or the then arm leaves through the `if`, which frees
         // these on its way, though its line may end them after it, in the else arm. An else
         // arm's `return` stands after the then arm in the log, so its line never ends them.
@@ -1280,6 +1324,27 @@ impl<'a> Parser<'a> {
             )
         };
         Ok(node)
+    }
+
+    /// The names an arm of an `if` ended where that arm always leaves (`flow`'s answer): none of
+    /// the lines after the `if` runs on its path, so it ends nothing for them, and no other arm
+    /// frees them (›A scope's value is what it evaluates to, and `return` is an optional early
+    /// exit from the enclosing function‹ [[R207]]). Only the result place is spared: every other
+    /// name keeps rule 2 of ›`move` and `free` are static: the parse marks the name dead‹ [[R70]].
+    fn spared_by_leaving_arms(&self, arms: [(DyadPtr, std::ops::Range<usize>); 2]) -> Vec<DyadPtr> {
+        let mut spared = Vec::new();
+        for (arm, range) in arms {
+            // SAFETY: `arm` is null or the reduced dyad of an arm just parsed.
+            if arm.is_null() || !unsafe { flow::of(self.types, arm) }.ends_scope() {
+                continue;
+            }
+            for &(name, _) in &self.cx.ended_log[range] {
+                if self.is_result_place(name) && !spared.contains(&name) {
+                    spared.push(name);
+                }
+            }
+        }
+        spared
     }
 
     /// The held names the ended log's `range` ended that a scope outside depth `inside` holds, in
@@ -2440,6 +2505,18 @@ impl<'a> Parser<'a> {
         self.cx.open.last().map_or_else(Vec::new, |o| o.made.clone())
     }
 
+    /// What the line being parsed made, that nothing took, since [`Self::line_made`] gave
+    /// `before`, taken out of the line's plan: a run the pass makes of it now
+    /// ([`Self::run_held`]) is the run that holds it.
+    pub(super) fn take_made_since(&mut self, before: &[DyadPtr]) -> Vec<DyadPtr> {
+        let Some(open) = self.cx.open.last_mut() else {
+            return Vec::new();
+        };
+        let (since, kept) = open.made.iter().partition(|m| !before.contains(m));
+        open.made = kept;
+        since
+    }
+
     /// `cell` was just built where the pass runs a line once it has parsed it: a node that runs,
     /// a call or an operator, runs only then. A node that runs nothing holds nothing that runs, so
     /// what the line noted inside it, the cells it took among it, left the line.
@@ -2778,19 +2855,26 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        let before = self.line_made();
         let operand = self.parse_in_pass(Self::parse_expression);
         // SAFETY: the operand was just parsed into this parser's store.
-        let value = unsafe { self.immediate_value(operand?) }?;
+        let value = unsafe { self.immediate_value(operand?, &before) }?;
         tape.place(value);
         Ok(Constructed::Placed)
     }
 
     /// What an `immediate` operand stands as: itself when nothing runs, else what the
-    /// graph can hold of its result: a number, a bool, a type or a node.
+    /// graph can hold of its result: a number, a bool, a type or a node. Its line holds what else
+    /// the run made ([`Self::run_held`]); `before` is [`Self::line_made`] before the operand was
+    /// parsed.
     ///
     /// # Safety
     /// `node` must be a reduced dyad this parser built into its store.
-    unsafe fn immediate_value(&mut self, node: DyadPtr) -> Result<DyadPtr, ParseError> {
+    unsafe fn immediate_value(
+        &mut self,
+        node: DyadPtr,
+        before: &[DyadPtr],
+    ) -> Result<DyadPtr, ParseError> {
         use crate::identities::numtype::NumType;
         use crate::identities::read::{read_kind, Dispatch, Read};
         use crate::identities::{operand_of, Operand};
@@ -2813,7 +2897,10 @@ impl<'a> Parser<'a> {
             _ => return Err(ParseError::ImmediateNotHeld),
         };
         self.drain()?;
-        let bits = self.run_on_pass(node).map_err(ParseError::Run)?;
+        let plan = self.take_made_since(before);
+        let depth = self.cx.open.len() - 1;
+        let bits =
+            self.run_held(depth, node, &plan, |p| p.run_on_pass(node).map_err(ParseError::Run))?;
         if bool_ {
             let bool_ty = types.bool_;
             return Ok(crate::identities::bool_mod::literal_node(

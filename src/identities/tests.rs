@@ -971,9 +971,9 @@ fn address_comparison_and_negation_stand_in_the_order() {
         script_parse_err("a := i32 1, b := i32 2, true == a < b"),
         ParseError::UnsupportedOperands
     );
-    // A negating `-` is built before `*`, and a number type starts it.
+    // A negating `-` is built before `*`, and a number type takes it only bracketed.
     assert_eq!(run_script("y := i32 3, -y * 2"), -6);
-    diff_nullary_fn("fn () -> i32 ( m := i32 3, i32 -m * 2 + 1 )", -5);
+    diff_nullary_fn("fn () -> i32 ( m := i32 3, i32 (-m) * 2 + 1 )", -5);
 }
 
 #[test]
@@ -1336,7 +1336,7 @@ fn logical_operators_run_both_sides_on_the_interpreter() {
 
 #[test]
 fn logical_operators_reject_non_bool_operands() {
-    for src in ["true and 1", "1 or false", "not (1)"] {
+    for src in ["true and 1", "1 or false", "not (1)", "1 xor 2", "true implies 1"] {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -4535,7 +4535,9 @@ fn lossy_gates_a_value_once_and_converts_only_numbers() {
     assert_eq!(script_parse_err("i32 lossy lossy (f64 2.5)"), ParseError::DoubleGate);
     assert_eq!(script_parse_err("x := i32 lossy, 0"), ParseError::MissingOperand);
     assert_eq!(parse_err("i32 lossy (true)"), ParseError::TypeMismatch);
-    assert_eq!(parse_err("i32 lossy (1, 2)"), ParseError::BadCast);
+    // `lossy`'s bracket is a value it builds, a block, never a conversion's argument list.
+    assert_eq!(script_parse_err("i32 lossy (1, 2)"), ParseError::LineAfterValue);
+    assert_eq!(script_parse_err("x := lossy (1, 2), 0"), ParseError::LineAfterValue);
     let copied = "y := lossy (f64 2.5), z := y, i32 z";
     assert_eq!(script_parse_err(copied), ParseError::TypeMismatch);
 }
@@ -4552,8 +4554,7 @@ fn number_types_take_the_value_to_their_right_rightmost_first_on_both_tiers() {
     }
     diff_nullary_fn("fn () -> f64 ( f64 i32 5 )", 5.0f64.to_bits() as i64);
     diff_typed_call("fn (x := f64 ?) -> i32 ( (i32 lossy f64 lossy (x)).value )", "f(2.5)", 2);
-    // Negation ranks with them, so `lossy` takes the negated value.
-    diff_typed_call("fn (m := f64 ?) -> i32 ( (i32 lossy -m).value )", "f(2.5)", -2);
+    diff_typed_call("fn (m := f64 ?) -> i32 ( (i32 lossy (-m)).value )", "f(2.5)", -2);
     assert_eq!(run_script("i32 lossy rational_number 5"), 5);
     assert_eq!(run_script("i32 lossy rational_number rational_number 5"), 5);
     for src in ["i32 i64 5", "i32 f64 2.5", "f64 rational_number 5"] {
@@ -4614,7 +4615,7 @@ fn a_type_takes_the_value_built_at_discovery_before_it() {
         (format!("{pt}, i32 (p.a)"), 7),
         ("m := i32 3, q := &m, i32 q@".to_string(), 3),
         ("g := fn (a := i32 ?) -> i32 ( a + 1 ), i32 g(3)".to_string(), 4),
-        ("c := true, i64 if c (i32 1) else (i64 2)".to_string(), 1),
+        ("c := true, i64 (if c (i32 1) else (i64 2))".to_string(), 1),
     ] {
         assert_eq!(run_script(&src), want, "{src}");
     }
