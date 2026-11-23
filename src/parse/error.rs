@@ -176,6 +176,8 @@ pub enum ParseError {
     GateNeedsValue,
     /// A value was gated twice by one word (`x := pub pub …`).
     DoubleGate,
+    /// A gate word before a word built after it, which it does not take (`mut try …`, `mut not a`).
+    GateBeforeLaterWord,
     /// `x = …` on a name not declared `mut`; carries the name.
     NotMutable(Box<String>),
     /// `p@ = …` through a pointer whose target type is not `mut`, an `@i32`.
@@ -389,6 +391,9 @@ pub enum ParseError {
     TryNeedsFallible,
     /// `try` where the innermost function gives no `T!`.
     TryOutsideFallible,
+    /// A float of a `lossy` type landing unwritten in an integer place: the conversion gives
+    /// `T!`, which the place does not hold.
+    UnwrittenWholeNumber,
     /// A raise or a `try` in a `defer`, whose error nobody receives.
     ErrorInDefer,
     /// `holds` with no member's name after it.

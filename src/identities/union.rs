@@ -81,9 +81,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> UnionIds {
     cx.lower.insert(member, lower_member);
     let leaf = callable::mint_native(cx.store, cs.callable, run_member, cs.seed_native);
 
-    // `holds` reads the cell to its left as `.` does, and a member's name to its right.
+    // `holds` reads the value to its left and a member's name to its right; it gives a `bool`,
+    // so it is built with the comparisons (›Every identity has a `parse_rank`, and `(` works in
+    // two steps‹ [[R259]]).
     let sides = &["lhs", "rhs"];
-    let record = meta::token_record(cx, meta::prec::TIGHT, crate::parse::Assoc::Left, sides);
+    let record = meta::token_record(cx, meta::prec::COMPARE, crate::parse::Assoc::Left, sides);
     let holds = cx.store.alloc_head(cx.type_, record);
     cx.declare("holds", holds);
     cx.metas.insert(holds, |p, _id, tape| p.construct_holds(tape));
@@ -253,9 +255,29 @@ unsafe fn fill_parts(
 /// # Safety
 /// `node` must be a fill node from [`build_fill`], `at` writable for its union's width.
 unsafe fn start(node: DyadPtr, at: *mut u8) {
-    let union = *(dyad::value(node) as *const DyadPtr).add(1);
+    begin(*(dyad::value(node) as *const DyadPtr).add(1), tag_in(node), at);
+}
+
+/// Starts a value of `union` at `at`: `tag`, and an empty room.
+///
+/// # Safety
+/// `union` must be a union type and `at` writable for its width.
+unsafe fn begin(union: DyadPtr, tag: u64, at: *mut u8) {
     std::ptr::write_bytes(at, 0, meta::record_size_of(union) as usize);
-    std::ptr::copy_nonoverlapping(tag_in(node).to_le_bytes().as_ptr(), at, TAG_BYTES);
+    std::ptr::copy_nonoverlapping(tag.to_le_bytes().as_ptr(), at, TAG_BYTES);
+}
+
+/// Writes at `at` a value of `union` holding `member`, whose value is `taken`, as a fill node
+/// writes one.
+///
+/// # Safety
+/// `union` must be a union type, `member` one of its member holes, `taken` a value of the
+/// member's type made for the union, and `at` writable for the union's width.
+pub(crate) unsafe fn put(types: &Core, union: DyadPtr, member: DyadPtr, at: *mut u8, taken: i64) {
+    begin(union, tag(union, member), at);
+    if let Some(carry) = super::read::carry_of(types, hole::type_in(member)) {
+        super::assign::put(carry, at.add(room_at(union)), taken);
+    }
 }
 
 fn run_fill(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -512,9 +534,15 @@ unsafe fn base_of(store: &mut Store, types: &Core, value: DyadPtr, union: DyadPt
 /// # Safety
 /// `union` must be a union type and `member` one of its member holes.
 unsafe fn tag_of(store: &mut Store, types: &Core, union: DyadPtr, member: DyadPtr) -> DyadPtr {
+    store.alloc_blob(types.numtypes[NumType::U64 as usize], &tag(union, member).to_ne_bytes())
+}
+
+/// # Safety
+/// As [`tag_of`].
+unsafe fn tag(union: DyadPtr, member: DyadPtr) -> u64 {
     let lines = array::items(meta::record_fields_of(union));
     let at = lines.iter().position(|&m| m == member).expect("a member of this union");
-    store.alloc_blob(types.numtypes[NumType::U64 as usize], &(at as u64).to_ne_bytes())
+    at as u64
 }
 
 /// The place among the union's lines of the member the union value at `at` holds; `None` while

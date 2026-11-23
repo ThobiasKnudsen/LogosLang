@@ -188,6 +188,9 @@ pub fn parse_message(e: &ParseError) -> String {
             "a gate word (`pub`, `mut`, `static`) gates the value to its right, so it stands right of `:=`: `x := mut i32 5`".into()
         }
         ParseError::DoubleGate => "this gate word already gates the value".into(),
+        ParseError::GateBeforeLaterWord => {
+            "a gate word takes the nearest value to its right, and a word built after it, such as `try`, `not` or a negating `-`, is none: put that word and its value in brackets, as `x := mut (try alloc 1 of i32 5)` or `mut (not a)`".into()
+        }
         ParseError::PointeeNotMutable => {
             "this pointer points at a value that is not `mut`: a write through `@` needs a `@ mut T`, as `&a` of `a := mut i32 5` or `try alloc 1 of mut i32 5` gives".into()
         }
@@ -588,6 +591,12 @@ pub fn parse_message(e: &ParseError) -> String {
             "`try` passes an error on to the caller, so it is written inside a function that gives \
              a value or an error, `-> i32!`, or at the top level, which hands it to the command \
              line"
+                .into()
+        }
+        ParseError::UnwrittenWholeNumber => {
+            "a float may be no number (NaN) or infinite, so its conversion into an integer type \
+             gives a value or an error, `i32!`, which this place cannot hold: write the \
+             conversion, `try i32 y`"
                 .into()
         }
         ParseError::ErrorInDefer => {

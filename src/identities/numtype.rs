@@ -135,7 +135,7 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
     let record = super::meta::record_assoc(
         cx.store,
         nt as u8,
-        super::meta::prec::CONVERT,
+        super::meta::prec::ONE_RANK,
         crate::parse::Assoc::Right,
     );
     let id = cx.store.alloc_head(cx.type_, record);
@@ -177,7 +177,10 @@ fn construct(
             if super::group::members(types, value).is_some() {
                 p.build_conversion(id, &[value], false)
             } else {
-                super::land(p.store(), types, value, id)
+                match p.checked_conversion(id, value, false)? {
+                    Some(checked) => Ok(checked),
+                    None => super::land(p.store(), types, value, id),
+                }
             }
         }
         .map_err(|e| p.fail_at(operand.start, e))?

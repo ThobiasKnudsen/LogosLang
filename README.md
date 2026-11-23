@@ -35,7 +35,7 @@ Newlines are whitespace. The one separator is `,`, and it is required between tw
 
 ### Numbers
 
-A plain number such as `3` is a `rational_number` until it lands in a number type, which converts it exactly: `x + 1` with `x` an `i32` is i32 addition, and `f64 0.1` is refused, since 0.1 has no exact `f64`. A value converts into another number type only when that type holds every value of its own, written (`i64 (x)`) or not: `i32 1 + i64 2` is i64 addition, and `i64 3 + f64 2.0` is refused. A conversion that may lose part of the value is written with `lossy`: `i32 lossy (f64 2.5)` is `2`, and `f64 lossy 0.1` is the nearest `f64`. `-y` is negation. Integer division by zero does not crash and does not give zero: it saturates, to the type's largest value for a non-negative dividend and its smallest for a negative one, loud enough to notice.
+A plain number such as `3` is a `rational_number` until it lands in a number type, which converts it exactly: `x + 1` with `x` an `i32` is i32 addition, and `f64 0.1` is refused, since 0.1 has no exact `f64`. A value converts into another number type only when that type holds every value of its own, written (`i64 (x)`) or not: `i32 1 + i64 2` is i64 addition, and `i64 3 + f64 2.0` is refused. A conversion that may lose part of the value is written with `lossy`: `f64 lossy 0.1` is the nearest `f64`, and a float into an integer type gives a value or an error, `i32!`, since a float that is not a number (NaN) or is infinite has no whole number, so `try i32 lossy (f64 2.5)` is `2` and the error is `error.no_whole_number`. `-y` is negation. Integer division by zero does not crash and does not give zero: it saturates, to the type's largest value for a non-negative dividend and its smallest for a negative one, loud enough to notice.
 
 ### Functions and scopes
 
@@ -204,7 +204,7 @@ Specified in the rules and not yet built:
 
 - **The rest of the gates.** The write permission through pointers (`@ mut i32`) and in an array's elements (`array mut i32`), and one read-or-write rule for visibility, borrowing, and reflection alike.
 - **The borrow checker.** Many readers or one writer, checked per place, with lexical lifetimes.
-- **Error values.** `T!`, `try`, and `match`. Today every error is a fault that stops the run with one message.
+- **The rest of the error values.** `T!`, `try`, `error.X «…»` and `holds` work, and `alloc` and a float converted with `lossy` into an integer type give `T!`. An index out of range and a power with no whole result still stop the run with one message, and a `T!` nobody reads is not refused yet.
 - **The rewriting engine.** Equality saturation over the graph: one engine for compiler optimization, computer algebra, and your own rewrites, driven by cost functions.
 - **Proofs as rewrite rules.** `conjecture ( a + a -> 2 * a ) where ( … ) proof ( … )`, checked by a small trusted core. A theorem is a rule with an accepted derivation, an axiom a rule a scope accepts without one.
 - **Refinement types** with an SMT solver, plus pre- and postconditions.

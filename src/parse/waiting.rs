@@ -664,12 +664,7 @@ impl<'a> Parser<'a> {
     ) -> bool {
         let types = self.types;
         let next = self.peek_token().map(|(id, _)| id);
-        if next == Some(types.assign) {
-            return true;
-        }
-        if prev.is_some_and(|p| {
-            p == types.free_ || p == types.move_ || self.precedence_of_cell(p) == prec::ADDRESS
-        }) {
+        if self.takes_the_place(prev, next) {
             return true;
         }
         let at_end = self.cx.pos >= self.cx.source.len()
