@@ -279,6 +279,7 @@ impl Core {
             metas: BTreeMap::new(),
             extents: BTreeMap::new(),
             choosers: BTreeMap::new(),
+            placings: BTreeMap::new(),
             lower: HashMap::new(),
         };
         let mut numtypes: [DyadPtr; 10] = [std::ptr::null_mut(); 10];
@@ -484,11 +485,11 @@ impl Core {
         );
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
-        // Every constructor, extent reader and chooser moves onto a callable leaf in its record;
-        // the tables drop before any parsing runs.
-        let Cx { store, trie, metas, extents, choosers, lower, .. } = cx;
-        // SAFETY: every key in `metas`, `extents` and `choosers` has its record built, and each
-        // entry is a `ConstructFn`, an `ExtentFn` or a `ChooseFn`.
+        // Every constructor, extent reader, chooser and placing moves onto a callable leaf in its
+        // record; the tables drop before any parsing runs.
+        let Cx { store, trie, metas, extents, choosers, placings, lower, .. } = cx;
+        // SAFETY: every key in `metas`, `extents`, `choosers` and `placings` has its record built,
+        // and each entry is a `ConstructFn`, an `ExtentFn`, a `ChooseFn` or a `PlaceFn`.
         unsafe {
             for (&id, &construct) in &metas {
                 let leaf = callable::mint(
@@ -517,10 +518,20 @@ impl Core {
                 );
                 meta::install_chooser(id, leaf);
             }
+            for (&id, &placing) in &placings {
+                let leaf = callable::mint(
+                    store,
+                    callables.callable,
+                    placing as usize,
+                    callables.seed_place,
+                );
+                meta::install_placing(id, leaf);
+            }
         }
         drop(metas);
         drop(extents);
         drop(choosers);
+        drop(placings);
         let mut core = Core {
             type_,
             logos,
@@ -808,6 +819,7 @@ pub(crate) struct Cx<'a> {
     metas: BTreeMap<DyadPtr, ConstructFn>,
     extents: BTreeMap<DyadPtr, crate::parse::ExtentFn>,
     choosers: BTreeMap<DyadPtr, mint::ChooseFn>,
+    placings: BTreeMap<DyadPtr, place::PlaceFn>,
     lower: LowerTable,
 }
 

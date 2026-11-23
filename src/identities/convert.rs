@@ -11,6 +11,8 @@ use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::numtype::{apply_cast, is_pointer_type, of_type_node};
+use super::place::{At, Operands, Placed};
+use super::read::output_type;
 use super::{meta, mint, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -27,8 +29,26 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let id = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(id, lower);
     cx.choosers.insert(id, choose);
+    cx.placings.insert(id, place);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)
+}
+
+/// A conversion into the type its placed operand already gives converts nothing: placed, it is
+/// what the written conversion makes, that operand (›A tape read checked against a number type
+/// reads as that number‹ [[R229]]).
+///
+/// # Safety
+/// `node` must be a reduced conversion node from the store.
+unsafe fn place(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunError> {
+    let operands = super::place::operands(rt, node, at)?;
+    if let Operands::New(words) = &operands {
+        let types = rt.types();
+        if output_type(types, words.first()) == output_type(types, node) {
+            return Ok(Placed::New(words.first()));
+        }
+    }
+    super::place::finish(rt, node, at, operands)
 }
 
 /// # Safety
