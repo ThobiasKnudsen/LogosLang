@@ -15218,3 +15218,87 @@ fn array_and_power_keep_their_mints_in_type_mint() {
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("get_mint"), "stderr: {stderr}");
 }
+
+/// `prime`, a collection written in Logos: a type whose `static` member `contains` takes a `u64`.
+const PRIME: &str = "prime := type ( contains := pub static fn (n := u64 ?) -> bool ( \
+     if n < 2 return false, d := mut u64 2, while d * d <= n ( if n % d == 0 return false, \
+     d = d + 1 ), true ) )";
+
+/// ›`x is c` is membership‹ [[R281]]: «`x is c` calls `c.contains(x)` and gives what it gives, a
+/// `bool`», so `7 is prime` is `prime.contains(7)`; `number` is the collection of the number
+/// types and `pointer` of the pointer types, each read under its gates; inside a function,
+/// compiled or not, and inside a parse.
+#[test]
+fn is_calls_the_collection_s_contains() {
+    let mut cases = vec![
+        ("print «{i32 is number} {bool is number} {string is number}»".to_owned(), "true false false\n"),
+        ("x := i32 3, print «{x.type is number}»".to_owned(), "true\n"),
+        ("x := mut i32 3, t := type x.type, print «{t is number} {@i32 is number}»".to_owned(), "true false\n"),
+        ("c := type number, print «{f64 is c}»".to_owned(), "true\n"),
+        (
+            "print «{@i32 is pointer} {i32 is pointer} {@void is pointer} {(mut @i32) is pointer} \
+             {@@i32 is pointer}»"
+                .to_owned(),
+            "true false true true true\n",
+        ),
+        (
+            "x := mut i32 3, p := &x, q := try alloc 1 of i32 7, r := alloc 1 of i32 7, \
+             print «{p.type is pointer} {q.type is pointer} {r.type is pointer} {x.type is pointer}»"
+                .to_owned(),
+            "true true false false\n",
+        ),
+        (
+            "pointer.contains.compile(), print «{@i32 is pointer} {pointer.contains(i32)}»"
+                .to_owned(),
+            "true false\n",
+        ),
+        (format!("{PRIME}, print «{{7 is prime}} {{8 is prime}} {{3 + 4 is prime}}»"), "true false true\n"),
+        (format!("{PRIME}, n := u64 9, print «{{n is prime}}»"), "false\n"),
+        ("print «{not (bool is number)} {i32 is number and bool is number} {i32 is number == true}»".to_owned(), "true false true\n"),
+        ("island := i32 4, print «{island}»".to_owned(), "4\n"),
+        (
+            "p := type ( parse_rank = 50, parse = ( print «{tape[-1].type is number} \
+             {tape[-1].gives is number}», tape.remove(-1), tape[0] = i32 1, \
+             tape.is_constructed[0] = true ) ), x := i32 3, y := x p, z := true p, w := (x + 1) p, 0"
+                .to_owned(),
+            "true true\nfalse false\nfalse true\n0\n",
+        ),
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!("f := fn (t := type ?) -> bool ( t is number ), {compile}print «{{f(i32)}} {{f(bool)}}»"),
+            "true false\n",
+        ));
+        cases.push((
+            format!("f := fn (y := i32 ?) -> bool ( y.type is number ), {compile}print «{{f(3)}}»"),
+            "true\n",
+        ));
+        cases.push((
+            format!(
+                "f := fn (t := type ?) -> bool ( t is pointer ), {compile}print «{{f(@void)}} {{f(u8)}}»"
+            ),
+            "true false\n",
+        ));
+        cases.push((
+            format!("{PRIME}, f := fn (n := u64 ?) -> bool ( n is prime ), {compile}print «{{f(7)}} {{f(9)}}»"),
+            "true false\n",
+        ));
+        cases.push((
+            format!("{PRIME}, f := fn () -> bool ( 7 is prime ), {compile}print «{{f()}}»"),
+            "true\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
+/// `is` asks a collection, a type with a member `contains` that gives a `bool` (›`x is c` is
+/// membership‹ [[R281]]); anything else on its right is refused where it is written.
+#[test]
+fn is_refuses_what_is_no_collection() {
+    let counts = "counts := type ( contains := pub static fn (n := u64 ?) -> i32 ( i32 1 ) )";
+    for src in ["i32 is bool", "i32 is 5", &format!("{counts}, 7 is counts")] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}");
+        assert!(stderr.contains("`is` asks a collection"), "{src}: stderr: {stderr}");
+    }
+}

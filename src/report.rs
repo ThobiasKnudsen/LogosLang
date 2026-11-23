@@ -567,6 +567,11 @@ pub fn parse_message(e: &ParseError) -> String {
             let members = members.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", ");
             format!("`{name}` is no member of this union, whose members are {members}")
         }
+        ParseError::NotACollection => {
+            "`is` asks a collection, a type whose member `contains` gives a `bool`: `x is number` \
+             calls `number.contains(x)`, and what stands to the right of `is` is no such type"
+                .into()
+        }
         ParseError::UnionApplied => {
             "a union holds one member, so it is not made from values in a row: declare an empty \
              place and write the member, `v := mut num ?, v.a = …`"

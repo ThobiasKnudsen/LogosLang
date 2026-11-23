@@ -60,6 +60,7 @@ pub(crate) mod instance;
 pub(crate) mod instruction;
 pub mod lex;
 mod logos;
+pub(crate) mod membership;
 pub(crate) mod meta;
 pub(crate) mod mint;
 mod not;
@@ -373,6 +374,7 @@ impl Core {
         op_leaves.not_ = not_leaf;
         let (subset, subset_leaf) = subset::register(&mut cx, &callables);
         op_leaves.subset_ = subset_leaf;
+        membership::register(&mut cx);
         let (if_, if_leaf, else_) = if_mod::register(&mut cx, &callables);
         op_leaves.if_ = if_leaf;
         let (while_, while_leaf) = while_mod::register(&mut cx, &callables);
@@ -642,6 +644,7 @@ impl Core {
         core.type_mint = type_mint::load(store, trie, &core, core.carried);
         type_mint::keep_early(store, &core);
         core.error = error::load(store, trie, &core, core.carried);
+        membership::load(store, trie, &core, core.carried);
         core.written = written::load(store, trie, &core, core.carried);
         core
     }

@@ -1250,6 +1250,57 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Gave)
     }
 
+    /// `is`'s constructor: `x is c` is the call `c.contains(x)`, built by the two reads `.` builds
+    /// the written call through a type with, so it takes and gives what that call does (›`x is c`
+    /// is membership‹ [[R281]]).
+    pub(crate) fn construct_membership(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        use crate::identities::membership::CONTAINS;
+        let Some((element, collection)) = self.binary_operands(tape)? else {
+            return Ok(Constructed::Decline);
+        };
+        let right = *tape.at(1).expect("`binary_operands` found a right side");
+        let refused = |p: &mut Self| p.fail_at(right.start, ParseError::NotACollection);
+        let t = match self.type_known_now(collection) {
+            Ok(t) => t,
+            Err(ParseError::TypeKnownOnlyAtRun) => {
+                return Err(self.fail_at(right.start, ParseError::TypeKnownOnlyAtRun))
+            }
+            Err(e) if e.type_given_by_running() => return Err(e),
+            Err(_) => return Err(refused(self)),
+        };
+        // SAFETY: `t` is a type node; the member and `element` are reduced dyads from the store.
+        let call = unsafe {
+            let t = crate::identities::gate::under(t);
+            let member = self.static_member_read(t, CONTAINS)?.filter(|&m| self.gives_bool(m));
+            match member {
+                Some(member) => {
+                    let none = Receiver::Nothing;
+                    self.call_member(tape, member, CONTAINS, &right, none, vec![element])?
+                }
+                None => None,
+            }
+        };
+        let call = call.ok_or_else(|| refused(self))?;
+        tape.reduce_here(call);
+        Ok(Constructed::Placed)
+    }
+
+    /// Whether `member` holds a function whose declared output is a `bool`, read under its gates.
+    ///
+    /// # Safety
+    /// `member` must be a dyad from the store.
+    unsafe fn gives_bool(&self, member: DyadPtr) -> bool {
+        let f = self.types.through(member);
+        if f.is_null() || dyad::ty(f) != self.types.fn_type {
+            return false;
+        }
+        let output = *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT);
+        crate::identities::gate::under(output) == self.types.bool_
+    }
+
     /// `held`, the node `place` was read through to, as `.` and `[` take it: what a `dyad` place
     /// holds is reached through the place each time the line runs, so a write through the reader
     /// lands in the node the place holds then; what any other operand gave stands as it is (›A
