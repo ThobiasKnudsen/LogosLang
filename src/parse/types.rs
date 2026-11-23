@@ -1593,6 +1593,7 @@ impl<'a> Parser<'a> {
                 returns: Vec::new(),
                 result: std::ptr::null_mut(),
                 slot_body: false,
+                gives_at: None,
             })
             .collect();
 

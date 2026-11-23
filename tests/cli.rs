@@ -8330,6 +8330,12 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
                 "a := g(i32 5), b := g(i32 2), print «{a.x} {a.y} {b.x} {b.y}»",
                 "5 0 2 9",
             ),
+            (
+                "g := fn (c := bool ?) -> i32 ( return = 1, x := ( if c ( i32 5 ) else ( i32 6 ) ), \
+                 h := fn () -> i32 ( i32 7 ), return = x + h(), return )",
+                "print «{g(true)} {g(false)}»",
+                "12 13",
+            ),
         ] {
             let src =
                 format!("{odd}, {bag}, {pt}, {g}, f := fn () -> void ( {body} ), {compile}f()");
@@ -8347,12 +8353,15 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
 /// leaves still ends any other name it moves on every path (R70, rule 2). `return` is no result
 /// place outside a function, in a `defer`, in a value made once, in a `-> void` function or in a
 /// type's slot body, and no caller writes a member of a `T!` (R379); `return.tag` is read only, as
-/// a named union's `tag` is.
+/// a named union's `tag` is. A body that writes `return` has no line that gives it its value,
+/// before the write or after it, in a loop or an arm (R207).
 #[test]
 fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
     let unwritten = "error: the result is read before it is written: write it first among the \
                      function's own lines, `return.value = …` or `return.err = …` where it gives \
                      `T!`, `return = …` where it gives any other type";
+    let gives = "error: this body writes `return`, so it leaves only by `return` or a raise; no \
+                 line of it gives a value";
     let q = "q := type ( v := pub mut i32 ?, parse_rank = 60, parse = ( tape.is_constructed[0] = \
              true ) )";
     for (src, want) in [
@@ -8378,6 +8387,26 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
              f := fn (c := bool ?) -> bag ( a := bag(1), if c ( return a ), a.n = 2, bag(3) ), 0"
                 .to_string(),
             "1:130: error: `a` is dead here: it was moved or freed above".to_string(),
+        ),
+        (
+            "f := fn () -> i32! ( return.value = 1, i32 5, return ), 0".to_string(),
+            format!("1:40: {gives}"),
+        ),
+        (
+            "f := fn (c := bool ?) -> i32! ( if c ( i32 5 ), return.value = 1, return ), 0"
+                .to_string(),
+            format!("1:33: {gives}"),
+        ),
+        (
+            "f := fn (c := bool ?) -> i32! ( return.value = 1, if c ( i32 5 ), return ), 0"
+                .to_string(),
+            format!("1:51: {gives}"),
+        ),
+        (
+            "f := fn (k := mut i32 ?) -> i32! ( while k > 0 ( if k == 1 ( i32 5 ), \
+             return.value = k, k = k - 1 ), return ), 0"
+                .to_string(),
+            format!("1:36: {gives}"),
         ),
         (
             "f := fn () -> i32! ( return.value = 1, return.tag = 2, return ), 0".to_string(),
