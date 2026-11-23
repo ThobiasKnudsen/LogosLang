@@ -250,7 +250,7 @@ pub(crate) unsafe fn mint_record(
     debug_assert_eq!(kind, TUPLE_TAG, "a built-in's mint's nodes are fixed operand runs");
     let mut blob = header(kind, Assoc::Left, prec::INERT).to_vec();
     blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(origin as usize).to_ne_bytes());
-    // Its nodes carry the `own` mark and hand on what the origin's do.
+    // Its nodes carry the `own` mark, hand on, and are placed as the origin's are.
     let shared = OWN_OFF..PAYLOAD_OFF;
     blob[shared.clone()]
         .copy_from_slice(std::slice::from_raw_parts(dyad::head(origin).add(OWN_OFF), shared.len()));
