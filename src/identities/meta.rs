@@ -150,7 +150,10 @@ pub(crate) mod prec {
     /// negates the comparison.
     pub const NOT: f64 = 35.0;
     pub const AND: f64 = 30.0;
+    /// `or` and `xor`.
     pub const OR: f64 = 20.0;
+    /// Built after `or`, so `a or b implies c` is `(a or b) implies c`.
+    pub const IMPLIES: f64 = 15.0;
     /// `return` and `try`.
     pub const RETURN: f64 = 10.0;
     /// `move`, the act that ends a name, built last, so a bare arm of `if`, `while` or `for`

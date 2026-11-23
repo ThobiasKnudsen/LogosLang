@@ -535,6 +535,11 @@ pub fn parse_message(e: &ParseError) -> String {
              still lets it be written from outside"
                 .into()
         }
+        ParseError::UnionMemberTag => {
+            "a union's own first line is `tag`, the byte that says which member it holds, so no \
+             member is named `tag`"
+                .into()
+        }
         ParseError::HoldsNeedsUnion => {
             "`holds` asks a union which member it holds, and this value is no union".into()
         }
@@ -566,6 +571,11 @@ pub fn parse_message(e: &ParseError) -> String {
             let (name, members) = &**named;
             let members = members.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", ");
             format!("`{name}` is no member of this union, whose members are {members}")
+        }
+        ParseError::NotACollection => {
+            "`is` asks a collection, a type whose member `contains` gives a `bool`: `x is number` \
+             calls `number.contains(x)`, and what stands to the right of `is` is no such type"
+                .into()
         }
         ParseError::UnionApplied => {
             "a union holds one member, so it is not made from values in a row: declare an empty \

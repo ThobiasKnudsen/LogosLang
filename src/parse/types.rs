@@ -422,10 +422,10 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// `union`'s constructor: `( members )` as the union of those members, the mint `type_mint`
-    /// keeps under `union` and each member's spelling and gated type in written order (›A union
-    /// holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]). For the name
-    /// that `num := type union ( … )` declares it gives the name's own dyad over that mint's
+    /// `union`'s constructor: `( members )` as the union of its tag's line and those members, the
+    /// mint `type_mint` keeps under `union` and each line's spelling and gated type in order (›A
+    /// union holds one of its members at a time: `union ( a := T, b := U )`‹ [[R379]]). For the
+    /// name that `num := type union ( … )` declares it gives the name's own dyad over that mint's
     /// record (›Every type is minted by its contents through `type_mint`; the name that holds a
     /// `type ( … )` gives it its identity‹ [[R383]]).
     pub(crate) fn construct_union(
@@ -445,30 +445,41 @@ impl<'a> Parser<'a> {
         self.expect_open()?;
         let depth = self.cx.scopes.depth();
         let scope = self.open_scope();
-        let (mut members, mut bindings, mut bytes) = (Vec::new(), Vec::new(), Vec::new());
-        let lines =
-            self.field_lines(FieldList::Members, scope, &mut members, &mut bindings, &mut bytes);
+        let (mut lines, mut bindings, mut bytes) = (Vec::new(), Vec::new(), Vec::new());
+        let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
+        let tag = crate::identities::union::TAG_LINE;
+        // The tag line is declared after the members, so a member's type reads an outer `tag`, and
+        // then stands first.
+        let read = self
+            .field_lines(FieldList::Members, scope, &mut lines, &mut bindings, &mut bytes)
+            .and_then(|()| self.declare_own_line(tag, u8_, opened_at, &mut lines, &mut bindings))
+            .map(|()| {
+                lines.rotate_right(1);
+                bindings.rotate_right(1);
+            });
         // As a type's body stands below its fields, where a member is looked up through a value.
         let body = self.open_scope();
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
         }
-        lines.map_err(|e| match e {
+        read.map_err(|e| match e {
             ParseError::StaticMisplaced | ParseError::BadDeclaredType => ParseError::UnionLine,
             other => other,
         })?;
         self.expect_close()?;
-        if members.is_empty() || members.len() > crate::identities::union::MOST_MEMBERS {
-            let e = match members.len() {
+        let members = lines.len() - 1;
+        if members == 0 || members > crate::identities::union::MOST_MEMBERS {
+            let e = match members {
                 0 => ParseError::UnionNeedsMembers,
                 _ => ParseError::UnionTooManyMembers,
             };
             return Err(self.fail_at(opened_at, e));
         }
-        // SAFETY: the members are holes just built with their bindings, their types type nodes.
+        // SAFETY: the lines are holes just built with their bindings, their types type nodes.
         let node = unsafe {
-            self.check_members(&members, &bindings).map_err(|e| self.fail_at(opened_at, e))?;
-            let mint = self.mint_union(scope, body, &members, &bindings)?;
+            self.check_members(&lines[1..], &bindings[1..])
+                .map_err(|e| self.fail_at(opened_at, e))?;
+            let mint = self.mint_union(scope, body, &lines, &bindings)?;
             self.named_type(own_name, mint, std::ptr::null_mut())?
         };
         tape.place(node);
@@ -563,20 +574,24 @@ impl<'a> Parser<'a> {
     pub(crate) fn fallible_of(&mut self, value: DyadPtr, at: usize) -> Result<DyadPtr, ParseError> {
         let depth = self.cx.scopes.depth();
         let scope = self.open_scope();
-        let (mut members, mut bindings) = (Vec::new(), Vec::new());
-        let declared =
-            [("value", value), ("err", self.types.error.value)].into_iter().try_for_each(
-                |(name, ty)| self.declare_own_line(name, ty, at, &mut members, &mut bindings),
-            );
+        let (mut lines, mut bindings) = (Vec::new(), Vec::new());
+        let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
+        let declared = [
+            (crate::identities::union::TAG_LINE, u8_),
+            ("value", value),
+            ("err", self.types.error.value),
+        ]
+        .into_iter()
+        .try_for_each(|(name, ty)| self.declare_own_line(name, ty, at, &mut lines, &mut bindings));
         let body = self.open_scope();
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
         }
         declared?;
-        // SAFETY: the members are holes just built with their bindings, their types type nodes.
+        // SAFETY: the lines are holes just built with their bindings, their types type nodes.
         unsafe {
-            self.check_members(&members, &bindings).map_err(|e| self.fail_at(at, e))?;
-            self.mint_union(scope, body, &members, &bindings)
+            self.check_members(&lines[1..], &bindings[1..]).map_err(|e| self.fail_at(at, e))?;
+            self.mint_union(scope, body, &lines, &bindings)
         }
     }
 
@@ -603,26 +618,26 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// The union of `members`, declared in `scope` by `bindings` with `body` below them: the mint
-    /// `type_mint` keeps under their names and types, made the first time (›Every type is minted
-    /// by its contents through `type_mint`; the name that holds a `type ( … )` gives it its
-    /// identity‹ [[R383]]).
+    /// The union of `lines`, its tag's and then its members', declared in `scope` by `bindings`
+    /// with `body` below them: the mint `type_mint` keeps under their names and types, made the
+    /// first time (›Every type is minted by its contents through `type_mint`; the name that holds
+    /// a `type ( … )` gives it its identity‹ [[R383]]).
     ///
     /// # Safety
-    /// `members` must be holes from the store, each over a type node, and `bindings` their
+    /// `lines` must be holes from the store, each over a type node, and `bindings` their
     /// bindings in the same order.
     unsafe fn mint_union(
         &mut self,
         scope: DyadPtr,
         body: DyadPtr,
-        members: &[DyadPtr],
+        lines: &[DyadPtr],
         bindings: &[DyadPtr],
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        let mut key = Vec::with_capacity(members.len() * 2);
-        for (&member, &binding) in members.iter().zip(bindings) {
+        let mut key = Vec::with_capacity(lines.len() * 2);
+        for (&line, &binding) in lines.iter().zip(bindings) {
             key.push(KeyPart::Name(Binding::spelling(binding)));
-            key.push(KeyPart::Node(crate::identities::hole::gated_type_in(member)));
+            key.push(KeyPart::Node(crate::identities::hole::gated_type_in(line)));
         }
         let (place, kept) = type_mint::find(self.rt.store, types, types.union.union, &key)
             .map_err(ParseError::Run)?;
@@ -630,14 +645,14 @@ impl<'a> Parser<'a> {
             return Ok(mint);
         }
         let mint = self.rt.store.alloc_leaf(types.type_);
-        let extent = crate::identities::union::lay_out(types, mint, members, bindings);
-        let members = crate::identities::array::build(self.rt.store, types.array_, members);
+        let extent = crate::identities::union::lay_out(types, mint, lines, bindings);
+        let lines = crate::identities::array::build(self.rt.store, types.array_, lines);
         let bindings = crate::identities::array::build(self.rt.store, types.array_, bindings);
         let record = crate::identities::meta::formed_record(
             self.rt.store,
             types.union.union,
             scope,
-            members,
+            lines,
             bindings,
             extent,
             body,
@@ -754,6 +769,10 @@ impl<'a> Parser<'a> {
             // of the `&mut self` needed below.
             let source = self.cx.source;
             let name = &source[start..start + len];
+            if list == FieldList::Members && name == crate::identities::union::TAG_LINE {
+                self.cx.pos = start;
+                return Err(ParseError::UnionMemberTag);
+            }
             let word = self.cx.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
             // A gate word gates a value, so none stands where a line's name does.
             if word.is_some_and(|id| self.is_gate_word(id)) {

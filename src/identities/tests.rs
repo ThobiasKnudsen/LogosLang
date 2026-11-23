@@ -1336,7 +1336,7 @@ fn logical_operators_run_both_sides_on_the_interpreter() {
 
 #[test]
 fn logical_operators_reject_non_bool_operands() {
-    for src in ["true and 1", "1 or false", "not (1)"] {
+    for src in ["true and 1", "1 or false", "not (1)", "1 xor 2", "true implies 1"] {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);

@@ -1863,6 +1863,21 @@ fn an_array_element_is_written_where_the_read_finds_it() {
             "g := fn () -> i32! ( q := try alloc 1 of i32 3, q@ ), (try g()) = 5",
             "this is not an assignable place",
         ),
+        // Nor is a call that holds an argument, which it frees as it returns, before the write
+        // lands.
+        (
+            "p := try alloc 1 of i32 3, g := fn (q := @i32 ?) -> i32 ( q@ ), g(move p) = 5",
+            "this is not an assignable place",
+        ),
+        (
+            "p := try alloc 1 of i32 3, g := fn (q := @i32 ?) -> i32 ( q@ ), g.compile(), \
+             g(move p) = 5",
+            "this is not an assignable place",
+        ),
+        (
+            "g := fn (q := @i32 ?) -> i32 ( q@ ), g(try alloc 1 of i32 3) = 5",
+            "this is not an assignable place",
+        ),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -2621,6 +2636,53 @@ fn an_or_group_of_non_booleans_is_data_like_the_and_group() {
     assert!(stderr.contains("must be a bool"), "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"x := i32 1\nx or true\n");
     assert!(stderr.contains("must be bools"), "stderr: {stderr}");
+}
+
+#[test]
+fn xor_and_implies_take_two_bools_in_the_four_logic_steps() {
+    let tables = "a := true, b := false, print «{a xor b} {a xor a} {b xor b} {b xor a} \
+                  {a implies b} {a implies a} {b implies b} {b implies a}»";
+    let compiled = "x := fn (a := bool ?, b := bool ?) -> bool ( a xor b ), \
+                    i := fn (a := bool ?, b := bool ?) -> bool ( a implies b ), \
+                    x.compile(), i.compile(), \
+                    print «{x(true, false)} {x(true, true)} {x(false, false)} {x(false, true)} \
+                    {i(true, false)} {i(true, true)} {i(false, false)} {i(false, true)}»";
+    for line in [tables, compiled] {
+        let (code, stdout, stderr) = run_line(line);
+        let want = "true false false true false true true true";
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{line}: stderr: {stderr}");
+    }
+    // `not`, then `and`, then `or` and `xor` from the left, then `implies` from the right.
+    for ([a, b, c], expr, want) in [
+        (["true", "true", "true"], "a or b xor c", "false"),
+        (["true", "false", "true"], "a and b xor c", "true"),
+        (["true", "false", "false"], "a or b implies c", "false"),
+        (["false", "false", "false"], "not a implies b", "false"),
+        (["false", "true", "false"], "a implies b implies c", "true"),
+        (["true", "false", "false"], "a == b xor true", "true"),
+        (["true", "false", "false"], "(a and b).type == and.mint(bool, bool)", "true"),
+        (["true", "false", "false"], "(a xor b).type == xor.mint(bool, bool)", "true"),
+    ] {
+        for line in [
+            format!("a := {a}, b := {b}, c := {c}, {expr}"),
+            format!(
+                "f := fn (a := bool ?, b := bool ?, c := bool ?) -> bool ( {expr} ), f.compile(), \
+                 f({a}, {b}, {c})"
+            ),
+        ] {
+            let (code, stdout, stderr) = run_line(&line);
+            assert_eq!((code, stdout.trim()), (Some(0), want), "{line}: stderr: {stderr}");
+        }
+    }
+    for line in [
+        "x := i32 1, y := i32 2, x xor y",
+        "x := i32 1, y := i32 2, x implies y",
+        "x := i32 1, y := i32 2, (x and y) xor true",
+    ] {
+        let (code, _, stderr) = run_line(line);
+        assert_eq!(code, Some(1), "{line}: stderr: {stderr}");
+        assert!(stderr.contains("must be bools"), "{line}: stderr: {stderr}");
+    }
 }
 
 #[test]
@@ -7420,8 +7482,8 @@ fn a_union_holds_the_member_written_last() {
         (format!("{NUM}, v := mut num ?, v.i = 5, v.f = f64 (v.i), v.f"), "5.0"),
         // No name holds the type: the place is of the mint itself.
         ("u := mut union ( i := mut i32, f := mut f64 ), u.f = 2.5, u.f".to_string(), "2.5"),
-        // The tag and the room of the largest member, packed.
-        (format!("{NUM}, num.size_bytes"), "9"),
+        // The tag, then the room of the largest member at its alignment, as C lays them out.
+        (format!("{NUM}, num.size_bytes"), "16"),
         ("u := type union ( a := mut u8, b := mut i8 ), u.size_bytes".to_string(), "2"),
         (
             format!(
@@ -7453,7 +7515,7 @@ fn a_union_holds_the_member_written_last() {
                 "{pt}, u := type union ( p := mut pt, i := mut i32 ), v := mut u ?, \
                  v.p = pt(1, 2.5), v.p.a = 9, print «{{v.p.a}} {{v.p.b}} {{u.size_bytes}}»"
             ),
-            "9 2.5 17",
+            "9 2.5 24",
         ),
         (
             "u := type union ( s := mut string, q := mut @i32 ), x := i32 4, v := mut u ?, \
@@ -7468,7 +7530,7 @@ fn a_union_holds_the_member_written_last() {
                  t.i = 4, x := mut r ?, x.k = 1, x.n = t, print «{{x.n.i}}», x.n.f = 2.5, \
                  print «{{x.n.f}} {{x.k}} {{r.size_bytes}}»"
             ),
-            "4\n2.5 1 16",
+            "4\n2.5 1 24",
         ),
         (
             format!(
@@ -7705,6 +7767,111 @@ fn what_a_union_does_not_take_is_refused_where_it_is_written() {
         (format!("u := type union ( {members} ), v := mut u ?, v.m254 = 7, v.m254"), "7"),
     ] {
         assert_eq!(line(&src), want, "{src}");
+    }
+}
+
+/// R379: a union's own first line is its tag, `tag := layout (u8, 0)`, and its members lie at
+/// the largest member's alignment, as C lays out a struct of the tag and a C union of the members
+/// (R385). A program reads `v.tag`, the held member's place among the lines, and never writes
+/// it; the line meets the union's other lines alone, never the names where the union is written;
+/// on both tiers.
+#[test]
+fn a_union_s_first_line_is_its_tag() {
+    let mut cases = vec![
+        (
+            "tag := i32 3, u := type union ( i := mut i32 ), v := mut u ?, v.i = 1, \
+             print «{tag} {v.tag}»"
+                .to_string(),
+            "3 1",
+        ),
+        // The `void!` a `parse` slot gives writes its own `tag` line beneath the body's `tag`.
+        (
+            "mk := type ( tag := pub static i32 7, parse = ( tape.is_constructed[0] = true ) ), \
+             print «{mk.tag}»"
+                .to_string(),
+            "7",
+        ),
+        (
+            "tag := i32 3, f := fn () -> i32! ( 4 ), r := f(), print «{tag} {r.tag}»".to_string(),
+            "3 1",
+        ),
+        // A member's type reads an outer `tag`, not the union's own line.
+        (
+            "tag := type ( n := pub mut i32 ? ), u := type union ( a := mut tag, b := mut i32 ), \
+             v := mut u ?, v.a = tag(4), print «{v.a.n} {v.tag}»"
+                .to_string(),
+            "4 1",
+        ),
+        (
+            "tag := type ( n := pub mut i32 ? ), u := type union ( a := mut tag, b := mut i32 ), \
+             f := fn () -> i32 ( v := mut u ?, v.a = tag(4), v.a.n + v.tag ), f.compile(), f()"
+                .to_string(),
+            "5",
+        ),
+        (
+            "u := type union ( i := mut i32 ), print «{u.size_bytes} {i32!.size_bytes}»"
+                .to_string(),
+            "8 16",
+        ),
+        (
+            format!(
+                "{NUM}, v := mut num ?, v.i = 5, print «{{v.tag}} {{v.tag.type == u8}}», \
+                 v.f = 2.5, v.tag"
+            ),
+            "1 true\n2",
+        ),
+        (format!("{NUM}, v := mut num ?, v.f = 2.5, p := &v, p@.tag"), "2"),
+        (
+            format!(
+                "{NUM}, p := try alloc 1 of num ?, print «{{p@.tag}}», p@.f = 1.5, \
+                 print «{{p@.tag}}», free p"
+            ),
+            "0\n2",
+        ),
+        (
+            format!(
+                "{NUM}, v := mut num ?, v.i = 5, w := mut v, w.f = 1.5, \
+                 print «{{v.tag}} {{w.tag}} {{v.i}} {{w.f}}»"
+            ),
+            "1 2 5 1.5",
+        ),
+    ];
+    for compile in ["", "f.compile(), "] {
+        for (f, call, want) in [
+            ("f := fn () -> u8 ( v := mut num ?, v.i = 5, v.f = 2.5, v.tag )", "f()", "2"),
+            (
+                "f := fn () -> num ( v := mut num ?, v.f = 1.5, v )",
+                "print «{f().tag} {f().f}»",
+                "2 1.5",
+            ),
+            ("f := fn (p := @num ?) -> u8 ( p@.tag )", "v := mut num ?, v.i = 3, f(&v)", "1"),
+            (
+                "f := fn (n := i32 ?) -> i32! ( n / 2 )",
+                "r := f(8), print «{r.tag} {r.value}»",
+                "1 4",
+            ),
+        ] {
+            cases.push((format!("{NUM}, {f}, {compile}{call}"), want));
+        }
+    }
+    for (src, want) in cases {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    for (src, message) in [
+        (format!("{NUM}, v := mut num ?, v.i = 5, v.tag = 2"), "`tag` is not `mut`"),
+        (
+            format!("{NUM}, v := mut num ?, v.i = 5, v holds tag"),
+            "`tag` is no member of this union, whose members are `i`, `f`",
+        ),
+        (
+            "num := type union ( i := mut i32, tag := mut f64 ), 0".to_string(),
+            "a union's own first line is `tag`, the byte that says which member it holds, so no \
+             member is named `tag`",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("error: {message}")), "{src}: stderr: {stderr}");
     }
 }
 
@@ -7973,6 +8140,29 @@ fn a_function_that_gives_t_bang_fills_value_with_its_last_value() {
     let (code, _, stderr) = run_line(&format!("{half}, r := mut half(8), r.value = 1, 0"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("error: `value` is not `mut`"), "stderr: {stderr}");
+}
+
+/// Every `own @T` written is one type, so a function hands on another's `(own @T)!` as it is
+/// (›Every type is minted by its contents through `type_mint`; the name that holds a
+/// `type ( … )` gives it its identity‹ [[R383]]), on both tiers; an owning union still lands in
+/// no borrowing one.
+#[test]
+fn a_function_hands_on_another_s_owning_union_unchanged() {
+    for made in ["try alloc 1 of i32 5", "alloc 1 of i32 5"] {
+        let f = format!("f := fn () -> (own @i32)! ( {made} )");
+        for compile in ["", "g.compile(), "] {
+            let src = format!("{f}, g := fn () -> (own @i32)! ( f() ), {compile}q := try g(), q@");
+            assert_eq!(line(&src), "5", "{src}");
+            let src = format!(
+                "{f}, g := fn () -> (own @i32)! ( f() ), h := fn () -> (own @i32)! ( g() ), \
+                 {compile}q := try h(), q@"
+            );
+            assert_eq!(line(&src), "5", "{src}");
+        }
+        let (code, _, stderr) = run_line(&format!("{f}, g := fn () -> (@i32)! ( f() ), 0"));
+        assert_eq!(code, Some(1), "stderr: {stderr}");
+        assert!(stderr.contains("error: these types do not match"), "stderr: {stderr}");
+    }
 }
 
 /// R140: «a raise inside it fills `err` and leaves the function»; R144: the error value is an
@@ -9091,12 +9281,12 @@ fn every_operation_is_typed_by_its_mint() {
         cases.push((format!("{f}, f.compile(), f()"), want));
     }
     cases.push(("p := try alloc 1 of i32 5, q := move p, q@".into(), "5\n"));
-    // `alloc` is typed by its mint for its count's type and the cells' type, interpreted only; its
-    // `@T!` is one type for one mint.
+    // The `@T!` an `alloc` gives is one type per cells' type, whatever its count's type,
+    // interpreted only.
     for (body, want) in [
         ("(alloc 1 of i32 5).type == (alloc 1 of i32 6).type", "true\n"),
         ("(alloc 1 of i32 5).type == (alloc 1 of i64 6).type", "false\n"),
-        ("(alloc 1 of i32 5).type == (alloc i64 1 of i32 6).type", "false\n"),
+        ("(alloc 1 of i32 5).type == (alloc i64 1 of i32 6).type", "true\n"),
         ("p := try alloc 2 of i32 5, (p + 1)@", "5\n"),
     ] {
         cases.push((body.into(), want));
@@ -9774,6 +9964,17 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
             "after\nfree\n",
         ),
         (format!("{bag}, x := bag(1), free (x.get()), print «after»"), "after\nfreed 1\n"),
+        (
+            format!("{BOX}, b := box (1, 2), g := fn (q := boxed ?) -> i32 ( q.p@ ), g(b) = 5, print «{{b.p@}}»"),
+            "5\nfree\n",
+        ),
+        (
+            format!(
+                "{BOX}, b := box (1, 2), g := fn (q := boxed ?) -> i32 ( q.p@ ), g.compile(), g(b) = 5, \
+                 print «{{b.p@}}»"
+            ),
+            "5\nfree\n",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
@@ -9814,6 +10015,17 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
             stderr.contains("an owning value must be bound to a name"),
             "{tail}: stderr: {stderr}"
         );
+    }
+    // The call frees what it holds as it returns, so a write through it would land in freed
+    // memory: a call that holds an argument is no place.
+    for tail in [
+        "g := fn (q := boxed ?) -> i32 ( q.p@ ), g(box (1, 2)) = 5",
+        "b := box (1, 2), g := fn (q := boxed ?) -> i32 ( q.p@ ), g(move b) = 5",
+        "b := box (1, 2), g := fn (q := boxed ?) -> i32 ( q.p@ ), g.compile(), g(move b) = 5",
+    ] {
+        let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("this is not an assignable place"), "{tail}: stderr: {stderr}");
     }
 }
 
@@ -15164,4 +15376,88 @@ fn array_and_power_keep_their_mints_in_type_mint() {
     let (code, _, stderr) = run_line(&format!("{array}, array.get_mint(i32)"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("get_mint"), "stderr: {stderr}");
+}
+
+/// `prime`, a collection written in Logos: a type whose `static` member `contains` takes a `u64`.
+const PRIME: &str = "prime := type ( contains := pub static fn (n := u64 ?) -> bool ( \
+     if n < 2 return false, d := mut u64 2, while d * d <= n ( if n % d == 0 return false, \
+     d = d + 1 ), true ) )";
+
+/// ›`x is c` is membership‹ [[R281]]: «`x is c` calls `c.contains(x)` and gives what it gives, a
+/// `bool`», so `7 is prime` is `prime.contains(7)`; `number` is the collection of the number
+/// types and `pointer` of the pointer types, each read under its gates; inside a function,
+/// compiled or not, and inside a parse.
+#[test]
+fn is_calls_the_collection_s_contains() {
+    let mut cases = vec![
+        ("print «{i32 is number} {bool is number} {string is number}»".to_owned(), "true false false\n"),
+        ("x := i32 3, print «{x.type is number}»".to_owned(), "true\n"),
+        ("x := mut i32 3, t := type x.type, print «{t is number} {@i32 is number}»".to_owned(), "true false\n"),
+        ("c := type number, print «{f64 is c}»".to_owned(), "true\n"),
+        (
+            "print «{@i32 is pointer} {i32 is pointer} {@void is pointer} {(mut @i32) is pointer} \
+             {@@i32 is pointer}»"
+                .to_owned(),
+            "true false true true true\n",
+        ),
+        (
+            "x := mut i32 3, p := &x, q := try alloc 1 of i32 7, r := alloc 1 of i32 7, \
+             print «{p.type is pointer} {q.type is pointer} {r.type is pointer} {x.type is pointer}»"
+                .to_owned(),
+            "true true false false\n",
+        ),
+        (
+            "pointer.contains.compile(), print «{@i32 is pointer} {pointer.contains(i32)}»"
+                .to_owned(),
+            "true false\n",
+        ),
+        (format!("{PRIME}, print «{{7 is prime}} {{8 is prime}} {{3 + 4 is prime}}»"), "true false true\n"),
+        (format!("{PRIME}, n := u64 9, print «{{n is prime}}»"), "false\n"),
+        ("print «{not (bool is number)} {i32 is number and bool is number} {i32 is number == true}»".to_owned(), "true false true\n"),
+        ("island := i32 4, print «{island}»".to_owned(), "4\n"),
+        (
+            "p := type ( parse_rank = 50, parse = ( print «{tape[-1].type is number} \
+             {tape[-1].gives is number}», tape.remove(-1), tape[0] = i32 1, \
+             tape.is_constructed[0] = true ) ), x := i32 3, y := x p, z := true p, w := (x + 1) p, 0"
+                .to_owned(),
+            "true true\nfalse false\nfalse true\n0\n",
+        ),
+    ];
+    for compile in ["", "f.compile(), "] {
+        cases.push((
+            format!("f := fn (t := type ?) -> bool ( t is number ), {compile}print «{{f(i32)}} {{f(bool)}}»"),
+            "true false\n",
+        ));
+        cases.push((
+            format!("f := fn (y := i32 ?) -> bool ( y.type is number ), {compile}print «{{f(3)}}»"),
+            "true\n",
+        ));
+        cases.push((
+            format!(
+                "f := fn (t := type ?) -> bool ( t is pointer ), {compile}print «{{f(@void)}} {{f(u8)}}»"
+            ),
+            "true false\n",
+        ));
+        cases.push((
+            format!("{PRIME}, f := fn (n := u64 ?) -> bool ( n is prime ), {compile}print «{{f(7)}} {{f(9)}}»"),
+            "true false\n",
+        ));
+        cases.push((
+            format!("{PRIME}, f := fn () -> bool ( 7 is prime ), {compile}print «{{f()}}»"),
+            "true\n",
+        ));
+    }
+    assert_runs(&cases);
+}
+
+/// `is` asks a collection, a type with a member `contains` that gives a `bool` (›`x is c` is
+/// membership‹ [[R281]]); anything else on its right is refused where it is written.
+#[test]
+fn is_refuses_what_is_no_collection() {
+    let counts = "counts := type ( contains := pub static fn (n := u64 ?) -> i32 ( i32 1 ) )";
+    for src in ["i32 is bool", "i32 is 5", &format!("{counts}, 7 is counts")] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}");
+        assert!(stderr.contains("`is` asks a collection"), "{src}: stderr: {stderr}");
+    }
 }
