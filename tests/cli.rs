@@ -4903,6 +4903,40 @@ fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
     assert!(stderr.contains("it holds something else"), "{src}: stderr: {stderr}");
 }
 
+/// ›A tape read checked against a number type reads as that number‹ [[R229]]: after a check, `:=`
+/// over `tape[1]` declares an empty place of the type the node holds; unchecked, a box of the node.
+#[test]
+fn a_checked_tape_node_declares_an_empty_place_of_the_type_it_holds() {
+    let r = |check: &str, write: &str| {
+        format!(
+            "r := type ( parse_rank = fn.parse_rank, parse = ( {check} t := mut tape[1], \
+             t = {write}, tape.remove(1), tape[0] = t + 1, tape.is_constructed[0] = true ) )"
+        )
+    };
+    let checked = "if tape[1].type != type ( abort «no» ),";
+    for (src, gives) in [
+        (format!("{}, x := r i64, print «{{x}} {{x.type}}»", r(checked, "5")), Ok("6 i64")),
+        (format!("{}, g := fn () -> i64 ( r i64 ), g.compile(), g()", r(checked, "5")), Ok("6")),
+        (format!("{}, g := fn () -> u8 ( r u8 ), g()", r(checked, "5")), Ok("6")),
+        (
+            format!("{}, x := r u8", r(checked, "300")),
+            Err("has no exact value in the type it lands in"),
+        ),
+        (format!("{}, x := r i64", r("", "5")), Err("these types do not match")),
+    ] {
+        let out = logos().args([&src]).output().unwrap();
+        let (stdout, stderr) =
+            (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        match gives {
+            Ok(gives) => {
+                assert!(out.status.success(), "{src}: stderr: {stderr}");
+                assert_eq!(stdout.lines().last(), Some(gives), "{src}");
+            }
+            Err(refused) => assert!(stderr.contains(refused), "{src}: stderr: {stderr}"),
+        }
+    }
+}
+
 /// ›Every type is minted by its contents through `type_mint`; the name that holds a `type ( … )`
 /// gives it its identity‹ [[R383]]: the body is built at each call, and two builds of the same
 /// contents are one type.
