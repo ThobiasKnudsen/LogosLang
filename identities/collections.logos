@@ -1,0 +1,15 @@
+# The collections the seed defines, each a type with a member `contains`: `x is c` calls
+# `c.contains(x)` (›`x is c` is membership‹ [[R281]]). `==` reads a gated type as the type it
+# gates, so `mut i32` is a number type too.
+
+number := pub type (
+    contains := pub static fn (t := type ?) -> bool (
+        t == (i8 or i16 or i32 or i64 or u8 or u16 or u32 or u64 or f32 or f64 or rational_number)
+    )
+),
+
+# Every type with `@` on its front, read under its gates. Logos cannot ask a type what it was made
+# from yet, so the seed gives `contains` a machine-code body in place of this one: stand-in for #549.
+pointer := pub type (
+    contains := pub static fn (t := type ?) -> bool ( false )
+)

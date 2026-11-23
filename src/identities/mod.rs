@@ -23,7 +23,6 @@ pub mod dyad;
 pub mod read;
 
 pub mod abort;
-mod and;
 pub(crate) mod array;
 pub(crate) mod assign;
 pub(crate) mod binary;
@@ -61,12 +60,12 @@ pub(crate) mod instance;
 pub(crate) mod instruction;
 pub mod lex;
 mod logos;
+pub(crate) mod membership;
 pub(crate) mod meta;
 pub(crate) mod mint;
 mod not;
 pub(crate) mod numtype;
 pub(crate) mod ops;
-mod or;
 mod paren;
 pub(crate) mod place;
 pub(crate) mod pointer;
@@ -364,6 +363,8 @@ impl Core {
             le,
             ge,
             ne,
+            and_,
+            or_,
         } = binary::register_all(&mut cx);
         let instructions = instruction::register(
             &mut cx,
@@ -374,14 +375,11 @@ impl Core {
             &op_leaves,
             [plus, minus, times, div_, rem_],
         );
-        let (and_, and_leaf) = and::register(&mut cx, &callables);
-        op_leaves.and_ = and_leaf;
-        let (or_, or_leaf) = or::register(&mut cx, &callables);
-        op_leaves.or_ = or_leaf;
         let (not_, not_leaf) = not::register(&mut cx, &callables);
         op_leaves.not_ = not_leaf;
         let (subset, subset_leaf) = subset::register(&mut cx, &callables);
         op_leaves.subset_ = subset_leaf;
+        membership::register(&mut cx);
         let (if_, if_leaf, else_) = if_mod::register(&mut cx, &callables);
         op_leaves.if_ = if_leaf;
         let (while_, while_leaf) = while_mod::register(&mut cx, &callables);
@@ -653,6 +651,7 @@ impl Core {
         core.type_mint = type_mint::load(store, trie, &core, core.carried);
         type_mint::keep_early(store, &core);
         core.error = error::load(store, trie, &core, core.carried);
+        membership::load(store, trie, &core, core.carried);
         core.written = written::load(store, trie, &core, core.carried);
         core
     }

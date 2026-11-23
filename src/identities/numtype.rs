@@ -401,6 +401,45 @@ impl CmpOp {
     }
 }
 
+/// The logic words over two `bool`s, both sides run (›`and` and `or` run both sides; `if` is the
+/// one identity that skips‹ [[R156]]).
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub(crate) enum LogicOp {
+    And,
+    Or,
+    Xor,
+    Implies,
+}
+
+impl LogicOp {
+    pub(crate) fn from_tag(t: u8) -> LogicOp {
+        use LogicOp::*;
+        match t {
+            0 => And,
+            1 => Or,
+            2 => Xor,
+            3 => Implies,
+            _ => unreachable!("invalid LogicOp tag {t}"),
+        }
+    }
+
+    pub(crate) fn apply(self, a: bool, b: bool) -> bool {
+        match self {
+            LogicOp::And => a && b,
+            LogicOp::Or => a || b,
+            LogicOp::Xor => a != b,
+            LogicOp::Implies => !a || b,
+        }
+    }
+
+    /// Over two non-booleans, `and` and `or` build a group (›`and`/`or` on non-booleans build a
+    /// group; every operator on a group applies to each member‹ [[R37]]).
+    pub(crate) fn groups(self) -> bool {
+        matches!(self, LogicOp::And | LogicOp::Or)
+    }
+}
+
 /// Wrapping semantics, matching the JIT.
 pub(crate) fn apply_arith(op: ArithOp, logos: NumType, l: i64, r: i64) -> i64 {
     macro_rules! int {

@@ -3,8 +3,8 @@
 
 //! Placing: the node a write into a tape cell or a field keeps. When the write runs, its right
 //! side is walked once: a tape read becomes the line it names, a read of a field of the parse's
-//! own node the node that field holds, and what reads the running call's own frame runs, since
-//! that frame is gone when the placed node runs. Everything else stays the graph it was built as.
+//! own node the node that field holds, and what reads or leaves the running call runs, since
+//! that call is gone when the placed node runs. Everything else stays the graph it was built as.
 
 use super::callable::{self, Callables};
 use super::read::{output_type, place_layout, Read};
@@ -52,7 +52,8 @@ enum At {
 enum Placed {
     Kept,
     New(DyadPtr),
-    /// A read of the running call's frame whose value no node holds, so the node over it runs.
+    /// A read of the running call's frame whose value no node holds, or a `return` from that
+    /// call, which a `try` and a raise build: the node over it runs.
     Frame,
 }
 
@@ -110,6 +111,9 @@ unsafe fn place(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunEr
         Some((crate::binding::Frame::Call(_), _)) => return run_now(rt, node, at),
         Some(_) => return Ok(Placed::Kept),
         None => {}
+    }
+    if dyad::ty(node) == types.return_ {
+        return Ok(Placed::Frame);
     }
     let (layout, words) = match describe(types, node) {
         Shape::Call { args, .. } => (Layout::Call, args),

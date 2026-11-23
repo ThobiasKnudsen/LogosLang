@@ -355,6 +355,8 @@ pub enum ParseError {
     UnionLine,
     /// `pub` before a union's member, which every scope reads.
     UnionMemberPub,
+    /// A member named as the union's own line, `tag`.
+    UnionMemberTag,
     /// A member of a union, named here, whose value does not move whole into a place.
     UnionMemberUnkept(Box<String>),
     /// A union type applied to values, as a type with fields is.
@@ -384,6 +386,8 @@ pub enum ParseError {
     HoldsNeedsMember,
     /// A name after `holds` that is no member of the union, and the union's members.
     NotAMember(Box<(String, Vec<String>)>),
+    /// `is` before something that is no type with a member `contains` giving a `bool`.
+    NotACollection,
     /// A `move` or `free` inside a loop or `fn` body names a place declared
     /// outside it: the loop would read a dead name on its next pass, and a
     /// function may own only what its parameters hand it (DESIGN ›`move` and `free` are
