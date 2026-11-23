@@ -8042,23 +8042,25 @@ fn t_bang_is_the_union_of_value_and_err() {
     );
 }
 
-/// R379, Thobias's Question 286: the lines a type's own parse writes, `T!`'s `value` and `err` and
-/// those of the `void!` a `parse` slot gives, meet only the type's own lines, never the names where
-/// the type is written. A line the program writes, a field or a union's member, still meets every
-/// name in reach (R234). On both tiers.
+/// R379, Thobias's Question 286: the lines a type's own parse writes, a union's `tag`, `T!`'s
+/// `value` and `err` and those of the `void!` a `parse` slot gives, meet only the type's own lines,
+/// never the names where the type is written. A line the program writes, a field or a union's
+/// member, still meets every name in reach (R234). On both tiers.
 #[test]
 fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
-    let probe = "probe := type ( value := i32 ?, err := i32 ?, run = ( print «{value} {err}» ), \
-                 parse_rank = *.parse_rank + 1, parse = ( tape[0].type = probe, \
-                 tape[0].value = 7, tape[0].err = 8, tape.is_constructed[0] = true ) )";
+    let probe = "probe := type ( value := i32 ?, err := i32 ?, tag := i32 ?, \
+                 run = ( print «{value} {err} {tag}» ), parse_rank = *.parse_rank + 1, \
+                 parse = ( tape[0].type = probe, tape[0].value = 7, tape[0].err = 8, \
+                 tape[0].tag = 9, tape.is_constructed[0] = true ) )";
     for compile in ["", "f.compile(), "] {
         for (src, want) in [
             (
                 format!(
-                    "value := i32 3, err := i32 4, f := fn () -> i32! ( value + err ), {compile}\
-                     r := f(), print «{{r.value}} {{value}} {{err}}»"
+                    "value := i32 3, err := i32 4, tag := i32 5, \
+                     f := fn () -> i32! ( value + err + tag ), {compile}\
+                     r := f(), print «{{r.value}} {{value}} {{err}} {{tag}}»"
                 ),
-                "7 3 4",
+                "12 3 4 5",
             ),
             (
                 format!(
@@ -8067,7 +8069,7 @@ fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
                 ),
                 "8",
             ),
-            (format!("{probe}, f := fn () -> void ( probe ), {compile}f()"), "7 8"),
+            (format!("{probe}, f := fn () -> void ( probe ), {compile}f()"), "7 8 9"),
         ] {
             assert_eq!(line(&src), want, "{src}");
         }
