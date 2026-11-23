@@ -8042,6 +8042,62 @@ fn t_bang_is_the_union_of_value_and_err() {
     );
 }
 
+/// R379, Thobias's Question 286: the lines a type's own parse writes, a union's `tag`, `T!`'s
+/// `value` and `err` and those of the `void!` a `parse` slot gives, meet only the type's own lines,
+/// never the names where the type is written. A line the program writes, a field or a union's
+/// member, still meets every name in reach (R234). On both tiers.
+#[test]
+fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
+    let probe = "probe := type ( value := i32 ?, err := i32 ?, tag := i32 ?, \
+                 run = ( print «{value} {err} {tag}» ), parse_rank = *.parse_rank + 1, \
+                 parse = ( tape[0].type = probe, tape[0].value = 7, tape[0].err = 8, \
+                 tape[0].tag = 9, tape.is_constructed[0] = true ) )";
+    for compile in ["", "f.compile(), "] {
+        for (src, want) in [
+            (
+                format!(
+                    "value := i32 3, err := i32 4, tag := i32 5, \
+                     f := fn () -> i32! ( value + err + tag ), {compile}\
+                     r := f(), print «{{r.value}} {{value}} {{err}} {{tag}}»"
+                ),
+                "12 3 4 5",
+            ),
+            (
+                format!(
+                    "tag := i32 3, num := type union ( i := mut i32 ), \
+                     f := fn () -> i32 ( v := mut num ?, v.i = 5, v.i + tag ), {compile}f()"
+                ),
+                "8",
+            ),
+            (format!("{probe}, f := fn () -> void ( probe ), {compile}f()"), "7 8 9"),
+        ] {
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    assert_eq!(
+        line(
+            "g := fn () -> i32 ( mk := type ( value := pub i32 ?, \
+             parse = ( tape.is_constructed[0] = true ) ), 1 ), g()"
+        ),
+        "1"
+    );
+    for (src, at, name) in [
+        ("x := i32 1, p := type ( x := i32 ? )", "1:25", "x"),
+        (
+            "value := i32 3, mk := type ( value := pub i32 ?, \
+             parse = ( tape.is_constructed[0] = true ) ), 0",
+            "1:30",
+            "value",
+        ),
+        ("value := i32 3, u := type union ( value := i32, err := error ), 0", "1:35", "value"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        let want = format!("{at}: error: `{name}` is already declared and still in scope");
+        assert!(stderr.contains(&want), "{src}: stderr: {stderr}");
+    }
+}
+
 /// R140: «A function that gives `T!` fills the union itself, and the program writes neither
 /// member: its last value of type `T` fills `value`», on both tiers, for a number, a record and
 /// a value whose type fills `free`, each `if` arm and a `return` alike.
@@ -13353,6 +13409,42 @@ fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
     for (src, want) in [
         ("y := lossy (f64 2.5), z := y, i32 z", "1:35: error: these types do not match"),
         ("i32 lossy lossy (f64 2.5)", "1:5: error: this gate word already gates the value"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(want), "{src}: stderr: {stderr}");
+    }
+}
+
+/// ›A gate word reads the nearest value to its right and gives it with its type gated‹ [[R102]],
+/// ›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]: a gate word
+/// over a value nobody names gives a node whose type is the gate node, so `.type` reads its gates
+/// and a `lossy` one converts with loss wherever it lands, an argument, `=` and a result alike.
+/// Landed, the value is its place's type's, and a copy takes no gate. On both tiers.
+#[test]
+fn a_gated_value_nobody_names_keeps_its_gate_where_it_lands() {
+    let defs = "g := fn (a := i32 ?) -> i32 ( a + 1 )";
+    let mut cases = vec![
+        ("x := f64 2.5, g := fn (a := i32 ?) -> i32 ( a + 1 ), g(lossy x)".to_string(), "3\n"),
+        ("print «{(mut i32 5).type} {(pub i32 5).type}»".to_string(), "mut i32 pub i32\n"),
+        ("x := f64 2.5, print «{(lossy x).type}»".to_string(), "lossy f64\n"),
+        ("x := mut i32 5, y := mut x, print «{y.type}»".to_string(), "mut i32\n"),
+        ("x := i64 6, x == i64 lossy (i32 5 or i32 6)".to_string(), "true\n"),
+    ];
+    for (f, want) in [
+        ("fn (x := f64 ?) -> i32 ( g(lossy x) )", "3\n"),
+        ("fn (x := f64 ?) -> i32 ( n := mut i32 0, n = lossy x, n )", "2\n"),
+        ("fn (x := f64 ?) -> i32 ( lossy x )", "2\n"),
+        ("fn (x := f64 ?) -> i32 ( print «{(mut i32 5).type}», i32 lossy x )", "mut i32\n2\n"),
+    ] {
+        cases.push((format!("{defs}, f := {f}, f(2.5)"), want));
+        cases.push((format!("{defs}, f := {f}, g.compile(), f.compile(), f(2.5)"), want));
+    }
+    assert_runs(&cases);
+    for (src, want) in [
+        ("x := f64 2.5, i32 f64 lossy (x)", "1:19: error: these types do not match"),
+        ("x := mut mut i32 5", "1:6: error: this gate word already gates the value"),
+        ("x := mut ?", "1:1: error: a name needs a type"),
     ] {
         let (code, stdout, stderr) = run_line(src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");

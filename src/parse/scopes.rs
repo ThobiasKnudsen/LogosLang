@@ -575,10 +575,10 @@ impl ScopeStack {
     }
 
     /// Checked against its siblings alone: a live binding of the spelling in an enclosing scope
-    /// stands beside it, both live until this scope closes. Only a name that spells one already
-    /// live on purpose is declared so: a type body's slot words (›Slot words are known only inside
-    /// a type body‹ [[R220]]), a kept record's mirror of the names it holds, a run's `output_type`
-    /// over the member.
+    /// stands beside it, both live until this scope closes. Only a name no program text wrote is
+    /// declared so: a type body's slot words (›Slot words are known only inside a type body‹
+    /// [[R220]]), the lines a type's own parse writes, such as `T!`'s `value` and `err`, a kept
+    /// record's mirror of the names it holds, a run's `output_type` over the member.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store; this writes its `scope`.

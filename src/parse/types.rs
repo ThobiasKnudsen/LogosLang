@@ -527,9 +527,10 @@ impl<'a> Parser<'a> {
         // SAFETY: a parsed cell holds a reduced dyad from the store.
         let ty = unsafe { crate::identities::type_identity_of(types, cell.dyad) };
         let ty = ty.ok_or_else(|| self.fail_at(start, ParseError::LayoutForm))?;
-        let mut gates = cell.gates;
+        // SAFETY: `ty` is a type node.
+        let (ty, mut gates) = unsafe { crate::identities::gate::parts(ty) };
         for word in words {
-            // SAFETY: a cell's gates are null or a gate mint, and `word` is a gate word.
+            // SAFETY: `gates` is null or a gate mint, and `word` is a gate word.
             let joined =
                 unsafe { crate::identities::gate::joined(self.rt.store, types, gates, word) };
             gates = joined.ok_or_else(|| self.fail_at(start, ParseError::DoubleGate))?;
@@ -550,8 +551,7 @@ impl<'a> Parser<'a> {
 
     /// `T!`, a value of `T` or an error: `union ( value := T, err := error )`, that very mint,
     /// with no type of its own (›Target: errors are values (`T!`), handled by `if`, passed on by
-    /// `try`…‹ [[R140]]). The members are declared as
-    /// the written union's lines declare theirs.
+    /// `try`…‹ [[R140]]).
     pub(crate) fn construct_fallible(
         &mut self,
         tape: &mut ParsingTape,
@@ -577,25 +577,13 @@ impl<'a> Parser<'a> {
         let scope = self.open_scope();
         let (mut lines, mut bindings) = (Vec::new(), Vec::new());
         let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
-        let tag = crate::identities::union::TAG_LINE;
-        let declared =
-            self.declare_own_line(tag, u8_, at, &mut lines, &mut bindings).and_then(|()| {
-                [("value", value), ("err", self.types.error.value)].into_iter().try_for_each(
-                    |(name, ty)| {
-                        let member = crate::identities::hole::build(
-                            self.rt.store,
-                            self.types.unknown,
-                            ty,
-                            std::ptr::null_mut(),
-                        );
-                        let binding = self.mint_binding(member, scope, name.as_bytes());
-                        self.enter_binding_in(scope, name, binding, at)?;
-                        lines.push(member);
-                        bindings.push(binding);
-                        Ok(())
-                    },
-                )
-            });
+        let declared = [
+            (crate::identities::union::TAG_LINE, u8_),
+            ("value", value),
+            ("err", self.types.error.value),
+        ]
+        .into_iter()
+        .try_for_each(|(name, ty)| self.declare_own_line(name, ty, at, &mut lines, &mut bindings));
         let body = self.open_scope();
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
@@ -868,11 +856,13 @@ impl<'a> Parser<'a> {
                     unsafe { self.cx.scopes.settle_item(body.scope, comment) };
                 }
             }
-            let value = cell.dyad;
+            // SAFETY: a parsed cell holds a reduced dyad from the store.
+            let (value, mut gates) =
+                unsafe { crate::identities::gate::value_parts(self.types, cell.dyad) }
+                    .unwrap_or((cell.dyad, std::ptr::null_mut()));
             if self.is_bare_unknown(&cell) {
                 return Err(self.untyped(start, relaxed));
             }
-            let mut gates = cell.gates;
             let mut byte = None;
             // SAFETY: `value` is a reduced dyad just parsed.
             let laid = unsafe { crate::identities::layout_of(self.types, value) };
@@ -882,8 +872,7 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::LayoutOutsideField);
                 }
                 byte = Some(at);
-                // SAFETY: a `layout` node holds a type node, and a cell's gates are null or a
-                // gate mint.
+                // SAFETY: a `layout` node holds a type node, and `gates` is null or a gate mint.
                 unsafe {
                     let (ty, own) = crate::identities::gate::parts(gated);
                     gates = crate::identities::gate::union(self.rt.store, self.types, gates, own);
@@ -936,7 +925,7 @@ impl<'a> Parser<'a> {
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = self.mint_binding(field, scope, name.as_bytes());
             self.enter_binding_in(scope, name, binding, start)?;
-            // SAFETY: a cell's gates are null or a gate mint.
+            // SAFETY: `gates` is null or a gate mint.
             let public =
                 unsafe { crate::identities::gate::words_of(gates) }.contains(&self.types.pub_);
             if public && list == FieldList::Parameters {
