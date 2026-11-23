@@ -326,6 +326,38 @@ impl OpenScope {
         self.made.extend(notes.made);
         self.prose.extend(notes.prose);
     }
+
+    /// How far the line being parsed has gone in what it holds, ends, runs and gives, its noted
+    /// values and comments apart: a constructor that failed part-way left the line as it found it
+    /// where this is unchanged.
+    pub(super) fn line_reach(&self) -> [usize; 11] {
+        [
+            self.exit.len(),
+            self.ended.len(),
+            self.unrun.len(),
+            self.stood.len(),
+            self.held.len(),
+            self.address_holds.len(),
+            self.narrowed.len(),
+            self.unsettled.len(),
+            self.closed_runs.len(),
+            usize::from(self.moves_through),
+            usize::from(self.gives_held),
+        ]
+    }
+
+    /// How many values and comments the line being parsed has noted so far.
+    pub(super) fn line_notes_mark(&self) -> (usize, usize) {
+        (self.made.len(), self.prose.len())
+    }
+
+    /// What the line noted since `mark`, taken off it.
+    pub(super) fn line_notes_since(&mut self, (made, prose): (usize, usize)) -> LineNotes {
+        LineNotes {
+            made: self.made.split_off(made.min(self.made.len())),
+            prose: self.prose.split_off(prose.min(self.prose.len())),
+        }
+    }
 }
 
 /// A function node's value record, in order: input `record`, return type,
@@ -790,15 +822,17 @@ impl<'a> Parser<'a> {
             let was = std::mem::replace(&mut self.cx.result_type, true);
             let items = self.drive_until_open(RightSide::ReturnType);
             self.cx.result_type = was;
-            let out = self.one_of(items?).map_err(|e| match e {
-                ParseError::Empty => ParseError::ExpectedReturnType,
-                e => e,
-            })?;
-            // The function is built here, so its result type is needed now (›`fn` is not a
-            // primitive: a function is a type in this same shape‹ [[R199]]).
+            let out =
+                self.one_of(items.map_err(ParseError::refused_now)?).map_err(|e| match e {
+                    ParseError::Empty => ParseError::ExpectedReturnType,
+                    e => e,
+                })?;
+            // The function is built here, so its result type is needed now, and nothing of it
+            // waits for the run (›`fn` is not a primitive: a function is a type in this same
+            // shape‹ [[R199]]).
             self.operand_dyad(out)
                 .and_then(|d| self.type_known_now(d))
-                .map_err(|e| self.fail_at(start, e))?
+                .map_err(|e| self.fail_at(start, e.refused_now()))?
         };
         let source = self.cx.source;
         // The source after `->`, as an error names the type.

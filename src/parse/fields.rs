@@ -176,7 +176,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         if !self.in_pass_order() {
-            return Err(ParseError::TypeKnownOnlyAtRun);
+            return Err(self.known_at_run());
         }
         let at = tape.at(-1).map_or(self.cx.pos, |c| c.start);
         self.run_first(tape, at)?;

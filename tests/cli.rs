@@ -5020,6 +5020,93 @@ fn what_needs_a_type_known_only_at_run_is_parsed_when_its_line_runs() {
     assert_eq!(run_line(src), (Some(0), "3\n".into(), String::new()), "{src}");
 }
 
+/// In a body, a node that gives a type known only at run is used as one known in the pass is,
+/// whatever its form: the part of the line that needs it waits for the run, keeping what it built
+/// (›A type known only when the program runs still works; what needs it is parsed when its line
+/// runs‹ [[R377]]). `COMPILE` stands where the compiled tier compiles `g`, which then stays
+/// interpreted.
+#[test]
+fn a_type_any_node_gives_at_run_is_used_in_a_body_as_one_known_in_the_pass_is() {
+    let pick = "pick := fn (n := i32) -> type ( if n == 1 (i64) else (i32) )";
+    let k = "k := fn (a := i64) -> i64 ( a )";
+    let map = "m := hashmap type -> type, m[i32] = i64";
+    for (src, want) in [
+        // A value read after the type, the type a call, a bracket, a map read, an `if`, a box
+        // or a pointer's target gives.
+        (format!("{pick}, {k}, g := fn (n := i32) -> i64 ( k(pick(n) 5) ), COMPILE g(1)"), "5"),
+        (format!("{pick}, {k}, g := fn (n := i32) -> i64 ( k((pick(n)) 5) ), COMPILE g(1)"), "5"),
+        (
+            format!(
+                "{pick}, g := fn (n := i32) -> type ( x := (pick(n)) 5, x.type ), \
+                 COMPILE print «{{g(1)}} {{g(0)}}»"
+            ),
+            "i64 i32",
+        ),
+        (format!("{map}, g := fn () -> type ( x := m[i32] 5, x.type ), COMPILE g()"), "i64"),
+        (
+            "g := fn (c := bool) -> type ( x := (if c (i32) else (i64)) 5, x.type ), \
+             COMPILE print «{g(true)} {g(false)}»"
+                .into(),
+            "i32 i64",
+        ),
+        ("g := fn (c := bool) -> i64 ( (if c (i64) else (i32)) 5 ), COMPILE g(true)".into(), "5"),
+        (
+            "g := fn (t := type ?) -> type ( x := t 5, x.type ), COMPILE print «{g(i64)} {g(u8)}»"
+                .into(),
+            "i64 u8",
+        ),
+        (
+            "g := fn (p := @type ?) -> type ( x := p@ 5, x.type ), \
+             p := try alloc 1 of type i64, COMPILE g(p)"
+                .into(),
+            "i64",
+        ),
+        // The line before it is parsed where it is written, and the lines after it too.
+        (
+            format!("{pick}, g := fn (n := i32) -> i32 ( a := 1, x := (pick(n)) 5, a + 1 ), COMPILE g(1)"),
+            "2",
+        ),
+        (
+            format!(
+                "{pick}, g := fn (n := i32) -> i32 ( for 0..2 ( print «{{(pick(n)) 3}}» ), 1 ), \
+                 COMPILE g(1)"
+            ),
+            "3\n3\n1",
+        ),
+        // A place of the type, `T` alone or `T ?`, laid out when the line runs.
+        (format!("{map}, g := fn () -> i64 ( x := mut m[i32], x = 5, x ), COMPILE g()"), "5"),
+        (
+            "g := fn (c := bool) -> i64 ( x := mut if c (i64) else (i32), x = 5, i64 (x) ), \
+             COMPILE print «{g(true)} {g(false)}»"
+                .into(),
+            "5 5",
+        ),
+        (
+            format!("{pick}, g := fn (n := i32) -> i64 ( u := mut (pick(n)), u = 5, u ), COMPILE g(1)"),
+            "5",
+        ),
+        (format!("{pick}, g := fn () -> i64 ( u := mut pick(1), u = 5, u ), COMPILE g()"), "5"),
+        (
+            format!(
+                "{pick}, g := fn (n := i32) -> i64 ( x := mut (pick(n)) ?, x = 5, i64 (x) ), \
+                 COMPILE print «{{g(1)}} {{g(0)}}»"
+            ),
+            "5 5",
+        ),
+    ] {
+        let interpreted = src.replace("COMPILE ", "");
+        let (code, stdout, stderr) = run_line(&interpreted);
+        assert_eq!((code, stdout.trim_end()), (Some(0), want), "{interpreted}: stderr: {stderr}");
+        let compiled = src.replace("COMPILE ", "g.compile(), ");
+        let (code, _, stderr) = run_line(&compiled);
+        assert_eq!(code, Some(1), "{compiled}");
+        assert!(
+            stderr.contains("is parsed only when it runs") && stderr.contains("stays interpreted"),
+            "{compiled}: {stderr}"
+        );
+    }
+}
+
 #[test]
 fn a_logos_declaration_declares_a_place_of_that_type() {
     let (echoes, stderr) = repl("a := mut i32 ?\na = 9\nprint «{a.type == i32}»\na\n");
@@ -12327,17 +12414,26 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
     let (code, _, stderr) = run_line(src);
     assert_eq!(code, Some(1), "{src}");
     assert!(stderr.contains("is parsed only when it runs"), "{src}: {stderr}");
-    // A line that waits for its type holds no `move`, with `?` after the type or without.
+    // A `move` built where it is written, before the type is known, ends its name's life there,
+    // with `?` after the type or without.
     let pk = "pk := fn (p := @i32 ?) -> type ( if p@ == 1 (i64) else (i32) )";
     for value in ["pk(move a)", "pk(move a) ?"] {
+        let body = format!("a := try alloc 1 of i32 n, u := mut {value}, u = 5");
         let src = format!(
-            "{pk}, f := fn (n := i32 ?) -> type! ( a := try alloc 1 of i32 n, u := mut {value}, \
-             u = 5, u.type ), try f(1)"
+            "{pk}, f := fn (n := i32 ?) -> type! ( {body}, u.type ), print «{{try f(1)}} {{try f(2)}}»"
         );
-        let (code, stdout, stderr) = run_line(&src);
-        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
-        assert!(stderr.contains("such a line cannot hold `move` yet"), "{src}: stderr: {stderr}");
+        assert_eq!(run_line(&src), (Some(0), "i64 i32\n".into(), String::new()), "{src}");
+        let src = format!("{pk}, f := fn (n := i32 ?) -> i32! ( {body}, a@ ), try f(1)");
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains("`a` is dead here"), "{src}: stderr: {stderr}");
     }
+    // The part of a line parsed when it runs holds no `move`.
+    let src = "f := fn (t := type ?) -> i32! ( a := try alloc 1 of i32 5, x := t (move a)@, 1 ), \
+               try f(i32)";
+    let (code, stdout, stderr) = run_line(src);
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+    assert!(stderr.contains("such a line cannot hold `move` yet"), "{src}: stderr: {stderr}");
 }
 
 /// Where the pass runs the line, a node that gives a type runs where it is built, whatever its
@@ -13623,6 +13719,8 @@ fn a_type_field_is_a_box_its_run_reads_when_it_runs() {
         (format!("{pass}, d := mut dyad ?, d = i32, (pass d) == i32"), "true\n"),
         (format!("{pass}, f := fn (d := dyad ?) -> bool ( (pass d) == f64 ), f(f64)"), "true\n"),
         (format!("{sq}, t := mut type ?, t = i64, sq t"), "16\n"),
+        // A body's type known only at run fills the field when the line runs.
+        (format!("{sq}, f := fn (u := type ?) -> i32 ( sq u ), f(i32)"), "16\n"),
         (format!("{pass}, q := mut pass i32, q = 5, q.type"), "mut i32\n"),
         // A `run` line that reads a value after the field's type is parsed when it runs.
         (format!("{mk}, mk i32"), "7\n"),
@@ -13631,15 +13729,15 @@ fn a_type_field_is_a_box_its_run_reads_when_it_runs() {
         assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
         assert_eq!(stdout, want, "{src}");
     }
-    let at_run = "which type this is is known only when the program runs, and this needs it now";
-    for (src, error) in [
-        (format!("{pass}, pass (i32 5)"), "the declared or assigned type must be a type value"),
-        (format!("{sq}, f := fn (u := type ?) -> i32 ( sq u ), f(i32)"), at_run),
-    ] {
-        let (code, _, stderr) = run_line(&src);
-        assert_eq!(code, Some(1), "{src}");
-        assert!(stderr.contains(error) && !stderr.contains("run error"), "{src}: {stderr}");
-    }
+    let src = format!("{sq}, f := fn (u := type ?) -> i32 ( sq u ), f.compile(), f(i32)");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}");
+    assert!(stderr.contains("stays interpreted"), "{src}: {stderr}");
+    let src = format!("{pass}, pass (i32 5)");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}");
+    let error = "the declared or assigned type must be a type value";
+    assert!(stderr.contains(error) && !stderr.contains("run error"), "{src}: {stderr}");
 }
 
 #[test]

@@ -101,9 +101,28 @@ impl<'a> Parser<'a> {
         }
         let held = self.settled_type(place);
         if held == place {
-            return Err(ParseError::TypeKnownOnlyAtRun);
+            return Err(self.known_at_run());
         }
         crate::identities::land(self.rt.store, types, value, dyad::ty(held))
+    }
+
+    /// An `=` into `place`, read before its right side, where the place's type is known only when
+    /// the program runs and the write waits for it: in a body, before the right side is parsed,
+    /// so the write is held from its `=`, with the place it writes ([`Self::land_in_run_type`]).
+    pub(crate) fn write_waits(&self, place: &Cell) -> Result<(), ParseError> {
+        let target = place.dyad;
+        // SAFETY: a read target holds a reduced dyad from the store.
+        let waits = self.waits_here()
+            && !target.is_null()
+            && unsafe {
+                dyad::ty(target) == self.types.binding_
+                    && Binding::read(target).typed_at_run
+                    && self.settled_type(target) == target
+            };
+        if waits {
+            return Err(ParseError::WaitsForRun(Some(Box::new(*place))));
+        }
+        Ok(())
     }
 
     /// The bindings a write into the cell's node must be granted by: the cell's path, or
@@ -901,13 +920,13 @@ impl<'a> Parser<'a> {
     }
 
     /// The value of the `:=` at the cursor where it waits for the run, held from after the gate
-    /// words that open it, which gate the place the run fills, and whether it is a place with
-    /// no value; `None`, the cursor where it was, for a value parsed here.
-    fn waiting_gated(&mut self) -> Result<Option<(Cell, bool)>, ParseError> {
+    /// words that open it, which gate the place the run fills; `None`, the cursor where it was,
+    /// for a value parsed here.
+    fn waiting_gated(&mut self) -> Result<Option<Cell>, ParseError> {
         let at = self.cx.pos;
         let (words, after) = self.gates_ahead();
         self.cx.pos = after;
-        let Some((mut held, hole)) = self.waiting_value()? else {
+        let Some(mut held) = self.waiting_value()? else {
             self.cx.pos = at;
             return Ok(None);
         };
@@ -918,7 +937,7 @@ impl<'a> Parser<'a> {
             };
             held.gates = joined.ok_or_else(|| self.fail_at(at, ParseError::DoubleGate))?;
         }
-        Ok(Some((held, hole)))
+        Ok(Some(held))
     }
 
     /// A word that gates the value to its right.
@@ -978,19 +997,28 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = binding;
         self.cx.filling.push(binding);
         self.cx.filling_at.push(self.cx.pos);
-        let (mut typed_at_run, mut unwritten) = (false, false);
-        let value = self.waiting_gated().and_then(|held| match held {
-            Some((held, hole)) => {
-                (typed_at_run, unwritten) = (true, hole);
-                Ok(held)
-            }
-            None => self.parse_expression_cell(),
-        });
+        self.skip_whitespace();
+        let (from, notes) = (self.cx.pos, self.cx.open.last().map(|o| o.line_notes_mark()));
+        let value = self
+            .waiting_gated()
+            .and_then(|held| held.map_or_else(|| self.parse_expression_cell(), Ok));
         self.cx.filling.pop();
         self.cx.filling_at.pop();
         self.cx.last_declared = binding;
         self.cx.pending_binding = std::ptr::null_mut();
-        let cell = if typed_at_run { value? } else { self.declared_value(value?)? };
+        let mut value = value?;
+        // SAFETY: a built cell holds a reduced dyad from the store.
+        let (typed_at_run, unwritten) = match unsafe { self.held_lays_out(value.dyad) } {
+            Some(lays_out) => (true, lays_out),
+            None => match self.hold_bare_type(from, notes.unwrap_or_default(), value)? {
+                Some(held) => {
+                    value = held;
+                    (true, true)
+                }
+                None => (false, false),
+            },
+        };
+        let cell = if typed_at_run { value } else { self.declared_value(value)? };
         let value = cell.dyad;
         if self.is_bare_unknown(&cell) {
             return Err(self.untyped(tok.start, false));

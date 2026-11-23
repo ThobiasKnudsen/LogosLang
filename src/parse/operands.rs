@@ -367,10 +367,22 @@ impl<'a> Parser<'a> {
         // SAFETY: `read` is a reduced dyad from the store, and `type` a type node.
         unsafe {
             if crate::identities::dyad_place::known_only_at_run(types, read) {
-                return Err(ParseError::TypeKnownOnlyAtRun);
+                return Err(self.known_at_run());
             }
             let landed = crate::identities::land(self.rt.store, types, read, types.type_)?;
-            crate::identities::type_identity_of(types, landed).ok_or(ParseError::TypeKnownOnlyAtRun)
+            crate::identities::type_identity_of(types, landed).ok_or_else(|| self.known_at_run())
+        }
+    }
+
+    /// Where the parse needs a type known only when the program runs: in a body the segment that
+    /// needs it waits for the run (›A type known only when the program runs still works; what
+    /// needs it is parsed when its line runs‹ [[R377]]); where nothing runs it later, the
+    /// checked error.
+    pub(super) fn known_at_run(&self) -> ParseError {
+        if self.waits_here() {
+            ParseError::WaitsForRun(None)
+        } else {
+            ParseError::TypeKnownOnlyAtRun
         }
     }
 
@@ -590,30 +602,24 @@ impl<'a> Parser<'a> {
     /// order, and never twice‹ [[R288]]), so a reader takes it as a type known in the pass (›A
     /// type known only when the program runs still works; what needs it is parsed when its line
     /// runs‹ [[R377]]). `None`, nothing run, for a node that is a type or gives none, a bracket,
+    /// whose lines ran where they were built, unless it is `kept` from a body, where they did not,
     /// a type taken as a value, a place ([`Self::takes_the_place`]), and where the pass does not
     /// run the line: a body, a `while` condition.
     pub(super) fn run_type_where_built(
         &mut self,
         tape: &mut ParsingTape,
+        kept: bool,
     ) -> Result<Option<DyadPtr>, ParseError> {
-        use crate::identities::{read, type_identity_of};
-        let types = self.types;
         if !self.in_pass_order() || self.cx.each_pass {
             return Ok(None);
         }
         let Some(cell) = tape.at(0).copied() else { return Ok(None) };
-        if !cell.constructed || cell.bracket || cell.type_value || cell.dyad.is_null() {
+        if !cell.constructed || (cell.bracket && !kept) || cell.type_value || cell.dyad.is_null() {
             return Ok(None);
         }
         let node = cell.dyad;
         // SAFETY: a constructed cell holds a node from the store.
-        let gives_type = unsafe {
-            !types.is_storage(node)
-                && !types.is_hole(types.through(node))
-                && read::output_type(types, node) == types.type_
-                && type_identity_of(types, node).is_none()
-        };
-        if !gives_type {
+        if !unsafe { self.runs_for_type(node) } {
             return Ok(None);
         }
         let prev = tape.at(-1).map(|c| self.cell_identity(c));

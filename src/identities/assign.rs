@@ -98,6 +98,7 @@ fn construct(
 ) -> Result<crate::parse::Constructed, ParseError> {
     let types = p.types();
     let (place, slot) = read_target(p, tape)?;
+    p.write_waits(&place)?;
     let target = place.dyad;
     // Anything but a bracket right of a body slot is `slot_fill`'s checked error.
     if matches!(
