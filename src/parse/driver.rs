@@ -573,7 +573,7 @@ impl<'a> Parser<'a> {
     /// name holding it does (›A name of a type with an instances' `parse` wakes it, as the
     /// instance does, and so does any expression of the type‹ [[R230]]): an instance whose type
     /// fills `parse`, or a type with a constructor that an expression `gave`.
-    fn wakes(&self, value: DyadPtr, gave: bool) -> bool {
+    pub(super) fn wakes(&self, value: DyadPtr, gave: bool) -> bool {
         // SAFETY: `value` is null or a reduced dyad from the store.
         self.is_awake_instance(value)
             || (gave

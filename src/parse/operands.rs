@@ -1150,6 +1150,7 @@ impl<'a> Parser<'a> {
             && cell.held.is_none()
             && cell.binding(types).is_null()
             && !cell.is_fresh(types)
+            && self.wakes(cell.dyad, true)
         {
             cell.constructed = true;
             return Ok(Some(cell));
