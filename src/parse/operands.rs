@@ -132,6 +132,10 @@ impl<'a> Parser<'a> {
             return false;
         }
         // A type by its rank, stand-in for #286.
+        let by_rank = |rank: f64| {
+            use crate::identities::meta::prec;
+            rank == prec::ONE_RANK || rank > prec::POINTER_TYPE
+        };
         let readers = cells
             .iter()
             .rev()
@@ -139,7 +143,7 @@ impl<'a> Parser<'a> {
                 let id = self.cell_identity(c);
                 !c.constructed
                     && !self.ends_value(c)
-                    && self.precedence_of_cell(id) >= crate::identities::meta::prec::CONVERT
+                    && by_rank(self.precedence_of_cell(id))
                     && !self.is_delimiter(id)
             })
             .count();
@@ -1103,25 +1107,18 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
-    /// What a type at the center takes from its right, the cell at `k` (›A type's `parse` decides
-    /// what converts into it; unwritten, a value converts only into a type that holds it
-    /// exactly‹ [[R155]]): a built value or a bare name, what is built at discovery (`.`, `@`, a
-    /// call, an `if`) finished before it, and a negating `-` there started first, so `i32 -m`
-    /// negates `m` before `i32` converts it (›`-` negates where a space stands before it and none
-    /// after, or no value stands to its left; any other `-` subtracts‹ [[R157]]). `None` where
-    /// the type stands as itself: nothing there, or a cell still to be built that is no value of
-    /// its own (`+`, `->`).
+    /// What a type or a gate word at the center takes from its right, the cell at `k`: a built
+    /// value or a bare name, what is built at discovery (`.`, `@`, a call, a bracket) finished
+    /// before it, `?`, and a word of its own rank, built before it since each associates right.
+    /// `None` where it stands alone: nothing there, or a word of a later rank still to be built
+    /// (`+`, `not`, a negating `-`), which it does not start, so `i32 -m` is written `i32 (-m)`
+    /// (›Every identity has a `parse_rank`, and `(` works in two steps‹ [[R259]]).
     pub(crate) fn type_operand(
         &mut self,
         tape: &mut ParsingTape,
         k: isize,
     ) -> Result<Option<Cell>, ParseError> {
-        let Some(mut cell) = self.cell_at(tape, k)? else { return Ok(None) };
-        // Any other word not built yet leaves the type standing as itself: stand-in for #535.
-        if !cell.constructed && self.cell_identity(&cell) == self.types.negate {
-            let Some(started) = self.side_at(tape, k)? else { return Ok(None) };
-            cell = started;
-        }
+        let Some(cell) = self.cell_at(tape, k)? else { return Ok(None) };
         Ok(self.is_operand_cell(&cell).then_some(cell))
     }
 

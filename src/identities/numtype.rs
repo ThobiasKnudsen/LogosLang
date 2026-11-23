@@ -135,7 +135,7 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
     let record = super::meta::record_assoc(
         cx.store,
         nt as u8,
-        super::meta::prec::CONVERT,
+        super::meta::prec::ONE_RANK,
         crate::parse::Assoc::Right,
     );
     let id = cx.store.alloc_head(cx.type_, record);

@@ -26,20 +26,14 @@ pub(super) struct GateIds {
     pub(super) gate_: DyadPtr,
 }
 
-/// The gate words as written, with their ranks, in the order [`GateIds::words`] and [`words`]
-/// keep them. `lossy` stands with the number types, whose rank it shares (›Every identity has a
-/// `parse_rank`, and `(` works in two steps‹ [[R259]]): in `i32 lossy f64 2.5`, `f64` is built
-/// first, then `lossy`, then `i32`.
-const WORDS: [(&str, f64); 4] = [
-    ("pub", meta::prec::PREFIX),
-    ("mut", meta::prec::PREFIX),
-    ("static", meta::prec::PREFIX),
-    ("lossy", meta::prec::CONVERT),
-];
+/// The gate words as written, in the order [`GateIds::words`] and [`words`] keep them. They stand
+/// in the one rank with the number types (›Every identity has a `parse_rank`, and `(` works in two
+/// steps‹ [[R259]]): in `i32 lossy f64 2.5`, `f64` is built first, then `lossy`, then `i32`.
+const WORDS: [&str; 4] = ["pub", "mut", "static", "lossy"];
 
 pub(super) fn register(cx: &mut Cx) -> GateIds {
-    let words = WORDS.map(|(spelling, rank)| {
-        let id = word(cx, spelling, rank);
+    let words = WORDS.map(|spelling| {
+        let id = word(cx, spelling);
         cx.metas.insert(id, construct);
         id
     });
@@ -51,12 +45,12 @@ pub(super) fn register(cx: &mut Cx) -> GateIds {
 /// Every gate word with its spelling.
 pub(crate) fn words(types: &Core) -> [(DyadPtr, &'static str); 4] {
     let ids = [types.pub_, types.mut_, types.static_, types.lossy];
-    std::array::from_fn(|i| (ids[i], WORDS[i].0))
+    std::array::from_fn(|i| (ids[i], WORDS[i]))
 }
 
 /// No node is ever typed by a gate word; its identity stands in a gate mint's record.
-pub(super) fn word(cx: &mut Cx, name: &str, rank: f64) -> DyadPtr {
-    let record = meta::token_record(cx, rank, crate::parse::Assoc::Right, &[]);
+pub(super) fn word(cx: &mut Cx, name: &str) -> DyadPtr {
+    let record = meta::token_record(cx, meta::prec::ONE_RANK, crate::parse::Assoc::Right, &[]);
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(name, id);
     id
@@ -389,9 +383,9 @@ pub(crate) unsafe fn words_of(mint: DyadPtr) -> Vec<DyadPtr> {
     }
 }
 
-/// A gate word reads the nearest value to its right, a word there not built yet started first,
-/// and gives it with `id` among the gates of its type (›A gate word reads the nearest value to
-/// its right and gives it with its type gated‹ [[R102]]). A declaration is no
+/// A gate word reads the nearest value to its right, as a type does (`Parser::type_operand`), and
+/// gives it with `id` among the gates of its type (›A gate word reads the nearest value to its
+/// right and gives it with its type gated‹ [[R102]]). A declaration is no
 /// value to gate, its gate standing right of its own `:=` (›Left of `:=` stands one name (or
 /// regex), and nothing else‹ [[R101]]), and neither is any other line that gives nothing; a
 /// place is one, whatever its type.
@@ -400,12 +394,16 @@ fn construct(
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    // The cell as built, so the gates a gate word of a lower rank put on it there join this one's:
+    let word_at = tape.at(0).map(|word| word.start);
+    // The cell as built, so the gates a gate word nearer the value put on it join this one's:
     // `lossy mut f64 2.5` is `mut lossy f64`.
-    let Some(right) = p.side_at(tape, 1)? else {
-        return Err(ParseError::MissingOperand);
+    let Some(right) = p.type_operand(tape, 1)? else {
+        return Err(match word_at {
+            Some(at) => p.fail_at(at, ParseError::MissingOperand),
+            None => ParseError::MissingOperand,
+        });
     };
-    let word_at = tape.at(0).map_or(right.start, |word| word.start);
+    let word_at = word_at.unwrap_or(right.start);
     let inner = p.as_operand(right)?;
     tape.remove(1);
     let types = p.types();

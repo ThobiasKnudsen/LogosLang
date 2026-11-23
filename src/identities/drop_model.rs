@@ -69,7 +69,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let of_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("of", of_);
 
-    let alloc_ = keyword(cx, "alloc", meta::prec::PREFIX, &["count", "init"], |p, _id, tape| {
+    let alloc_ = keyword(cx, "alloc", meta::prec::ONE_RANK, &["count", "init"], |p, _id, tape| {
         let of_ = p.types().of_;
         if p.marker_right(tape, of_) {
             return Err(ParseError::MissingOperand);
@@ -97,7 +97,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 
     // `own` stands only in a type position, `own @T ?` or `-> own @T`: the word makes the hole,
     // or the function's result, an owning one.
-    let own_ = super::gate::word(cx, "own", meta::prec::PREFIX);
+    let own_ = super::gate::word(cx, "own");
     cx.metas.insert(own_, |p, _id, tape| {
         let Some(&hole) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
@@ -171,7 +171,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // value no name holds is used as any value is: it runs, then its type's `free`. `free = …`
     // never reaches here: `=` constructs first and takes the lone `free` as the slot's name.
     let free_ =
-        keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
+        keyword(cx, "free", meta::prec::ONE_RANK, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = match p.place_operand_cell(tape)? {
                 Taken::Place(place, ended) => (place, ended),
                 Taken::Hole(at) => return Err(p.fail_at(at, ParseError::FreeOfHole)),

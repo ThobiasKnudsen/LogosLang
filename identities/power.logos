@@ -45,7 +45,7 @@ error.needs_float := «a power needs a float result»,
                 if (whole_exponent) (
                     power := mut output_type 1,
                     times := mut i64 lossy (rhs),
-                    factor := mut if (output_type == rational_number) (output_type(lhs)) else (output_type lossy (lhs)),
+                    factor := mut (if (output_type == rational_number) (output_type(lhs)) else (output_type lossy (lhs))),
                     if times < 0 (
                         if not (output_type == (f64 or f32 or rational_number))
                             error.not_whole «a negative exponent of a whole number is not whole: write the base as a float»,

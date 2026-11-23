@@ -25,7 +25,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record_assoc(
         cx.store,
         meta::FRACTION_TAG,
-        meta::prec::CONVERT,
+        meta::prec::ONE_RANK,
         crate::parse::Assoc::Right,
     );
     let id = cx.store.alloc_head(cx.type_, record);
