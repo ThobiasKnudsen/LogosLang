@@ -328,12 +328,17 @@ impl<'a> Parser<'a> {
     /// The cell `offset` links right of the center, lexed on demand (DESIGN
     /// ›The scope's constructor is the driver‹): what lets `:`, `.` and `@`
     /// construct at discovery. `None` when a boundary comes first; negative offsets read the tape as it stands.
+    /// A bracket held there is read as a value, built now.
     pub(crate) fn cell_at(
         &mut self,
         tape: &mut ParsingTape,
         offset: isize,
     ) -> Result<Option<Cell>, ParseError> {
-        if offset <= 0 || tape.sealed {
+        if offset <= 0 {
+            return Ok(tape.at(offset).copied());
+        }
+        if tape.sealed {
+            self.take_held(tape, offset)?;
             return Ok(tape.at(offset).copied());
         }
         let mark = tape.mark();
@@ -352,6 +357,7 @@ impl<'a> Parser<'a> {
         }
         tape.restore(mark);
         tape.lexed_on(edits);
+        self.take_held(tape, offset)?;
         Ok(tape.at(offset).copied())
     }
 
@@ -647,23 +653,22 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         discovery: bool,
     ) -> Result<(), ParseError> {
-        // A word built as it is lexed reads what is written before it, so the brackets held there
-        // are built first, in order; at the boundary a word takes the nearest node on each side,
-        // and a bracket only the one to its left.
-        if discovery {
+        let (built_as, gates) = self.gated_type_parts(id);
+        let logos = self.is_logos_ctor(built_as);
+        // A word built as it is lexed that takes the node before it, or whose parse is written in
+        // Logos and so runs first what stands before it, reads what is written there, so the
+        // brackets held there are built first, in order; at the boundary a word takes the nearest
+        // node on each side, the bracket to its left built, the one to its right held until it
+        // reads it.
+        if discovery && (logos || self.reads_left(id)) {
             let at = tape.at(0).map_or(usize::MAX, |c| c.start);
             self.take_held_before(tape, at)?;
         } else {
             self.take_held(tape, -1)?;
-            if !self.is_opener(id) {
-                self.take_held(tape, 1)?;
-            }
         }
         let own = tape.mark();
         let edits = tape.edits();
         let taken = tape.taken_mark();
-        let (built_as, gates) = self.gated_type_parts(id);
-        let logos = self.is_logos_ctor(built_as);
         // Dispatching the cell's identity is the body's read of its name: a
         // callee, an operator, a keyword alike.
         if let Some(c) = tape.at(0) {
@@ -809,6 +814,28 @@ impl<'a> Parser<'a> {
         self.cx.pos = frontier;
         tape.restore(center);
         Ok(())
+    }
+
+    /// The `( … )` held right of the center, as `type`'s body is a bracket that is the word's own
+    /// and no value (›Every identity has a `parse_rank`, and `(` works in two steps‹ [[R259]]).
+    pub(crate) fn own_bracket(&self, tape: &ParsingTape) -> Option<Cell> {
+        let cell = tape.in_reach(1).copied()?;
+        (cell.held.is_some() && self.cell_identity(&cell) == self.types.open_).then_some(cell)
+    }
+
+    /// `read` over `bracket`, the [`Self::own_bracket`] of the word at the center, from its
+    /// opener; the bracket comes off the tape, and the lexer goes on from where it stood.
+    pub(crate) fn read_own_bracket<T>(
+        &mut self,
+        tape: &mut ParsingTape,
+        bracket: Cell,
+        read: impl FnOnce(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<T, ParseError> {
+        let frontier = std::mem::replace(&mut self.cx.pos, bracket.start);
+        let built = read(self)?;
+        self.cx.pos = frontier;
+        tape.remove(1);
+        Ok(built)
     }
 
     /// A name lexed on `tape` after `from`, where a bracket was built late: one the bracket moved

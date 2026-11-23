@@ -323,7 +323,8 @@ impl Core {
         // The single-native leaves (`and`, `convert`, …) are patched in below.
         let mut op_leaves = ops::register(&mut cx, &callables);
         let array_ = array::register(&mut cx);
-        let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER);
+        let record =
+            meta::record_assoc(cx.store, meta::TYPEREC_TAG, meta::prec::ONE_RANK, Assoc::Right);
         // SAFETY: `type_` was minted above with a null value nothing has read.
         unsafe {
             dyad::set_head(type_, record);

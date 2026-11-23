@@ -1183,31 +1183,33 @@ impl<'a> Parser<'a> {
         self.valueless_place(t).map(Some)
     }
 
-    /// `type T`: the type `T` as a value of `type`, as `i32 1` is a value of `i32`, so a name
-    /// given it holds `T` itself (›The ground is one identity, spelled `type`; `logos` is a
-    /// language‹ [[R134]]). `T` is the whole right side, a type a line computes too:
-    /// `type array i32`, `type pick(1)`. A box the pass has filled gives what it holds; a type
-    /// known only when the program runs stays the value it is, which lands in a `type` place.
-    /// `type ?` is the valueless `type` place, and with nothing to its right `type` stands as
-    /// itself.
-    pub(crate) fn construct_type_value(
+    /// `type`, a word of the one rank (›Every identity has a `parse_rank`, and `(` works in two
+    /// steps‹ [[R259]]): the `( … )` right after it is its own, the body of a new type
+    /// ([`Self::parse_type_body`]); `type ?` is the valueless `type` place; `type T` takes `T` as
+    /// a type takes a value ([`Self::type_operand`]) and gives the type `T` as a value of `type`,
+    /// as `i32 1` is a value of `i32`, so a name given it holds `T` itself (›The ground is one
+    /// identity, spelled `type`; `logos` is a language‹ [[R134]]): `type @i32`, `type pick(1)`.
+    /// A box the pass has filled gives what it holds; a type known only when the program runs
+    /// stays the value it is, which lands in a `type` place. With nothing to take, `type` stands
+    /// as itself.
+    pub(crate) fn construct_type(
         &mut self,
         id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if !self.finds_right_side(tape) {
-            return Ok(Constructed::Decline);
+        if let Some(body) = self.own_bracket(tape) {
+            let node = self.read_own_bracket(tape, body, |p| p.parse_type_body(id))?;
+            tape.place_type_value(node);
+            return Ok(Constructed::Placed);
         }
-        let Some(operand) = self.value_after(tape)? else {
+        let Some(operand) = self.type_operand(tape, 1)? else {
             return Ok(Constructed::Decline);
         };
-        if self.is_bare_unknown(&operand) {
-            let (place, _) = self.valueless_place(id)?;
-            tape.place(place);
-            tape.at_mut(0).expect("placed above").hole = true;
+        if self.takes_unknown(tape, &operand, id)? {
             return Ok(Constructed::Placed);
         }
         let value = self.as_operand(operand)?;
+        tape.remove(1);
         let types = self.types;
         // The gates a gate word put on a type a place holds join the type's own.
         // SAFETY: `value` is a reduced dyad from the store.
@@ -1229,21 +1231,6 @@ impl<'a> Parser<'a> {
         };
         tape.place_type_value(held);
         Ok(Constructed::Placed)
-    }
-
-    /// The value after the type at the center, taken off the source: the rest of its expression,
-    /// read as `:=` reads its own right side. Inside a read that ends at a bracket, a condition
-    /// or a range, it is the one cell before that bracket, which only the read around it can
-    /// tell from the value's own.
-    fn value_after(&mut self, tape: &mut ParsingTape) -> Result<Option<Cell>, ParseError> {
-        if self.cx.lex_mode.is_none() {
-            return self.parse_expression_cell().map(Some);
-        }
-        let cell = self.cell_at(tape, 1)?;
-        if cell.is_some() {
-            tape.remove(1);
-        }
-        Ok(cell)
     }
 
     /// A declaration's right side is `?` alone, with no type to its left.

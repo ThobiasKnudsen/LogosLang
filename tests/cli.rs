@@ -1700,13 +1700,8 @@ fn the_array_chooser_stands_as_itself_before_a_type_with_no_instance_bytes() {
         ),
         ("g := fn () -> bool ( array == array ), g.compile(), g()".to_string(), "true"),
         ("f := fn (x := type ?) -> bool ( x == array ), f.compile(), f(array)".to_string(), "true"),
-        (format!("{keep}, t := type array keep, t == array"), "true"),
-        (
-            format!(
-                "{keep}, g := fn () -> bool ( t := type array keep, t == array ), g.compile(), g()"
-            ),
-            "true",
-        ),
+        (format!("{keep}, b := array keep == array, b"), "true"),
+        (format!("{keep}, g := fn () -> bool ( array keep == array ), g.compile(), g()"), "true"),
         ("a := array type [i32, i64], a[1]".to_string(), "i64"),
         (
             "f := fn () -> bool ( a := array type [i32, i64], a[0] == i32 ), f.compile(), f()"
@@ -2628,6 +2623,39 @@ fn two_spellings_of_a_pointer_type_are_one_type() {
          print «{x == y}»\nz := type k(@@i32)\nz == @@i32\n",
     );
     assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
+}
+
+/// `type` is a word of the one rank: the reads at discovery are built before it takes the type to
+/// its right, a call's result among them, and a word of a later rank is not taken, so `type i32 +
+/// x` is `(type i32) + x` (›Every identity has a `parse_rank`, and `(` works in two steps‹
+/// [[R259]]).
+#[test]
+fn type_takes_the_type_the_reads_after_it_built() {
+    let compiled = |body: &str| format!("f := fn () -> bool ( {body} ), f.compile(), f()");
+    let pointer = "x := type @i32, x == @i32";
+    let mint = "t := type +.mint(i64, i64), w := i64 5, (w + w).type == t";
+    for (src, printed) in [
+        (pointer.to_string(), "true"),
+        (compiled(pointer), "true"),
+        ("z := type @@i32, z == @@i32".to_string(), "true"),
+        (mint.to_string(), "true"),
+        (compiled(mint), "true"),
+        ("mk := fn () -> type ( i32 ), u := type mk(), u == i32".to_string(), "true"),
+        ("a := i32 3, (a) - 1".to_string(), "2"),
+        ("f := fn (a := i32 ?) -> i32 ( (a) - 1 ), f.compile(), f(3)".to_string(), "2"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{src}");
+    }
+    for src in [
+        "x := i32 1, t := type i32 + x, t",
+        "f := fn (x := i32 ?) -> bool ( t := type i32 + x, true ), f.compile(), f(1)",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("`+` takes numbers"), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]
@@ -14051,7 +14079,7 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
             ),
             "4\n",
         ),
-        (format!("{pass}, t := mut type ?, t = i32, q := type t pass, q"), "i32\n"),
+        (format!("{pass}, t := mut type ?, t = i32, q := mut type ?, q = t pass, q"), "i32\n"),
         (format!("{pass}, ty := fn () -> type ( i32 ), (ty() pass) == i32"), "true\n"),
         (format!("{pass}, (i32 pass) == i32"), "true\n"),
         (format!("{pass}, g := fn (u := type ?) -> type ( u pass ), g.compile(), g(i32)"), "i32\n"),
