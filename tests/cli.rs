@@ -8182,6 +8182,92 @@ fn a_try_at_the_top_level_hands_the_error_to_the_command_line() {
     assert!(stderr.contains(refused), "stderr: {stderr}");
 }
 
+/// A `static` value and an `immediate` operand run once, where they are parsed, as a line the
+/// pass runs early: a `try` there reads the value its operand gave, and what the run made beside
+/// the value that leaves it ends with its line (›The pass runs only as far as it must, in order,
+/// and never twice‹ [[R288]], ›Holding is decided at the binding site, parameters included‹
+/// [[R61]]). On both tiers.
+#[test]
+fn a_static_or_immediate_value_runs_as_a_line_that_holds_what_it_made() {
+    let g = "g := fn () -> i32! ( 5 )";
+    for (tail, want) in [
+        ("p := static try g(), p", "5"),
+        ("p := static (try g()) + 1, p", "6"),
+        ("p := static mut try g(), p = p + 1, p", "6"),
+        ("x := immediate try g(), x", "5"),
+    ] {
+        let src = format!("{g}, {tail}");
+        assert_eq!(line(&src), want, "{src}");
+    }
+    for compile in ["", "f.compile(), "] {
+        for body in ["p := static try g(), p", "immediate try g()"] {
+            let src = format!("{g}, f := fn () -> i32! ( {body} ), {compile}try f()");
+            assert_eq!(line(&src), "5", "{src}");
+        }
+    }
+    let bad = "error.bad := «bad», g := fn () -> i32! ( error.bad «no» )";
+    for value in ["p := static try g()", "p := immediate try g()"] {
+        let src = format!("{bad}, print «before», {value}, print «never»");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), "before\n"), "{src}\nstderr: {stderr}");
+        assert!(stderr.contains("run error: error.bad: no"), "{src}\nstderr: {stderr}");
+    }
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), \
+               mb := fn () -> bag ( print «mb», bag(4) ), h := fn () -> i32 ( print «h», 1 )";
+    for (tail, want) in [
+        ("p := static (mb()).n, print «p {p}»", "mb\nfreed 4\np 4"),
+        ("x := h() + immediate (mb()).n, print «x {x}»", "mb\nh\nfreed 4\nx 5"),
+    ] {
+        let src = format!("{bag}, {tail}");
+        assert_eq!(line(&src), want, "{src}");
+    }
+    for compile in ["", "f.compile(), "] {
+        for body in ["p := static (mb()).n, p", "immediate (mb()).n"] {
+            let src = format!(
+                "{bag}, f := fn () -> i32 ( {body} ), print «defined», {compile}\
+                 print «{{f()}} {{f()}}»"
+            );
+            assert_eq!(line(&src), "mb\nfreed 4\ndefined\n4 4", "{src}");
+        }
+    }
+}
+
+/// A `try` a `parse` writes into a node runs as it is placed, since the call it hands its error to
+/// is gone when the placed node runs; what else the right side holds stays graph, run where the
+/// node runs (›A tape read checked against a number type reads as that number‹ [[R229]],
+/// ›Target: a constructor returns `void!`, so a user's syntax error is a recoverable value‹
+/// [[R142]]). On both tiers.
+#[test]
+fn a_try_a_parse_writes_into_a_node_runs_as_it_is_placed() {
+    let q = |right: &str| {
+        format!(
+            "q := type ( v := i32 ?, parse_rank = 60, parse = ( tape[0] = {right}, \
+             tape.is_constructed[0] = true ) )"
+        )
+    };
+    let g = "g := fn () -> i32! ( print «g», 9 )";
+    let h = "h := fn () -> i32 ( print «h», 3 )";
+    for (right, use_, want) in [
+        ("try g()", "a := q, a + 1", "g\n10"),
+        ("(try g()) + 1", "a := q, a + 1", "g\n11"),
+        ("h() + try g()", "print «def», a := q, print «a {a}»", "def\ng\nh\na 12"),
+        ("try g()", "f := fn () -> i32 ( a := q, a + 1 ), f.compile(), f()", "g\n10"),
+    ] {
+        let src = format!("{g}, {h}, {}, {use_}", q(right));
+        assert_eq!(line(&src), want, "{src}");
+    }
+    let src = format!(
+        "error.bad := «bad», g := fn () -> i32! ( error.bad «no» ), {}, a := q",
+        q("try g()")
+    );
+    let (code, stdout, stderr) = run_line(&src);
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}\nstderr: {stderr}");
+    assert!(
+        stderr.contains("this identity's constructor failed while parsing: error.bad: no"),
+        "{src}\nstderr: {stderr}"
+    );
+}
+
 /// R140: a function that gives `void!` holds `value` where its body ends and `err` where a raise
 /// or a `try` leaves it; its body gives nothing, as a `-> void` one's, ending what it holds on
 /// either way out; on both tiers.

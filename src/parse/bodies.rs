@@ -2407,6 +2407,18 @@ impl<'a> Parser<'a> {
         self.cx.open.last().map_or_else(Vec::new, |o| o.made.clone())
     }
 
+    /// What the line being parsed made, that nothing took, since [`Self::line_made`] gave
+    /// `before`, taken out of the line's plan: a run the pass makes of it now
+    /// ([`Self::run_held`]) is the run that holds it.
+    pub(super) fn take_made_since(&mut self, before: &[DyadPtr]) -> Vec<DyadPtr> {
+        let Some(open) = self.cx.open.last_mut() else {
+            return Vec::new();
+        };
+        let (since, kept) = open.made.iter().partition(|m| !before.contains(m));
+        open.made = kept;
+        since
+    }
+
     /// `cell` was just built where the pass runs a line once it has parsed it: a node that runs,
     /// a call or an operator, runs only then. A node that runs nothing holds nothing that runs, so
     /// what the line noted inside it, the cells it took among it, left the line.
@@ -2745,19 +2757,26 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        let before = self.line_made();
         let operand = self.parse_in_pass(Self::parse_expression);
         // SAFETY: the operand was just parsed into this parser's store.
-        let value = unsafe { self.immediate_value(operand?) }?;
+        let value = unsafe { self.immediate_value(operand?, &before) }?;
         tape.place(value);
         Ok(Constructed::Placed)
     }
 
     /// What an `immediate` operand stands as: itself when nothing runs, else what the
-    /// graph can hold of its result: a number, a bool, a type or a node.
+    /// graph can hold of its result: a number, a bool, a type or a node. Its line holds what else
+    /// the run made ([`Self::run_held`]); `before` is [`Self::line_made`] before the operand was
+    /// parsed.
     ///
     /// # Safety
     /// `node` must be a reduced dyad this parser built into its store.
-    unsafe fn immediate_value(&mut self, node: DyadPtr) -> Result<DyadPtr, ParseError> {
+    unsafe fn immediate_value(
+        &mut self,
+        node: DyadPtr,
+        before: &[DyadPtr],
+    ) -> Result<DyadPtr, ParseError> {
         use crate::identities::numtype::NumType;
         use crate::identities::read::{read_kind, Dispatch, Read};
         use crate::identities::{operand_of, Operand};
@@ -2780,7 +2799,10 @@ impl<'a> Parser<'a> {
             _ => return Err(ParseError::ImmediateNotHeld),
         };
         self.drain()?;
-        let bits = self.run_on_pass(node).map_err(ParseError::Run)?;
+        let plan = self.take_made_since(before);
+        let depth = self.cx.open.len() - 1;
+        let bits =
+            self.run_held(depth, node, &plan, |p| p.run_on_pass(node).map_err(ParseError::Run))?;
         if bool_ {
             let bool_ty = types.bool_;
             return Ok(crate::identities::bool_mod::literal_node(
