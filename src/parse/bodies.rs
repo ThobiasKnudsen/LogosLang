@@ -361,17 +361,20 @@ pub const FN_FIELDS: [&str; FN_SLOTS] =
 
 /// Refuses a value a function hands on through a pointer result, `made` as `handed_ends` reads
 /// it, that the result does not say: a borrow under an owning `@T`, or, where the result is
-/// written (`written`, the source after `->`), a value made under a plain one. A result of any
-/// other type owns what it gets either way (›A last value moves out‹ [[R66]]). No `written` is a
-/// `run`.
+/// written (`written`, the source after `->`), a value made under a plain one. A `T!` result is
+/// read as its `T`. A result of any other type owns what it gets either way (›A last value moves
+/// out‹ [[R66]]). No `written` is a `run`.
 ///
 /// # Safety
 /// `output` must be the result type node of the function whose body closes.
 unsafe fn check_handed(
+    types: &Core,
     output: DyadPtr,
     written: Option<&str>,
     made: Option<bool>,
 ) -> Result<(), ParseError> {
+    let fallible = crate::identities::union::fallible_members(types, output);
+    let output = fallible.map_or(output, |(value, _)| crate::identities::hole::type_in(value));
     if !crate::identities::numtype::is_pointer_type(output) {
         return Ok(());
     }
@@ -379,7 +382,13 @@ unsafe fn check_handed(
     match (made, written) {
         (Some(false), Some(_)) if owns => Err(ParseError::OwnResultBorrows),
         (Some(false), None) if owns => Err(ParseError::RunReturnBorrows),
-        (Some(true), Some(text)) if !owns => Err(ParseError::HandsOnMade(text.to_string())),
+        (Some(true), Some(text)) if !owns => {
+            let owning = match text.trim().strip_suffix('!').filter(|_| fallible.is_some()) {
+                Some(value) => format!("(own {})!", value.trim()),
+                None => format!("own {text}"),
+            };
+            Err(ParseError::HandsOnMade(owning))
+        }
         _ => Ok(()),
     }
 }
@@ -1003,10 +1012,10 @@ impl<'a> Parser<'a> {
         // The last value, once its type is, and every `return`'s operand, which a `return` makes
         // the call's value, are checked against the result type a call reads.
         // SAFETY: `result_type` is the result type node the function carries.
-        unsafe { check_handed(result_type, result, made) }?;
+        unsafe { check_handed(self.types, result_type, result, made) }?;
         for r in &returns {
             // SAFETY: as above.
-            unsafe { check_handed(result_type, result, r.made) }
+            unsafe { check_handed(self.types, result_type, result, r.made) }
                 .map_err(|e| self.fail_at(r.at, e))?;
         }
         for r in returns {

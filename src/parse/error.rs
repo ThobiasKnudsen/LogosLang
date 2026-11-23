@@ -326,7 +326,7 @@ pub enum ParseError {
     /// act is `move`.
     OwnOutsideType,
     /// A function hands on a value made in it, as its last value or through a `return`, and its
-    /// result, a pointer spelled as written here, lacks `own`.
+    /// result, a pointer, lacks `own`: the result as it is written with `own`.
     HandsOnMade(String),
     /// A function whose result says `-> own @T` hands on a borrow, as its last value or through a
     /// `return`.
