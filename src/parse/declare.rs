@@ -54,7 +54,9 @@ impl<'a> Parser<'a> {
         let mut at = node;
         while !at.is_null() {
             if dyad::ty(at) == types.deref_ {
-                if pointer::writes_through(types, at) {
+                let into_result = crate::identities::union::member_of_place(types, at)
+                    .is_some_and(|place| self.is_result_place(place));
+                if into_result || pointer::writes_through(types, at) {
                     return Ok(());
                 }
                 return Err(ParseError::PointeeNotMutable);
@@ -157,6 +159,22 @@ impl<'a> Parser<'a> {
     }
 
     fn check_gates(&self, path: &[DyadPtr]) -> Result<(), ParseError> {
+        // The body writes its own result, and a member of a `T!` one, which no caller may (›A
+        // scope's value is what it evaluates to, and `return` is an optional early exit from the
+        // enclosing function‹ [[R207]]); what lies inside grants as it does anywhere.
+        let path = match path {
+            [place, rest @ ..] if self.is_result_place(*place) => {
+                // SAFETY: a result place is a binding dyad laid out with its type.
+                let union = unsafe {
+                    crate::identities::union::is_union(self.types, Binding::read(*place).dyad)
+                };
+                match rest {
+                    [_member, inside @ ..] if union => inside,
+                    _ => rest,
+                }
+            }
+            _ => path,
+        };
         for &binding in path {
             // SAFETY: the path holds binding dyads from the store.
             unsafe {
@@ -569,6 +587,9 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         self.cx.pos = at;
+        if self.is_result_place(binding) {
+            return Err(ParseError::ResultUnwritten);
+        }
         // SAFETY: as above.
         Err(ParseError::Unwritten(Box::new(unsafe { Binding::spelling(binding) })))
     }
@@ -813,16 +834,20 @@ impl<'a> Parser<'a> {
         if member || !self.static_ahead() {
             return self.declare_here(tape);
         }
+        let before = self.line_made();
         let built = self.parse_in_pass(|p| p.declare_here(tape));
         if !matches!(built?, Constructed::Placed) {
             return Ok(Constructed::Decline);
         }
         let node = tape.at(0).expect("the declaration was just placed").dyad;
         self.drain()?;
+        let plan = self.take_made_since(&before);
+        let depth = self.cx.open.len() - 1;
         let mark = self.rt.stack_mark();
-        // SAFETY: `node` is the declare node just built; its binding is a binding dyad from the store.
+        // SAFETY: `node` is the declare node just built, `plan` what its value made; its binding
+        // is a binding dyad from the store.
         unsafe {
-            self.run_on_pass(node).map_err(ParseError::Run)?;
+            self.run_held(depth, node, &plan, |p| p.run_on_pass(node).map_err(ParseError::Run))?;
             let named = self.types.through(crate::identities::declare::binding_of(node));
             crate::identities::declare::set_declared(node, named);
         }
@@ -865,13 +890,98 @@ impl<'a> Parser<'a> {
         binding
     }
 
+    /// The result place of the function being read, the word `return` at `at` read as a name
+    /// (›A scope's value is what it evaluates to, and `return` is an optional early exit from the
+    /// enclosing function‹ [[R207]]): a place of its result type in its call frame, declared the
+    /// first time the body reads it, unwritten until a write fills it, and held by the body, so
+    /// a `return X` or a raise after a write ends what it holds.
+    pub(super) fn result_place(&mut self, at: usize) -> Result<DyadPtr, ParseError> {
+        match self.receiver() {
+            Receiver::CommandLine => {
+                return Err(self.fail_at(at, ParseError::ReturnOutsideFunction))
+            }
+            Receiver::Deferred => return Err(self.fail_at(at, ParseError::ReturnInDefer)),
+            Receiver::Caller { .. } | Receiver::Nobody => {}
+        }
+        let depth = self.cx.frames.len();
+        if self.cx.once_at == Some(depth) {
+            return Err(self.fail_at(at, ParseError::OnceReadsUnmade));
+        }
+        // A line held for the run is read over stand-ins for the frames open where it was written.
+        if depth <= self.cx.held_depth {
+            return Err(self.fail_at(at, ParseError::ResultPlaceInHeldLine));
+        }
+        let types = self.types;
+        let frame = self.cx.frames.last_mut().expect("a caller is a function's");
+        if frame.slot_body {
+            return Err(self.fail_at(at, ParseError::ResultPlaceInSlot));
+        }
+        // SAFETY: an open frame is a `fn` node, its signature written before its body parses.
+        let output = unsafe { *(dyad::value(frame.frame) as *const DyadPtr).add(super::FN_OUTPUT) };
+        if output == types.void_ {
+            return Err(self.fail_at(at, ParseError::ResultPlaceOfVoid));
+        }
+        // SAFETY: a function's result is a type node from the store.
+        if unsafe { crate::identities::meta::is_node_valued(output, types.fn_type) } {
+            return Err(self.fail_at(at, ParseError::ResultPlaceOfNode));
+        }
+        if !frame.result.is_null() {
+            let place = frame.result;
+            // SAFETY: a result place is a binding dyad from the store.
+            if unsafe { Binding::read(place) }.is_dead() {
+                let dead = ResolveError::Dead("return".into());
+                return Err(self.fail_at(at, ParseError::Resolve(dead)));
+            }
+            return Ok(place);
+        }
+        let body = frame.open_below;
+        let scope = self.cx.open[body].scope.expect("a function body is a block");
+        let binding = self.mint_binding(output, scope, b"return");
+        // SAFETY: `output` is the function's result type, a type node from the store, and
+        // `binding` the binding just minted.
+        unsafe {
+            let width = crate::identities::by_copy::place_width(types, output);
+            let frame = self.cx.frames.last_mut().expect("read above");
+            Binding::lay_out(binding, output, frame.frame, frame.size);
+            frame.size += width;
+            frame.result = binding;
+            Binding::set_unread(binding, true);
+            if crate::identities::meta::is_record_type(output) {
+                self.leave_fields_unwritten(binding, output, false);
+            }
+            let ends = teardown_of_type(types, output);
+            if ends != Teardown::Nothing {
+                if ends.of_record() {
+                    Binding::set_holds(binding);
+                }
+                // The frame starts zeroed, whose end runs nothing, so it is held from this line on.
+                let open = &mut self.cx.open[body];
+                open.exit.push(ExitItem { what: binding, from: open.lines, end: None });
+            }
+        }
+        Ok(binding)
+    }
+
+    /// Whether the lexed `cell` is the word `return` read as a name, the result place: a read
+    /// `.` or `holds`, or a write `=`, stands after it, where `return X` would take a value.
+    pub(super) fn reads_result_place(&mut self, cell: &Cell) -> bool {
+        let types = self.types;
+        self.cell_identity(cell) == types.return_
+            && matches!(self.next_identity(),
+                Some(id) if id == types.dot_ || id == types.union.holds || id == types.assign)
+    }
+
+    /// Whether `binding` is the result place of a function being read.
+    pub(super) fn is_result_place(&self, binding: DyadPtr) -> bool {
+        !binding.is_null() && self.cx.frames.iter().any(|f| f.result == binding)
+    }
+
     /// The gates of the value the name `binding` took, written before it, are the gates of the
     /// name's type (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹
     /// [[R381]]).
     pub(super) fn gate_name(&mut self, binding: DyadPtr, mint: DyadPtr) {
         use crate::identities::gate::{add_to_name, words_of};
-        // SAFETY: a cell's gates are null or a gate mint, and `binding` is a binding dyad from
-        // the store.
+        // SAFETY: `mint` is null or a gate mint, and `binding` is a binding dyad from the store.
         unsafe {
             for gate in words_of(mint) {
                 add_to_name(self.rt.store, self.types, binding, gate);
@@ -983,26 +1093,39 @@ impl<'a> Parser<'a> {
         self.cx.filling_at.pop();
         self.cx.last_declared = binding;
         self.cx.pending_binding = std::ptr::null_mut();
-        let mut value = value?;
+        let value = value?;
+        // A line held for the run is what the gate words over it gave: the held line keeps those
+        // gates for the name.
         // SAFETY: a built cell holds a reduced dyad from the store.
-        let (typed_at_run, unwritten) = match unsafe { self.held_lays_out(value.dyad) } {
+        let (under, written) =
+            unsafe { crate::identities::gate::value_parts(self.types, value.dyad) }
+                .unwrap_or((value.dyad, std::ptr::null_mut()));
+        let mut held = value;
+        held.dyad = under;
+        // SAFETY: as above.
+        let (typed_at_run, unwritten) = match unsafe { self.held_lays_out(under) } {
             Some(lays_out) => (true, lays_out),
-            None => match self.hold_bare_type(from, notes.unwrap_or_default(), value)? {
-                Some(held) => {
-                    value = held;
+            None => match self.hold_bare_type(from, notes.unwrap_or_default(), held)? {
+                Some(line) => {
+                    held = line;
                     (true, true)
                 }
                 None => (false, false),
             },
         };
-        let cell = if typed_at_run { value } else { self.declared_value(value)? };
-        let value = cell.dyad;
+        let held_gates = if typed_at_run { written } else { std::ptr::null_mut() };
+        let cell = if typed_at_run { held } else { self.declared_value(value)? };
         if self.is_bare_unknown(&cell) {
             return Err(self.untyped(tok.start, false));
         }
+        // The gates the value's own gate words wrote are the name's (›Gates are type nodes:
+        // `x := mut i32 5`; the record holds no gates‹ [[R381]]); the value lands without them.
+        // SAFETY: a parsed cell holds a reduced dyad from the store.
+        let (value, gates) = unsafe { crate::identities::gate::value_parts(self.types, cell.dyad) }
+            .unwrap_or((cell.dyad, held_gates));
         // SAFETY: `binding` is the binding just declared; `value` a reduced dyad from the store.
         let declared = unsafe { self.land_at_binding(binding, value, cell.hole) }?;
-        self.gate_name(binding, cell.gates);
+        self.gate_name(binding, gates);
         // A place whose type its line gives when it runs keeps that type, which a write converts
         // into ([`Self::land_in_run_type`]); one laid out then holds no value until a write fills
         // it, as one declared `T ?` does.
@@ -1028,18 +1151,26 @@ impl<'a> Parser<'a> {
     /// a line computes too; a value stands as it is, the one `type` made of what stood after it
     /// (`type i32`, `type (…)`) among them.
     pub(super) fn declared_value(&mut self, cell: Cell) -> Result<Cell, ParseError> {
+        use crate::identities::gate;
         if cell.hole || cell.type_value {
             return Ok(cell);
         }
-        let place = self.empty_place_of(cell.dyad).map_err(|e| self.fail_at(cell.start, e))?;
-        let Some((place, gates)) = place else { return Ok(cell) };
+        // A type a line computes, gated: the place is made of the type, with both sets of gates.
+        // SAFETY: a parsed cell holds a reduced dyad from the store.
+        let (value, written) = unsafe { gate::value_parts(self.types, cell.dyad) }
+            .unwrap_or((cell.dyad, std::ptr::null_mut()));
+        let place = self.empty_place_of(value).map_err(|e| self.fail_at(cell.start, e))?;
+        let Some((place, own)) = place else { return Ok(cell) };
+        // SAFETY: `written` and `own` are null or gate mints, and `place` a node just built.
+        let place = unsafe {
+            let gates = gate::union(self.rt.store, self.types, written, own);
+            gate::give(self.rt.store, self.types, gates, place, false)
+        }
+        .map_err(|e| self.fail_at(cell.start, e))?;
         let mut cell = cell;
         cell.dyad = place;
         cell.hole = true;
         cell.constructed = true;
-        // SAFETY: a cell's gates are null or a gate mint, and so are `gates`.
-        cell.gates =
-            unsafe { crate::identities::gate::union(self.rt.store, self.types, cell.gates, gates) };
         Ok(cell)
     }
 
@@ -1090,6 +1221,10 @@ impl<'a> Parser<'a> {
         }
         let value = self.as_operand(operand)?;
         let types = self.types;
+        // The gates a gate word put on a type a place holds join the type's own.
+        // SAFETY: `value` is a reduced dyad from the store.
+        let (value, gates) = unsafe { crate::identities::gate::value_parts(types, value) }
+            .unwrap_or((value, std::ptr::null_mut()));
         // SAFETY: `value` is a reduced dyad from the store, and `type` a type node.
         let landed = unsafe { crate::identities::land(self.rt.store, types, value, types.type_) }
             .map_err(|e| self.fail_at(operand.start, e))?;
@@ -1098,13 +1233,10 @@ impl<'a> Parser<'a> {
             let read = self.settled_type(types.through(landed));
             crate::identities::type_identity_of(types, read)
         };
-        // The gates a gate word put on the type are the type's own: `type mut i32` is `mut i32`.
         let held = match known {
-            // SAFETY: `t` is a type node, and a cell's gates null or a gate mint.
-            Some(t) => unsafe {
-                crate::identities::gate::gated(self.rt.store, types, operand.gates, t)
-            },
-            None if operand.gates.is_null() => landed,
+            // SAFETY: `t` is a type node, and `gates` null or a gate mint.
+            Some(t) => unsafe { crate::identities::gate::gated(self.rt.store, types, gates, t) },
+            None if gates.is_null() => landed,
             None => return Err(self.fail_at(operand.start, ParseError::TypeKnownOnlyAtRun)),
         };
         tape.place_type_value(held);
@@ -1264,9 +1396,8 @@ impl<'a> Parser<'a> {
                 let ty = crate::identities::type_identity_of(self.types, ty).unwrap_or(ty);
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
                     self.rt.store,
-                    self.types.type_,
+                    self.types,
                     crate::identities::numtype::gated_pointee_of(ty),
-                    self.types.ops.teardown_,
                 );
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
                 let place = self.place_for(binding, owning_ty, 8);
@@ -1332,8 +1463,7 @@ impl<'a> Parser<'a> {
             // A box the pass has not filled holds its type only when the program runs, and the
             // line does not wait for it: stand-in for #292.
             let ty = self.type_known_now(ty)?;
-            // A gated type gives a node of the type it gates, standing with its gates as
-            // `mut i32 5` does.
+            // A gated type gives a node of the type it gates, gated as `mut i32 5` is.
             let (ty, gates) = crate::identities::gate::parts(ty);
             let node =
                 crate::identities::dyad_place::build_of_type(self.rt.store, types, ty, value)?;
@@ -1341,9 +1471,11 @@ impl<'a> Parser<'a> {
             self.take(value);
             (node, gates)
         };
+        // SAFETY: `gates` is null or a gate mint, and `node` a node just built.
+        let node =
+            unsafe { crate::identities::gate::give(self.rt.store, types, gates, node, false) }?;
         tape.remove(1);
         tape.place(node);
-        tape.at_mut(0).expect("placed above").gates = gates;
         Ok(Constructed::Placed)
     }
 
@@ -1370,18 +1502,19 @@ impl<'a> Parser<'a> {
             tape.place(value);
             return Ok(Constructed::Placed);
         };
-        let (node, own) = self.valueless_place(t)?;
         // The place of a gated type, `x.type ?`, has that type's gates.
-        let gates = tape.at(-1).map_or(std::ptr::null_mut(), |cell| cell.gates);
-        // SAFETY: a cell's gates are null or a gate mint, and so are `own`.
-        let gates =
-            unsafe { crate::identities::gate::union(self.rt.store, self.types, gates, own) };
+        let node = self.gated_place(t)?;
         tape.remove(-1);
         tape.place(node);
-        let cell = tape.at_mut(0).expect("placed above");
-        cell.hole = true;
-        cell.gates = gates;
+        tape.at_mut(0).expect("placed above").hole = true;
         Ok(Constructed::Placed)
+    }
+
+    /// [`Self::valueless_place`] of `t`, gated as `t` is: `mut i32 ?` is `i32 ?` gated `mut`.
+    fn gated_place(&mut self, t: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let (node, gates) = self.valueless_place(t)?;
+        // SAFETY: `gates` is null or a gate mint, and `node` a node just built.
+        unsafe { crate::identities::gate::give(self.rt.store, self.types, gates, node, false) }
     }
 
     /// The type `t` at the center, whose parse takes the value to its right, finding `?` alone
@@ -1397,23 +1530,17 @@ impl<'a> Parser<'a> {
         if !self.is_bare_unknown(operand) {
             return Ok(false);
         }
-        let (node, own) = self.valueless_place(t)?;
-        let gates = tape.at(0).map_or(std::ptr::null_mut(), |cell| cell.gates);
-        // SAFETY: a cell's gates are null or a gate mint, and so are `own`.
-        let gates =
-            unsafe { crate::identities::gate::union(self.rt.store, self.types, gates, own) };
+        let node = self.gated_place(t)?;
         tape.remove(1);
         tape.place(node);
-        let cell = tape.at_mut(0).expect("placed above");
-        cell.hole = true;
-        cell.gates = gates;
+        tape.at_mut(0).expect("placed above").hole = true;
         Ok(true)
     }
 
     /// What `T ?` makes of the type `t`, the valueless form a declaration takes, whose type
     /// `hole::declared_type` reads: an empty node of a type whose nodes run (›`array` is a
     /// chooser‹ [[R223]]), else the valueless marker; with the gate mint of a gated `t`, which
-    /// the place's cell carries, `mut i32 ?` as `i32 ?` gated.
+    /// [`Self::gated_place`] gates the place with.
     pub(super) fn valueless_place(&mut self, t: DyadPtr) -> Result<(DyadPtr, DyadPtr), ParseError> {
         let types = self.types;
         // SAFETY: `t` is a type node from the store.

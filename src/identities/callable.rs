@@ -30,6 +30,8 @@ pub(crate) struct Callables {
     pub seed_extent: DyadPtr,
     /// A built-in operation's chooser, `ChooseFn`.
     pub seed_choose: DyadPtr,
+    /// What a parse's placed right side makes of a node, `PlaceFn`.
+    pub seed_place: DyadPtr,
 }
 
 /// Neither type has a spelling: callables are minted by registration loops and compilation,
@@ -46,6 +48,7 @@ pub(super) fn register(cx: &mut Cx) -> Callables {
     let seed_parse = mint_convention(cx, convention, b"seed-parse");
     let seed_extent = mint_convention(cx, convention, b"seed-extent");
     let seed_choose = mint_convention(cx, convention, b"seed-choose");
+    let seed_place = mint_convention(cx, convention, b"seed-place");
 
     Callables {
         callable,
@@ -55,6 +58,7 @@ pub(super) fn register(cx: &mut Cx) -> Callables {
         seed_parse,
         seed_extent,
         seed_choose,
+        seed_place,
     }
 }
 

@@ -12,6 +12,7 @@
 
 use super::callable::{self, Callables};
 use super::drop_model::{teardown_of_type, Teardown};
+use super::place::{At, Placed};
 use super::read::{carry_of, place_layout, Carry, Read};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
@@ -115,6 +116,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         op(cx, &["cell", "name", "scope", "v", "op"], run_named_write);
     let (block, block_leaf) = op(cx, &["place", "op", "output_type"], run_block);
     cx.lower.insert(block, lower_block);
+    cx.placings.insert(slot, place_field);
+    cx.placings.insert(load, place_field);
+    cx.placings.insert(named, place_named);
+    cx.placings.insert(field_type, super::place::run_now);
+    cx.placings.insert(field_gives, super::place::run_now);
     ThisIds {
         slot,
         slot_leaf,
@@ -861,6 +867,33 @@ pub(crate) unsafe fn held_field_addr(
         Field::Slot(slot, _) => slot as *mut u8,
         Field::Bytes(bytes, ..) => bytes,
     }))
+}
+
+/// Placed, a field of the parse's own node that its `parse` filled is the node the field holds
+/// (›A tape read checked against a number type reads as that number‹ [[R229]]), landed in the
+/// field's type inside the right side; any other field read needs the running call.
+///
+/// # Safety
+/// `read` must be a reduced node `is_field_read` accepts.
+unsafe fn place_field(rt: &mut Runtime, read: DyadPtr, at: At) -> Result<Placed, RunError> {
+    let types: *const Core = rt.types();
+    let types = &*types;
+    if !is_fill(types, read) {
+        return super::place::run_now(rt, read, at);
+    }
+    let held = held(rt, read)?;
+    Ok(Placed::New(match (at, load_type(types, read)) {
+        (At::Inside, Some(ty)) => super::place::land(rt, held, ty)?,
+        _ => held,
+    }))
+}
+
+/// Placed, a field looked up by its name when it runs is the node it holds.
+///
+/// # Safety
+/// `node` must be a reduced node [`is_named`] accepts.
+unsafe fn place_named(rt: &mut Runtime, node: DyadPtr, _at: At) -> Result<Placed, RunError> {
+    Ok(Placed::New(rt.run(node)? as DyadPtr))
 }
 
 /// The node the field a read reaches holds; an unfilled one is the checked error.

@@ -178,13 +178,18 @@ impl<'a> Parser<'a> {
             return Ok(Some(Boundary::Eof));
         };
         if !cell.constructed && !self.after_tight_read(tape) {
-            let field = self.names_own_field(&cell);
-            if field.is_err() {
-                self.cx.pos = start;
-            }
-            if field? {
-                // Left unbuilt, as a name is, so a value whose type has a parse wakes it: `items[1]`.
-                cell.dyad = self.this_field(cell.spelling(), start)?;
+            if self.reads_result_place(&cell) {
+                cell.dyad = self.result_place(start)?;
+            } else {
+                let field = self.names_own_field(&cell);
+                if field.is_err() {
+                    self.cx.pos = start;
+                }
+                if field? {
+                    // Left unbuilt, as a name is, so a value whose type has a parse wakes it:
+                    // `items[1]`.
+                    cell.dyad = self.this_field(cell.spelling(), start)?;
+                }
             }
         }
         let id = self.cell_identity(&cell);
@@ -742,13 +747,6 @@ impl<'a> Parser<'a> {
                 // its own value.
                 return Ok(());
             }
-            if !gates.is_null() {
-                // SAFETY: a cell's gates are null or a gate mint, and `gates` is one.
-                cell.gates = unsafe {
-                    crate::identities::gate::union(self.rt.store, self.types, cell.gates, gates)
-                };
-                tape.at_mut(0).expect("the cell stands at its mark").gates = cell.gates;
-            }
             // A Logos-written constructor placed its node, or an instance's
             // parse let it stand: the node's run is the function built for its field-type set.
             // SAFETY: a constructed cell's dyad is null or a node from the store.
@@ -763,6 +761,7 @@ impl<'a> Parser<'a> {
                 let folded =
                     unsafe { self.resolve_specialization(cell.dyad, cell.start, &spelling)? };
                 if let Some(lit) = folded {
+                    let lit = self.gate_built(gates, lit, false, cell.start)?;
                     tape.place(lit);
                     return Ok(());
                 }
@@ -790,12 +789,19 @@ impl<'a> Parser<'a> {
                 !ran && built && self.awake_type(cell.dyad) == Some(unsafe { dyad::ty(cell.dyad) });
             let gave = ran || matches!(outcome, Constructed::Gave);
             // A value a gate word read whole has had its turn.
-            let gated = !gave && !cell.gates.is_null();
+            // SAFETY: a constructed cell's dyad is null or a node from the store.
+            let gated = !gave
+                && (!gates.is_null()
+                    || unsafe { crate::identities::gate::is_value(self.types, cell.dyad) });
             if !same && !reparsed && !gated && !cell.bracket && self.wakes(cell.dyad, gave) {
                 tape.set_constructed(0, false);
             }
             self.note_made(cell.dyad);
             self.note_runs(&cell);
+            if !gates.is_null() {
+                let built = self.gate_built(gates, cell.dyad, cell.type_value, cell.start)?;
+                tape.at_mut(0).expect("the cell stands at its mark").dyad = built;
+            }
             return Ok(());
         }
         if !same {
@@ -813,12 +819,29 @@ impl<'a> Parser<'a> {
             self.cx.pos = cell.start;
             return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));
         }
-        // The identity stands as its own value: the use of its name, its binding. A type a gate
-        // word read, `mut i32` with nothing after it, stands with its gates.
+        // The identity stands as its own value: the use of its name, its binding; a gated type,
+        // `mut i32` with nothing after it, is that gated type.
         let value = self.stand_as_value(tape, id);
         tape.place(value);
-        tape.at_mut(0).expect("placed above").gates = cell.gates;
         Ok(())
+    }
+
+    /// `built`, the node a gated type's constructor built, with that type's `gates`: `mut pt(1, 2)`
+    /// gives the node `pt(1, 2)` built gated `mut`. Null gates, or no node, give `built` as it is.
+    fn gate_built(
+        &mut self,
+        gates: DyadPtr,
+        built: DyadPtr,
+        held: bool,
+        at: usize,
+    ) -> Result<DyadPtr, ParseError> {
+        if gates.is_null() || built.is_null() {
+            return Ok(built);
+        }
+        // SAFETY: `gates` is a gate mint, and `built` a reduced dyad a constructor placed.
+        let gated =
+            unsafe { crate::identities::gate::give(self.rt.store, self.types, gates, built, held) };
+        gated.map_err(|e| self.fail_at(at, e))
     }
 
     /// The bracket held at `k` of `tape`, built as the word beside it takes it: its lines are read
@@ -1548,21 +1571,9 @@ impl<'a> Parser<'a> {
         from: isize,
         to: isize,
     ) -> Result<(), ParseError> {
-        use crate::identities::read::{read_kind, Read};
         let cells: Vec<Cell> = (from..to).map_while(|k| tape.in_reach(k).copied()).collect();
         let taken = cells.len();
-        let mut built = self.construct_line(cells)?;
-        // A type its gate words read stands as the gated type, so a parse reading it is handed
-        // `mut i32`.
-        // SAFETY: a built cell holds a node from the store, and its gates are null or a gate mint.
-        unsafe {
-            let types = self.types;
-            let id = built.identity(types);
-            if !built.gates.is_null() && read_kind(types, id) == Read::Identity {
-                built.dyad = crate::identities::gate::gated(self.rt.store, types, built.gates, id);
-                built.gates = std::ptr::null_mut();
-            }
-        }
+        let built = self.construct_line(cells)?;
         for _ in 1..taken {
             tape.remove(from + 1);
         }

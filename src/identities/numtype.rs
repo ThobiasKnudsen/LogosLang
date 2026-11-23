@@ -145,9 +145,10 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
 }
 
 /// Juxtaposition: the value to the right (`Parser::type_operand`) converts into this type as
-/// any value lands in it; `?` makes this type's valueless place; a bracket is the written
-/// conversion `i32(x)`; a value the gate word `lossy` gated converts as a written conversion
-/// does, losing what this type cannot hold. With no value to the right the type stands as a
+/// any value lands in it, a value the gate word `lossy` gave losing what this type cannot hold;
+/// `?` makes this type's valueless place; a bracket is the written conversion `i32(x)`; a group
+/// converts member by member (›`and`/`or` on non-booleans build a group; every operator on a
+/// group applies to each member‹ [[R37]]). With no value to the right the type stands as a
 /// value, so `f(i32, 3)` passes the type.
 fn construct(
     p: &mut crate::parse::Parser,
@@ -161,18 +162,7 @@ fn construct(
     if p.takes_unknown(tape, &operand, id)? {
         return Ok(crate::parse::Constructed::Placed);
     }
-    // SAFETY: a cell's gates are null or a gate mint.
-    let lossy = unsafe { super::gate::words_of(operand.gates) }.contains(&types.lossy);
-    let node = if lossy {
-        let value = p.as_operand(operand)?;
-        tape.remove(1);
-        // SAFETY: `value` is the reduced dyad `lossy` gated; `id` is this numeric type's node.
-        unsafe {
-            let args = p.args_of(value);
-            p.build_conversion(id, &args, true)
-        }
-        .map_err(|e| p.fail_at(operand.start, e))?
-    } else if operand.is_bracket() {
+    let node = if operand.is_bracket() {
         // `i32(x)`: the bracket is this type's to read, a conversion, never `(`'s call.
         // SAFETY: a bracket cell holds its node from the store.
         let args = unsafe { p.args_of(operand.dyad) };
@@ -183,8 +173,14 @@ fn construct(
         let value = p.as_operand(operand)?;
         tape.remove(1);
         // SAFETY: `value` is a reduced dyad from the store; `id` is this numeric type's node.
-        unsafe { super::land(p.store(), types, value, id) }
-            .map_err(|e| p.fail_at(operand.start, e))?
+        unsafe {
+            if super::group::members(types, value).is_some() {
+                p.build_conversion(id, &[value], false)
+            } else {
+                super::land(p.store(), types, value, id)
+            }
+        }
+        .map_err(|e| p.fail_at(operand.start, e))?
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
@@ -393,6 +389,45 @@ impl CmpOp {
             5 => Ne,
             _ => unreachable!("invalid CmpOp tag {t}"),
         }
+    }
+}
+
+/// The logic words over two `bool`s, both sides run (›`and` and `or` run both sides; `if` is the
+/// one identity that skips‹ [[R156]]).
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub(crate) enum LogicOp {
+    And,
+    Or,
+    Xor,
+    Implies,
+}
+
+impl LogicOp {
+    pub(crate) fn from_tag(t: u8) -> LogicOp {
+        use LogicOp::*;
+        match t {
+            0 => And,
+            1 => Or,
+            2 => Xor,
+            3 => Implies,
+            _ => unreachable!("invalid LogicOp tag {t}"),
+        }
+    }
+
+    pub(crate) fn apply(self, a: bool, b: bool) -> bool {
+        match self {
+            LogicOp::And => a && b,
+            LogicOp::Or => a || b,
+            LogicOp::Xor => a != b,
+            LogicOp::Implies => !a || b,
+        }
+    }
+
+    /// Over two non-booleans, `and` and `or` build a group (›`and`/`or` on non-booleans build a
+    /// group; every operator on a group applies to each member‹ [[R37]]).
+    pub(crate) fn groups(self) -> bool {
+        matches!(self, LogicOp::And | LogicOp::Or)
     }
 }
 

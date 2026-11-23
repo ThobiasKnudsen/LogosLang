@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Placing: the node a write into a tape cell or a field keeps. When the write runs, its right
-//! side is walked once: a tape read becomes the line it names, a read of a field of the parse's
-//! own node the node that field holds, and what reads the running call's own frame runs, since
-//! that frame is gone when the placed node runs. Everything else stays the graph it was built as.
+//! side is walked once, each node placed as its type's record says, as its run is: a read of a
+//! line or field the parse holds becomes that node, and what needs the running call runs, since
+//! that call is gone when the placed node runs. A node whose type says nothing is placed operand
+//! by operand, and stays the graph it was built as where none of them changes.
 
 use super::callable::{self, Callables};
 use super::read::{output_type, place_layout, Read};
@@ -55,17 +56,21 @@ pub(crate) unsafe fn build(
     Ok(store.alloc_words(types.place.place, &[value, types.place.place_leaf, output]))
 }
 
+/// What a parse's placed right side makes of a node of one type, held by the type's record
+/// (›A tape read checked against a number type reads as that number‹ [[R229]]).
+pub(crate) type PlaceFn = unsafe fn(&mut Runtime, DyadPtr, At) -> Result<Placed, RunError>;
+
 /// Where a node stands in the right side: the whole of it, or an operand of a node over it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum At {
+pub(crate) enum At {
     Whole,
     Inside,
 }
 
-enum Placed {
+pub(crate) enum Placed {
     Kept,
     New(DyadPtr),
-    /// A read of the running call's frame whose value no node holds, so the node over it runs.
+    /// It needs the running call and gives nothing a node can hold: the node over it runs.
     Frame,
 }
 
@@ -89,54 +94,59 @@ unsafe fn place(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunEr
     if node.is_null() {
         return Ok(Placed::Kept);
     }
+    match meta::placing_of(dyad::ty(node)) {
+        Some(placing) => placing(rt, node, at),
+        None => {
+            let operands = operands(rt, node, at)?;
+            finish(rt, node, at, operands)
+        }
+    }
+}
+
+/// A node's operands, each placed.
+pub(crate) enum Operands {
+    /// None changes.
+    Same,
+    /// One needs the running call, so the node ran: what stands for it.
+    Ran(Placed),
+    /// The node's words, the changed ones placed anew.
+    New(Words),
+}
+
+pub(crate) struct Words {
+    layout: Layout,
+    words: Vec<DyadPtr>,
+}
+
+impl Words {
+    /// The first operand, placed.
+    pub(crate) fn first(&self) -> DyadPtr {
+        self.words[0]
+    }
+}
+
+/// # Safety
+/// As [`place`].
+pub(crate) unsafe fn operands(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    at: At,
+) -> Result<Operands, RunError> {
     let types: *const Core = rt.types();
     let types = &*types;
-    if let Some(line) = super::tape::named_line(rt, node) {
-        let line = line?;
-        return Ok(Placed::New(match (at, super::tape::checked_type(types, node)) {
-            (At::Inside, Some(ty)) => land(rt, line, ty)?,
-            _ => line,
-        }));
-    }
-    // A `.type` read of a line the parse holds reads its tape or its node, and gives a type.
-    if super::tape::is_line_type_read(types, node) {
-        return run_now(rt, node, at);
-    }
-    if super::this::is_field_read(types, node) {
-        if !super::this::is_fill(types, node) {
-            return run_now(rt, node, at);
-        }
-        let held = super::this::held(rt, node)?;
-        return Ok(Placed::New(match (at, super::this::load_type(types, node)) {
-            (At::Inside, Some(ty)) => land(rt, held, ty)?,
-            _ => held,
-        }));
-    }
-    if super::this::is_named(types, node) {
-        return Ok(Placed::New(rt.run(node)? as DyadPtr));
-    }
-    // A `fn` value's body runs in a frame of its own, and a bracket's lines where it is run.
-    if dyad::ty(node) == types.fn_type || super::tape::bracket_kind(types, node).is_some() {
-        return Ok(Placed::Kept);
-    }
-    match types.frame_of(node) {
-        Some((crate::binding::Frame::Call(_), _)) => return run_now(rt, node, at),
-        Some(_) => return Ok(Placed::Kept),
-        None => {}
-    }
     let (layout, words) = match describe(types, node) {
         Shape::Call { args, .. } => (Layout::Call, args),
         Shape::Tuple { slots } => (Layout::Tuple, slots.iter().map(|s| s.node).collect()),
         Shape::List { head, tail } => {
             (Layout::List, head.iter().map(|s| s.node).chain(tail).collect())
         }
-        _ => return Ok(Placed::Kept),
+        _ => return Ok(Operands::Same),
     };
     let mut placed: Option<Vec<DyadPtr>> = None;
     for (i, &word) in words.iter().enumerate() {
         let new = match place(rt, word, At::Inside)? {
             Placed::Kept => continue,
-            Placed::Frame => return run_now(rt, node, at),
+            Placed::Frame => return Ok(Operands::Ran(run_now(rt, node, at)?)),
             // A bracket handed to a call has its lines run where the call runs.
             Placed::New(new)
                 if layout == Layout::Call && super::tape::bracket_kind(types, new).is_some() =>
@@ -147,17 +157,30 @@ unsafe fn place(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunEr
         };
         placed.get_or_insert_with(|| words.clone())[i] = new;
     }
-    let Some(words) = placed else {
-        return Ok(Placed::Kept);
+    Ok(match placed {
+        Some(words) => Operands::New(Words { layout, words }),
+        None => Operands::Same,
+    })
+}
+
+/// The node [`operands`] leaves: itself, what stands for it where it ran, or a new node of its
+/// type over the placed words.
+///
+/// # Safety
+/// As [`place`]; `operands` what [`operands`] gave of `node`.
+pub(crate) unsafe fn finish(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    at: At,
+    operands: Operands,
+) -> Result<Placed, RunError> {
+    let Words { layout, words } = match operands {
+        Operands::Same => return Ok(Placed::Kept),
+        Operands::Ran(placed) => return Ok(placed),
+        Operands::New(words) => words,
     };
-    // A conversion into the type its placed operand already gives converts nothing: the node is
-    // what the written conversion makes (›A tape read checked against a number type reads as that
-    // number‹ [[R229]]).
-    if super::mint::origin(dyad::ty(node)) == types.convert
-        && output_type(types, words[0]) == output_type(types, node)
-    {
-        return Ok(Placed::New(words[0]));
-    }
+    let types: *const Core = rt.types();
+    let types = &*types;
     let copy = rebuild(rt.store(), node, layout, &words);
     // ›Inside a body, a `-> type` call may take an argument known only at run‹ [[R296]].
     if layout == Layout::Call
@@ -169,20 +192,45 @@ unsafe fn place(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunEr
     Ok(Placed::New(copy))
 }
 
+/// A node whose lines run where it runs, a `fn` value's in a frame of its own and a bracket's
+/// where the call it is handed to runs, is kept whole.
+///
+/// # Safety
+/// As [`place`].
+pub(crate) unsafe fn whole(_rt: &mut Runtime, _node: DyadPtr, _at: At) -> Result<Placed, RunError> {
+    Ok(Placed::Kept)
+}
+
+/// A name runs where its bytes lie in the running call's frame, and is kept where they outlive it.
+///
+/// # Safety
+/// As [`place`].
+pub(crate) unsafe fn by_frame(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunError> {
+    match rt.types().frame_of(node) {
+        Some((crate::binding::Frame::Call(_), _)) => run_now(rt, node, at),
+        _ => Ok(Placed::Kept),
+    }
+}
+
 /// # Safety
 /// `node` must be a dyad from the store; `ty` a type node.
-unsafe fn land(rt: &mut Runtime, node: DyadPtr, ty: DyadPtr) -> Result<DyadPtr, RunError> {
+pub(crate) unsafe fn land(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    ty: DyadPtr,
+) -> Result<DyadPtr, RunError> {
     let types: *const Core = rt.types();
     super::land(rt.store(), &*types, node, ty).map_err(|e| RunError::Parse(Box::new(e)))
 }
 
-/// The node runs now, and a node of its value stands in: a number or rational as a constant, a
-/// type as itself, and a node as itself, or inside the right side as
-/// [`super::tape::node_operand`] hands it on. A value of any other type is [`Placed::Frame`].
+/// The placing of a node that needs the running call: it runs now, and a node of its value
+/// stands in: a number or rational as a constant, a type as itself, and a node as itself, or
+/// inside the right side as [`super::tape::node_operand`] hands it on. A value of any other type,
+/// and a node that gives none, is [`Placed::Frame`], and never runs here.
 ///
 /// # Safety
 /// As [`place`].
-unsafe fn run_now(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunError> {
+pub(crate) unsafe fn run_now(rt: &mut Runtime, node: DyadPtr, at: At) -> Result<Placed, RunError> {
     let types: *const Core = rt.types();
     let types = &*types;
     let ty = output_type(types, node);

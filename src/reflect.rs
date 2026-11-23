@@ -325,6 +325,8 @@ mod tests {
             ("!=", prec::COMPARE, true),
             ("and", prec::AND, true),
             ("or", prec::OR, true),
+            ("xor", prec::OR, true),
+            ("implies", prec::IMPLIES, true),
             ("=", prec::DECLARE, true),
             ("42", prec::LITERAL, true),
             ("«t»", prec::LITERAL, true),
@@ -511,6 +513,8 @@ mod tests {
                 (core.ge, 2),
                 (core.eq, 2),
                 (core.ne, 2),
+                (core.and_, 2),
+                (core.or_, 2),
                 (core.assign, 2),
                 (core.amp_, 2),
                 (core.addr_, 2),
@@ -524,8 +528,6 @@ mod tests {
                 assert_eq!((meta::op_slot_of(id), meta::output_slot_of(id)), (None, None));
             }
             for (id, kind, arity) in [
-                (core.and_, meta::TUPLE_TAG, 4),
-                (core.or_, meta::TUPLE_TAG, 4),
                 (core.deref_, meta::TUPLE_TAG, 5),
                 (core.not_, meta::TUPLE_TAG, 3),
                 (core.construct_, meta::LIST_TAG, 4),

@@ -640,7 +640,8 @@ impl<'a> Parser<'a> {
         let (mut start, mut cut, mut kept, mut gates) = (from, cut, kept, std::ptr::null_mut());
         let value = !tape.segment.line;
         if value {
-            // The gate words that open a value gate the place it fills, where it is written.
+            // The gate words that open a value are not held: they gate the held value where it is
+            // written, as a gate word gives what it reads.
             self.cx.pos = from;
             let (words, after) = self.gates_ahead();
             for gate in words {
@@ -653,8 +654,8 @@ impl<'a> Parser<'a> {
             (start, cut) = (after, cut.max(after));
         }
         // What was lexed and not built is built when the line runs: a name in it is read here as
-        // a use of it, and it holds no word the run cannot check where it is written (stand-in
-        // for #281).
+        // a use of it, and it holds no word the run cannot check where it is written
+        // (stand-in for #281).
         for cell in kept.iter().filter(|c| !c.constructed) {
             if cell.is_fresh(types) {
                 self.as_operand(*cell)?;
@@ -666,10 +667,15 @@ impl<'a> Parser<'a> {
         let lays_out = value && hole;
         let mut held = self.hold_text(start, end, cut, kept, place, lays_out)?;
         if value {
-            // SAFETY: `held` holds the line `hold_text` just built, which has not run.
-            unsafe { crate::identities::waiting::set_into(types, held.dyad, types.dyad_) };
+            // SAFETY: `held` holds the line `hold_text` just built, which has not run, and
+            // `gates` is null or a gate mint.
+            held.dyad = unsafe {
+                crate::identities::waiting::set_into(types, held.dyad, types.dyad_);
+                crate::identities::gate::give(self.rt.store, types, gates, held.dyad, false)
+            }
+            .map_err(|e| self.fail_at(from, e))?;
         }
-        (held.start, held.len, held.gates) = (from, end - from, gates);
+        (held.start, held.len) = (from, end - from);
         tape.hold_whole(held);
         tape.segment.held_to = Some(boundary);
         self.cx.pos = boundary;
@@ -878,6 +884,29 @@ impl<'a> Parser<'a> {
         for mut cell in kept.cells {
             if !cell.constructed {
                 self.read_where_lexed(tape, &mut cell)?;
+            } else if let Some((name, gates)) =
+                // SAFETY: a constructed cell holds a reduced dyad from the store.
+                unsafe { crate::identities::gate::value_parts(self.types, cell.dyad) }
+            {
+                // A gate word's value is the value it read, read here, then gated again (›A gate
+                // word reads the nearest value to its right and gives it with its type gated‹
+                // [[R102]]).
+                let mut read = cell;
+                (read.dyad, read.constructed) = (name, false);
+                self.read_where_lexed(tape, &mut read)?;
+                if read.dyad != name {
+                    // SAFETY: `gates` is a gate mint, and `read.dyad` a reduced dyad.
+                    cell.dyad = unsafe {
+                        crate::identities::gate::give(
+                            self.rt.store,
+                            self.types,
+                            gates,
+                            read.dyad,
+                            false,
+                        )
+                    }
+                    .map_err(|e| self.fail_at(cell.start, e))?;
+                }
             }
             tape.push(cell);
         }
@@ -942,7 +971,7 @@ impl<'a> Parser<'a> {
         let mut held = self.hold_text(start, end, end, kept, None, true)?;
         // SAFETY: `held` holds the line `hold_text` just built, which has not run.
         unsafe { crate::identities::waiting::set_into(types, held.dyad, types.dyad_) };
-        (held.start, held.len, held.gates) = (start, end - start, cell.gates);
+        (held.start, held.len) = (start, end - start);
         self.cx.pos = at;
         Ok(Some(held))
     }
@@ -1000,6 +1029,8 @@ impl<'a> Parser<'a> {
                 outer: Vec::new(),
                 open_below: 0,
                 returns: Vec::new(),
+                result: std::ptr::null_mut(),
+                slot_body: false,
             })
             .collect();
         let cx = Context {

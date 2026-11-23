@@ -77,11 +77,17 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         }
         let at = tape.at(0).map_or(0, |word| word.start);
         let count = p.take_right(tape)?;
+        let types = p.types();
         let (gates, init) = if p.marker_right(tape, of_) {
             tape.remove(1);
             p.build_right_side(tape)?;
-            let gates = tape.at(1).map_or(std::ptr::null_mut(), |c| c.gates);
-            (gates, Some(p.take_right(tape)?))
+            let init = p.take_right(tape)?;
+            // The gates a gate word wrote on the value gate the type the pointer points at.
+            // SAFETY: `init` is a reduced dyad just parsed.
+            match unsafe { super::gate::value_parts(types, init) } {
+                Some((init, gates)) => (gates, Some(init)),
+                None => (std::ptr::null_mut(), Some(init)),
+            }
         } else {
             (std::ptr::null_mut(), None)
         };
@@ -89,7 +95,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         if let Some(init) = init {
             p.take(init);
         }
-        let types = p.types();
         let node = build_alloc(p.store(), types, count, init, gates)?;
         // `alloc` gives `@T!` (›There is no bare `error «…»`; `abort «…»` stops the program;
         // `alloc` returns `@T!`‹ [[R145]]).
@@ -409,8 +414,7 @@ pub(super) fn build_alloc(
 }
 
 /// What `alloc`'s mint over the field types `key`, the count's and the pointee, gives back and
-/// runs: the owning `@pointee`, made with the mint, so its nodes give one type;
-/// stand-in for #462.
+/// runs: the owning `@pointee`; stand-in for #462.
 ///
 /// # Safety
 /// `key` must hold type nodes from the store.
@@ -422,9 +426,7 @@ unsafe fn choose_alloc(
     let &[_, pointee] = key else {
         return None;
     };
-    let teardown = types.ops.teardown_;
-    let output_type =
-        super::pointer::make_owning_pointer_type(store, types.type_, pointee, teardown);
+    let output_type = super::pointer::make_owning_pointer_type(store, types, pointee);
     Some(super::mint::Made { output_type, op: types.ops.alloc_ })
 }
 
@@ -548,12 +550,7 @@ unsafe fn owning_pointer(
     if meta::kind_of(ty) != Some(numtype::ADDR_TAG) || !meta::destructor_of(ty).is_null() {
         return Err(ParseError::OwnNeedsPointer);
     }
-    Ok(super::pointer::make_owning_pointer_type(
-        store,
-        types.type_,
-        numtype::gated_pointee_of(ty),
-        types.ops.teardown_,
-    ))
+    Ok(super::pointer::make_owning_pointer_type(store, types, numtype::gated_pointee_of(ty)))
 }
 
 /// The result type `-> own @T` gives its calls, the owning `@T` (›Three fail-closed ownership
@@ -3021,6 +3018,34 @@ mod tests {
                 "an owning pointer's logos carries the destructor"
             );
         }
+    }
+
+    #[test]
+    fn an_owning_pointer_type_is_one_type_per_pointee() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let i32_ = core.numtypes[numtype::NumType::I32 as usize];
+        let i64_ = core.numtypes[numtype::NumType::I64 as usize];
+        use crate::identities::pointer::{make_owning_pointer_type, make_pointer_type};
+        // SAFETY: `i32_` and `i64_` are type nodes `Core::build` minted.
+        unsafe {
+            let own = make_owning_pointer_type(&mut store, &core, i32_);
+            let again = make_owning_pointer_type(&mut store, &core, i32_);
+            let wide = make_owning_pointer_type(&mut store, &core, i64_);
+            let borrow = make_pointer_type(&mut store, &core, i32_);
+            assert_eq!(own, again, "two `own @i32` are one type");
+            assert_ne!(own, wide, "`own @i64` is another");
+            assert_ne!(own, borrow, "`@i32` is another");
+        }
+    }
+
+    #[test]
+    fn a_function_hands_on_another_s_owning_result_in_a_union() {
+        let fs = "f := fn () -> (own @i32)! ( alloc 1 of i32 5 ),\n\
+                  g := fn () -> (own @i32)! ( f() ),\n";
+        assert_eq!(run(&format!("{fs}q := try g(),\nq@")), (5, 0));
+        assert_eq!(free_log(), vec![5], "freed once, at `q`'s end");
     }
 
     #[test]
