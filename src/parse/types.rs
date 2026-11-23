@@ -539,8 +539,7 @@ impl<'a> Parser<'a> {
 
     /// `T!`, a value of `T` or an error: `union ( value := T, err := error )`, that very mint,
     /// with no type of its own (›Target: errors are values (`T!`), handled by `if`, passed on by
-    /// `try`…‹ [[R140]]). The members are declared as
-    /// the written union's lines declare theirs.
+    /// `try`…‹ [[R140]]).
     pub(crate) fn construct_fallible(
         &mut self,
         tape: &mut ParsingTape,
@@ -565,21 +564,10 @@ impl<'a> Parser<'a> {
         let depth = self.cx.scopes.depth();
         let scope = self.open_scope();
         let (mut members, mut bindings) = (Vec::new(), Vec::new());
-        let declared = [("value", value), ("err", self.types.error.value)]
-            .into_iter()
-            .try_for_each(|(name, ty)| {
-                let member = crate::identities::hole::build(
-                    self.rt.store,
-                    self.types.unknown,
-                    ty,
-                    std::ptr::null_mut(),
-                );
-                let binding = self.mint_binding(member, scope, name.as_bytes());
-                self.enter_binding_in(scope, name, binding, at)?;
-                members.push(member);
-                bindings.push(binding);
-                Ok(())
-            });
+        let declared =
+            [("value", value), ("err", self.types.error.value)].into_iter().try_for_each(
+                |(name, ty)| self.declare_own_line(name, ty, at, &mut members, &mut bindings),
+            );
         let body = self.open_scope();
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
@@ -590,6 +578,29 @@ impl<'a> Parser<'a> {
             self.check_members(&members, &bindings).map_err(|e| self.fail_at(at, e))?;
             self.mint_union(scope, body, &members, &bindings)
         }
+    }
+
+    /// `name := ty`, a line a type's own parse writes and no program text did, declared in the
+    /// open scope, the type's, against the type's own lines alone and never the names where the
+    /// type is written (›A union holds one of its members at a time: `union ( a := T, b := U )`‹
+    /// [[R379]]), and pushed onto `lines` and `bindings`; an error is placed at `at`.
+    fn declare_own_line(
+        &mut self,
+        name: &str,
+        ty: DyadPtr,
+        at: usize,
+        lines: &mut Vec<DyadPtr>,
+        bindings: &mut Vec<DyadPtr>,
+    ) -> Result<(), ParseError> {
+        let line = crate::identities::hole::build(
+            self.rt.store,
+            self.types.unknown,
+            ty,
+            std::ptr::null_mut(),
+        );
+        bindings.push(self.declare_field_name(name, line, at)?);
+        lines.push(line);
+        Ok(())
     }
 
     /// The union of `members`, declared in `scope` by `bindings` with `body` below them: the mint
