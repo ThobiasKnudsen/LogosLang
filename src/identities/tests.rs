@@ -937,17 +937,17 @@ fn a_bare_for_body_reads_as_a_bracketed_one() {
 fn move_is_built_after_if_and_return() {
     // A bare arm starts `move` as its own, so the else arm finds the name alive.
     assert_eq!(
-        run_script("a := alloc 1 of i32 7, c := mut i32 0, d := mut i32 0, if c == 1 move a else (d = a@), d"),
+        run_script("a := try alloc 1 of i32 7, c := mut i32 0, d := mut i32 0, if c == 1 move a else (d = a@), d"),
         7
     );
     assert_eq!(
-        run_script("a := alloc 1 of i32 7, c := mut i32 1, b := if c == 1 move a else (alloc 1 of i32 8), b@"),
+        run_script("a := try alloc 1 of i32 7, c := mut i32 1, b := if c == 1 move a else (try alloc 1 of i32 8), b@"),
         7
     );
     // `return` finds `move` unbuilt to its right and starts it.
     assert_eq!(
         run_script(
-            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, return move p ), q := mk(), q@"
+            "mk := fn () -> (own @i32)! ( p := try alloc 1 of i32 7, return move p ), q := try mk(), q@"
         ),
         7
     );
@@ -1260,7 +1260,7 @@ fn a_write_through_a_pointer_or_a_call_place_is_a_node_of_the_mint_a_name_writes
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     let src =
-        "x := mut i32 0, a := alloc 2 of mut i32 3, get := fn (p := @ mut i32 ?) -> i32 ( p@ ), \
+        "x := mut i32 0, a := try alloc 2 of mut i32 3, get := fn (p := @ mut i32 ?) -> i32 ( p@ ), \
                x = 9, a@ = 4, (a + 1)@ = 5, get(a) = 6";
     let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
     let root = p.parse_sequence().unwrap();
@@ -1572,13 +1572,15 @@ fn every_arm_of_an_if_whose_value_is_used_gives_one_type() {
         "x := if c (1) else (print «a», if c (2) else (3))",
         "x := if c (y := i32 1, y) else (i32 2)",
         "if c (return 1) else (y := mut i32 2, y = 3)",
-        // Each `alloc` mints its own owning `@i32`, one type with the other.
-        "x := if c (alloc 1 of i32 5) else (alloc 1 of i32 6)",
         // A `.` reads the `if` node and uses no arm's value.
         "x := (if c (i32 1) else (i64 2)).type == if",
     ] {
         assert_eq!(parses(&f(body)), Ok(()), "{body}");
     }
+    // Each `alloc` mints its own owning `@i32`, one type with the other.
+    let made = "fn (c := bool ?) -> i32! \
+                ( x := if c (try alloc 1 of i32 5) else (try alloc 1 of i32 6), i32 0 )";
+    assert_eq!(parses(made), Ok(()), "{made}");
 }
 
 #[test]
@@ -2445,7 +2447,10 @@ fn a_result_type_is_written_as_a_type_place_is() {
             "u = {written}"
         );
     }
-    assert_eq!(parse_err("fn () -> own @i32 ? ( alloc 1 of i32 7 )"), ParseError::BadDeclaredType);
+    assert_eq!(
+        parse_err("fn () -> own @i32 ? ( try alloc 1 of i32 7 )"),
+        ParseError::BadDeclaredType
+    );
     assert_eq!(
         parse_err_after(&["pt := type ( a := i32 ?, b := i32 ? )"], "fn () -> pt ? ( pt(1, 2) )"),
         ParseError::BadDeclaredType
@@ -2473,7 +2478,10 @@ fn a_result_type_is_written_as_a_type_place_is() {
             );
         }
     }
-    assert_eq!(run_script("mk := fn () -> own @i32 ( alloc 1 of i32 7 ), m := mk(), m@ + 1"), 8);
+    assert_eq!(
+        run_script("mk := fn () -> (own @i32)! ( try alloc 1 of i32 7 ), m := try mk(), m@ + 1"),
+        8
+    );
 }
 
 #[test]
@@ -2506,7 +2514,7 @@ fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
     // A value that is no node lands in a new one, as `=` writes it into a `dyad ?` name; one with
     // an end of its own moves into it.
     for src in [
-        "fn () -> dyad ( alloc 1 of i32 5 )",
+        "fn () -> dyad! ( try alloc 1 of i32 5 )",
         "fn () -> dyad ( i32 5 )",
         "fn () -> dyad ( 5 )",
         "fn (q := dyad ?) -> dyad ( q )",
@@ -2516,7 +2524,7 @@ fn a_dyad_returning_body_hands_back_a_node_its_caller_holds() {
         assert_eq!(parses(src), Ok(()), "{src}");
     }
     assert_eq!(run_script("f := fn () -> dyad ( i32 5 ), x := f(), x.type == i32"), 1);
-    assert_eq!(run_script("f := fn () -> dyad ( alloc 1 of i32 5 ), x := f(), x@"), 5);
+    assert_eq!(run_script("f := fn () -> dyad! ( try alloc 1 of i32 5 ), x := try f(), x@"), 5);
     assert_eq!(run_script("f := fn () -> dyad ( i32 ), g := f(), x := g 5, x"), 5);
     assert_eq!(
         run_script("f := fn () -> dyad ( d := mut dyad ?, d = i64, d ),\nt := f(), x := t 9, x"),
@@ -2687,7 +2695,7 @@ fn address_of_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers() {
             assert_eq!(run_script(&format!("{f}, {compile}{args}")), expect, "{f} / {compile}");
         }
     }
-    assert_eq!(run_script("a := alloc 1 of mut i32 3, p := &(a@), p@ = 7, a@"), 7);
+    assert_eq!(run_script("a := try alloc 1 of mut i32 3, p := &(a@), p@ = 7, a@"), 7);
     // `&` keeps `mut` only where `=` into the place is granted: a `mut` field of a value read
     // through an `@point`, of a name that is not `mut`, of a pointer at an `i32`.
     for src in [
@@ -2724,7 +2732,7 @@ fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers(
     // The base is checked before the write, as a read through it checks it.
     for compile in ["", "f.compile(), "] {
         let src = format!(
-            "f := fn (q := @@ mut i32 ?) -> i32 ( q@@ = 7, 1 ), {compile}p := alloc 1 of @ mut i32 ?, f(p)"
+            "f := fn (q := @@ mut i32 ?) -> i32 ( q@@ = 7, 1 ), {compile}p := try alloc 1 of @ mut i32 ?, f(p)"
         );
         let got = run_script_result(&src);
         assert!(matches!(got, Err(crate::run::RunError::NullPointer)), "{src}: {got:?}");
@@ -2733,7 +2741,7 @@ fn a_write_through_a_cell_a_field_through_a_pointer_and_a_call_place_both_tiers(
 
 #[test]
 fn a_cell_that_owns_takes_only_a_value_just_made_or_moved() {
-    let made = "q := alloc 1 of mut own @i32 ?, a := alloc 1 of i32 5";
+    let made = "q := try alloc 1 of mut own @i32 ?, a := try alloc 1 of i32 5";
     assert_eq!(parse_err(&format!("( {made}, q@ = a )")), ParseError::NonOwningIntoOwning);
     assert_eq!(run_script(&format!("{made}, q@ = move a, q@@")), 5);
 }
@@ -2784,37 +2792,40 @@ fn address_of_a_value_nothing_names_holds_it_both_tiers() {
 fn a_pointer_steps_by_whole_cells_both_tiers() {
     // Cell k of the span `alloc n of T v` made is `(p + k)@`, for any cell width.
     assert_eq!(
-        run_script("a := alloc 3 of mut i32 7, b := a + 1, b@ = 9, (a + 2)@ = 11, a@ + (a + 1)@ * 10 + (b + 1)@ * 100 + (b - 1)@ * 1000"),
+        run_script("a := try alloc 3 of mut i32 7, b := a + 1, b@ = 9, (a + 2)@ = 11, a@ + (a + 1)@ * 10 + (b + 1)@ * 100 + (b - 1)@ * 1000"),
         8197
     );
     assert_eq!(
-        run_script("a := alloc 4 of mut i64 3, k := i32 3, (a + k)@ = 40, i := u8 1, (a + i)@ = 5, (a + 3)@ + (a + 1)@ + (a + 2)@"),
+        run_script("a := try alloc 4 of mut i64 3, k := i32 3, (a + k)@ = 40, i := u8 1, (a + i)@ = 5, (a + 3)@ + (a + 1)@ + (a + 2)@"),
         48
     );
     assert_eq!(
-        run_script("holder := type (r := pub @ mut i32 ?), a := alloc 3 of mut i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
+        run_script("holder := type (r := pub @ mut i32 ?), a := try alloc 3 of mut i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
         12
     );
     let walk = "f := fn (p := @ mut i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), s := mut i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
-    assert_eq!(run_script(&format!("{walk}, a := alloc 4 of mut i32 0, f(a, 4)")), 60);
-    assert_eq!(run_script(&format!("{walk}, f.compile(), a := alloc 4 of mut i32 0, f(a, 4)")), 60);
+    assert_eq!(run_script(&format!("{walk}, a := try alloc 4 of mut i32 0, f(a, 4)")), 60);
+    assert_eq!(
+        run_script(&format!("{walk}, f.compile(), a := try alloc 4 of mut i32 0, f(a, 4)")),
+        60
+    );
     // A step of any integer type counts cells: an unsigned one too.
     let step =
         "f := fn (p := @ mut i32 ?, k := u64 ?, j := u8 ?) -> i32 ( (p + k)@ = 9, (p + 2 - j)@ )";
-    assert_eq!(run_script(&format!("{step}, a := alloc 3 of mut i32 7, f(a, 1, 1)")), 9);
+    assert_eq!(run_script(&format!("{step}, a := try alloc 3 of mut i32 7, f(a, 1, 1)")), 9);
     assert_eq!(
-        run_script(&format!("{step}, f.compile(), a := alloc 3 of mut i32 7, f(a, 1, 1)")),
+        run_script(&format!("{step}, f.compile(), a := try alloc 3 of mut i32 7, f(a, 1, 1)")),
         9
     );
     assert_eq!(
-        run_script("a := alloc 3 of mut i32 7, (a + (u64 1))@ = 9, b := a + 2, (b - (u8 1))@"),
+        run_script("a := try alloc 3 of mut i32 7, (a + (u64 1))@ = 9, b := a + 2, (b - (u8 1))@"),
         9
     );
 }
 
 #[test]
 fn a_pointer_steps_only_by_an_integer_on_its_right() {
-    let defs = &["p := alloc 1 of i32 0", "q := alloc 1 of i32 0"];
+    let defs = &["p := try alloc 1 of i32 0", "q := try alloc 1 of i32 0"];
     assert_eq!(parse_err_after(defs, "p * 2"), ParseError::UnsupportedOperands);
     assert_eq!(parse_err_after(defs, "p + q"), ParseError::UnsupportedOperands);
     assert_eq!(parse_err_after(defs, "1 + p"), no_sum());
@@ -3437,13 +3448,13 @@ fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
 #[test]
 fn an_early_return_hands_on_a_held_or_made_value_only_under_own() {
     for body in [
-        "p := alloc 1 of i32 7, if (n > 2) (return p), &n",
-        "( p := alloc 1 of i32 7, if (n > 2) (return p) ), &n",
-        "if (n > 2) (return alloc 1 of i32 7), &n",
+        "p := try alloc 1 of i32 7, if (n > 2) (return p), &n",
+        "( p := try alloc 1 of i32 7, if (n > 2) (return p) ), &n",
+        "if (n > 2) (return try alloc 1 of i32 7), &n",
     ] {
         assert_eq!(
-            parse_err(&format!("fn (n := i32 ?) -> @i32 ( {body} )")),
-            ParseError::HandsOnMade("@i32".into()),
+            parse_err(&format!("fn (n := i32 ?) -> @i32! ( {body} )")),
+            ParseError::HandsOnMade("(own @i32)!".into()),
             "{body}"
         );
     }
@@ -4579,7 +4590,7 @@ fn a_number_type_takes_the_name_to_its_right() {
     diff_typed_call("fn (n := i32 ?) -> f64 ( f64 n )", "f(4)", 4.0f64.to_bits() as i64);
     diff_typed_call("fn (n := i32 ?) -> i64 ( i64 n + i64 1 )", "f(4)", 5);
     diff_typed_call("fn (n := f64 ?) -> i32 ( i32 lossy n )", "f(2.5)", 2);
-    assert_eq!(run_script("m := i32 3, x := alloc 1 of i32 m, x@"), 3);
+    assert_eq!(run_script("m := i32 3, x := try alloc 1 of i32 m, x@"), 3);
     assert_eq!(run_script("m := i32 3, y := mut i32 0, y = i32 m, y"), 3);
     assert_eq!(run_script("r := 3, i32 r"), 3);
     assert_eq!(run_script("r := rational_number 1/3, i32 lossy r"), 0);
@@ -4809,7 +4820,7 @@ fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_plac
         "n := mut u64 0, n = tape[1].dyads[0], tape[0].v = n",
         "n := mut u64 ?, n = tape[1].dyads[0], tape[0].v = n",
         "r := mut pt ?, r.b = 0, r.a = tape[1].dyads[0], tape[0].v = r.a",
-        "p := alloc 1 of mut u64 0, p@ = tape[1].dyads[0], tape[0].v = p@",
+        "p := try alloc 1 of mut u64 0, p@ = tape[1].dyads[0], tape[0].v = p@",
         "n := mut u64 0, p := &n, p@ = tape[1].dyads[0], tape[0].v = n",
         "id := fn (k := u64 ?) -> u64 ( k ), n := mut u64 0, n = id(tape[1].dyads[0]), \
          tape[0].v = n",
@@ -4845,7 +4856,8 @@ fn a_tape_line_no_check_narrowed_is_checked_when_the_parse_runs_however_its_plac
 #[test]
 fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     // A `bool` takes `true` and `false`, and no number lies inside it.
-    for (place, read) in [("b := mut bool ?, b", "b"), ("p := alloc 1 of mut bool ?, p@", "p@")] {
+    for (place, read) in [("b := mut bool ?, b", "b"), ("p := try alloc 1 of mut bool ?, p@", "p@")]
+    {
         let q = tape_line_q(&format!(
             "{place} = tape[1].dyads[0], if {read} ( tape[0].v = 1 ) else ( tape[0].v = 2 )"
         ));
@@ -4876,7 +4888,8 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     // A `rational_number` place and a pointer's are decided when the parse runs, as a number's is,
     // by name as through a pointer: a constant of the type is taken as it is, and a name is no
     // constant.
-    for place in ["r := mut rational_number ?, r", "p := alloc 1 of mut rational_number 0, p@"] {
+    for place in ["r := mut rational_number ?, r", "p := try alloc 1 of mut rational_number 0, p@"]
+    {
         let q = tape_line_q(&format!("{place} = tape[1].dyads[0], tape[0].v = 1"));
         assert_eq!(run_script(&format!("{q}, x := q [1/2], x.v")), 1, "{place}");
         let src = format!("{q}, m := u64 3, x := q [m]");
@@ -4886,7 +4899,7 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
             "{place}: q [m]"
         );
     }
-    let q = tape_line_q("p := alloc 1 of mut @u64 ?, p@ = tape[1].dyads[0], tape[0].v = 1");
+    let q = tape_line_q("p := try alloc 1 of mut @u64 ?, p@ = tape[1].dyads[0], tape[0].v = 1");
     assert!(
         matches!(script_parse_err(&format!("{q}, n := u64 3, x := q [&n]")),
             ParseError::ConstructorFailed(e)
@@ -4894,7 +4907,7 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
         "p@ of @u64"
     );
     // A `dyad` place holds the line itself, which the parse body's line refuses where it is read.
-    let q = tape_line_q("p := alloc 1 of mut dyad ?, p@ = tape[1].dyads[0], tape[0].v = 1");
+    let q = tape_line_q("p := try alloc 1 of mut dyad ?, p@ = tape[1].dyads[0], tape[0].v = 1");
     assert_eq!(script_parse_err(&format!("{q}, 7")), ParseError::DyadTakesNode);
 }
 
@@ -4906,7 +4919,7 @@ fn a_tape_line_no_check_narrowed_is_checked_where_a_type_is_wanted_when_the_pars
     for (line, write) in [("tape[1].dyads[0]", "q [{}]"), ("tape[1]", "q {}")] {
         for place in [
             format!("t := mut type ?, t = {line}, tape[0].v = g(t)"),
-            format!("p := alloc 1 of mut type ?, p@ = {line}, tape[0].v = g(p@)"),
+            format!("p := try alloc 1 of mut type ?, p@ = {line}, tape[0].v = g(p@)"),
             format!("n := mut u64 0, n = g({line}), tape[0].v = n"),
         ] {
             let q = format!("{g}{}", tape_line_q(&place));

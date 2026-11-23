@@ -163,7 +163,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::DoubleGate => "this gate word already gates the value".into(),
         ParseError::PointeeNotMutable => {
-            "this pointer points at a value that is not `mut`: a write through `@` needs a `@ mut T`, as `&a` of `a := mut i32 5` or `alloc 1 of mut i32 5` gives".into()
+            "this pointer points at a value that is not `mut`: a write through `@` needs a `@ mut T`, as `&a` of `a := mut i32 5` or `try alloc 1 of mut i32 5` gives".into()
         }
         ParseError::Unwritten(name) => format!(
             "`{name}` is read before it is written: give it a value with `{name} = …` in the same block first"
@@ -481,8 +481,8 @@ pub fn parse_message(e: &ParseError) -> String {
              a value"
                 .into()
         }
-        ParseError::HandsOnMade(written) => {
-            format!("this function hands on a value it made: write `-> own {written}`")
+        ParseError::HandsOnMade(owning) => {
+            format!("this function hands on a value it made: write `-> {owning}`")
         }
         ParseError::OwnResultBorrows => {
             "this function hands on a borrow, but its result says `-> own`, which hands on a \
