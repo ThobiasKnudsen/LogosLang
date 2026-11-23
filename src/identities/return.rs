@@ -36,6 +36,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     cx.declare("return", id);
     cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
+    // It leaves the running call, which is gone when a parse's placed node runs.
+    cx.placings.insert(id, super::place::run_now);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)
 }
@@ -46,7 +48,7 @@ fn construct(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     let at = tape.at(0).map_or(0, |cell| cell.start);
-    let operand = p.take_right(tape)?;
+    let operand = p.return_operand(tape)?;
     let leaf = p.types().ops.return_;
     let node = p.store().alloc_words(id, &[operand, std::ptr::null_mut(), leaf]);
     // SAFETY: `node` is the `return` node just built.

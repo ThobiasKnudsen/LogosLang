@@ -726,6 +726,13 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
             if let Some(which) = TypeRead::of_member(name) {
+                // A value a gate word gave stands with its gate node for its type word, which
+                // reducing it to its operand hops: `(mut i32 5).type` is `mut i32`.
+                // SAFETY: a cell holds null or a dyad from the store.
+                let gated = unsafe { crate::identities::gate::is_value(self.types, left.dyad) };
+                if which == TypeRead::Own && left.constructed && gated {
+                    return Ok((dyad::ty(left.dyad), 0));
+                }
                 // A name's type is read with its gate node, a field's too: with `x := mut i32 5`,
                 // `x.type` is `mut i32` (›`x.type` reads the type word of the node a name or an
                 // expression stands for‹ [[R279]], ›Gates are type nodes: `x := mut i32 5`; the
@@ -967,6 +974,10 @@ impl<'a> Parser<'a> {
             let (member, binding) = self.find_field(value_type, nstart, nlen)?;
             self.cx.member_path = self.field_path(&left, binding);
             let types = self.types;
+            if union::is_tag_line(value_type, member) {
+                let tag = union::build_tag_read(self.rt.store, types, lhs, value_type);
+                return Ok((tag, 0));
+            }
             // SAFETY: `lhs` is a reduced dyad from the store.
             let made = unsafe { teardown_of(types, lhs) } != Teardown::Nothing;
             let access = match (writes, made) {
@@ -1231,23 +1242,74 @@ impl<'a> Parser<'a> {
         let Some((nstart, nlen)) = member? else {
             return Err(self.fail_at(at, ParseError::HoldsNeedsMember));
         };
-        // SAFETY: `union` is a union type, whose members are holes with bindings.
+        // SAFETY: `union` is a union type, whose lines are holes with bindings.
         let node = unsafe {
-            let Ok((member, _)) = self.find_field(union, nstart, nlen) else {
+            use crate::identities::union;
+            let found = self.find_field(union, nstart, nlen).ok().map(|(line, _)| line);
+            let Some(member) = found.filter(|&line| !union::is_tag_line(union, line)) else {
                 let name = self.cx.source[nstart..nstart + nlen].to_string();
-                let members = crate::identities::array::items(
-                    crate::identities::meta::record_field_bindings_of(union),
-                );
+                let members = union::member_bindings(union);
                 let members = members.iter().map(|&b| Binding::spelling(b)).collect();
                 let e = ParseError::NotAMember(Box::new((name, members)));
                 return Err(self.fail_at(nstart, e));
             };
-            crate::identities::union::build_holds(self.rt.store, self.types, lhs, union, member)
+            union::build_holds(self.rt.store, self.types, lhs, union, member)
         };
         tape.remove(1);
         tape.remove(-1);
         tape.place(node);
         Ok(Constructed::Gave)
+    }
+
+    /// `is`'s constructor: `x is c` is the call `c.contains(x)`, built by the two reads `.` builds
+    /// the written call through a type with, so it takes and gives what that call does (›`x is c`
+    /// is membership‹ [[R281]]).
+    pub(crate) fn construct_membership(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        use crate::identities::membership::CONTAINS;
+        let Some((element, collection)) = self.binary_operands(tape)? else {
+            return Ok(Constructed::Decline);
+        };
+        let right = *tape.at(1).expect("`binary_operands` found a right side");
+        let refused = |p: &mut Self| p.fail_at(right.start, ParseError::NotACollection);
+        let t = match self.type_known_now(collection) {
+            Ok(t) => t,
+            Err(ParseError::TypeKnownOnlyAtRun) => {
+                return Err(self.fail_at(right.start, ParseError::TypeKnownOnlyAtRun))
+            }
+            Err(e) if e.type_given_by_running() => return Err(e),
+            Err(_) => return Err(refused(self)),
+        };
+        // SAFETY: `t` is a type node; the member and `element` are reduced dyads from the store.
+        let call = unsafe {
+            let t = crate::identities::gate::under(t);
+            let member = self.static_member_read(t, CONTAINS)?.filter(|&m| self.gives_bool(m));
+            match member {
+                Some(member) => {
+                    let none = Receiver::Nothing;
+                    self.call_member(tape, member, CONTAINS, &right, none, vec![element])?
+                }
+                None => None,
+            }
+        };
+        let call = call.ok_or_else(|| refused(self))?;
+        tape.reduce_here(call);
+        Ok(Constructed::Placed)
+    }
+
+    /// Whether `member` holds a function whose declared output is a `bool`, read under its gates.
+    ///
+    /// # Safety
+    /// `member` must be a dyad from the store.
+    unsafe fn gives_bool(&self, member: DyadPtr) -> bool {
+        let f = self.types.through(member);
+        if f.is_null() || dyad::ty(f) != self.types.fn_type {
+            return false;
+        }
+        let output = *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT);
+        crate::identities::gate::under(output) == self.types.bool_
     }
 
     /// `held`, the node `place` was read through to, as `.` and `[` take it: what a `dyad` place
@@ -1975,7 +2037,10 @@ impl<'a> Parser<'a> {
         let t = match which {
             TypeRead::Own => match read::operator_node(types, lhs) {
                 Some(node) => return Ok(dyad::ty(node)),
-                None => read::value_type(types, lhs)?,
+                None => {
+                    read::value_type(types, lhs)?;
+                    read::given_type(types, lhs)
+                }
             },
             TypeRead::Gives => read::gives(types, lhs)?,
         };

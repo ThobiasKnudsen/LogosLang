@@ -1336,7 +1336,7 @@ fn logical_operators_run_both_sides_on_the_interpreter() {
 
 #[test]
 fn logical_operators_reject_non_bool_operands() {
-    for src in ["true and 1", "1 or false", "not (1)"] {
+    for src in ["true and 1", "1 or false", "not (1)", "1 xor 2", "true implies 1"] {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -4534,7 +4534,9 @@ fn lossy_gates_a_value_once_and_converts_only_numbers() {
     assert_eq!(script_parse_err("i32 lossy lossy (f64 2.5)"), ParseError::DoubleGate);
     assert_eq!(script_parse_err("x := i32 lossy, 0"), ParseError::MissingOperand);
     assert_eq!(parse_err("i32 lossy (true)"), ParseError::TypeMismatch);
-    assert_eq!(parse_err("i32 lossy (1, 2)"), ParseError::BadCast);
+    // `lossy`'s bracket is a value it builds, a block, never a conversion's argument list.
+    assert_eq!(script_parse_err("i32 lossy (1, 2)"), ParseError::LineAfterValue);
+    assert_eq!(script_parse_err("x := lossy (1, 2), 0"), ParseError::LineAfterValue);
     let copied = "y := lossy (f64 2.5), z := y, i32 z";
     assert_eq!(script_parse_err(copied), ParseError::TypeMismatch);
 }

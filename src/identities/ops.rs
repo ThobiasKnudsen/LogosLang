@@ -11,7 +11,7 @@ use crate::run::{RunError, RunFn, Runtime};
 
 use super::assign::{put, take};
 use super::callable::{self, Callables};
-use super::numtype::{apply_arith, apply_compare, apply_negate, ArithOp, CmpOp, NumType};
+use super::numtype::{apply_arith, apply_compare, apply_negate, ArithOp, CmpOp, LogicOp, NumType};
 use super::read::{carry_of, Carry};
 use super::{operands, Cx};
 
@@ -35,8 +35,8 @@ pub struct OpLeaves {
     pub(crate) store: [DyadPtr; 10],
     /// The `=` of a value that is its bytes.
     pub(crate) store_bytes: DyadPtr,
-    pub(crate) and_: DyadPtr,
-    pub(crate) or_: DyadPtr,
+    /// `[LogicOp]`, over two `bool`s.
+    pub(crate) logic: [DyadPtr; 4],
     pub(crate) convert_: DyadPtr,
     /// The statement natives, one leaf each: control flow branches on graph structure.
     pub(crate) if_: DyadPtr,
@@ -84,6 +84,10 @@ impl OpLeaves {
 
     pub(crate) fn cmp_leaf(&self, op: CmpOp, nt: NumType) -> DyadPtr {
         self.cmp[op as usize][nt as usize]
+    }
+
+    pub(crate) fn logic_leaf(&self, op: LogicOp) -> DyadPtr {
+        self.logic[op as usize]
     }
 
     pub(crate) fn rational_arith_leaf(&self, op: ArithOp) -> DyadPtr {
@@ -168,6 +172,19 @@ fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Resul
         Ok(apply_compare(CmpOp::from_tag(OP), NumType::from_tag(NT), l, r))
     }
 }
+
+fn logic_run<const OP: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: as `arith_run`.
+    unsafe {
+        let (lhs, rhs) = operands(node);
+        let l = rt.run(lhs)?;
+        let r = rt.run(rhs)?;
+        Ok(i64::from(LogicOp::from_tag(OP).apply(l != 0, r != 0)))
+    }
+}
+
+/// The logic shims, `[LogicOp]`.
+const LOGIC_SHIMS: [RunFn; 4] = [logic_run::<0>, logic_run::<1>, logic_run::<2>, logic_run::<3>];
 
 fn type_cmp_run<const EQUAL: bool>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `arith_run`; each side gives a type, a type node's address.
@@ -333,6 +350,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
     let store_bytes = callable::mint_native(cx.store, cs.callable, store_bytes_run, cs.seed_native);
     let type_cmp = [type_cmp_run::<false> as RunFn, type_cmp_run::<true>]
         .map(|run| callable::mint_native(cx.store, cs.callable, run, cs.seed_native));
+    let logic =
+        LOGIC_SHIMS.map(|run| callable::mint_native(cx.store, cs.callable, run, cs.seed_native));
     // The single-native leaves are minted by their own registrations.
     OpLeaves {
         arith,
@@ -344,8 +363,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         type_cmp,
         store,
         store_bytes,
-        and_: std::ptr::null_mut(),
-        or_: std::ptr::null_mut(),
+        logic,
         convert_: std::ptr::null_mut(),
         if_: std::ptr::null_mut(),
         while_: std::ptr::null_mut(),

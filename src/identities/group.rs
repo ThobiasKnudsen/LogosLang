@@ -1,12 +1,14 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! A group: `and`/`or` over two non-booleans, `[lhs, rhs, null]`. Every operator applied
-//! to a group applies to each member, and the results join with the group's connective,
-//! which collapses to a boolean once the members are booleans.
-//! DESIGN ›The proof layer‹
+//! A group: `and`/`or` over two non-booleans, `[lhs, rhs]` typed by the connective itself, where
+//! two booleans are typed by its mint. Every operator applied to a group applies to each member,
+//! and the results join with the group's connective, which collapses to a boolean once the
+//! members are booleans. ›`and`/`or` on non-booleans build a group; every operator on a group
+//! applies to each member‹ [[R37]]
 
-use super::{and, or};
+use super::binary;
+use super::numtype::LogicOp;
 use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::ParseError;
@@ -26,7 +28,7 @@ pub(crate) unsafe fn members(types: &Core, node: DyadPtr) -> Option<(DyadPtr, Dy
         return None;
     }
     let p = dyad::value(node) as *const DyadPtr;
-    (*p.add(2)).is_null().then(|| (dyad::ty(node), *p, *p.add(1)))
+    Some((dyad::ty(node), *p, *p.add(1)))
 }
 
 /// The connective joins; any other operator over a group applies to each member.
@@ -64,9 +66,7 @@ pub(crate) fn join(
     a: DyadPtr,
     b: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    if connective == types.and_ {
-        and::build(store, types, connective, a, b)
-    } else {
-        or::build(store, types, connective, a, b)
-    }
+    let l = if connective == types.and_ { LogicOp::And } else { LogicOp::Or };
+    // SAFETY: the members and the results built over them are reduced dyads from the store.
+    unsafe { binary::build_logic(store, types, connective, l, a, b) }
 }

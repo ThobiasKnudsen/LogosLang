@@ -141,6 +141,7 @@ while := type ?
 and := type ?
 or := type ?
 xor := type ?
+implies := type ?
 not := type ?
 
 

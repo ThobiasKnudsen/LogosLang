@@ -23,7 +23,6 @@ pub mod dyad;
 pub mod read;
 
 pub mod abort;
-mod and;
 pub(crate) mod array;
 pub(crate) mod assign;
 pub(crate) mod binary;
@@ -61,12 +60,12 @@ pub(crate) mod instance;
 pub(crate) mod instruction;
 pub mod lex;
 mod logos;
+pub(crate) mod membership;
 pub(crate) mod meta;
 pub(crate) mod mint;
 mod not;
 pub(crate) mod numtype;
 pub(crate) mod ops;
-mod or;
 mod paren;
 pub(crate) mod place;
 pub(crate) mod pointer;
@@ -280,6 +279,7 @@ impl Core {
             metas: BTreeMap::new(),
             extents: BTreeMap::new(),
             choosers: BTreeMap::new(),
+            placings: BTreeMap::new(),
             lower: HashMap::new(),
         };
         let mut numtypes: [DyadPtr; 10] = [std::ptr::null_mut(); 10];
@@ -359,6 +359,8 @@ impl Core {
             le,
             ge,
             ne,
+            and_,
+            or_,
         } = binary::register_all(&mut cx);
         let instructions = instruction::register(
             &mut cx,
@@ -369,14 +371,11 @@ impl Core {
             &op_leaves,
             [plus, minus, times, div_, rem_],
         );
-        let (and_, and_leaf) = and::register(&mut cx, &callables);
-        op_leaves.and_ = and_leaf;
-        let (or_, or_leaf) = or::register(&mut cx, &callables);
-        op_leaves.or_ = or_leaf;
         let (not_, not_leaf) = not::register(&mut cx, &callables);
         op_leaves.not_ = not_leaf;
         let (subset, subset_leaf) = subset::register(&mut cx, &callables);
         op_leaves.subset_ = subset_leaf;
+        membership::register(&mut cx);
         let (if_, if_leaf, else_) = if_mod::register(&mut cx, &callables);
         op_leaves.if_ = if_leaf;
         let (while_, while_leaf) = while_mod::register(&mut cx, &callables);
@@ -486,11 +485,11 @@ impl Core {
         );
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
-        // Every constructor, extent reader and chooser moves onto a callable leaf in its record;
-        // the tables drop before any parsing runs.
-        let Cx { store, trie, metas, extents, choosers, lower, .. } = cx;
-        // SAFETY: every key in `metas`, `extents` and `choosers` has its record built, and each
-        // entry is a `ConstructFn`, an `ExtentFn` or a `ChooseFn`.
+        // Every constructor, extent reader, chooser and placing moves onto a callable leaf in its
+        // record; the tables drop before any parsing runs.
+        let Cx { store, trie, metas, extents, choosers, placings, lower, .. } = cx;
+        // SAFETY: every key in `metas`, `extents`, `choosers` and `placings` has its record built,
+        // and each entry is a `ConstructFn`, an `ExtentFn`, a `ChooseFn` or a `PlaceFn`.
         unsafe {
             for (&id, &construct) in &metas {
                 let leaf = callable::mint(
@@ -519,10 +518,20 @@ impl Core {
                 );
                 meta::install_chooser(id, leaf);
             }
+            for (&id, &placing) in &placings {
+                let leaf = callable::mint(
+                    store,
+                    callables.callable,
+                    placing as usize,
+                    callables.seed_place,
+                );
+                meta::install_placing(id, leaf);
+            }
         }
         drop(metas);
         drop(extents);
         drop(choosers);
+        drop(placings);
         let mut core = Core {
             type_,
             logos,
@@ -646,6 +655,7 @@ impl Core {
         core.type_mint = type_mint::load(store, trie, &core, core.carried);
         type_mint::keep_early(store, &core);
         core.error = error::load(store, trie, &core, core.carried);
+        membership::load(store, trie, &core, core.carried);
         core.written = written::load(store, trie, &core, core.carried);
         core
     }
@@ -666,11 +676,14 @@ impl Core {
         ]
     }
 
-    /// A binding yields the dyad it names; anything else passes through.
+    /// A binding yields the dyad it names, and a value a gate word gave the value it gates, whose
+    /// gates its type alone carries (›Gates are type nodes: `x := mut i32 5`; the record holds no
+    /// gates‹ [[R381]]); anything else passes through.
     ///
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     pub unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
+        let p = gate::value_parts(self, p).map_or(p, |(value, _)| value);
         binding::through(self, p)
     }
 
@@ -809,6 +822,7 @@ pub(crate) struct Cx<'a> {
     metas: BTreeMap<DyadPtr, ConstructFn>,
     extents: BTreeMap<DyadPtr, crate::parse::ExtentFn>,
     choosers: BTreeMap<DyadPtr, mint::ChooseFn>,
+    placings: BTreeMap<DyadPtr, place::PlaceFn>,
     lower: LowerTable,
 }
 
@@ -1104,10 +1118,10 @@ unsafe fn land_leaf(
     place: read::Read,
     how: Landing,
 ) -> Result<DyadPtr, ParseError> {
-    if let Some(read) = dyad_place::read_through(store, types, value, ty, how.lossy) {
-        return land_leaf(store, types, read, ty, place, how);
-    }
     let lossy = how.lossy || gate::is_lossy(types, value);
+    if let Some(read) = dyad_place::read_through(store, types, value, ty, lossy) {
+        return land_leaf(store, types, read, ty, place, Landing { lossy, ..how });
+    }
     // A comptime name used here is its binding; the literal folds through it.
     let plain = types.through(value);
     let plain_number = dyad::ty(plain) == types.rational;
@@ -1147,11 +1161,12 @@ unsafe fn land_leaf(
         read::Read::Aggregate | read::Read::Behind(_) => from == ty,
         _ => false,
     };
-    if fits {
-        Ok(value)
-    } else {
-        Err(ParseError::TypeMismatch)
+    if !fits {
+        return Err(ParseError::TypeMismatch);
     }
+    // Landed, the value is the place's type's, so a gate a gate word gave it has had its say:
+    // `f64 lossy (x)` of an `f64` is a plain `f64`.
+    Ok(gate::value_parts(types, value).map_or(value, |(value, _)| value))
 }
 
 /// # Safety
