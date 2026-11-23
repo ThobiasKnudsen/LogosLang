@@ -54,7 +54,9 @@ impl<'a> Parser<'a> {
         let mut at = node;
         while !at.is_null() {
             if dyad::ty(at) == types.deref_ {
-                if pointer::writes_through(types, at) {
+                let into_result = crate::identities::union::member_of_place(types, at)
+                    .is_some_and(|place| self.is_result_place(place));
+                if into_result || pointer::writes_through(types, at) {
                     return Ok(());
                 }
                 return Err(ParseError::PointeeNotMutable);
@@ -138,6 +140,22 @@ impl<'a> Parser<'a> {
     }
 
     fn check_gates(&self, path: &[DyadPtr]) -> Result<(), ParseError> {
+        // The body writes its own result, and a member of a `T!` one, which no caller may (›A
+        // scope's value is what it evaluates to, and `return` is an optional early exit from the
+        // enclosing function‹ [[R207]]); what lies inside grants as it does anywhere.
+        let path = match path {
+            [place, rest @ ..] if self.is_result_place(*place) => {
+                // SAFETY: a result place is a binding dyad laid out with its type.
+                let union = unsafe {
+                    crate::identities::union::is_union(self.types, Binding::read(*place).dyad)
+                };
+                match rest {
+                    [_member, inside @ ..] if union => inside,
+                    _ => rest,
+                }
+            }
+            _ => path,
+        };
         for &binding in path {
             // SAFETY: the path holds binding dyads from the store.
             unsafe {
@@ -550,6 +568,9 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         self.cx.pos = at;
+        if self.is_result_place(binding) {
+            return Err(ParseError::ResultUnwritten);
+        }
         // SAFETY: as above.
         Err(ParseError::Unwritten(Box::new(unsafe { Binding::spelling(binding) })))
     }
@@ -848,6 +869,92 @@ impl<'a> Parser<'a> {
         };
         Binding::lay_out(binding, ty, frame, offset);
         binding
+    }
+
+    /// The result place of the function being read, the word `return` at `at` read as a name
+    /// (›A scope's value is what it evaluates to, and `return` is an optional early exit from the
+    /// enclosing function‹ [[R207]]): a place of its result type in its call frame, declared the
+    /// first time the body reads it, unwritten until a write fills it, and held by the body, so
+    /// a `return X` or a raise after a write ends what it holds.
+    pub(super) fn result_place(&mut self, at: usize) -> Result<DyadPtr, ParseError> {
+        match self.receiver() {
+            Receiver::CommandLine => {
+                return Err(self.fail_at(at, ParseError::ReturnOutsideFunction))
+            }
+            Receiver::Deferred => return Err(self.fail_at(at, ParseError::ReturnInDefer)),
+            Receiver::Caller { .. } | Receiver::Nobody => {}
+        }
+        let depth = self.cx.frames.len();
+        if self.cx.once_at == Some(depth) {
+            return Err(self.fail_at(at, ParseError::OnceReadsUnmade));
+        }
+        // A line held for the run is read over stand-ins for the frames open where it was written.
+        if depth <= self.cx.held_depth {
+            return Err(self.fail_at(at, ParseError::ResultPlaceInHeldLine));
+        }
+        let types = self.types;
+        let frame = self.cx.frames.last_mut().expect("a caller is a function's");
+        if frame.slot_body {
+            return Err(self.fail_at(at, ParseError::ResultPlaceInSlot));
+        }
+        // SAFETY: an open frame is a `fn` node, its signature written before its body parses.
+        let output = unsafe { *(dyad::value(frame.frame) as *const DyadPtr).add(super::FN_OUTPUT) };
+        if output == types.void_ {
+            return Err(self.fail_at(at, ParseError::ResultPlaceOfVoid));
+        }
+        // SAFETY: a function's result is a type node from the store.
+        if unsafe { crate::identities::meta::is_node_valued(output, types.fn_type) } {
+            return Err(self.fail_at(at, ParseError::ResultPlaceOfNode));
+        }
+        if !frame.result.is_null() {
+            let place = frame.result;
+            // SAFETY: a result place is a binding dyad from the store.
+            if unsafe { Binding::read(place) }.is_dead() {
+                let dead = ResolveError::Dead("return".into());
+                return Err(self.fail_at(at, ParseError::Resolve(dead)));
+            }
+            return Ok(place);
+        }
+        let body = frame.open_below;
+        let scope = self.cx.open[body].scope.expect("a function body is a block");
+        let binding = self.mint_binding(output, scope, b"return");
+        // SAFETY: `output` is the function's result type, a type node from the store, and
+        // `binding` the binding just minted.
+        unsafe {
+            let width = crate::identities::by_copy::place_width(types, output);
+            let frame = self.cx.frames.last_mut().expect("read above");
+            Binding::lay_out(binding, output, frame.frame, frame.size);
+            frame.size += width;
+            frame.result = binding;
+            Binding::set_unread(binding, true);
+            if crate::identities::meta::is_record_type(output) {
+                self.leave_fields_unwritten(binding, output, false);
+            }
+            let ends = teardown_of_type(types, output);
+            if ends != Teardown::Nothing {
+                if ends.of_record() {
+                    Binding::set_holds(binding);
+                }
+                // The frame starts zeroed, whose end runs nothing, so it is held from this line on.
+                let open = &mut self.cx.open[body];
+                open.exit.push(ExitItem { what: binding, from: open.lines, end: None });
+            }
+        }
+        Ok(binding)
+    }
+
+    /// Whether the lexed `cell` is the word `return` read as a name, the result place: a read
+    /// `.` or `holds`, or a write `=`, stands after it, where `return X` would take a value.
+    pub(super) fn reads_result_place(&mut self, cell: &Cell) -> bool {
+        let types = self.types;
+        self.cell_identity(cell) == types.return_
+            && matches!(self.next_identity(),
+                Some(id) if id == types.dot_ || id == types.union.holds || id == types.assign)
+    }
+
+    /// Whether `binding` is the result place of a function being read.
+    pub(super) fn is_result_place(&self, binding: DyadPtr) -> bool {
+        !binding.is_null() && self.cx.frames.iter().any(|f| f.result == binding)
     }
 
     /// The gates of the value the name `binding` took, written before it, are the gates of the
@@ -1262,9 +1369,8 @@ impl<'a> Parser<'a> {
                 let ty = crate::identities::type_identity_of(self.types, ty).unwrap_or(ty);
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
                     self.rt.store,
-                    self.types.type_,
+                    self.types,
                     crate::identities::numtype::gated_pointee_of(ty),
-                    self.types.ops.teardown_,
                 );
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
                 let place = self.place_for(binding, owning_ty, 8);

@@ -43,6 +43,7 @@ pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> Dya
         Ok(Constructed::Placed)
     });
     cx.lower.insert(scope_, lower);
+    cx.placings.insert(scope_, super::place::whole);
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }
 
