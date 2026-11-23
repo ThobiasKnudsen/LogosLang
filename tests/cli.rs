@@ -8093,6 +8093,62 @@ fn t_bang_is_the_union_of_value_and_err() {
     );
 }
 
+/// R379, Thobias's Question 286: the lines a type's own parse writes, a union's `tag`, `T!`'s
+/// `value` and `err` and those of the `void!` a `parse` slot gives, meet only the type's own lines,
+/// never the names where the type is written. A line the program writes, a field or a union's
+/// member, still meets every name in reach (R234). On both tiers.
+#[test]
+fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
+    let probe = "probe := type ( value := i32 ?, err := i32 ?, tag := i32 ?, \
+                 run = ( print «{value} {err} {tag}» ), parse_rank = *.parse_rank + 1, \
+                 parse = ( tape[0].type = probe, tape[0].value = 7, tape[0].err = 8, \
+                 tape[0].tag = 9, tape.is_constructed[0] = true ) )";
+    for compile in ["", "f.compile(), "] {
+        for (src, want) in [
+            (
+                format!(
+                    "value := i32 3, err := i32 4, tag := i32 5, \
+                     f := fn () -> i32! ( value + err + tag ), {compile}\
+                     r := f(), print «{{r.value}} {{value}} {{err}} {{tag}}»"
+                ),
+                "12 3 4 5",
+            ),
+            (
+                format!(
+                    "tag := i32 3, num := type union ( i := mut i32 ), \
+                     f := fn () -> i32 ( v := mut num ?, v.i = 5, v.i + tag ), {compile}f()"
+                ),
+                "8",
+            ),
+            (format!("{probe}, f := fn () -> void ( probe ), {compile}f()"), "7 8 9"),
+        ] {
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    assert_eq!(
+        line(
+            "g := fn () -> i32 ( mk := type ( value := pub i32 ?, \
+             parse = ( tape.is_constructed[0] = true ) ), 1 ), g()"
+        ),
+        "1"
+    );
+    for (src, at, name) in [
+        ("x := i32 1, p := type ( x := i32 ? )", "1:25", "x"),
+        (
+            "value := i32 3, mk := type ( value := pub i32 ?, \
+             parse = ( tape.is_constructed[0] = true ) ), 0",
+            "1:30",
+            "value",
+        ),
+        ("value := i32 3, u := type union ( value := i32, err := error ), 0", "1:35", "value"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        let want = format!("{at}: error: `{name}` is already declared and still in scope");
+        assert!(stderr.contains(&want), "{src}: stderr: {stderr}");
+    }
+}
+
 /// R140: «A function that gives `T!` fills the union itself, and the program writes neither
 /// member: its last value of type `T` fills `value`», on both tiers, for a number, a record and
 /// a value whose type fills `free`, each `if` arm and a `return` alike.
@@ -8313,7 +8369,8 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
 /// it leaves, and a bare `return` leaves with what it holds; `return X` and a raise still leave,
 /// ending what it holds. Under `T!` a write of `return.value` or `return.err` sets the member and
 /// the tag; any other result is written whole, `return = …`, and a record's field through it.
-/// A write ends the value written before it. On both tiers.
+/// A write ends the value written before it. An arm that always leaves ends the place for none of
+/// the lines after its `if`, as the guard arm of R207's `half` does not. On both tiers.
 #[test]
 fn the_result_place_is_written_and_read_before_the_function_leaves() {
     let odd = "error.odd := «odd»";
@@ -8362,6 +8419,24 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
                 "print «{g(i32 1)} {g(i32 5)}»",
                 "2 5",
             ),
+            (
+                "g := fn (k := i32 ?) -> bag! ( return.value = bag(k), if k > 3 ( return ), \
+                 return.value = bag(k + 10), return )",
+                "print «{g(5).value.n} {g(1).value.n}»",
+                "freed 1\n5 11\nfreed 11\nfreed 5",
+            ),
+            (
+                "g := fn (c := bool ?) -> i32! ( return.value = 1, \
+                 if c ( print «stays» ) else ( return ), return.value = 2, return )",
+                "print «{g(true).value} {g(false).value}»",
+                "stays\n2 1",
+            ),
+            (
+                "g := fn (k := i32 ?) -> pt ( return = pt(k, 0), if k > 1 ( if k > 3 ( return ) ), \
+                 return.y = 9, return )",
+                "a := g(i32 5), b := g(i32 2), print «{a.x} {a.y} {b.x} {b.y}»",
+                "5 0 2 9",
+            ),
         ] {
             let src =
                 format!("{odd}, {bag}, {pt}, {g}, f := fn () -> void ( {body} ), {compile}f()");
@@ -8375,10 +8450,11 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
 }
 
 /// R207: «A read of `return` before its first write is refused where it is written», a write in
-/// an arm filling nothing for the lines after it, as for every name (R105), and a bare `return`
-/// in an arm moving the place out on every path, as `return a` moves `a` (R66, R70). `return` is
-/// no result place outside a function, in a `defer`, in a value made once, in a `-> void`
-/// function or in a type's slot body, and no caller writes a member of a `T!` (R379).
+/// an arm filling nothing for the lines after it, as for every name (R105); an arm that always
+/// leaves still ends any other name it moves on every path (R70, rule 2). `return` is no result
+/// place outside a function, in a `defer`, in a value made once, in a `-> void` function or in a
+/// type's slot body, and no caller writes a member of a `T!` (R379); `return.tag` is read only, as
+/// a named union's `tag` is.
 #[test]
 fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
     let unwritten = "error: the result is read before it is written: write it first among the \
@@ -8405,10 +8481,16 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
             format!("1:60: {unwritten}"),
         ),
         (
-            "f := fn (c := bool ?) -> i32! ( return.value = 1, if c ( return ), \
-             return.value = 2, return ), 0"
+            "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), \
+             f := fn (c := bool ?) -> bag ( a := bag(1), if c ( return a ), a.n = 2, bag(3) ), 0"
                 .to_string(),
-            "1:68: error: `return` is dead here: it was moved or freed above".to_string(),
+            "1:130: error: `a` is dead here: it was moved or freed above".to_string(),
+        ),
+        (
+            "f := fn () -> i32! ( return.value = 1, return.tag = 2, return ), 0".to_string(),
+            "1:53: error: `tag` is not `mut`: a name is written after its declaration only when \
+             declared `tag := mut …`"
+                .to_string(),
         ),
         (
             "return.value = 1".to_string(),

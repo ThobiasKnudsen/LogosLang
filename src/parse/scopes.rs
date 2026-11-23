@@ -512,6 +512,27 @@ impl ScopeStack {
         undone
     }
 
+    /// `binding`, which a `move` or `free` ended since `mark`, is live as if nothing had ended it:
+    /// its end goes back to what it was at `mark`, and its journal entries since then and its
+    /// pending end go, so neither a line's close nor an enclosing `if` ends it again.
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store.
+    pub unsafe fn spare(&mut self, mark: usize, binding: DyadPtr) {
+        let mut at = self.journal.len();
+        while at > mark {
+            at -= 1;
+            if let Journal::Ended { binding: ended, prev_end } = self.journal[at] {
+                if ended == binding {
+                    // SAFETY: the caller's contract.
+                    unsafe { Binding::replace_end(binding, prev_end) };
+                    self.journal.remove(at);
+                }
+            }
+        }
+        self.pending.retain(|p| p.binding != binding || p.endpoint != Endpoint::End);
+    }
+
     /// Every endpoint pending for `scope` now points at `item`, the line as a
     /// whole: a `move` inside an `if` body ends the outer name at the `if`
     /// (DESIGN ›Name resolution is scope-filtered‹).
@@ -554,10 +575,10 @@ impl ScopeStack {
     }
 
     /// Checked against its siblings alone: a live binding of the spelling in an enclosing scope
-    /// stands beside it, both live until this scope closes. Only a name that spells one already
-    /// live on purpose is declared so: a type body's slot words (›Slot words are known only inside
-    /// a type body‹ [[R220]]), a kept record's mirror of the names it holds, a run's `output_type`
-    /// over the member.
+    /// stands beside it, both live until this scope closes. Only a name no program text wrote is
+    /// declared so: a type body's slot words (›Slot words are known only inside a type body‹
+    /// [[R220]]), the lines a type's own parse writes, such as `T!`'s `value` and `err`, a kept
+    /// record's mirror of the names it holds, a run's `output_type` over the member.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store; this writes its `scope`.

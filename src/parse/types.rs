@@ -551,8 +551,7 @@ impl<'a> Parser<'a> {
 
     /// `T!`, a value of `T` or an error: `union ( value := T, err := error )`, that very mint,
     /// with no type of its own (›Target: errors are values (`T!`), handled by `if`, passed on by
-    /// `try`…‹ [[R140]]). The members are declared as
-    /// the written union's lines declare theirs.
+    /// `try`…‹ [[R140]]).
     pub(crate) fn construct_fallible(
         &mut self,
         tape: &mut ParsingTape,
@@ -578,25 +577,13 @@ impl<'a> Parser<'a> {
         let scope = self.open_scope();
         let (mut lines, mut bindings) = (Vec::new(), Vec::new());
         let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
-        let tag = crate::identities::union::TAG_LINE;
-        let declared =
-            self.declare_own_line(tag, u8_, at, &mut lines, &mut bindings).and_then(|()| {
-                [("value", value), ("err", self.types.error.value)].into_iter().try_for_each(
-                    |(name, ty)| {
-                        let member = crate::identities::hole::build(
-                            self.rt.store,
-                            self.types.unknown,
-                            ty,
-                            std::ptr::null_mut(),
-                        );
-                        let binding = self.mint_binding(member, scope, name.as_bytes());
-                        self.enter_binding_in(scope, name, binding, at)?;
-                        lines.push(member);
-                        bindings.push(binding);
-                        Ok(())
-                    },
-                )
-            });
+        let declared = [
+            (crate::identities::union::TAG_LINE, u8_),
+            ("value", value),
+            ("err", self.types.error.value),
+        ]
+        .into_iter()
+        .try_for_each(|(name, ty)| self.declare_own_line(name, ty, at, &mut lines, &mut bindings));
         let body = self.open_scope();
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
