@@ -70,7 +70,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let of_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("of", of_);
 
-    let alloc_ = keyword(cx, "alloc", meta::prec::PREFIX, &["count", "init"], |p, _id, tape| {
+    let alloc_ = keyword(cx, "alloc", meta::prec::ONE_RANK, &["count", "init"], |p, _id, tape| {
         let of_ = p.types().of_;
         if p.marker_right(tape, of_) {
             return Err(ParseError::MissingOperand);
@@ -114,7 +114,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 
     // `own` stands only in a type position, `own @T ?` or `-> own @T`: the word makes the hole,
     // or the function's result, an owning one.
-    let own_ = super::gate::word(cx, "own", meta::prec::PREFIX);
+    let own_ = super::gate::word(cx, "own");
     cx.metas.insert(own_, |p, _id, tape| {
         let Some(&hole) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
@@ -188,7 +188,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // value no name holds is used as any value is: it runs, then its type's `free`. `free = …`
     // never reaches here: `=` constructs first and takes the lone `free` as the slot's name.
     let free_ =
-        keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
+        keyword(cx, "free", meta::prec::ONE_RANK, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = match p.place_operand_cell(tape)? {
                 Taken::Place(place, ended) => (place, ended),
                 Taken::Hole(at) => return Err(p.fail_at(at, ParseError::FreeOfHole)),
@@ -568,8 +568,8 @@ pub(crate) unsafe fn own_result(
 
 /// `move` of a place: `[place]` under `move`'s mint for the moved value's type, which it gives,
 /// so the name that takes it learns whether it holds it. A `{ … }` value kept in its bytes moves
-/// as their address, which the taker copies; any other value as the word its place holds, NULL
-/// there from then on.
+/// as their address, which the taker copies, or where its type has an end as a copy of them, its
+/// place zeroed; any other value as the word its place holds, NULL there from then on.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
@@ -2031,12 +2031,12 @@ mod tests {
     #[test]
     fn an_owning_place_takes_only_an_owning_value() {
         assert_eq!(
-            parse_err("x := i32 1, a := mut try alloc 1 of i32 5, a = &x"),
+            parse_err("x := i32 1, a := mut (try alloc 1 of i32 5), a = &x"),
             ParseError::NonOwningIntoOwning
         );
         // A named owner is copied in: each name frees its own block.
         assert_eq!(
-            run("a := mut try alloc 1 of mut i32 5, b := try alloc 1 of mut i32 6, a = b, a@ = 9, b@"),
+            run("a := mut (try alloc 1 of mut i32 5), b := try alloc 1 of mut i32 6, a = b, a@ = 9, b@"),
             (6, 0)
         );
         assert_eq!(free_log(), vec![5, 6, 9]);
@@ -2044,16 +2044,16 @@ mod tests {
         assert_eq!(run("a := try alloc 1 of mut i32 5, a@ = 9, a@"), (9, 0));
 
         // `=` frees the block it displaces, after building the right side, before the write.
-        assert_eq!(run("a := mut try alloc 1 of i32 5, a = try alloc 1 of i32 6, a@"), (6, 0));
+        assert_eq!(run("a := mut (try alloc 1 of i32 5), a = try alloc 1 of i32 6, a@"), (6, 0));
         assert_eq!(free_log(), vec![5, 6]);
         assert_eq!(
-            run("a := mut try alloc 1 of i32 5, b := try alloc 1 of i32 6, a = move b, a@"),
+            run("a := mut (try alloc 1 of i32 5), b := try alloc 1 of i32 6, a = move b, a@"),
             (6, 0)
         );
         assert_eq!(free_log(), vec![5, 6]);
         // The right side may read what it displaces.
         assert_eq!(
-            run("a := mut try alloc 1 of i32 5, a = try alloc 1 of i32 (a@ + 1), a@"),
+            run("a := mut (try alloc 1 of i32 5), a = try alloc 1 of i32 (a@ + 1), a@"),
             (6, 0)
         );
         // An owner never written frees nothing when the first value lands.
@@ -2364,7 +2364,10 @@ mod tests {
     fn alloc_of_a_bare_count_is_that_many_zeroed_bytes() {
         assert_eq!(run("a := try alloc 8,\na@"), (0, 0));
         // An `@u8` is read through only; bytes to write are `alloc n of mut u8 0`.
-        assert_eq!(parse_err("a := mut try alloc 8,\na@ = 200,\n1"), ParseError::PointeeNotMutable);
+        assert_eq!(
+            parse_err("a := mut (try alloc 8),\na@ = 200,\n1"),
+            ParseError::PointeeNotMutable
+        );
         assert_eq!(run("a := try alloc 8 of mut u8 0,\na@ = 200,\na@"), (200, 0));
         // The count-less spelling is gone: `i32 2` is a count, so this is two bytes.
         assert_eq!(run("a := try alloc i32 2,\na@"), (0, 0));
@@ -2582,7 +2585,7 @@ mod tests {
     #[test]
     fn a_write_after_move_is_refused() {
         assert_eq!(
-            parse_err("a := mut try alloc 1 of i32 7,\nb := move a,\na = b"),
+            parse_err("a := mut (try alloc 1 of i32 7),\nb := move a,\na = b"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }

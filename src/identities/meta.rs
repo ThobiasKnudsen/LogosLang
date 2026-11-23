@@ -123,20 +123,17 @@ pub(crate) mod prec {
     pub const ADDRESS: f64 = 90.5;
     /// `?`: above a type that takes a value, so in `i32 ?` the unknown stands before `i32` takes it.
     pub const HOLE: f64 = 87.0;
-    /// A type taking the value to its right, `i64 m`, and `lossy` between it and the value: below
-    /// `(` and `?`, above the pointer types and the prefix words. ›A parse is ranked by what it
-    /// takes from its right‹ [[R116]].
-    pub const CONVERT: f64 = 86.0;
     /// `.`, `:`, `@`: the tight reads of the cell to their left, above the readers and
     /// below `:=`/`=`; the right cell is lexed lazily inside the constructor.
     pub const TIGHT: f64 = 92.5;
-    /// The prefix words, built before every operation: the gate words `mut`, `pub` and `static`,
-    /// so each takes the nearest value to its right (›A gate word reads the nearest value to its
-    /// right and gives it with its type gated‹ [[R102]]), `own`, `alloc`, and `free`
-    /// (stand-in for #384).
-    pub const PREFIX: f64 = 82.0;
+    /// One rank, built before every operation, of the words that take the nearest value to their
+    /// right and no operation: the number types and `rational_number`, the gate words `mut`,
+    /// `pub`, `static`, `own` and `lossy`, `alloc`, and `free` (stand-in for #384). Each associates
+    /// right, so of two in a row the one nearer the value is built first (›Every identity has a
+    /// `parse_rank`, and `(` works in two steps‹ [[R259]]).
+    pub const ONE_RANK: f64 = 82.0;
     /// A pointer type taking the pointer to its right, `@i32 &a`: below `&`, whose pointer it
-    /// takes, above the prefix words, which take its hole whole, `own @i32 ?`. ›A parse is ranked
+    /// takes, above the one rank, whose words take its hole whole, `own @i32 ?`. ›A parse is ranked
     /// by what it takes from its right‹ [[R116]].
     pub const POINTER_TYPE: f64 = 84.0;
     /// A negating `-`, built after `^`, whose rank is `*`'s and one, and before `*`, so `-x ^ 2`
