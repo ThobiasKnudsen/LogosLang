@@ -4535,7 +4535,9 @@ fn lossy_gates_a_value_once_and_converts_only_numbers() {
     assert_eq!(script_parse_err("i32 lossy lossy (f64 2.5)"), ParseError::DoubleGate);
     assert_eq!(script_parse_err("x := i32 lossy, 0"), ParseError::MissingOperand);
     assert_eq!(parse_err("i32 lossy (true)"), ParseError::TypeMismatch);
-    assert_eq!(parse_err("i32 lossy (1, 2)"), ParseError::BadCast);
+    // `lossy`'s bracket is a value it builds, a block, never a conversion's argument list.
+    assert_eq!(script_parse_err("i32 lossy (1, 2)"), ParseError::LineAfterValue);
+    assert_eq!(script_parse_err("x := lossy (1, 2), 0"), ParseError::LineAfterValue);
     let copied = "y := lossy (f64 2.5), z := y, i32 z";
     assert_eq!(script_parse_err(copied), ParseError::TypeMismatch);
 }
