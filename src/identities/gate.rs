@@ -398,9 +398,14 @@ fn construct(
     // The cell as built, so the gates a gate word nearer the value put on it join this one's:
     // `lossy mut f64 2.5` is `mut lossy f64`.
     let Some(right) = p.type_operand(tape, 1)? else {
+        let e = if tape.at(1).is_some() {
+            ParseError::GateBeforeLaterWord
+        } else {
+            ParseError::MissingOperand
+        };
         return Err(match word_at {
-            Some(at) => p.fail_at(at, ParseError::MissingOperand),
-            None => ParseError::MissingOperand,
+            Some(at) => p.fail_at(at, e),
+            None => e,
         });
     };
     let word_at = word_at.unwrap_or(right.start);

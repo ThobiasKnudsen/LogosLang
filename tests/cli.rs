@@ -5337,12 +5337,18 @@ fn a_gate_word_stands_right_of_the_declaration_and_gates_the_nearest_value() {
         ("t := type ( static parse_rank = 50.0 )", "it stands right of `:=`: `x := mut i32 5`"),
         ("mut print «a»", "1:5: error: this gives nothing, and a value is needed here"),
         ("x := mut", "missing an operand"),
-        // A gate word starts no word of a later rank, so a gated `not` or negation is bracketed.
-        ("a := true, b := mut not a, b", "1:17: error: an operator is missing an operand"),
-        ("m := f64 2.5, i32 lossy -m", "1:19: error: an operator is missing an operand"),
+        // A gate word starts no word of a later rank, so a gated `not`, negation or `try` is
+        // bracketed.
+        ("a := true, b := mut not a, b", "1:17: error: a gate word takes the nearest value"),
+        ("m := f64 2.5, i32 lossy -m", "1:19: error: a gate word takes the nearest value"),
         (
             "f := fn (m := f64 ?) -> i32 ( i32 lossy -m ), f.compile(), f(2.5)",
-            "1:35: error: an operator is missing an operand",
+            "1:35: error: a gate word takes the nearest value",
+        ),
+        ("a := mut try alloc 1 of i32 5, a@", "1:6: error: a gate word takes the nearest value"),
+        (
+            "g := fn () -> i32! ( 5 ), f := fn () -> i32! ( p := static try g(), p ), f.compile()",
+            "1:53: error: a gate word takes the nearest value",
         ),
         ("p := type ( v := pub i32 ? ), q := mut p(1), q.v = 3", "`v` is not `mut`"),
         ("p := type ( v := i32 ? ), q := p(1), q.v", "`v` is not `pub`"),
