@@ -503,4 +503,5 @@ pub(super) fn register_type(
     // SAFETY: `binding_` is the type node minted at the head of the build.
     unsafe { dyad::set_head(binding_, layout) };
     cx.declare("binding", binding_);
+    cx.placings.insert(binding_, super::place::by_frame);
 }

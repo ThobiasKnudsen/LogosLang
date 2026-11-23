@@ -1369,9 +1369,8 @@ impl<'a> Parser<'a> {
                 let ty = crate::identities::type_identity_of(self.types, ty).unwrap_or(ty);
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
                     self.rt.store,
-                    self.types.type_,
+                    self.types,
                     crate::identities::numtype::gated_pointee_of(ty),
-                    self.types.ops.teardown_,
                 );
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
                 let place = self.place_for(binding, owning_ty, 8);

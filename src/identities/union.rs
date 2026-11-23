@@ -1,9 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `union ( a := T, b := U )`: a type whose value holds one of its members at a time. A value
-//! is `[tag: TAG_BYTES][room of the largest member]`; the tag is 0 while it holds none, else
-//! the held member's place among the members, counted from 1. A member read `v.a` is a
+//! `union ( a := T, b := U )`: a type whose value holds one of its members at a time. Its first
+//! line is its own, `tag := layout (u8, 0)`, then each member at [`room_at`], the first byte after
+//! the tag its widest member's alignment allows. The tag is the held member's place among the
+//! lines, so 0, the tag's own, while it holds none. A member read `v.a` is a
 //! dereference of a `member` node `{type: member, value: [base, union, tag, access, op,
 //! output_type]}`, which runs to the room's address: a write sets the tag, ending the member
 //! held before, and every other use checks it. `v holds a` is an `asks` node `[base, union, tag,
@@ -58,6 +59,8 @@ pub(crate) enum Access {
 
 /// The tag's width in a value.
 pub(crate) const TAG_BYTES: usize = 1;
+/// The spelling of a union's own first line, its tag.
+pub(crate) const TAG_LINE: &str = "tag";
 /// The most members the tag tells apart, 0 saying none is held.
 pub(crate) const MOST_MEMBERS: usize = (u64::MAX >> (64 - 8 * TAG_BYTES)) as usize;
 
@@ -141,12 +144,10 @@ pub(crate) unsafe fn fallible_members(types: &Core, ty: DyadPtr) -> Option<(Dyad
     if !is_union(types, ty) {
         return None;
     }
-    let members = array::items(meta::record_fields_of(ty));
-    let bindings = array::items(meta::record_field_bindings_of(ty));
-    let [value, err] = members[..] else {
+    let [value, err] = members(ty)[..] else {
         return None;
     };
-    let named = bindings.iter().map(|&b| Binding::spelling(b)).eq(["value", "err"]);
+    let named = member_bindings(ty).iter().map(|&b| Binding::spelling(b)).eq(["value", "err"]);
     (named && super::error::is_value(types, hole::type_in(err))).then_some((value, err))
 }
 
@@ -241,8 +242,7 @@ unsafe fn fill_parts(
 ) -> (DyadPtr, DyadPtr, Option<super::read::Carry>) {
     let ops = dyad::value(node) as *const DyadPtr;
     let union = *ops.add(1);
-    let members = array::items(meta::record_fields_of(union));
-    let ty = hole::type_in(members[tag_in(node) as usize - 1]);
+    let ty = hole::type_in(array::items(meta::record_fields_of(union))[tag_in(node) as usize]);
     let carry = super::read::carry_of(types, ty);
     debug_assert!(carry.is_some() || ty == types.void_, "a union's member moves whole");
     (*ops, union, carry)
@@ -270,7 +270,7 @@ fn run_fill(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let at = rt.scratch(meta::record_size_of(union) as usize);
         start(node, at);
         if let Some((carry, taken)) = taken {
-            super::assign::put(carry, at.add(TAG_BYTES), taken);
+            super::assign::put(carry, at.add(room_at(union)), taken);
         }
         Ok(at as i64)
     }
@@ -289,7 +289,7 @@ fn lower_fill(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let node = lw.node_addr(node);
         lw.call_seed(compiled_start as *const () as usize, &[node, at])?;
         if let Some((carry, taken)) = taken {
-            super::assign::lower_put(lw, carry, at, TAG_BYTES as i64, taken);
+            super::assign::lower_put(lw, carry, at, room_at(union) as i64, taken);
         }
         Ok(at)
     }
@@ -314,22 +314,23 @@ pub(crate) unsafe fn is_union(types: &Core, t: DyadPtr) -> bool {
     !t.is_null() && meta::is_record_type(t) && meta::mint_of(t) == types.union.union
 }
 
-/// Every member's place in a value of the union `ty`, the room after the tag, written onto the
-/// member's binding; the tag and the room of the largest member, the union's `size_bytes`, and
-/// the widest member's alignment, the union's, as C aligns a union.
+/// Each line's byte in a value of the union `ty`, written onto its binding, as C lays out a
+/// struct of the tag and a C union of the members: the tag at 0, every member at the first byte
+/// after it that the widest member's alignment allows, and the size rounded up to that alignment
+/// (›Inside a type body, `layout` gives a field its type and its byte: `a := layout (mut i32,
+/// 1)`‹ [[R385]]).
 ///
 /// # Safety
-/// `ty` must be a type node from the store, `members` its member holes and `bindings` their
-/// bindings in the same order.
+/// `ty` must be a type node from the store, `lines` its tag hole and then its member holes, and
+/// `bindings` their bindings in the same order.
 pub(crate) unsafe fn lay_out(
     types: &Core,
     ty: DyadPtr,
-    members: &[DyadPtr],
+    lines: &[DyadPtr],
     bindings: &[DyadPtr],
 ) -> meta::Extent {
     let (mut room, mut align) = (0, 1);
-    for (&member, &binding) in members.iter().zip(bindings) {
-        Binding::set_field_offset(binding, ty, TAG_BYTES);
+    for &member in &lines[1..] {
         let t = hole::type_in(member);
         if t == types.void_ {
             continue;
@@ -337,7 +338,42 @@ pub(crate) unsafe fn lay_out(
         room = room.max(super::by_copy::place_width(types, t));
         align = align.max(super::read::place_align(types, t));
     }
-    meta::Extent { size_bytes: (TAG_BYTES + room) as u64, align }
+    let at = TAG_BYTES.next_multiple_of(align);
+    Binding::set_field_offset(bindings[0], ty, 0);
+    for &binding in &bindings[1..] {
+        Binding::set_field_offset(binding, ty, at);
+    }
+    meta::Extent { size_bytes: (at + room).next_multiple_of(align) as u64, align }
+}
+
+/// The member holes of the union `union`, its lines after the tag's.
+///
+/// # Safety
+/// `union` must be a union type.
+pub(crate) unsafe fn members<'a>(union: DyadPtr) -> &'a [DyadPtr] {
+    &array::items(meta::record_fields_of(union))[1..]
+}
+
+/// # Safety
+/// As [`members`].
+pub(crate) unsafe fn member_bindings<'a>(union: DyadPtr) -> &'a [DyadPtr] {
+    &array::items(meta::record_field_bindings_of(union))[1..]
+}
+
+/// Whether `line` is the tag's line of the union `union`.
+///
+/// # Safety
+/// As [`members`].
+pub(crate) unsafe fn is_tag_line(union: DyadPtr, line: DyadPtr) -> bool {
+    array::items(meta::record_fields_of(union)).first() == Some(&line)
+}
+
+/// The byte every member of the union `union` starts at.
+///
+/// # Safety
+/// As [`members`].
+unsafe fn room_at(union: DyadPtr) -> usize {
+    Binding::read(member_bindings(union)[0]).offset
 }
 
 /// The place of the member `member` of the union value `value`, of the union type `union`: a
@@ -414,6 +450,21 @@ pub(crate) unsafe fn build_holds(
     store.alloc_words(types.union.asks, &ops)
 }
 
+/// `value.tag`: the tag of the union value `value`, of the union type `union`, a `u8` read with
+/// no check.
+///
+/// # Safety
+/// As [`build_member`].
+pub(crate) unsafe fn build_tag_read(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+    union: DyadPtr,
+) -> DyadPtr {
+    let base = base_of(store, types, value, union);
+    pointer::build_deref(store, types, base, types.numtypes[NumType::U8 as usize], 0)
+}
+
 /// What runs to the address of the union value `value`: the address of a place, or a value
 /// nothing names, which runs to the address of its bytes.
 ///
@@ -432,18 +483,18 @@ unsafe fn base_of(store: &mut Store, types: &Core, value: DyadPtr, union: DyadPt
 /// # Safety
 /// `union` must be a union type and `member` one of its member holes.
 unsafe fn tag_of(store: &mut Store, types: &Core, union: DyadPtr, member: DyadPtr) -> DyadPtr {
-    let members = array::items(meta::record_fields_of(union));
-    let at = members.iter().position(|&m| m == member).expect("a member of this union");
-    store.alloc_blob(types.numtypes[NumType::U64 as usize], &(at as u64 + 1).to_ne_bytes())
+    let lines = array::items(meta::record_fields_of(union));
+    let at = lines.iter().position(|&m| m == member).expect("a member of this union");
+    store.alloc_blob(types.numtypes[NumType::U64 as usize], &(at as u64).to_ne_bytes())
 }
 
-/// The place among its members of the member the union value at `at` holds, counted from 0;
-/// `None` while it holds none.
+/// The place among the union's lines of the member the union value at `at` holds; `None` while
+/// it holds none.
 ///
 /// # Safety
 /// `at` must be the address of a union value.
 pub(crate) unsafe fn held(at: *const u8) -> Option<usize> {
-    (tag_at(at) as usize).checked_sub(1)
+    Some(tag_at(at) as usize).filter(|&line| line != 0)
 }
 
 /// The member hole the union value at `at`, of the union type `union`, holds, and the address of
@@ -452,8 +503,8 @@ pub(crate) unsafe fn held(at: *const u8) -> Option<usize> {
 /// # Safety
 /// `at` must be the address of a value of `union`, a union type.
 pub(crate) unsafe fn held_member(union: DyadPtr, at: *const u8) -> Option<(DyadPtr, *const u8)> {
-    let members = array::items(meta::record_fields_of(union));
-    Some((*members.get(held(at)?)?, at.add(TAG_BYTES)))
+    let lines = array::items(meta::record_fields_of(union));
+    Some((*lines.get(held(at)?)?, at.add(room_at(union))))
 }
 
 /// # Safety
@@ -513,14 +564,14 @@ unsafe fn enter(rt: &mut Runtime, node: DyadPtr, at: *mut u8) -> Result<i64, Run
         }
     } else if tag_at(at) != tag {
         let bindings = array::items(meta::record_field_bindings_of(union));
-        let name = |tag: u64| bindings.get(tag as usize - 1).map(|&b| Binding::spelling(b));
-        let held = Some(tag_at(at)).filter(|&held| held != 0).and_then(name);
-        let read = name(tag).expect("a member node reads a member of its union");
+        let name = |line: usize| bindings.get(line).map(|&b| Binding::spelling(b));
+        let held = held(at).and_then(name);
+        let read = name(tag as usize).expect("a member node reads a member of its union");
         return Err(RunError::UnionHolds(Box::new((held, read))));
     } else if access == Access::Take {
         std::ptr::write_bytes(at, 0, TAG_BYTES);
     }
-    Ok(at.add(TAG_BYTES) as i64)
+    Ok(at.add(room_at(union)) as i64)
 }
 
 fn run_member(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

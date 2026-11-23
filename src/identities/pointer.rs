@@ -250,10 +250,8 @@ pub(crate) fn address_value(
     store.alloc_blob(ty, &(addr as usize as u64).to_ne_bytes())
 }
 
-/// One node per pointee: `type_mint` keeps the mint under `@` and the pointee, so two spellings
-/// of `@i32` are one type (›Every type is minted by its contents through `type_mint`; the name
-/// that holds a `type ( … )` gives it its identity‹ [[R383]]). A pointee carrying no record gets
-/// a fresh node; an owning pointer type is never interned.
+/// `@pointee`, one node per pointee (›Every type is minted by its contents through `type_mint`;
+/// the name that holds a `type ( … )` gives it its identity‹ [[R383]]).
 ///
 /// # Safety
 /// `pointee` must be a type node from the store.
@@ -265,14 +263,34 @@ pub(crate) unsafe fn make_pointer_type(
     types: &Core,
     pointee: DyadPtr,
 ) -> DyadPtr {
-    let type_ = types.type_;
+    let (type_, ctor) = (types.type_, types.pointer_ctor);
+    mint_pointer(store, types, types.at_, pointee, |store| {
+        new_pointer_type(store, type_, pointee, ctor)
+    })
+}
+
+/// The pointer type `former` makes of `pointee`: the one `type_mint` keeps under `former` and the
+/// pointee, or the one `make` builds the first time. A pointee carrying no record gets a fresh
+/// node.
+///
+/// # Safety
+/// `pointee` must be a type node from the store, and `make` must give a pointer type node of it.
+///
+/// # Panics
+/// As [`make_pointer_type`].
+unsafe fn mint_pointer(
+    store: &mut Store,
+    types: &Core,
+    former: DyadPtr,
+    pointee: DyadPtr,
+    make: impl FnOnce(&mut Store) -> DyadPtr,
+) -> DyadPtr {
     // A gated pointee is one node per gated type already, kept by `type_mint`.
-    let ctor = types.pointer_ctor;
     if super::meta::kind_of(pointee).is_none() && !super::gate::is_node(pointee) {
-        return new_pointer_type(store, type_, pointee, ctor);
+        return make(store);
     }
-    let made = |store: &mut Store| Some(new_pointer_type(store, type_, pointee, ctor));
-    type_mint::mint_of(store, types, types.at_, &[pointee], made).expect("a pointer type is made")
+    type_mint::mint_of(store, types, former, &[pointee], |store| Some(make(store)))
+        .expect("a pointer type is made")
 }
 
 /// A pointer type taking the value to its right as [`construct_conversion`] takes it, ranked as
@@ -309,22 +327,27 @@ pub(crate) fn at_dyad(store: &mut Store, types: &Core) -> DyadPtr {
     unsafe { make_pointer_type(store, types, types.dyad_) }
 }
 
-/// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,
-/// so `free`/`move` recognize owning-ness by the slot while a borrow's pointer has none.
-/// A new node at each call; `alloc` makes one per mint.
+/// `own @pointee`, one node per pointee as `@pointee` is, kept under `own`: a pointer record
+/// whose `destructor` runs the teardown, so `free`/`move` recognize owning-ness by the slot while
+/// a borrow's pointer has none.
 ///
 /// # Safety
-/// `destructor` must be a callable leaf running the owning pointer's teardown.
+/// `pointee` must be a type node from the store.
+///
+/// # Panics
+/// As [`make_pointer_type`].
 pub(crate) unsafe fn make_owning_pointer_type(
     store: &mut Store,
-    type_: DyadPtr,
+    types: &Core,
     pointee: DyadPtr,
-    destructor: DyadPtr,
 ) -> DyadPtr {
-    let value = super::meta::pointer_record(store, pointee, Assoc::Left, meta::prec::INERT);
-    let node = store.alloc_head(type_, value);
-    super::meta::install_destructor(node, destructor);
-    node
+    let (type_, teardown) = (types.type_, types.ops.teardown_);
+    mint_pointer(store, types, types.own_, pointee, |store| {
+        let value = meta::pointer_record(store, pointee, Assoc::Left, meta::prec::INERT);
+        let node = store.alloc_head(type_, value);
+        meta::install_destructor(node, teardown);
+        node
+    })
 }
 
 /// The offset is a committed u64 literal node, so the graph stays self-describing.

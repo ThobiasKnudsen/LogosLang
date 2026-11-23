@@ -36,6 +36,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     cx.declare("return", id);
     cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
+    // It leaves the running call, which is gone when a parse's placed node runs.
+    cx.placings.insert(id, super::place::run_now);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)
 }
