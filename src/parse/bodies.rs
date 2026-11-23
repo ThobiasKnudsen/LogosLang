@@ -1275,8 +1275,18 @@ impl<'a> Parser<'a> {
         self.cx.narrow_next = None;
         self.cx.runtime_depth -= 1;
         let (then, els) = branches?;
+        let log_end = self.cx.ended_log.len();
+        let spared =
+            self.spared_by_leaving_arms([(then, log_start..log_then), (els, log_then..log_end)]);
+        for &name in &spared {
+            // SAFETY: `name` is a binding dyad the ended log held.
+            unsafe { self.cx.scopes.spare(ends_mark, name) };
+        }
         // What the then arm ended is dead after the `if`, as what the else arm ended is.
         for (name, node) in ended_by_then {
+            if spared.contains(&name) {
+                continue;
+            }
             // SAFETY: `name` is a binding dyad the journal held.
             if !unsafe { Binding::read(name) }.is_dead() {
                 // SAFETY: as above.
@@ -1299,15 +1309,29 @@ impl<'a> Parser<'a> {
         // frees it at its end, an else-less `if` in the arm it gains, and a condition that
         // leaves before either arm runs frees it too (DESIGN ›`move` and `free` are static: the
         // parse marks the name dead‹, rule 2).
-        let log_end = self.cx.ended_log.len();
-        let then_ended = self.ended_outside(log_start..log_then, if_depth);
-        let else_ended = self.ended_outside(log_then..log_end, if_depth);
         let not_in = |ended: &[DyadPtr], other: &[DyadPtr]| -> Vec<DyadPtr> {
             other.iter().copied().filter(|name| !ended.contains(name)).collect()
         };
+        let then_ended = not_in(&spared, &self.ended_outside(log_start..log_then, if_depth));
+        let else_ended = not_in(&spared, &self.ended_outside(log_then..log_end, if_depth));
         let then_ends = not_in(&then_ended, &else_ended);
         let else_ends = not_in(&else_ended, &then_ended);
-        let condition_ends = self.ended_outside(log_start..log_end, if_depth);
+        let condition_ends = not_in(&spared, &self.ended_outside(log_start..log_end, if_depth));
+        // A spared name ended nothing: no line's close settles an end for it.
+        if !spared.is_empty() {
+            let gone: Vec<usize> = (log_start..log_end)
+                .filter(|&at| spared.contains(&self.cx.ended_log[at].0))
+                .collect();
+            for &at in gone.iter().rev() {
+                self.cx.ended_log.remove(at);
+            }
+            for r in self.returns_from(returns_start) {
+                r.cursor -= gone.iter().filter(|&&at| at < r.cursor).count();
+            }
+            for scope in &mut self.cx.open[..if_depth] {
+                scope.ended.retain(|name| !spared.contains(name));
+            }
+        }
         // A `return` in the condition or the then arm leaves through the `if`, which frees
         // these on its way, though its line may end them after it, in the else arm. An else
         // arm's `return` stands after the then arm in the log, so its line never ends them.
@@ -1330,6 +1354,27 @@ impl<'a> Parser<'a> {
             )
         };
         Ok(node)
+    }
+
+    /// The names an arm of an `if` ended where that arm always leaves (`flow`'s answer): none of
+    /// the lines after the `if` runs on its path, so it ends nothing for them, and no other arm
+    /// frees them (›A scope's value is what it evaluates to, and `return` is an optional early
+    /// exit from the enclosing function‹ [[R207]]). Only the result place is spared: every other
+    /// name keeps rule 2 of ›`move` and `free` are static: the parse marks the name dead‹ [[R70]].
+    fn spared_by_leaving_arms(&self, arms: [(DyadPtr, std::ops::Range<usize>); 2]) -> Vec<DyadPtr> {
+        let mut spared = Vec::new();
+        for (arm, range) in arms {
+            // SAFETY: `arm` is null or the reduced dyad of an arm just parsed.
+            if arm.is_null() || !unsafe { flow::of(self.types, arm) }.ends_scope() {
+                continue;
+            }
+            for &(name, _) in &self.cx.ended_log[range] {
+                if self.is_result_place(name) && !spared.contains(&name) {
+                    spared.push(name);
+                }
+            }
+        }
+        spared
     }
 
     /// The held names the ended log's `range` ended that a scope outside depth `inside` holds, in

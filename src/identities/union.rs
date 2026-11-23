@@ -81,9 +81,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> UnionIds {
     cx.lower.insert(member, lower_member);
     let leaf = callable::mint_native(cx.store, cs.callable, run_member, cs.seed_native);
 
-    // `holds` reads the cell to its left as `.` does, and a member's name to its right.
+    // `holds` reads the value to its left and a member's name to its right; it gives a `bool`,
+    // so it is built with the comparisons (›Every identity has a `parse_rank`, and `(` works in
+    // two steps‹ [[R259]]).
     let sides = &["lhs", "rhs"];
-    let record = meta::token_record(cx, meta::prec::TIGHT, crate::parse::Assoc::Left, sides);
+    let record = meta::token_record(cx, meta::prec::COMPARE, crate::parse::Assoc::Left, sides);
     let holds = cx.store.alloc_head(cx.type_, record);
     cx.declare("holds", holds);
     cx.metas.insert(holds, |p, _id, tape| p.construct_holds(tape));

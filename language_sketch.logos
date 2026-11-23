@@ -6,7 +6,7 @@ assign := fn (node := &mut dyad ?, type := @dyad ?, value := @void ?) -> void ( 
 assign(declare(&mut logos, «=»), ?, ?)
 assign(declare(&mut logos, «:=»), ?, ?)
 assign(declare(&mut logos, «rational_number»), type, ?)
-assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: the literal never carries a sign; a negation before a literal folds into it at parse. - spells two identities, told apart where it stands: negation where no value stands to its left (-5, (-m), [-1], x=-1) or a space stands before it and none after (i32 -m), else subtraction (a-1, a - 1, a- 1), so a-1 never lexes as a then -1 (›`-` negates where a space stands before it and none after, or no value stands to its left; any other `-` subtracts‹)
+assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: the literal never carries a sign; a negation before a literal folds into it at parse. - spells two identities, told apart where it stands: negation where no value stands to its left (-5, (-m), [-1], x=-1) or a space stands before it and none after (1 -m, two values side by side), else subtraction (a-1, a - 1, a- 1), so a-1 never lexes as a then -1 (›`-` negates where a space stands before it and none after, or no value stands to its left; any other `-` subtracts‹)
 
 parsing_tape := type (
     # the working frontier: Logic Graph with a string extension (DESIGN ›Source becomes runnable‹, ›The scope's
