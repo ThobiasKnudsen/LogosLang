@@ -8255,22 +8255,22 @@ fn a_try_at_the_top_level_hands_the_error_to_the_command_line() {
 fn a_static_or_immediate_value_runs_as_a_line_that_holds_what_it_made() {
     let g = "g := fn () -> i32! ( 5 )";
     for (tail, want) in [
-        ("p := static try g(), p", "5"),
+        ("p := static (try g()), p", "5"),
         ("p := static (try g()) + 1, p", "6"),
-        ("p := static mut try g(), p = p + 1, p", "6"),
+        ("p := static mut (try g()), p = p + 1, p", "6"),
         ("x := immediate try g(), x", "5"),
     ] {
         let src = format!("{g}, {tail}");
         assert_eq!(line(&src), want, "{src}");
     }
     for compile in ["", "f.compile(), "] {
-        for body in ["p := static try g(), p", "immediate try g()"] {
+        for body in ["p := static (try g()), p", "immediate try g()"] {
             let src = format!("{g}, f := fn () -> i32! ( {body} ), {compile}try f()");
             assert_eq!(line(&src), "5", "{src}");
         }
     }
     let bad = "error.bad := «bad», g := fn () -> i32! ( error.bad «no» )";
-    for value in ["p := static try g()", "p := immediate try g()"] {
+    for value in ["p := static (try g())", "p := immediate try g()"] {
         let src = format!("{bad}, print «before», {value}, print «never»");
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), "before\n"), "{src}\nstderr: {stderr}");
@@ -12776,7 +12776,7 @@ fn an_assignment_copies_a_value_that_owns_memory() {
             "9\n",
         ),
         (
-            "p := try alloc 1 of mut i32 5, q := mut try alloc 1 of mut i32 6, q = p, q@ = i32 9, p@"
+            "p := try alloc 1 of mut i32 5, q := mut (try alloc 1 of mut i32 6), q = p, q@ = i32 9, p@"
                 .to_string(),
             "5\n",
         ),
@@ -14124,7 +14124,7 @@ fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
     }
     run(format!("{bag}m := {{ b := bag (1) }}, print «end»"), "end\nfreed 1\n");
     run(
-        "m := { p := pub try alloc 1 of i32 5, a := i32 1 }, q := move m.p, print «end {q@}»"
+        "m := { p := pub (try alloc 1 of i32 5), a := i32 1 }, q := move m.p, print «end {q@}»"
             .into(),
         "end 5\n",
     );

@@ -2034,12 +2034,12 @@ mod tests {
     #[test]
     fn an_owning_place_takes_only_an_owning_value() {
         assert_eq!(
-            parse_err("x := i32 1, a := mut try alloc 1 of i32 5, a = &x"),
+            parse_err("x := i32 1, a := mut (try alloc 1 of i32 5), a = &x"),
             ParseError::NonOwningIntoOwning
         );
         // A named owner is copied in: each name frees its own block.
         assert_eq!(
-            run("a := mut try alloc 1 of mut i32 5, b := try alloc 1 of mut i32 6, a = b, a@ = 9, b@"),
+            run("a := mut (try alloc 1 of mut i32 5), b := try alloc 1 of mut i32 6, a = b, a@ = 9, b@"),
             (6, 0)
         );
         assert_eq!(free_log(), vec![5, 6, 9]);
@@ -2047,16 +2047,16 @@ mod tests {
         assert_eq!(run("a := try alloc 1 of mut i32 5, a@ = 9, a@"), (9, 0));
 
         // `=` frees the block it displaces, after building the right side, before the write.
-        assert_eq!(run("a := mut try alloc 1 of i32 5, a = try alloc 1 of i32 6, a@"), (6, 0));
+        assert_eq!(run("a := mut (try alloc 1 of i32 5), a = try alloc 1 of i32 6, a@"), (6, 0));
         assert_eq!(free_log(), vec![5, 6]);
         assert_eq!(
-            run("a := mut try alloc 1 of i32 5, b := try alloc 1 of i32 6, a = move b, a@"),
+            run("a := mut (try alloc 1 of i32 5), b := try alloc 1 of i32 6, a = move b, a@"),
             (6, 0)
         );
         assert_eq!(free_log(), vec![5, 6]);
         // The right side may read what it displaces.
         assert_eq!(
-            run("a := mut try alloc 1 of i32 5, a = try alloc 1 of i32 (a@ + 1), a@"),
+            run("a := mut (try alloc 1 of i32 5), a = try alloc 1 of i32 (a@ + 1), a@"),
             (6, 0)
         );
         // An owner never written frees nothing when the first value lands.
@@ -2367,7 +2367,10 @@ mod tests {
     fn alloc_of_a_bare_count_is_that_many_zeroed_bytes() {
         assert_eq!(run("a := try alloc 8,\na@"), (0, 0));
         // An `@u8` is read through only; bytes to write are `alloc n of mut u8 0`.
-        assert_eq!(parse_err("a := mut try alloc 8,\na@ = 200,\n1"), ParseError::PointeeNotMutable);
+        assert_eq!(
+            parse_err("a := mut (try alloc 8),\na@ = 200,\n1"),
+            ParseError::PointeeNotMutable
+        );
         assert_eq!(run("a := try alloc 8 of mut u8 0,\na@ = 200,\na@"), (200, 0));
         // The count-less spelling is gone: `i32 2` is a count, so this is two bytes.
         assert_eq!(run("a := try alloc i32 2,\na@"), (0, 0));
@@ -2585,7 +2588,7 @@ mod tests {
     #[test]
     fn a_write_after_move_is_refused() {
         assert_eq!(
-            parse_err("a := mut try alloc 1 of i32 7,\nb := move a,\na = b"),
+            parse_err("a := mut (try alloc 1 of i32 7),\nb := move a,\na = b"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
