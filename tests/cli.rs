@@ -13305,6 +13305,42 @@ fn lossy_is_a_gate_word_and_a_number_type_takes_its_value_with_loss() {
     }
 }
 
+/// ›A gate word reads the nearest value to its right and gives it with its type gated‹ [[R102]],
+/// ›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]: a gate word
+/// over a value nobody names gives a node whose type is the gate node, so `.type` reads its gates
+/// and a `lossy` one converts with loss wherever it lands, an argument, `=` and a result alike.
+/// Landed, the value is its place's type's, and a copy takes no gate. On both tiers.
+#[test]
+fn a_gated_value_nobody_names_keeps_its_gate_where_it_lands() {
+    let defs = "g := fn (a := i32 ?) -> i32 ( a + 1 )";
+    let mut cases = vec![
+        ("x := f64 2.5, g := fn (a := i32 ?) -> i32 ( a + 1 ), g(lossy x)".to_string(), "3\n"),
+        ("print «{(mut i32 5).type} {(pub i32 5).type}»".to_string(), "mut i32 pub i32\n"),
+        ("x := f64 2.5, print «{(lossy x).type}»".to_string(), "lossy f64\n"),
+        ("x := mut i32 5, y := mut x, print «{y.type}»".to_string(), "mut i32\n"),
+        ("x := i64 6, x == i64 lossy (i32 5 or i32 6)".to_string(), "true\n"),
+    ];
+    for (f, want) in [
+        ("fn (x := f64 ?) -> i32 ( g(lossy x) )", "3\n"),
+        ("fn (x := f64 ?) -> i32 ( n := mut i32 0, n = lossy x, n )", "2\n"),
+        ("fn (x := f64 ?) -> i32 ( lossy x )", "2\n"),
+        ("fn (x := f64 ?) -> i32 ( print «{(mut i32 5).type}», i32 lossy x )", "mut i32\n2\n"),
+    ] {
+        cases.push((format!("{defs}, f := {f}, f(2.5)"), want));
+        cases.push((format!("{defs}, f := {f}, g.compile(), f.compile(), f(2.5)"), want));
+    }
+    assert_runs(&cases);
+    for (src, want) in [
+        ("x := f64 2.5, i32 f64 lossy (x)", "1:19: error: these types do not match"),
+        ("x := mut mut i32 5", "1:6: error: this gate word already gates the value"),
+        ("x := mut ?", "1:1: error: a name needs a type"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(want), "{src}: stderr: {stderr}");
+    }
+}
+
 /// What a number type's lower rank leaves refused: an `if` arm the type cannot hold, a type a
 /// `-` subtracts from (›`-` negates where a space stands before it and none after, or no value
 /// stands to its left; any other `-` subtracts‹ [[R157]]), a bracket read through `.`, a type

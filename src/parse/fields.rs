@@ -726,6 +726,13 @@ impl<'a> Parser<'a> {
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
             if let Some(which) = TypeRead::of_member(name) {
+                // A value a gate word gave stands with its gate node for its type word, which
+                // reducing it to its operand hops: `(mut i32 5).type` is `mut i32`.
+                // SAFETY: a cell holds null or a dyad from the store.
+                let gated = unsafe { crate::identities::gate::is_value(self.types, left.dyad) };
+                if which == TypeRead::Own && left.constructed && gated {
+                    return Ok((dyad::ty(left.dyad), 0));
+                }
                 // A name's type is read with its gate node, a field's too: with `x := mut i32 5`,
                 // `x.type` is `mut i32` (›`x.type` reads the type word of the node a name or an
                 // expression stands for‹ [[R279]], ›Gates are type nodes: `x := mut i32 5`; the
@@ -2030,7 +2037,10 @@ impl<'a> Parser<'a> {
         let t = match which {
             TypeRead::Own => match read::operator_node(types, lhs) {
                 Some(node) => return Ok(dyad::ty(node)),
-                None => read::value_type(types, lhs)?,
+                None => {
+                    read::value_type(types, lhs)?;
+                    read::given_type(types, lhs)
+                }
             },
             TypeRead::Gives => read::gives(types, lhs)?,
         };

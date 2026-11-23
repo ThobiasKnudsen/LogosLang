@@ -959,7 +959,7 @@ pub(crate) fn run_line_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunE
             };
             match rt.read_on_tape(tape, k, read)? {
                 Some(operand) => operand,
-                None => rt.through(cell_on(rt, tape, k).dyad),
+                None => crate::binding::through(rt.types(), cell_on(rt, tape, k).dyad),
             }
         } else {
             line_of_type_read(rt, node)?
