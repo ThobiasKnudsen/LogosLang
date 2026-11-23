@@ -8193,6 +8193,77 @@ fn a_try_at_the_top_level_hands_the_error_to_the_command_line() {
     assert!(stderr.contains(refused), "stderr: {stderr}");
 }
 
+/// R140: one `try` covers every `T!` on its right in its expression, up to `,` or the end of its
+/// bracket: each gives its value, and the first error is passed on before anything after it runs;
+/// a `T!` before the `try`, after its bracket or in another function's body is not covered; on both
+/// tiers.
+#[test]
+fn one_try_covers_every_t_bang_on_its_right_in_its_expression() {
+    let big = "error.big := «a number is too big»";
+    let half =
+        "half := fn (n := i32 ?) -> i32! ( if n > 100 ( error.big «{n} is too big» ), n / 2 )";
+    let loud = "loud := fn (n := i32 ?) -> i32! ( print «loud {n}», n )";
+    let k = "k := fn (n := i32 ?) -> i32 ( n * 2 )";
+    for compile in ["", "g.compile(), "] {
+        for (g, call, want) in [
+            (
+                "g := fn (a := i32 ?, b := i32 ?) -> i32! ( try half(a) + half(b) )",
+                "r := g(8, 10), s := g(300, 10), t := g(8, 400), \
+                 print «{r.value} {s.err[0].message} {s.err.size} {t.err[0].message}»",
+                "9 300 is too big 2 400 is too big\n",
+            ),
+            (
+                "g := fn (a := i32 ?) -> i32! ( try half(a) + loud(1) )",
+                "print «{g(300) holds err}», print «{g(8).value}»",
+                "true\nloud 1\n5\n",
+            ),
+            (
+                "g := fn (a := i32 ?) -> i32! ( x := half(a), try x * 3 + k(half(a)) )",
+                "print «{g(8).value} {g(300).err[0].message}»",
+                "20 300 is too big\n",
+            ),
+            (
+                "g := fn (a := i32 ?) -> i32! ( s := mut i32 0, for i in 0..3 ( s = try s + half(a + i) ), s )",
+                "print «{g(8).value} {g(299).err[0].message}»",
+                "13 299 is too big\n",
+            ),
+            (
+                "g := fn (c := bool ?) -> i32! ( try if c (half(8)) else (half(300)) )",
+                "print «{g(true).value} {g(false) holds err}»",
+                "4 true\n",
+            ),
+        ] {
+            let src = format!("{big}, {half}, {loud}, {k}, {g}, {compile}{call}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}\nstderr: {stderr}");
+        }
+    }
+    let src = format!(
+        "{big}, {half}, x := try half(8) + half(2), print «{{x}}», y := try half(4) + half(300), \
+         print «never»"
+    );
+    let (code, stdout, stderr) = run_line(&src);
+    assert_eq!((code, stdout.as_str()), (Some(1), "5\n"), "stderr: {stderr}");
+    assert!(stderr.contains("run error: error.big: 300 is too big"), "stderr: {stderr}");
+
+    let plus = "error.operands: `+` takes numbers, and this type is none";
+    let no_t_bang =
+        "`try` passes on the error of a value that holds a value or an error, `T!`, and \
+                     this value is no `T!`";
+    for (tail, message) in [
+        ("x := half(2) + try half(8)", plus),
+        ("x := (try half(8)) + half(2)", plus),
+        ("x := try half(8), y := half(2) + 1", plus),
+        ("x := try ( f := fn () -> i32 ( half(8) + 1 ), half(2) + f() )", plus),
+        ("r := half(8), x := try r.value + 1", no_t_bang),
+    ] {
+        let src = format!("{big}, {half}, {tail}");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}\nstderr: {stderr}");
+        assert!(stderr.contains(message), "{src}\nstderr: {stderr}");
+    }
+}
+
 /// R140: a function that gives `void!` holds `value` where its body ends and `err` where a raise
 /// or a `try` leaves it; its body gives nothing, as a `-> void` one's, ending what it holds on
 /// either way out; on both tiers.

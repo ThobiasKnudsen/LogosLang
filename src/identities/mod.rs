@@ -1156,7 +1156,8 @@ unsafe fn land_leaf(
             if from != ty && converts {
                 // The written conversion gives `ty!` here, which a place of `ty` cannot hold
                 // (›A type's `parse` decides what converts into it; unwritten, a value converts
-                // only into a type that holds it exactly‹ [[R155]]).
+                // only into a type that holds it exactly‹ [[R155]]). Refused on a `try`'s right
+                // too, where the `try` would read the `ty!`: stand-in for #159.
                 if !how.faults && convert::may_fail(types, from, ty) {
                     return Err(ParseError::UnwrittenWholeNumber);
                 }

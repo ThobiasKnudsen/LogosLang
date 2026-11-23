@@ -4567,6 +4567,7 @@ fn a_lossy_value_converts_where_a_comparison_or_an_operation_reads_it() {
         ("x := f64 2.5, if i32 2 == try i32 lossy (x) (1) else (0)", 1),
         ("x := f64 2.5, if i32 2 == try i32 lossy x (1) else (0)", 1),
         ("x := f64 2.5, if (try i32 lossy (x)) == i32 2 (1) else (0)", 1),
+        ("x := f64 2.5, y := try i32 lossy (x) == i32 2, if y (1) else (0)", 1),
         ("x := mut f64 0.5, n := mut i32 0, while i32 3 > try i32 lossy (x) (x = x + 1, n = n + 1), n", 3),
         ("x := f64 2.5, i32 1 + try i32 lossy x", 3),
         ("x := f64 2.5, y := try i32 lossy x, y", 2),
