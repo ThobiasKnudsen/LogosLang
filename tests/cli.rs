@@ -8042,6 +8042,62 @@ fn t_bang_is_the_union_of_value_and_err() {
     );
 }
 
+/// R379, Thobias's Question 286: the lines a type's own parse writes, a union's `tag`, `T!`'s
+/// `value` and `err` and those of the `void!` a `parse` slot gives, meet only the type's own lines,
+/// never the names where the type is written. A line the program writes, a field or a union's
+/// member, still meets every name in reach (R234). On both tiers.
+#[test]
+fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
+    let probe = "probe := type ( value := i32 ?, err := i32 ?, tag := i32 ?, \
+                 run = ( print «{value} {err} {tag}» ), parse_rank = *.parse_rank + 1, \
+                 parse = ( tape[0].type = probe, tape[0].value = 7, tape[0].err = 8, \
+                 tape[0].tag = 9, tape.is_constructed[0] = true ) )";
+    for compile in ["", "f.compile(), "] {
+        for (src, want) in [
+            (
+                format!(
+                    "value := i32 3, err := i32 4, tag := i32 5, \
+                     f := fn () -> i32! ( value + err + tag ), {compile}\
+                     r := f(), print «{{r.value}} {{value}} {{err}} {{tag}}»"
+                ),
+                "12 3 4 5",
+            ),
+            (
+                format!(
+                    "tag := i32 3, num := type union ( i := mut i32 ), \
+                     f := fn () -> i32 ( v := mut num ?, v.i = 5, v.i + tag ), {compile}f()"
+                ),
+                "8",
+            ),
+            (format!("{probe}, f := fn () -> void ( probe ), {compile}f()"), "7 8 9"),
+        ] {
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    assert_eq!(
+        line(
+            "g := fn () -> i32 ( mk := type ( value := pub i32 ?, \
+             parse = ( tape.is_constructed[0] = true ) ), 1 ), g()"
+        ),
+        "1"
+    );
+    for (src, at, name) in [
+        ("x := i32 1, p := type ( x := i32 ? )", "1:25", "x"),
+        (
+            "value := i32 3, mk := type ( value := pub i32 ?, \
+             parse = ( tape.is_constructed[0] = true ) ), 0",
+            "1:30",
+            "value",
+        ),
+        ("value := i32 3, u := type union ( value := i32, err := error ), 0", "1:35", "value"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        let want = format!("{at}: error: `{name}` is already declared and still in scope");
+        assert!(stderr.contains(&want), "{src}: stderr: {stderr}");
+    }
+}
+
 /// R140: «A function that gives `T!` fills the union itself, and the program writes neither
 /// member: its last value of type `T` fills `value`», on both tiers, for a number, a record and
 /// a value whose type fills `free`, each `if` arm and a `return` alike.
