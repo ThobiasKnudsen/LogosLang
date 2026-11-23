@@ -448,9 +448,14 @@ impl<'a> Parser<'a> {
         let (mut lines, mut bindings, mut bytes) = (Vec::new(), Vec::new(), Vec::new());
         let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
         let tag = crate::identities::union::TAG_LINE;
-        let read =
-            self.declare_own_line(tag, u8_, opened_at, &mut lines, &mut bindings).and_then(|()| {
-                self.field_lines(FieldList::Members, scope, &mut lines, &mut bindings, &mut bytes)
+        // The tag line is declared after the members, so a member's type reads an outer `tag`, and
+        // then stands first.
+        let read = self
+            .field_lines(FieldList::Members, scope, &mut lines, &mut bindings, &mut bytes)
+            .and_then(|()| self.declare_own_line(tag, u8_, opened_at, &mut lines, &mut bindings))
+            .map(|()| {
+                lines.rotate_right(1);
+                bindings.rotate_right(1);
             });
         // As a type's body stands below its fields, where a member is looked up through a value.
         let body = self.open_scope();

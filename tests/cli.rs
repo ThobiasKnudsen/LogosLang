@@ -7780,6 +7780,19 @@ fn a_union_s_first_line_is_its_tag() {
             "tag := i32 3, f := fn () -> i32! ( 4 ), r := f(), print «{tag} {r.tag}»".to_string(),
             "3 1",
         ),
+        // A member's type reads an outer `tag`, not the union's own line.
+        (
+            "tag := type ( n := pub mut i32 ? ), u := type union ( a := mut tag, b := mut i32 ), \
+             v := mut u ?, v.a = tag(4), print «{v.a.n} {v.tag}»"
+                .to_string(),
+            "4 1",
+        ),
+        (
+            "tag := type ( n := pub mut i32 ? ), u := type union ( a := mut tag, b := mut i32 ), \
+             f := fn () -> i32 ( v := mut u ?, v.a = tag(4), v.a.n + v.tag ), f.compile(), f()"
+                .to_string(),
+            "5",
+        ),
         (
             "u := type union ( i := mut i32 ), print «{u.size_bytes} {i32!.size_bytes}»"
                 .to_string(),
