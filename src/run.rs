@@ -467,6 +467,9 @@ pub struct Runtime<'a> {
     stood: Vec<DyadPtr>,
     /// The brackets whose lines a refusal waits on, until a reader takes them as data.
     unread_lines: Vec<DyadPtr>,
+    /// Set while an `alloc` that got no memory makes its error, whose hop needs memory too: an
+    /// `alloc` that gets none then stops the run.
+    refusing_alloc: bool,
     /// Handed to every jump into machine code.
     pub(crate) ctx: Context,
 }
@@ -543,6 +546,7 @@ impl<'a> Runtime<'a> {
             line_values: Vec::new(),
             stood: Vec::new(),
             unread_lines: Vec::new(),
+            refusing_alloc: false,
             ctx: Context::new(),
         }
     }
@@ -880,6 +884,23 @@ impl<'a> Runtime<'a> {
 
     pub(crate) fn note_alloc(&mut self) {
         self.live_allocs += 1;
+    }
+
+    /// Runs `make`, which makes the error of an `alloc` that got no memory, with every `alloc`
+    /// inside it that gets none stopping the run (›There is no bare `error «…»`; `abort «…»`
+    /// stops the program; `alloc` returns `@T!`‹ [[R145]]); `None` when this runtime is already
+    /// making one.
+    pub(crate) fn refusing_alloc(
+        &mut self,
+        make: impl FnOnce(&mut Self) -> Result<i64, RunError>,
+    ) -> Option<Result<i64, RunError>> {
+        if self.refusing_alloc {
+            return None;
+        }
+        self.refusing_alloc = true;
+        let made = make(self);
+        self.refusing_alloc = false;
+        Some(made)
     }
 
     /// Called after freeing a non-null pointer; a place holding nothing never reaches here.

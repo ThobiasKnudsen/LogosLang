@@ -109,8 +109,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> UnionIds {
         &["value", "union", "tag", "op", "output_type"],
     );
     let fill = cx.store.alloc_head(cx.type_, record);
-    // SAFETY: `fill` carries the record just built.
-    unsafe { meta::mark_own(fill) };
+    // SAFETY: `fill` carries the record just built, whose roles name `value`.
+    unsafe {
+        meta::mark_own(fill);
+        meta::install_hands_on(fill, &["value"], &[]);
+    }
     cx.lower.insert(fill, lower_fill);
     let fill_leaf = callable::mint_native(cx.store, cs.callable, run_fill, cs.seed_native);
 

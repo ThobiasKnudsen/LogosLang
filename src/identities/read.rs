@@ -877,7 +877,7 @@ mod tests {
              get := fn (p := @i32 ?) -> i32 ( p@ ),\n\
              seven := fn () -> i32 ( 7 ),\n\
              early := fn (p := @i32 ?) -> i32 ( return p@ ),\n\
-             kept := fn (p := @i32 ?) -> i32 ( q := alloc 1 of i32 2, p@ ),\n\
+             kept := fn (p := @i32 ?) -> i32 ( q := dyad (i32, 2), p@ ),\n\
              e8 := v.x,\n\
              e9 := a@,\n\
              e10 := get(a),\n\
@@ -887,7 +887,7 @@ mod tests {
              e14 := 5,\n\
              e15 := a + 1,\n\
              e16 := v:lex_rank,\n\
-             e17 := get(alloc 1 of i32 3),\n\
+             e17 := get(try alloc 1 of i32 3),\n\
              @i32 ?",
         );
         let types = &core;
@@ -926,6 +926,10 @@ mod tests {
             }
             assert!(is_lex_rank_field(types, exprs[16]));
             assert!(!is_lex_rank_field(types, exprs[8]));
+            assert!(
+                matches!(read_kind(types, exprs[17]), Read::Executable(Dispatch::Call(_))),
+                "the call that holds its argument is a call of `get`, a place but for what it holds"
+            );
         }
     }
 

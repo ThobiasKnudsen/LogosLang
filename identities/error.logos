@@ -12,6 +12,10 @@ hop := type (
 ),
 hops := type array hop,
 
+# The category of the error `alloc` gives where it gets no memory, which the seed hands every program
+# (›There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`‹ [[R145]]).
+error.out_of_memory := «the allocator refused an alloc»,
+
 # The error value a raise makes, which the seed calls where the raise runs: one hop, holding the
 # category, the message and the node of the raise; no raise writes a value yet.
 one_hop := fn (category := @binding ?, message := string ?, location := @dyad ?) -> hops (
@@ -24,8 +28,9 @@ one_hop := fn (category := @binding ?, message := string ?, location := @dyad ?)
 passed := fn (below := hops ?, location := @dyad ?) -> hops (
     count := below.size + 1,
     longer := mut hops ?,
-    # `ptr` owns the block and reads it only; `w`, a plain pointer into it, writes it.
-    p := alloc count of mut hop ?,
+    # `ptr` owns the block and reads it only; `w`, a plain pointer into it, writes it. The block is
+    # read out of the `@T!` `alloc` gives: stand-in for #159.
+    p := (alloc count of mut hop ?).value,
     w := p + 0,
     longer.ptr = move p,
     for hop_at in 0..below.size (
