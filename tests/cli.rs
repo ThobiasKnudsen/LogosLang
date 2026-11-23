@@ -7730,8 +7730,8 @@ fn a_union_s_first_line_is_its_tag() {
         (format!("{NUM}, v := mut num ?, v.f = 2.5, p := &v, p@.tag"), "2"),
         (
             format!(
-                "{NUM}, p := alloc 1 of num ?, print «{{p@.tag}}», p@.f = 1.5, print «{{p@.tag}}», \
-                 free p"
+                "{NUM}, p := try alloc 1 of num ?, print «{{p@.tag}}», p@.f = 1.5, \
+                 print «{{p@.tag}}», free p"
             ),
             "0\n2",
         ),
