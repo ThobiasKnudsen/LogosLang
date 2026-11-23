@@ -20,8 +20,9 @@ array := pub type (
 
     run = (
         v := mut output_type ?,
-        # `ptr` owns the block and reads it only; `w`, a plain pointer into it, writes it.
-        p := alloc elements.dyads.size of mut v.element_type ?,
+        # `ptr` owns the block and reads it only; `w`, a plain pointer into it, writes it. The block
+        # is read out of the `@T!` `alloc` gives: stand-in for #159.
+        p := (alloc elements.dyads.size of mut v.element_type ?).value,
         w := p + 0,
         v.ptr = move p,
         # size counts only written elements, so a failed `=` leaves free nothing unwritten to walk.

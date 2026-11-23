@@ -326,7 +326,7 @@ pub enum ParseError {
     /// act is `move`.
     OwnOutsideType,
     /// A function hands on a value made in it, as its last value or through a `return`, and its
-    /// result, a pointer spelled as written here, lacks `own`.
+    /// result, a pointer, lacks `own`: the result as it is written with `own`.
     HandsOnMade(String),
     /// A function whose result says `-> own @T` hands on a borrow, as its last value or through a
     /// `return`.
@@ -359,6 +359,14 @@ pub enum ParseError {
     UnionMemberUnkept(Box<String>),
     /// A union type applied to values, as a type with fields is.
     UnionApplied,
+    /// `layout` with no `( T, byte )` after it, or with something other than a type first.
+    LayoutForm,
+    /// `layout`'s byte is no `u64` known where the type is built.
+    LayoutByte,
+    /// `layout` right of a parameter's or a union member's `:=`, which is no field of a type body.
+    LayoutOutsideField,
+    /// A field that would end past the store's whole room, which no value outgrows.
+    LayoutTooFar,
     /// `holds` after a value that is no union.
     HoldsNeedsUnion,
     /// `!` after something that is no type.

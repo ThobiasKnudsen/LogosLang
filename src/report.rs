@@ -158,7 +158,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::DoubleGate => "this gate word already gates the value".into(),
         ParseError::PointeeNotMutable => {
-            "this pointer points at a value that is not `mut`: a write through `@` needs a `@ mut T`, as `&a` of `a := mut i32 5` or `alloc 1 of mut i32 5` gives".into()
+            "this pointer points at a value that is not `mut`: a write through `@` needs a `@ mut T`, as `&a` of `a := mut i32 5` or `try alloc 1 of mut i32 5` gives".into()
         }
         ParseError::Unwritten(name) => format!(
             "`{name}` is read before it is written: give it a value with `{name} = …` in the same block first"
@@ -476,8 +476,8 @@ pub fn parse_message(e: &ParseError) -> String {
              a value"
                 .into()
         }
-        ParseError::HandsOnMade(written) => {
-            format!("this function hands on a value it made: write `-> own {written}`")
+        ParseError::HandsOnMade(owning) => {
+            format!("this function hands on a value it made: write `-> {owning}`")
         }
         ParseError::OwnResultBorrows => {
             "this function hands on a borrow, but its result says `-> own`, which hands on a \
@@ -572,6 +572,24 @@ pub fn parse_message(e: &ParseError) -> String {
              place and write the member, `v := mut num ?, v.a = …`"
                 .into()
         }
+        ParseError::LayoutForm => {
+            "`layout` takes the field's type, then the byte the field starts at: \
+             `a := layout (mut i32, 4)`"
+                .into()
+        }
+        ParseError::LayoutByte => {
+            "the byte `layout` gives a field is a `u64` known where the type is built, such as `4`"
+                .into()
+        }
+        ParseError::LayoutOutsideField => {
+            "`layout` gives a field of a type body its type and its byte, and this is no such \
+             field: `t := type ( a := layout (mut i32, 4) )`"
+                .into()
+        }
+        ParseError::LayoutTooFar => format!(
+            "a field ends past byte {}, the store's whole room, which no value outgrows",
+            crate::store::ARENA_CAP
+        ),
         ParseError::UnionMemberUnkept(name) => format!(
             "`{name}` cannot be a member of a union: the seed keeps a member whose value moves \
              whole into a place, as a number, a string, a record or a pointer does"

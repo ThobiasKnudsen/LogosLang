@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The drop model: `alloc`, `own`, `move`, `free`, `defer`, and what a scope's end runs,
-//! one mechanism in one file. `alloc n of T v` yields an owning `@T` to the first of n
-//! cells (a pointer type with a non-null destructor), `alloc n` an `@u8` over n bytes. A
+//! one mechanism in one file. `alloc n of T v` yields `@T!`: an owning `@T` to the first of n
+//! cells (a pointer type with a non-null destructor), or the error `error.out_of_memory`;
+//! `alloc n` gives an `@u8` over n bytes the same way. A
 //! name bound to a value with a teardown is held by its scope, whose end runs the teardown
 //! read off the place's type (DESIGN ›A value's teardown runs where its life ends‹).
 //! `alloc` and a block's `free` keep a function interpreted.
@@ -74,6 +75,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         if p.marker_right(tape, of_) {
             return Err(ParseError::MissingOperand);
         }
+        let at = tape.at(0).map_or(0, |word| word.start);
         let count = p.take_right(tape)?;
         let (gates, init) = if p.marker_right(tape, of_) {
             tape.remove(1);
@@ -89,6 +91,16 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         }
         let types = p.types();
         let node = build_alloc(p.store(), types, count, init, gates)?;
+        // `alloc` gives `@T!` (›There is no bare `error «…»`; `abort «…»` stops the program;
+        // `alloc` returns `@T!`‹ [[R145]]).
+        // SAFETY: `node` is the `alloc` node just built.
+        let fallible = p.fallible_of(unsafe { super::read::output_type(types, node) }, at)?;
+        // SAFETY: `fallible` is a `T!`, a union of two member holes.
+        let node = unsafe {
+            let (value, err) = super::union::fallible_members(types, fallible)
+                .expect("a `T!` has a `value` and an `err`");
+            super::error::build_refusable(p.store(), types, node, [fallible, value, err])
+        };
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)
     });
@@ -1723,10 +1735,15 @@ pub(crate) unsafe fn handed_ends(types: &Core, node: DyadPtr) -> Result<Option<b
         return Ok(ends);
     }
     let t = super::read::output_type(types, node);
-    if t == types.void_ {
+    // An error is no value of the result's: a `T!` hands on its `value`, made or borrowed as a
+    // `T` is.
+    if t == types.void_ || super::error::is_value(types, t) {
         return Ok(None);
     }
-    Ok(has_end(types, t).then(|| teardown_of(types, node) != Teardown::Nothing))
+    let t = super::union::fallible_members(types, t)
+        .map_or(t, |(value, _)| super::hole::type_in(value));
+    Ok(has_end(types, t)
+        .then(|| moves_out(types, node) && teardown_of_type(types, t) != Teardown::Nothing))
 }
 
 /// Whether a value of type `t` has an end beyond its bytes, as [`teardown_of_type`] reads the
@@ -1767,7 +1784,6 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         let init = *slots.add(ALLOC_INIT);
         let carry = super::read::carry_of(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
-        let taken = if init.is_null() { None } else { Some(super::assign::take(rt, carry, init)?) };
         let width = carry.width();
         let Ok(count) = usize::try_from(count as u64) else {
             return Err(RunError::OutOfMemory);
@@ -1775,8 +1791,13 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let Some(total) = count.checked_mul(width) else {
             return Err(RunError::OutOfMemory);
         };
+        let taken = if init.is_null() { None } else { Some(super::assign::take(rt, carry, init)?) };
         let mem = heap_alloc(total);
         if mem.is_null() {
+            // No cell holds the value taken for them, so it ends here.
+            if let Some(taken) = taken {
+                end_of_type(rt, pointee, taken)?;
+            }
             return Err(RunError::OutOfMemory);
         }
         rt.note_alloc();
@@ -2005,28 +2026,34 @@ mod tests {
     #[test]
     fn an_owning_place_takes_only_an_owning_value() {
         assert_eq!(
-            parse_err("x := i32 1, a := mut alloc 1 of i32 5, a = &x"),
+            parse_err("x := i32 1, a := mut try alloc 1 of i32 5, a = &x"),
             ParseError::NonOwningIntoOwning
         );
         // A named owner is copied in: each name frees its own block.
         assert_eq!(
-            run("a := mut alloc 1 of mut i32 5, b := alloc 1 of mut i32 6, a = b, a@ = 9, b@"),
+            run("a := mut try alloc 1 of mut i32 5, b := try alloc 1 of mut i32 6, a = b, a@ = 9, b@"),
             (6, 0)
         );
         assert_eq!(free_log(), vec![5, 6, 9]);
         assert_eq!(run("x := i32 1, p := mut &x, p = &x, p@").0, 1);
-        assert_eq!(run("a := alloc 1 of mut i32 5, a@ = 9, a@"), (9, 0));
+        assert_eq!(run("a := try alloc 1 of mut i32 5, a@ = 9, a@"), (9, 0));
 
         // `=` frees the block it displaces, after building the right side, before the write.
-        assert_eq!(run("a := mut alloc 1 of i32 5, a = alloc 1 of i32 6, a@"), (6, 0));
+        assert_eq!(run("a := mut try alloc 1 of i32 5, a = try alloc 1 of i32 6, a@"), (6, 0));
         assert_eq!(free_log(), vec![5, 6]);
-        assert_eq!(run("a := mut alloc 1 of i32 5, b := alloc 1 of i32 6, a = move b, a@"), (6, 0));
+        assert_eq!(
+            run("a := mut try alloc 1 of i32 5, b := try alloc 1 of i32 6, a = move b, a@"),
+            (6, 0)
+        );
         assert_eq!(free_log(), vec![5, 6]);
         // The right side may read what it displaces.
-        assert_eq!(run("a := mut alloc 1 of i32 5, a = alloc 1 of i32 (a@ + 1), a@"), (6, 0));
+        assert_eq!(
+            run("a := mut try alloc 1 of i32 5, a = try alloc 1 of i32 (a@ + 1), a@"),
+            (6, 0)
+        );
         // An owner never written frees nothing when the first value lands.
         assert_eq!(
-            run("a := mut own @i32 ?, a = alloc 1 of i32 5, a = alloc 1 of i32 7, a@"),
+            run("a := mut own @i32 ?, a = try alloc 1 of i32 5, a = try alloc 1 of i32 7, a@"),
             (7, 0)
         );
         assert_eq!(free_log(), vec![5, 7]);
@@ -2060,32 +2087,33 @@ mod tests {
     #[test]
     fn a_dyad_place_ends_the_value_it_holds_with_its_node() {
         for src in [
-            "d := mut dyad ?, d = alloc 1 of i32 5, 1",
-            "d := mut dyad ?, d = alloc 1 of i32 5, d = alloc 1 of i32 6, 1",
-            "d := mut dyad ?, d = alloc 1 of i32 5, d = i64 7, 1",
-            "d := mut dyad ?, d = alloc 1 of i32 5, free d, 1",
-            "d := mut dyad ?, d = alloc 1 of i32 5, e := d, 1",
-            "d := mut dyad ?, d = alloc 1 of i32 5, e := move d, 1",
-            "p := alloc 1 of i32 5, d := mut dyad ?, d = p, 1",
-            "d := mut dyad ?, for 0..3 ( d = alloc 1 of i32 5 ), 1",
-            "f := fn (a := dyad ?) -> i32 ( 1 ), f(alloc 1 of i32 5)",
-            "f := fn (a := dyad ?) -> dyad ( a ), x := f(alloc 1 of i32 5), 1",
-            "f := fn () -> dyad ( alloc 1 of i32 5 ), x := f(), 1",
-            "f := fn () -> dyad ( alloc 1 of i32 5 ), free (f()), 1",
-            "f := fn () -> dyad ( p := alloc 1 of i32 5, p ), x := f(), 1",
+            "d := mut dyad ?, d = try alloc 1 of i32 5, 1",
+            "d := mut dyad ?, d = try alloc 1 of i32 5, d = try alloc 1 of i32 6, 1",
+            "d := mut dyad ?, d = try alloc 1 of i32 5, d = i64 7, 1",
+            "d := mut dyad ?, d = try alloc 1 of i32 5, free d, 1",
+            "d := mut dyad ?, d = try alloc 1 of i32 5, e := d, 1",
+            "d := mut dyad ?, d = try alloc 1 of i32 5, e := move d, 1",
+            "p := try alloc 1 of i32 5, d := mut dyad ?, d = p, 1",
+            "d := mut dyad ?, for 0..3 ( d = try alloc 1 of i32 5 ), 1",
+            "f := fn (a := dyad ?) -> i32 ( 1 ), f(try alloc 1 of i32 5)",
+            "f := fn (a := dyad ?) -> dyad ( a ), x := f(try alloc 1 of i32 5), 1",
+            "f := fn () -> dyad! ( try alloc 1 of i32 5 ), x := try f(), 1",
+            "f := fn () -> dyad! ( try alloc 1 of i32 5 ), free (try f()), 1",
+            "f := fn () -> dyad! ( p := try alloc 1 of i32 5, p ), x := try f(), 1",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
         }
         // A body that makes no block compiles; the call's argument and result end as they do
         // interpreted.
         for src in [
-            "f := fn (a := dyad ?) -> i32 ( 1 ), f.compile(), f(alloc 1 of i32 5)",
-            "f := fn (a := dyad ?) -> dyad ( a ), f.compile(), x := f(alloc 1 of i32 5), 1",
+            "f := fn (a := dyad ?) -> i32 ( 1 ), f.compile(), f(try alloc 1 of i32 5)",
+            "f := fn (a := dyad ?) -> dyad ( a ), f.compile(), x := f(try alloc 1 of i32 5), 1",
         ] {
             assert_eq!(run(src), (1, 0), "{src}");
         }
-        let read = "g := fn (q := @i32 ?) -> i32 ( q@ ), f := fn () -> dyad ( alloc 1 of i32 5 ), \
-                    g(f())";
+        let read =
+            "g := fn (q := @i32 ?) -> i32 ( q@ ), f := fn () -> dyad! ( try alloc 1 of i32 5 ), \
+                    g(try f())";
         assert_eq!(run(read), (5, 0), "{read}");
     }
 
@@ -2093,27 +2121,33 @@ mod tests {
     fn a_dyad_parameter_borrows_a_value_a_name_holds() {
         let f = "f := fn (a := dyad ?) -> i32 ( 1 )";
         for (src, want) in [
-            (format!("p := alloc 1 of i32 5, {f}, f(p)"), 1),
-            (format!("p := alloc 1 of i32 5, {f}, f.compile(), f(p)"), 1),
+            (format!("p := try alloc 1 of i32 5, {f}, f(p)"), 1),
+            (format!("p := try alloc 1 of i32 5, {f}, f.compile(), f(p)"), 1),
             (
-                format!("p := alloc 1 of i32 5, {f}, g := fn () -> i32 ( f(p) ), g.compile(), g()"),
+                format!(
+                    "p := try alloc 1 of i32 5, {f}, g := fn () -> i32 ( f(p) ), g.compile(), g()"
+                ),
                 1,
             ),
-            (format!("p := alloc 1 of i32 5, {f}, for 0..3 ( free (f(p)) ), p@"), 5),
+            (format!("p := try alloc 1 of i32 5, {f}, for 0..3 ( free (f(p)) ), p@"), 5),
             (
-                "p := alloc 1 of i32 5, f := fn (a := dyad ?) -> i32 ( a@ ), free (f(p)), p@"
+                "p := try alloc 1 of i32 5, f := fn (a := dyad ?) -> i32 ( a@ ), free (f(p)), p@"
                     .into(),
                 5,
             ),
-            (format!("d := mut dyad ?, d = alloc 1 of i32 5, {f}, f(d)"), 1),
-            ("p := alloc 1 of i32 5, f := fn (a := dyad ?) -> dyad ( a ), x := f(p), p@".into(), 5),
+            (format!("d := mut dyad ?, d = try alloc 1 of i32 5, {f}, f(d)"), 1),
+            (
+                "p := try alloc 1 of i32 5, f := fn (a := dyad ?) -> dyad ( a ), x := f(p), p@"
+                    .into(),
+                5,
+            ),
         ] {
             assert_eq!(run_hosted(&src), (want, 0), "{src}");
             if src.starts_with("p :=") {
                 assert_eq!(free_log(), vec![5], "{src}");
             }
         }
-        let held = format!("{f}, g := fn (a := dyad ?) -> i32 ( f(a) ), g(alloc 1 of i32 5)");
+        let held = format!("{f}, g := fn (a := dyad ?) -> i32 ( f(a) ), g(try alloc 1 of i32 5)");
         assert_eq!(run_hosted(&held), (1, 0), "{held}");
     }
 
@@ -2241,15 +2275,15 @@ mod tests {
 
     #[test]
     fn a_fault_ends_what_every_scope_it_leaves_holds() {
-        let f = "f := fn (k := i32 ?) -> i32 ( p := alloc 1 of i32 7, \
-                 ( q := alloc 1 of i32 8, if (k == 1) (abort «stop») ), 0 ),\n";
-        let (e, live) = fault(&format!("{f}f(1)"));
+        let f = "f := fn (k := i32 ?) -> i32! ( p := try alloc 1 of i32 7, \
+                 ( q := try alloc 1 of i32 8, if (k == 1) (abort «stop») ), 0 ),\n";
+        let (e, live) = fault(&format!("{f}try f(1)"));
         assert!(matches!(e, RunError::Aborted(_)), "{e:?}");
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![8, 7], "the inner scope's first");
         // Only what was declared before the fault ends.
         let (_, live) = fault(
-            "k := i32 1,\np := alloc 1 of i32 7,\nif (k == 1) (abort «stop»),\nq := alloc 1 of i32 8,\n1",
+            "k := i32 1,\np := try alloc 1 of i32 7,\nif (k == 1) (abort «stop»),\nq := try alloc 1 of i32 8,\n1",
         );
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![7]);
@@ -2268,8 +2302,9 @@ mod tests {
             ("if (g() == 1) ( free a ) else ( free a )", vec![7, 8]),
             ("if (g() == 1) ( free b, free a ) else ( c := move a, free b )", vec![8, 7]),
         ] {
-            let (e, live) =
-                fault(&format!("{g}a := alloc 1 of i32 7,\nb := alloc 1 of i32 8,\n{tail},\n1"));
+            let (e, live) = fault(&format!(
+                "{g}a := try alloc 1 of i32 7,\nb := try alloc 1 of i32 8,\n{tail},\n1"
+            ));
             assert!(matches!(e, RunError::Aborted(_)), "{tail}: {e:?}");
             assert_eq!(live, 0, "{tail}");
             assert_eq!(free_log(), freed, "{tail}");
@@ -2290,8 +2325,8 @@ mod tests {
             "x := ( c := i32 1, y := (free a, i32 1) + g(), i32 2 )",
         ] {
             for src in [
-                format!("{g}f := fn () -> i32 ( a := alloc 1 of i32 7, {line}, x ),\nf()"),
-                format!("{g}a := alloc 1 of i32 7,\n{line},\n1"),
+                format!("{g}f := fn () -> i32! ( a := try alloc 1 of i32 7, {line}, x ),\ntry f()"),
+                format!("{g}a := try alloc 1 of i32 7,\n{line},\n1"),
             ] {
                 let (e, live) = fault(&src);
                 assert!(matches!(e, RunError::Aborted(_)), "{src}: {e:?}");
@@ -2315,73 +2350,87 @@ mod tests {
 
     #[test]
     fn alloc_counts_its_cells_and_fills_them_from_the_value() {
-        assert_eq!(run("n := i32 3,\na := alloc n of i32 7,\na@"), (7, 0));
-        assert_eq!(run("a := alloc 2 of mut i32 ?,\na@ = 4,\na@"), (4, 0));
-        assert_eq!(run("a := alloc 0 of i32 1,\n9"), (9, 0));
+        assert_eq!(run("n := i32 3,\na := try alloc n of i32 7,\na@"), (7, 0));
+        assert_eq!(run("a := try alloc 2 of mut i32 ?,\na@ = 4,\na@"), (4, 0));
+        assert_eq!(run("a := try alloc 0 of i32 1,\n9"), (9, 0));
     }
 
     #[test]
     fn alloc_of_a_bare_count_is_that_many_zeroed_bytes() {
-        assert_eq!(run("a := alloc 8,\na@"), (0, 0));
+        assert_eq!(run("a := try alloc 8,\na@"), (0, 0));
         // An `@u8` is read through only; bytes to write are `alloc n of mut u8 0`.
-        assert_eq!(parse_err("a := mut alloc 8,\na@ = 200,\n1"), ParseError::PointeeNotMutable);
-        assert_eq!(run("a := alloc 8 of mut u8 0,\na@ = 200,\na@"), (200, 0));
+        assert_eq!(parse_err("a := mut try alloc 8,\na@ = 200,\n1"), ParseError::PointeeNotMutable);
+        assert_eq!(run("a := try alloc 8 of mut u8 0,\na@ = 200,\na@"), (200, 0));
         // The count-less spelling is gone: `i32 2` is a count, so this is two bytes.
-        assert_eq!(run("a := alloc i32 2,\na@"), (0, 0));
+        assert_eq!(run("a := try alloc i32 2,\na@"), (0, 0));
     }
 
     #[test]
     fn alloc_needs_an_integer_count_and_a_value_after_of() {
-        assert_eq!(parse_err("a := alloc f64 2 of i32 1"), ParseError::UnsupportedOperands);
-        assert_eq!(parse_err("a := alloc 2 of"), ParseError::MissingOperand);
-        assert_eq!(parse_err("a := alloc of i32 1"), ParseError::MissingOperand);
+        assert_eq!(parse_err("a := try alloc f64 2 of i32 1"), ParseError::UnsupportedOperands);
+        assert_eq!(parse_err("a := try alloc 2 of"), ParseError::MissingOperand);
+        assert_eq!(parse_err("a := try alloc of i32 1"), ParseError::MissingOperand);
         assert!(matches!(
-            try_run("n := i32 0 - 1,\na := alloc n of i32 1,\n1"),
+            try_run("n := i32 0 - 1,\na := try alloc n of i32 1,\n1"),
             Err(RunError::BadCount(-1))
         ));
     }
 
     #[test]
     fn a_plain_number_count_lands_in_u64() {
-        assert_eq!(run("a := alloc 3000000000 of u8 0,\n7"), (7, 0));
-        assert_eq!(parse_err("a := alloc -1 of u8 0"), ParseError::UncomputableLiteral);
-        assert_eq!(run("a := alloc (if true (2) else (3)) of i32 7,\na@"), (7, 0));
+        assert_eq!(run("a := try alloc 3000000000 of u8 0,\n7"), (7, 0));
+        assert_eq!(parse_err("a := try alloc -1 of u8 0"), ParseError::UncomputableLiteral);
+        assert_eq!(run("a := try alloc (if true (2) else (3)) of i32 7,\na@"), (7, 0));
         assert_eq!(
-            parse_err("a := alloc (if true (1/2) else (3)) of u8 0"),
+            parse_err("a := try alloc (if true (1/2) else (3)) of u8 0"),
             ParseError::UncomputableLiteral
         );
         // A `u64` count past `i64::MAX` is too big a block, never a negative one.
-        assert!(matches!(
-            try_run("n := u64 lossy (i64 -1),\na := alloc n of u8 0,\n1"),
-            Err(RunError::OutOfMemory)
-        ));
+        let e = try_run("n := u64 lossy (i64 -1),\na := try alloc n of u8 0,\n1");
+        assert!(
+            matches!(&e, Err(RunError::Raised(hop)) if hop.0 == "error.out_of_memory"),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn an_alloc_that_gets_no_memory_gives_error_out_of_memory() {
+        let refused = ("error.out_of_memory".to_string(), "this alloc got no memory".to_string());
+        // A block too big for the address space, and one whose size overflows a word.
+        for count in ["100000000000000000", "3000000000000000000"] {
+            let e = try_run(&format!("p := try alloc {count} of i64 0,\n1"));
+            assert!(matches!(&e, Err(RunError::Raised(hop)) if **hop == refused), "{e:?}");
+        }
+        // Each call gives its own error, of two hops: the `alloc`'s and the `try`'s.
+        let g = "g := fn () -> i32! ( p := try alloc 100000000000000000 of i64 0, 1 ),\n";
+        assert_eq!(run(&format!("{g}r := g(),\ns := g(),\nr.err.size + s.err.size")), (4, 0));
     }
 
     #[test]
     fn alloc_reads_back_and_frees_at_scope_exit() {
-        let (v, live) = run("a := alloc 1 of i32 5,\na@");
+        let (v, live) = run("a := try alloc 1 of i32 5,\na@");
         assert_eq!(v, 5);
         assert_eq!(live, 0, "scope exit frees the allocation");
     }
 
     #[test]
     fn an_early_return_runs_the_teardowns_of_every_scope_it_leaves() {
-        let f = "f := fn (n := i32 ?) -> i32 ( p := alloc 1 of i32 42, \
-                 ( q := alloc 1 of i32 1, for i in 0..n ( if (i == 2) (return p@ + q@) ) ), 0 ),\n";
-        assert_eq!(run(&format!("{f}f(5)")), (43, 0));
-        assert_eq!(run(&format!("{f}f(1)")), (0, 0));
+        let f = "f := fn (n := i32 ?) -> i32! ( p := try alloc 1 of i32 42, \
+                 ( q := try alloc 1 of i32 1, for i in 0..n ( if (i == 2) (return p@ + q@) ) ), 0 ),\n";
+        assert_eq!(run(&format!("{f}try f(5)")), (43, 0));
+        assert_eq!(run(&format!("{f}try f(1)")), (0, 0));
     }
 
     #[test]
     fn a_return_ends_what_the_scope_holds_at_its_line() {
-        let f = "f := fn (c := i32 ?) -> i32 ( a := alloc 1 of i32 5, \
+        let f = "f := fn (c := i32 ?) -> i32! ( a := try alloc 1 of i32 5, \
                  if (c == 1) (return 1), free a, 2 ),\n";
-        assert_eq!(run(&format!("{f}f(1) + f(0)")), (3, 0));
+        assert_eq!(run(&format!("{f}(try f(1)) + (try f(0))")), (3, 0));
         assert_eq!(free_log(), vec![5, 5], "freed once on each path");
         // A name declared after the return is not held there yet.
-        let g = "g := fn (c := i32 ?) -> i32 ( if (c == 1) (return 1), \
-                 a := alloc 1 of i32 5, a@ ),\n";
-        assert_eq!(run(&format!("{g}g(1) + g(0)")), (6, 0));
+        let g = "g := fn (c := i32 ?) -> i32! ( if (c == 1) (return 1), \
+                 a := try alloc 1 of i32 5, a@ ),\n";
+        assert_eq!(run(&format!("{g}(try g(1)) + (try g(0))")), (6, 0));
         assert_eq!(free_log(), vec![5]);
     }
 
@@ -2402,9 +2451,10 @@ mod tests {
             format!("x := if ({ret} == 2) (free a, i32 1) else (i32 3)"),
         ];
         for body in bodies {
-            let f = format!("f := fn (c := i32 ?) -> i32 ( a := alloc 1 of i32 7, {body}, x ),\n");
+            let f =
+                format!("f := fn (c := i32 ?) -> i32! ( a := try alloc 1 of i32 7, {body}, x ),\n");
             for c in [1, 0] {
-                let (v, live) = run(&format!("{f}f({c})"));
+                let (v, live) = run(&format!("{f}try f({c})"));
                 assert_eq!(live, 0, "{body}: c = {c}");
                 assert_eq!(free_log(), vec![7], "{body}: c = {c}");
                 if c == 1 {
@@ -2415,22 +2465,23 @@ mod tests {
         // A name the block holds; the return's frees run where the names' lives end, before
         // the end of the block it leaves.
         let block = format!(
-            "( b := alloc 1 of i32 8, free ({ret} + (free a, free b, i32 1)), d := alloc 1 of i32 9, d@ )"
+            "( b := try alloc 1 of i32 8, free ({ret} + (free a, free b, i32 1)), d := try alloc 1 of i32 9, d@ )"
         );
-        let f =
-            format!("f := fn (c := i32 ?) -> i32 ( a := alloc 1 of i32 7, x := {block}, x ),\n");
-        assert_eq!(run(&format!("{f}f(1)")), (5, 0));
+        let f = format!(
+            "f := fn (c := i32 ?) -> i32! ( a := try alloc 1 of i32 7, x := {block}, x ),\n"
+        );
+        assert_eq!(run(&format!("{f}try f(1)")), (5, 0));
         assert_eq!(free_log(), vec![8, 7]);
-        assert_eq!(run(&format!("{f}f(0)")), (9, 0));
+        assert_eq!(run(&format!("{f}try f(0)")), (9, 0));
         assert_eq!(free_log(), vec![7, 8, 9]);
     }
 
     #[test]
     fn the_address_of_a_held_name_does_not_leave_its_scope() {
         for src in [
-            "p := ( c := alloc 1 of i32 7, &c ),\n1",
-            "f := fn () -> @@i32 ( c := alloc 1 of i32 7, &c )",
-            "f := fn (n := i32 ?) -> i32 ( c := alloc 1 of i32 7, if (n > 2) (return &c), 0 )",
+            "p := ( c := try alloc 1 of i32 7, &c ),\n1",
+            "f := fn () -> @@i32! ( c := try alloc 1 of i32 7, &c )",
+            "f := fn (n := i32 ?) -> i32! ( c := try alloc 1 of i32 7, if (n > 2) (return &c), 0 )",
         ] {
             assert_eq!(parse_err(src), ParseError::AddressOfHeld, "{src}");
         }
@@ -2438,14 +2489,15 @@ mod tests {
 
     #[test]
     fn alloc_inside_a_function_frees_when_the_call_returns() {
-        let (v, live) = run("main := fn () -> i32 ( p := alloc 1 of i32 42, p@ ),\nmain()");
+        let (v, live) =
+            run("main := fn () -> i32! ( p := try alloc 1 of i32 42, p@ ),\ntry main()");
         assert_eq!(v, 42);
         assert_eq!(live, 0, "the call's frame scope frees its alloc");
     }
 
     #[test]
     fn early_free_does_not_double_free() {
-        let (v, live) = run("a := alloc 1 of i32 3,\nfree a,\n99");
+        let (v, live) = run("a := try alloc 1 of i32 3,\nfree a,\n99");
         assert_eq!(v, 99);
         assert_eq!(live, 0, "free frees once; the scope's end holds it no more");
         assert_eq!(free_log(), vec![3], "exactly one free happened");
@@ -2453,7 +2505,7 @@ mod tests {
 
     #[test]
     fn move_moves_ownership_and_the_source_scope_frees_nothing() {
-        let (v, live) = run("a := alloc 1 of i32 7,\nb := move a,\nb@");
+        let (v, live) = run("a := try alloc 1 of i32 7,\nb := move a,\nb@");
         assert_eq!(v, 7);
         assert_eq!(live, 0, "the moved pointer is freed once, through b");
         assert_eq!(free_log(), vec![7], "move does not double-free the source");
@@ -2482,7 +2534,7 @@ mod tests {
 
     #[test]
     fn move_out_of_an_inner_block_frees_at_the_outer_owner() {
-        let (v, live) = run("b := ( a := alloc 1 of i32 8, move a ),\nb@");
+        let (v, live) = run("b := ( a := try alloc 1 of i32 8, move a ),\nb@");
         assert_eq!(v, 8);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![8], "freed once, at the outer owner");
@@ -2490,7 +2542,7 @@ mod tests {
 
     #[test]
     fn teardown_runs_lifo() {
-        let (_v, live) = run("a := alloc 1 of i32 10,\nb := alloc 1 of i32 20,\n0");
+        let (_v, live) = run("a := try alloc 1 of i32 10,\nb := try alloc 1 of i32 20,\n0");
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![20, 10], "LIFO := last ? allocated frees first");
     }
@@ -2499,7 +2551,7 @@ mod tests {
     fn a_freed_name_takes_no_later_free() {
         // A later `free a` is a use of a dead name, refused before anything runs.
         assert_eq!(
-            parse_err("a := alloc 1 of i32 4,\nfree a,\nfree a,\n1"),
+            parse_err("a := try alloc 1 of i32 4,\nfree a,\nfree a,\n1"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
@@ -2508,7 +2560,7 @@ mod tests {
     fn a_dead_name_may_be_redeclared_after_move() {
         // LIFO: the new `a` (9) frees before `b` (7).
         let (v, live) =
-            run("a := alloc 1 of i32 7,\nb := move a,\na := alloc 1 of i32 9,\na@ + b@");
+            run("a := try alloc 1 of i32 7,\nb := move a,\na := try alloc 1 of i32 9,\na@ + b@");
         assert_eq!(v, 16);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![9, 7], "a fresh place; the old one held up to the move");
@@ -2517,7 +2569,7 @@ mod tests {
     #[test]
     fn a_read_after_move_is_refused() {
         assert_eq!(
-            parse_err("a := alloc 1 of i32 7,\nb := move a,\na@"),
+            parse_err("a := try alloc 1 of i32 7,\nb := move a,\na@"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
@@ -2525,7 +2577,7 @@ mod tests {
     #[test]
     fn a_write_after_move_is_refused() {
         assert_eq!(
-            parse_err("a := mut alloc 1 of i32 7,\nb := move a,\na = b"),
+            parse_err("a := mut try alloc 1 of i32 7,\nb := move a,\na = b"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
@@ -2535,7 +2587,7 @@ mod tests {
         // While the line is still parsing the entry's `end` is the `free` node itself.
         assert_eq!(
             parse_err(
-                "h := fn (x := i32 ?, p := @i32 ?) -> i32 ( x ),\na := alloc 1 of i32 1,\nh(free a, a)"
+                "h := fn (x := i32 ?, p := @i32 ?) -> i32 ( x ),\na := try alloc 1 of i32 1,\nh(free a, a)"
             ),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
@@ -2545,7 +2597,7 @@ mod tests {
     fn a_move_inside_a_nested_block_ends_the_outer_name_after_the_block() {
         assert_eq!(
             parse_err(
-                "a := alloc 1 of i32 7,\nc := i32 1,\nif (c == 1) ( b := move a, x := b@ ),\na@"
+                "a := try alloc 1 of i32 7,\nc := i32 1,\nif (c == 1) ( b := move a, x := b@ ),\na@"
             ),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
@@ -2553,8 +2605,8 @@ mod tests {
         // or freed in the arm the else-less `if` gains.
         for c in [0, 1] {
             let (v, live) = run(&format!(
-                "a := alloc 1 of i32 7,\nc := i32 {c},\nif (c == 1) ( b := move a, x := b@ ),\n\
-                 a := alloc 1 of i32 9,\na@"
+                "a := try alloc 1 of i32 7,\nc := i32 {c},\nif (c == 1) ( b := move a, x := b@ ),\n\
+                 a := try alloc 1 of i32 9,\na@"
             ));
             assert_eq!((v, live), (9, 0), "c = {c}");
             assert_eq!(free_log(), vec![7, 9], "c = {c}: the old a at the if, the new at the end");
@@ -2571,7 +2623,7 @@ mod tests {
                 "if (c == 1) ( x := 2 ) else if (c == 3) ( x := 4 ) else ( b := move a, x := b@ )",
                 "( if (c == 1) ( free a ), x := 5 )",
             ] {
-                let src = format!("a := alloc 1 of i32 7,\nc := i32 {c},\n{body},\n1");
+                let src = format!("a := try alloc 1 of i32 7,\nc := i32 {c},\n{body},\n1");
                 assert_eq!(run(&src), (1, 0), "c = {c}: {body}");
                 assert_eq!(free_log(), vec![7], "c = {c}: {body}: freed once");
             }
@@ -2600,7 +2652,7 @@ mod tests {
             ),
         ] {
             for (c, value) in values.into_iter().enumerate() {
-                let src = format!("a := alloc 1 of i32 7,\nc := i32 {c},\nx := {body},\nx");
+                let src = format!("a := try alloc 1 of i32 7,\nc := i32 {c},\nx := {body},\nx");
                 assert_eq!(run(&src), (value, 0), "c = {c}: {body}");
                 assert_eq!(free_log(), vec![7], "c = {c}: {body}: freed once");
             }
@@ -2617,7 +2669,7 @@ mod tests {
             ("x := (if (c == 1) ( free a, i32 0 ) else ( i32 1 )) + a@", dead()),
             ("if (c == 1) ( free a ) else if (c == 2) ( x := 2 ) else ( free a ),\na@", dead()),
         ] {
-            let src = format!("a := alloc 1 of i32 7,\nc := i32 1,\n{tail}");
+            let src = format!("a := try alloc 1 of i32 7,\nc := i32 1,\n{tail}");
             assert_eq!(parse_err(&src), refused, "{tail}");
         }
     }
@@ -2626,8 +2678,8 @@ mod tests {
     fn a_branch_the_pass_drops_ends_no_name() {
         // A bare untaken branch is parsed only to find where it ends; it never runs.
         for src in [
-            "a := alloc 1 of i32 7,\nif true (free (1)) else move a,\na@",
-            "a := alloc 1 of i32 7,\nif false free a,\na@",
+            "a := try alloc 1 of i32 7,\nif true (free (1)) else move a,\na@",
+            "a := try alloc 1 of i32 7,\nif false free a,\na@",
         ] {
             assert_eq!(run(src), (7, 0), "{src}");
             assert_eq!(free_log(), vec![7], "{src}: freed once, at the end");
@@ -2638,9 +2690,9 @@ mod tests {
     fn a_return_before_a_move_frees_what_it_would_have_moved() {
         // The arm that does not move frees on its way out; the moving arm holds the name up to
         // the line that moves it.
-        let f = "f := fn (c := i32 ?) -> i32 ( a := alloc 1 of i32 7, \
+        let f = "f := fn (c := i32 ?) -> i32! ( a := try alloc 1 of i32 7, \
                  if (c > 0) ( if (c == 2) (return 9), b := move a, b@ ) else ( return 2 ) ),\n";
-        assert_eq!(run(&format!("{f}f(0) + f(1) + f(2)")), (18, 0));
+        assert_eq!(run(&format!("{f}(try f(0)) + (try f(1)) + (try f(2))")), (18, 0));
         assert_eq!(free_log(), vec![7, 7, 7]);
     }
 
@@ -2649,27 +2701,27 @@ mod tests {
         // The next pass would read a dead name.
         assert_eq!(
             parse_err(
-                "a := alloc 1 of i32 7,\nc := mut i32 1,\nwhile (c == 1) ( b := move a, c = 0 )"
+                "a := try alloc 1 of i32 7,\nc := mut i32 1,\nwhile (c == 1) ( b := move a, c = 0 )"
             ),
             ParseError::MoveOfOuterName
         );
         assert_eq!(
-            parse_err("a := alloc 1 of i32 7,\nfor i in 0..2 ( b := move a )"),
+            parse_err("a := try alloc 1 of i32 7,\nfor i in 0..2 ( b := move a )"),
             ParseError::MoveOfOuterName
         );
         assert_eq!(
-            parse_err("a := alloc 1 of i32 7,\nfor i in 0..2 ( free a )"),
+            parse_err("a := try alloc 1 of i32 7,\nfor i in 0..2 ( free a )"),
             ParseError::MoveOfOuterName
         );
         // A `while` condition runs every pass as its body does.
         assert_eq!(
             parse_err(
-                "a := alloc 1 of i32 7,\nc := mut i32 0,\nwhile ((free a, c) < 2) ( c = c + 1 )"
+                "a := try alloc 1 of i32 7,\nc := mut i32 0,\nwhile ((free a, c) < 2) ( c = c + 1 )"
             ),
             ParseError::MoveOfOuterName
         );
         // A range runs once, before the first pass.
-        assert_eq!(run("a := alloc 1 of i32 7,\nc := mut i32 0,\nfor i in 0..(free a, i32 3) ( c = c + 1 ),\nc"), (3, 0));
+        assert_eq!(run("a := try alloc 1 of i32 7,\nc := mut i32 0,\nfor i in 0..(free a, i32 3) ( c = c + 1 ),\nc"), (3, 0));
     }
 
     #[test]
@@ -2697,7 +2749,7 @@ mod tests {
     fn a_move_of_an_outer_name_inside_a_fn_body_is_refused() {
         // A function may own only what its parameters hand it.
         assert_eq!(
-            parse_err("a := alloc 1 of i32 7,\nf := fn () -> i32 ( b := move a, b@ )"),
+            parse_err("a := try alloc 1 of i32 7,\nf := fn () -> i32 ( b := move a, b@ )"),
             ParseError::MoveOfOuterName
         );
     }
@@ -2715,8 +2767,8 @@ mod tests {
             ("a := mut r ?,\n1".into(), 1),
             ("a := mut r ?,\na = r(3),\na = r(4),\na.n".into(), 4),
             ("a := mut r ?,\na.n = 7,\na.n".into(), 7),
-            ("p := alloc 1 of r(1),\nfree p@,\nfree p@,\n1".into(), 1),
-            ("p := alloc 1 of mut r(1),\np@ = r(2),\nfree p@,\n1".into(), 1),
+            ("p := try alloc 1 of r(1),\nfree p@,\nfree p@,\n1".into(), 1),
+            ("p := try alloc 1 of mut r(1),\np@ = r(2),\nfree p@,\n1".into(), 1),
             ("free (r(1)),\n1".into(), 1),
             ("f := fn () -> r ( r(2) ),\nx := f(),\nx.n".into(), 2),
             ("d := dyad (r, r(1)),\ne := d,\n1".into(), 1),
@@ -2744,7 +2796,7 @@ mod tests {
     /// `x`, a record with two owning fields, `p` holding 5 and `q` 6.
     const PAIR: &str = "r := type ( p := pub mut own @i32 ?, q := pub mut own @i32 ?, \
         free = ( free p, free q ), s := static fn () -> i32 ( 2 ) ),\n\
-        x := mut r ?,\na := alloc 1 of i32 5,\nx.p = move a,\nb := alloc 1 of i32 6,\nx.q = move b,\n";
+        x := mut r ?,\na := try alloc 1 of i32 5,\nx.p = move a,\nb := try alloc 1 of i32 6,\nx.q = move b,\n";
 
     #[test]
     fn a_field_of_a_record_that_fills_free_is_never_ended_alone() {
@@ -2820,17 +2872,21 @@ mod tests {
 
     #[test]
     fn a_value_the_pass_ran_early_ends_once() {
-        let defs = "p := fn () -> own @i32 ( alloc 1 of i32 5 ), g := fn () -> dyad ( i32 2 ), \
+        let defs = "p := fn () -> (own @i32)! ( try alloc 1 of i32 5 ), g := fn () -> dyad ( i32 2 ), \
                     k := fn (a := @i32 ?, b := i32 ?) -> i32 ( a@ + b ), \
                     h := fn () -> i32 ( 1 ), k3 := fn (a := @i32 ?, b := i32 ?, c := i32 ?) -> i32 ( a@ + b + c )";
         // Held by the call, or by the line where the callee holds nothing: freed once either way.
         for (tail, want) in [
-            ("k(p(), g() + 1)", 8),
-            ("k3(p(), h(), immediate h())", 7),
-            ("x := k(p(), g() + 1), x", 8),
-            ("x := ( free (h()), k(p(), g() + 1) ), x", 8),
-            ("q := fn () -> i32 ( k(p(), g() + 1) ), q() + q()", 16),
-            ("q := fn () -> i32 ( k(p(), g() + 1) ), s := mut i32 0, for 0..20 ( s = s + q() ), s", 160),
+            ("k(try p(), g() + 1)", 8),
+            ("k3(try p(), h(), immediate h())", 7),
+            ("x := k(try p(), g() + 1), x", 8),
+            ("x := ( free (h()), k(try p(), g() + 1) ), x", 8),
+            ("q := fn () -> i32! ( k(try p(), g() + 1) ), (try q()) + (try q())", 16),
+            (
+                "q := fn () -> i32! ( k(try p(), g() + 1) ), s := mut i32 0, \
+                 for 0..20 ( s = s + (try q()) ), s",
+                160,
+            ),
         ] {
             assert_eq!(run_hosted(&format!("{defs}, {tail}")), (want, 0), "{tail}");
         }
@@ -2927,7 +2983,7 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let src = "a := alloc 1 of i32 5,\ndefer free (alloc 1 of i32 6),\nfree a,\n0";
+        let src = "a := try alloc 1 of i32 5,\ndefer print «done»,\nfree a,\n0";
         let items = exit_items(&mut store, &mut trie, &core, src);
         // Nothing is inserted into the lines: the scope holds `a` until `free a` and
         // defers what its `defer` line wrote.
@@ -2947,7 +3003,7 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let items = exit_items(&mut store, &mut trie, &core, "a := alloc 1 of i32 5,\na@");
+        let items = exit_items(&mut store, &mut trie, &core, "a := try alloc 1 of i32 5,\na@");
         let a = items[0].what;
         // SAFETY: `a` is the held name's binding, laid out over an owning pointer type.
         unsafe {
@@ -2990,34 +3046,34 @@ mod tests {
     #[test]
     fn a_call_frees_the_block_a_parameter_holds_as_it_returns() {
         let f = "f := fn (p := @i32 ?) -> i32 ( p@ ),\n";
-        assert_eq!(run(&format!("{f}f(alloc 1 of i32 5)")), (5, 0));
-        assert_eq!(run(&format!("{f}a := alloc 1 of i32 6,\nf(move a)")), (6, 0));
+        assert_eq!(run(&format!("{f}f(try alloc 1 of i32 5)")), (5, 0));
+        assert_eq!(run(&format!("{f}a := try alloc 1 of i32 6,\nf(move a)")), (6, 0));
         assert_eq!(free_log(), Vec::<i64>::new(), "the call frees it, not `a`'s end");
-        assert_eq!(run(&format!("{f}a := alloc 1 of i32 7,\nf(a) + a@")), (14, 0));
+        assert_eq!(run(&format!("{f}a := try alloc 1 of i32 7,\nf(a) + a@")), (14, 0));
         assert_eq!(free_log(), vec![7], "a borrow: `a`'s end frees it, once");
         let raise = "g := fn () -> i32 ( abort «stop» ),\n";
         let f2 = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( p@ ),\n";
         for src in [
-            "f := fn (p := @i32 ?) -> i32 ( abort «stop» ),\nf(alloc 1 of i32 5)".to_string(),
-            format!("{raise}{f2}f(alloc 1 of i32 5, g())"),
-            format!("{raise}{f2}a := alloc 1 of i32 6,\nf(move a, g())"),
+            "f := fn (p := @i32 ?) -> i32 ( abort «stop» ),\nf(try alloc 1 of i32 5)".to_string(),
+            format!("{raise}{f2}f(try alloc 1 of i32 5, g())"),
+            format!("{raise}{f2}a := try alloc 1 of i32 6,\nf(move a, g())"),
         ] {
             let (e, live) = fault(&src);
             assert!(matches!(e, RunError::Aborted(_)), "{src}: {e:?}");
             assert_eq!(live, 0, "{src}");
         }
         assert_eq!(
-            parse_err("f := fn (p := mut @i32 ?) -> i32 ( p@ ),\nf(alloc 1 of i32 5)"),
+            parse_err("f := fn (p := mut @i32 ?) -> i32 ( p@ ),\nf(try alloc 1 of i32 5)"),
             ParseError::UnboundOwningValue
         );
     }
 
     #[test]
     fn an_own_hole_frees_what_is_written_into_it() {
-        assert_eq!(run("a := mut own @i32 ?,\na = alloc 1 of i32 5,\na@"), (5, 0));
+        assert_eq!(run("a := mut own @i32 ?,\na = try alloc 1 of i32 5,\na@"), (5, 0));
         assert_eq!(free_log(), vec![5]);
         assert_eq!(run("a := mut own @i32 ?,\n1"), (1, 0), "an unwritten owner frees nothing");
-        assert_eq!(run("a := mut own @i32 ?,\nb := alloc 1 of i32 6,\na = b,\na@"), (6, 0));
+        assert_eq!(run("a := mut own @i32 ?,\nb := try alloc 1 of i32 6,\na = b,\na@"), (6, 0));
         assert_eq!(free_log(), vec![6, 6]);
         assert_eq!(parse_err("a := own i32 ?"), ParseError::OwnNeedsPointer);
         assert_eq!(
@@ -3029,12 +3085,12 @@ mod tests {
     #[test]
     fn own_names_a_state_and_drop_is_no_word() {
         assert_eq!(
-            parse_err("a := alloc 1 of i32 7,\nb := own a,\nb@"),
+            parse_err("a := try alloc 1 of i32 7,\nb := own a,\nb@"),
             ParseError::OwnOutsideType
         );
         assert_eq!(parse_err("own.arity"), ParseError::BadReflectRead, "a gate word, as `pub`");
         assert_eq!(
-            parse_err("a := alloc 1 of i32 7,\ndrop a,\n1"),
+            parse_err("a := try alloc 1 of i32 7,\ndrop a,\n1"),
             ParseError::Resolve(ResolveError::Unknown("drop".into()))
         );
         assert_eq!(
@@ -3049,7 +3105,7 @@ mod tests {
 
     #[test]
     fn free_of_a_value_runs_it_then_frees_what_it_owns() {
-        assert_eq!(run("free (alloc 1 of i32 5),\n1"), (1, 0));
+        assert_eq!(run("free (try alloc 1 of i32 5),\n1"), (1, 0));
         assert_eq!(
             parse_err("alloc 1 of i32 5,\n1"),
             ParseError::LineAfterValue,
@@ -3060,9 +3116,12 @@ mod tests {
             (2, 0),
             "an array no name takes ends after its line has read it"
         );
-        assert_eq!(run("mk := fn () -> own @i32 ( alloc 1 of i32 7 ),\nfree (mk()),\n1"), (1, 0));
+        assert_eq!(
+            run("mk := fn () -> (own @i32)! ( try alloc 1 of i32 7 ),\nfree (try mk()),\n1"),
+            (1, 0)
+        );
         assert!(matches!(
-            try_run("n := i32 0 - 1,\nfree (alloc n of i32 1),\n1"),
+            try_run("n := i32 0 - 1,\nfree (try alloc n of i32 1),\n1"),
             Err(RunError::BadCount(-1))
         ));
         let counted = "n := mut i32 0,\nf := fn () -> i32 ( n = n + 1, n ),\n";
@@ -3077,7 +3136,7 @@ mod tests {
         }
         // A borrow is not the value's owner, so nothing is freed twice.
         assert_eq!(
-            run("p := alloc 1 of i32 3,\nid := fn (q := @i32 ?) -> @i32 ( q ),\nfree (id(p)),\np@"),
+            run("p := try alloc 1 of i32 3,\nid := fn (q := @i32 ?) -> @i32 ( q ),\nfree (id(p)),\np@"),
             (3, 0)
         );
         assert_eq!(free_log(), vec![3], "freed once, by its owner");
@@ -3100,21 +3159,24 @@ mod tests {
         for src in [
             "f := fn () -> i32 ( 7 ),\nb := move (f())",
             "b := move 5",
-            "b := move (alloc 1 of i32 5)",
+            "b := move (try alloc 1 of i32 5)",
             "b := move (own @i32 ?)",
             "b := move ?",
-            "a := alloc 2 of i32 1,\nb := move (a + 1)",
+            "a := try alloc 2 of i32 1,\nb := move (a + 1)",
         ] {
             assert_eq!(parse_err(src), ParseError::MoveOfValue, "{src}");
         }
         // `free` uses the value it frees, so it refuses what any use refuses, for that reason.
         let c = "c := i32 1,\nv := fn () -> void ( y := i32 1 ),\n";
         for (operand, e) in [
-            ("if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i64 6)", ParseError::ArmsDiffer),
-            ("if (c == 1) (alloc 1 of i32 5) else (i32 6)", ParseError::ArmsDiffer),
+            (
+                "if (c == 1) (try alloc 1 of i32 5) else (try alloc 1 of i64 6)",
+                ParseError::ArmsDiffer,
+            ),
+            ("if (c == 1) (try alloc 1 of i32 5) else (i32 6)", ParseError::ArmsDiffer),
             ("if (c == 1) (i32 5) else (i64 6)", ParseError::ArmsDiffer),
-            ("if (c == 1) (alloc 1 of i32 5)", ParseError::MissingElse),
-            ("if (c == 1) (alloc 1 of i32 5) else (y := i32 2)", ParseError::ArmGivesNothing),
+            ("if (c == 1) (try alloc 1 of i32 5)", ParseError::MissingElse),
+            ("if (c == 1) (try alloc 1 of i32 5) else (y := i32 2)", ParseError::ArmGivesNothing),
             ("x := i32 5", ParseError::StatementAsValue),
             ("v()", ParseError::StatementAsValue),
         ] {
@@ -3125,26 +3187,30 @@ mod tests {
     #[test]
     fn an_if_whose_every_arm_makes_or_moves_a_value_hands_it_on() {
         let c = "c := i32 1,\n";
-        let free = "free (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)),\n1";
+        let free = "free (if (c == 1) (try alloc 1 of i32 5) else (try alloc 1 of i32 6)),\n1";
         assert_eq!(run(&format!("{c}{free}")), (1, 0));
-        let mk = "mk := fn () -> own @i32 ( alloc 1 of i32 5 ),\n";
-        assert_eq!(run(&format!("{c}{mk}free (if (c == 1) (mk()) else (mk())),\n1")), (1, 0));
+        let mk = "mk := fn () -> (own @i32)! ( try alloc 1 of i32 5 ),\n";
+        assert_eq!(
+            run(&format!("{c}{mk}free (if (c == 1) (try mk()) else (try mk())),\n1")),
+            (1, 0)
+        );
         for (tail, freed) in [
-            ("x := if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6),\n1", vec![5]),
+            ("x := if (c == 1) (try alloc 1 of i32 5) else (try alloc 1 of i32 6),\n1", vec![5]),
             (
-                "a := alloc 1 of i32 5,\nb := alloc 1 of i32 6,\n\
+                "a := try alloc 1 of i32 5,\nb := try alloc 1 of i32 6,\n\
                  x := if (c == 1) (move a) else (move b),\n1",
                 vec![6, 5],
             ),
             (
-                "f := fn () -> own @i32 ( if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6) ),\n\
-                 x := f(),\n1",
+                "f := fn () -> (own @i32)! \
+                 ( if (c == 1) (try alloc 1 of i32 5) else (try alloc 1 of i32 6) ),\n\
+                 x := try f(),\n1",
                 vec![5],
             ),
             // A call through `-> own` hands its value on from an arm as it does alone.
             (
-                "mk := fn () -> own @i32 ( alloc 1 of i32 5 ),\n\
-                 x := if (c == 1) (mk()) else (alloc 1 of i32 6),\n1",
+                "mk := fn () -> (own @i32)! ( try alloc 1 of i32 5 ),\n\
+                 x := if (c == 1) (try mk()) else (try alloc 1 of i32 6),\n1",
                 vec![5],
             ),
         ] {
@@ -3152,39 +3218,39 @@ mod tests {
             assert_eq!(free_log(), freed, "{tail}");
         }
         // A long `else if` chain hands its block on as a short one does.
-        let mut chain = String::from("x := if (c == 0) (alloc 1 of i32 0)");
+        let mut chain = String::from("x := if (c == 0) (try alloc 1 of i32 0)");
         for k in 1..40 {
-            chain.push_str(&format!(" else if (c == {k}) (alloc 1 of i32 {k})"));
+            chain.push_str(&format!(" else if (c == {k}) (try alloc 1 of i32 {k})"));
         }
-        chain.push_str(" else (alloc 1 of i32 40),\n1");
+        chain.push_str(" else (try alloc 1 of i32 40),\n1");
         assert_eq!(run(&format!("{c}{chain}")), (1, 0));
         assert_eq!(free_log(), vec![1]);
     }
 
     #[test]
     fn an_if_that_makes_in_one_arm_and_borrows_in_another_is_refused_wherever_it_goes() {
-        let c = "c := i32 1,\ny := i32 4,\nb := &y,\np := alloc 1 of i32 7,\n\
+        let c = "c := i32 1,\ny := i32 4,\nb := &y,\np := try alloc 1 of i32 7,\n\
                  f := fn (q := @i32 ?) -> i32 ( q@ ),\n";
         for src in [
-            "x := if (c == 1) (alloc 1 of i32 5) else (move b),\n1",
-            "x := if (c == 1) (move b) else (alloc 1 of i32 5),\n1",
-            "x := if (c == 1) (alloc 1 of i32 5) else (p),\n1",
-            "a := alloc 1 of i32 5,\nx := if (c == 1) (move a) else (move b),\n1",
-            "x := (z := i32 1, if (c == 1) (alloc 1 of i32 5) else (move b)),\n1",
-            "x := if (c == 1) (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)) else (b),\n1",
-            "f(if (c == 1) (alloc 1 of i32 5) else (move b))",
-            "f(if (c == 1) (b) else (alloc 1 of i32 5))",
-            "free (if (c == 1) (alloc 1 of i32 5) else (p)),\n1",
-            "free (if (c == 1) (alloc 1 of i32 5) else (move b)),\n1",
-            "g := fn (q := @i32 ?) -> @i32 ( return if (c == 1) (move q) else (alloc 1 of i32 5) )",
-            "g := fn (q := @i32 ?) -> void ( return if (c == 1) (move q) else (alloc 1 of i32 5) )",
-            "g := fn (q := @i32 ?) -> void ( return if (c == 1) (alloc 1 of i32 5) else (move q) )",
+            "x := if (c == 1) (try alloc 1 of i32 5) else (move b),\n1",
+            "x := if (c == 1) (move b) else (try alloc 1 of i32 5),\n1",
+            "x := if (c == 1) (try alloc 1 of i32 5) else (p),\n1",
+            "a := try alloc 1 of i32 5,\nx := if (c == 1) (move a) else (move b),\n1",
+            "x := (z := i32 1, if (c == 1) (try alloc 1 of i32 5) else (move b)),\n1",
+            "x := if (c == 1) (if (c == 1) (try alloc 1 of i32 5) else (try alloc 1 of i32 6)) else (b),\n1",
+            "f(if (c == 1) (try alloc 1 of i32 5) else (move b))",
+            "f(if (c == 1) (b) else (try alloc 1 of i32 5))",
+            "free (if (c == 1) (try alloc 1 of i32 5) else (p)),\n1",
+            "free (if (c == 1) (try alloc 1 of i32 5) else (move b)),\n1",
+            "g := fn (q := @i32 ?) -> @i32! ( return if (c == 1) (move q) else (try alloc 1 of i32 5) )",
+            "g := fn (q := @i32 ?) -> void! ( return if (c == 1) (move q) else (try alloc 1 of i32 5) )",
+            "g := fn (q := @i32 ?) -> void! ( return if (c == 1) (try alloc 1 of i32 5) else (move q) )",
             // A function's last line gives the call its value.
-            "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
-            "g := fn (q := @i32 ?) -> @i32 ( if (c == 1) (return move q) else (alloc 1 of i32 5) )",
-            "g := fn (q := @i64 ?) -> dyad ( if (c == 1) (alloc 1 of i32 5) else (move q) )",
-            "g := fn (n := i32 ?, q := @i32 ?) -> @i32 \
-             ( if (n == 0) (q) else (if (n == 1) (alloc 1 of i32 5) else (g(n - 1, q))) )",
+            "g := fn (q := @i32 ?) -> @i32! ( if (c == 1) (try alloc 1 of i32 5) else (move q) )",
+            "g := fn (q := @i32 ?) -> @i32! ( if (c == 1) (return move q) else (try alloc 1 of i32 5) )",
+            "g := fn (q := @i64 ?) -> dyad! ( if (c == 1) (try alloc 1 of i32 5) else (move q) )",
+            "g := fn (n := i32 ?, q := @i32 ?) -> @i32! \
+             ( if (n == 0) (q) else (if (n == 1) (try alloc 1 of i32 5) else (try g(n - 1, q))) )",
             // A `dyad` ends the node it holds, so it makes or borrows as a pointer does.
             "d := mut dyad ?,\nd = i32 5,\nx := if (c == 1) (dyad (i32, 6)) else (d),\n1",
             "d := mut dyad ?,\nd = i32 5,\nfree (if (c == 1) (d) else (dyad (i32, 6))),\n1",
@@ -3194,8 +3260,8 @@ mod tests {
         // A number has nothing to end, so beside a made value it mixes nothing: the `-> T`
         // refuses it for its type.
         for src in [
-            "g := fn () -> i32 ( if (c == 1) (alloc 1 of i32 5) else (i32 6) )",
-            "g := fn () -> i32 ( if (c == 1) (i32 6) else (alloc 1 of i32 5) )",
+            "g := fn () -> i32! ( if (c == 1) (try alloc 1 of i32 5) else (i32 6) )",
+            "g := fn () -> i32! ( if (c == 1) (i32 6) else (try alloc 1 of i32 5) )",
         ] {
             assert_eq!(parse_err(&format!("{c}{src}")), ParseError::TypeMismatch, "{src}");
         }
@@ -3207,7 +3273,7 @@ mod tests {
         );
         // It gives no value, so a reader that asks only its type finds none.
         assert_eq!(
-            parse_err(&format!("{c}x := (if (c == 1) (alloc 1 of i32 5) else (move b))@,\n1")),
+            parse_err(&format!("{c}x := (if (c == 1) (try alloc 1 of i32 5) else (move b))@,\n1")),
             ParseError::UnsupportedOperands
         );
         // `.` reads the `if` node itself, which has no field `items`.
@@ -3230,29 +3296,30 @@ mod tests {
     #[test]
     fn a_function_s_call_to_itself_reads_its_written_result() {
         // The call is answered by `-> own` while the body is still open, at any depth.
-        let mk =
-            "mk := fn (n := i32 ?) -> own @i32 ( if (n == 0) (alloc 1 of i32 5) else (mk(n - 1)) )";
+        let mk = "mk := fn (n := i32 ?) -> (own @i32)! \
+                  ( if (n == 0) (try alloc 1 of i32 5) else (try mk(n - 1)) )";
         for n in [3, 40] {
-            assert_eq!(run(&format!("{mk},\nx := mk({n}),\nx@")), (5, 0));
+            assert_eq!(run(&format!("{mk},\nx := try mk({n}),\nx@")), (5, 0));
             assert_eq!(free_log(), vec![5], "freed once, by `x`");
         }
-        let held = "mk := fn (n := i32 ?) -> own @i32 \
-                    ( if (n == 0) (alloc 1 of i32 5) else ( x := mk(n - 1), x ) )";
-        assert_eq!(run(&format!("{held},\ny := mk(4),\ny@")), (5, 0));
+        let held = "mk := fn (n := i32 ?) -> (own @i32)! \
+                    ( if (n == 0) (try alloc 1 of i32 5) else ( x := try mk(n - 1), x ) )";
+        assert_eq!(run(&format!("{held},\ny := try mk(4),\ny@")), (5, 0));
         assert_eq!(free_log(), vec![5]);
         // Beside an arm that makes, the call makes too; beside a borrow it disagrees.
         let c = "c := i32 1,\ny := i32 4,\n";
-        let made = "x := if (c == 1) (mk(3)) else (alloc 1 of i32 6),\nx@";
+        let made = "x := if (c == 1) (try mk(3)) else (try alloc 1 of i32 6),\nx@";
         assert_eq!(run(&format!("{mk},\n{c}{made}")), (5, 0));
         assert_eq!(free_log(), vec![5], "`x` owns what the call made");
         assert_eq!(
-            parse_err(&format!("{mk},\n{c}x := if (c == 1) (mk(3)) else (&y)")),
+            parse_err(&format!("{mk},\n{c}x := if (c == 1) (try mk(3)) else (&y)")),
             ParseError::ArmsMakeAndBorrow
         );
         // Without `own` the call borrows, so beside a made arm the two disagree.
         assert_eq!(
             parse_err(
-                "mk := fn (n := i32 ?) -> @i32 ( if (n == 0) (alloc 1 of i32 5) else (mk(n - 1)) )"
+                "mk := fn (n := i32 ?) -> @i32! \
+                 ( if (n == 0) (try alloc 1 of i32 5) else (try mk(n - 1)) )"
             ),
             ParseError::ArmsMakeAndBorrow
         );
@@ -3260,28 +3327,35 @@ mod tests {
 
     #[test]
     fn a_function_s_result_says_whether_it_hands_on_a_made_value() {
+        let owning = || ParseError::HandsOnMade("(own @i32)!".into());
         for (src, e) in [
-            ("mk := fn () -> @i32 ( alloc 1 of i32 5 )", ParseError::HandsOnMade("@i32".into())),
+            ("mk := fn () -> @i32! ( try alloc 1 of i32 5 )", owning()),
             (
-                "c := i32 1,\nmk := fn () -> @i32 ( if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6) )",
-                ParseError::HandsOnMade("@i32".into()),
+                "mk := fn () -> (@i32)! ( try alloc 1 of i32 5 )",
+                ParseError::HandsOnMade("(own (@i32))!".into()),
+            ),
+            (
+                "c := i32 1,\nmk := fn () -> @i32! \
+                 ( if (c == 1) (try alloc 1 of i32 5) else (try alloc 1 of i32 6) )",
+                owning(),
             ),
             ("mk := fn (p := @i32 ?) -> own @i32 ( p )", ParseError::OwnResultBorrows),
+            ("mk := fn (p := @i32 ?) -> (own @i32)! ( p )", ParseError::OwnResultBorrows),
             (
-                "y := i32 4,\nmk := fn (c := i32 ?) -> own @i32 \
-                 ( if (c == 1) (return &y), alloc 1 of i32 6 )",
+                "y := i32 4,\nmk := fn (c := i32 ?) -> (own @i32)! \
+                 ( if (c == 1) (return &y), try alloc 1 of i32 6 )",
                 ParseError::OwnResultBorrows,
             ),
             ("mk := fn () -> own i32 ( i32 1 )", ParseError::OwnNeedsPointer),
-            ("mk := fn () -> own own @i32 ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
-            ("mk := fn () -> own 5 ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
-            ("mk := fn () -> own «a» ( alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
-            ("p := alloc 1 of i32 5,\nq := own p", ParseError::OwnOutsideType),
+            ("mk := fn () -> own own @i32 ( try alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
+            ("mk := fn () -> own 5 ( try alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
+            ("mk := fn () -> own «a» ( try alloc 1 of i32 5 )", ParseError::OwnNeedsPointer),
+            ("p := try alloc 1 of i32 5,\nq := own p", ParseError::OwnOutsideType),
         ] {
             assert_eq!(parse_err(src), e, "{src}");
         }
         // A block's last value still moves out with no `own`.
-        assert_eq!(run("x := ( a := alloc 1 of i32 8, a ),\nx@"), (8, 0));
+        assert_eq!(run("x := ( a := try alloc 1 of i32 8, a ),\nx@"), (8, 0));
         assert_eq!(free_log(), vec![8]);
         // A value with no end needs no `own`, and a borrow none.
         assert_eq!(run("mk := fn () -> i32 ( i32 3 ),\nmk()"), (3, 0));
@@ -3303,33 +3377,33 @@ mod tests {
     #[test]
     fn a_return_hands_on_what_it_made_or_holds_only_under_own() {
         for mk in [
-            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, return p )",
-            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, return move p )",
-            "mk := fn () -> own @i32 ( return alloc 1 of i32 7 )",
+            "mk := fn () -> (own @i32)! ( p := try alloc 1 of i32 7, return p )",
+            "mk := fn () -> (own @i32)! ( p := try alloc 1 of i32 7, return move p )",
+            "mk := fn () -> (own @i32)! ( return try alloc 1 of i32 7 )",
         ] {
-            assert_eq!(run(&format!("{mk},\nm := mk(),\nm@")), (7, 0), "{mk}");
+            assert_eq!(run(&format!("{mk},\nm := try mk(),\nm@")), (7, 0), "{mk}");
             assert_eq!(free_log(), vec![7], "{mk}: freed once, by the caller's owner");
         }
         // The names it leaves are freed on the way out; an arm that does not return frees
         // what the returning arm moved.
-        let mk =
-            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, q := alloc 1 of i32 8, return p )";
-        assert_eq!(run(&format!("{mk},\nm := mk(),\nm@")), (7, 0));
+        let mk = "mk := fn () -> (own @i32)! \
+                  ( p := try alloc 1 of i32 7, q := try alloc 1 of i32 8, return p )";
+        assert_eq!(run(&format!("{mk},\nm := try mk(),\nm@")), (7, 0));
         assert_eq!(free_log(), vec![8, 7]);
-        let mk = "mk := fn (n := i32 ?) -> own @i32 ( p := alloc 1 of i32 7, \
-                  if (n > 2) (return p) else (alloc 1 of i32 8) )";
-        assert_eq!(run(&format!("{mk},\nm := mk(3),\nm@")), (7, 0));
-        assert_eq!(run(&format!("{mk},\nm := mk(1),\nm@")), (8, 0));
+        let mk = "mk := fn (n := i32 ?) -> (own @i32)! ( p := try alloc 1 of i32 7, \
+                  if (n > 2) (return p) else (try alloc 1 of i32 8) )";
+        assert_eq!(run(&format!("{mk},\nm := try mk(3),\nm@")), (7, 0));
+        assert_eq!(run(&format!("{mk},\nm := try mk(1),\nm@")), (8, 0));
         assert_eq!(free_log(), vec![7, 8]);
-        let mk = "mk := fn (n := i32 ?) -> own @i32 ( ( p := alloc 1 of i32 7, \
-                  if (n > 2) (return p) ), alloc 1 of i32 8 )";
-        assert_eq!(run(&format!("{mk},\nm := mk(3),\nm@")), (7, 0));
+        let mk = "mk := fn (n := i32 ?) -> (own @i32)! ( ( p := try alloc 1 of i32 7, \
+                  if (n > 2) (return p) ), try alloc 1 of i32 8 )";
+        assert_eq!(run(&format!("{mk},\nm := try mk(3),\nm@")), (7, 0));
         assert_eq!(free_log(), vec![7]);
-        assert_eq!(run(&format!("{mk},\nm := mk(1),\nm@")), (8, 0));
+        assert_eq!(run(&format!("{mk},\nm := try mk(1),\nm@")), (8, 0));
         assert_eq!(free_log(), vec![7, 8]);
         for mk in [
-            "mk := fn () -> @i32 ( p := alloc 1 of i32 7, return p )",
-            "mk := fn () -> @i32 ( return alloc 1 of i32 7 )",
+            "mk := fn () -> @i32! ( p := try alloc 1 of i32 7, return p )",
+            "mk := fn () -> @i32! ( return try alloc 1 of i32 7 )",
         ] {
             let e = parse_err(&format!("{mk},\nmk()"));
             assert!(matches!(e, ParseError::HandsOnMade(_)), "{mk}: {e:?}");
@@ -3339,21 +3413,24 @@ mod tests {
     #[test]
     fn a_function_s_last_value_moves_ownership_to_the_caller() {
         for mk in [
-            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, p )",
-            "mk := fn () -> own @i32 ( p := alloc 1 of i32 7, move p )",
-            "mk := fn () -> own @i32 ( alloc 1 of i32 7 )",
+            "mk := fn () -> (own @i32)! ( p := try alloc 1 of i32 7, p )",
+            "mk := fn () -> (own @i32)! ( p := try alloc 1 of i32 7, move p )",
+            "mk := fn () -> (own @i32)! ( try alloc 1 of i32 7 )",
         ] {
-            assert_eq!(run(&format!("{mk},\nm := mk(),\nm@")), (7, 0), "{mk}");
+            assert_eq!(run(&format!("{mk},\nm := try mk(),\nm@")), (7, 0), "{mk}");
             assert_eq!(free_log(), vec![7], "{mk}: freed once, by the caller's owner");
         }
         // A block's last value moves to its binder the same way.
-        assert_eq!(run("b := ( a := alloc 1 of i32 8, a ),\nb@"), (8, 0));
+        assert_eq!(run("b := ( a := try alloc 1 of i32 8, a ),\nb@"), (8, 0));
         assert_eq!(free_log(), vec![8]);
         // A moved-out value thrown away is freed at its line.
-        assert_eq!(run("mk := fn () -> own @i32 ( alloc 1 of i32 7 ),\nfree (mk()),\n1"), (1, 0));
+        assert_eq!(
+            run("mk := fn () -> (own @i32)! ( try alloc 1 of i32 7 ),\nfree (try mk()),\n1"),
+            (1, 0)
+        );
         // A call's result is owned only through the callee's `-> own`.
         assert_eq!(
-            run("id := fn (q := @i32 ?) -> @i32 ( q ),\np := alloc 1 of i32 3,\nr := id(p),\nr@"),
+            run("id := fn (q := @i32 ?) -> @i32 ( q ),\np := try alloc 1 of i32 3,\nr := id(p),\nr@"),
             (3, 0)
         );
         assert_eq!(free_log(), vec![3], "the borrow `r` frees nothing");
@@ -3386,11 +3463,11 @@ mod tests {
     fn a_call_reading_a_freed_owning_pointer_is_refused() {
         // A freed name's place may hold anything, here a freed block.
         assert_eq!(
-            parse_err("p := alloc 1 of i32 5,\nf := fn () -> i32 ( p@ ),\nfree p,\nf()"),
+            parse_err("p := try alloc 1 of i32 5,\nf := fn () -> i32 ( p@ ),\nfree p,\nf()"),
             ParseError::Resolve(ResolveError::Dead("p".into()))
         );
         let (v, live) = run(
-            "p := alloc 1 of i32 5,\nf := fn (q := @i32 ?) -> i32 ( q@ ),\nr := alloc 1 of i32 4,\nfree p,\nf(r)",
+            "p := try alloc 1 of i32 5,\nf := fn (q := @i32 ?) -> i32 ( q@ ),\nr := try alloc 1 of i32 4,\nfree p,\nf(r)",
         );
         assert_eq!(v, 4);
         assert_eq!(live, 0);
@@ -3457,7 +3534,7 @@ mod tests {
     #[test]
     fn a_loop_body_frees_every_iteration() {
         let (_v, live) =
-            run("i := mut i32 0,\nwhile (i < 3) ( p := alloc 1 of i32 5, i = i + 1 ),\ni");
+            run("i := mut i32 0,\nwhile (i < 3) ( p := try alloc 1 of i32 5, i = i + 1 ),\ni");
         assert_eq!(live, 0, "no allocation outlives its iteration");
         assert_eq!(free_log().len(), 3, "one free per iteration");
     }
@@ -3470,18 +3547,18 @@ mod tests {
     fn a_union_frees_the_owning_pointer_it_holds() {
         let u = "u := type union ( p := mut own @i32 ?, i := mut i32 ),\nv := mut u ?,\n";
         let (v, live) = run(&format!(
-            "{u}v.p = alloc 1 of i32 4,\nv.p = alloc 1 of i32 5,\nx := v.p@,\nv.i = 3,\n\
-             v.p = alloc 1 of i32 6,\nx"
+            "{u}v.p = try alloc 1 of i32 4,\nv.p = try alloc 1 of i32 5,\nx := v.p@,\nv.i = 3,\n\
+             v.p = try alloc 1 of i32 6,\nx"
         ));
         assert_eq!((v, live), (5, 0));
-        let (v, live) = run(&format!("{u}q := alloc 1 of i32 7,\nv.p = move q,\nv.p@"));
+        let (v, live) = run(&format!("{u}q := try alloc 1 of i32 7,\nv.p = move q,\nv.p@"));
         assert_eq!((v, live), (7, 0));
         assert_eq!(
-            parse_err(&format!("{u}q := alloc 1 of i32 7,\nv.p = q")),
+            parse_err(&format!("{u}q := try alloc 1 of i32 7,\nv.p = q")),
             ParseError::NonOwningIntoOwning
         );
         let (v, live) = run(
-            "c := alloc 1 of mut own @i32 ?,\nc@ = alloc 1 of i32 4,\nc@ = alloc 1 of i32 5,\n\
+            "c := try alloc 1 of mut own @i32 ?,\nc@ = try alloc 1 of i32 4,\nc@ = try alloc 1 of i32 5,\n\
              x := c@@,\nfree c@,\nfree c,\nx",
         );
         assert_eq!((v, live), (5, 0));
@@ -3490,7 +3567,7 @@ mod tests {
     #[test]
     fn the_compiled_tier_reads_heap_memory_identically() {
         let (v, live) = run(
-            "f := fn (p := @i32 ?) -> i32 ( p@ + 1 ),\na := alloc 1 of i32 41,\nb := f(a),\nf.compile(),\nc := f(a),\nb + c",
+            "f := fn (p := @i32 ?) -> i32 ( p@ + 1 ),\na := try alloc 1 of i32 41,\nb := f(a),\nf.compile(),\nc := f(a),\nb + c",
         );
         assert_eq!(v, 84, "interpreted and compiled reads agree");
         assert_eq!(live, 0);
@@ -3505,7 +3582,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let types = &core;
-        let src = "main := fn () -> i32 ( p := alloc 1 of i32 5, p@ ),\nmain.compile()";
+        let src = "main := fn () -> i32! ( p := try alloc 1 of i32 5, p@ ),\nmain.compile()";
         let mut p = Parser::new(src, &mut store, &mut trie, types, scopes).with_lower(&core.lower);
         let root = p.parse_sequence().expect("parse");
         let mut rt = p.into_runtime();
