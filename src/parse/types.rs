@@ -446,8 +446,10 @@ impl<'a> Parser<'a> {
         let depth = self.cx.scopes.depth();
         let scope = self.open_scope();
         let (mut lines, mut bindings, mut bytes) = (Vec::new(), Vec::new(), Vec::new());
+        let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
+        let tag = crate::identities::union::TAG_LINE;
         let read =
-            self.declare_tag_line(scope, opened_at, &mut lines, &mut bindings).and_then(|()| {
+            self.declare_own_line(tag, u8_, opened_at, &mut lines, &mut bindings).and_then(|()| {
                 self.field_lines(FieldList::Members, scope, &mut lines, &mut bindings, &mut bytes)
             });
         // As a type's body stands below its fields, where a member is looked up through a value.
@@ -569,23 +571,26 @@ impl<'a> Parser<'a> {
         let depth = self.cx.scopes.depth();
         let scope = self.open_scope();
         let (mut lines, mut bindings) = (Vec::new(), Vec::new());
-        let declared = self.declare_tag_line(scope, at, &mut lines, &mut bindings).and_then(|()| {
-            [("value", value), ("err", self.types.error.value)].into_iter().try_for_each(
-                |(name, ty)| {
-                    let member = crate::identities::hole::build(
-                        self.rt.store,
-                        self.types.unknown,
-                        ty,
-                        std::ptr::null_mut(),
-                    );
-                    let binding = self.mint_binding(member, scope, name.as_bytes());
-                    self.enter_binding_in(scope, name, binding, at)?;
-                    lines.push(member);
-                    bindings.push(binding);
-                    Ok(())
-                },
-            )
-        });
+        let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
+        let tag = crate::identities::union::TAG_LINE;
+        let declared =
+            self.declare_own_line(tag, u8_, at, &mut lines, &mut bindings).and_then(|()| {
+                [("value", value), ("err", self.types.error.value)].into_iter().try_for_each(
+                    |(name, ty)| {
+                        let member = crate::identities::hole::build(
+                            self.rt.store,
+                            self.types.unknown,
+                            ty,
+                            std::ptr::null_mut(),
+                        );
+                        let binding = self.mint_binding(member, scope, name.as_bytes());
+                        self.enter_binding_in(scope, name, binding, at)?;
+                        lines.push(member);
+                        bindings.push(binding);
+                        Ok(())
+                    },
+                )
+            });
         let body = self.open_scope();
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
@@ -598,29 +603,26 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A union's own first line, `tag := layout (u8, 0)`, declared in `scope`, the union's,
-    /// against every name open there, as a line the program writes is, and pushed onto `lines`
-    /// and `bindings`; an error is placed at `at` (›A union holds one of its members at a time:
-    /// `union ( a := T, b := U )`‹ [[R379]]).
-    fn declare_tag_line(
+    /// `name := ty`, a line a type's own parse writes and no program text did, declared in the
+    /// open scope, the type's, against the type's own lines alone and never the names where the
+    /// type is written (›A union holds one of its members at a time: `union ( a := T, b := U )`‹
+    /// [[R379]]), and pushed onto `lines` and `bindings`; an error is placed at `at`.
+    fn declare_own_line(
         &mut self,
-        scope: DyadPtr,
+        name: &str,
+        ty: DyadPtr,
         at: usize,
         lines: &mut Vec<DyadPtr>,
         bindings: &mut Vec<DyadPtr>,
     ) -> Result<(), ParseError> {
-        use crate::identities::union::TAG_LINE;
-        let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
-        let tag = crate::identities::hole::build(
+        let line = crate::identities::hole::build(
             self.rt.store,
             self.types.unknown,
-            u8_,
+            ty,
             std::ptr::null_mut(),
         );
-        let binding = self.mint_binding(tag, scope, TAG_LINE.as_bytes());
-        self.enter_binding_in(scope, TAG_LINE, binding, at)?;
-        lines.push(tag);
-        bindings.push(binding);
+        bindings.push(self.declare_field_name(name, line, at)?);
+        lines.push(line);
         Ok(())
     }
 

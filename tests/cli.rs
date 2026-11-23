@@ -6518,21 +6518,21 @@ fn a_parse_written_in_logos_that_finds_nothing_to_consume_declines() {
     let pt = "pt := type ( x := i32 ? )";
     let mk = |otherwise: &str| {
         format!(
-            "{pt}, mk := type ( a := pub i32 ?, output_type := type ?, mark := pub static i32 7, \
+            "{pt}, mk := type ( a := pub i32 ?, output_type := type ?, tag := pub static i32 7, \
              run = ( pt(a) ), parse = ( if (tape[-1].type == i32) ( \
              tape[0].type = mk, tape[0].a = tape[-1], tape[0].output_type = pt, \
              tape.is_constructed[0] = true, tape.remove(-1) ){otherwise} ) )"
         )
     };
     let pre = format!(
-        "{pt}, mk := type ( mark := pub static i32 7, parse = ( if (tape[1].type == i32) ( \
+        "{pt}, mk := type ( tag := pub static i32 7, parse = ( if (tape[1].type == i32) ( \
          tape[0] = tape[1], tape.remove(1), tape.is_constructed[0] = true ) ) )"
     );
     let f = "f := fn (t := type ?) -> bool ( t == mk )";
     for defs in [mk(""), mk(" else ( tape.is_constructed[0] = true )"), pre.clone()] {
         let built = if defs == pre { "mk n" } else { "(n mk).a" };
         for (body, out, want) in
-            [("mk == pt", "bool", "false"), ("mk.mark", "i32", "7"), ("(mk) == mk", "bool", "true")]
+            [("mk == pt", "bool", "false"), ("mk.tag", "i32", "7"), ("(mk) == mk", "bool", "true")]
         {
             assert_eq!(line(&format!("{defs}, {body}")), want, "{defs}, {body}");
             for call in ["g()", "g.compile(), g()"] {
@@ -7758,10 +7758,28 @@ fn what_a_union_does_not_take_is_refused_where_it_is_written() {
 /// R379: a union's own first line is its tag, `tag := layout (u8, 0)`, and its members lie at
 /// the largest member's alignment, as C lays out a struct of the tag and a C union of the members
 /// (R385). A program reads `v.tag`, the held member's place among the lines, and never writes
-/// it; the line is declared as a written one is, against every name in reach; on both tiers.
+/// it; the line meets the union's other lines alone, never the names where the union is written;
+/// on both tiers.
 #[test]
 fn a_union_s_first_line_is_its_tag() {
     let mut cases = vec![
+        (
+            "tag := i32 3, u := type union ( i := mut i32 ), v := mut u ?, v.i = 1, \
+             print «{tag} {v.tag}»"
+                .to_string(),
+            "3 1",
+        ),
+        // The `void!` a `parse` slot gives writes its own `tag` line beneath the body's `tag`.
+        (
+            "mk := type ( tag := pub static i32 7, parse = ( tape.is_constructed[0] = true ) ), \
+             print «{mk.tag}»"
+                .to_string(),
+            "7",
+        ),
+        (
+            "tag := i32 3, f := fn () -> i32! ( 4 ), r := f(), print «{tag} {r.tag}»".to_string(),
+            "3 1",
+        ),
         (
             "u := type union ( i := mut i32 ), print «{u.size_bytes} {i32!.size_bytes}»"
                 .to_string(),
@@ -7811,7 +7829,6 @@ fn a_union_s_first_line_is_its_tag() {
     for (src, want) in cases {
         assert_eq!(line(&src), want, "{src}");
     }
-    let declared = "`tag` is already declared and still in scope";
     for (src, message) in [
         (format!("{NUM}, v := mut num ?, v.i = 5, v.tag = 2"), "`tag` is not `mut`"),
         (
@@ -7823,8 +7840,6 @@ fn a_union_s_first_line_is_its_tag() {
             "a union's own first line is `tag`, the byte that says which member it holds, so no \
              member is named `tag`",
         ),
-        ("tag := i32 3, num := type union ( i := mut i32 ), 0".to_string(), declared),
-        ("tag := i32 3, f := fn () -> i32! ( 4 ), 0".to_string(), declared),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
@@ -9022,12 +9037,12 @@ fn a_declaration_on_the_command_line_is_its_names_start() {
 #[test]
 fn a_nodes_fields_are_read_by_name_without_running_it() {
     let power = POWER;
-    let sq = "sq := type ( a := i32 ?, output_type := static type i32, mark := pub static i32 7, \
+    let sq = "sq := type ( a := i32 ?, output_type := static type i32, tag := pub static i32 7, \
               run = ( a * a ), parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
               tape.is_constructed[0] = true, tape.remove(-1) ) )";
     let mk =
         "pt := type ( x := pub i32 ? ), mk := type ( a := pub i32 ?, output_type := pub type ?, \
-              mark := pub static i32 7, run = ( pt(a) ), parse = ( tape[0].type = mk, \
+              tag := pub static i32 7, run = ( pt(a) ), parse = ( tape[0].type = mk, \
               tape[0].a = tape[-1], tape[0].output_type = pt, tape.is_constructed[0] = true, \
               tape.remove(-1) ) )";
     for (tail, want) in [
@@ -9046,10 +9061,9 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{tail}");
     }
     // A `static` member of the node's own type.
-    for tail in [
-        "x := i32 3, (x sq).mark",
-        "f := fn (x := i32 ?) -> i32 ( (x sq).mark ), f.compile(), f(3)",
-    ] {
+    for tail in
+        ["x := i32 3, (x sq).tag", "f := fn (x := i32 ?) -> i32 ( (x sq).tag ), f.compile(), f(3)"]
+    {
         let out = logos().arg(format!("{sq}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n", "{tail}");
@@ -9084,9 +9098,9 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
     // stand-in for #402.
     for src in [
         format!("{mk}, t := mk, 1"),
-        format!("{mk}, mk.mark"),
+        format!("{mk}, mk.tag"),
         format!("{mk}, y := i32 3, (y mk).type == pt"),
-        format!("{mk}, y := i32 3, (y mk).type.mark"),
+        format!("{mk}, y := i32 3, (y mk).type.tag"),
     ] {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: {stderr}");
@@ -12551,7 +12565,7 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
 fn an_empty_place_of_a_type_with_a_run_runs_nothing() {
     let pt = "pt := type ( x := i32 ?, run = ( x ) )";
     let mk = "pt := type ( x := i32 ? ), mk := type ( a := i32 ?, output_type := type ?, \
-              mark := static i32 7, run = ( pt(a) ), parse = ( \
+              tag := static i32 7, run = ( pt(a) ), parse = ( \
               if (tape[-1].type == i32) ( tape[0].type = mk, tape[0].a = tape[-1], \
               tape[0].output_type = pt, tape.is_constructed[0] = true, tape.remove(-1) ) ) )";
     for (defs, body, out, want) in [
