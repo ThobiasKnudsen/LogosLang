@@ -4515,21 +4515,17 @@ fn a_written_conversion_is_checked_as_an_unwritten_one() {
     diff_typed_call("fn (c := bool ?) -> i64 ( i64 (if c (i32 1) else (i64 2)) )", "f(true)", 1);
 }
 
+/// `lossy` is a gate word (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹
+/// [[R381]]): it gates a value once, needs one to its right, and lets a number type convert only
+/// a number with loss; a copy takes no gate.
 #[test]
-fn lossy_stands_only_between_a_number_type_and_its_value() {
-    for src in [
-        "x := lossy (f64 2.5)",
-        "lossy 1",
-        "x := i32 lossy, 0",
-        "i32 lossy lossy (f64 2.5)",
-        "rational_number lossy 2.5",
-        "pt := type (a := i32 ?, b := i32 ?), pt lossy (f64 2.5)",
-    ] {
-        assert_eq!(script_parse_err(src), ParseError::LossyOutOfPlace, "{src}");
-    }
-    assert_eq!(script_parse_err("n := i32 lossy ?, 0"), ParseError::TypeMismatch);
+fn lossy_gates_a_value_once_and_converts_only_numbers() {
+    assert_eq!(script_parse_err("i32 lossy lossy (f64 2.5)"), ParseError::DoubleGate);
+    assert_eq!(script_parse_err("x := i32 lossy, 0"), ParseError::MissingOperand);
     assert_eq!(parse_err("i32 lossy (true)"), ParseError::TypeMismatch);
     assert_eq!(parse_err("i32 lossy (1, 2)"), ParseError::BadCast);
+    let copied = "y := lossy (f64 2.5), z := y, i32 z";
+    assert_eq!(script_parse_err(copied), ParseError::TypeMismatch);
 }
 
 #[test]
