@@ -25,7 +25,9 @@
 //!                 the slot of each node that holds it, the `own` word or null; `NO_SLOT` nowhere
 //! [60]       u8   the slots whose node a node of this type hands on as its value, one bit each
 //! [61]       u8   the slots whose lines it hands on the last of, one bit each
-//! [62..]     payload, per kind:
+//! [62..70]   u64  placing: a `seed-place` callable leaf saying what a parse's placed right side
+//!                 makes of a node of this type, or 0 for a node placed operand by operand
+//! [70..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST/TOKEN   u8 arity, u8 op slot, u8 output slot (`NO_SLOT` for
 //!                                 none), then arity × `dyad@` role-name strings; a token's
@@ -91,7 +93,8 @@ const NODE_VALUE_OFF: usize = 58;
 const OWN_OFF: usize = 59;
 const HANDS_ON_OFF: usize = 60;
 const HANDS_ON_LINES_OFF: usize = 61;
-pub(crate) const PAYLOAD_OFF: usize = 62;
+const PLACE_OFF: usize = 62;
+pub(crate) const PAYLOAD_OFF: usize = 70;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -250,7 +253,7 @@ pub(crate) unsafe fn mint_record(
     debug_assert_eq!(kind, TUPLE_TAG, "a built-in's mint's nodes are fixed operand runs");
     let mut blob = header(kind, Assoc::Left, prec::INERT).to_vec();
     blob[MINT_OF_OFF..MINT_OF_OFF + 8].copy_from_slice(&(origin as usize).to_ne_bytes());
-    // Its nodes carry the `own` mark and hand on what the origin's do.
+    // Its nodes carry the `own` mark, hand on, and are placed as the origin's are.
     let shared = OWN_OFF..PAYLOAD_OFF;
     blob[shared.clone()]
         .copy_from_slice(std::slice::from_raw_parts(dyad::head(origin).add(OWN_OFF), shared.len()));
@@ -679,6 +682,29 @@ pub(crate) unsafe fn chooser_of(id: DyadPtr) -> DyadPtr {
 /// `id` must carry a record and `leaf` must be a callable leaf whose entry is a `ChooseFn`.
 pub(crate) unsafe fn install_chooser(id: DyadPtr, leaf: DyadPtr) {
     std::ptr::write_unaligned(dyad::head(id).add(CHOOSER_OFF) as *mut DyadPtr, leaf);
+}
+
+/// # Safety
+/// `id` must carry a record and `leaf` must be a callable leaf whose entry is a `PlaceFn`.
+pub(crate) unsafe fn install_placing(id: DyadPtr, leaf: DyadPtr) {
+    std::ptr::write_unaligned(dyad::head(id).add(PLACE_OFF) as *mut DyadPtr, leaf);
+}
+
+/// What a parse's placed right side makes of a node of `id`, or `None` where the node is placed
+/// operand by operand. Safe on any node, as `kind_of` is.
+///
+/// # Safety
+/// `id` must be null or a valid dyad from the store.
+pub(crate) unsafe fn placing_of(id: DyadPtr) -> Option<super::place::PlaceFn> {
+    if id.is_null() || kind_of(id).is_none() {
+        return None;
+    }
+    let leaf = std::ptr::read_unaligned(dyad::head(id).add(PLACE_OFF) as *const DyadPtr);
+    if leaf.is_null() {
+        return None;
+    }
+    // SAFETY: `install_placing` is the one writer, and takes only a leaf minted from a `PlaceFn`.
+    Some(std::mem::transmute::<usize, super::place::PlaceFn>(super::callable::entry_of(leaf)))
 }
 
 /// The function that makes `id`'s mints, or `None` where `id` is no built-in operation. Safe on
