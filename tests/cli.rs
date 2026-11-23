@@ -3950,7 +3950,8 @@ fn a_hashmap_of_types_hands_back_the_unknown_for_a_missing_key() {
     let (echoes, stderr) = repl(
         "mints := hashmap type -> type\n\
           mints[i32] = f64\n\
-          t := mut type mints[i32]\n\
+          t := mut type\n\
+          t = mints[i32]\n\
           print «{t == f64}»\n\
           t = mints[u8]\n\
           print «{t}»\n\
@@ -3966,7 +3967,8 @@ fn a_declared_hashmap_is_empty_and_readable_at_once() {
     // Before any write, with or without `?`: no read veto, as `t := i32 ?` has.
     let (echoes, stderr) = repl(
         "m := hashmap type -> type\n\
-          u := mut type m[i32]\n\
+          u := mut type\n\
+          u = m[i32]\n\
           print «{u}»\n\
           n := hashmap i32 -> i64 ?\n\
           n[1]\n\
@@ -4834,7 +4836,7 @@ fn a_type_returning_function_hands_back_a_type_box() {
           y := type f(f64)\nz := y 5\nprint «{z}»\n\
           mints := hashmap type -> type\n\
           get := fn (t := type ?) -> type ( m := mut type mints[t], if m != ? return m, m = t, mints[t] = m, m )\n\
-          print «{get(i32) == get(i32)}»\nprint «{get(i32) == get(f64)}»\nu := mut type mints[u8]\nu == ?\n",
+          print «{get(i32) == get(i32)}»\nprint «{get(i32) == get(f64)}»\nu := mut type\nu = mints[u8]\nu == ?\n",
     );
     assert_eq!(echoes, ["true", "5.0", "true", "false", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -12841,7 +12843,11 @@ fn type_takes_its_whole_right_side() {
         ("a := i32 5, t := type a.type, t 3".into(), "3"),
         ("f := fn () -> i32 ( a := i32 5, t := type a.type, t 3 ), f.compile(), f()".into(), "3"),
         ("n := i32 1, x := type if n == 1 (i32) else (i64), x".into(), "i32"),
-        ("m := hashmap type -> type, m[i32] = i64, x := mut type m[i32], x = f64, x".into(), "f64"),
+        ("m := hashmap type -> type, m[i32] = i64, x := type m[i32], x".into(), "i64"),
+        (
+            "m := hashmap type -> type, m[i32] = i64, x := mut type, x = m[i32], x = f64, x".into(),
+            "f64",
+        ),
         ("k := fn (t := type ?) -> type ( t ), x := type k(type i64), x".into(), "i64"),
         ("f := fn (t := type ?) -> i32 ( x := type t, y := x 5, y ), f(i32)".into(), "5"),
         // Inside a condition the value is the one lexeme before the body's bracket.
@@ -12883,6 +12889,9 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
         ("f := fn () -> i32 ( a := i32 5, t := a.type, t 3 ), f.compile(), f()".into(), "t"),
         (format!("{pick}, f := fn (n := i32 ?) -> i32 ( u := pick(n), u ), 0"), "u"),
         ("f := fn (t := type ?) -> i32 ( x := t, x ), 0".into(), "x"),
+        ("m := hashmap type -> type, m[i32] = i64, x := m[i32], x".into(), "x"),
+        ("c := true, x := if c (i32) else (i64), x".into(), "x"),
+        ("p := try alloc 1 of mut type ?, p@ = i32, t := p@, t".into(), "t"),
     ] {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
@@ -12911,6 +12920,12 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
         ("a := i32 5, t := mut a.type, t = 3, t + a".into(), "8"),
         ("t := mut type ?, t = i32, x := mut t, x = 7, x".into(), "7"),
         ("x := mut (if true (i32) else (i64)), x = 3, x".into(), "3"),
+        ("c := true, x := mut (if c (i32) else (i64)), x = 3, x.type".into(), "mut i32"),
+        (
+            "m := hashmap type -> type, m[i32] = i64, x := mut m[i32], x = 5, x.type".into(),
+            "mut i64",
+        ),
+        ("p := try alloc 1 of mut type ?, p@ = i32, t := mut p@, t = 7, t.type".into(), "mut i32"),
         // A type known only when its line runs: the place is laid out then.
         (format!("{run_pick}, print «{{f(1)}} {{f(0)}}»"), "i64 i32"),
         ("f := fn (t := type ?) -> i32 ( x := mut t, x = 5, x ), f(i32)".into(), "5"),
@@ -12944,19 +12959,11 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
     ] {
         assert_eq!(line(src), want, "{src}");
     }
-    // What `T ?` refuses, `T` alone refuses: a type no place of which the seed lays out, and one
-    // known only when the program runs where the line cannot wait for it.
-    for (src, message) in [
-        ("x := scope, 1", "declarations of non-numeric types are not in the seed yet"),
-        (
-            "m := hashmap type -> type, m[i32] = i64, x := m[i32], 1",
-            "which type this is is known only when the program runs",
-        ),
-    ] {
-        let (code, stdout, stderr) = run_line(src);
-        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
-        assert!(stderr.contains(message), "{src}: stderr: {stderr}");
-    }
+    // What `T ?` refuses, `T` alone refuses: a type no place of which the seed lays out.
+    let (code, stdout, stderr) = run_line("x := scope, 1");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    let message = "declarations of non-numeric types are not in the seed yet";
+    assert!(stderr.contains(message), "stderr: {stderr}");
     let src = "f := fn (t := type ?) -> i32 ( x := mut t, x = 5, x ), f.compile(), f(i32)";
     let (code, _, stderr) = run_line(src);
     assert_eq!(code, Some(1), "{src}");
@@ -12971,6 +12978,40 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
         assert!(stderr.contains("such a line cannot hold `move` yet"), "{src}: stderr: {stderr}");
+    }
+}
+
+/// Where the pass runs the line, a node that gives a type runs where it is built, whatever its
+/// form, after what stands before it, and its type is used as one written (›The pass runs only as
+/// far as it must, in order, and never twice‹ [[R288]], ›A type known only when the program runs
+/// still works; what needs it is parsed when its line runs‹ [[R377]]).
+#[test]
+fn a_node_that_gives_a_type_runs_where_the_pass_builds_it() {
+    let m = "m := mut hashmap type -> type, m[i32] = i64";
+    let p = "p := try alloc 1 of mut type ?, p@ = i32";
+    let pk = "pk := fn () -> bool ( print «pk», true )";
+    for (src, want) in [
+        (format!("{m}, x := m[i32] 5, x.type"), "i64"),
+        (format!("{m}, m[i32] 5"), "5"),
+        (format!("{m}, m[i32].size_bytes"), "8"),
+        (format!("{p}, x := p@ 7, x.type"), "i32"),
+        ("c := true, x := (if c (i32) else (i64)) 5, x.type".into(), "i32"),
+        (format!("{pk}, x := (if pk() (i32) else (i64)) 5, x.type"), "pk\ni32"),
+        (format!("{m}, g := fn () -> i32 ( m[i32] = f64, 2 ), x := g() + m[i32] 5, x.type"), "f64"),
+        // A gate word over it gates the type it gave, as over a type written there.
+        (format!("{m}, x := mut m[i32] 5, x = 8, x.type"), "mut i64"),
+        (format!("{m}, u := mut m[i32], u = 3, u.type"), "mut i64"),
+        (format!("{p}, x := mut p@ 7, x = 9, x.type"), "mut i32"),
+        ("c := true, x := pub ((if c (i32) else (i64)) 5), x.type".into(), "pub i32"),
+        // A function reading the type a line gave reads it as written, so it compiles.
+        (
+            format!(
+                "{m}, t := type m[i32], f := fn () -> type ( x := t 5, x.type ), f.compile(), f()"
+            ),
+            "i64",
+        ),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
     }
 }
 
@@ -14274,6 +14315,7 @@ fn a_type_field_is_a_box_its_run_reads_when_it_runs() {
         (format!("{pass}, d := mut dyad ?, d = i32, (pass d) == i32"), "true\n"),
         (format!("{pass}, f := fn (d := dyad ?) -> bool ( (pass d) == f64 ), f(f64)"), "true\n"),
         (format!("{sq}, t := mut type ?, t = i64, sq t"), "16\n"),
+        (format!("{pass}, q := mut (pass i32), q = 5, q.type"), "mut i32\n"),
         // A `run` line that reads a value after the field's type is parsed when it runs.
         (format!("{mk}, mk i32"), "7\n"),
     ] {

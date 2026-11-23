@@ -588,6 +588,69 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
+    /// The node just built at the center of `tape`, where it gives a type and the pass runs its
+    /// line: what stands before it runs first, then the node, and the type it gave stands in its
+    /// place, whatever the node is (›The pass runs only as far as it must, in
+    /// order, and never twice‹ [[R288]]), so a reader takes it as a type known in the pass (›A
+    /// type known only when the program runs still works; what needs it is parsed when its line
+    /// runs‹ [[R377]]). `None`, nothing run, for a node that is a type or gives none, a bracket,
+    /// a type taken as a value, a place ([`Self::takes_the_place`]), and where the pass does not
+    /// run the line: a body, a `while` condition.
+    pub(super) fn run_type_where_built(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        use crate::identities::{read, type_identity_of};
+        let types = self.types;
+        if !self.in_pass_order() || self.cx.each_pass {
+            return Ok(None);
+        }
+        let Some(cell) = tape.at(0).copied() else { return Ok(None) };
+        if !cell.constructed || cell.bracket || cell.type_value || cell.dyad.is_null() {
+            return Ok(None);
+        }
+        let node = cell.dyad;
+        // SAFETY: a constructed cell holds a node from the store.
+        let gives_type = unsafe {
+            !types.is_storage(node)
+                && !types.is_hole(types.through(node))
+                && read::output_type(types, node) == types.type_
+                && type_identity_of(types, node).is_none()
+        };
+        if !gives_type {
+            return Ok(None);
+        }
+        let prev = tape.at(-1).map(|c| self.cell_identity(c));
+        let next = match tape.at(1) {
+            Some(c) => Some(self.cell_identity(c)),
+            None => self.next_identity(),
+        };
+        if self.takes_the_place(prev, next) {
+            return Ok(None);
+        }
+        self.run_first(tape, cell.start)?;
+        let plan = self.line_made();
+        let depth = self.cx.open.len() - 1;
+        // SAFETY: `node` is a reduced dyad this parser built into its store.
+        let value = unsafe { self.run_early(depth, cell.start, node, &plan)? };
+        let handle = tape.handle_at(0).expect("the built cell stands at the center");
+        tape.stand_as_ran(handle, value);
+        self.ran_through(tape, handle);
+        Ok(Some(value))
+    }
+
+    /// Whether the operand between `prev` and `next` stands for its place, not for what it gives:
+    /// what `=` writes, `&` points at, and `free` and `move` end.
+    pub(super) fn takes_the_place(&self, prev: Option<DyadPtr>, next: Option<DyadPtr>) -> bool {
+        let types = self.types;
+        next == Some(types.assign)
+            || prev.is_some_and(|p| {
+                p == types.free_
+                    || p == types.move_
+                    || self.precedence_of_cell(p) == crate::identities::meta::prec::ADDRESS
+            })
+    }
+
     /// A point at `at` where the parse needs a value: what stands before it runs first
     /// ([`Self::ran_first`]), or the point is refused, with nothing run, where something before
     /// it cannot.
