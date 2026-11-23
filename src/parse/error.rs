@@ -367,8 +367,10 @@ pub enum ParseError {
     FallibleNeedsType,
     /// `try` before a value that gives no `T!`.
     TryNeedsFallible,
-    /// `try` where no function that gives a `T!` is being written.
+    /// `try` where the innermost function gives no `T!`.
     TryOutsideFallible,
+    /// A raise or a `try` in a `defer`, whose error nobody receives.
+    ErrorInDefer,
     /// `holds` with no member's name after it.
     HoldsNeedsMember,
     /// A name after `holds` that is no member of the union, and the union's members.

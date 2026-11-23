@@ -1443,8 +1443,8 @@ impl<'a> Parser<'a> {
 
     /// The call runs on the pass and the result bits are the produced type
     /// node's address (DESIGN ›Build and run are one self-directing pass‹); an error the call
-    /// raised, or a mint it failed to build, is its own; any other run failure or a non-type
-    /// result is `NonComptimeTypeCall`.
+    /// raised, an `abort` it ran, or a mint it failed to build, is its own; any other run failure
+    /// or a non-type result is `NonComptimeTypeCall`.
     ///
     /// # Safety
     /// `call` must be a reduced call node from the store.
@@ -1452,9 +1452,9 @@ impl<'a> Parser<'a> {
         // What stands before the call runs first, so the call reads committed state.
         self.drain()?;
         let bits = self.run_on_pass(call).map_err(|e| match e {
-            crate::run::RunError::MintFailed(_) | crate::run::RunError::Raised(_) => {
-                ParseError::Run(e)
-            }
+            crate::run::RunError::MintFailed(_)
+            | crate::run::RunError::Raised(_)
+            | crate::run::RunError::Aborted(_) => ParseError::Run(e),
             _ => ParseError::NonComptimeTypeCall,
         })?;
         // A call declared `-> type` yields a node's address (DESIGN ›The store is keyed by address‹).

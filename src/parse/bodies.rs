@@ -1140,10 +1140,14 @@ impl<'a> Parser<'a> {
     /// A `defer`'s body. It runs as its scope ends, once the way out is chosen and with nothing
     /// to take a value, so a `return` in it, at any depth, and a body that gives a value are
     /// refused where they are written (›A scope's value is what it evaluates to, and `return` is
-    /// an optional early exit from the enclosing function‹ [[R207]]).
+    /// an optional early exit from the enclosing function‹ [[R207]]), as a raise and a `try` are,
+    /// whose error nobody there receives.
     pub(crate) fn parse_deferred(&mut self) -> Result<DyadPtr, ParseError> {
         let from = self.returns_len();
-        let body = self.parse_expression_cell()?;
+        self.cx.deferring.push(self.cx.frames.len());
+        let body = self.parse_expression_cell();
+        self.cx.deferring.pop();
+        let body = body?;
         if let Some(at) = self.returns_from(from).first().map(|r| r.at) {
             return Err(self.fail_at(at, ParseError::ReturnInDefer));
         }

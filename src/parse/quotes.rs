@@ -9,6 +9,20 @@ use crate::dyad;
 use crate::identities::drop_model::ExitItem;
 use crate::identities::string::Piece;
 
+/// Who receives an error a raise or a `try` hands on where it is written (›Target: errors are
+/// values (`T!`), handled by `if`, passed on by `try`…‹ [[R140]]).
+enum Receiver {
+    /// The caller of the innermost function, which gives the `T!` `output` whose `err` member is
+    /// `err`.
+    Caller { output: DyadPtr, err: DyadPtr },
+    /// The command line, at the top level: it prints the error and stops the run.
+    CommandLine,
+    /// Nobody: the innermost function gives no `T!`.
+    Nobody,
+    /// Nobody: a `defer` runs as its scope ends, once the way out is chosen.
+    Deferred,
+}
+
 /// The once-per-run registry of files read as Logos: a file loads once per run, every reader
 /// sharing the one loaded section, and a path met again while its own load is in progress is a
 /// cycle.
@@ -396,10 +410,14 @@ impl<'a> Parser<'a> {
         category: DyadPtr,
         at: usize,
     ) -> Result<Constructed, ParseError> {
+        let receiver = self.receiver();
+        if let Receiver::Deferred = receiver {
+            return Err(self.fail_at(at, ParseError::ErrorInDefer));
+        }
         let parts = self.interpolated_quote("error")?;
-        let fallible = self.fallible_output();
         let (store, types) = (&mut *self.rt.store, self.types);
-        let Some((output, err)) = fallible else {
+        // A raise where the innermost function gives no `T!` stops the run: stand-in for #159.
+        let Receiver::Caller { output, err } = receiver else {
             let node = crate::identities::error::build(store, types, &parts, category);
             tape.place(node);
             return Ok(Constructed::Placed);
@@ -416,20 +434,29 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// The result of the innermost function being parsed and its `err` member, where that result
-    /// is a `T!`: what a raise and a `try` there fill.
-    pub(super) fn fallible_output(&self) -> Option<(DyadPtr, DyadPtr)> {
-        let frame = self.cx.frames.last()?;
+    /// Who receives an error a raise or a `try` hands on here.
+    fn receiver(&self) -> Receiver {
+        let depth = self.cx.frames.len();
+        if self.cx.deferring.last() == Some(&depth) {
+            return Receiver::Deferred;
+        }
+        let Some(frame) = self.cx.frames.last() else {
+            return Receiver::CommandLine;
+        };
         // SAFETY: an open frame is a `fn` node, its signature written before its body parses,
         // and its result a type node from the store.
         unsafe {
             let output = *(dyad::value(frame.frame) as *const DyadPtr).add(super::FN_OUTPUT);
-            Some((output, crate::identities::union::fallible_members(self.types, output)?.1))
+            match crate::identities::union::fallible_members(self.types, output) {
+                Some((_, err)) => Receiver::Caller { output, err },
+                None => Receiver::Nobody,
+            }
         }
     }
 
-    /// `try` and the value to its right, which gives a `T!`, inside a function that gives one
-    /// (›Target: errors are values (`T!`), handled by `if`, passed on by `try`…‹ [[R140]]).
+    /// `try` and the value to its right, which gives a `T!`, inside a function that gives one or
+    /// at the top level (›Target: errors are values (`T!`), handled by `if`, passed on by
+    /// `try`…‹ [[R140]]).
     pub(crate) fn construct_try(
         &mut self,
         tape: &mut ParsingTape,
@@ -449,22 +476,28 @@ impl<'a> Parser<'a> {
         let Some((fallible, (value, err))) = members else {
             return Err(self.fail_at(right.start, ParseError::TryNeedsFallible));
         };
-        let Some(output) = self.fallible_output() else {
-            return Err(self.fail_at(at, ParseError::TryOutsideFallible));
+        let receiver = match self.receiver() {
+            Receiver::Caller { output, err } => Some((output, err)),
+            Receiver::CommandLine => None,
+            Receiver::Nobody => return Err(self.fail_at(at, ParseError::TryOutsideFallible)),
+            Receiver::Deferred => return Err(self.fail_at(at, ParseError::ErrorInDefer)),
         };
         // SAFETY: as above.
         let kept = unsafe {
             let path = crate::identities::drop_model::handed_through(types, operand);
             self.line_made().contains(&path[0])
         };
-        // SAFETY: `operand` gives `fallible`, whose members are `value` and `err`, and `output`
-        // is a `T!` with its `err` member.
+        // SAFETY: `operand` gives `fallible`, whose members are `value` and `err`, and the
+        // receiver's output is a `T!` with its `err` member.
         let (node, ret) = unsafe {
             let fallible = [fallible, value, err];
-            crate::identities::try_mod::build(self.rt.store, types, operand, fallible, output, kept)
+            let store = &mut *self.rt.store;
+            crate::identities::try_mod::build(store, types, operand, fallible, receiver, kept)
         };
-        // SAFETY: `ret` is the `return` node just built.
-        unsafe { self.note_return(ret, at) }?;
+        if let Some(ret) = ret {
+            // SAFETY: `ret` is the `return` node just built.
+            unsafe { self.note_return(ret, at) }?;
+        }
         tape.place(node);
         Ok(Constructed::Placed)
     }
