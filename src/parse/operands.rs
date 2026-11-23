@@ -378,6 +378,25 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// [`Self::type_known_now`] for a reader whose operand, written at `at`, must be a type: one
+    /// that names no type is `refused` there, and one that names a type only running gives stays
+    /// that refusal, so a body's line waits for the run.
+    pub(crate) fn type_operand_now(
+        &mut self,
+        operand: DyadPtr,
+        at: usize,
+        refused: ParseError,
+    ) -> Result<DyadPtr, ParseError> {
+        match self.type_known_now(operand) {
+            Ok(t) => Ok(t),
+            Err(ParseError::TypeKnownOnlyAtRun) => {
+                Err(self.fail_at(at, ParseError::TypeKnownOnlyAtRun))
+            }
+            Err(e) if e.type_given_by_running() => Err(e),
+            Err(_) => Err(self.fail_at(at, refused)),
+        }
+    }
+
     /// Where the parse needs a type known only when the program runs: in a body the segment that
     /// needs it waits for the run (›A type known only when the program runs still works; what
     /// needs it is parsed when its line runs‹ [[R377]]); where nothing runs it later, the
@@ -556,7 +575,7 @@ impl<'a> Parser<'a> {
     /// ([`Self::run_before`]), and its cell stands for the node it gave, as a `dyad` name read
     /// there does. In a body, the read of either waits for the run ([`Self::known_at_run`]), and
     /// a `while` condition holding a call waits as a whole (`hold_condition`).
-    pub(super) fn read_through_value(
+    pub(crate) fn read_through_value(
         &mut self,
         tape: &mut ParsingTape,
         k: isize,
@@ -1197,9 +1216,9 @@ impl<'a> Parser<'a> {
         Some(!(def.in_parse || def.in_free))
     }
 
-    /// The one read every prefix constructor makes (`return x`, `not x`, a
-    /// prefix `-`): its side, read as an operation reads one, so a word there not built yet is
-    /// built first, as `move p` in `return move p`.
+    /// The read a prefix word that puts its side somewhere makes (`return x`, `alloc`'s count and
+    /// value): its side as it stands, which lands there, so a word there not built yet is built
+    /// first, as `move p` in `return move p`.
     pub(crate) fn take_right(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
         let Some(cell) = self.side_at(tape, 1)? else {
             return Err(ParseError::MissingOperand);
@@ -1207,6 +1226,16 @@ impl<'a> Parser<'a> {
         let node = self.as_operand(cell)?;
         tape.remove(1);
         Ok(node)
+    }
+
+    /// The read a prefix operation makes of its side (`not x`, a prefix `-`, `try x`): read as an
+    /// infix reads each of its sides ([`Self::operands`]).
+    pub(crate) fn operand_right(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
+        let Some([operand]) = self.operands(tape, [1], Taker::Operation)? else {
+            return Err(ParseError::MissingOperand);
+        };
+        tape.remove(1);
+        Ok(operand)
     }
 
     /// What a type or a gate word at the center takes from its right, the cell at `k`: a built

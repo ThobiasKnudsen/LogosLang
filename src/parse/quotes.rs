@@ -465,7 +465,7 @@ impl<'a> Parser<'a> {
         let Some(&right) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
         };
-        let operand = self.take_right(tape)?;
+        let operand = self.operand_right(tape)?;
         let types = self.types;
         // SAFETY: `operand` is a reduced dyad off the tape, its output type null or a type node.
         let members = unsafe {

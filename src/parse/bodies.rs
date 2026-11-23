@@ -1639,6 +1639,16 @@ impl<'a> Parser<'a> {
         if let Some(s) = step {
             parts.push(s);
         }
+        // The parts' types decide the counter's, so a part of a type known only when the program
+        // runs is read then (›A type known only when the program runs still works; what needs it
+        // is parsed when its line runs‹ [[R377]]).
+        let at_run = |&p: &DyadPtr| {
+            // SAFETY: `parts` are reduced dyads just parsed.
+            unsafe { crate::identities::dyad_place::known_only_at_run(types, p) }
+        };
+        if parts.iter().any(at_run) {
+            return Err(self.known_at_run());
+        }
         // SAFETY: `parts` are reduced dyads just parsed.
         let logos =
             unsafe { crate::identities::resolve_loop_parts(self.rt.store, types, &mut parts)? };
@@ -2599,7 +2609,7 @@ impl<'a> Parser<'a> {
 
     /// Where the pass runs each line once it has parsed it: the top level, or a held line
     /// parsed when it runs, outside every deferred body.
-    pub(super) fn in_pass_order(&self) -> bool {
+    pub(crate) fn in_pass_order(&self) -> bool {
         self.cx.feed.as_ref().is_none_or(|f| f.in_run_order) && self.cx.runtime_depth == 0
     }
 

@@ -1278,14 +1278,7 @@ impl<'a> Parser<'a> {
         };
         let right = *tape.at(1).expect("`binary_operands` found a right side");
         let refused = |p: &mut Self| p.fail_at(right.start, ParseError::NotACollection);
-        let t = match self.type_known_now(collection) {
-            Ok(t) => t,
-            Err(ParseError::TypeKnownOnlyAtRun) => {
-                return Err(self.fail_at(right.start, ParseError::TypeKnownOnlyAtRun))
-            }
-            Err(e) if e.type_given_by_running() => return Err(e),
-            Err(_) => return Err(refused(self)),
-        };
+        let t = self.type_operand_now(collection, right.start, ParseError::NotACollection)?;
         // SAFETY: `t` is a type node; the member and `element` are reduced dyads from the store.
         let call = unsafe {
             let t = crate::identities::gate::under(t);
@@ -1752,10 +1745,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnsupportedOperands);
         };
         let base = self.operand_dyad(cell)?;
-        // SAFETY: `base` is a resolved dyad from the store.
-        if !unsafe { crate::identities::is_type_value(self.types, base) } {
-            return Err(ParseError::UnsupportedOperands);
-        }
+        let base = self.type_operand_now(base, cell.start, ParseError::UnsupportedOperands)?;
         tape.remove(1);
         // SAFETY: `base` is a type node from the store, gated or not.
         let logos = unsafe {

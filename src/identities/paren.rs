@@ -16,6 +16,9 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     cx.metas.insert(open, |p, _id, tape| {
         let body = p.parse_paren_cell(tape)?;
         p.expect_close()?;
+        // A group gives what its line gives, a line held for the run giving it in a `dyad`.
+        // SAFETY: `body` holds a reduced dyad just parsed.
+        unsafe { super::waiting::lands_in(p.types(), body.dyad, p.types().dyad_) };
         tape.place_bracket_cell(body);
         Ok(crate::parse::Constructed::Placed)
     });

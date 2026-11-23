@@ -386,6 +386,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether `cell` may stand for a type the pass does not know, so that a cell after it that
+    /// uses a type needs it: one that gives such a type, or a `dyad` whose node, which may be a
+    /// type, is known only when the program runs.
+    fn may_give_type_at_run(&self, cell: &Cell) -> bool {
+        // SAFETY: a cell holds null or a resolved dyad from the store.
+        self.gives_type_at_run(cell)
+            || (!cell.dyad.is_null()
+                && !cell.type_value
+                && unsafe {
+                    crate::identities::dyad_place::known_only_at_run(self.types, cell.dyad)
+                })
+    }
+
     /// Whether `node`, built, gives a type only by running.
     ///
     /// # Safety
@@ -421,7 +434,7 @@ impl<'a> Parser<'a> {
         let ids: Vec<DyadPtr> = cells.iter().map(|c| self.cell_identity(c)).collect();
         let waits = (1..cells.len()).any(|k| {
             let prev = k.checked_sub(2).map(|p| ids[p]);
-            self.gives_type_at_run(&cells[k - 1]) && self.used_after(prev, Some(ids[k]))
+            self.may_give_type_at_run(&cells[k - 1]) && self.used_after(prev, Some(ids[k]))
         });
         if !waits {
             return Ok(false);
@@ -439,7 +452,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         cell: &Cell,
     ) -> Result<bool, ParseError> {
-        if !self.waits_here() || self.after_tight_read(tape) || !self.gives_type_at_run(cell) {
+        if !self.waits_here() || self.after_tight_read(tape) || !self.may_give_type_at_run(cell) {
             return Ok(false);
         }
         let prev = tape.last().map(|c| self.cell_identity(c));
@@ -597,17 +610,20 @@ impl<'a> Parser<'a> {
             kept.retain(|c| c.end() <= place.start || c.start >= place.end());
             kept.insert(at.min(kept.len()), *place);
         } else {
-            // A `dyad` name that ends what was kept is read again from the held text where the
-            // line runs, so it is read as one lexed there is, the parse of the node it holds then
-            // included.
+            // A `dyad` name, or a group whose line waits, that ends what was kept is read again
+            // from the held text where the line runs, so it is read as one lexed there is, the
+            // parse of the node it holds then included, and the gates a group's line gives.
             let types = self.types;
-            // SAFETY: a lexed cell's identity is a dyad from the store.
-            let dyad_name = |c: &Cell| unsafe {
-                !c.constructed
-                    && crate::identities::read::read_kind(types, c.identity(types))
+            // SAFETY: a lexed cell's identity, and a built cell's node, are dyads from the store.
+            let read_again = |c: &Cell| unsafe {
+                if c.constructed {
+                    c.bracket && crate::dyad::ty(c.dyad) == types.waiting.line
+                } else {
+                    crate::identities::read::read_kind(types, c.identity(types))
                         == crate::identities::read::Read::Container(types.dyad_)
+                }
             };
-            while let Some(last) = kept.last().filter(|c| dyad_name(c)) {
+            while let Some(last) = kept.last().filter(|c| read_again(c)) {
                 cut = last.start;
                 kept.pop();
             }

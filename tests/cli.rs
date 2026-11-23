@@ -5207,6 +5207,29 @@ fn a_type_any_node_gives_at_run_is_used_in_a_body_as_one_known_in_the_pass_is() 
             ),
             "5 5",
         ),
+        // What reads a type: `!`, `@` and `is`.
+        (
+            "g := fn (t := type ?) -> type ( m := mut type t, m! ), \
+             COMPILE print «{g(i32) == i32!} {g(i64) == i32!}»"
+                .into(),
+            "true false",
+        ),
+        (
+            "g := fn (t := type ?) -> type ( @t ), COMPILE print «{g(i32) == @i32} {g(i64) == @i32}»"
+                .into(),
+            "true false",
+        ),
+        ("g := fn (t := type ?) -> i64 ( x := i64 5, p := @t &x, p@ ), COMPILE g(i64)".into(), "5"),
+        (
+            format!("{pick}, g := fn (n := i32) -> type ( @(pick(n)) ), COMPILE print «{{g(1) == @i64}}»"),
+            "true",
+        ),
+        (
+            "g := fn (c := type ?) -> bool ( i32 is c ), COMPILE print «{g(number)} {g(pointer)}»"
+                .into(),
+            "true false",
+        ),
+        ("g := fn (t := type ?) -> bool ( @t is pointer ), COMPILE g(i32)".into(), "true"),
     ] {
         let interpreted = src.replace("COMPILE ", "");
         let (code, stdout, stderr) = run_line(&interpreted);
@@ -5265,6 +5288,38 @@ fn a_node_whose_type_is_known_only_at_run_is_read_in_a_body_where_its_line_runs(
             "6",
         ),
         (format!("{f}, g := fn () -> i32 ( if ((f()).type == i32) ( 1 ) else ( 2 ) ), COMPILE g()"), "1"),
+        // A bracket whose line waits gives that line's value to every reader, its gates included,
+        // and a prefix operation, a gate word, `!`, `@` and a `for` range read a `dyad` through.
+        (
+            "g := fn (d := dyad ?) -> type ( (d * 1.0).type ), COMPILE print «{g(f64 2.5)} {g(i32 2)}»"
+                .into(),
+            "f64 i32",
+        ),
+        ("g := fn (d := dyad ?) -> type ( (d + d).type ), COMPILE g(f64 2.5)".into(), "f64"),
+        (
+            "g := fn (d := dyad ?) -> i32 ( print «{(d * 1.0).type}», 0 ), COMPILE g(f64 2.5)".into(),
+            "f64\n0",
+        ),
+        ("g := fn (d := dyad ?) -> type ( (lossy d).type ), COMPILE g(f64 2.5)".into(), "lossy f64"),
+        ("g := fn (d := dyad ?) -> type ( (mut d).type ), COMPILE g(f64 2.5)".into(), "mut f64"),
+        ("g := fn (d := dyad ?) -> type ( (d * 1.0).gives ), COMPILE g(f64 2.5)".into(), "f64"),
+        ("g := fn (d := dyad ?) -> bool ( (d * 1.0).type is number ), COMPILE g(f64 2.5)".into(), "true"),
+        ("g := fn (d := dyad ?) -> f64 ( -d ), COMPILE g(f64 2.5)".into(), "-2.5"),
+        ("g := fn (d := dyad ?) -> f64 ( -(d * 1.0) ), COMPILE g(f64 2.5)".into(), "-2.5"),
+        ("e := fn () -> dyad ( f64 2.5 ), g := fn () -> f64 ( -(e()) ), COMPILE g()".into(), "-2.5"),
+        ("g := fn (d := dyad ?) -> bool ( not d ), COMPILE g(true)".into(), "false"),
+        ("g := fn (d := dyad ?) -> bool ( not ((d * 1.0) == 2.5) ), COMPILE g(f64 2.5)".into(), "false"),
+        ("g := fn (d := dyad ?) -> type ( d! ), COMPILE print «{g(i32) == i32!}»".into(), "true"),
+        ("g := fn (d := dyad ?) -> type ( @d ), COMPILE print «{g(i32) == @i32}»".into(), "true"),
+        (
+            "g := fn (d := dyad ?) -> i32 ( n := mut i32 0, for i in 0..d ( n = n + i ), n ), \
+             COMPILE g(i32 3)"
+                .into(),
+            "3",
+        ),
+        // A `dyad` before a value may be a type that builds it.
+        ("g := fn (d := dyad ?) -> i32 ( d 2 ), COMPILE g(i32)".into(), "2"),
+        ("g := fn (d := dyad ?) -> i64 ( x := d 2, x ), COMPILE g(i64)".into(), "2"),
         // A gate word over a name whose line waits gates the name read where the line runs, and
         // the gate words opening a value that waits gate the place it fills.
         ("g := fn (a := dyad ?) -> i64 ( x := mut a + 1, x ), COMPILE g(i64 5)".into(), "6"),
