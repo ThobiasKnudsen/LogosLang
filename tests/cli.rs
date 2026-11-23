@@ -7911,6 +7911,27 @@ fn a_function_that_gives_t_bang_fills_value_with_its_last_value() {
     assert!(stderr.contains("error: `value` is not `mut`"), "stderr: {stderr}");
 }
 
+/// Every `own @T` written is one type, so a function hands on another's `(own @T)!` as it is
+/// (›Every type is minted by its contents through `type_mint`; the name that holds a
+/// `type ( … )` gives it its identity‹ [[R383]]), on both tiers; an owning union still lands in
+/// no borrowing one.
+#[test]
+fn a_function_hands_on_another_s_owning_union_unchanged() {
+    let f = "f := fn () -> (own @i32)! ( alloc 1 of i32 5 )";
+    for compile in ["", "g.compile(), "] {
+        let src = format!("{f}, g := fn () -> (own @i32)! ( f() ), {compile}q := try g(), q@");
+        assert_eq!(line(&src), "5", "{src}");
+        let src = format!(
+            "{f}, g := fn () -> (own @i32)! ( f() ), h := fn () -> (own @i32)! ( g() ), \
+             {compile}q := try h(), q@"
+        );
+        assert_eq!(line(&src), "5", "{src}");
+    }
+    let (code, _, stderr) = run_line(&format!("{f}, g := fn () -> (@i32)! ( f() ), 0"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("error: these types do not match"), "stderr: {stderr}");
+}
+
 /// R140: «a raise inside it fills `err` and leaves the function»; R144: the error value is an
 /// array with one element per hop, each holding its category and its message, «`{…}` read as
 /// `print` reads it». A raise ends what the function holds as it leaves, from an `if` arm and
