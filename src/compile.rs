@@ -796,6 +796,21 @@ impl<'a> Lowerer<'a, '_> {
         emit_copy(self.builder, self.flags, dst, src, width);
     }
 
+    /// Write `width` zero bytes at `dst`.
+    pub(crate) fn zero_bytes(&mut self, dst: Value, width: usize) {
+        let mut at = 0;
+        for (ty, size) in [(types::I64, 8), (types::I32, 4), (types::I16, 2), (types::I8, 1)] {
+            if width - at < size {
+                continue;
+            }
+            let zero = self.builder.ins().iconst(ty, 0);
+            while width - at >= size {
+                self.builder.ins().store(self.flags, zero, dst, at as i32);
+                at += size;
+            }
+        }
+    }
+
     /// The address `offset` bytes past `addr`.
     pub(crate) fn offset_addr(&mut self, addr: Value, offset: i64) -> Value {
         if offset == 0 {

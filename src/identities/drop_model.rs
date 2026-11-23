@@ -571,8 +571,8 @@ pub(crate) unsafe fn own_result(
 
 /// `move` of a place: `[place]` under `move`'s mint for the moved value's type, which it gives,
 /// so the name that takes it learns whether it holds it. A `{ … }` value kept in its bytes moves
-/// as their address, which the taker copies; any other value as the word its place holds, NULL
-/// there from then on.
+/// as their address, which the taker copies, or where its type has an end as a copy of them, its
+/// place zeroed; any other value as the word its place holds, NULL there from then on.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.
