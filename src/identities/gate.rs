@@ -78,13 +78,13 @@ pub(crate) unsafe fn written(types: &Core, t: DyadPtr) -> Option<String> {
 
 /// Whether the value `node` gives is of a type gated `lossy`, which a number type takes with
 /// loss (›A type's `parse` decides what converts into it; unwritten, a value converts only into
-/// a type that holds it exactly‹ [[R155]]): a name, a parameter or a field declared so, or a
-/// call whose result is.
+/// a type that holds it exactly‹ [[R155]]): a name, a parameter or a field declared so, a value
+/// the gate word gave, or a call whose result is.
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
 pub(crate) unsafe fn is_lossy(types: &Core, node: DyadPtr) -> bool {
-    let node = types.through(node);
+    let node = crate::binding::through(types, node);
     let t = if node.is_null() {
         node
     } else if dyad::ty(node) == types.binding_ {
@@ -95,6 +95,93 @@ pub(crate) unsafe fn is_lossy(types: &Core, node: DyadPtr) -> bool {
         super::read::given_type(types, node)
     };
     has(t, types.lossy)
+}
+
+/// Whether `p` is a value a gate word gave, `[G | v]`: a node whose type word `G` is a gate node,
+/// over the type the value `v` gives (›A gate word reads the nearest value to its right and gives
+/// it with its type gated‹ [[R102]]).
+///
+/// # Safety
+/// `p` must be null or a dyad from the store.
+pub(crate) unsafe fn is_value(types: &Core, p: DyadPtr) -> bool {
+    if p.is_null() {
+        return false;
+    }
+    let gated = dyad::ty(p);
+    let mint = if gated.is_null() { gated } else { dyad::ty(gated) };
+    !mint.is_null() && dyad::ty(mint) == types.gate_
+}
+
+/// The value a gate word gave `p` over, and the gate mint of its words; `None` for any other node.
+///
+/// # Safety
+/// As [`is_value`].
+pub(crate) unsafe fn value_parts(types: &Core, p: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
+    is_value(types, p).then(|| (dyad::head(p) as DyadPtr, dyad::ty(dyad::ty(p))))
+}
+
+/// `value` with the gates of `mint` among those of its type (›A gate word reads the nearest value
+/// to its right and gives it with its type gated‹ [[R102]]): a type standing as itself gives the
+/// gated type, `mut i32`; a value the gate words gave has its one gate node grow; any other
+/// value, a type `held` as a value of `type` among them, gives `[G | value]`, `G` the gate node
+/// of `mint` over the type the value gives. A name read there is a copy, so its own gates are not
+/// among them (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]).
+/// A group's members are gated each (›`and`/`or` on non-booleans build a group; every operator
+/// on a group applies to each member‹ [[R37]]). Null `mint` gives `value` as it is.
+///
+/// # Errors
+/// `DoubleGate` where a gate of `mint` is among the gates already, `TypeKnownOnlyAtRun` where the
+/// type the value gives is known only when the program runs.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store; `mint` null or a gate mint.
+///
+/// # Panics
+/// As [`mint_of`].
+pub(crate) unsafe fn give(
+    store: &mut Store,
+    types: &Core,
+    mint: DyadPtr,
+    value: DyadPtr,
+    held: bool,
+) -> Result<DyadPtr, ParseError> {
+    if mint.is_null() {
+        return Ok(value);
+    }
+    if let Some((connective, a, b)) = super::group::members(types, value) {
+        let a = give(store, types, mint, a, false)?;
+        let b = give(store, types, mint, b, false)?;
+        return super::group::join(store, types, connective, a, b);
+    }
+    let (under, own, is_type) = match value_parts(types, value) {
+        Some((v, own)) => (v, own, false),
+        // `?` is a value, the unknown, though the seed spells it as a type node (›`?` is one
+        // value, the unknown; `key := T` declares without a value, and `key := T ?` is refused‹
+        // [[R103]]).
+        None => {
+            match super::type_identity_of(types, value).filter(|&t| !held && t != types.unknown) {
+                Some(t) => {
+                    let (t, own) = parts(t);
+                    (t, own, true)
+                }
+                None => (value, std::ptr::null_mut(), false),
+            }
+        }
+    };
+    let had = words_of(own);
+    if words_of(mint).iter().any(|g| had.contains(g)) {
+        return Err(ParseError::DoubleGate);
+    }
+    let mint = union(store, types, own, mint);
+    if is_type {
+        return Ok(over(store, types, mint, under));
+    }
+    let t = super::read::output_type(types, under);
+    if t.is_null() {
+        return Err(ParseError::TypeKnownOnlyAtRun);
+    }
+    let gated = over(store, types, mint, t);
+    Ok(store.alloc_head(gated, under as *mut u8))
 }
 
 /// Whether `p` is a gate node, a node typed by a gate mint.
@@ -384,9 +471,9 @@ pub(crate) unsafe fn words_of(mint: DyadPtr) -> Vec<DyadPtr> {
 }
 
 /// A gate word reads the nearest value to its right, as a type does (`Parser::type_operand`), and
-/// gives it with `id` among the gates of its type (›A gate word reads the nearest value to its
-/// right and gives it with its type gated‹ [[R102]]). A declaration is no
-/// value to gate, its gate standing right of its own `:=` (›Left of `:=` stands one name (or
+/// gives it with `id` among the gates of its type, as [`give`] gives it (›A gate word reads the
+/// nearest value to its right and gives it with its type gated‹ [[R102]]). A declaration is
+/// no value to gate, its gate standing right of its own `:=` (›Left of `:=` stands one name (or
 /// regex), and nothing else‹ [[R101]]), and neither is any other line that gives nothing; a
 /// place is one, whatever its type.
 fn construct(
@@ -395,7 +482,7 @@ fn construct(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<Constructed, ParseError> {
     let word_at = tape.at(0).map(|word| word.start);
-    // The cell as built, so the gates a gate word nearer the value put on it join this one's:
+    // The value as built, so a gate word nearer the value built there joins this one's gates:
     // `lossy mut f64 2.5` is `mut lossy f64`.
     let Some(right) = p.type_operand(tape, 1)? else {
         let e = if tape.at(1).is_some() {
@@ -425,13 +512,18 @@ fn construct(
     if gives_nothing {
         return Err(p.fail_at(right.start, ParseError::StatementAsValue));
     }
-    let mut value = right;
-    value.dyad = inner;
-    value.constructed = true;
-    // SAFETY: the cell's gates are null or a gate mint, and `id` is a gate word.
-    let Some(mint) = (unsafe { joined(p.store(), types, value.gates, id) }) else {
-        return Err(p.fail_at(word_at, ParseError::DoubleGate));
+    // SAFETY: `id` is a gate word, and `inner` a reduced dyad.
+    let gated = unsafe {
+        let mint = mint_of(p.store(), types, &[id]);
+        give(p.store(), types, mint, inner, right.type_value)
     };
-    tape.place_gated(value, mint);
+    let gated = gated.map_err(|e| match e {
+        ParseError::DoubleGate => p.fail_at(word_at, e),
+        e => p.fail_at(right.start, e),
+    })?;
+    let mut value = right;
+    value.dyad = gated;
+    value.constructed = true;
+    tape.place_gated(value);
     Ok(Constructed::Placed)
 }
