@@ -16,6 +16,10 @@ hops := type array hop,
 # (›There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`‹ [[R145]]).
 error.out_of_memory := «the allocator refused an alloc»,
 
+# The category of the error a float converted with `lossy` into an integer type gives where it has
+# no whole number (›A checked error is a fault: the task that hit it is cancelled‹ [[R141]]).
+error.no_whole_number := «a float that is not a number (NaN) or is infinite has no whole number»,
+
 # The error value a raise makes, which the seed calls where the raise runs: one hop, holding the
 # category, the message and the node of the raise; no raise writes a value yet.
 one_hop := fn (category := @binding ?, message := string ?, location := @dyad ?) -> hops (

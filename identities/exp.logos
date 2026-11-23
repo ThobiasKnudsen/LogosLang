@@ -2,11 +2,12 @@
 
 # exp(k ln 2 + r) = 2^k exp(r), with |r| < ln 2 so the series is short. Below -746 the
 # nearest f64 to exp(y) is 0 and above 710 it is inf, so k is computed only between, where
-# it fits an i64; exp(NaN) is NaN.
+# it is a whole number that fits an i64, the `value` of the `i64!` its conversion gives; exp(NaN)
+# is NaN.
 exp := pub fn (y := f64 ?) -> f64 (
     if y > -746.0 and y < 710.0 (
         ln2 := f64 lossy 0.6931471805599453,
-        k := i64 lossy (y / ln2),
+        k := (i64 lossy (y / ln2)).value,
         r := y - f64 lossy (k) * ln2,
         term := mut f64 1.0,
         sum := mut f64 1.0,

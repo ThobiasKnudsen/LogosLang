@@ -44,6 +44,9 @@ pub struct ErrorIds {
     /// The binding record of `error.out_of_memory`, the category of an `alloc` that gets no
     /// memory; null until identities/error.logos is read.
     pub out_of_memory: DyadPtr,
+    /// The binding record of `error.no_whole_number`, the category of a float converted into an
+    /// integer type that has no whole number; null until identities/error.logos is read.
+    pub no_whole_number: DyadPtr,
     /// A raise read as the error value it makes, `[parts, op, output_type, category]`: what a
     /// raise inside a function that gives `T!` fills `err` with.
     pub raised: DyadPtr,
@@ -77,10 +80,12 @@ const FILE: carried::File = carried::File {
     source: include_str!("../../identities/error.logos"),
 };
 const OUT_OF_MEMORY: &str = "error.out_of_memory";
+const NO_WHOLE_NUMBER: &str = "error.no_whole_number";
 
 /// Reads identities/error.logos into `section`, after the array it is built from: the error
-/// value's type, its element's, the function that makes the value of one raise, and the category
-/// of an `alloc` that gets no memory, the one name of either file the root is given.
+/// value's type, its element's, the function that makes the value of one raise, and the
+/// categories the seed raises, of an `alloc` that gets no memory and of a float with no whole
+/// number, the names of either file the root is given.
 ///
 /// # Panics
 /// Where a file the seed was built with does not parse or run: a defect of the seed.
@@ -110,10 +115,14 @@ pub(super) fn load(
         hop: ty("hop"),
         one_hop: function("one_hop"),
         out_of_memory: carried::name_in(trie, section, &FILE, OUT_OF_MEMORY).binding,
+        no_whole_number: carried::name_in(trie, section, &FILE, NO_WHOLE_NUMBER).binding,
         passed: function("passed"),
         ..core.error
     };
-    let published = [(OUT_OF_MEMORY.to_string(), ids.out_of_memory)];
+    let published = [
+        (OUT_OF_MEMORY.to_string(), ids.out_of_memory),
+        (NO_WHOLE_NUMBER.to_string(), ids.no_whole_number),
+    ];
     carried::publish(store, trie, core, &FILE, &published);
     ids
 }
@@ -197,6 +206,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
         hop: null,
         one_hop: null,
         out_of_memory: null,
+        no_whole_number: null,
         raised,
         raised_leaf,
         passed: null,
@@ -390,6 +400,18 @@ fn run_refused(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
     // SAFETY: `category` is set where error.logos is read.
     unsafe { hop(rt, category, node, b"this alloc got no memory") }
+}
+
+/// error.logos's `one_hop` of `error.no_whole_number`, `at` the hop's location: the error value
+/// of a float converted into an integer type that has no whole number. Before error.logos is
+/// read the conversion stops the run.
+pub(crate) fn no_whole_number(rt: &mut Runtime, at: DyadPtr) -> Result<i64, RunError> {
+    let category = rt.types().error.no_whole_number;
+    if category.is_null() {
+        return Err(RunError::NoWholeNumber);
+    }
+    // SAFETY: `category` is set where error.logos is read.
+    unsafe { hop(rt, category, at, b"this float is not a number (NaN) or is infinite") }
 }
 
 /// The category and the message of the first hop of the error value `value`, the raise's. `None`

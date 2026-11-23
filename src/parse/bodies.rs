@@ -1681,9 +1681,42 @@ impl<'a> Parser<'a> {
         lossy: bool,
     ) -> Result<DyadPtr, ParseError> {
         self.over_arguments(ty, args, &mut |p, args| {
+            if let &[value] = args {
+                // SAFETY: as below.
+                if let Some(checked) = unsafe { p.checked_conversion(ty, value, lossy) }? {
+                    return Ok(checked);
+                }
+            }
             // SAFETY: `ty` is a number type node; `args` are reduced dyads.
             unsafe { crate::identities::build_cast(p.rt.store, p.types, ty, args, lossy) }
         })
+    }
+
+    /// The written conversion of `value` into the number type `ty` where it may have no value of
+    /// `ty`, a float of a `lossy` type into an integer type: it gives `ty!`, whose `err` holds an
+    /// error of `error.no_whole_number` where the float is no number (NaN) or infinite (›A checked
+    /// error is a fault: the task that hit it is cancelled‹ [[R141]]). `None` for every other
+    /// conversion.
+    ///
+    /// # Safety
+    /// `ty` must be a number type node and `value` a reduced dyad from the store.
+    pub(crate) unsafe fn checked_conversion(
+        &mut self,
+        ty: DyadPtr,
+        value: DyadPtr,
+        lossy: bool,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        use crate::identities::{convert, dyad_place, gate, read};
+        let types = self.types;
+        let lossy = lossy || gate::is_lossy(types, value);
+        let value =
+            dyad_place::read_through(self.rt.store, types, value, ty, lossy).unwrap_or(value);
+        let from = read::output_type(types, value);
+        if !lossy || !convert::may_fail(types, from, ty) {
+            return Ok(None);
+        }
+        let fallible = self.fallible_of(ty, self.cx.pos)?;
+        Ok(Some(convert::build_checked(self.rt.store, types, value, from, fallible)))
     }
 
     /// `T (…)` for a record type `T` whose body fills no `parse`: a value of `T` from the

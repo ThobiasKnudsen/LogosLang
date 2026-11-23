@@ -4420,8 +4420,9 @@ fn casts_between_integer_widths_match_between_tiers() {
 #[test]
 fn casts_between_int_and_float_match_between_tiers() {
     diff_typed_call("fn (x := i32 ?) -> f64 ( f64(x) )", "f(3)", 3.0f64.to_bits() as i64);
-    diff_var_fn(NumType::F64, 3.7f64.to_bits() as i64, "fn () -> i32 ( i32 lossy (a) )", 3);
-    diff_var_fn(NumType::F64, (-3.7f64).to_bits() as i64, "fn () -> i32 ( i32 lossy (a) )", -3);
+    let whole = "fn () -> i32 ( (i32 lossy (a)).value )";
+    diff_var_fn(NumType::F64, 3.7f64.to_bits() as i64, whole, 3);
+    diff_var_fn(NumType::F64, (-3.7f64).to_bits() as i64, whole, -3);
     diff_var_fn(
         NumType::F64,
         1.5f64.to_bits() as i64,
@@ -4449,34 +4450,34 @@ fn lossy_keeps_a_floats_whole_part_wrapped_exactly_on_both_tiers() {
             ("i64", NumType::I64, whole as i64),
             ("u64", NumType::U64, whole as u64 as i64),
         ] {
-            let src = format!("fn () -> {ty} ( {ty} lossy (a) )");
+            let src = format!("fn () -> {ty} ( ({ty} lossy (a)).value )");
             let (interp, jit) = var_fn_on_both_tiers(NumType::F64, f.to_bits() as i64, &src);
             assert_eq!(interp, Ok(expect), "interpreter: {src} of {f:e} as {nt:?}");
             assert_eq!(jit, interp, "jit != interpreter: {src} of {f:e}");
         }
     }
     // Past 2^64 every f64 is a multiple of 2^64, so it wraps to zero.
-    diff_var_fn(NumType::F64, 1e300f64.to_bits() as i64, "fn () -> i64 ( i64 lossy (a) )", 0);
+    let wrapped = "fn () -> i64 ( (i64 lossy (a)).value )";
+    diff_var_fn(NumType::F64, 1e300f64.to_bits() as i64, wrapped, 0);
 }
 
+/// ›A checked error is a fault: the task that hit it is cancelled‹ [[R141]]: the `T!` a float
+/// converted into an integer type gives holds `err` where the float is no number or infinite.
 #[test]
-fn lossy_of_nan_or_an_infinity_into_an_integer_fails_on_both_tiers() {
+fn lossy_of_nan_or_an_infinity_into_an_integer_gives_err_on_both_tiers() {
     for f in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         for ty in ["i32", "u8", "u64"] {
-            let src = format!("fn () -> {ty} ( {ty} lossy (a) )");
-            let (interp, jit) = var_fn_on_both_tiers(NumType::F64, f.to_bits() as i64, &src);
-            assert_eq!(
-                interp,
-                Err(crate::run::RunError::NoWholeNumber),
-                "interpreter: {src} of {f}"
+            diff_var_fn(
+                NumType::F64,
+                f.to_bits() as i64,
+                &format!("fn () -> bool ( ({ty} lossy (a)) holds err )"),
+                1,
             );
-            assert_eq!(jit, interp, "jit != interpreter: {src} of {f}");
         }
     }
-    let src = "fn () -> i32 ( i32 lossy (a) )";
-    let (interp, jit) = var_fn_on_both_tiers(NumType::F32, i64::from(f32::NAN.to_bits()), src);
-    assert_eq!(interp, Err(crate::run::RunError::NoWholeNumber), "interpreter: f32 NaN");
-    assert_eq!(jit, interp, "jit != interpreter: f32 NaN");
+    let src = "fn () -> bool ( (i32 lossy (a)) holds err )";
+    diff_var_fn(NumType::F32, i64::from(f32::NAN.to_bits()), src, 1);
+    diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, src, 0);
 }
 
 #[test]
@@ -4544,15 +4545,15 @@ fn number_types_take_the_value_to_their_right_rightmost_first_on_both_tiers() {
     for (src, want) in [
         ("fn () -> i64 ( i64 i32 5 )", 5),
         ("fn () -> i64 ( i64 i32 -5 )", -5),
-        ("fn () -> i32 ( i32 lossy f64 2.5 )", 2),
+        ("fn () -> i32 ( (i32 lossy f64 2.5).value )", 2),
         ("fn () -> i32 ( i32 lossy i64 5000000000 )", 705032704),
     ] {
         diff_nullary_fn(src, want);
     }
     diff_nullary_fn("fn () -> f64 ( f64 i32 5 )", 5.0f64.to_bits() as i64);
-    diff_typed_call("fn (x := f64 ?) -> i32 ( i32 lossy f64 lossy (x) )", "f(2.5)", 2);
+    diff_typed_call("fn (x := f64 ?) -> i32 ( (i32 lossy f64 lossy (x)).value )", "f(2.5)", 2);
     // Negation ranks with them, so `lossy` takes the negated value.
-    diff_typed_call("fn (m := f64 ?) -> i32 ( i32 lossy -m )", "f(2.5)", -2);
+    diff_typed_call("fn (m := f64 ?) -> i32 ( (i32 lossy -m).value )", "f(2.5)", -2);
     assert_eq!(run_script("i32 lossy rational_number 5"), 5);
     assert_eq!(run_script("i32 lossy rational_number rational_number 5"), 5);
     for src in ["i32 i64 5", "i32 f64 2.5", "f64 rational_number 5"] {
@@ -4563,18 +4564,19 @@ fn number_types_take_the_value_to_their_right_rightmost_first_on_both_tiers() {
 #[test]
 fn a_lossy_value_converts_where_a_comparison_or_an_operation_reads_it() {
     for (src, want) in [
-        ("x := f64 2.5, if i32 2 == i32 lossy (x) (1) else (0)", 1),
-        ("x := f64 2.5, if i32 2 == i32 lossy x (1) else (0)", 1),
-        ("x := f64 2.5, if i32 lossy (x) == i32 2 (1) else (0)", 1),
-        ("x := mut f64 0.5, n := mut i32 0, while i32 3 > i32 lossy (x) (x = x + 1, n = n + 1), n", 3),
-        ("x := f64 2.5, i32 1 + i32 lossy x", 3),
-        ("x := f64 2.5, y := i32 lossy x, y", 2),
+        ("x := f64 2.5, if i32 2 == try i32 lossy (x) (1) else (0)", 1),
+        ("x := f64 2.5, if i32 2 == try i32 lossy x (1) else (0)", 1),
+        ("x := f64 2.5, if (try i32 lossy (x)) == i32 2 (1) else (0)", 1),
+        ("x := mut f64 0.5, n := mut i32 0, while i32 3 > try i32 lossy (x) (x = x + 1, n = n + 1), n", 3),
+        ("x := f64 2.5, i32 1 + try i32 lossy x", 3),
+        ("x := f64 2.5, y := try i32 lossy x, y", 2),
+        ("m := i64 4294967298, if i32 2 == i32 lossy m (1) else (0)", 1),
     ] {
         assert_eq!(run_script(src), want, "{src}");
     }
     diff_typed_call(
-        "fn (x := f64 ?) -> i32 ( if i32 2 == i32 lossy (x) (1) else (0) )",
-        "f(2.5)",
+        "fn (x := f64 ?) -> i32! ( if i32 2 == try i32 lossy (x) (1) else (0) )",
+        "f(2.5).value",
         1,
     );
 }
@@ -4585,7 +4587,7 @@ fn a_number_type_takes_the_name_to_its_right() {
     diff_typed_call("fn (n := i32 ?) -> i32 ( i32 n )", "f(-4)", -4);
     diff_typed_call("fn (n := i32 ?) -> f64 ( f64 n )", "f(4)", 4.0f64.to_bits() as i64);
     diff_typed_call("fn (n := i32 ?) -> i64 ( i64 n + i64 1 )", "f(4)", 5);
-    diff_typed_call("fn (n := f64 ?) -> i32 ( i32 lossy n )", "f(2.5)", 2);
+    diff_typed_call("fn (n := f64 ?) -> i32 ( (i32 lossy n).value )", "f(2.5)", 2);
     assert_eq!(run_script("m := i32 3, x := try alloc 1 of i32 m, x@"), 3);
     assert_eq!(run_script("m := i32 3, y := mut i32 0, y = i32 m, y"), 3);
     assert_eq!(run_script("r := 3, i32 r"), 3);
@@ -4622,7 +4624,7 @@ fn a_type_takes_the_value_built_at_discovery_before_it() {
 fn a_lossy_conversion_reads_its_bracket_as_a_written_one_does() {
     assert_eq!(run_script("x := i64 5, x == i64 (i32 5 or i32 6)"), 1);
     assert_eq!(run_script("x := i64 6, x == i64 lossy (i32 5 or i32 6)"), 1);
-    assert_eq!(run_script("x := i32 7, x == i32 lossy (f64 5.5 or f64 6.5)"), 0);
+    assert_eq!(run_script("x := i32 7, x == i32 lossy (i64 4294967301 or i64 4294967302)"), 0);
 }
 
 #[test]

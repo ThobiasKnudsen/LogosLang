@@ -253,9 +253,29 @@ unsafe fn fill_parts(
 /// # Safety
 /// `node` must be a fill node from [`build_fill`], `at` writable for its union's width.
 unsafe fn start(node: DyadPtr, at: *mut u8) {
-    let union = *(dyad::value(node) as *const DyadPtr).add(1);
+    begin(*(dyad::value(node) as *const DyadPtr).add(1), tag_in(node), at);
+}
+
+/// Starts a value of `union` at `at`: `tag`, and an empty room.
+///
+/// # Safety
+/// `union` must be a union type and `at` writable for its width.
+unsafe fn begin(union: DyadPtr, tag: u64, at: *mut u8) {
     std::ptr::write_bytes(at, 0, meta::record_size_of(union) as usize);
-    std::ptr::copy_nonoverlapping(tag_in(node).to_le_bytes().as_ptr(), at, TAG_BYTES);
+    std::ptr::copy_nonoverlapping(tag.to_le_bytes().as_ptr(), at, TAG_BYTES);
+}
+
+/// Writes at `at` a value of `union` holding `member`, whose value is `taken`, as a fill node
+/// writes one.
+///
+/// # Safety
+/// `union` must be a union type, `member` one of its member holes, `taken` a value of the
+/// member's type made for the union, and `at` writable for the union's width.
+pub(crate) unsafe fn put(types: &Core, union: DyadPtr, member: DyadPtr, at: *mut u8, taken: i64) {
+    begin(union, tag(union, member), at);
+    if let Some(carry) = super::read::carry_of(types, hole::type_in(member)) {
+        super::assign::put(carry, at.add(TAG_BYTES), taken);
+    }
 }
 
 fn run_fill(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -419,9 +439,15 @@ unsafe fn base_of(store: &mut Store, types: &Core, value: DyadPtr, union: DyadPt
 /// # Safety
 /// `union` must be a union type and `member` one of its member holes.
 unsafe fn tag_of(store: &mut Store, types: &Core, union: DyadPtr, member: DyadPtr) -> DyadPtr {
+    store.alloc_blob(types.numtypes[NumType::U64 as usize], &tag(union, member).to_ne_bytes())
+}
+
+/// # Safety
+/// As [`tag_of`].
+unsafe fn tag(union: DyadPtr, member: DyadPtr) -> u64 {
     let members = array::items(meta::record_fields_of(union));
     let at = members.iter().position(|&m| m == member).expect("a member of this union");
-    store.alloc_blob(types.numtypes[NumType::U64 as usize], &(at as u64 + 1).to_ne_bytes())
+    at as u64 + 1
 }
 
 /// The place among its members of the member the union value at `at` holds, counted from 0;

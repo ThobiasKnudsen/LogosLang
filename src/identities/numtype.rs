@@ -183,8 +183,13 @@ fn construct(
         let value = p.as_operand(operand)?;
         tape.remove(1);
         // SAFETY: `value` is a reduced dyad from the store; `id` is this numeric type's node.
-        unsafe { super::land(p.store(), types, value, id) }
-            .map_err(|e| p.fail_at(operand.start, e))?
+        unsafe {
+            match p.checked_conversion(id, value, false)? {
+                Some(checked) => Ok(checked),
+                None => super::land(p.store(), types, value, id),
+            }
+        }
+        .map_err(|e| p.fail_at(operand.start, e))?
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
