@@ -146,6 +146,32 @@ pub fn parse_message(e: &ParseError) -> String {
              already chosen, so it holds no `return`"
                 .into()
         }
+        ParseError::ResultPlaceOfVoid => {
+            "a `-> void` function gives no value, so `return` has no result here to read, write \
+             or leave with"
+                .into()
+        }
+        ParseError::ResultPlaceInSlot => {
+            "`return` is read and written as the result only in a `fn` body, not yet in a type's \
+             `run`, `parse` or `free` body"
+                .into()
+        }
+        ParseError::ResultPlaceOfNode => {
+            "`return` is read and written as the result only of a type whose values are not nodes \
+             its `parse` builds, so far; leave with `return X` or the last line instead"
+                .into()
+        }
+        ParseError::ResultPlaceInHeldLine => {
+            "this line is read when it runs, and `return` is read and written as the result only \
+             in a line read where it is written, so far"
+                .into()
+        }
+        ParseError::ResultUnwritten => {
+            "the result is read before it is written: write it first among the function's own \
+             lines, `return.value = …` or `return.err = …` where it gives `T!`, `return = …` \
+             where it gives any other type"
+                .into()
+        }
         ParseError::StatementAsValue => "this gives nothing, and a value is needed here".into(),
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
         ParseError::AssignToLiteral(lit) => format!(
