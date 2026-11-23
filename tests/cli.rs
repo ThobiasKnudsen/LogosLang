@@ -332,7 +332,7 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     );
     assert_eq!(echoes, ["3", "4", "4"], "stderr: {stderr}");
     let (echoes, stderr) =
-        repl(b"h := fn () -> i32 ( n := i64 0 - 1, p := alloc n of i32 0, 1 )\ng := type (y := static h())\n");
+        repl(b"h := fn () -> i32! ( n := i64 0 - 1, p := try alloc n of i32 0, 1 )\ng := type (y := static h())\n");
     assert!(
         echoes.is_empty() && stderr.contains("a type body's own declaration failed"),
         "stderr: {stderr}"
@@ -1823,14 +1823,14 @@ fn an_array_element_is_written_where_the_read_finds_it() {
         ),
         // Any call whose body ends in a dereference is a place, not only an array's.
         (
-            "p := alloc 2 of i32 4, g := fn (q := @i32 ?, i := u64 ?) -> i32 ( (q + i)@ ), \
+            "p := try alloc 2 of i32 4, g := fn (q := @i32 ?, i := u64 ?) -> i32 ( (q + i)@ ), \
              g(p, 1) = 3, (p + 1)@",
             "3",
         ),
         // A name freed before the last line leaves the body's end nothing to run.
         (
-            "p := alloc 1 of i32 0, \
-             g := fn (r := @i32 ?) -> i32 ( q := alloc 1 of i32 1, free q, r@ ), g(p) = 5, p@",
+            "p := try alloc 1 of i32 0, \
+             g := fn (r := @i32 ?) -> i32 ( q := dyad (i32, 1), free q, r@ ), g(p) = 5, p@",
             "5",
         ),
         ("x := u8 3, a[0] = x, a[0]", "3"),
@@ -1858,9 +1858,9 @@ fn an_array_element_is_written_where_the_read_finds_it() {
         ("b := array u8 [1, 2], b[1] = 300", "this literal has no exact value"),
         ("a[-1] = 1", "the index type is not within the size type"),
         ("g := fn () -> i32 ( 5 ), g() = 3", "this is not an assignable place"),
-        // A teardown would free the place before the write lands.
+        // A call that gives `T!` is no place, so nothing writes the block its body frees.
         (
-            "g := fn () -> i32 ( q := alloc 1 of i32 3, q@ ), g() = 5",
+            "g := fn () -> i32! ( q := try alloc 1 of i32 3, q@ ), (try g()) = 5",
             "this is not an assignable place",
         ),
     ] {
@@ -1885,8 +1885,9 @@ fn a_static_name_in_a_function_is_made_once_at_the_definition() {
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "miss\ntrue\n");
-    // An owning value is freed when the program ends, not at each call's end.
-    let src = "f := fn () -> i32 ( p := static alloc 1 of i32 7, p@ ), f() + f()";
+    // An owning value is freed when the program ends, not at each call's end. The block is read
+    // out of the `@T!` `alloc` gives with `.value`: stand-in for #557.
+    let src = "f := fn () -> i32 ( p := static (alloc 1 of i32 7).value, p@ ), f() + f()";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "14\n");
@@ -2019,7 +2020,7 @@ fn a_static_function_is_called_on_the_record_behind_a_pointer() {
     let t = "u := type ( a := i64 ?, s := pub static fn () -> i64 ( a ) ), \
              t := type ( n := pub mut i64 ?, inner := pub u ?, k := pub static fn () -> i64 ( 1 ), \
              get := pub static fn () -> i64 ( n ), bump := pub static fn () -> i64 ( n = n + 10, n ) ), \
-             p := alloc 2 of mut t (i64 3, u (i64 7))";
+             p := try alloc 2 of mut t (i64 3, u (i64 7))";
     for (tail, want) in [
         ("p@.k()", "1\n"),
         ("p@.get()", "3\n"),
@@ -2042,7 +2043,7 @@ fn a_static_member_holding_any_function_is_called_through_a_member_read() {
     for (tail, want) in [
         ("t.h(i64 4)", "8\n"),
         ("v.h(i64 5)", "10\n"),
-        ("p := alloc 1 of t (i64 1), p@.h(i64 6)", "12\n"),
+        ("p := try alloc 1 of t (i64 1), p@.h(i64 6)", "12\n"),
         ("k := fn () -> i64 ( t.h(i64 4) ), k.compile(), k()", "8\n"),
         ("k := fn () -> i64 ( w := t (1), w.h(i64 6) ), k.compile(), k()", "12\n"),
     ] {
@@ -2075,10 +2076,11 @@ fn a_value_runs_its_type_s_parse_as_tape_0() {
 
 #[test]
 fn a_static_member_read_through_tape_0_is_the_member_itself() {
-    // `tape[0].element_type` folds to the identity, so `alloc … of` has a static pointee.
-    let q =
-        "q := type ( element_type := static type i32, v := i32 ?, parse_rank = 60, \
-             parse = ( tape[0] = alloc 1 of tape[0].element_type 9, tape.is_constructed[0] = true ) )";
+    // `tape[0].element_type` folds to the identity, so `alloc … of` has a static pointee. The
+    // block is read out of the `@T!` `alloc` gives with `.value`: stand-in for #557.
+    let q = "q := type ( element_type := static type i32, v := i32 ?, parse_rank = 60, \
+             parse = ( tape[0] = (alloc 1 of tape[0].element_type 9).value, \
+             tape.is_constructed[0] = true ) )";
     let out = logos().args([&format!("{q}, a := q, a@ + 1")]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
@@ -3078,8 +3080,8 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
             (format!("f := fn () -> i32 ( d := mut dyad ?, d = i64 5, d = 1/2, 1 ), {c}f()"), "1"),
             ("d := mut dyad ?, d = «a», d".to_string(), "a"),
             (format!("f := fn () -> i32 ( d := mut dyad ?, d = «a», 1 ), {c}f()"), "1"),
-            ("d := mut dyad ?, d = alloc 1 of i32 5, d@".to_string(), "5"),
-            (format!("f := fn (q := dyad ?) -> i32 ( 1 ), {c}f(alloc 1 of i32 5)"), "1"),
+            ("d := mut dyad ?, d = try alloc 1 of i32 5, d@".to_string(), "5"),
+            (format!("f := fn (q := dyad ?) -> i32 ( 1 ), {c}f(try alloc 1 of i32 5)"), "1"),
         ] {
             let out = logos().arg(&src).output().unwrap();
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -3090,7 +3092,7 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
     // A number in a place no name holds.
     for src in [
         "f := fn (q := mut dyad ?) -> i32 ( 1 ), f(5)",
-        "p := alloc 1 of mut dyad ?, p@ = 5",
+        "p := try alloc 1 of mut dyad ?, p@ = 5",
         "r := type ( v := dyad ? ), x := r (5)",
     ] {
         let out = logos().arg(src).output().unwrap();
@@ -3801,8 +3803,8 @@ fn a_pointer_s_right_side_is_built_by_its_own_constructors() {
     let pointer_param = "a := mut i32 1, b := mut &a, \
                          f := fn (p := @ mut @ mut i32 ?) -> i32 ( p@@ = 3, a )";
     for (src, printed) in [
-        ("t := type mut i32, p := alloc 1 of t 5, p@ = 6, p@".to_string(), "6"),
-        ("r := alloc 1 of pub mut i32 4, r@ = 5, r@".into(), "5"),
+        ("t := type mut i32, p := try alloc 1 of t 5, p@ = 6, p@".to_string(), "6"),
+        ("r := try alloc 1 of pub mut i32 4, r@ = 5, r@".into(), "5"),
         ("t := type mut i32, a := mut i32 2, p := mut @t ?, p = &a, p@ = 9, a".into(), "9"),
         (
             "k := fn (t := type ?) -> type ( t ), x := type k(@ (mut i32)), \
@@ -3817,7 +3819,10 @@ fn a_pointer_s_right_side_is_built_by_its_own_constructors() {
     }
     for (src, message) in [
         ("p := @ mut mut i32 ?", "1:8: error: this gate word already gates the value"),
-        ("r := alloc 1 of mut mut i32 5", "1:17: error: this gate word already gates the value"),
+        (
+            "r := try alloc 1 of mut mut i32 5",
+            "1:21: error: this gate word already gates the value",
+        ),
         (
             "a := i32 1, b := mut &a, f := fn (p := @ mut @ i32 ?) -> i32 ( p@@ = 3, 0 ), f(&b)",
             "points at a value that is not `mut`",
@@ -4515,8 +4520,9 @@ fn the_repl_rolls_back_a_failed_lines_declarations() {
 
 #[test]
 fn the_repl_keeps_an_owning_binding_alive_across_lines() {
-    let (echoes, stderr) =
-        repl("a := alloc 1 of i32 5\nprint «{a@}»\nr := ( b := alloc 1 of i32 20, b@ )\nr\n");
+    let (echoes, stderr) = repl(
+        "a := try alloc 1 of i32 5\nprint «{a@}»\nr := ( b := try alloc 1 of i32 20, b@ )\nr\n",
+    );
     assert_eq!(echoes, ["5", "20"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -4565,7 +4571,8 @@ fn an_imported_function_may_read_its_own_sections_private_names() {
 
 #[test]
 fn a_failed_repl_line_restores_a_moved_name() {
-    let (echoes, stderr) = repl(b"a := alloc 1 of i32 5\nr := ( b := move a, b@ ) + nosuch\na@\n");
+    let (echoes, stderr) =
+        repl(b"a := try alloc 1 of i32 5\nr := ( b := move a, b@ ) + nosuch\na@\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     assert!(stderr.contains("unknown name"), "stderr: {stderr}");
     assert!(!stderr.contains("dead"), "stderr: {stderr}");
@@ -4576,7 +4583,7 @@ fn a_repl_line_that_faults_keeps_the_end_of_what_it_ended() {
     // Its run freed the value, before the fault or as the fault left: the session neither
     // reads it nor frees it again.
     let (echoes, stderr) =
-        repl(b"a := alloc 1 of i32 5\n( free a, abort \xc2\xabx\xc2\xbb )\na@\n");
+        repl(b"a := try alloc 1 of i32 5\n( free a, abort \xc2\xabx\xc2\xbb )\na@\n");
     assert!(echoes.is_empty(), "{echoes:?} stderr: {stderr}");
     assert!(stderr.contains("`a` is dead here"), "stderr: {stderr}");
     let lines = BOX.replacen("), box := ", ")\nbox := ", 1);
@@ -5622,7 +5629,7 @@ fn a_field_of_an_array_is_written_only_through_a_mut_name() {
     let arrays = "import file «./identities/array.logos», ";
     for tail in [
         "a := array i32 [1, 2, 3], a.size = 9, 0",
-        "a := array i32 [1, 2, 3], a.ptr = alloc 1 of i32 ?, 0",
+        "a := array i32 [1, 2, 3], a.ptr = try alloc 1 of i32 ?, 0",
         "f := fn (a := array i32 ?) -> u64 ( a.size = 7, a.size ), 0",
     ] {
         let (code, _, stderr) = run_line(&format!("{arrays}{tail}"));
@@ -5640,14 +5647,14 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
     let u = |a: &str, b: &str| {
         format!(
             "u := type ( a := pub {a}i64 ?, bump := pub static fn () -> void ( a = a + 1 ) ), \
-             t := type ( b := pub {b}u ? ), p := alloc 1 of mut t (u (5))"
+             t := type ( b := pub {b}u ? ), p := try alloc 1 of mut t (u (5))"
         )
     };
     let read_only = "points at a value that is not `mut`";
     for (src, expect) in [
-        (format!("{}, p := alloc 1 of mut t (5), p@.n = 7", t("")), "`n` is not `mut`"),
+        (format!("{}, p := try alloc 1 of mut t (5), p@.n = 7", t("")), "`n` is not `mut`"),
         (format!("{}, v := mut t (5), q := &v, q@.n = 7", t("")), "`n` is not `mut`"),
-        (format!("{}, p := alloc 2 of mut t (5), (p + 1)@.n = 7", t("")), "`n` is not `mut`"),
+        (format!("{}, p := try alloc 2 of mut t (5), (p + 1)@.n = 7", t("")), "`n` is not `mut`"),
         (
             format!("{}, f := fn (p := @ mut t ?) -> i64 ( p@.n = 7, p@.n ), f.compile()", t("")),
             "`n` is not `mut`",
@@ -5656,10 +5663,10 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
         (format!("{}, p@.b.a = 7", u("", "mut ")), "`a` is not `mut`"),
         (format!("{}, p@.b.bump()", u("mut ", "")), "`b` is not `mut`"),
         // Every field grants the write, and the pointer does not.
-        (format!("{}, p := alloc 1 of t (5), p@.n = 7", t("mut ")), read_only),
+        (format!("{}, p := try alloc 1 of t (5), p@.n = 7", t("mut ")), read_only),
         (format!("{}, v := t (5), q := &v, q@.n = 7", t("mut ")), read_only),
         (format!("{}, f := fn (p := @t ?) -> i64 ( p@.n = 7, p@.n ), 0", t("mut ")), read_only),
-        (format!("{}, q := alloc 1 of t (u (5)), q@.b.bump()", u("mut ", "mut ")), read_only),
+        (format!("{}, q := try alloc 1 of t (u (5)), q@.b.bump()", u("mut ", "mut ")), read_only),
     ] {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
@@ -5668,8 +5675,11 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
     // The name holding the pointer grants nothing: the path starts at the `@`, whose pointer
     // grants the write by the `mut` under it.
     for (src, want) in [
-        (format!("{}, p := alloc 1 of mut t (5), p@.n = 7, p@.n", t("mut ")), "7\n"),
-        (format!("{}, p := alloc 2 of mut t (5), (p + 1)@.n = 7, (p + 1)@.n", t("mut ")), "7\n"),
+        (format!("{}, p := try alloc 1 of mut t (5), p@.n = 7, p@.n", t("mut ")), "7\n"),
+        (
+            format!("{}, p := try alloc 2 of mut t (5), (p + 1)@.n = 7, (p + 1)@.n", t("mut ")),
+            "7\n",
+        ),
         (format!("{}, v := mut t (5), q := &v, q@.n = 7, v.n", t("mut ")), "7\n"),
         (format!("{}, p@.b.a = 7, p@.b.a", u("mut ", "mut ")), "7\n"),
         (format!("{}, p@.b.bump(), p@.b.a", u("mut ", "mut ")), "6\n"),
@@ -5679,7 +5689,7 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
     }
     for compile in ["", "f.compile(), "] {
         let src = format!(
-            "{}, f := fn (p := @ mut t ?) -> i64 ( p@.n = 7, p@.n ), {compile}p := alloc 1 of mut t (5), f(p)",
+            "{}, f := fn (p := @ mut t ?) -> i64 ( p@.n = 7, p@.n ), {compile}p := try alloc 1 of mut t (5), f(p)",
             t("mut ")
         );
         let (code, stdout, stderr) = run_line(&src);
@@ -5914,7 +5924,7 @@ fn an_element_has_an_address_and_taking_it_checks_the_index() {
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains("error.index_out_of_range"), "{src}: stderr: {stderr}");
     }
-    let (echoes, stderr) = repl(b"a := alloc 1 of mut i32 3\np := &(a@)\np@ = 9\na@\n");
+    let (echoes, stderr) = repl(b"a := try alloc 1 of mut i32 3\np := &(a@)\np@ = 9\na@\n");
     assert_eq!(echoes, ["9"], "stderr: {stderr}");
 }
 
@@ -6756,7 +6766,7 @@ fn a_static_name_in_a_file_imported_twice_is_one_place() {
 #[test]
 fn a_static_name_in_a_top_level_loop_is_made_once() {
     let src = "print «a», t := mut i32 0, \
-               for i in 0..3 ( p := static (print «made», alloc 1 of i32 7), t = t + p@ ), \
+               for i in 0..3 ( p := static (print «made», try alloc 1 of i32 7), t = t + p@ ), \
                print «end», t";
     let out = logos().arg(src).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -7432,7 +7442,7 @@ fn a_union_holds_the_member_written_last() {
         (format!("{NUM}, v := mut num ?, v.i = 5, p := &v.i, p@ = 8, v.i"), "8"),
         (
             format!(
-                "{NUM}, p := alloc 2 of num ?, p@.f = 1.5, (p + 1)@.i = 3, \
+                "{NUM}, p := try alloc 2 of num ?, p@.f = 1.5, (p + 1)@.i = 3, \
                  print «{{p@.f}} {{(p + 1)@.i}}», free p"
             ),
             "1.5 3",
@@ -7535,7 +7545,7 @@ fn reading_a_member_a_union_does_not_hold_is_a_run_error() {
             holds("s", "n"),
         ),
         (
-            format!("{NUM}, p := alloc 1 of num ?, p@.i"),
+            format!("{NUM}, p := try alloc 1 of num ?, p@.i"),
             "",
             "this union holds no member yet, so `i` is not there to read: write a member first"
                 .to_string(),
@@ -7786,7 +7796,7 @@ fn holds_asks_which_member_a_union_holds() {
         (format!("{NUM}, v := mut num ?, v.i = 5, p := &v, p@ holds i"), "true"),
         (
             format!(
-                "{NUM}, p := alloc 1 of num ?, print «{{p@ holds i}} {{p@ holds f}}», p@.f = 1.5, \
+                "{NUM}, p := try alloc 1 of num ?, print «{{p@ holds i}} {{p@ holds f}}», p@.f = 1.5, \
                  print «{{p@ holds f}}», free p"
             ),
             "false false\ntrue",
@@ -8644,6 +8654,68 @@ fn a_bare_error_is_refused_where_it_is_written() {
     }
 }
 
+/// ›There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`‹ [[R145]]:
+/// «`alloc` returns `@T!`: out of memory is an error value», of the category
+/// `error.out_of_memory` the seed declares; `try` passes it on, and a value taken for the cells
+/// ends where no cell holds it. A function that allocates stays interpreted.
+#[test]
+fn alloc_gives_the_block_or_error_out_of_memory() {
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let refused = "run error: error.out_of_memory: this alloc got no memory";
+    let too_big = "alloc 100000000000000000 of";
+    for (src, printed, error) in [
+        ("p := try alloc 2 of i32 7, (p + 1)@", "7\n", ""),
+        ("r := alloc 2 of i64 7, print «{r holds value} {r.value@}»", "true 7\n", ""),
+        (&format!("p := try {too_big} i64 0, print «never»"), "", refused),
+        (
+            &format!("r := {too_big} i64 0, print «{{r holds err}} {{r.err[0].message}}»"),
+            "true this alloc got no memory\n",
+            "",
+        ),
+        (
+            &format!(
+                "g := fn () -> i32! ( p := try {too_big} i64 0, 1 ), r := g(), s := g(), \
+                 print «{{r holds err}} {{s.err.size}}»"
+            ),
+            "true 2\n",
+            "",
+        ),
+        (&format!("{bag}, p := try {too_big} bag(1), print «never»"), "freed 1\n", refused),
+        (
+            &format!("{bag}, b := bag(2), p := try {too_big} b, print «never»"),
+            "freed 2\nfreed 2\n",
+            refused,
+        ),
+        // The pointer `try` takes out of the call is the very block `alloc` gave.
+        (
+            "mk := fn () -> (own @i32)! ( p := try alloc 1 of i32 5, print «{p}», p ), \
+             q := try mk(), print «{q}»",
+            "",
+            "",
+        ),
+        (
+            "mk := fn () -> (own @i32)! ( try alloc 1 of i32 5 ), mk.compile()",
+            "",
+            "run error: compile() failed: this cannot be compiled yet",
+        ),
+        (
+            "mk := fn () -> @i32! ( try alloc 1 of i32 5 ), 1",
+            "",
+            "this function hands on a value it made: write `-> (own @i32)!`",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(if error.is_empty() { 0 } else { 1 }), "{src}: stderr: {stderr}");
+        if src.starts_with("mk := fn () -> (own @i32)! ( p :=") {
+            let lines: Vec<&str> = stdout.lines().collect();
+            assert!(lines.len() == 2 && lines[0] == lines[1], "{src}: stdout: {stdout}");
+        } else {
+            assert_eq!(stdout, printed, "{src}");
+        }
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+}
+
 /// R143: «`error.X` declared in two libraries are two identities […]; categories live in the
 /// declaring library's scope, never in one global set.»
 #[test]
@@ -8956,14 +9028,14 @@ fn every_operation_is_typed_by_its_mint() {
         cases.push((format!("{f}, f()"), want));
         cases.push((format!("{f}, f.compile(), f()"), want));
     }
-    cases.push(("p := alloc 1 of i32 5, q := move p, q@".into(), "5\n"));
-    // `alloc` is typed by its mint for its count's type and the cells' type, interpreted only.
+    cases.push(("p := try alloc 1 of i32 5, q := move p, q@".into(), "5\n"));
+    // `alloc` is typed by its mint for its count's type and the cells' type, interpreted only; its
+    // `@T!` is one type for one mint.
     for (body, want) in [
         ("(alloc 1 of i32 5).type == (alloc 1 of i32 6).type", "true\n"),
         ("(alloc 1 of i32 5).type == (alloc 1 of i64 6).type", "false\n"),
         ("(alloc 1 of i32 5).type == (alloc i64 1 of i32 6).type", "false\n"),
-        ("(alloc 2 of i32 5).count", "2\n"),
-        ("p := alloc 2 of i32 5, (p + 1)@", "5\n"),
+        ("p := try alloc 2 of i32 5, (p + 1)@", "5\n"),
     ] {
         cases.push((body.into(), want));
     }
@@ -9477,7 +9549,8 @@ fn a_free_body_fills_the_values_free() {
 
 /// A collection in the array's shape whose values' `free` prints `free` before it frees, so a
 /// run shows each teardown: `box (…)` is a node whose run makes a new `boxed`, and `box`
-/// with no bracket is `boxed`.
+/// with no bracket is `boxed`. Its `run` reads the block out of the `@T!` `alloc` gives:
+/// stand-in for #159.
 const BOX: &str = "boxed := type ( \
     p := pub mut own @ mut i32 ?, \
     size := pub mut u64 0, \
@@ -9490,7 +9563,7 @@ box := type ( \
     output_type := type ?, \
     run = ( \
         v := mut output_type ?, \
-        v.p = alloc elements.dyads.size of mut i32 ?, \
+        v.p = (alloc elements.dyads.size of mut i32 ?).value, \
         for i in 0..elements.dyads.size ( \
             (v.p + i)@ = elements.dyads[i], \
             v.size = i + 1 \
@@ -9766,7 +9839,7 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
     assert!(stderr.contains("file stops"), "stderr: {stderr}");
     // The stopped function's `defer` runs, the line after the fault does not.
     let (echoes, stderr) = repl(
-        "p := alloc 1 of mut i32 5\n\
+        "p := try alloc 1 of mut i32 5\n\
          g := fn () -> i32 ( abort «stop» )\n\
          f := fn () -> i32 ( defer (p@ = p@ + 100), free (g()), p@ = 9, 1 )\n\
          f()\n\
@@ -9897,7 +9970,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
         // A null pointer, and the stack's limit.
         (
             "g := fn (q := @@i32 ?) -> i32 ( n := q@@, print «n {n}», n )".to_string(),
-            "p := alloc 1 of @i32 ?, g(p)",
+            "p := try alloc 1 of @i32 ?, g(p)",
             "",
             "this pointer holds nothing yet",
         ),
@@ -10098,17 +10171,17 @@ fn a_block_moves_out_a_name_it_holds_on_the_paths_that_give_it() {
     }
     // A reader to the left takes the value, so the arm borrows; one to the right is refused.
     let (code, stdout, stderr) = run_line(
-        "c := true, a := alloc 1 of i32 7, b := alloc 1 of i32 8, y := if c (a) else (b), y@",
+        "c := true, a := try alloc 1 of i32 7, b := try alloc 1 of i32 8, y := if c (a) else (b), y@",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "7\n"), "stderr: {stderr}");
     for (src, expect) in [
         (
-            "c := true, x := ( a := alloc 1 of i32 7, b := alloc 1 of i32 8, if c (a) else (b) + 1 ), 0",
+            "c := true, x := ( a := try alloc 1 of i32 7, b := try alloc 1 of i32 8, if c (a) else (b) + 1 ), 0",
             "this line takes the value on the way",
         ),
-        ("x := ( a := alloc 1 of i32 7, &a ), 0", "hands out the address of a name its scope holds"),
+        ("x := ( a := try alloc 1 of i32 7, &a ), 0", "hands out the address of a name its scope holds"),
         (
-            "x := ( a := alloc 1 of i32 7, for i in 0..3 ( if (i == 1) (a) ), alloc 1 of i32 9 ), 0",
+            "x := ( a := try alloc 1 of i32 7, for i in 0..3 ( if (i == 1) (a) ), try alloc 1 of i32 9 ), 0",
             "give it with `move`",
         ),
     ] {
@@ -10582,23 +10655,23 @@ fn the_address_of_a_value_in_a_call_s_arguments_holds_it_to_the_scope_the_call_s
 /// a cell an owning pointer reaches, a record kept in the cell's bytes included", on both tiers.
 #[test]
 fn free_of_a_cell_runs_the_free_of_the_record_it_holds() {
-    let mk =
-        "mk := fn () -> own @bag ( alloc 1 of bag (5) ), g := fn () -> i32 ( free (mk())@, 1 )";
+    let mk = "mk := fn () -> (own @bag)! ( try alloc 1 of bag (5) ), \
+         g := fn () -> i32! ( free (try mk())@, 1 )";
     for (tail, printed) in [
-        ("p := alloc 1 of bag (5), free p@, 0".to_string(), "freed 5\n0\n"),
+        ("p := try alloc 1 of bag (5), free p@, 0".to_string(), "freed 5\n0\n"),
         (
-            "p := alloc 2 of mut bag (5), (p + 1)@.n = 6, free (p + 1)@, free (p + 2 - 2)@, 0"
+            "p := try alloc 2 of mut bag (5), (p + 1)@.n = 6, free (p + 1)@, free (p + 2 - 2)@, 0"
                 .to_string(),
             "freed 6\nfreed 5\n0\n",
         ),
         (
-            "g := fn () -> i32 ( p := alloc 1 of bag (5), free p@, 1 ), g()".to_string(),
+            "g := fn () -> i32! ( p := try alloc 1 of bag (5), free p@, 1 ), try g()".to_string(),
             "freed 5\n1\n",
         ),
-        (format!("{mk}, g()"), "freed 5\n1\n"),
-        (format!("{mk}, g.compile(), g()"), "freed 5\n1\n"),
+        (format!("{mk}, try g()"), "freed 5\n1\n"),
+        (format!("{mk}, g.compile(), try g()"), "freed 5\n1\n"),
         // The block's own `free` runs nothing for the records its cells hold.
-        ("p := alloc 1 of bag (5), free p, 0".to_string(), "0\n"),
+        ("p := try alloc 1 of bag (5), free p, 0".to_string(), "0\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
@@ -10642,7 +10715,7 @@ fn a_value_whose_type_fills_free_lives_behind_a_pointer() {
                       set := pub static fn () -> void ( n = 4 ), \
                       get := pub static fn () -> i32 ( n ) )";
     let mut cases = vec![
-        ("p := alloc 1 of bag(1), free p@, free p@, print «end»".to_string(), "freed 1\nend\n"),
+        ("p := try alloc 1 of bag(1), free p@, free p@, print «end»".to_string(), "freed 1\nend\n"),
         ("a := mut bag ?, print «end»".to_string(), "end\n"),
         ("a := bag(1), b := a, free a, print «end»".to_string(), "freed 1\nend\nfreed 1\n"),
         (
@@ -10681,10 +10754,10 @@ fn a_cell_reached_through_a_borrow_is_not_ended_there() {
     for tail in [
         "a := bag(1), pp := &a, free pp@, 0",
         "a := bag(1), pp := &a, b := move pp@, 0",
-        "a := alloc 1 of i32 5, pp := &a, free pp@, 0",
-        "a := alloc 1 of i32 5, pp := &a, b := move pp@, 0",
+        "a := try alloc 1 of i32 5, pp := &a, free pp@, 0",
+        "a := try alloc 1 of i32 5, pp := &a, b := move pp@, 0",
         "f := fn (p := @bag ?) -> i32 ( free p@, 1 )",
-        "id := fn (q := @bag ?) -> @bag ( q ), p := alloc 1 of bag (5), free (id(p))@, 0",
+        "id := fn (q := @bag ?) -> @bag ( q ), p := try alloc 1 of bag (5), free (id(p))@, 0",
         "import file «./identities/array.logos», t := type array i32, tt := type array t, \
          g := fn (h := tt ?) -> i32 ( free (h.ptr + 0)@, 1 )",
     ] {
@@ -10694,8 +10767,8 @@ fn a_cell_reached_through_a_borrow_is_not_ended_there() {
     }
     // A copy of an owning pointer owns its own block, so its cells are its own to end.
     for (tail, printed) in [
-        ("p := alloc 1 of bag (5), q := p, free q@, 0", "freed 5\n0\n"),
-        ("p := alloc 2 of bag (5), q := p, free (q + 1)@, 0", "freed 5\n0\n"),
+        ("p := try alloc 1 of bag (5), q := p, free q@, 0", "freed 5\n0\n"),
+        ("p := try alloc 2 of bag (5), q := p, free (q + 1)@, 0", "freed 5\n0\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
@@ -10760,15 +10833,17 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
     }
     // A pointer result says it with `own`: a borrow under it, or a made value without it, is
     // refused, from a `return` as from the last line.
-    let p = "p := alloc 1 of i32 9, mk := fn (c := i32 ?) ->";
+    let p = "p := try alloc 1 of i32 9, mk := fn (c := i32 ?) ->";
     for (tail, refused) in [
         (
-            format!("{p} own @i32 ( if (c == 1) (return p), alloc 1 of i32 4 ), x := mk(1)"),
+            format!(
+                "{p} (own @i32)! ( if (c == 1) (return p), try alloc 1 of i32 4 ), x := try mk(1)"
+            ),
             "hands on a borrow",
         ),
         (
-            format!("{p} @i32 ( if (c == 1) (return alloc 1 of i32 3), p ), x := mk(1)"),
-            "write `-> own @i32`",
+            format!("{p} @i32! ( if (c == 1) (return try alloc 1 of i32 3), p ), x := try mk(1)"),
+            "write `-> (own @i32)!`",
         ),
     ] {
         let (code, _, stderr) = run_line(&tail);
@@ -10833,10 +10908,11 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
         assert!(stderr.contains(refused), "{src}: {stderr}");
     }
     // A type's `run` whose result type fills `free` hands on what it makes, and a borrow its
-    // `return` hands on as its copy, as a function's does.
+    // `return` hands on as its copy, as a function's does. The `run`s read the block out of the
+    // `@T!` `alloc` gives with `.value`: stand-in for #159.
     let run = "g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, \
                run = ( if (elements.dyads.size == 3) (return g), v := mut output_type ?, \
-               v.p = alloc 1 of mut i32 ?, v.size = 1, move v ), \
+               v.p = (alloc 1 of mut i32 ?).value, v.size = 1, move v ), \
                parse_rank = dyad.parse_rank, associativity = left, \
                parse = ( tape[0].type = pk, tape[0].elements = tape[1], \
                tape[0].output_type = boxed, tape.remove(1), tape.is_constructed[0] = true ) ), \
@@ -10847,7 +10923,7 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
     // of a borrow is refused.
     let pk = |run: &str| {
         format!(
-            "q := alloc 1 of i32 4, pk := type ( elements := scope ?, output_type := type ?, \
+            "q := try alloc 1 of i32 4, pk := type ( elements := scope ?, output_type := type ?, \
              run = ( {run} ), \
              parse_rank = dyad.parse_rank, associativity = left, \
              parse = ( tape[0].type = pk, tape[0].elements = tape[1], \
@@ -10855,10 +10931,10 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
              x := pk (7, 8, 9), x@"
         )
     };
-    let (code, stdout, stderr) = run_line(&pk("alloc 1 of i32 5"));
+    let (code, stdout, stderr) = run_line(&pk("(alloc 1 of i32 5).value"));
     assert_eq!((code, stdout.as_str()), (Some(0), "5\n"), "stderr: {stderr}");
     let (code, _, stderr) =
-        run_line(&pk("if (elements.dyads.size == 3) (return q), alloc 1 of i32 5"));
+        run_line(&pk("if (elements.dyads.size == 3) (return q), (alloc 1 of i32 5).value"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("this `return` hands on a borrow"), "{stderr}");
 }
@@ -10920,7 +10996,7 @@ fn a_result_whose_type_fills_free_hands_on_what_it_makes_and_a_copy_of_what_it_b
                     f.compile(), f()";
     let (code, stdout, stderr) = run_line(compiled);
     assert_eq!((code, stdout.trim()), (Some(0), "10"), "stderr: {stderr}");
-    let through = "p := alloc 1 of mut bag(1), g := fn (q := @ mut bag ?) -> bag ( q@ ), \
+    let through = "p := try alloc 1 of mut bag(1), g := fn (q := @ mut bag ?) -> bag ( q@ ), \
                    print «{g(p).n}», g(p).n = 5, print «{p@.n}», free p@, free p";
     let (code, stdout, stderr) = run_line(&format!("{RECORD}, {through}"));
     assert_eq!((code, stdout.as_str()), (Some(0), "1\n5\nfreed 5\n"), "stderr: {stderr}");
@@ -10929,10 +11005,10 @@ fn a_result_whose_type_fills_free_hands_on_what_it_makes_and_a_copy_of_what_it_b
 #[test]
 fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
     let r = "r := type ( p := pub mut own @i32 ?, free = ( free p ), \
-             set := pub static fn () -> i32 ( a := alloc 1 of i32 5, p = move a, 1 ) ), x := mut r ?";
+             set := pub static fn () -> i32! ( a := try alloc 1 of i32 5, p = move a, 1 ) ), x := mut r ?";
     for (tail, printed) in [
-        ("free (x.set()), 2", "2"),
-        ("a := alloc 1 of i32 5, x.p = move a, b := alloc 1 of i32 6, x.p = move b, x.p@", "6"),
+        ("free (try x.set()), 2", "2"),
+        ("a := try alloc 1 of i32 5, x.p = move a, b := try alloc 1 of i32 6, x.p = move b, x.p@", "6"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{r}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
@@ -10940,8 +11016,8 @@ fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
     }
     // The record's own free frees the field; nothing takes it out alone.
     for tail in [
-        "a := alloc 1 of i32 5, x.p = move a, free x.p, 2",
-        "a := alloc 1 of i32 5, x.p = move a, b := move x.p, b@",
+        "a := try alloc 1 of i32 5, x.p = move a, free x.p, 2",
+        "a := try alloc 1 of i32 5, x.p = move a, b := move x.p, b@",
     ] {
         let (code, _, stderr) = run_line(&format!("{r}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -11729,7 +11805,7 @@ fn free_and_move_refuse_what_they_cannot_take_where_it_stands() {
         ),
         ("free i32, 1", "i32", "`i32` is a name the run starts with"),
         (
-            "c := i32 1, p := alloc 1 of i32 7, free (if (c == 1) (alloc 1 of i32 5) else (p)), 1",
+            "c := i32 1, p := try alloc 1 of i32 7, free (if (c == 1) (try alloc 1 of i32 5) else (p)), 1",
             "(if",
             "make a value in every arm, or borrow in every arm",
         ),
@@ -11747,7 +11823,7 @@ fn free_and_move_refuse_what_they_cannot_take_where_it_stands() {
 fn the_repl_runs_a_freed_value_and_refuses_a_hole_and_a_moved_value() {
     let (echoes, stderr) = repl(
         b"f := fn () -> i32 ( print \xc2\xabran\xc2\xbb, 7 )\nfree (f())\nfree (own @i32 ?)\n\
-          b := move (f())\nfree (alloc 1 of i32 5)\n1\n",
+          b := move (f())\nfree (try alloc 1 of i32 5)\n1\n",
     );
     assert_eq!(echoes, ["ran", "1"], "stderr: {stderr}");
     assert!(stderr.contains("<repl>:1:6: error: a hole"), "stderr: {stderr}");
@@ -11811,11 +11887,17 @@ fn a_value_left_unwritten_is_filled_one_field_at_a_time() {
     let bx = "bx := type ( p := pub mut own @i32 ?, size := pub mut u64 0, free = ( free p ), \
               parse_rank = dyad.parse_rank, parse = ( tape.is_constructed[0] = true ) )";
     for (src, want) in [
-        (format!("{pt}, f := fn () -> i32 ( v := mut pt ?, v.x = 3, v.y = 4, v.x + v.y ), f()"), "7\n"),
+        (
+            format!("{pt}, f := fn () -> i32 ( v := mut pt ?, v.x = 3, v.y = 4, v.x + v.y ), f()"),
+            "7\n",
+        ),
         (format!("{pt}, v := mut pt ?, v.x = 3, v.y = 4, v.x * v.y"), "12\n"),
         // A field with a default already holds it.
         (
-            format!("{bx}, f := fn (n := u64 ?) -> u64 ( v := mut bx ?, v.p = alloc n of i32 ?, v.size ), f(2)"),
+            format!(
+                "{bx}, f := fn (n := u64 ?) -> u64! \
+                 ( v := mut bx ?, v.p = try alloc n of i32 ?, v.size ), try f(2)"
+            ),
             "0\n",
         ),
     ] {
@@ -12320,8 +12402,8 @@ fn a_type_a_line_computes_declares_a_place_of_it() {
     let pk = "pk := fn (p := @i32 ?) -> type ( if p@ == 1 (i64) else (i32) )";
     for value in ["pk(move a)", "pk(move a) ?"] {
         let src = format!(
-            "{pk}, f := fn (n := i32 ?) -> type ( a := alloc 1 of i32 n, u := mut {value}, \
-             u = 5, u.type ), f(1)"
+            "{pk}, f := fn (n := i32 ?) -> type! ( a := try alloc 1 of i32 n, u := mut {value}, \
+             u = 5, u.type ), try f(1)"
         );
         let (code, stdout, stderr) = run_line(&src);
         assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
@@ -12622,7 +12704,7 @@ fn an_assignment_copies_a_value_that_owns_memory() {
             "9\n",
         ),
         (
-            "p := alloc 1 of mut i32 5, q := mut alloc 1 of mut i32 6, q = p, q@ = i32 9, p@"
+            "p := try alloc 1 of mut i32 5, q := mut try alloc 1 of mut i32 6, q = p, q@ = i32 9, p@"
                 .to_string(),
             "5\n",
         ),
@@ -12633,8 +12715,8 @@ fn an_assignment_copies_a_value_that_owns_memory() {
 /// taking it and every other one owning a copy of its own.
 #[test]
 fn alloc_gives_each_cell_a_value_of_its_own() {
-    let array = "import file «./identities/array.logos», p := alloc 2 of array i32 [1, 2]";
-    let boxes = format!("{BOX}, p := alloc 2 of box (1, 2), ((p + 1)@.p + 0)@ = i32 9");
+    let array = "import file «./identities/array.logos», p := try alloc 2 of array i32 [1, 2]";
+    let boxes = format!("{BOX}, p := try alloc 2 of box (1, 2), ((p + 1)@.p + 0)@ = i32 9");
     assert_runs(&[
         (format!("{array}, (p + 1)@[0] = i32 9, p@[0]"), "1\n"),
         (format!("{array}, (p + 1)@[0] = i32 9, (p + 1)@[0]"), "9\n"),
@@ -12642,14 +12724,14 @@ fn alloc_gives_each_cell_a_value_of_its_own() {
         (format!("{boxes}, free p@, free (p + 1)@, print «freed»"), "free\nfree\nfreed\n"),
         // A named owner is copied into every cell, the first included.
         (
-            "import file «./identities/array.logos», a := array i32 [1, 2], p := alloc 2 of a, \
+            "import file «./identities/array.logos», a := array i32 [1, 2], p := try alloc 2 of a, \
              p@[0] = i32 9, a[0]"
                 .to_string(),
             "1\n",
         ),
         (
             format!(
-                "{BOX}, x := box (1, 2), p := alloc 1 of x, (p@.p + 0)@ = i32 9, \
+                "{BOX}, x := box (1, 2), p := try alloc 1 of x, (p@.p + 0)@ = i32 9, \
                  print «{{(x.p + 0)@}}»"
             ),
             "1\nfree\n",
@@ -12664,36 +12746,36 @@ fn a_cell_through_a_pointer_moves_any_type_with_a_layout() {
     let pt =
         "pt := type ( a := mut i64 ?, b := pub mut i32 ? ), g := fn (v := pt ?) -> i32 ( v.b )";
     let mut cases = vec![
-        (format!("{pt}, p := alloc 1 of mut pt ?, p@.b = 7, p@.b"), "7\n"),
-        (format!("{pt}, p := alloc 2 of pt (1, 2), (p + 1)@.b"), "2\n"),
-        (format!("{pt}, p := alloc 2 of mut pt (1, 2), (p + 1)@ = pt(5, 6), p@.b * 10 + (p + 1)@.b"), "26\n"),
+        (format!("{pt}, p := try alloc 1 of mut pt ?, p@.b = 7, p@.b"), "7\n"),
+        (format!("{pt}, p := try alloc 2 of pt (1, 2), (p + 1)@.b"), "2\n"),
+        (format!("{pt}, p := try alloc 2 of mut pt (1, 2), (p + 1)@ = pt(5, 6), p@.b * 10 + (p + 1)@.b"), "26\n"),
         (format!("{pt}, f := fn (p := @pt ?) -> pt ( p@ ), w := pt(1, 2), r := f(&w), r.b"), "2\n"),
         (
             format!("{pt}, f := fn (p := @pt ?) -> pt ( p@ ), f.compile(), w := pt(1, 2), r := f(&w), r.b"),
             "2\n",
         ),
-        ("p := alloc 1 of mut rational_number ?, p@ = rational_number 1/2, p@".to_string(), "1/2\n"),
-        ("p := alloc 2 of rational_number (1/3), (p + 1)@".to_string(), "1/3\n"),
+        ("p := try alloc 1 of mut rational_number ?, p@ = rational_number 1/2, p@".to_string(), "1/2\n"),
+        ("p := try alloc 2 of rational_number (1/3), (p + 1)@".to_string(), "1/3\n"),
         (
             "f := fn (p := @ mut rational_number ?) -> i32 ( p@ = rational_number 1/2, 1 ), \
-             q := alloc 1 of mut rational_number ?, free (f(q)), q@"
+             q := try alloc 1 of mut rational_number ?, free (f(q)), q@"
                 .to_string(),
             "1/2\n",
         ),
         (
             "f := fn (p := @ mut rational_number ?, r := rational_number ?) -> i32 ( p@ = r, 1 ), \
-             f.compile(), q := alloc 1 of mut rational_number ?, free (f(q, 1/2)), q@"
+             f.compile(), q := try alloc 1 of mut rational_number ?, free (f(q, 1/2)), q@"
                 .to_string(),
             "1/2\n",
         ),
         (
             "f := fn (p := @rational_number ?) -> rational_number ( p@ ), f.compile(), \
-             q := alloc 1 of mut rational_number ?, q@ = rational_number 2/3, f(q)"
+             q := try alloc 1 of mut rational_number ?, q@ = rational_number 2/3, f(q)"
                 .to_string(),
             "2/3\n",
         ),
-        ("p := alloc 1 of mut type ?, p@ = i32, t := type p@, t".to_string(), "i32\n"),
-        ("p := alloc 1 of mut dyad ?, p@ = i32, d := p@, d == i32".to_string(), "true\n"),
+        ("p := try alloc 1 of mut type ?, p@ = i32, t := type p@, t".to_string(), "i32\n"),
+        ("p := try alloc 1 of mut dyad ?, p@ = i32, d := p@, d == i32".to_string(), "true\n"),
         (
             "pt := type ( t := pub mut type ?, b := pub mut i32 ? ), v := mut pt ?, v.t = i32, v.b = 1, \
              p := &v, p@.t = i64, v.t"
@@ -12722,7 +12804,10 @@ fn a_cell_through_a_pointer_moves_any_type_with_a_layout() {
 #[test]
 fn a_type_converts_the_name_to_its_right() {
     let mut cases = vec![
-        ("f := fn (n := i32 ?) -> i32 ( x := alloc 1 of i32 n, x@ ), f(4)".to_string(), "4\n"),
+        (
+            "f := fn (n := i32 ?) -> i32! ( x := try alloc 1 of i32 n, x@ ), try f(4)".to_string(),
+            "4\n",
+        ),
         ("r := rational_number 1/3, rational_number r".to_string(), "1/3\n"),
         (
             "f := fn (r := rational_number ?) -> rational_number ( rational_number r ), f(1/3)"
@@ -12752,7 +12837,7 @@ fn a_number_type_takes_the_value_built_at_discovery_before_it() {
     let mut cases = vec![
         (format!("{pt}, p := pt(7, 8), i64 p.a"), "7\n"),
         (format!("{pt}, p := pt(7, 8), i32 lossy p.a"), "7\n"),
-        (format!("{pt}, p := pt(7, 8), x := alloc 1 of i32 p.a, x@"), "7\n"),
+        (format!("{pt}, p := pt(7, 8), x := try alloc 1 of i32 p.a, x@"), "7\n"),
         ("q := i32 5, r := &q, i64 r@".to_string(), "5\n"),
         (format!("{g}, i64 g(3)"), "3\n"),
         ("c := true, x := i64 if c (i32 1) else (i64 2), x".to_string(), "1\n"),
@@ -12955,24 +13040,24 @@ fn a_record_written_through_a_pointer_frees_the_one_it_displaces() {
             "freed 1\nfreed 2\nfreed 2\n0\n",
         ),
         (
-            format!("{r}, p := alloc 1 of mut r(1), p@ = r(2), print «end», free p@"),
+            format!("{r}, p := try alloc 1 of mut r(1), p@ = r(2), print «end», free p@"),
             "freed 1\nend\nfreed 2\n",
         ),
         // A named owner written into a cell is copied: the cell and the name each free their own.
         (
             format!(
-                "{r}, p := alloc 1 of mut r(1), a := mut r(5), p@ = a, a.n = 6, \
+                "{r}, p := try alloc 1 of mut r(1), a := mut r(5), p@ = a, a.n = 6, \
                  print «end {{p@.n}}», free p@, print «after»"
             ),
             "freed 1\nend 5\nfreed 5\nafter\nfreed 6\n",
         ),
         (
-            format!("{r}, p := alloc 1 of mut r(1), f := fn () -> i32 ( {body} ), x := f(), free p@"),
+            format!("{r}, p := try alloc 1 of mut r(1), f := fn () -> i32 ( {body} ), x := f(), free p@"),
             "freed 1\nend\nfreed 2\n",
         ),
         (
             format!(
-                "{r}, p := alloc 1 of mut r(1), f := fn () -> i32 ( {body} ), f.compile(), x := f(), \
+                "{r}, p := try alloc 1 of mut r(1), f := fn () -> i32 ( {body} ), f.compile(), x := f(), \
                  free p@"
             ),
             "freed 1\nend\nfreed 2\n",
@@ -13045,11 +13130,11 @@ fn a_field_takes_the_width_a_place_of_its_type_takes() {
             "1/3 9\n",
         ),
         (
-            format!("{ab}, p := alloc 1 of mut pt ?, p@.b = 7, p@.a = rational_number 1/2, print «{{p@.a}} {{p@.b}}»"),
+            format!("{ab}, p := try alloc 1 of mut pt ?, p@.b = 7, p@.a = rational_number 1/2, print «{{p@.a}} {{p@.b}}»"),
             "1/2 7\n",
         ),
         (
-            "pt := type ( b := mut i32 ?, a := pub mut rational_number ? ), p := alloc 1 of mut pt ?, \
+            "pt := type ( b := mut i32 ?, a := pub mut rational_number ? ), p := try alloc 1 of mut pt ?, \
              p@.a = rational_number 1/2, p@.a"
                 .to_string(),
             "1/2\n",
@@ -13327,7 +13412,7 @@ fn a_static_function_reaches_each_field_of_a_plain_record_whole() {
 fn the_repl_writes_and_copies_whole_records() {
     let (echoes, stderr) = repl(
         "q := type ( x := pub mut i32 ? )\nv := mut q ?\nv = q(3)\nprint «{v.x}»\nw := q(4)\nu := mut w\n\
-          u.x = 9\nprint «{w.x}»\npt := type ( a := mut i64 ?, b := pub mut i32 ? )\np := alloc 1 of mut pt ?\n\
+          u.x = 9\nprint «{w.x}»\npt := type ( a := mut i64 ?, b := pub mut i32 ? )\np := try alloc 1 of mut pt ?\n\
           p@.b = 7\nprint «{p@.b}»\nr := &v\nr@ = q(5)\nv.x\n",
     );
     assert_eq!(echoes, ["3", "4", "7", "5"], "stderr: {stderr}");
@@ -13373,14 +13458,14 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
         ("true == true", "true\n"),
         ("x := i32 3, print «{(&x).output_type == @i32}», p := &x, p.type == @i32", "true\ntrue\n"),
         (
-            "c := mut true, a := alloc 1 of i32 5, b := alloc 1 of i32 6, \
-             x := if c (move a) else (move b), y := if c (alloc 1 of i32 7) else (alloc 1 of i32 8), \
+            "c := mut true, a := try alloc 1 of i32 5, b := try alloc 1 of i32 6, \
+             x := if c (move a) else (move b), y := if c (try alloc 1 of i32 7) else (try alloc 1 of i32 8), \
              print «{x@} {y@}», free x, free y",
             "5 7\n",
         ),
-        ("p := alloc 1 of i32 0, f := fn (q := @i32 ?) -> @i32 ( q ), f(p).type == @i32", "true\n"),
+        ("p := try alloc 1 of i32 0, f := fn (q := @i32 ?) -> @i32 ( q ), f(p).type == @i32", "true\n"),
         (
-            "mk := fn () -> own @i32 ( alloc 1 of i32 7 ), x := mk(), print «{x@}», free x",
+            "mk := fn () -> (own @i32)! ( try alloc 1 of i32 7 ), x := try mk(), print «{x@}», free x",
             "7\n",
         ),
         // A list standing as a value gives back itself, never nothing.
@@ -13439,7 +13524,7 @@ fn a_bool_hole_is_a_bool_place_on_both_tiers() {
         ("a := mut true, a = 2, a", "no exact value in the type it lands in"),
         ("pt := type ( ok := pub bool ?, n := i32 ? ), p := pt(7, 3), p.ok", "no exact value"),
         ("f := fn (b := bool ?) -> i32 ( if b (1) else (2) ), f(2)", "no exact value"),
-        ("b := alloc 1 of mut bool ?, b@ = 7, b@", "no exact value"),
+        ("b := try alloc 1 of mut bool ?, b@ = 7, b@", "no exact value"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}");
@@ -13450,8 +13535,8 @@ fn a_bool_hole_is_a_bool_place_on_both_tiers() {
 #[test]
 fn free_and_move_read_the_type_a_dereference_gives_back() {
     let r = "r := type ( p := pub mut own @i32 ?, free = ( free p ) )";
-    let q = "q := alloc 1 of mut own @i32 ?, a := alloc 1 of i32 5, q@ = move a";
-    let x = "x := mut r ?, a := alloc 1 of i32 5, x.p = move a";
+    let q = "q := try alloc 1 of mut own @i32 ?, a := try alloc 1 of i32 5, q@ = move a";
+    let x = "x := mut r ?, a := try alloc 1 of i32 5, x.p = move a";
     let src = format!("{q}, free q@, q@@");
     let (code, _, stderr) = run_line(&src);
     assert_eq!(code, Some(1), "{src}");
@@ -13964,7 +14049,8 @@ fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
     }
     run(format!("{bag}m := {{ b := bag (1) }}, print «end»"), "end\nfreed 1\n");
     run(
-        "m := { p := pub alloc 1 of i32 5, a := i32 1 }, q := move m.p, print «end {q@}»".into(),
+        "m := { p := pub try alloc 1 of i32 5, a := i32 1 }, q := move m.p, print «end {q@}»"
+            .into(),
         "end 5\n",
     );
     let head = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) )\n";
@@ -14108,7 +14194,7 @@ fn a_fn_entry_of_a_curly_bracket_reads_its_sibling_names_through_the_value() {
             ("x := f64 2.5, f := fn () -> f64 ( x * 2 ), {compile}y := pub f() }, m.y", "5.0"),
             ("a := i32 5, g := fn () -> i32 ( a * 2 ), f := fn () -> i32 ( g() + 1 ), {compile}b := pub f() }, m.b", "11"),
             ("a := i32 2, f := fn (x := i32 ?) -> i32 ( if x == 0 ( a ) else ( f(x - 1) + a ) ), {compile}b := pub f(3) }, m.b", "8"),
-            ("p := alloc 1 of i32 7, f := fn () -> i32 ( p@ ), {compile}b := pub f() }, m.b", "7"),
+            ("p := try alloc 1 of i32 7, f := fn () -> i32 ( p@ ), {compile}b := pub f() }, m.b", "7"),
             ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := pub f(), t := type ( x := i32 ? ) }, m.b", "2"),
             ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := f(), s := pub static (b * 10) }, m.s", "20"),
             ("a := i32 1, f := pub fn () -> i32 ( a + 1 ), {compile}b := pub f() }, m.f() + m.b", "4"),
@@ -14540,7 +14626,7 @@ fn a_hashmap_reads_a_curly_bracket_each_name_s_spelling_a_text_key() {
 fn a_tape_line_no_check_narrowed_is_checked_through_a_record_pointer() {
     let q = "pt := type ( a := pub mut u64 ?, b := mut u64 ? ), \
              q := type ( v := pub u64 ?, parse_rank = 61, parse = ( tape[0].type = q, \
-             p := alloc 1 of mut pt ?, p@.a = tape[1].dyads[0], tape[0].v = p@.a, \
+             p := try alloc 1 of mut pt ?, p@.a = tape[1].dyads[0], tape[0].v = p@.a, \
              tape.remove(1), tape.is_constructed[0] = true ) )";
     let src = format!("{q}, x := q [5], x.v");
     assert_eq!(run_line(&src), (Some(0), "5\n".to_string(), String::new()), "{src}");
