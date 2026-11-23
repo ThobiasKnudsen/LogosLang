@@ -8346,7 +8346,8 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
 /// an arm filling nothing for the lines after it, as for every name (R105); an arm that always
 /// leaves still ends any other name it moves on every path (R70, rule 2). `return` is no result
 /// place outside a function, in a `defer`, in a value made once, in a `-> void` function or in a
-/// type's slot body, and no caller writes a member of a `T!` (R379).
+/// type's slot body, and no caller writes a member of a `T!` (R379); `return.tag` is read only, as
+/// a named union's `tag` is.
 #[test]
 fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
     let unwritten = "error: the result is read before it is written: write it first among the \
@@ -8377,6 +8378,12 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
              f := fn (c := bool ?) -> bag ( a := bag(1), if c ( return a ), a.n = 2, bag(3) ), 0"
                 .to_string(),
             "1:130: error: `a` is dead here: it was moved or freed above".to_string(),
+        ),
+        (
+            "f := fn () -> i32! ( return.value = 1, return.tag = 2, return ), 0".to_string(),
+            "1:53: error: `tag` is not `mut`: a name is written after its declaration only when \
+             declared `tag := mut …`"
+                .to_string(),
         ),
         (
             "return.value = 1".to_string(),

@@ -140,17 +140,20 @@ impl<'a> Parser<'a> {
     }
 
     fn check_gates(&self, path: &[DyadPtr]) -> Result<(), ParseError> {
-        // The body writes its own result, and a member of a `T!` one, which no caller may (›A
-        // scope's value is what it evaluates to, and `return` is an optional early exit from the
-        // enclosing function‹ [[R207]]); what lies inside grants as it does anywhere.
+        // The body writes its own result, and a member of a `T!` one, which no caller may, but
+        // not its tag (›A scope's value is what it evaluates to, and `return` is an optional early
+        // exit from the enclosing function‹ [[R207]]); what lies inside grants as it does anywhere.
         let path = match path {
             [place, rest @ ..] if self.is_result_place(*place) => {
+                use crate::identities::union;
                 // SAFETY: a result place is a binding dyad laid out with its type.
-                let union = unsafe {
-                    crate::identities::union::is_union(self.types, Binding::read(*place).dyad)
+                let ty = unsafe { Binding::read(*place).dyad };
+                // SAFETY: `ty` is a union type where `is_union` holds.
+                let member = |line: &DyadPtr| unsafe {
+                    union::is_union(self.types, ty) && union::member_bindings(ty).contains(line)
                 };
                 match rest {
-                    [_member, inside @ ..] if union => inside,
+                    [line, inside @ ..] if member(line) => inside,
                     _ => rest,
                 }
             }
