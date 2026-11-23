@@ -15049,10 +15049,10 @@ fn is_calls_the_collection_s_contains() {
             "true false true true true\n",
         ),
         (
-            "x := mut i32 3, p := &x, q := alloc 1 of i32 7, \
-             print «{p.type is pointer} {q.type is pointer} {x.type is pointer}»"
+            "x := mut i32 3, p := &x, q := try alloc 1 of i32 7, r := alloc 1 of i32 7, \
+             print «{p.type is pointer} {q.type is pointer} {r.type is pointer} {x.type is pointer}»"
                 .to_owned(),
-            "true true false\n",
+            "true true false false\n",
         ),
         (
             "pointer.contains.compile(), print «{@i32 is pointer} {pointer.contains(i32)}»"
