@@ -738,6 +738,19 @@ fn the_power_demo_prints_nine() {
 }
 
 #[test]
+fn importing_power_logos_sets_its_operator() {
+    let import = "import file «identities/power.logos»";
+    // The file's own demo prints `9` before the line that uses `^`.
+    for (tail, want) in [
+        ("x := i32 2, x ^ 3", "9\n8"),
+        ("g := fn (x := i32 ?) -> i32 ( x ^ 3 ), g.compile(), g(3)", "9\n27"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{import}, {tail}"));
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
     // The demo's own `^`, its last line swapped for each case.
     let demo = std::fs::read_to_string("identities/power.logos").unwrap();

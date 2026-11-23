@@ -22,7 +22,7 @@ error.not_whole := «a power of a whole number is not whole»,
 error.not_real := «a power is no real number»,
 error.needs_float := «a power needs a float result»,
 
-^ := type (
+^ := pub type (
     get_mint := pub static fn (l := type ?, r := type ?) -> type (
         place := type_mint.step(type_mint.step(type_mint.step(0, ^), l), r),
         mint := mut type type_mint.kept(place),
