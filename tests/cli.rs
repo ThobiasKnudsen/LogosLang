@@ -12550,6 +12550,15 @@ fn a_node_that_gives_a_type_runs_where_the_pass_builds_it() {
     ] {
         assert_eq!(line(&src), want, "{src}");
     }
+    // `move` takes the place such a node stands for, not the type it gives.
+    for src in [format!("{p}, x := move p@, x"), format!("{m}, x := move m[i32], x")] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(
+            stderr.contains("moving out of a field or cell that owns nothing"),
+            "{src}: stderr: {stderr}"
+        );
+    }
 }
 
 /// ›`?` is one value, the unknown; `key := T ?` declares without a value‹ [[R103]]: an empty place
