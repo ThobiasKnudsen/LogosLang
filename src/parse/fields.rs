@@ -967,6 +967,10 @@ impl<'a> Parser<'a> {
             let (member, binding) = self.find_field(value_type, nstart, nlen)?;
             self.cx.member_path = self.field_path(&left, binding);
             let types = self.types;
+            if union::is_tag_line(value_type, member) {
+                let tag = union::build_tag_read(self.rt.store, types, lhs, value_type);
+                return Ok((tag, 0));
+            }
             // SAFETY: `lhs` is a reduced dyad from the store.
             let made = unsafe { teardown_of(types, lhs) } != Teardown::Nothing;
             let access = match (writes, made) {
@@ -1231,18 +1235,18 @@ impl<'a> Parser<'a> {
         let Some((nstart, nlen)) = member? else {
             return Err(self.fail_at(at, ParseError::HoldsNeedsMember));
         };
-        // SAFETY: `union` is a union type, whose members are holes with bindings.
+        // SAFETY: `union` is a union type, whose lines are holes with bindings.
         let node = unsafe {
-            let Ok((member, _)) = self.find_field(union, nstart, nlen) else {
+            use crate::identities::union;
+            let found = self.find_field(union, nstart, nlen).ok().map(|(line, _)| line);
+            let Some(member) = found.filter(|&line| !union::is_tag_line(union, line)) else {
                 let name = self.cx.source[nstart..nstart + nlen].to_string();
-                let members = crate::identities::array::items(
-                    crate::identities::meta::record_field_bindings_of(union),
-                );
+                let members = union::member_bindings(union);
                 let members = members.iter().map(|&b| Binding::spelling(b)).collect();
                 let e = ParseError::NotAMember(Box::new((name, members)));
                 return Err(self.fail_at(nstart, e));
             };
-            crate::identities::union::build_holds(self.rt.store, self.types, lhs, union, member)
+            union::build_holds(self.rt.store, self.types, lhs, union, member)
         };
         tape.remove(1);
         tape.remove(-1);
