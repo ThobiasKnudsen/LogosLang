@@ -1548,6 +1548,8 @@ impl<'a> Parser<'a> {
                 outer: Vec::new(),
                 open_below: 0,
                 returns: Vec::new(),
+                result: std::ptr::null_mut(),
+                slot_body: false,
             })
             .collect();
 

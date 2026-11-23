@@ -149,6 +149,16 @@ pub enum ParseError {
     ReturnOutsideFunction,
     /// A `return` in a `defer`, at any depth.
     ReturnInDefer,
+    /// `return` read as the result place in a `-> void` function.
+    ResultPlaceOfVoid,
+    /// `return` read as the result place in a type's `run`, `parse` or `free` body.
+    ResultPlaceInSlot,
+    /// `return` read as the result place of a type whose values are nodes its `parse` builds.
+    ResultPlaceOfNode,
+    /// `return` read as the result place in a line read when it runs.
+    ResultPlaceInHeldLine,
+    /// The result place read before a write fills it.
+    ResultUnwritten,
     /// A node that gives nothing (a statement, a `-> void` call) stood where a value is
     /// required.
     StatementAsValue,

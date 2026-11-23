@@ -46,7 +46,7 @@ fn construct(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     let at = tape.at(0).map_or(0, |cell| cell.start);
-    let operand = p.take_right(tape)?;
+    let operand = p.return_operand(tape)?;
     let leaf = p.types().ops.return_;
     let node = p.store().alloc_words(id, &[operand, std::ptr::null_mut(), leaf]);
     // SAFETY: `node` is the `return` node just built.

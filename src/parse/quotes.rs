@@ -11,7 +11,7 @@ use crate::identities::string::Piece;
 
 /// Who receives an error a raise or a `try` hands on where it is written (›Target: errors are
 /// values (`T!`), handled by `if`, passed on by `try`…‹ [[R140]]).
-enum Receiver {
+pub(super) enum Receiver {
     /// The caller of the innermost function, which gives the `T!` `output` whose `err` member is
     /// `err`.
     Caller { output: DyadPtr, err: DyadPtr },
@@ -435,7 +435,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Who receives an error a raise or a `try` hands on here.
-    fn receiver(&self) -> Receiver {
+    pub(super) fn receiver(&self) -> Receiver {
         let depth = self.cx.frames.len();
         if self.cx.deferring.last() == Some(&depth) {
             return Receiver::Deferred;

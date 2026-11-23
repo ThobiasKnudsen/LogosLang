@@ -383,6 +383,19 @@ pub(crate) unsafe fn build_member(
     }
 }
 
+/// The place whose member the dereference `node` reaches, where it reads a member of a named
+/// union value; `None` for any other dereference.
+///
+/// # Safety
+/// `node` must be a deref node from `pointer::build_deref`.
+pub(crate) unsafe fn member_of_place(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    let room = pointer::deref_parts(node).0;
+    if dyad::ty(room) != types.union.member {
+        return None;
+    }
+    pointer::address_place(types, *(dyad::value(room) as *const DyadPtr))
+}
+
 /// `value holds member`: whether the union value `value`, of the union type `union`, holds the
 /// member `member`, a `bool` the tag gives.
 ///

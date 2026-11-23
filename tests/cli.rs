@@ -8115,6 +8115,153 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
     }
 }
 
+/// R207: `return` is also the function's result place, which the body writes and reads before
+/// it leaves, and a bare `return` leaves with what it holds; `return X` and a raise still leave,
+/// ending what it holds. Under `T!` a write of `return.value` or `return.err` sets the member and
+/// the tag; any other result is written whole, `return = …`, and a record's field through it.
+/// A write ends the value written before it. On both tiers.
+#[test]
+fn the_result_place_is_written_and_read_before_the_function_leaves() {
+    let odd = "error.odd := «odd»";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let pt = "pt := type ( x := pub mut i32 ?, y := pub mut i32 ? )";
+    for compile in ["", "g.compile(), f.compile(), "] {
+        for (g, body, want) in [
+            (
+                "g := fn (n := i32 ?) -> i32! ( if n % 2 == 1 ( return error.odd «not even» ), \
+                 return.value = n / 2, print «{return holds value} {return.value}», return )",
+                "r := g(i32 8), print «{r.value} {g(i32 7).err[0].message}»",
+                "true 4\n4 not even",
+            ),
+            (
+                "g := fn (k := i32 ?) -> bag! ( return.value = bag(k), \
+                 if k > 1 ( return bag(k + 10) ), return )",
+                "print «{g(1).value.n} {g(5).value.n}»",
+                "freed 5\n1 15\nfreed 15\nfreed 1",
+            ),
+            (
+                "g := fn (k := i32 ?) -> bag! ( return.value = bag(k), \
+                 if k > 1 ( error.odd «too big» ), return.value = bag(k + 1), return )",
+                "print «{g(5).err[0].message}», print «{g(1).value.n}»",
+                "freed 5\ntoo big\nfreed 1\n2\nfreed 2",
+            ),
+            (
+                "g := fn (c := bool ?) -> i32! ( return.value = 1, \
+                 if c ( return.value = return.value + 5 ), return )",
+                "print «{g(true).value} {g(false).value}»",
+                "6 1",
+            ),
+            (
+                "g := fn (n := i32 ?) -> i32! ( if n < 2 ( return i32 1 ), \
+                 return.value = n * (try g(n - 1)), print «{return holds err}», return )",
+                "print «{g(i32 4).value}»",
+                "false\nfalse\nfalse\n24",
+            ),
+            (
+                "g := fn (n := i32 ?) -> pt ( return = pt(1, 2), if n > 3 ( return pt(n, n) ), \
+                 return.x = n, return )",
+                "a := g(i32 7), b := g(i32 3), print «{a.x} {a.y} {b.x} {b.y}»",
+                "7 7 3 2",
+            ),
+            (
+                "g := fn (n := i32 ?) -> i32 ( return = n * 2, if n > 3 ( return n ), return )",
+                "print «{g(i32 1)} {g(i32 5)}»",
+                "2 5",
+            ),
+        ] {
+            let src =
+                format!("{odd}, {bag}, {pt}, {g}, f := fn () -> void ( {body} ), {compile}f()");
+            assert_eq!(line(&src), want, "{src}");
+        }
+    }
+    let h = "h := fn () -> i32! ( error.odd «inner» )";
+    let g = "g := fn () -> i32! ( r := h(), return.err = r.err, return )";
+    let src = format!("{odd}, {h}, {g}, r := g(), print «{{r holds err}} {{r.err[0].message}}»");
+    assert_eq!(line(&src), "true inner", "{src}");
+}
+
+/// R207: «A read of `return` before its first write is refused where it is written», a write in
+/// an arm filling nothing for the lines after it, as for every name (R105), and a bare `return`
+/// in an arm moving the place out on every path, as `return a` moves `a` (R66, R70). `return` is
+/// no result place outside a function, in a `defer`, in a value made once, in a `-> void`
+/// function or in a type's slot body, and no caller writes a member of a `T!` (R379).
+#[test]
+fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
+    let unwritten = "error: the result is read before it is written: write it first among the \
+                     function's own lines, `return.value = …` or `return.err = …` where it gives \
+                     `T!`, `return = …` where it gives any other type";
+    let q = "q := type ( v := pub mut i32 ?, parse_rank = 60, parse = ( tape.is_constructed[0] = \
+             true ) )";
+    for (src, want) in [
+        (
+            "f := fn () -> i32! ( print «{return holds value}», return.value = 1, return ), 0"
+                .to_string(),
+            format!("1:30: {unwritten}"),
+        ),
+        ("f := fn () -> i32 ( return ), 0".to_string(), format!("1:21: {unwritten}")),
+        (
+            "f := fn (c := bool ?) -> i32! ( if c ( return.value = 2, return ), \
+             return.value = 1, return ), 0"
+                .to_string(),
+            format!("1:58: {unwritten}"),
+        ),
+        (
+            "f := fn () -> i32! ( return.value = 1, g := fn () -> i32 ( return.value ), return ), 0"
+                .to_string(),
+            format!("1:60: {unwritten}"),
+        ),
+        (
+            "f := fn (c := bool ?) -> i32! ( return.value = 1, if c ( return ), \
+             return.value = 2, return ), 0"
+                .to_string(),
+            "1:68: error: `return` is dead here: it was moved or freed above".to_string(),
+        ),
+        (
+            "return.value = 1".to_string(),
+            "1:1: error: `return` is written only inside a function".to_string(),
+        ),
+        (
+            "f := fn () -> i32! ( defer ( print «{return.value}» ), return.value = 1, return ), 0"
+                .to_string(),
+            "1:38: error: a `defer` cannot leave its function".to_string(),
+        ),
+        (
+            "f := fn () -> i32! ( x := static return.value, return.value = 1, return ), 0"
+                .to_string(),
+            "1:34: error: a value made once, where it is written".to_string(),
+        ),
+        (
+            "f := fn () -> void ( return ), 0".to_string(),
+            "1:22: error: a `-> void` function gives no value, so `return` has no result here to \
+             read, write or leave with"
+                .to_string(),
+        ),
+        (
+            "q := type ( v := i32 ?, parse_rank = 60, parse = ( return.value = 1, \
+             tape.is_constructed[0] = true ) ), 0"
+                .to_string(),
+            "1:52: error: `return` is read and written as the result only in a `fn` body, not yet \
+             in a type's `run`, `parse` or `free` body"
+                .to_string(),
+        ),
+        (
+            format!("{q}, f := fn () -> q ( return.v = 1, return ), 0"),
+            "1:113: error: `return` is read and written as the result only of a type whose \
+             values are not nodes its `parse` builds, so far"
+                .to_string(),
+        ),
+        (
+            "f := fn () -> i32! ( return.value = 1, return ), r := mut f(), r.value = 2"
+                .to_string(),
+            "1:74: error: `value` is not `mut`".to_string(),
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("<command line>:{want}")), "{src}: stderr: {stderr}");
+    }
+}
+
 /// A union made for one read gives its member up to that read (›A last value moves out‹
 /// [[R66]]): `try mk()` and `mk().value` hold the very value `mk` made, freed once, where a copy
 /// was taken of it; a member nobody takes is freed at its line's end, a line that fails after the

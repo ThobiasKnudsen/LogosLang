@@ -165,13 +165,18 @@ impl<'a> Parser<'a> {
             return Ok(Some(Boundary::Eof));
         };
         if !cell.constructed && !self.after_tight_read(tape) {
-            let field = self.names_own_field(&cell);
-            if field.is_err() {
-                self.cx.pos = start;
-            }
-            if field? {
-                // Left unbuilt, as a name is, so a value whose type has a parse wakes it: `items[1]`.
-                cell.dyad = self.this_field(cell.spelling(), start)?;
+            if self.reads_result_place(&cell) {
+                cell.dyad = self.result_place(start)?;
+            } else {
+                let field = self.names_own_field(&cell);
+                if field.is_err() {
+                    self.cx.pos = start;
+                }
+                if field? {
+                    // Left unbuilt, as a name is, so a value whose type has a parse wakes it:
+                    // `items[1]`.
+                    cell.dyad = self.this_field(cell.spelling(), start)?;
+                }
             }
         }
         let id = self.cell_identity(&cell);
