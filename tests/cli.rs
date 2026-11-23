@@ -8232,11 +8232,11 @@ fn a_static_or_immediate_value_runs_as_a_line_that_holds_what_it_made() {
     }
 }
 
-/// A `try` a `parse` writes into a node runs as it is placed, since the call it hands its error to
-/// is gone when the placed node runs; what else the right side holds stays graph, run where the
-/// node runs (›A tape read checked against a number type reads as that number‹ [[R229]],
-/// ›Target: a constructor returns `void!`, so a user's syntax error is a recoverable value‹
-/// [[R142]]). On both tiers.
+/// A `try` a `parse` writes into a node, or a local of the parse it filled, runs as it is placed,
+/// since the call it hands its error to is gone when the placed node runs; what else the right
+/// side holds stays graph, run where the node runs (›A tape read checked against a number type
+/// reads as that number‹ [[R229]], ›Target: a constructor returns `void!`, so a user's syntax
+/// error is a recoverable value‹ [[R142]]). On both tiers.
 #[test]
 fn a_try_a_parse_writes_into_a_node_runs_as_it_is_placed() {
     let q = |right: &str| {
@@ -8255,6 +8255,12 @@ fn a_try_a_parse_writes_into_a_node_runs_as_it_is_placed() {
     ] {
         let src = format!("{g}, {h}, {}, {use_}", q(right));
         assert_eq!(line(&src), want, "{src}");
+    }
+    let named = "q := type ( v := i32 ?, parse_rank = 60, parse = ( r := try g(), tape[0] = r, \
+                 tape.is_constructed[0] = true ) )";
+    for use_ in ["a := q, a + 1", "f := fn () -> i32 ( a := q, a + 1 ), f.compile(), f()"] {
+        let src = format!("{g}, {named}, {use_}");
+        assert_eq!(line(&src), "g\n10", "{src}");
     }
     let src = format!(
         "error.bad := «bad», g := fn () -> i32! ( error.bad «no» ), {}, a := q",

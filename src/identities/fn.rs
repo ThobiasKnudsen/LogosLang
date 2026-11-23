@@ -22,6 +22,7 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
 /// Returns the `->` arrow.
 pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     cx.declare("fn", cx.fn_type);
+    cx.placings.insert(cx.fn_type, super::place::whole);
     // The pending `:=` binding is claimed so a self-call in the body
     // resolves the published signature.
     cx.metas.insert(cx.fn_type, |p, id, tape| {

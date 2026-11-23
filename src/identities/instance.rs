@@ -64,6 +64,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
         &["record", "field", "op"],
     );
     let field = cx.store.alloc_head(cx.type_, record);
+    cx.placings.insert(field, super::place::by_frame);
 
     let sides = &["lhs", "rhs"];
     let record = meta::token_record(cx, meta::prec::TIGHT, crate::parse::Assoc::Left, sides);
@@ -91,6 +92,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
     );
     let square_brackets = cx.store.alloc_head(cx.type_, record);
     cx.declare("square_brackets", square_brackets);
+    cx.placings.insert(square_brackets, super::place::whole);
 
     // Outside text, `{` is the curly bracket: its lines kept as a value of the record its names
     // lay out (›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]).
