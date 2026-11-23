@@ -352,10 +352,13 @@ mod tests {
             ("in", prec::INERT, false),
             ("of", prec::INERT, false),
             ("..", prec::COMPARE, false),
-            ("i32", prec::CONVERT, true),
-            ("f64", prec::CONVERT, true),
-            ("rational_number", prec::CONVERT, true),
-            ("lossy", prec::CONVERT, true),
+            ("i32", prec::ONE_RANK, true),
+            ("f64", prec::ONE_RANK, true),
+            ("rational_number", prec::ONE_RANK, true),
+            ("lossy", prec::ONE_RANK, true),
+            ("mut", prec::ONE_RANK, true),
+            ("own", prec::ONE_RANK, true),
+            ("alloc", prec::ONE_RANK, true),
             ("bool", prec::INERT, false),
             ("void", prec::INERT, false),
         ];
@@ -570,8 +573,8 @@ mod tests {
             assert_eq!(meta::parse_rank_of(core.times), prec::MULTIPLICATIVE);
             assert_eq!(meta::parse_rank_of(core.assign), prec::DECLARE);
             assert_eq!(meta::assoc_of(core.assign), Assoc::Right);
-            for id in [core.i32_, core.rational, core.lossy] {
-                assert_eq!(meta::parse_rank_of(id), prec::CONVERT);
+            for id in [core.i32_, core.rational, core.lossy, core.mut_] {
+                assert_eq!(meta::parse_rank_of(id), prec::ONE_RANK);
                 assert_eq!(meta::assoc_of(id), Assoc::Right);
             }
             assert_eq!(meta::parse_rank_of(core.negate), prec::NEGATE);
@@ -728,7 +731,7 @@ mod tests {
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, parse_rank), (NumType::I32 as u8, meta::prec::CONVERT));
+            assert_eq!((kind, parse_rank), (NumType::I32 as u8, meta::prec::ONE_RANK));
             assert!(!constructor.is_null() && destructor.is_null());
             let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
                 describe(types, core.type_)

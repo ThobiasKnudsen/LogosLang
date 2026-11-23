@@ -174,6 +174,8 @@ pub enum ParseError {
     GateNeedsValue,
     /// A value was gated twice by one word (`x := pub pub …`).
     DoubleGate,
+    /// A gate word before a word built after it, which it does not take (`mut try …`, `mut not a`).
+    GateBeforeLaterWord,
     /// `x = …` on a name not declared `mut`; carries the name.
     NotMutable(Box<String>),
     /// `p@ = …` through a pointer whose target type is not `mut`, an `@i32`.
