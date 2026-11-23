@@ -8098,6 +8098,31 @@ fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
     }
 }
 
+/// The nodes a run of `src` adds to the store after the core, as `LOGOS_STATS` reports them.
+fn store_nodes(src: &str) -> usize {
+    let out = logos().env("LOGOS_STATS", "1").arg(src).output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{src}: stderr: {err}");
+    err.lines()
+        .find_map(|line| line.strip_prefix("store delta: nodes="))
+        .and_then(|rest| rest.split(' ').next()?.parse().ok())
+        .unwrap_or_else(|| panic!("{src}: no store delta in stderr: {err}"))
+}
+
+/// R379, Thobias's Question 286: `T!`'s lines meet only one another, so an `i32!` already minted
+/// is found by its lines' names and types alone, and writing it again declares none of them. Its
+/// three lines would take nine nodes, a hole, a binding and the binding's name each, beyond what
+/// writing `i32` again takes.
+#[test]
+fn a_kept_t_bang_declares_its_lines_no_more() {
+    let again = |ty: &str| {
+        store_nodes(&format!("a := {ty}, b := {ty}, c := {ty}, 0"))
+            - store_nodes(&format!("a := {ty}, b := {ty}, 0"))
+    };
+    let (fallible, plain) = (again("i32!"), again("i32"));
+    assert!(fallible < plain + 9, "an `i32!` written again adds {fallible} nodes, `i32` {plain}");
+}
+
 /// R140: «A function that gives `T!` fills the union itself, and the program writes neither
 /// member: its last value of type `T` fills `value`», on both tiers, for a number, a record and
 /// a value whose type fills `free`, each `if` arm and a `return` alike.
