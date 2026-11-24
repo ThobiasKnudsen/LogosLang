@@ -1700,13 +1700,8 @@ fn the_array_chooser_stands_as_itself_before_a_type_with_no_instance_bytes() {
         ),
         ("g := fn () -> bool ( array == array ), g.compile(), g()".to_string(), "true"),
         ("f := fn (x := type ?) -> bool ( x == array ), f.compile(), f(array)".to_string(), "true"),
-        (format!("{keep}, t := type array keep, t == array"), "true"),
-        (
-            format!(
-                "{keep}, g := fn () -> bool ( t := type array keep, t == array ), g.compile(), g()"
-            ),
-            "true",
-        ),
+        (format!("{keep}, b := array keep == array, b"), "true"),
+        (format!("{keep}, g := fn () -> bool ( array keep == array ), g.compile(), g()"), "true"),
         ("a := array type [i32, i64], a[1]".to_string(), "i64"),
         (
             "f := fn () -> bool ( a := array type [i32, i64], a[0] == i32 ), f.compile(), f()"
@@ -2628,6 +2623,39 @@ fn two_spellings_of_a_pointer_type_are_one_type() {
          print «{x == y}»\nz := type k(@@i32)\nz == @@i32\n",
     );
     assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
+}
+
+/// `type` is a word of the one rank: the reads at discovery are built before it takes the type to
+/// its right, a call's result among them, and a word of a later rank is not taken, so `type i32 +
+/// x` is `(type i32) + x` (›Every identity has a `parse_rank`, and `(` works in two steps‹
+/// [[R259]]).
+#[test]
+fn type_takes_the_type_the_reads_after_it_built() {
+    let compiled = |body: &str| format!("f := fn () -> bool ( {body} ), f.compile(), f()");
+    let pointer = "x := type @i32, x == @i32";
+    let mint = "t := type +.mint(i64, i64), w := i64 5, (w + w).type == t";
+    for (src, printed) in [
+        (pointer.to_string(), "true"),
+        (compiled(pointer), "true"),
+        ("z := type @@i32, z == @@i32".to_string(), "true"),
+        (mint.to_string(), "true"),
+        (compiled(mint), "true"),
+        ("mk := fn () -> type ( i32 ), u := type mk(), u == i32".to_string(), "true"),
+        ("a := i32 3, (a) - 1".to_string(), "2"),
+        ("f := fn (a := i32 ?) -> i32 ( (a) - 1 ), f.compile(), f(3)".to_string(), "2"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{src}");
+    }
+    for src in [
+        "x := i32 1, t := type i32 + x, t",
+        "f := fn (x := i32 ?) -> bool ( t := type i32 + x, true ), f.compile(), f(1)",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("`+` takes numbers"), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]
@@ -8447,6 +8475,12 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
                 "a := g(i32 5), b := g(i32 2), print «{a.x} {a.y} {b.x} {b.y}»",
                 "5 0 2 9",
             ),
+            (
+                "g := fn (c := bool ?) -> i32 ( return = 1, x := ( if c ( i32 5 ) else ( i32 6 ) ), \
+                 h := fn () -> i32 ( i32 7 ), return = x + h(), return )",
+                "print «{g(true)} {g(false)}»",
+                "12 13",
+            ),
         ] {
             let src =
                 format!("{odd}, {bag}, {pt}, {g}, f := fn () -> void ( {body} ), {compile}f()");
@@ -8464,12 +8498,15 @@ fn the_result_place_is_written_and_read_before_the_function_leaves() {
 /// leaves still ends any other name it moves on every path (R70, rule 2). `return` is no result
 /// place outside a function, in a `defer`, in a value made once, in a `-> void` function or in a
 /// type's slot body, and no caller writes a member of a `T!` (R379); `return.tag` is read only, as
-/// a named union's `tag` is.
+/// a named union's `tag` is. A body that writes `return` has no line that gives it its value,
+/// before the write or after it, in a loop or an arm (R207).
 #[test]
 fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
     let unwritten = "error: the result is read before it is written: write it first among the \
                      function's own lines, `return.value = …` or `return.err = …` where it gives \
                      `T!`, `return = …` where it gives any other type";
+    let gives = "error: this body writes `return`, so it leaves only by `return` or a raise; no \
+                 line of it gives a value";
     let q = "q := type ( v := pub mut i32 ?, parse_rank = 60, parse = ( tape.is_constructed[0] = \
              true ) )";
     for (src, want) in [
@@ -8495,6 +8532,26 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
              f := fn (c := bool ?) -> bag ( a := bag(1), if c ( return a ), a.n = 2, bag(3) ), 0"
                 .to_string(),
             "1:130: error: `a` is dead here: it was moved or freed above".to_string(),
+        ),
+        (
+            "f := fn () -> i32! ( return.value = 1, i32 5, return ), 0".to_string(),
+            format!("1:40: {gives}"),
+        ),
+        (
+            "f := fn (c := bool ?) -> i32! ( if c ( i32 5 ), return.value = 1, return ), 0"
+                .to_string(),
+            format!("1:33: {gives}"),
+        ),
+        (
+            "f := fn (c := bool ?) -> i32! ( return.value = 1, if c ( i32 5 ), return ), 0"
+                .to_string(),
+            format!("1:51: {gives}"),
+        ),
+        (
+            "f := fn (k := mut i32 ?) -> i32! ( while k > 0 ( if k == 1 ( i32 5 ), \
+             return.value = k, k = k - 1 ), return ), 0"
+                .to_string(),
+            format!("1:36: {gives}"),
         ),
         (
             "f := fn () -> i32! ( return.value = 1, return.tag = 2, return ), 0".to_string(),
@@ -14428,7 +14485,7 @@ fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
             ),
             "4\n",
         ),
-        (format!("{pass}, t := mut type ?, t = i32, q := type t pass, q"), "i32\n"),
+        (format!("{pass}, t := mut type ?, t = i32, q := mut type ?, q = t pass, q"), "i32\n"),
         (format!("{pass}, ty := fn () -> type ( i32 ), (ty() pass) == i32"), "true\n"),
         (format!("{pass}, (i32 pass) == i32"), "true\n"),
         (format!("{pass}, g := fn (u := type ?) -> type ( u pass ), g.compile(), g(i32)"), "i32\n"),

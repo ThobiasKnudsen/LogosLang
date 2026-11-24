@@ -689,7 +689,8 @@ impl<'a> Runtime<'a> {
     }
 
     /// Lexes `tape` on to the cell `k` when it is the tape a running constructor was
-    /// handed; any other tape, and a read the tape already holds, is left as it stands.
+    /// handed, and builds a bracket held there; any other tape, and a read the tape already
+    /// holds built, is left as it stands.
     ///
     /// # Safety
     /// `tape` must be a live `ParsingTape`.
@@ -698,7 +699,8 @@ impl<'a> Runtime<'a> {
         tape: *mut crate::parse::ParsingTape,
         k: isize,
     ) -> Result<(), RunError> {
-        if k <= 0 || self.ctor_tape != Some(tape) || (*tape).at(k).is_some() {
+        let built = (*tape).at(k).is_some_and(|c| c.held.is_none());
+        if k <= 0 || self.ctor_tape != Some(tape) || built {
             return Ok(());
         }
         let Some(host) = self.lexer.and_then(|l| l.host) else { return Ok(()) };
