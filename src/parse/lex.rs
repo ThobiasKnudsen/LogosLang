@@ -89,17 +89,17 @@ pub(crate) fn lex_token<'c>(
 }
 
 /// Whether a value ends where `before` ends, the cells left of a token, nearest first: a built
-/// cell, a closer, a literal, `?`, a name, a function or a type that takes a value does; an
-/// opener, `,`, an operator, a prefix word or a type whose `parse` is written in Logos does not,
-/// and a tight read leaves what stands left of it (`x@`). What tells apart the two identities
-/// `-` spells (›`-` negates where a space stands before it and none after, or no value stands to
-/// its left; any other `-` subtracts‹ [[R157]]).
+/// cell, a held bracket, a closer, a literal, `?`, a name, a function or a type that takes a value
+/// does; an opener, `,`, an operator, a prefix word or a type whose `parse` is written in Logos
+/// does not, and a tight read leaves what stands left of it (`x@`). What tells apart the two
+/// identities `-` spells (›`-` negates where a space stands before it and none after, or no value
+/// stands to its left; any other `-` subtracts‹ [[R157]]).
 fn value_ends<'c>(types: &Core, before: impl IntoIterator<Item = &'c Cell>) -> bool {
     use crate::identities::meta;
     for cell in before {
         let id = cell.identity(types);
         let closer = types.brackets().into_iter().any(|(_, close)| close == id);
-        if cell.constructed || id == types.unknown || closer {
+        if cell.constructed || cell.held.is_some() || id == types.unknown || closer {
             return true;
         }
         // SAFETY: a lexed cell's identity is a dyad from the store; `kind_of` turns away one

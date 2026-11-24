@@ -164,6 +164,8 @@ pub enum ParseError {
     ResultPlaceInHeldLine,
     /// The result place read before a write fills it.
     ResultUnwritten,
+    /// A line gives its value to a body that writes the result place.
+    ResultWrittenGives,
     /// A node that gives nothing (a statement, a `-> void` call) stood where a value is
     /// required.
     StatementAsValue,

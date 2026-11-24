@@ -570,26 +570,35 @@ impl<'a> Parser<'a> {
     /// `value!`, `union ( value := value, err := error )` (›Target: errors are values (`T!`),
     /// handled by `if`, passed on by `try`…‹ [[R140]]); an error is placed at `at`.
     pub(crate) fn fallible_of(&mut self, value: DyadPtr, at: usize) -> Result<DyadPtr, ParseError> {
-        let depth = self.cx.scopes.depth();
-        let scope = self.open_scope();
-        let (mut lines, mut bindings) = (Vec::new(), Vec::new());
         let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
-        let declared = [
+        let own = [
             (crate::identities::union::TAG_LINE, u8_),
             ("value", value),
             ("err", self.types.error.value),
-        ]
-        .into_iter()
-        .try_for_each(|(name, ty)| self.declare_own_line(name, ty, at, &mut lines, &mut bindings));
+        ];
+        // Its lines meet only one another, so a kept mint needs them declared no more.
+        // SAFETY: each line's type is a type node.
+        let (place, kept) =
+            unsafe { self.find_union(own.map(|(name, ty)| (name.to_string(), ty))) }?;
+        if let Some(mint) = kept {
+            return Ok(mint);
+        }
+        let depth = self.cx.scopes.depth();
+        let scope = self.open_scope();
+        let (mut lines, mut bindings) = (Vec::new(), Vec::new());
+        let declared = own.into_iter().try_for_each(|(name, ty)| {
+            self.declare_own_line(name, ty, at, &mut lines, &mut bindings)
+        });
         let body = self.open_scope();
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
         }
         declared?;
-        // SAFETY: the lines are holes just built with their bindings, their types type nodes.
+        // SAFETY: the lines are holes just built with their bindings, their types type nodes, and
+        // `type_mint` keeps nothing at `place`.
         unsafe {
             self.check_members(&lines[1..], &bindings[1..]).map_err(|e| self.fail_at(at, e))?;
-            self.mint_union(scope, body, &lines, &bindings)
+            self.form_union(place, scope, body, &lines, &bindings)
         }
     }
 
@@ -631,17 +640,47 @@ impl<'a> Parser<'a> {
         lines: &[DyadPtr],
         bindings: &[DyadPtr],
     ) -> Result<DyadPtr, ParseError> {
+        let named = lines.iter().zip(bindings).map(|(&line, &binding)| {
+            (Binding::spelling(binding), crate::identities::hole::gated_type_in(line))
+        });
+        match self.find_union(named)? {
+            (_, Some(mint)) => Ok(mint),
+            (place, None) => self.form_union(place, scope, body, lines, bindings),
+        }
+    }
+
+    /// The place `type_mint` keeps the union of `lines`, each a spelling and its type as declared,
+    /// in order, and the mint kept there.
+    ///
+    /// # Safety
+    /// Each line's type must be a type node from the store.
+    unsafe fn find_union(
+        &mut self,
+        lines: impl IntoIterator<Item = (String, DyadPtr)>,
+    ) -> Result<(u64, Option<DyadPtr>), ParseError> {
+        let key: Vec<KeyPart> = lines
+            .into_iter()
+            .flat_map(|(name, ty)| [KeyPart::Name(name), KeyPart::Node(ty)])
+            .collect();
+        type_mint::find(self.rt.store, self.types, self.types.union.union, &key)
+            .map_err(ParseError::Run)
+    }
+
+    /// The union of `lines`, declared in `scope` by `bindings` with `body` below them, made and
+    /// kept at `place`.
+    ///
+    /// # Safety
+    /// As [`Self::mint_union`]; `place` must be the place [`Self::find_union`] gave for these
+    /// lines, where `type_mint` keeps nothing.
+    unsafe fn form_union(
+        &mut self,
+        place: u64,
+        scope: DyadPtr,
+        body: DyadPtr,
+        lines: &[DyadPtr],
+        bindings: &[DyadPtr],
+    ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        let mut key = Vec::with_capacity(lines.len() * 2);
-        for (&line, &binding) in lines.iter().zip(bindings) {
-            key.push(KeyPart::Name(Binding::spelling(binding)));
-            key.push(KeyPart::Node(crate::identities::hole::gated_type_in(line)));
-        }
-        let (place, kept) = type_mint::find(self.rt.store, types, types.union.union, &key)
-            .map_err(ParseError::Run)?;
-        if let Some(mint) = kept {
-            return Ok(mint);
-        }
         let mint = self.rt.store.alloc_leaf(types.type_);
         let extent = crate::identities::union::lay_out(types, mint, lines, bindings);
         let lines = crate::identities::array::build(self.rt.store, types.array_, lines);
@@ -1579,6 +1618,7 @@ impl<'a> Parser<'a> {
                 returns: Vec::new(),
                 result: std::ptr::null_mut(),
                 slot_body: false,
+                gives_at: None,
             })
             .collect();
 

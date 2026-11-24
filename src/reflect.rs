@@ -331,7 +331,7 @@ mod tests {
             ("42", prec::LITERAL, true),
             ("«t»", prec::LITERAL, true),
             ("return", prec::RETURN, true),
-            ("type", prec::READER, true),
+            ("type", prec::ONE_RANK, true),
             ("logos", prec::READER, true),
             ("language", prec::INERT, false),
             ("fn", prec::READER, true),
@@ -738,7 +738,7 @@ mod tests {
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, parse_rank), (meta::TYPEREC_TAG, meta::prec::READER));
+            assert_eq!((kind, parse_rank), (meta::TYPEREC_TAG, meta::prec::ONE_RANK));
             assert!(!constructor.is_null() && destructor.is_null());
         }
     }

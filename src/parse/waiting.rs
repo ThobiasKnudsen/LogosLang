@@ -610,13 +610,16 @@ impl<'a> Parser<'a> {
             kept.retain(|c| c.end() <= place.start || c.start >= place.end());
             kept.insert(at.min(kept.len()), *place);
         } else {
-            // A `dyad` name, or a group whose line waits, that ends what was kept is read again
-            // from the held text where the line runs, so it is read as one lexed there is, the
-            // parse of the node it holds then included, and the gates a group's line gives.
+            // A `dyad` name, a bracket not built yet, or a group whose line waits, that ends what
+            // was kept is read again from the held text where the line runs, so it is read as one
+            // lexed there is: the parse of the node it holds then included, what its line runs
+            // before a bracket run first, and the gates a group's line gives.
             let types = self.types;
             // SAFETY: a lexed cell's identity, and a built cell's node, are dyads from the store.
             let read_again = |c: &Cell| unsafe {
-                if c.constructed {
+                if c.held.is_some() {
+                    true
+                } else if c.constructed {
                     c.bracket && crate::dyad::ty(c.dyad) == types.waiting.line
                 } else {
                     crate::identities::read::read_kind(types, c.identity(types))
@@ -1047,6 +1050,7 @@ impl<'a> Parser<'a> {
                 returns: Vec::new(),
                 result: std::ptr::null_mut(),
                 slot_body: false,
+                gives_at: None,
             })
             .collect();
         let cx = Context {

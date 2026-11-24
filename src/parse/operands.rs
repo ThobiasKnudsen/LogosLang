@@ -227,7 +227,7 @@ impl<'a> Parser<'a> {
     /// Whether `id` continues what stands to its left, as its record says: an infix operator's
     /// first operand, a token's first side (`..`, `.`, `in`) or a type's first field is `lhs`.
     /// A quote, a `(`, a gate word or `else` names none, so it starts what follows it.
-    fn reads_left(&self, id: DyadPtr) -> bool {
+    pub(super) fn reads_left(&self, id: DyadPtr) -> bool {
         use crate::identities::meta;
         // An operation written in Logos reads to its left as the native version whose name it
         // took: stand-in for #500.
@@ -491,14 +491,18 @@ impl<'a> Parser<'a> {
     }
 
     /// The cell an operation takes at `k` of `tape`: a word there not built yet is started first
-    /// and builds what it takes (›Every identity has a `parse_rank`, and `(` works in two steps‹
-    /// [[R259]]). `None` where no operand stands within reach.
+    /// and builds what it takes, and a bracket held there is built (›Every identity has a
+    /// `parse_rank`, and `(` works in two steps‹ [[R259]]). `None` where no operand stands within
+    /// reach.
     pub(crate) fn side_at(
         &mut self,
         tape: &mut ParsingTape,
         k: isize,
     ) -> Result<Option<Cell>, ParseError> {
         loop {
+            if tape.in_reach(k).is_some() {
+                self.take_held(tape, k)?;
+            }
             let Some(&cell) = tape.in_reach(k) else { return Ok(None) };
             if self.is_operand_cell(&cell) {
                 return Ok(Some(cell));
@@ -1054,6 +1058,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Taken, ParseError> {
+        self.take_held(tape, 1)?;
         let Some(&cell) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
         };
@@ -1249,7 +1254,19 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         k: isize,
     ) -> Result<Option<Cell>, ParseError> {
-        let Some(cell) = self.cell_at(tape, k)? else { return Ok(None) };
+        let Some(mut cell) = self.cell_at(tape, k)? else { return Ok(None) };
+        // A call's result whose type has a parse of its own stands unbuilt, woken as that type's
+        // word, though the call built it: `type arithmetic.operation(«+», …)`.
+        let types = self.types;
+        if !cell.constructed
+            && cell.held.is_none()
+            && cell.binding(types).is_null()
+            && !cell.is_fresh(types)
+            && self.wakes(cell.dyad, true)
+        {
+            cell.constructed = true;
+            return Ok(Some(cell));
+        }
         Ok(self.is_operand_cell(&cell).then_some(cell))
     }
 

@@ -110,7 +110,7 @@ pub(crate) mod prec {
     /// `:=` and `=`: each reads its left and drives its right side to the boundary.
     pub const DECLARE: f64 = 93.0;
     /// The identities that read their own bracket or right side: `fn`, `for`, `while`, `defer`,
-    /// `type`, `if`, `scope`.
+    /// `if`, `scope`.
     pub const READER: f64 = 92.0;
     /// `(`: the discovery threshold.
     pub const OPEN: f64 = 90.0;
@@ -127,7 +127,7 @@ pub(crate) mod prec {
     /// below `:=`/`=`; the right cell is lexed lazily inside the constructor.
     pub const TIGHT: f64 = 92.5;
     /// One rank, built before every operation, of the words that take the nearest value to their
-    /// right and no operation: the number types and `rational_number`, the gate words `mut`,
+    /// right and no operation: `type`, the number types and `rational_number`, the gate words `mut`,
     /// `pub`, `static`, `own` and `lossy`, `alloc`, and `free` (stand-in for #384). Each associates
     /// right, so of two in a row the one nearer the value is built first (›Every identity has a
     /// `parse_rank`, and `(` works in two steps‹ [[R259]]).
