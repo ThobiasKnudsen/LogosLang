@@ -23,6 +23,17 @@ pub(super) enum Receiver {
     Deferred,
 }
 
+/// A `try` lexed and not yet built, whose right side is the rest of its expression: where its word
+/// starts, and the frame depth, the open scope and that scope's line it stands in.
+pub(super) struct TryCover {
+    start: usize,
+    frames: usize,
+    open: usize,
+    line: usize,
+    /// A `T!` on its right gave its value through it.
+    took: bool,
+}
+
 /// The once-per-run registry of files read as Logos: a file loads once per run, every reader
 /// sharing the one loaded section, and a path met again while its own load is in progress is a
 /// cycle.
@@ -454,9 +465,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `try` and the value to its right, which gives a `T!`, inside a function that gives one or
-    /// at the top level (›Target: errors are values (`T!`), handled by `if`, passed on by
-    /// `try`…‹ [[R140]]).
+    /// `try` and the value to its right, inside a function that gives a `T!` or at the top level:
+    /// over a `T!`, its value, the error passed on; over a value a `T!` on its right gave its value
+    /// to, that value (›Target: errors are values (`T!`), handled by `if`, passed on by `try`…‹
+    /// [[R140]]).
     pub(crate) fn construct_try(
         &mut self,
         tape: &mut ParsingTape,
@@ -465,24 +477,87 @@ impl<'a> Parser<'a> {
         let Some(&right) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
         };
-        let operand = self.operand_right(tape)?;
+        let operand = self.take_right(tape);
+        let took = self.close_try(at);
+        let operand = operand?;
+        let node = match self.fallible_parts(operand) {
+            Some(fallible) => self.try_over(operand, fallible, at)?,
+            None if took => operand,
+            None => return Err(self.fail_at(right.start, ParseError::TryNeedsFallible)),
+        };
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// Notes a `try` lexed at `start`: until it is built, a `T!` read on its right in its
+    /// expression gives its value through it ([`Self::under_try`]).
+    pub(super) fn open_try(&mut self, start: usize) {
+        let open = self.cx.open.len() - 1;
+        let line = self.cx.open[open].lines;
+        let frames = self.cx.frames.len();
+        self.cx.tries.push(TryCover { start, frames, open, line, took: false });
+    }
+
+    /// Ends the `try` lexed at `at`, its right side built: whether a `T!` there gave its value
+    /// through it. A line read again lexed it again, and its newest note is the one built.
+    fn close_try(&mut self, at: usize) -> bool {
+        let took = self.cx.tries.iter().rev().find(|t| t.start == at).is_some_and(|t| t.took);
+        self.cx.tries.retain(|t| t.start != at);
+        took
+    }
+
+    /// `operand`, read at `at`, as the `try` whose right side holds it reads it: a `T!` gives its
+    /// value, its error passed on; any other operand, or one on the right of no `try` in the same
+    /// function and line, is itself (›Target: errors are values (`T!`), handled by `if`, passed on
+    /// by `try`…‹ [[R140]]).
+    pub(super) fn under_try(&mut self, operand: DyadPtr, at: usize) -> Result<DyadPtr, ParseError> {
+        if self.cx.tries.is_empty() {
+            return Ok(operand);
+        }
+        let frames = self.cx.frames.len();
+        let open = &self.cx.open;
+        let cover = self.cx.tries.iter().rposition(|t| {
+            t.frames == frames
+                && t.start < at
+                && open.get(t.open).is_some_and(|s| s.lines == t.line)
+        });
+        let Some(i) = cover else { return Ok(operand) };
+        let Some(fallible) = self.fallible_parts(operand) else { return Ok(operand) };
+        let node = self.try_over(operand, fallible, self.cx.tries[i].start)?;
+        self.cx.tries[i].took = true;
+        Ok(node)
+    }
+
+    /// The `T!` `operand` gives, with its `value` and `err` members; `None` for any other operand.
+    fn fallible_parts(&self, operand: DyadPtr) -> Option<[DyadPtr; 3]> {
         let types = self.types;
-        // SAFETY: `operand` is a reduced dyad off the tape, its output type null or a type node.
-        let members = unsafe {
+        // SAFETY: `operand` is a reduced dyad, its output type null or a type node.
+        unsafe {
+            if types.is_hole(operand) {
+                return None;
+            }
             let fallible = crate::identities::read::output_type(types, operand);
-            let members = crate::identities::union::fallible_members(types, fallible);
-            members.filter(|_| !types.is_hole(operand)).map(|m| (fallible, m))
-        };
-        let Some((fallible, (value, err))) = members else {
-            return Err(self.fail_at(right.start, ParseError::TryNeedsFallible));
-        };
+            let (value, err) = crate::identities::union::fallible_members(types, fallible)?;
+            Some([fallible, value, err])
+        }
+    }
+
+    /// `try` over `operand`, of the `T!` whose members `fallible` names, its word at `at`: the
+    /// operand's value, its error passed on to whoever receives one here.
+    fn try_over(
+        &mut self,
+        operand: DyadPtr,
+        fallible: [DyadPtr; 3],
+        at: usize,
+    ) -> Result<DyadPtr, ParseError> {
         let receiver = match self.receiver() {
             Receiver::Caller { output, err } => Some((output, err)),
             Receiver::CommandLine => None,
             Receiver::Nobody => return Err(self.fail_at(at, ParseError::TryOutsideFallible)),
             Receiver::Deferred => return Err(self.fail_at(at, ParseError::ErrorInDefer)),
         };
-        // SAFETY: as above.
+        let types = self.types;
+        // SAFETY: `operand` is a reduced dyad from the store.
         let kept = unsafe {
             let path = crate::identities::drop_model::handed_through(types, operand);
             self.line_made().contains(&path[0])
@@ -490,7 +565,6 @@ impl<'a> Parser<'a> {
         // SAFETY: `operand` gives `fallible`, whose members are `value` and `err`, and the
         // receiver's output is a `T!` with its `err` member.
         let (node, ret) = unsafe {
-            let fallible = [fallible, value, err];
             let store = &mut *self.rt.store;
             crate::identities::try_mod::build(store, types, operand, fallible, receiver, kept)
         };
@@ -498,8 +572,7 @@ impl<'a> Parser<'a> {
             // SAFETY: `ret` is the `return` node just built.
             unsafe { self.note_return(ret, at) }?;
         }
-        tape.place(node);
-        Ok(Constructed::Placed)
+        Ok(node)
     }
 
     /// The `«…»` to the right of `print`, `abort` or a raise, read into its parts: text runs, and

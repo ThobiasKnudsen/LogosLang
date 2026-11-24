@@ -454,9 +454,16 @@ impl<'a> Parser<'a> {
                 None => return Ok(None),
             }
         }
+        // A `T!` on the right of a `try` gives its value there, and the side stands for the read.
         let mut names = Vec::with_capacity(N);
-        for &cell in &cells {
-            names.push(self.name_read(cell, taker)?);
+        for (cell, k) in cells.iter_mut().zip(ks) {
+            let name = self.name_read(*cell, taker)?;
+            let read = self.under_try(name, cell.start)?;
+            if read != name {
+                tape.at_mut(k).expect("a side stands at its offset").over(read);
+                cell.over(read);
+            }
+            names.push(read);
         }
         let mut gives = Vec::with_capacity(N);
         for (&name, cell) in names.iter().zip(&cells) {
@@ -1221,9 +1228,9 @@ impl<'a> Parser<'a> {
         Some(!(def.in_parse || def.in_free))
     }
 
-    /// The read a prefix word that puts its side somewhere makes (`return x`, `alloc`'s count and
-    /// value): its side as it stands, which lands there, so a word there not built yet is built
-    /// first, as `move p` in `return move p`.
+    /// The read a prefix word that takes its side whole makes (`return x`, `try x`, `alloc`'s
+    /// count and value): its side as it stands, so a word there not built yet is built first, as
+    /// `move p` in `return move p`.
     pub(crate) fn take_right(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
         let Some(cell) = self.side_at(tape, 1)? else {
             return Err(ParseError::MissingOperand);
@@ -1233,8 +1240,8 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
-    /// The read a prefix operation makes of its side (`not x`, a prefix `-`, `try x`): read as an
-    /// infix reads each of its sides ([`Self::operands`]).
+    /// The read a prefix operation makes of its side (`not x`, a prefix `-`): read as an infix
+    /// reads each of its sides ([`Self::operands`]).
     pub(crate) fn operand_right(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
         let Some([operand]) = self.operands(tape, [1], Taker::Operation)? else {
             return Err(ParseError::MissingOperand);

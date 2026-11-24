@@ -593,12 +593,11 @@ pub fn parse_message(e: &ParseError) -> String {
              line"
                 .into()
         }
-        ParseError::UnwrittenWholeNumber => {
-            "a float may be no number (NaN) or infinite, so its conversion into an integer type \
-             gives a value or an error, `i32!`, which this place cannot hold: write the \
-             conversion, `try i32 y`"
-                .into()
-        }
+        ParseError::UnwrittenWholeNumber(place) => format!(
+            "a float may be no number (NaN) or infinite, so its conversion into `{place}` gives \
+             a value or an error, `{place}!`, which this place cannot hold: write the conversion \
+             before this value and pass its error on, `try {place} …`"
+        ),
         ParseError::ErrorInDefer => {
             "a `defer` runs as its scope ends, where nobody receives an error, so it holds no raise \
              and no `try`; `abort «…»` stops the program"

@@ -1710,7 +1710,7 @@ impl<'a> Parser<'a> {
         };
         let scope = self.cx.scopes.current().expect("`&` parses in an open scope");
         let binding = self.mint_binding(std::ptr::null_mut(), scope, b"");
-        let declared = self.land_at_binding(binding, value, false)?;
+        let declared = self.land_at_binding(binding, value, false, false)?;
         // Only a landing that lays out bytes holds the value, so a refusal here holds nothing.
         if !types.is_storage(binding) {
             return Err(ParseError::BadAddressOf);

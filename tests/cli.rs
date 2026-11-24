@@ -6324,7 +6324,7 @@ fn an_element_has_an_address_and_taking_it_checks_the_index() {
 #[test]
 fn declaring_from_a_box_copies_it() {
     let (echoes, stderr) = repl(
-        "a := mut type ?\na = i32\nx := mut type ?\nx = a\nx = f64\nprint «{a == i32}»\nprint «{x == f64}»\n\
+        "a := mut type ?\na = i32\nx := mut type a\nx = f64\nprint «{a == i32}»\nprint «{x == f64}»\n\
           d := mut dyad ?\nd = i32\ne := mut d\ne = f64\nprint «{d == i32}»\ne == f64\n",
     );
     assert_eq!(echoes, ["true", "true", "true", "true"], "stderr: {stderr}");
@@ -8998,6 +8998,77 @@ fn a_try_at_the_top_level_hands_the_error_to_the_command_line() {
     assert!(stderr.contains(refused), "stderr: {stderr}");
 }
 
+/// R140: one `try` covers every `T!` on its right in its expression, up to `,` or the end of its
+/// bracket: each gives its value, and the first error is passed on before anything after it runs;
+/// a `T!` before the `try`, after its bracket or in another function's body is not covered; on both
+/// tiers.
+#[test]
+fn one_try_covers_every_t_bang_on_its_right_in_its_expression() {
+    let big = "error.big := «a number is too big»";
+    let half =
+        "half := fn (n := i32 ?) -> i32! ( if n > 100 ( error.big «{n} is too big» ), n / 2 )";
+    let loud = "loud := fn (n := i32 ?) -> i32! ( print «loud {n}», n )";
+    let k = "k := fn (n := i32 ?) -> i32 ( n * 2 )";
+    for compile in ["", "g.compile(), "] {
+        for (g, call, want) in [
+            (
+                "g := fn (a := i32 ?, b := i32 ?) -> i32! ( try half(a) + half(b) )",
+                "r := g(8, 10), s := g(300, 10), t := g(8, 400), \
+                 print «{r.value} {s.err[0].message} {s.err.size} {t.err[0].message}»",
+                "9 300 is too big 2 400 is too big\n",
+            ),
+            (
+                "g := fn (a := i32 ?) -> i32! ( try half(a) + loud(1) )",
+                "print «{g(300) holds err}», print «{g(8).value}»",
+                "true\nloud 1\n5\n",
+            ),
+            (
+                "g := fn (a := i32 ?) -> i32! ( x := half(a), try x * 3 + k(half(a)) )",
+                "print «{g(8).value} {g(300).err[0].message}»",
+                "20 300 is too big\n",
+            ),
+            (
+                "g := fn (a := i32 ?) -> i32! ( s := mut i32 0, for i in 0..3 ( s = try s + half(a + i) ), s )",
+                "print «{g(8).value} {g(299).err[0].message}»",
+                "13 299 is too big\n",
+            ),
+            (
+                "g := fn (c := bool ?) -> i32! ( try if c (half(8)) else (half(300)) )",
+                "print «{g(true).value} {g(false) holds err}»",
+                "4 true\n",
+            ),
+        ] {
+            let src = format!("{big}, {half}, {loud}, {k}, {g}, {compile}{call}");
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}\nstderr: {stderr}");
+        }
+    }
+    let src = format!(
+        "{big}, {half}, x := try half(8) + half(2), print «{{x}}», y := try half(4) + half(300), \
+         print «never»"
+    );
+    let (code, stdout, stderr) = run_line(&src);
+    assert_eq!((code, stdout.as_str()), (Some(1), "5\n"), "stderr: {stderr}");
+    assert!(stderr.contains("run error: error.big: 300 is too big"), "stderr: {stderr}");
+
+    let plus = "error.operands: `+` takes numbers, and this type is none";
+    let no_t_bang =
+        "`try` passes on the error of a value that holds a value or an error, `T!`, and \
+                     this value is no `T!`";
+    for (tail, message) in [
+        ("x := half(2) + try half(8)", plus),
+        ("x := (try half(8)) + half(2)", plus),
+        ("x := try half(8), y := half(2) + 1", plus),
+        ("x := try ( f := fn () -> i32 ( half(8) + 1 ), half(2) + f() )", plus),
+        ("r := half(8), x := try r.value + 1", no_t_bang),
+    ] {
+        let src = format!("{big}, {half}, {tail}");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}\nstderr: {stderr}");
+        assert!(stderr.contains(message), "{src}\nstderr: {stderr}");
+    }
+}
+
 /// A `static` value and an `immediate` operand run once, where they are parsed, as a line the
 /// pass runs early: a `try` there reads the value its operand gave, and what the run made beside
 /// the value that leaves it ends with its line (›The pass runs only as far as it must, in order,
@@ -9592,12 +9663,19 @@ fn a_float_converted_into_an_integer_type_gives_a_value_or_error_no_whole_number
         (
             "y := lossy (f64 2.5), n := mut i32 ?, n = y",
             "",
-            "its conversion into an integer type gives a value or an error, `i32!`",
+            "its conversion into `i32` gives a value or an error, `i32!`",
+        ),
+        (
+            "y := lossy (f64 2.5), n := mut u8 0, n = y",
+            "",
+            "1:43: error: a float may be no number (NaN) or infinite, so its conversion into `u8` \
+             gives a value or an error, `u8!`, which this place cannot hold: write the conversion \
+             before this value and pass its error on, `try u8 …`",
         ),
         (
             "g := fn (a := i32 ?) -> i32 ( a + 1 ), y := lossy (f64 2.5), g(y)",
             "",
-            "write the conversion, `try i32 y`",
+            "write the conversion before this value and pass its error on, `try i32 …`",
         ),
         ("g := fn (a := i32 ?) -> i32 ( a + 1 ), y := lossy (f64 2.5), g(try i32 y)", "3\n", ""),
         // A `dyad` whose type is known only when the program runs: stand-in for #452.
@@ -13205,10 +13283,7 @@ fn type_takes_its_whole_right_side() {
         ("f := fn () -> i32 ( a := i32 5, t := type a.type, t 3 ), f.compile(), f()".into(), "3"),
         ("n := i32 1, x := type if n == 1 (i32) else (i64), x".into(), "i32"),
         ("m := hashmap type -> type, m[i32] = i64, x := type m[i32], x".into(), "i64"),
-        (
-            "m := hashmap type -> type, m[i32] = i64, x := mut type, x = m[i32], x = f64, x".into(),
-            "f64",
-        ),
+        ("m := hashmap type -> type, m[i32] = i64, x := mut type m[i32], x = f64, x".into(), "f64"),
         ("k := fn (t := type ?) -> type ( t ), x := type k(type i64), x".into(), "i64"),
         ("f := fn (t := type ?) -> i32 ( x := type t, y := x 5, y ), f(i32)".into(), "5"),
         // Inside a condition the value is the one lexeme before the body's bracket.
@@ -13220,6 +13295,50 @@ fn type_takes_its_whole_right_side() {
     let (code, stdout, stderr) = run_line("x := type i32 5, x");
     assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
     let message = "1:11: error: the declared or assigned type must be a type value";
+    assert!(stderr.contains(message), "stderr: {stderr}");
+}
+
+/// ›A `type ?` place is a box, written any number of times‹ [[R291]]: a `mut` name declared with a
+/// type holds it in a place `=` writes, a type written bare or after `type`, however the declared
+/// type is written, on both tiers; a name nothing writes is the type itself (›Every type is minted
+/// by its contents through `type_mint`; the name that holds a `type ( … )` gives it its identity‹
+/// [[R383]]).
+#[test]
+fn a_mut_name_that_holds_a_type_is_written() {
+    let map = "m := mut hashmap type -> type, m[i32] = i64";
+    let mk = "mk := fn () -> type ( i64 )";
+    let branch = "f := fn (c := bool ?) -> type ( x := mut type i32, if c ( x = f64 ), x )";
+    for (src, want) in [
+        ("x := mut type i32, x = f64, x".into(), "f64"),
+        ("x := mut type i32, x = type f64, x".into(), "f64"),
+        ("x := mut type i32, y := x 5, y".into(), "5"),
+        ("f := fn () -> i32 ( x := mut type i32, y := x 5, y ), f()".into(), "5"),
+        ("x := mut type i32, x = f64, y := x 2.5, y.type".into(), "f64"),
+        ("x := mut type i32, for i in 0..3 ( x = i64 ), x".into(), "i64"),
+        ("x := mut type i32, x.type".into(), "mut type"),
+        ("x := mut type i32, x == i32".into(), "true"),
+        (format!("{map}, x := mut type m[i32], x = f64, x"), "f64"),
+        (format!("{mk}, x := mut type mk(), x = f64, x"), "f64"),
+        ("b := mut type ?, b = i64, t := mut type b, t = f64, t".into(), "f64"),
+        ("f := fn () -> type ( x := mut type i32, x = f64, x ), f()".into(), "f64"),
+        ("f := fn () -> type ( x := mut type i32, x = f64, x ), f.compile(), f()".into(), "f64"),
+        (format!("{branch}, print «{{f(true)}} {{f(false)}}»"), "f64 i32"),
+        (format!("{branch}, f.compile(), print «{{f(true)}} {{f(false)}}»"), "f64 i32"),
+        ("t := type i32, t == i32".into(), "true"),
+        ("t := type i32, y := t 5, y".into(), "5"),
+        ("f := fn () -> i32 ( t := type i32, y := t 5, y ), f.compile(), f()".into(), "5"),
+        ("g := fn (t := type ?) -> type ( t ), g(i32)".into(), "i32"),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    let (code, stdout, stderr) = run_line("x := type i32, x = f64, x");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("1:20: error: `x` is not `mut`"), "stderr: {stderr}");
+    // `x` may be written before `x 5` runs, so that line waits for the run and stays interpreted.
+    let src = "f := fn () -> i32 ( x := mut type i32, y := x 5, y ), f.compile(), f()";
+    let (code, stdout, stderr) = run_line(src);
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    let message = "compile() failed: a line of this function is parsed only when it runs";
     assert!(stderr.contains(message), "stderr: {stderr}");
 }
 

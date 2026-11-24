@@ -102,6 +102,8 @@ struct Context<'a> {
     /// The frame depth of each `defer` body open around the position, innermost last: an error
     /// raised or passed on at that depth reaches nobody.
     deferring: Vec<usize>,
+    /// The `try`s lexed and not yet built, innermost last.
+    tries: Vec<quotes::TryCover>,
     /// How many deferred-or-repeated bodies enclose the position, where parse order and run order
     /// do not coincide, so a part runs in the pass only by [`Parser::runs_in_pass`]. Comptime-taken
     /// `if` branches do not count.
@@ -217,6 +219,7 @@ impl<'a> Context<'a> {
             run_fields: None,
             frames: Vec::new(),
             deferring: Vec::new(),
+            tries: Vec::new(),
             runtime_depth: 0,
             each_pass: false,
             each_pass_read: false,
