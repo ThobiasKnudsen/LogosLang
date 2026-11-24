@@ -152,8 +152,8 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::ResultPlaceInSlot => {
-            "`return` is read and written as the result only in a `fn` body, not yet in a type's \
-             `run`, `parse` or `free` body"
+            "`return` is read and written as the result only in a `fn` body or a type's `run` \
+             body, not in its `parse` or `free` body"
                 .into()
         }
         ParseError::ResultPlaceOfNode => {

@@ -8,6 +8,17 @@ use super::*;
 use crate::dyad;
 use crate::identities::drop_model::{teardown_of, teardown_of_type, ExitItem, Teardown};
 
+/// What follows a member in a path, which decides whether the path reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Next {
+    /// `=`: the path is written.
+    Write,
+    /// `.` and another member; `checked_after` where that step checks the path again.
+    Dot { checked_after: bool },
+    /// Anything else: the place is read.
+    Read,
+}
+
 impl<'a> Parser<'a> {
     /// A write into a name is granted by its own binding, and into a place reached by a path by
     /// every binding along it; the constructor's fill of its fresh node is granted; a write of a
@@ -494,20 +505,30 @@ impl<'a> Parser<'a> {
     /// `ended.binding` must be a name's binding dyad and `ended.path` field bindings; `node` a
     /// `move` or `free` node over the path's place.
     unsafe fn end_path(&mut self, ended: Ended, node: DyadPtr) {
-        let name = Binding::read(ended.binding);
         let mut path = ended.binding;
         for &field in &ended.path {
-            let identity = Binding::read(field).dyad;
-            let mut below = Binding::path(path, identity);
-            if below.is_null() {
-                let spelled = format!("{}.{}", Binding::spelling(path), Binding::spelling(field));
-                below = self.mint_binding(identity, name.scope, spelled.as_bytes());
-                Binding::set_start(below, name.start);
-                Binding::add_path(self.rt.store, self.types.array_, path, below);
-            }
-            path = below;
+            path = self.path_below(ended.binding, path, field);
         }
         self.cx.scopes.mark_dead(path, node);
+    }
+
+    /// The path binding under `path`, the name `name` or a path binding under it, that ends at the
+    /// field binding `field`, made the first time a path reaches it.
+    ///
+    /// # Safety
+    /// `name` must be a name's binding dyad, `path` it or a path binding under it.
+    unsafe fn path_below(&mut self, name: DyadPtr, path: DyadPtr, field: DyadPtr) -> DyadPtr {
+        let identity = Binding::read(field).dyad;
+        let below = Binding::path(path, identity);
+        if !below.is_null() {
+            return below;
+        }
+        let name = Binding::read(name);
+        let spelled = format!("{}.{}", Binding::spelling(path), Binding::spelling(field));
+        let below = self.mint_binding(identity, name.scope, spelled.as_bytes());
+        Binding::set_start(below, name.start);
+        Binding::add_path(self.rt.store, self.types.array_, path, below);
+        below
     }
 
     /// The path binding a field path `lhs` from the name `root` reaches under its entry, null
@@ -594,8 +615,12 @@ impl<'a> Parser<'a> {
         }
         let Some((start, len)) = self.lex_spelling() else { return Ok(()) };
         let source = self.cx.source;
-        let next = self.next_identity();
-        let (writes, dotted) = (next == Some(self.types.assign), next == Some(self.types.dot_));
+        // No later step of a held line is checked where it is written, so this one checks for them.
+        let next = match self.next_identity() {
+            Some(id) if id == self.types.assign => Next::Write,
+            Some(id) if id == self.types.dot_ => Next::Dot { checked_after: false },
+            _ => Next::Read,
+        };
         // SAFETY: `binding` is a binding dyad from the store, which `.` reads as its own place.
         unsafe {
             self.check_name_field(
@@ -603,8 +628,8 @@ impl<'a> Parser<'a> {
                 std::ptr::null_mut(),
                 binding,
                 &source[start..start + len],
-                writes,
-                dotted,
+                next,
+                std::ptr::null_mut(),
             )
         }
         .map(|_| ())
@@ -627,7 +652,13 @@ impl<'a> Parser<'a> {
             }
         }
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
-        self.cx.last_write = LastWrite { node, scope, place: place.dyad, fill: place.target };
+        // A path is the place's when every step of it was a member by name, from a name.
+        // SAFETY: a cell's path is null or an `array` node.
+        let from_name = !place.root.is_null()
+            && !place.path.is_null()
+            && unsafe { crate::identities::array::items(place.path) }.first() == Some(&place.root);
+        let path = if from_name { place.path } else { std::ptr::null_mut() };
+        self.cx.last_write = LastWrite { node, scope, place: place.dyad, fill: place.target, path };
     }
 
     /// The type a check has narrowed the cell, line or field to, the innermost check first.
@@ -675,30 +706,19 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `item` must be a reduced dyad from the store.
     pub unsafe fn fill_if_sibling_write(&mut self, item: DyadPtr) {
-        let LastWrite { node, scope, place, fill } = self.cx.last_write;
+        let LastWrite { node, scope, place, fill, path } = self.cx.last_write;
         if item.is_null() || item != node {
             return;
         }
-        if !fill.0.is_null() {
-            let (binding, field) = fill;
-            let rec = Binding::read(binding);
-            if rec.scope != scope || rec.unwritten.is_null() {
-                return;
-            }
-            // A union is one place: a write of any member fills it.
-            let whole = crate::identities::union::is_union(self.types, Binding::read(field).frame);
-            let field = Binding::read(field).dyad;
-            let left: Vec<DyadPtr> = crate::identities::array::items(rec.unwritten)
-                .iter()
-                .copied()
-                .filter(|&f| !whole && f != field)
-                .collect();
-            if left.is_empty() {
-                Binding::set_unwritten(binding, std::ptr::null_mut());
-                Binding::set_unread(binding, false);
-            } else {
-                let arr = crate::identities::array::build(self.rt.store, self.types.array_, &left);
-                Binding::set_unwritten(binding, arr);
+        let (name, fields) = if path.is_null() {
+            (fill.0, vec![fill.1])
+        } else {
+            let path = crate::identities::array::items(path);
+            (path[0], path[1..].to_vec())
+        };
+        if !name.is_null() {
+            if Binding::read(name).scope == scope {
+                self.fill_path(name, &fields);
             }
             return;
         }
@@ -711,6 +731,72 @@ impl<'a> Parser<'a> {
         }
         Binding::set_unread(place, false);
         Binding::set_unwritten(place, std::ptr::null_mut());
+    }
+
+    /// A sibling write of the place the field bindings `fields` reach from the name `name`: each
+    /// place along it still unwritten under the one above is tracked by its own path binding, its
+    /// type's fields unwritten from the first write into it; the last field is filled, and each
+    /// place it completes is filled in the place above it (›A value of several fields is filled
+    /// one field at a time‹ [[R105]]). A place already written is left as it is.
+    ///
+    /// # Safety
+    /// `name` must be a name's binding dyad; `fields` field bindings along its value.
+    unsafe fn fill_path(&mut self, name: DyadPtr, fields: &[DyadPtr]) {
+        let Some((&last, through)) = fields.split_last() else { return };
+        let mut places = vec![name];
+        for &field in through {
+            let place = *places.last().expect("starts with the name");
+            let identity = Binding::read(field).dyad;
+            let unwritten = Binding::read(place).unwritten;
+            if unwritten.is_null()
+                || !crate::identities::array::items(unwritten).contains(&identity)
+            {
+                return;
+            }
+            let below = self.path_below(name, place, field);
+            if Binding::read(below).unwritten.is_null() {
+                let ty = crate::identities::hole::type_in(identity);
+                if !crate::identities::meta::is_record_type(ty) {
+                    return;
+                }
+                self.leave_fields_unwritten(below, ty, false);
+            }
+            places.push(below);
+        }
+        for (&place, &field) in
+            places.iter().rev().zip(std::iter::once(&last).chain(through.iter().rev()))
+        {
+            if !self.fill_field(place, field) {
+                return;
+            }
+        }
+    }
+
+    /// Fills the field `field` of the place `place` tracks, or every field of a union, which is one
+    /// place: a write of any member fills it. Whether the place is now written whole.
+    ///
+    /// # Safety
+    /// `place` must be a binding dyad from the store, `field` a field binding of its value.
+    unsafe fn fill_field(&mut self, place: DyadPtr, field: DyadPtr) -> bool {
+        let unwritten = Binding::read(place).unwritten;
+        if unwritten.is_null() {
+            return true;
+        }
+        let whole = crate::identities::union::is_union(self.types, Binding::read(field).frame);
+        let identity = Binding::read(field).dyad;
+        let left: Vec<DyadPtr> = crate::identities::array::items(unwritten)
+            .iter()
+            .copied()
+            .filter(|&f| !whole && f != identity)
+            .collect();
+        if left.is_empty() {
+            Binding::set_unwritten(place, std::ptr::null_mut());
+            Binding::set_unread(place, false);
+            return true;
+        }
+        let arr = crate::identities::array::build(self.rt.store, self.types.array_, &left);
+        Binding::set_unwritten(place, arr);
+        false
     }
 
     /// `v := T ?` of a type with fields: each field waits for its own write, those with a
@@ -733,29 +819,29 @@ impl<'a> Parser<'a> {
         Binding::set_unwritten(binding, arr);
     }
 
-    /// `v.f` where `v` is a name, `root`, or a field path from the name `chain`: the name and
-    /// the field's binding it reaches when `v` is a name, nulls otherwise. A read of a field
-    /// `v := T ?` left unwritten is refused, a write let through. Where a path under `v` ended,
-    /// `v.f` is refused if `f`'s did, and so is `v.f` read whole, with no `.` after it
-    /// (`dotted`), if a path under it did; a member that is no field, which takes `v` whole, is
-    /// refused too.
+    /// `v.f` where `v` is a name, `root`, or a field path from the name `chain`, `left_path` the
+    /// bindings it was reached by, the name first: the name and the field's binding it reaches
+    /// when `v` is a name, nulls otherwise. A read of a field still unwritten is refused at the
+    /// path's last step, a write let through: no step of a write path is a read (›A value of
+    /// several fields is filled one field at a time‹ [[R105]]). Where a path under `v` ended, `v.f`
+    /// is refused if `f`'s did, and so is `v.f` read whole, with no `.` after it, if a path under
+    /// it did; a member that is no field, which takes `v` whole, is refused too.
     ///
     /// # Safety
-    /// `root` and `chain` must be null or binding dyads from the store; `lhs` a reduced dyad.
+    /// `root` and `chain` must be null or binding dyads from the store; `lhs` a reduced dyad;
+    /// `left_path` null or an `array` of binding dyads.
     pub(super) unsafe fn check_name_field(
         &self,
         root: DyadPtr,
         chain: DyadPtr,
         lhs: DyadPtr,
         name: &str,
-        writes: bool,
-        dotted: bool,
+        next: Next,
+        left_path: DyadPtr,
     ) -> Result<(DyadPtr, DyadPtr), ParseError> {
+        let dotted = matches!(next, Next::Dot { .. });
         let none = (std::ptr::null_mut(), std::ptr::null_mut());
         let parent = if root.is_null() { self.reached_path(lhs, chain) } else { root };
-        if parent.is_null() {
-            return Ok(none);
-        }
         let t = if root.is_null() {
             crate::identities::read::output_type(self.types, lhs)
         } else {
@@ -770,7 +856,7 @@ impl<'a> Parser<'a> {
                 crate::identities::array::items(crate::identities::meta::record_fields_of(t));
             scope.resolve(self.trie, name).ok().filter(|r| fields.contains(&r.identity))
         };
-        if Binding::has_ended_path(parent) {
+        if !parent.is_null() && Binding::has_ended_path(parent) {
             let dead = match &field {
                 None => Some(Binding::spelling(parent)),
                 Some(r) => {
@@ -785,20 +871,68 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::Resolve(ResolveError::Dead(dead)));
             }
         }
-        let Some(field) = field.filter(|_| !root.is_null()) else {
-            return Ok(none);
+        // The name the path starts at and the fields it steps through, this one last; a member
+        // that is no field takes the place before it whole.
+        let mut fields = Vec::new();
+        let from = if root.is_null() {
+            let before = if left_path.is_null() {
+                &[][..]
+            } else {
+                crate::identities::array::items(left_path)
+            };
+            match before.split_first() {
+                Some((&first, rest)) if !chain.is_null() && first == chain => {
+                    fields.extend_from_slice(rest);
+                    chain
+                }
+                _ => std::ptr::null_mut(),
+            }
+        } else {
+            root
         };
-        let unwritten = Binding::read(root).unwritten;
-        if !writes
-            && !unwritten.is_null()
-            && crate::identities::array::items(unwritten).contains(&field.identity)
-        {
-            return Err(ParseError::Unwritten(Box::new(format!(
-                "{}.{name}",
-                Binding::spelling(root)
-            ))));
+        fields.extend(field.as_ref().map(|f| f.binding));
+        let reads = match (&field, next) {
+            (None, _) | (Some(_), Next::Read) => true,
+            (Some(_), Next::Write) => false,
+            (Some(_), Next::Dot { checked_after }) => !checked_after,
+        };
+        if reads && !from.is_null() && !fields.is_empty() {
+            if let Some(path) = self.unwritten_along(from, &fields) {
+                return Err(ParseError::Unwritten(Box::new(path)));
+            }
         }
-        Ok((root, field.binding))
+        match field.filter(|_| !root.is_null()) {
+            Some(field) => Ok((root, field.binding)),
+            None => Ok(none),
+        }
+    }
+
+    /// The first place along the path from the name `from` through the field bindings `fields`
+    /// that sibling writes have not filled, spelled `v.a.b`: one still unwritten under the place
+    /// above it, or the last, written only in part; `None` where the path reaches written bytes.
+    ///
+    /// # Safety
+    /// `from` must be a binding dyad from the store, `fields` field bindings along its value.
+    unsafe fn unwritten_along(&self, from: DyadPtr, fields: &[DyadPtr]) -> Option<String> {
+        let mut place = from;
+        let mut spelled = Binding::spelling(from);
+        for &field in fields {
+            let identity = Binding::read(field).dyad;
+            let unwritten = Binding::read(place).unwritten;
+            if unwritten.is_null()
+                || !crate::identities::array::items(unwritten).contains(&identity)
+            {
+                return None;
+            }
+            spelled.push('.');
+            spelled.push_str(&Binding::spelling(field));
+            let below = Binding::path(place, identity);
+            if below.is_null() || Binding::read(below).unwritten.is_null() {
+                return Some(spelled);
+            }
+            place = below;
+        }
+        Some(spelled)
     }
 
     /// `name := value`, or `name := static value`: one place for every context

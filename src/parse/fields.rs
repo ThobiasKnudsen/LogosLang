@@ -1142,11 +1142,18 @@ impl<'a> Parser<'a> {
                 lhs
             }
         };
+        let next = if writes {
+            super::declare::Next::Write
+        } else if dotted {
+            super::declare::Next::Dot { checked_after: true }
+        } else {
+            super::declare::Next::Read
+        };
         // SAFETY: `named` and the left cell's root are null or binding dyads; `place` a reduced
-        // dyad off the tape.
+        // dyad off the tape; the left cell's path null or an `array` of bindings.
         let reached = match unsafe {
             let member = &source[nstart..nstart + nlen];
-            self.check_name_field(named, left.root, place, member, writes, dotted)
+            self.check_name_field(named, left.root, place, member, next, left.path)
         } {
             Ok(reached) => reached,
             Err(e) => {
@@ -1190,6 +1197,10 @@ impl<'a> Parser<'a> {
         self.cx.member_root = std::ptr::null_mut();
         let path = std::mem::take(&mut self.cx.member_path);
         let (node, consumed) = access?;
+        if writes {
+            // SAFETY: `node` is the place just built.
+            unsafe { crate::identities::union::select_along(self.types, node) };
+        }
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
