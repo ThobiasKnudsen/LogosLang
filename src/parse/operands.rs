@@ -420,9 +420,16 @@ impl<'a> Parser<'a> {
                 None => return Ok(None),
             }
         }
+        // A `T!` on the right of a `try` gives its value there, and the side stands for the read.
         let mut names = Vec::with_capacity(N);
-        for &cell in &cells {
-            names.push(self.name_read(cell, taker)?);
+        for (cell, k) in cells.iter_mut().zip(ks) {
+            let name = self.name_read(*cell, taker)?;
+            let read = self.under_try(name, cell.start)?;
+            if read != name {
+                tape.at_mut(k).expect("a side stands at its offset").over(read);
+                cell.over(read);
+            }
+            names.push(read);
         }
         let mut gives = Vec::with_capacity(N);
         for (&name, cell) in names.iter().zip(&cells) {

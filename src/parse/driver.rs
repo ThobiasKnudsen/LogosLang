@@ -200,6 +200,9 @@ impl<'a> Parser<'a> {
             return Ok(Some(Boundary::Open));
         }
         tape.push(cell);
+        if !cell.constructed && id == self.types.try_.try_ {
+            self.open_try(cell.start);
+        }
         if !cell.constructed {
             if let Some(construct) = self.ctor_of(id) {
                 let prec = self.precedence_of_cell(id);
@@ -434,7 +437,11 @@ impl<'a> Parser<'a> {
         for cell in cells {
             // The cell leaves the tape as the operand it reduces to, its facts with it.
             let mut reduced = cell;
-            reduced.dyad = self.as_operand(cell)?;
+            let operand = self.as_operand(cell)?;
+            match self.under_try(operand, cell.start)? {
+                read if read == operand => reduced.dyad = operand,
+                read => reduced.over(read),
+            }
             reduced.constructed = true;
             items.push((reduced, cell.start));
         }

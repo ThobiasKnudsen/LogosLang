@@ -204,7 +204,7 @@ Specified in the rules and not yet built:
 
 - **The rest of the gates.** The write permission through pointers (`@ mut i32`) and in an array's elements (`array mut i32`), and one read-or-write rule for visibility, borrowing, and reflection alike.
 - **The borrow checker.** Many readers or one writer, checked per place, with lexical lifetimes.
-- **The rest of the error values.** `T!`, `try`, `error.X «…»` and `holds` work, and `alloc` and a float converted with `lossy` into an integer type give `T!`. An index out of range and a power with no whole result still stop the run with one message, and a `T!` nobody reads is not refused yet.
+- **The rest of the error values.** `T!`, `try` (one covers every `T!` on its right in its expression, `x := try half(a) + half(b)`), `error.X «…»` and `holds` work, and `alloc` and a float converted with `lossy` into an integer type give `T!`. An index out of range and a power with no whole result still stop the run with one message, and a `T!` nobody reads is not refused yet.
 - **The rewriting engine.** Equality saturation over the graph: one engine for compiler optimization, computer algebra, and your own rewrites, driven by cost functions.
 - **Proofs as rewrite rules.** `conjecture ( a + a -> 2 * a ) where ( … ) proof ( … )`, checked by a small trusted core. A theorem is a rule with an accepted derivation, an axiom a rule a scope accepts without one.
 - **Refinement types** with an SMT solver, plus pre- and postconditions.
