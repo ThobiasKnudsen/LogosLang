@@ -6045,7 +6045,7 @@ fn an_element_has_an_address_and_taking_it_checks_the_index() {
 #[test]
 fn declaring_from_a_box_copies_it() {
     let (echoes, stderr) = repl(
-        "a := mut type ?\na = i32\nx := mut type ?\nx = a\nx = f64\nprint «{a == i32}»\nprint «{x == f64}»\n\
+        "a := mut type ?\na = i32\nx := mut type a\nx = f64\nprint «{a == i32}»\nprint «{x == f64}»\n\
           d := mut dyad ?\nd = i32\ne := mut d\ne = f64\nprint «{d == i32}»\ne == f64\n",
     );
     assert_eq!(echoes, ["true", "true", "true", "true"], "stderr: {stderr}");
@@ -13004,10 +13004,7 @@ fn type_takes_its_whole_right_side() {
         ("f := fn () -> i32 ( a := i32 5, t := type a.type, t 3 ), f.compile(), f()".into(), "3"),
         ("n := i32 1, x := type if n == 1 (i32) else (i64), x".into(), "i32"),
         ("m := hashmap type -> type, m[i32] = i64, x := type m[i32], x".into(), "i64"),
-        (
-            "m := hashmap type -> type, m[i32] = i64, x := mut type, x = m[i32], x = f64, x".into(),
-            "f64",
-        ),
+        ("m := hashmap type -> type, m[i32] = i64, x := mut type m[i32], x = f64, x".into(), "f64"),
         ("k := fn (t := type ?) -> type ( t ), x := type k(type i64), x".into(), "i64"),
         ("f := fn (t := type ?) -> i32 ( x := type t, y := x 5, y ), f(i32)".into(), "5"),
         // Inside a condition the value is the one lexeme before the body's bracket.
@@ -13019,6 +13016,50 @@ fn type_takes_its_whole_right_side() {
     let (code, stdout, stderr) = run_line("x := type i32 5, x");
     assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
     let message = "1:11: error: the declared or assigned type must be a type value";
+    assert!(stderr.contains(message), "stderr: {stderr}");
+}
+
+/// ›A `type ?` place is a box, written any number of times‹ [[R291]]: a `mut` name declared with a
+/// type holds it in a place `=` writes, a type written bare or after `type`, however the declared
+/// type is written, on both tiers; a name nothing writes is the type itself (›Every type is minted
+/// by its contents through `type_mint`; the name that holds a `type ( … )` gives it its identity‹
+/// [[R383]]).
+#[test]
+fn a_mut_name_that_holds_a_type_is_written() {
+    let map = "m := mut hashmap type -> type, m[i32] = i64";
+    let mk = "mk := fn () -> type ( i64 )";
+    let branch = "f := fn (c := bool ?) -> type ( x := mut type i32, if c ( x = f64 ), x )";
+    for (src, want) in [
+        ("x := mut type i32, x = f64, x".into(), "f64"),
+        ("x := mut type i32, x = type f64, x".into(), "f64"),
+        ("x := mut type i32, y := x 5, y".into(), "5"),
+        ("f := fn () -> i32 ( x := mut type i32, y := x 5, y ), f()".into(), "5"),
+        ("x := mut type i32, x = f64, y := x 2.5, y.type".into(), "f64"),
+        ("x := mut type i32, for i in 0..3 ( x = i64 ), x".into(), "i64"),
+        ("x := mut type i32, x.type".into(), "mut type"),
+        ("x := mut type i32, x == i32".into(), "true"),
+        (format!("{map}, x := mut type m[i32], x = f64, x"), "f64"),
+        (format!("{mk}, x := mut type mk(), x = f64, x"), "f64"),
+        ("b := mut type ?, b = i64, t := mut type b, t = f64, t".into(), "f64"),
+        ("f := fn () -> type ( x := mut type i32, x = f64, x ), f()".into(), "f64"),
+        ("f := fn () -> type ( x := mut type i32, x = f64, x ), f.compile(), f()".into(), "f64"),
+        (format!("{branch}, print «{{f(true)}} {{f(false)}}»"), "f64 i32"),
+        (format!("{branch}, f.compile(), print «{{f(true)}} {{f(false)}}»"), "f64 i32"),
+        ("t := type i32, t == i32".into(), "true"),
+        ("t := type i32, y := t 5, y".into(), "5"),
+        ("f := fn () -> i32 ( t := type i32, y := t 5, y ), f.compile(), f()".into(), "5"),
+        ("g := fn (t := type ?) -> type ( t ), g(i32)".into(), "i32"),
+    ] {
+        assert_eq!(line(&src), want, "{src}");
+    }
+    let (code, stdout, stderr) = run_line("x := type i32, x = f64, x");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("1:20: error: `x` is not `mut`"), "stderr: {stderr}");
+    // `x` may be written before `x 5` runs, so that line waits for the run and stays interpreted.
+    let src = "f := fn () -> i32 ( x := mut type i32, y := x 5, y ), f.compile(), f()";
+    let (code, stdout, stderr) = run_line(src);
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    let message = "compile() failed: a line of this function is parsed only when it runs";
     assert!(stderr.contains(message), "stderr: {stderr}");
 }
 

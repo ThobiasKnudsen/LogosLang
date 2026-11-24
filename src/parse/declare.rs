@@ -1114,8 +1114,11 @@ impl<'a> Parser<'a> {
         // SAFETY: a parsed cell holds a reduced dyad from the store.
         let (value, gates) = unsafe { crate::identities::gate::value_parts(self.types, cell.dyad) }
             .unwrap_or((cell.dyad, held_gates));
+        // SAFETY: `gates` is null or a gate mint.
+        let written =
+            unsafe { crate::identities::gate::words_of(gates) }.contains(&self.types.mut_);
         // SAFETY: `binding` is the binding just declared; `value` a reduced dyad from the store.
-        let declared = unsafe { self.land_at_binding(binding, value, cell.hole) }?;
+        let declared = unsafe { self.land_at_binding(binding, value, cell.hole, written) }?;
         self.gate_name(binding, gates);
         // A place whose type its line gives when it runs keeps that type, which a write converts
         // into ([`Self::land_in_run_type`]); one laid out then holds no value until a write fills
@@ -1256,8 +1259,8 @@ impl<'a> Parser<'a> {
 
     /// Where `value` lands for `binding`, and whether the open scope holds it: the binding
     /// site's one decision, which `:=` and `&` of a value nothing names both ask (DESIGN
-    /// ›Holding is decided at the binding site, parameters included‹ [[R61]]). Returns what the declare
-    /// node runs.
+    /// ›Holding is decided at the binding site, parameters included‹ [[R61]]). `written` says the
+    /// name's gates let `=` write it after its declaration. Returns what the declare node runs.
     ///
     /// # Safety
     /// `binding` must be the binding being declared; `value` a reduced dyad from the store.
@@ -1266,6 +1269,7 @@ impl<'a> Parser<'a> {
         binding: DyadPtr,
         value: DyadPtr,
         hole: bool,
+        written: bool,
     ) -> Result<DyadPtr, ParseError> {
         let value = if hole {
             value
@@ -1341,10 +1345,14 @@ impl<'a> Parser<'a> {
             } else if crate::identities::read::read_kind(self.types, read)
                 == crate::identities::read::Read::Identity
                 && !crate::identities::gate::is_node(read)
+                && !written
             {
-                // A type held, `type i32`: the name is another spelling of it. A gated type,
-                // `type mut i32`, is held in a `type` place instead, since a gate node where the
-                // binding points is the name's own.
+                // A type held, `type i32`, by a name nothing writes: the name is another spelling
+                // of it (›Every type is minted by its contents through `type_mint`; the name that
+                // holds a `type ( … )` gives it its identity‹ [[R383]]). A `mut` name holds it in a
+                // `type` place instead, which `=` writes (›A `type ?` place is a box, written any
+                // number of times‹ [[R291]]), and so does a gated type, `type mut i32`, since a
+                // gate node where the binding points is the name's own.
                 self.cx.scopes.rebind(binding, read);
                 read
             } else if let Some(t) = crate::identities::node_output(self.types, value) {
