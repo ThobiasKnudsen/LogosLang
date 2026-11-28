@@ -1226,16 +1226,29 @@ impl<'a> Parser<'a> {
             self.cx.pos = tok.start;
             return Err(ParseError::EmptySpelling);
         }
-        let name: &str = &name;
+        let node = self.declare_value(&name, pattern, tok.start)?;
+        tape.remove(-1); // the name token, consumed
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// `name := value` read from after its `:=`, the name written at `at` as the spelling it
+    /// declares, or with `pattern` the pattern: the declaration's node.
+    pub(super) fn declare_value(
+        &mut self,
+        name: &str,
+        pattern: bool,
+        at: usize,
+    ) -> Result<DyadPtr, ParseError> {
         // The binding is the name's home before its node exists (DESIGN ›An unknown spelling is
         // a node of type `unknown_name`; `:=` makes the binding, and the node comes with the
         // value‹ [[R251]]).
-        let declared = self.declare_spelling(name, pattern, std::ptr::null_mut(), tok.start);
+        let declared = self.declare_spelling(name, pattern, std::ptr::null_mut(), at);
         let binding = match declared {
             Ok(binding) => binding,
             Err(e) => {
                 // The stuck point is the name itself (it is what shadows).
-                self.cx.pos = tok.start;
+                self.cx.pos = at;
                 return Err(e);
             }
         };
@@ -1255,11 +1268,10 @@ impl<'a> Parser<'a> {
         });
         self.cx.filling.pop();
         self.cx.filling_at.pop();
-        self.cx.last_declared = binding;
         self.cx.pending_binding = std::ptr::null_mut();
         let cell = if typed_at_run { value? } else { self.declared_value(value?)? };
         if self.is_bare_unknown(&cell) {
-            return Err(self.untyped(tok.start, false));
+            return Err(self.untyped(at, false));
         }
         // The gates the value's own gate words wrote are the name's (›Gates are type nodes:
         // `x := mut i32 5`; the record holds no gates‹ [[R381]]); the value lands without them.
@@ -1284,11 +1296,7 @@ impl<'a> Parser<'a> {
                 Binding::set_unread(binding, true);
             }
         }
-        let node =
-            crate::identities::declare::build(self.rt.store, self.types, binding, value, declared);
-        tape.remove(-1); // the name token, consumed
-        tape.place(node);
-        Ok(Constructed::Placed)
+        Ok(crate::identities::declare::build(self.rt.store, self.types, binding, value, declared))
     }
 
     /// What `:=` makes of its right side, read as a type and the value after it, for a name, a

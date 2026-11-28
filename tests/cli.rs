@@ -13178,6 +13178,43 @@ fn a_field_meets_only_its_siblings_while_a_parameter_meets_every_live_name() {
     }
 }
 
+/// ›Members are dot-only; strictness has no exceptions‹ [[R336]]: a `static` member's name is read
+/// as the spelling it declares, as a field's is, so it may spell a function or a type live where
+/// its type is written, which a bare name there still reaches.
+#[test]
+fn a_static_members_name_is_a_spelling_it_declares_as_a_fields_is() {
+    let g = "g := fn () -> i32 ( 100 ), ";
+    let gt = format!("{g}t := type ( g := static pub fn () -> i32 ( 3 ) ), ");
+    let rect = "texture := type ( w := pub i32 ? ), rect := type ( texture := static pub i32 3 ), ";
+    for (src, out) in [
+        (format!("{gt}t.g()"), "3"),
+        (format!("{gt}t.g.compile(), t.g()"), "3"),
+        (format!("{rect}rect.texture"), "3"),
+        (format!("{rect}f := fn () -> i32 ( rect.texture ), f.compile(), f()"), "3"),
+        (
+            format!("{g}f := fn () -> i32 ( t := type ( g := static pub fn () -> i32 ( 3 ) ), t.g() ), f()"),
+            "3",
+        ),
+        (format!("{g}t := type ( x := pub i32 ?, g := static pub i32 5 ), v := t (1), v.g + v.x"), "6"),
+        (
+            format!(
+                "{g}t := type ( g := static pub fn () -> i32 ( 3 ), \
+                 h := static pub fn () -> i32 ( self.g() + g() ) ), t.h()"
+            ),
+            "103",
+        ),
+    ] {
+        assert_eq!(run_line(&src), (Some(0), format!("{out}\n"), String::new()), "{src}");
+    }
+    let src = format!("{g}t := type ( g := static pub i32 1, g := static pub i32 2 ), 1");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(
+        stderr.contains("1:63: error: `g` is already declared and still in scope"),
+        "{src}: stderr: {stderr}"
+    );
+}
+
 /// ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]: `self.n`
 /// reaches the member of the body it is written in, also in a `type (…)` built when the body around
 /// it runs, whatever `n` names where that body is written: a local, a parameter, a root name, or a
