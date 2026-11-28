@@ -18,7 +18,7 @@ array := pub type (
     elements := square_brackets ?,
     output_type := type ?,
 
-    run = (
+    run := static pub fn () -> self.output_type (
         v := mut self.output_type ?,
         # `ptr` owns the block and reads it only; `w`, a plain pointer into it, writes it. The block
         # is read out of the `@T!` `alloc` gives: stand-in for #159.
@@ -34,9 +34,9 @@ array := pub type (
     ),
 
     # Above application, so it takes its element type before anything else reads it.
-    parse_rank = fn.parse_rank,
-    associativity = right,
-    parse = (
+    parse_rank := static pub fn.parse_rank,
+    associativity := static pub right,
+    parse := static pub fn (tape := parsing_tape) -> void! (
         # Nothing to its right (`tape[1]` is `void`), or a type with no instance bytes, as `void` and an
         # operation such as `==` are: no branch builds, so `array` touches nothing and stands as its own
         # value (›`array` is a chooser‹ [[R223]]).
@@ -56,7 +56,7 @@ array := pub type (
                         size := pub mut u64 0,
                         size_bytes := pub static fn () -> u64 (self.size * self.element_type.size_bytes),
 
-                        free = (
+                        free := static pub fn () -> void (
                             for i in 0..self.size ( free (self.ptr + i)@ ),
                             free self.ptr
                         ),
@@ -72,10 +72,10 @@ array := pub type (
                         ),
 
                         # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
-                        parse_rank = dyad.parse_rank,
-                        associativity = left,
+                        parse_rank := static pub dyad.parse_rank,
+                        associativity := static pub left,
                         # Its `tape` is the mint's own, not `array`'s (›`tape` is a word the `parse` slot declares into its body‹ [[R191]]).
-                        parse = (
+                        parse := static pub fn (tape := parsing_tape) -> void! (
                             if (tape[0].type != type and tape[1].type == square_brackets) (
                                 # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
                                 if (tape[1].dyads[0].gives ⊆ tape[0].size.type) (

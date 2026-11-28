@@ -54,41 +54,31 @@ unsafe fn choose(_: &mut Store, types: &Core, key: &[DyadPtr]) -> Option<mint::M
 }
 
 /// The place an `=` at the center of `tape` writes, read before its right side: the nearest node
-/// to its left, a word there not built yet built first, and removed, with the slot it fills where
-/// it names one. A write into any other place is checked against the gates that grant it here,
-/// since whether a place may be written needs nothing from the right side.
+/// to its left, a word there not built yet built first, and removed. The write is checked against
+/// the gates that grant it here, since whether a place may be written needs nothing from the right
+/// side.
 pub(crate) fn read_target(
     p: &mut crate::parse::Parser,
     tape: &mut crate::parse::ParsingTape,
-) -> Result<(crate::parse::Cell, Option<crate::parse::SlotKind>), ParseError> {
+) -> Result<crate::parse::Cell, ParseError> {
     let types = p.types();
     let at = tape.at(0).map(|c| c.start);
-    // A `free` constructed on its own would read an operand to its
-    // right, so `=` takes the keyword's use as the slot's name unconstructed.
-    let target = match tape.at(-1) {
-        Some(c) if !c.constructed && c.identity(types) == types.free_ => *c,
-        _ => {
-            let Some(mut place) = p.side_at(tape, -1)? else {
-                return Err(ParseError::MissingOperand);
-            };
-            place.dyad = p.as_operand(place)?;
-            place.constructed = true;
-            place
-        }
+    // `free` built on its own would read the `=` as its operand.
+    if tape.at(-1).is_some_and(|c| !c.constructed && c.identity(types) == types.free_) {
+        return Err(ParseError::FreeIsNoPlace);
+    }
+    let Some(mut target) = p.side_at(tape, -1)? else {
+        return Err(ParseError::MissingOperand);
     };
+    target.dyad = p.as_operand(target)?;
+    target.constructed = true;
     tape.remove(-1);
     // The place is reached when the `=` runs, after its right side.
     if let Some(at) = at {
         p.runs_inside(target.start, at);
     }
-    // SAFETY: `target` holds the reduced dyad of the cell to the left.
-    let slot = unsafe { p.slot_of(target.dyad) };
-    match slot {
-        Some(_) if !p.filling_definition() => return Err(ParseError::SlotOutsideDefinition),
-        Some(_) => {}
-        None => p.check_write(&target)?,
-    }
-    Ok((target, slot))
+    p.check_write(&target)?;
+    Ok(target)
 }
 
 fn construct(
@@ -97,22 +87,8 @@ fn construct(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     let types = p.types();
-    let (place, slot) = read_target(p, tape)?;
+    let place = read_target(p, tape)?;
     let target = place.dyad;
-    // Anything but a bracket right of a body slot is `slot_fill`'s checked error.
-    if matches!(
-        slot,
-        Some(
-            crate::parse::SlotKind::Parse
-                | crate::parse::SlotKind::Run
-                | crate::parse::SlotKind::Free
-        )
-    ) && p.at_open()
-    {
-        let node = p.slot_body_fill(slot.expect("matched above"), target)?;
-        tape.place(node);
-        return Ok(crate::parse::Constructed::Placed);
-    }
     let value = p.parse_expression()?;
     let value = p.held_type_or(value);
     // SAFETY: `target` and `value` are reduced dyads from the store.
@@ -136,7 +112,7 @@ fn construct(
             }
             Err(_) => false,
         };
-        if !into_cell && slot.is_none() && copies() {
+        if !into_cell && copies() {
             super::copy::taken(p.store(), types, value)
         } else {
             value
@@ -151,33 +127,24 @@ fn construct(
         tape.place(node);
         return Ok(crate::parse::Constructed::Placed);
     }
-    let node = if let Some(kind) = slot {
-        // SAFETY: `value` is the reduced dyad of the right side.
-        unsafe { p.slot_fill(kind, target, value) }?
-    } else {
-        let types = p.types();
-        // A value whose type owns nothing, a `&` or a plain `@T`, has no copy an owner could
-        // free.
-        // SAFETY: `target` and `value` are reduced dyads from the store.
-        if unsafe {
-            (dyad::ty(target) == types.binding_ && p.owns_node(target) || p.is_owning_read(target))
-                && super::drop_model::teardown_of(types, value)
-                    == super::drop_model::Teardown::Nothing
-        } {
-            return Err(ParseError::NonOwningIntoOwning);
+    // A value whose type owns nothing, a `&` or a plain `@T`, has no copy an owner could free.
+    // SAFETY: `target` and `value` are reduced dyads from the store.
+    if unsafe {
+        (dyad::ty(target) == types.binding_ && p.owns_node(target) || p.is_owning_read(target))
+            && super::drop_model::teardown_of(types, value) == super::drop_model::Teardown::Nothing
+    } {
+        return Err(ParseError::NonOwningIntoOwning);
+    }
+    let node = build_store(p.store(), types, id, target, value)?;
+    // SAFETY: `target` is the reduced dyad of the cell to the left; `node` the write just built
+    // over it.
+    unsafe {
+        if let Some(free) = super::drop_model::displaced_free(p, target)? {
+            displace(p.store(), types, node, free);
         }
-        let node = build_store(p.store(), types, id, target, value)?;
-        // SAFETY: `target` is the reduced dyad of the cell to the left; `node` the write just
-        // built over it.
-        unsafe {
-            if let Some(free) = super::drop_model::displaced_free(p, target)? {
-                displace(p.store(), types, node, free);
-            }
-            p.note_receiver_write(target);
-        }
-        p.note_write(node, &place);
-        node
-    };
+        p.note_receiver_write(target);
+    }
+    p.note_write(node, &place);
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
 }

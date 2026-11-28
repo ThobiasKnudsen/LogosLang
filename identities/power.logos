@@ -39,7 +39,7 @@ error.needs_float := «a power needs a float result»,
             # so its locals avoid common ones. NaN and the infinities are no whole exponent,
             # and have no whole number to test. A finite exponent, through f64, has a whole
             # number, the `value` of the `i64!` its conversion gives.
-            run = (
+            run := static pub fn () -> self.output_type (
                 whole_exponent := if self.rhs - self.rhs == 0 (
                     f64 lossy (self.rhs) == f64 lossy ((i64 lossy (f64 lossy (self.rhs))).value)
                 ) else (false),
@@ -72,9 +72,9 @@ error.needs_float := «a power needs a float result»,
         mint
     ),
 
-    parse_rank = *.parse_rank + 1,
-    associativity = right,
-    parse = (
+    parse_rank := static pub (*.parse_rank + 1),
+    associativity := static pub right,
+    parse := static pub fn (tape := parsing_tape) -> void! (
         exponent := type if (tape[1].gives ⊆ i64) (i64) else (tape[1].gives),
         tape[0].type = self.get_mint(tape[-1].gives, exponent),
         tape[0].lhs = tape[-1],

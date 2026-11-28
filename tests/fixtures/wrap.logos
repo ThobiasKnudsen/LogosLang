@@ -2,9 +2,9 @@
 # a value that holds one `i32`, one mint per type, kept by `type_mint`. The mint fills a `parse` of
 # its own, which takes a `[…]` after a value and gives what the value holds.
 wrap := pub type (
-    parse_rank = fn.parse_rank,
-    associativity = right,
-    parse = (
+    parse_rank := static pub fn.parse_rank,
+    associativity := static pub right,
+    parse := static pub fn (tape := parsing_tape) -> void! (
         if tape[1] == ? (
             tape.is_constructed[0] = true
         ) else if (tape[1].type == type) (
@@ -17,9 +17,9 @@ wrap := pub type (
                     v := pub mut self.inner,
                     get := pub static fn () -> self.inner ( self.v ),
 
-                    parse_rank = dyad.parse_rank,
-                    associativity = left,
-                    parse = (
+                    parse_rank := static pub dyad.parse_rank,
+                    associativity := static pub left,
+                    parse := static pub fn (tape := parsing_tape) -> void! (
                         if (tape[0].type != type and tape[1].type == square_brackets) (
                             tape[0] = tape[0].get(),
                             tape.remove(1)

@@ -79,7 +79,7 @@ p := point (3, 4),
 p.x + p.y                      # 7
 ```
 
-`type` is both the root of every type chain and the keyword that defines one. A type body describes one level: an unmarked member is a field of every value, a `static` one is stored once with the type and read as `point.member`, and the slot lines (`parse_rank`, `associativity`, `parse`, `run`, `free`) are stored once too, so they are filled with `… = …`. A type with per-value fields is a record. A type whose members are all `static` is a namespace.
+`type` is both the root of every type chain and the keyword that defines one. A type body describes one level: an unmarked member is a field of every value, a `static` one is stored once with the type and read as `point.member`, and the slots (`parse_rank`, `associativity`, `parse`, `run`, `free`) are `static` members the body declares like any other, `parse_rank := static pub 60`. A type with per-value fields is a record. A type whose members are all `static` is a namespace.
 
 ### Types are values
 
@@ -110,7 +110,7 @@ inner := ( c := try alloc 1 of i32 100, c@ ),  # c is freed when its scope close
 b@ + inner - 98                              # 42, then b is freed at program end
 ```
 
-`@T` is a pointer type, `p@` dereferences, `&x` takes an address. Locals live on the stack and go away with their scope. Heap memory is explicit: `alloc n of T v` returns an owning pointer to `n` cells (`alloc n` to `n` bytes), or the error `error.out_of_memory` where it gets no memory, so it is written `try alloc …`, which passes the error on, and inserts a visible `defer free` into the scope that owns it. Teardowns run last-in first-out at scope exit. `move` moves ownership by ending the old name at parse time, and `free x` runs the value's teardown and ends the name now; on a value with no teardown, `free n` only ends the name. A type whose body fills `free = (…)` is torn down the same way: binding a new value of it (`a := array i32 [1, 2]`) inserts `defer free a`, `b := a` and `b = a` copy it deep, so each name owns and frees its own, `f(a)` borrows, and a function's last value moves out to the caller's name. An array of arrays owns its inner arrays and frees them with itself: `a := array array i32 [[1, 2], [3, 4]]` reads `a[1][0]` as 3, and a name in such a list puts a copy in, `array t [x]`, unless it is moved in, `array t [move x]`. A field owns its value when declared `own`, `items := mut own (array i32) ?`: the type's `free` must then `free self.items`, and `b.items[1]` reads the array through the field. Nothing is destroyed behind your back: every teardown is graph structure you can read. The borrow checker that will prove these uses safe is specified but not yet built, so pointers are unchecked today.
+`@T` is a pointer type, `p@` dereferences, `&x` takes an address. Locals live on the stack and go away with their scope. Heap memory is explicit: `alloc n of T v` returns an owning pointer to `n` cells (`alloc n` to `n` bytes), or the error `error.out_of_memory` where it gets no memory, so it is written `try alloc …`, which passes the error on, and inserts a visible `defer free` into the scope that owns it. Teardowns run last-in first-out at scope exit. `move` moves ownership by ending the old name at parse time, and `free x` runs the value's teardown and ends the name now; on a value with no teardown, `free n` only ends the name. A type whose body declares `free := static pub fn () -> void (…)` is torn down the same way: binding a new value of it (`a := array i32 [1, 2]`) inserts `defer free a`, `b := a` and `b = a` copy it deep, so each name owns and frees its own, `f(a)` borrows, and a function's last value moves out to the caller's name. An array of arrays owns its inner arrays and frees them with itself: `a := array array i32 [[1, 2], [3, 4]]` reads `a[1][0]` as 3, and a name in such a list puts a copy in, `array t [x]`, unless it is moved in, `array t [move x]`. A field owns its value when declared `own`, `items := mut own (array i32) ?`: the type's `free` must then `free self.items`, and `b.items[1]` reads the array through the field. Nothing is destroyed behind your back: every teardown is graph structure you can read. The borrow checker that will prove these uses safe is specified but not yet built, so pointers are unchecked today.
 
 ### Comments and strings
 
@@ -146,7 +146,7 @@ A file is reached by `file` and its path written as text, relative to the folder
 
 ## Defining the language from inside
 
-This is what the first public preview is built to show. An operator is a type with its slots filled: what its nodes hold and compute, where it binds, which way it associates, and how it parses.
+This is what the first public preview is built to show. An operator is a type that declares its slots: what its nodes hold and compute, where it binds, which way it associates, and how it parses.
 
 ```logos
 ^ := type (
@@ -155,10 +155,10 @@ This is what the first public preview is built to show. An operator is a type wi
         mint := mut type type_mint.kept(place),    # `type` first holds the type, not a place of it
         if mint != ? return mint,                  # each mint is built once
         mint = type (
-            lhs := l ?,                            # the operands: one field per cell consumed
-            rhs := i32 ?,
+            lhs := pub l ?,                        # the operands: one field per cell consumed
+            rhs := pub i32 ?,
             output_type := static type l,          # the result follows the base's type
-            run = (                                # what every node computes, its fields through self
+            run := static pub fn () -> self.output_type (  # what every node computes, its fields through self
                 r := mut self.output_type 1,
                 for 0..self.rhs ( r = r * self.lhs ),
                 r
@@ -167,9 +167,9 @@ This is what the first public preview is built to show. An operator is a type wi
         type_mint.keep(place, mint),
         mint
     ),
-    parse_rank = *.parse_rank + 1,                 # binds tighter than *
-    associativity = right,
-    parse = (                                      # runs at every appearance of ^
+    parse_rank := static pub (*.parse_rank + 1),   # binds tighter than *
+    associativity := static pub right,
+    parse := static pub fn (tape := parsing_tape) -> void! (  # runs at every appearance of ^
         tape[0].type = self.get_mint(tape[-1].gives),  # its own cell becomes a node of the mint
         tape[0].lhs = tape[-1],                    # filled by name
         tape[0].rhs = tape[1],
@@ -183,7 +183,7 @@ f.compile(),
 f(2)
 ```
 
-The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. `tape[k].type` is a cell's own type and `tape[k].gives` the type it gives when it runs: for `(x + 2)` with `x` an `i32`, the mint of `+` and `i32`, and `^` mints by the second. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `tape[0].type = T` makes the constructor's own cell a new node of its type, whose fields it writes by name, `tape[0].lhs`, and once built the node runs and is never parsed again, while a value of the type that appears later, a name or a call's result, runs the same parse with that value as `tape[0]`, which is how `a[1]` reads an array; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape`, and a member is never a bare name: `run`, `free` and the type's `static` functions reach the fields through `self`, the value they work on, and `parse` reaches the type's members through `self`, the type, as `self.get_mint` above, and `run = (…)` is lexed once where it is written and constructed once per mint `get_mint` builds, so `^` over i32 and over f64 is one definition. A type is minted by code written for it, a function as `get_mint` here, or the chooser's own `parse` as `array`'s in identities/array.logos, whose mint fills a `parse` of its own with a `tape` of its own, and one identity keeps every mint, `type_mint` in identities/type_mint.logos: a key is walked one `step` per argument from place 0, `kept` gives the mint kept at the place reached, or `?`, and `keep` keeps one there.
+The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. `tape[k].type` is a cell's own type and `tape[k].gives` the type it gives when it runs: for `(x + 2)` with `x` an `i32`, the mint of `+` and `i32`, and `^` mints by the second. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `tape[0].type = T` makes the constructor's own cell a new node of its type, whose fields it writes by name, `tape[0].lhs`, and once built the node runs and is never parsed again, while a value of the type that appears later, a name or a call's result, runs the same parse with that value as `tape[0]`, which is how `a[1]` reads an array; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot is a `static` function of its own form: `parse` takes the parsing tape as its parameter `tape`, and a member is never a bare name: `run`, `free` and the type's `static` functions reach the fields through `self`, the value they work on, and `parse` reaches the type's members through `self`, the type, as `self.get_mint` above, and `run`'s body is lexed once where it is written and constructed once per mint `get_mint` builds, so `^` over i32 and over f64 is one definition. A type is minted by code written for it, a function as `get_mint` here, or the chooser's own `parse` as `array`'s in identities/array.logos, whose mint declares a `parse` of its own with a `tape` of its own, and one identity keeps every mint, `type_mint` in identities/type_mint.logos: a key is walked one `step` per argument from place 0, `kept` gives the mint kept at the place reached, or `?`, and `keep` keeps one there.
 
 ## What runs today, and what does not
 

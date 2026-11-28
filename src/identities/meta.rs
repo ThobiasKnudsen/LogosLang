@@ -14,7 +14,7 @@
 //! [10..18]   u64  constructor: a `seed-parse` callable leaf, the `fn` a type body's `parse`
 //!                 filled, or 0; every record type has one, `type`'s derived one by default
 //! [18..26]   u64  destructor: the owning pointer's teardown, else 0
-//! [26..34]   u64  run body: the lexed body a `run = (…)` line held, or 0
+//! [26..34]   u64  run body: the lexed body the `run` line held, or 0
 //! [34..42]   u64  extent: a `seed-extent` callable leaf for a token that reads its own
 //!                 extent, or 0
 //! [42..50]   u64  mint of: the type this one is a mint of, or 0
@@ -511,8 +511,8 @@ pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
 
 const INSTANCES_FREE_OFF: usize = PAYLOAD_OFF + 32;
 
-/// The `fn` a `free = (…)` line filled, over the one value parameter `self`; null where the type
-/// body fills none.
+/// The `fn` the `free` line declared, over the one value parameter `self`; null where the type
+/// body declares none.
 ///
 /// # Safety
 /// As `record_scope_of`.
@@ -621,7 +621,7 @@ pub(crate) unsafe fn install_destructor(id: DyadPtr, leaf: DyadPtr) {
     std::ptr::write_unaligned(dyad::head(id).add(DTOR_OFF) as *mut DyadPtr, leaf);
 }
 
-/// The lexed body a `run = (…)` line held, constructed per field-type set;
+/// The lexed body the `run` line held, constructed per field-type set;
 /// null for a type with no run.
 ///
 /// # Safety

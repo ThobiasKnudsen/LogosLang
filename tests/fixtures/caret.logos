@@ -13,7 +13,7 @@
             lhs := pub l ?,
             rhs := pub i32 ?,
             output_type := static type l,
-            run = (
+            run := static pub fn () -> self.output_type (
                 r := mut self.output_type 1,
                 for 0..self.rhs ( r = r * self.lhs ),
                 r
@@ -22,9 +22,9 @@
         type_mint.keep(place, mint),
         mint
     ),
-    parse_rank = *.parse_rank + 1,
-    associativity = right,
-    parse = (
+    parse_rank := static pub (*.parse_rank + 1),
+    associativity := static pub right,
+    parse := static pub fn (tape := parsing_tape) -> void! (
         tape[0].type = self.get_mint(tape[-1].gives),
         tape[0].lhs = tape[-1],
         tape[0].rhs = tape[1],

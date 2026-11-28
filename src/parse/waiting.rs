@@ -839,7 +839,7 @@ impl<'a> Parser<'a> {
             );
             if waits.writes {
                 tape.set_cursor(tape.len());
-                let (place, _) = crate::identities::assign::read_target(self, &mut tape)?;
+                let place = crate::identities::assign::read_target(self, &mut tape)?;
                 tape.push(place);
             }
             Ok(())

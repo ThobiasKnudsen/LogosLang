@@ -47,15 +47,15 @@ arithmetic := pub type (
                     rhs := pub r ?,
                     output_type := pub static type l,
                     step := static type chosen,
-                    run = ( self.step(self.lhs, self.rhs) )
+                    run := static pub fn () -> self.output_type ( self.step(self.lhs, self.rhs) )
                 ),
                 type_mint.keep(place, made),
                 made
             ),
 
-            parse_rank = rank,
-            associativity = left,
-            parse = (
+            parse_rank := static pub rank,
+            associativity := static pub left,
+            parse := static pub fn (tape := parsing_tape) -> void! (
                 l := type tape[-1].gives,
                 r := type tape[1].gives,
                 # With nothing on either side, the operation stands as itself; a side nothing has
