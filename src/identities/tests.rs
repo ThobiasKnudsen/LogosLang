@@ -2365,10 +2365,13 @@ fn left_and_right_are_the_values_of_direction_on_both_tiers() {
     ] {
         assert_eq!(run_script(&format!("{side} t.associativity == right")), 1, "{side}");
     }
-    assert_eq!(
-        parse_err("t := type ( associativity := static pub 3 )"),
-        ParseError::BadAssociativity
-    );
+    for not_a_side in ["3", "direction ?", "direction"] {
+        assert_eq!(
+            parse_err(&format!("t := type ( associativity := static pub {not_a_side} )")),
+            ParseError::BadAssociativity,
+            "{not_a_side}"
+        );
+    }
     assert_eq!(run_script("+.associativity == left"), 1);
     for tail in ["", "f.compile(), "] {
         let held = "t := type ( a := static pub right ), f := fn () -> bool ( t.a == right ),\n";
@@ -3239,6 +3242,19 @@ fn a_slot_is_declared_in_its_own_form_and_a_run_type_has_no_place() {
         ParseError::RunArrow(true)
     );
     assert_eq!(parse_err("free = 5"), ParseError::FreeIsNoPlace);
+    // ›Slot words are known only inside a type body‹ [[R220]]: `b = 3` whatever `b` names.
+    for written in [
+        "t := type (a := static pub mut i32 1, a = 3)",
+        "t := type (x := pub mut i32 ?, x = 3)",
+        "t := type (output_type := static type i32, output_type = i64)",
+        "t := type (w = 5)",
+    ] {
+        assert_eq!(parse_err(written), ParseError::TypeBodyLine, "{written}");
+    }
+    assert_eq!(
+        parse_err("t := type (x := pub i32 ?, lex_rank := static pub 2)"),
+        ParseError::LexRankDeclared
+    );
     // `pw` is an infix still waiting for its operands, not a type applied to `?`.
     assert!(matches!(parse_err_after(&[POW_TYPE], "p := pw ?"), ParseError::ConstructorFailed(_)));
 }

@@ -473,6 +473,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::PerNodeThroughType(name) => format!(
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),
+        ParseError::LexRankDeclared => {
+            "lex_rank is the rank of the name the type is the value of, not a member of the type: \
+             write `lex_rank = …`"
+                .into()
+        }
         ParseError::LexRankNeedsName => {
             "lex_rank is the name's: write it in a declaration, `x := type (lex_rank = …)`, \
              or on the name, `x:lex_rank = …`"
@@ -559,11 +564,6 @@ pub fn parse_message(e: &ParseError) -> String {
              only borrows, the last value too"
                 .into()
         }
-        ParseError::NoSuchSlot(name) => format!(
-            "`{name}` is declared nowhere in this type body: a type body declares its members, \
-             `{name} := static …`, and its slots, `parse := static pub fn (tape := parsing_tape) \
-             -> void! ( … )`"
-        ),
         ParseError::FieldsNeedFree(fields) => {
             let named = fields.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ");
             let (which, own, it) = match fields.len() {

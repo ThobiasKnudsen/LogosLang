@@ -868,6 +868,14 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
+            // stand-in for Question 358
+            if relaxed
+                && name == LEX_RANK
+                && matches!(self.peek_token(), Some((id, _)) if id == self.types.declare_tok)
+            {
+                self.cx.pos = start;
+                return Err(ParseError::LexRankDeclared);
+            }
             if let Some(kind) = SlotKind::named(name).filter(|_| relaxed) {
                 if assigns {
                     return Err(self.slot_filled(kind, start));
@@ -883,8 +891,8 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if !self.consume_token(self.types.declare_tok) {
-                // A bare field name stands alone on its line: `x = 5` in a type
-                // body writes no slot `type` declares.
+                // A bare field name stands alone on its line; `x = 5` in a type body is refused
+                // whatever `x` names (›Slot words are known only inside a type body‹ [[R220]]).
                 let alone = self.at_close()
                     || matches!(
                         self.peek_token(),
@@ -892,11 +900,10 @@ impl<'a> Parser<'a> {
                     );
                 if relaxed && !alone {
                     self.cx.pos = start;
-                    return Err(match word {
-                        // `=` writes what exists, so a fresh word before it names no slot.
-                        None if assigns => ParseError::NoSuchSlot(name.to_string()),
-                        None => ParseError::Resolve(ResolveError::Unknown(name.to_string())),
-                        Some(_) => ParseError::TypeBodyLine,
+                    return Err(if word.is_none() && !assigns {
+                        ParseError::Resolve(ResolveError::Unknown(name.to_string()))
+                    } else {
+                        ParseError::TypeBodyLine
                     });
                 }
                 return Err(self.untyped(start, relaxed));
@@ -1089,10 +1096,13 @@ impl<'a> Parser<'a> {
         match kind {
             SlotKind::ParseRank | SlotKind::Associativity => {
                 let cell = self.parse_expression_cell()?;
+                // The gates stand over a value, `static pub 60`, or over a type standing as
+                // itself, `static pub direction`, which the value's own check refuses.
                 // SAFETY: a parsed cell holds a reduced dyad from the store.
-                let (value, gates) =
-                    unsafe { crate::identities::gate::value_parts(types, cell.dyad) }
-                        .unwrap_or((cell.dyad, std::ptr::null_mut()));
+                let (value, gates) = unsafe {
+                    crate::identities::gate::value_parts(types, cell.dyad)
+                        .unwrap_or_else(|| crate::identities::gate::parts(cell.dyad))
+                };
                 // SAFETY: `gates` is null or a gate mint.
                 let words = unsafe { crate::identities::gate::words_of(gates) };
                 if !Self::slot_gates(types, &words) {
@@ -1170,7 +1180,7 @@ impl<'a> Parser<'a> {
         }
         self.drain()?;
         // SAFETY: as above.
-        let bits = unsafe { self.run_on_pass(value) }.map_err(|_| ParseError::NonComptimeRank)?;
+        let bits = unsafe { self.run_on_pass(value) }.map_err(|_| ParseError::BadAssociativity)?;
         // SAFETY: `left` and `right` are the shared values of `direction`.
         unsafe { crate::identities::direction::side(types, bits) }
             .ok_or(ParseError::BadAssociativity)

@@ -367,10 +367,7 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     let (_echoes, stderr) = repl(b"f := fn (t := type ?) -> void ( )\nf(type (lex_rank = 1))\n");
     assert!(stderr.contains("lex_rank is the name's"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"s := type (precedence = 5)\n");
-    assert!(
-        echoes.is_empty() && stderr.contains("`precedence` is declared nowhere in this type body"),
-        "stderr: {stderr}"
-    );
+    assert!(echoes.is_empty() && stderr.contains("a type body line"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"c := type (run = 5)\n");
     assert!(
         echoes.is_empty() && stderr.contains("`run := static pub fn () -> self.output_type ( … )`"),
@@ -2620,10 +2617,15 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (static parse := static pub fn (tape := parsing_tape) -> void! ( 1 ))\n", "it stands right of `:=`"),
         (b"t := type (parse)\n", "a type body line"),
         (b"x := 1\nt := type (x = 5)\n", "a type body line"),
-        (b"t := type (fields = (a := i32 ?))\n", "`fields` is declared nowhere in this type body"),
+        (b"t := type (fields = (a := i32 ?))\n", "a type body line"),
         (b"t := type (associativity := static pub 5)\n", "`left` or `right`"),
+        (b"t := type (associativity := static pub direction ?)\n", "`left` or `right`"),
+        (b"t := type (associativity := static pub direction)\n", "`left` or `right`"),
+        (b"t := type (a := static pub mut i32 1, a = 3)\n", "a type body line"),
+        (b"t := type (x := pub mut i32 ?, x = 3)\n", "a type body line"),
+        (b"t := type (x := pub i32 ?, lex_rank := static pub 2)\n", "write `lex_rank = …`"),
         (b"t := type (free = 5)\n", "`free := static pub fn () -> void ( … )`"),
-        (b"t := type (drop = ( 0 ))\n", "`drop` is declared nowhere in this type body"),
+        (b"t := type (drop = ( 0 ))\n", "a type body line"),
         (b"t := type (parse := static pub fn (tape := parsing_tape) -> void! ( tape[0].a = tape[-1] ))\n", "no field `a`"),
         (b"t := type (a := i32 ?, parse := static pub fn (tape := parsing_tape) -> void! ( tape[0].b = tape[-1] ))\n", "no field `b`"),
         (b"t := type (a := i32 ?, parse := static pub fn (tape := parsing_tape) -> void! ( tape.is_constructed[0] = 5 ))\n", "takes a bool"),

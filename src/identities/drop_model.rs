@@ -3113,7 +3113,7 @@ mod tests {
         );
         assert_eq!(
             parse_err("t := type ( a := i32 ?, drop = ( 0 ) ),\n1"),
-            ParseError::NoSuchSlot("drop".into())
+            ParseError::TypeBodyLine
         );
         assert_eq!(
             run("import file «./identities/array.logos», x := mut array i32 [1], y := move x, free y, 0"),

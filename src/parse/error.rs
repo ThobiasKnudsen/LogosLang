@@ -70,6 +70,8 @@ pub enum ParseError {
     /// `lex_rank = …` in a type body that is not a declaration's value: the
     /// rank is the name's, and here there is no name.
     LexRankNeedsName,
+    /// `lex_rank := …` in a type body, where the name's rank is written `lex_rank = …`.
+    LexRankDeclared,
     /// A rank or a side whose `static pub` gates only part of its value.
     SlotNotWhole(SlotKind),
     /// A slot declared with other gate words, parameters or arrow than its own.
@@ -362,8 +364,6 @@ pub enum ParseError {
     /// A `return` in a type's `run` hands on a borrowed pointer, where the `run`'s last value is
     /// a pointer made there and so marks it to hand on what it makes.
     RunReturnBorrows,
-    /// `w = …` in a type body where `w` is no slot and nothing declared.
-    NoSuchSlot(String),
     /// A type body whose fields, named here, own what they hold, and no `free` to free it.
     FieldsNeedFree(Vec<String>),
     /// A name of a `{ … }` whose value its scope's end runs a teardown for, or that does not

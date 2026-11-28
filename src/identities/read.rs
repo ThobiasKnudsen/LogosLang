@@ -965,7 +965,7 @@ mod tests {
         }
         let (_store, _trie, core, exprs) = parse_seq(
             "w := type ( x := i64 ?, y := i64 ? ),\n\
-             c := type ( a := i32 ?, run := static pub fn () -> void ( self.a ) )",
+             c := type ( a := i32 ?, run := static pub fn () -> void ( print «{self.a}» ) )",
         );
         let types = &core;
         // SAFETY: the declared identities were just parsed.
