@@ -98,8 +98,8 @@ impl<'a> Parser<'a> {
     }
 
     /// The open definition while the line being read is about its value. A function written
-    /// inside that body, or a value made once in it, is about none (›A bare call of a `static`
-    /// function works on the value the calling body is about‹ [[R238]]).
+    /// inside that body, or a value made once in it, is about none (›A `static` function called
+    /// through `self` works on the value the calling body is about‹ [[R238]]).
     pub(super) fn about_value(&self) -> Option<&OpenType> {
         self.value_def().filter(|d| self.reach_value(d).is_ok())
     }
@@ -109,20 +109,15 @@ impl<'a> Parser<'a> {
         self.cx.definitions.last_mut()
     }
 
-    /// Whether `cell` names a field of the value a `free` or a `static` function is about, named
-    /// bare (DESIGN ›There is no `this`‹); fields come first, so an outer name never stands in for
-    /// one. Where the line does not reach the value it is refused as the body's locals are, and
-    /// inside a parse, whose fields go through `tape[0]`.
-    pub(super) fn names_own_field(&self, cell: &Cell) -> Result<bool, ParseError> {
+    /// Whether `cell` is bound to a field of the value a `free`, a `static` function or a `{ … }`
+    /// entry is about, which `self.x` reaches. Where the line does not reach the value it is
+    /// refused as the body's locals are, and inside a parse, whose fields go through `tape[0]`.
+    pub(super) fn own_field(&self, cell: &Cell) -> Result<bool, ParseError> {
         let Some(def) = self.value_def() else {
             return Ok(false);
         };
-        let mut fields = ScopeStack::new();
-        fields.push(def.block.0);
-        let named = fields
-            .resolve(self.trie, cell.spelling())
-            .is_ok_and(|r| r.matched == cell.len && def.block.1.contains(&r.identity));
-        if !named {
+        let bound = !cell.binding(self.types).is_null();
+        if !bound || !def.block.1.contains(&cell.identity(self.types)) {
             return Ok(false);
         }
         self.reach_value(def)?;
@@ -130,6 +125,57 @@ impl<'a> Parser<'a> {
             return Err(ParseError::BareFieldInParse(Box::new(cell.spelling().to_string())));
         }
         Ok(true)
+    }
+
+    /// `cell`, a name read bare where `next` follows it, refused where it is a member: where only a
+    /// member of an open type has its spelling, or, in a `{ … }` entry's body about its value, a
+    /// name of that `{ … }` (›Fields are read with a dot, outside their type and inside it through
+    /// `self`‹ [[R234]]). In a parse a field of its node is written through `tape[0]`. A name `:=`
+    /// declares is no read.
+    pub(super) fn refuse_bare_member(
+        &self,
+        cell: &Cell,
+        next: Option<DyadPtr>,
+    ) -> Result<(), ParseError> {
+        let types = self.types;
+        if cell.constructed || next == Some(types.declare_tok) {
+            return Ok(());
+        }
+        let spelling = cell.spelling();
+        let member = if cell.is_fresh(types) {
+            match self.resolve_fresh(spelling) {
+                Err(ResolveError::Member(_)) => {
+                    self.cx.scopes.resolve_member(self.trie, spelling).ok().map(|r| r.binding)
+                }
+                _ => None,
+            }
+        } else {
+            let binding = cell.binding(types);
+            // SAFETY: a lexed cell's binding is null or a binding dyad from the store.
+            let entry = !binding.is_null()
+                && self
+                    .about_value()
+                    .is_some_and(|d| d.block.0 == unsafe { Binding::read(binding) }.scope);
+            entry.then_some(binding)
+        };
+        let Some(member) = member else {
+            return Ok(());
+        };
+        let node_field = self.about_value().is_some_and(|d| {
+            d.in_parse
+                && self
+                    .cx
+                    .scopes
+                    .resolve_member(self.trie, spelling)
+                    .is_ok_and(|r| d.block.1.contains(&r.identity))
+        });
+        Err(if node_field {
+            ParseError::BareFieldInParse(Box::new(spelling.to_string()))
+        } else if self.self_reaches(member) {
+            ParseError::Resolve(ResolveError::Member(spelling.to_string()))
+        } else {
+            ParseError::MemberOfTypeAround(Box::new(spelling.to_string()))
+        })
     }
 
     /// `tape[0]` inside a parse body: the cell the parse was woken on, holding its node.
@@ -186,9 +232,10 @@ impl<'a> Parser<'a> {
     }
 
     /// `tape[0].type = T`: a fresh node of `T` placed in the parse's own cell, from where its
-    /// fields are written by name (DESIGN ›There is no `this`‹). The type being defined has its
-    /// node made before the parse runs; any other `T`, such as a mint a function chooses
-    /// (›The v0.1.0 demo: a user-defined power operator `^`‹ [[R366]]), when the stamp runs.
+    /// fields are written by name, `tape[0].x` (›Fields are read with a dot, outside their type
+    /// and inside it through `self`‹ [[R234]]). The type being defined has its node made before
+    /// the parse runs; any other `T`, such as a mint a function chooses (›The v0.1.0 demo: a
+    /// user-defined power operator `^`‹ [[R366]]), when the stamp runs.
     ///
     /// # Safety
     /// `target` must be a `tape.cell_type` node from the store; `value` a reduced dyad.
@@ -215,11 +262,11 @@ impl<'a> Parser<'a> {
         Ok(tape::build_stamp(self.rt.store, types, cell, value))
     }
 
-    /// A bare call of a `static` function that works on a value takes the value the calling
-    /// body is about (›A bare call of a `static` function works on the value the calling body is
-    /// about‹ [[R238]]): a `run`'s node, a `free`'s or `static` function's own, the scope a `{ … }`
-    /// builds ([`Parser::open_scope_receiver`]); anywhere else, a parse included, the call has none
-    /// ([`Parser::on_no_value`]). `cell` is the call's callee as written.
+    /// A call through `self` of a `static` function that works on a value takes the value the
+    /// calling body is about (›A `static` function called through `self` works on the value the
+    /// calling body is about‹ [[R238]]): a `run`'s node, a `free`'s or `static` function's own, the
+    /// scope a `{ … }` builds ([`Parser::open_scope_receiver`]); anywhere else, a parse included,
+    /// the call has none ([`Parser::on_no_value`]). `cell` is the call's callee as written.
     ///
     /// # Safety
     /// `callee` must be a reduced dyad from the store.
@@ -262,7 +309,7 @@ impl<'a> Parser<'a> {
         Ok(with)
     }
 
-    /// What a bare call of `f` hands on when `f` is a `fn` entry of a `{ … }` whose lines are still
+    /// What a call of `f` hands on when `f` is a `fn` entry of a `{ … }` whose lines are still
     /// being read; `None` for any other callee, and in an entry's own body, which hands on its
     /// value. In the `{ … }`'s own lines the call is about the scope being built (›`{ … }` outside
     /// text is a scope kept as a value, read with `.`‹ [[R374]]): it hands on no value, and each
@@ -302,10 +349,10 @@ impl<'a> Parser<'a> {
     }
 
     /// What a call of the `static` function `f` works on where it has no value: through the type,
-    /// `t.k()`, by another name, `f := t.k, f()`, or bare from a parse (›A bare call of a `static`
-    /// function works on the value the calling body is about‹ [[R238]]). Only a function that
-    /// uses no field of its value is called so. `name` is the function as the call spells it,
-    /// `member` whether that is the name of the member holding it.
+    /// `t.k()`, by another name, `f := t.k, f()`, or through `self` from a parse (›A `static`
+    /// function called through `self` works on the value the calling body is about‹ [[R238]]).
+    /// Only a function that uses no field of its value is called so. `name` is the function as
+    /// the call spells it, `member` whether that is the name of the member holding it.
     ///
     /// # Safety
     /// `f` must be a function node from the store.
@@ -401,7 +448,7 @@ impl<'a> Parser<'a> {
         let (scope, items) = (def.block.0, def.block.1.clone());
         let mut field_scope = ScopeStack::new();
         field_scope.push(scope);
-        let resolved = field_scope.resolve(self.trie, name).ok();
+        let resolved = field_scope.resolve_member(self.trie, name).ok();
         let field = resolved.as_ref().map(|r| r.identity);
         let index = field.and_then(|f| items.iter().position(|&x| x == f));
         let Some(index) = index else {
@@ -523,7 +570,7 @@ impl<'a> Parser<'a> {
             {
                 let mut fields = ScopeStack::new();
                 fields.push(meta::record_scope_of(ty));
-                let found = fields.resolve(self.trie, name).ok().and_then(|r| {
+                let found = fields.resolve_member(self.trie, name).ok().and_then(|r| {
                     let items = array::items(meta::record_fields_of(ty));
                     Some((items.iter().position(|&f| f == r.identity)?, r.binding))
                 });
@@ -586,7 +633,7 @@ impl<'a> Parser<'a> {
         }
         let mut fields = ScopeStack::new();
         fields.push(meta::record_scope_of(t));
-        let field = fields.resolve(self.trie, name).ok()?.identity;
+        let field = fields.resolve_member(self.trie, name).ok()?.identity;
         array::items(meta::record_fields_of(t))
             .contains(&field)
             .then(|| crate::identities::hole::type_in(field))
@@ -615,7 +662,7 @@ impl<'a> Parser<'a> {
         fields.push(meta::record_scope_of(t));
         let items = array::items(meta::record_fields_of(t));
         let found = fields
-            .resolve(self.trie, name)
+            .resolve_member(self.trie, name)
             .ok()
             .and_then(|r| Some((items.iter().position(|&f| f == r.identity)?, r.binding)));
         if let Some((i, binding)) = found {
@@ -757,7 +804,8 @@ impl<'a> Parser<'a> {
             // caller read through to the node the tape holds ([`Self::held_tape_node`]).
             if self.tape_node_member(lhs, name) == Some(NodeMember::Own) {
                 // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
-                // (DESIGN ›There is no `this`‹).
+                // (›Fields are read with a dot, outside their type and inside it through `self`‹
+                // [[R234]]).
                 if self.cx.definitions.last().is_some_and(|d| d.stamps_at_run) {
                     let (types, store) = (self.types, &mut *self.rt.store);
                     let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
@@ -1026,9 +1074,9 @@ impl<'a> Parser<'a> {
         }
         // A `static` member of the record's type, or a field: the field's offset inside the
         // record's storage, read through the record's binding and the field's. A record value no
-        // name lays out, a field named bare or what a call returns, has the field read off what it
-        // gives when it runs (›Reading a path runs nothing‹ [[R273]]), as has a record a place
-        // keeps behind its pointer (›`free` and `move` end a name; no drop flag‹ [[R60]]).
+        // name lays out, a field read through `self` or what a call returns, has the field read
+        // off what it gives when it runs (›Reading a path runs nothing‹ [[R273]]), as has a record
+        // a place keeps behind its pointer (›`free` and `move` end a name; no drop flag‹ [[R60]]).
         let storage = self.types.is_storage(lhs);
         if (!storage || behind(self.types, self.types.type_of(lhs))) && !self.types.is_hole(lhs) {
             let t = crate::identities::read::output_type(self.types, lhs);
@@ -1491,7 +1539,7 @@ impl<'a> Parser<'a> {
         let name = &source[nstart..nstart + nlen];
         let mut field_scope = ScopeStack::new();
         field_scope.push(crate::identities::meta::record_scope_of(record_logos));
-        let resolved = field_scope.resolve(self.trie, name).map_err(ParseError::Resolve)?;
+        let resolved = field_scope.resolve_member(self.trie, name).map_err(ParseError::Resolve)?;
         let field = resolved.identity;
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(
             record_logos,
@@ -2289,7 +2337,7 @@ impl<'a> Parser<'a> {
     fn static_in(&self, body: DyadPtr, name: &str) -> Option<(DyadPtr, DyadPtr)> {
         let mut members = ScopeStack::new();
         members.push(body);
-        let r = members.resolve(self.trie, name).ok()?;
+        let r = members.resolve_member(self.trie, name).ok()?;
         Some((r.identity, r.binding))
     }
 
@@ -2319,7 +2367,7 @@ impl<'a> Parser<'a> {
         }
         let mut fields = ScopeStack::new();
         fields.push(meta::record_scope_of(logos));
-        fields.resolve(self.trie, name).is_ok()
+        fields.resolve_member(self.trie, name).is_ok()
     }
 
     /// Fresh storage holding `bits` at `nt`'s width: the reflection counts

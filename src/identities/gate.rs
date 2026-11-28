@@ -417,7 +417,7 @@ pub(crate) unsafe fn add_to_name(store: &mut Store, types: &Core, binding: DyadP
 /// its own scope and below, along the parent links, and with `pub` from any scope (›A value's
 /// gates are one ordered set in its type, combined as grants and vetoes‹ [[R81]]). A `.` from
 /// outside a file, a type or a `{ … }` reaches only its `pub` names so (›Fields are read with a
-/// dot outside their scope‹ [[R234]]).
+/// dot, outside their type and inside it through `self`‹ [[R234]]).
 ///
 /// # Safety
 /// `binding` must be a binding dyad from the store; `from` null or a scope node.

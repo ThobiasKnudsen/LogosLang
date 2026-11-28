@@ -424,7 +424,7 @@ mod tests {
             assert_eq!(describe(&core, falpha), Shape::Scalar(NumType::I32));
             let mut inner = ScopeStack::new();
             inner.push(scope);
-            assert_eq!(inner.resolve(&trie, "alpha").unwrap().identity, falpha);
+            assert_eq!(inner.resolve_member(&trie, "alpha").unwrap().identity, falpha);
             let mut outer = ScopeStack::new();
             outer.push(core.root_scope);
             assert!(matches!(

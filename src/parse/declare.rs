@@ -182,7 +182,8 @@ impl<'a> Parser<'a> {
     }
 
     /// A `static` function that writes a field of its value meets the gates `receiver.f = …`
-    /// would (DESIGN ›There is no `this`‹).
+    /// would (›A `static` function writes the value it is called on, and respects `mut`‹
+    /// [[R239]]).
     ///
     /// # Safety
     /// `member` must be a reduced dyad from the store.
@@ -260,7 +261,41 @@ impl<'a> Parser<'a> {
         let binding = self.mint_binding(identity, scope, spelling.as_bytes());
         // SAFETY: `binding` was minted by `Binding::alloc` just above.
         unsafe { Binding::set_pattern(binding, pattern) };
+        if self.in_type_body_lines() {
+            return self.declare_member(scope, spelling, binding, at);
+        }
         self.enter_binding(spelling, binding, at)
+    }
+
+    /// The line being read is one of a type body's own, whose names are its `static` members.
+    pub(super) fn in_type_body_lines(&self) -> bool {
+        self.cx.definitions.last().is_some_and(|def| self.cx.scopes.current() == Some(def.scope))
+    }
+
+    /// `binding`, a member of the type `scope` is a scope of, entered under `spelling` there and
+    /// checked against its siblings alone: in a type body, every member its fields' scope and its
+    /// own scope hold (›Members are dot-only; strictness has no exceptions‹ [[R336]]). A failure
+    /// is reported at `at`.
+    pub(super) fn declare_member(
+        &mut self,
+        scope: DyadPtr,
+        spelling: &str,
+        binding: DyadPtr,
+        at: usize,
+    ) -> Result<DyadPtr, ParseError> {
+        let siblings = match self.cx.definitions.last() {
+            Some(def) if def.block.0 == scope || def.scope == scope => vec![def.block.0, def.scope],
+            _ => vec![scope],
+        };
+        // SAFETY: the caller hands a binding dyad from the store.
+        let declared = unsafe {
+            self.cx.scopes.declare_member(self.trie, spelling, binding, scope, &siblings)
+        };
+        if let Err(e) = declared {
+            self.cx.pos = at;
+            return Err(ParseError::Resolve(e));
+        }
+        Ok(binding)
     }
 
     /// Enter a minted binding under its spelling in the open scope; a failure is reported
@@ -271,20 +306,8 @@ impl<'a> Parser<'a> {
         binding: DyadPtr,
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
-        let scope = self.cx.scopes.current().expect("declare needs an open scope");
-        self.enter_binding_in(scope, spelling, binding, at)
-    }
-
-    /// `enter_binding` into `scope`, an open scope that need not be the innermost.
-    pub(super) fn enter_binding_in(
-        &mut self,
-        scope: DyadPtr,
-        spelling: &str,
-        binding: DyadPtr,
-        at: usize,
-    ) -> Result<DyadPtr, ParseError> {
         // SAFETY: the caller hands a binding dyad from the store.
-        if let Err(e) = unsafe { self.cx.scopes.declare_in(self.trie, spelling, binding, scope) } {
+        if let Err(e) = unsafe { self.cx.scopes.declare(self.trie, spelling, binding) } {
             self.cx.pos = at;
             return Err(ParseError::Resolve(e));
         }
@@ -854,7 +877,7 @@ impl<'a> Parser<'a> {
             scope.push(crate::identities::meta::record_scope_of(t));
             let fields =
                 crate::identities::array::items(crate::identities::meta::record_fields_of(t));
-            scope.resolve(self.trie, name).ok().filter(|r| fields.contains(&r.identity))
+            scope.resolve_member(self.trie, name).ok().filter(|r| fields.contains(&r.identity))
         };
         if !parent.is_null() && Binding::has_ended_path(parent) {
             let dead = match &field {
@@ -944,12 +967,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         // A type body's member is made as its line is read, with the type.
-        let member = self
-            .cx
-            .definitions
-            .last()
-            .is_some_and(|def| self.cx.scopes.current() == Some(def.scope));
-        if member || !self.static_ahead() {
+        if self.in_type_body_lines() || !self.static_ahead() {
             return self.declare_here(tape);
         }
         let before = self.line_made();

@@ -248,7 +248,7 @@ impl<'a> Parser<'a> {
                     let mut scope = ScopeStack::new();
                     scope.push(meta::record_scope_of(h));
                     first.is_some_and(|f| {
-                        scope.resolve(self.trie, "lhs").is_ok_and(|r| r.identity == f)
+                        scope.resolve_member(self.trie, "lhs").is_ok_and(|r| r.identity == f)
                     })
                 }
                 _ => meta::takes_lhs(h),
@@ -1035,7 +1035,7 @@ impl<'a> Parser<'a> {
         let woke = cell.constructed
             && !cell.dyad.is_null()
             && unsafe { dyad::ty(cell.dyad) } == self.types.binding_;
-        // A field named bare reaches its place as a path does.
+        // A field read through `self` reaches its place as a path does.
         // SAFETY: as above.
         let field = !cell.constructed
             && !cell.dyad.is_null()
@@ -1282,7 +1282,7 @@ impl<'a> Parser<'a> {
     /// A value made once (`static`, `immediate`) runs at parse, where a name of the
     /// loop or branch around it has no value yet.
     pub(super) fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
-        // A field named bare has no binding.
+        // A field read through `self` has no binding.
         if self.cx.once_at.is_none() || binding.is_null() {
             return Ok(());
         }

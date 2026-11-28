@@ -56,6 +56,16 @@ pub(super) fn name_in(trie: &RegexTrie, scope: DyadPtr, file: &File, name: &str)
     names.resolve(trie, name).unwrap_or_else(|_| panic!("{}: no `{name}`", file.path))
 }
 
+/// What the member `name` of the type whose body is `body` names.
+///
+/// # Panics
+/// Where `body` declares no member `name`: a defect of the file the seed was built with.
+pub(super) fn member_in(trie: &RegexTrie, body: DyadPtr, file: &File, name: &str) -> Resolved {
+    let mut members = ScopeStack::new();
+    members.push(body);
+    members.resolve_member(trie, name).unwrap_or_else(|_| panic!("{}: no `{name}`", file.path))
+}
+
 /// Gives the root `names`, each with the binding a carried file declared it by.
 ///
 /// # Panics

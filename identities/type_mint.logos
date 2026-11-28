@@ -19,50 +19,50 @@ type_mint := pub type (
     places := static mut u64 0,
 
     step := pub static fn (at := u64 ?, argument := type ?) -> u64 (
-        if branches[at] == ? (
+        if self.branches[at] == ? (
             branch := hashmap type -> hashmap u64 -> u64,
-            branches[at] = branch
+            self.branches[at] = branch
         ),
-        if branches[at][argument] == ? (
-            places = places + 1,
+        if self.branches[at][argument] == ? (
+            self.places = self.places + 1,
             next := hashmap u64 -> u64,
-            next[0] = places,
-            branches[at][argument] = next
+            next[0] = self.places,
+            self.branches[at][argument] = next
         ),
-        branches[at][argument][0]
+        self.branches[at][argument][0]
     ),
 
     step_name := pub static fn (at := u64 ?, name := string ?) -> u64 (
-        if name_branches[at] == ? (
+        if self.name_branches[at] == ? (
             branch := hashmap string -> hashmap u64 -> u64,
-            name_branches[at] = branch
+            self.name_branches[at] = branch
         ),
-        if name_branches[at][name] == ? (
-            places = places + 1,
+        if self.name_branches[at][name] == ? (
+            self.places = self.places + 1,
             next := hashmap u64 -> u64,
-            next[0] = places,
-            name_branches[at][name] = next
+            next[0] = self.places,
+            self.name_branches[at][name] = next
         ),
-        name_branches[at][name][0]
+        self.name_branches[at][name][0]
     ),
 
     step_word := pub static fn (at := u64 ?, word := u64 ?) -> u64 (
-        if word_branches[at] == ? (
+        if self.word_branches[at] == ? (
             branch := hashmap u64 -> hashmap u64 -> u64,
-            word_branches[at] = branch
+            self.word_branches[at] = branch
         ),
-        if word_branches[at][word] == ? (
-            places = places + 1,
+        if self.word_branches[at][word] == ? (
+            self.places = self.places + 1,
             next := hashmap u64 -> u64,
-            next[0] = places,
-            word_branches[at][word] = next
+            next[0] = self.places,
+            self.word_branches[at][word] = next
         ),
-        word_branches[at][word][0]
+        self.word_branches[at][word][0]
     ),
 
-    kept := pub static fn (at := u64 ?) -> type ( mints[at] ),
+    kept := pub static fn (at := u64 ?) -> type ( self.mints[at] ),
     keep := pub static fn (at := u64 ?, made := type ?) -> void (
-        if mints[at] != ? abort «a key's mint is made once»,
-        mints[at] = made
+        if self.mints[at] != ? abort «a key's mint is made once»,
+        self.mints[at] = made
     )
 )

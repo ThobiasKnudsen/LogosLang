@@ -1274,8 +1274,8 @@ pub(crate) unsafe fn is_comptime_arg(types: &Core, node: DyadPtr) -> bool {
 }
 
 /// What a `static` function's call works on where it has no value: through the type (`t.k()`),
-/// by another name, or bare from a parse (›A bare call of a `static` function works on the value
-/// the calling body is about‹ [[R238]]).
+/// by another name, or through `self` from a parse (›A `static` function called through `self`
+/// works on the value the calling body is about‹ [[R238]]).
 pub(crate) fn no_value(store: &mut Store, types: &Core) -> DyadPtr {
     store.alloc_head(types.dyad_, std::ptr::null_mut())
 }
@@ -1552,16 +1552,16 @@ pub(crate) unsafe fn commit_call_args(
     Ok(())
 }
 
-/// Whether parameter `i` of the `fn` `callee` is the one no name declares: the value a `static`
-/// function is reached through, which the call reads and writes where it stands.
+/// Whether parameter `i` of the `fn` `callee` is its `self`: the value a `static` function is
+/// reached through, which the call reads and writes where it stands.
 ///
 /// # Safety
-/// `callee` must be a `fn` node from the store.
-unsafe fn is_receiver(callee: DyadPtr, i: usize) -> bool {
+/// `callee` must be a `fn` node from the store whose input is a record.
+pub(crate) unsafe fn is_receiver(callee: DyadPtr, i: usize) -> bool {
     let input = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_INPUT);
     array::items(meta::record_field_bindings_of(input))
         .get(i)
-        .is_some_and(|&b| !b.is_null() && !binding::Binding::is_named(b))
+        .is_some_and(|&b| !b.is_null() && binding::Binding::read(b).receiver)
 }
 
 /// Land every value a body gives, each of its lines' that give one, or a `return`'s, in the

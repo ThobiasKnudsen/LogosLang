@@ -59,7 +59,7 @@ pub(super) fn load(
     // SAFETY: the file declared `type_mint` as a type with a body.
     let body = unsafe { meta::record_body_of(keeper.identity) };
     let member = |name: &str| {
-        let f = carried::name_in(trie, body, &FILE, name).identity;
+        let f = carried::member_in(trie, body, &FILE, name).identity;
         // SAFETY: `f` is the dyad a name of the body holds.
         assert!(unsafe { dyad::ty(f) } == core.fn_type, "{}: `{name}` is no function", FILE.path);
         f

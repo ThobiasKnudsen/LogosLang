@@ -1,4 +1,4 @@
 # A file whose top level holds a value with a `free` field that prints: the file's scope
 # lives as long as the run, so the value is freed once, where the run ends.
-bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ),
+bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) ),
 h := pub bag(9)

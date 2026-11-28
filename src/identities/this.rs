@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The value a type's bodies work on: a parse's node, `tape[0]`, or a `free`'s or `static`
-//! function's value, bound as an unnamed parameter, a `dyad ?` place holding the value's
-//! address: a node's, or a plain record's bytes. A field read, `tape[0].f` or bare `f`,
-//! reaches field `f` of the value by its index: a node's slot holding the node the field
+//! function's value, its parameter `self`, a `dyad ?` place holding the value's address: a
+//! node's, or a plain record's bytes. A field read, `tape[0].f` or `self.f`, reaches field
+//! `f` of the value by its index: a node's slot holding the node the field
 //! holds, or for a field of a number or pointer type the value that node yields; a plain
 //! record's bytes at the field's offset. As `=`'s target, the write of the right side's
 //! node, or of a node holding the value it yields. The owner type each read carries says
@@ -72,8 +72,8 @@ pub struct ThisIds {
     pub block_leaf: DyadPtr,
 }
 
-/// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
-/// name in a `free` or `static` function builds it too, and `=` the write over it.
+/// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, `self.x` in a
+/// `free` or `static` function builds it too, and `=` the write over it.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
         let record = meta::operand_record(
@@ -526,7 +526,7 @@ pub(crate) unsafe fn build_named_write(
 unsafe fn field_named(rt: &Runtime, ty: DyadPtr, name: &str) -> Option<(usize, DyadPtr)> {
     let mut scope = crate::parse::ScopeStack::new();
     scope.push(meta::record_scope_of(ty));
-    let found = scope.resolve(rt.index()?, name).ok().filter(|r| r.matched == name.len())?;
+    let found = scope.resolve_member(rt.index()?, name).ok().filter(|r| r.matched == name.len())?;
     let fields = super::array::items(meta::record_fields_of(ty));
     Some((fields.iter().position(|&f| f == found.identity)?, found.binding))
 }
@@ -588,8 +588,9 @@ fn run_named_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// Where field `k` of the value lies: a node's slot, or the bytes of a plain record, the one a
-/// `static` function called through it writes (DESIGN ›There is no `this`‹), with the field's
-/// declared type; each with the field's index.
+/// `static` function called through it writes (›A `static` function writes the value it is called
+/// on, and respects `mut`‹ [[R239]]), with the field's declared type; each with the field's
+/// index.
 enum Field {
     Slot(*mut DyadPtr, usize),
     Bytes(*mut u8, DyadPtr, usize),
@@ -1267,8 +1268,9 @@ pub(crate) unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
     store.alloc_words(ty, &slots)
 }
 
-/// The value a bare `static` call from a `run` hands on: a new value of `ty` whose fields are
-/// the run's own, `places` its parameters in field order (DESIGN ›There is no `this`‹). The
+/// The value a `run` hands on when it calls a `static` function through `self`: a new value of
+/// `ty` whose fields are the run's own, `places` its parameters in field order (›A `static`
+/// function called through `self` works on the value the calling body is about‹ [[R238]]). The
 /// node itself would not do: its fields hold the operands as written, which the run evaluates.
 pub(crate) fn build_pack(
     store: &mut Store,

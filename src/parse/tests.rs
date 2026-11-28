@@ -375,7 +375,7 @@ fn a_logos_constructor_runs_when_its_identity_appears() {
     let (_, s) = go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
     let (_, s) = go(
         "squared := type ( \
-            a := i32 ?, output_type := type ?, run = ( sq(a) ), \
+            a := i32 ?, output_type := type ?, run = ( sq(self.a) ), \
             parse_rank = *.parse_rank + 1, \
             parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
                       tape.is_constructed[0] = true, tape.remove(-1) ) )",
@@ -419,7 +419,7 @@ fn every_record_type_runs_the_constructor_its_own_slot_holds() {
     let (_, s) = go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, s);
     let (_, s) = go(
         "squared := type ( \
-            a := i32 ?, output_type := type ?, run = ( sq(a) ), \
+            a := i32 ?, output_type := type ?, run = ( sq(self.a) ), \
             parse_rank = *.parse_rank + 1, \
             parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
                       tape.is_constructed[0] = true, tape.remove(-1) ) )",

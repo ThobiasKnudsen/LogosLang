@@ -660,13 +660,16 @@ impl<'a> Parser<'a> {
         }
         let static_output = self.declared_output_type(ty);
         let output = output_field.map(|i| key[i]).or(static_output).unwrap_or(types.void_);
-        let (input, places) = self.hidden_param_record(&params, 0)?;
+        let (input, places) = self.hidden_param_record(&params, true, 0)?;
         self.cx.run_fields = Some((ty, places.clone(), spec));
         let param_scope = crate::identities::meta::record_scope_of(input);
         self.cx.scopes.push(param_scope);
         let mut names_now = places.clone();
         let declared = match (output_name, output_field) {
-            (Some(n), Some(i)) => self.declare_name(n, key[i], 0).map(|b| names_now[i] = b),
+            (Some(n), Some(i)) => {
+                let binding = self.mint_binding(key[i], param_scope, n.as_bytes());
+                self.declare_member(param_scope, n, binding, 0).map(|b| names_now[i] = b)
+            }
             _ => Ok(()),
         };
         let declared = declared.and_then(|()| match static_output {
@@ -700,7 +703,7 @@ impl<'a> Parser<'a> {
         let mut scope = ScopeStack::new();
         scope.push(crate::identities::meta::record_scope_of(ty));
         scope
-            .resolve(self.trie, crate::identities::mint::STATIC_FIELD)
+            .resolve_member(self.trie, crate::identities::mint::STATIC_FIELD)
             .ok()
             .and_then(|r| fields.iter().position(|&f| f == r.identity))
             .filter(|&i| crate::identities::hole::type_in(fields[i]) == self.types.type_)
@@ -721,7 +724,7 @@ impl<'a> Parser<'a> {
         }
         let mut members = ScopeStack::new();
         members.push(body);
-        let found = members.resolve(self.trie, STATIC_FIELD).ok()?;
+        let found = members.resolve_member(self.trie, STATIC_FIELD).ok()?;
         let member = found.binding;
         let own = !member.is_null()
             && found.matched == STATIC_FIELD.len()
@@ -747,11 +750,13 @@ impl<'a> Parser<'a> {
         output: DyadPtr,
     ) -> Result<(), ParseError> {
         use crate::identities::mint::STATIC_FIELD;
-        let binding = self.declare_field_name(STATIC_FIELD, output, 0)?;
+        let scope = self.cx.scopes.current().expect("the run's parameters are open");
+        let binding = self.mint_binding(output, scope, STATIC_FIELD.as_bytes());
+        let binding = self.declare_member(scope, STATIC_FIELD, binding, 0)?;
         let mut members = ScopeStack::new();
         members.push(crate::identities::meta::record_body_of(mint));
         if let (Ok(origin), Some(feed)) =
-            (members.resolve(self.trie, STATIC_FIELD), self.cx.feed.as_mut())
+            (members.resolve_member(self.trie, STATIC_FIELD), self.cx.feed.as_mut())
         {
             for cell in feed.cells.iter_mut().filter(|c| c.dyad == origin.binding) {
                 cell.dyad = binding;
@@ -824,7 +829,7 @@ impl<'a> Parser<'a> {
                 )
             };
         }
-        // The value is the first parameter, the one no name declares.
+        // The value is the first parameter, `self`.
         let this = params[0];
         let in_kept = kept.is_some();
         self.cx.definitions.extend(kept);

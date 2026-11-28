@@ -8,7 +8,7 @@
 # that is a call, its output the function's.
 sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
-    a := i32 ?, output_type := type ?, run = ( sq(a) ),
+    a := i32 ?, output_type := type ?, run = ( sq(self.a) ),
     parse_rank = *.parse_rank + 1,
     associativity = left,
     parse = (
@@ -22,7 +22,7 @@ squared := type (
 # A binary one: both cells, by name.
 add := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ),
 plus2 := type (
-    a := i32 ?, b := i32 ?, output_type := type ?, run = ( add(a, b) ),
+    a := i32 ?, b := i32 ?, output_type := type ?, run = ( add(self.a, self.b) ),
     parse_rank = +.parse_rank,
     associativity = left,
     parse = (
