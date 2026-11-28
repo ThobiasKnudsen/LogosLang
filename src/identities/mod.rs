@@ -36,6 +36,7 @@ mod comment;
 pub(crate) mod convert;
 pub(crate) mod copy;
 pub(crate) mod declare;
+mod direction;
 pub(crate) mod drop_model;
 pub(crate) mod dyad_place;
 pub mod error;
@@ -107,6 +108,8 @@ pub struct Core {
     pub numtypes: [DyadPtr; 10],
     pub lossy: DyadPtr,
     pub bool_: DyadPtr,
+    /// Associativity's type; `left_` and `right_` are its two values.
+    pub direction: DyadPtr,
     pub void_: DyadPtr,
     pub assign: DyadPtr,
     /// The scalar numeric conversion `T(value)`; it has no spelling of its own.
@@ -239,7 +242,6 @@ pub struct Core {
     pub open_curly_: DyadPtr,
     pub close_curly_: DyadPtr,
     pub sep_: DyadPtr,
-    /// Associativity's two values.
     pub left_: DyadPtr,
     pub right_: DyadPtr,
     pub arrow_: DyadPtr,
@@ -303,6 +305,7 @@ impl Core {
         let i32_ = numtypes[NumType::I32 as usize];
         let void = numtype::register_void(&mut cx);
         let bool_ = bool_mod::register(&mut cx);
+        let (direction, left_, right_) = direction::register(&mut cx);
         let rational = rational::register(&mut cx);
         // Before the operators: their records name operands with string nodes.
         let quote_ = string::register(&mut cx);
@@ -407,7 +410,7 @@ impl Core {
         let colon_ = colon::register(&mut cx);
         let unknown = hole::register(&mut cx);
         cx.unknown = unknown;
-        let (sep_, left_, right_) = type_mod::register_syntax(&mut cx);
+        let sep_ = type_mod::register_syntax(&mut cx);
         let layout_ = type_mod::register_layout(&mut cx);
         let logos = logos::register(&mut cx);
         let unknown_name = fresh::register(&mut cx);
@@ -549,6 +552,7 @@ impl Core {
             numtypes,
             lossy,
             bool_,
+            direction,
             void_: void,
             assign,
             convert,
@@ -1296,6 +1300,9 @@ unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
     if node == types.bool_ {
         return "bool".to_string();
     }
+    if node == types.direction {
+        return "direction".to_string();
+    }
     if node == types.binding_ {
         return "binding".to_string();
     }
@@ -1391,8 +1398,8 @@ pub unsafe fn display_value(
 /// # Safety
 /// As [`display_value`], `node` read through.
 unsafe fn shown(types: &Core, node: DyadPtr, bits: i64) -> String {
-    if read::output_type(types, node) == types.bool_ {
-        return if bits != 0 { "true" } else { "false" }.to_string();
+    if let Some(word) = named_value(types, read::output_type(types, node), bits) {
+        return word.to_string();
     }
     // A rational value's bits are the address of its sixteen bytes.
     if read::output_type(types, node) == types.rational {
@@ -1446,14 +1453,25 @@ unsafe fn display_held(types: &Core, ty: DyadPtr, bits: i64) -> String {
     }
     let at = dyad::value(held);
     match read::place_layout(types, of) {
-        Some((read::Read::Scalar(_), _)) if of == types.bool_ => {
-            if numtype::read_scalar_nt(NumType::I32, at) != 0 { "true" } else { "false" }
-                .to_string()
+        Some((read::Read::Scalar(nt), _)) => {
+            let bits = numtype::read_scalar_nt(nt, at);
+            named_value(types, of, bits).map_or_else(|| format_scalar(nt, bits), str::to_string)
         }
-        Some((read::Read::Scalar(nt), _)) => format_scalar(nt, numtype::read_scalar_nt(nt, at)),
         Some((read::Read::Rational, _)) => rational::spell_at(at),
         _ => "dyad".to_string(),
     }
+}
+
+/// The word a value of `ty` shows as where the seed names its values, `bool`'s and `direction`'s;
+/// stand-in for #174.
+fn named_value(types: &Core, ty: DyadPtr, bits: i64) -> Option<&'static str> {
+    if ty == types.bool_ {
+        return Some(if bits != 0 { "true" } else { "false" });
+    }
+    if ty == types.direction {
+        return ["left", "right"].get(usize::try_from(bits).ok()?).copied();
+    }
+    None
 }
 
 /// The container is already sign-extended, so signed integers print as-is.

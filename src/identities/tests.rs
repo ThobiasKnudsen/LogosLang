@@ -2350,6 +2350,25 @@ fn a_bool_literal_agrees_across_tiers() {
 }
 
 #[test]
+fn left_and_right_are_the_values_of_direction_on_both_tiers() {
+    // ›Associativity's values are `left` and `right`, the values of the type `direction`‹ [[R216]]
+    assert_eq!(run_script("right.type == direction"), 1);
+    assert_eq!(run_script("left.type == direction"), 1);
+    assert_eq!(run_script("t := type ( associativity = right ), t.associativity == right"), 1);
+    assert_eq!(run_script("+.associativity == left"), 1);
+    for tail in ["", "f.compile(), "] {
+        let held = "t := type ( a := static pub right ), f := fn () -> bool ( t.a == right ),\n";
+        assert_eq!(run_script(&format!("{held}{tail}f()")), 1, "{tail:?}");
+        let is_right = "f := fn (d := direction) -> bool ( d == right ),\n";
+        assert_eq!(run_script(&format!("{is_right}{tail}f(right)")), 1, "{tail:?}");
+        assert_eq!(run_script(&format!("{is_right}{tail}f(left)")), 0, "{tail:?}");
+        let gives = "f := fn () -> direction ( left ),\n";
+        assert_eq!(run_script(&format!("{gives}{tail}f() == left")), 1, "{tail:?}");
+    }
+    assert_eq!(parse_err("right + 1"), parse_err("true + 1"));
+}
+
+#[test]
 fn a_type_read_agrees_across_tiers() {
     assert_eq!(
         run_script(

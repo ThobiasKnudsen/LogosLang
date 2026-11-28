@@ -306,10 +306,20 @@ fn a_value_reads_its_type_and_a_reached_node_its_operands() {
 }
 
 #[test]
+fn left_and_right_show_as_the_values_of_direction() {
+    let (echoes, stderr) = repl(
+        "t := type ( a := static pub right )\nprint «{t.a == right}»\nprint «{right.type}»\n\
+          print «{+.associativity}»\nleft\n",
+    );
+    assert_eq!(echoes, ["true", "direction", "left", "left"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn a_type_body_fills_its_slots_and_declares_its_members() {
     let (echoes, stderr) = repl(
         "t := type (parse_rank = *.parse_rank + 1, associativity = right)\n\
-          print «{t.parse_rank}»\nprint «{t.associativity == right}»\nright.type == type\n",
+          print «{t.parse_rank}»\nprint «{t.associativity == right}»\nright.type == direction\n",
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
