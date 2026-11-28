@@ -639,6 +639,18 @@ pub fn parse_message(e: &ParseError) -> String {
              and no `try`; `abort «…»` stops the program"
                 .into()
         }
+        ParseError::FallibleUnread => {
+            "this gives a value or an error, a `T!`, and nothing reads it: an error must be \
+             handled, passed on with `try`, as in `x := try f()`, or read with `if`, as in \
+             `r := f(), if r holds err ( … )`"
+                .into()
+        }
+        ParseError::FreeOfFallible => {
+            "`free` throws away a value nobody wants, and a `T!` may hold an error, which must be \
+             handled: passed on with `try`, as in `x := try f()`, or read with `if`, as in \
+             `r := f(), if r holds err ( … )`"
+                .into()
+        }
         ParseError::HoldsNeedsMember => {
             "`holds` is followed by the name of a member of the union: `v holds a`".into()
         }
