@@ -1310,6 +1310,70 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The code being read does what a caller of the innermost open function sees: that
+    /// function's `FN_EFFECT`.
+    pub(crate) fn note_effect(&mut self) {
+        if let Some(frame) = self.cx.frames.last_mut() {
+            frame.effect = true;
+        }
+    }
+
+    /// A node built here calls `callee` each time the code being read runs: where the callee does
+    /// what a caller sees, so does that code. A body a parse or a constructor runs while the code
+    /// is read is no such call.
+    ///
+    /// # Safety
+    /// `callee` must be null or a dyad from the store.
+    pub(crate) unsafe fn note_call_effect(&mut self, callee: DyadPtr) {
+        let types = self.types;
+        if !callee.is_null()
+            && dyad::ty(callee) == types.fn_type
+            && (fn_effect(types, callee) || fn_receiver(types, callee) & RECEIVER_WRITES != 0)
+        {
+            self.note_effect();
+        }
+    }
+
+    /// Whether the place an `=` writes, as `=` read it, lies in the innermost open function's own
+    /// frame: a name of the frame, or a field of one reached by `.` alone and through no pointer.
+    pub(crate) fn writes_own_frame(&self, place: &Cell) -> bool {
+        use crate::identities::{hole, numtype};
+        let types = self.types;
+        let Some(frame) = self.cx.frames.last() else {
+            return false;
+        };
+        let root = if place.root.is_null() { place.dyad } else { place.root };
+        // SAFETY: a cell's dyad, root and path are null or dyads from the store, a path an
+        // `array` of binding dyads.
+        unsafe {
+            if root.is_null() || dyad::ty(root) != types.binding_ {
+                return false;
+            }
+            let own = Binding::read(root).storage(types);
+            if own != Some(crate::binding::Frame::Call(frame.frame)) {
+                return false;
+            }
+            if place.root.is_null() {
+                return true;
+            }
+            if place.path.is_null() {
+                return false;
+            }
+            let path = crate::identities::array::items(place.path);
+            if path.first() != Some(&root) {
+                return false;
+            }
+            let mut ty = types.type_of(root);
+            for &field in path.iter().skip(1) {
+                if ty.is_null() || numtype::is_pointer_type(ty) {
+                    return false;
+                }
+                ty = hole::type_in(Binding::read(field).dyad);
+            }
+            true
+        }
+    }
+
     /// A call is a use of every outer name the callee's body reads (DESIGN
     /// ›`move` and `free` are static‹): each listed binding is checked as a bare
     /// use here would be, and joins the lists of the functions being parsed.
@@ -1317,12 +1381,35 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `callee` must be null or a dyad from the store.
     pub(crate) unsafe fn check_call_reads(&mut self, callee: DyadPtr) -> Result<(), ParseError> {
+        // SAFETY: as this function's.
+        for &binding in unsafe { self.checked_reads(callee)? } {
+            self.note_outer_read(binding);
+        }
+        Ok(())
+    }
+
+    /// A body run here, while the code around it is read, a parse's or a constructor's, uses
+    /// every outer name it reads here, each checked as [`Self::check_call_reads`] checks it; the
+    /// functions being parsed do not read them when they run.
+    ///
+    /// # Safety
+    /// `f` must be null or a dyad from the store.
+    pub(crate) unsafe fn check_reads_now(&mut self, f: DyadPtr) -> Result<(), ParseError> {
+        // SAFETY: as this function's.
+        unsafe { self.checked_reads(f) }.map(|_| ())
+    }
+
+    /// The outer names `callee`'s body reads, each checked as a bare use here would be.
+    ///
+    /// # Safety
+    /// `callee` must be null or a dyad from the store.
+    unsafe fn checked_reads<'l>(&self, callee: DyadPtr) -> Result<&'l [DyadPtr], ParseError> {
         if callee.is_null() {
-            return Ok(());
+            return Ok(&[]);
         }
         // SAFETY: `callee` is a dyad from the store.
         if unsafe { dyad::ty(callee) } != self.types.fn_type {
-            return Ok(());
+            return Ok(&[]);
         }
         // SAFETY: `callee` is a function node; its list holds binding dyads.
         let outer = unsafe { fn_outer(callee) };
@@ -1361,8 +1448,7 @@ impl<'a> Parser<'a> {
             if fields.is_dead() || unsafe { Binding::has_ended_path(binding) } {
                 return Err(ParseError::Resolve(ResolveError::Dead(name())));
             }
-            self.note_outer_read(binding);
         }
-        Ok(())
+        Ok(outer)
     }
 }

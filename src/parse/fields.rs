@@ -2296,6 +2296,7 @@ impl<'a> Parser<'a> {
         };
         self.read_gate(binding)?;
         self.cx.member_path = vec![binding];
+        self.note_outer_read(binding);
         Ok(Some(identity))
     }
 
@@ -2341,7 +2342,11 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `logos` must be a valid dyad from the store.
-    unsafe fn static_member_of(&self, logos: DyadPtr, name: &str) -> Option<(DyadPtr, DyadPtr)> {
+    pub(super) unsafe fn static_member_of(
+        &self,
+        logos: DyadPtr,
+        name: &str,
+    ) -> Option<(DyadPtr, DyadPtr)> {
         use crate::identities::meta;
         if !meta::is_record_type(logos) {
             return None;

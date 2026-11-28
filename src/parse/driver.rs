@@ -745,6 +745,8 @@ impl<'a> Parser<'a> {
                     self.cx.pos = cell.start;
                     return Err(e);
                 }
+                // SAFETY: as above.
+                unsafe { self.note_call_effect(callee) };
             }
             let ran = self.run_type_where_built(tape)?.is_some();
             if ran {
@@ -1284,8 +1286,8 @@ impl<'a> Parser<'a> {
         // operand, which it reads as written (›How a Logos constructor builds its node‹ [[R362]]).
         let from = tape.at(-1).or(tape.at(0)).map_or(self.cx.pos, |c| c.start);
         self.run_first(tape, from)?;
-        // Its run is a call: a use of every outer name its body reads.
-        if let Err(e) = self.check_call_reads(f) {
+        // Its run is a call here: a use of every outer name its body reads.
+        if let Err(e) = self.check_reads_now(f) {
             if let Some(c) = tape.at(0) {
                 self.cx.pos = c.start;
             }

@@ -4,7 +4,8 @@
 //! The parser: one pass over the source, the scope's constructor lexing a segment and
 //! constructing its cells highest parse_rank first (DESIGN ›The scope's constructor is the
 //! driver‹). This file holds the parser and the context a sub-parse pushes; each job is the
-//! file beside it: tape, scopes, error, lex, driver, operands, declare, fields, types, bodies, quotes.
+//! file beside it: tape, scopes, error, lex, driver, operands, declare, fields, types, mint_key,
+//! bodies, quotes, waiting.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -21,6 +22,7 @@ mod driver;
 mod error;
 mod fields;
 mod lex;
+mod mint_key;
 mod operands;
 mod quotes;
 mod scopes;
@@ -162,6 +164,12 @@ struct Context<'a> {
     /// While a held `type (…)` is built at its run, its held node: the place the body is written
     /// in, one for every build of it. Null for a body built where it is read.
     held: DyadPtr,
+    /// While a held `type (…)` is built at its run, what its key in `type_mint` asks of the build.
+    place_key: mint_key::PlaceKey,
+    /// The contents of the type body built last, for a test to compare a build with the mint its
+    /// key found.
+    #[cfg(test)]
+    built_contents: Vec<crate::identities::type_mint::KeyPart>,
     /// A cell the branch about to open is checked against a type, with that type.
     narrow_next: Option<(CellKey, DyadPtr)>,
     /// While a `static` line of a type body is read, the frame depth a
@@ -240,6 +248,9 @@ impl<'a> Context<'a> {
             kept: None,
             held_depth: 0,
             held: std::ptr::null_mut(),
+            place_key: mint_key::PlaceKey::None,
+            #[cfg(test)]
+            built_contents: Vec::new(),
             narrow_next: None,
             member_fn_depth: None,
             once_at: None,

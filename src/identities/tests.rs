@@ -2923,6 +2923,21 @@ fn run_script(src: &str) -> i64 {
     run_script_result(src).unwrap()
 }
 
+/// Runs `src` in the one pass, as the command line does, so a `type ( … )` built when its body
+/// runs reaches the parser: the value the program gives.
+fn run_in_pass(src: &str) -> i64 {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+    p.read_lines(crate::parse::LinesEnd::TextEnd).unwrap();
+    let (node, bits) = p.finish().unwrap().expect("the program gives a value");
+    // SAFETY: `node` is the line that gave the program its value, `bits` that value.
+    let value = unsafe { rational::as_number(&core, node, bits) };
+    p.end_tail().unwrap();
+    value
+}
+
 /// Runs `f` on the work stack, as `main` runs every program: a deep recursion then meets
 /// the stack guard, not the harness's 2 MiB thread.
 fn on_work_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
@@ -5228,4 +5243,122 @@ fn a_file_is_read_from_outside_only_by_its_pub_names() {
     let lib = "(logos file «tests/fixtures/lib_pub.logos»)";
     assert_eq!(run_script(&format!("{lib}.double(21)")), 42);
     assert_eq!(script_parse_err(&format!("{lib}.helper(1)")), not_pub("helper"));
+}
+
+/// [[R383]]'s place key: a held `type ( … )` reached again with the same values of its reads that
+/// can change finds the mint kept for them, which its writable `static` `k` shows, and one reached
+/// with other values is built; a line with an effect runs at every reach, counted through a `mut`
+/// counter. A test's build at every hit is compared with the mint it found.
+#[test]
+fn a_held_type_is_found_again_by_its_place_and_its_reads_that_can_change() {
+    let k = "k := static pub mut i32 0";
+    let bump = "c := mut i32 0, bump := fn () -> i32 ( c = c + 1, 1 )";
+    let cases = [
+        (
+            "arr := fn (t := type ?) -> type ( type ( v := pub t ?, n := static pub mut i32 0 ) ), \
+             a := type arr(i32), a.n = 7, b := type arr(i32), c := type arr(f64), b.n * 10 + c.n"
+                .to_string(),
+            70,
+        ),
+        // A parameter of the function the type is written in.
+        (
+            format!(
+                "mk := fn (x := i32 ?) -> type ( type ( n := static pub i32 x, {k} ) ), \
+                 a := type mk(1), a.k = 3, b := type mk(2), c := type mk(1), c.k * 100 + b.n * 10 + c.n"
+            ),
+            321,
+        ),
+        // A `mut` name, read in the type and through a call.
+        (
+            format!(
+                "m := mut i32 1, mk := fn () -> type ( type ( n := static pub i32 m, {k} ) ), \
+                 a := type mk(), a.k = 3, m = 5, b := type mk(), m = 1, c := type mk(), \
+                 c.k * 100 + b.n * 10 + c.n"
+            ),
+            351,
+        ),
+        (
+            format!(
+                "m := mut i32 1, get := fn () -> i32 ( m ), \
+                 mk := fn () -> type ( type ( n := static pub i32 get(), {k} ) ), \
+                 a := type mk(), a.k = 3, m = 5, b := type mk(), m = 1, c := type mk(), \
+                 c.k * 100 + b.n * 10 + c.n"
+            ),
+            351,
+        ),
+        // A writable `static` of another type.
+        (
+            format!(
+                "o := type ( count := static pub mut i32 0 ), \
+                 mk := fn () -> type ( type ( n := static pub i32 o.count, {k} ) ), \
+                 a := type mk(), a.k = 3, o.count = 5, b := type mk(), o.count = 0, c := type mk(), \
+                 c.k * 100 + b.n * 10 + c.n"
+            ),
+            350,
+        ),
+        // A loop variable.
+        (
+            format!(
+                "s := mut i32 0, for j in 0..2 ( for i in 0..2 ( t := type ( v := static pub i32 i, {k} ), \
+                 t.k = t.k + 1, s = s * 10 + t.k ) ), s"
+            ),
+            1122,
+        ),
+        // A local of the function the type is written in.
+        (
+            format!(
+                "mk := fn (x := i32 ?) -> type ( y := i32 x * 2, type ( n := static pub i32 y, {k} ) ), \
+                 a := type mk(3), a.k = 1, b := type mk(10), c := type mk(3), c.k * 100 + a.n + b.n"
+            ),
+            126,
+        ),
+        // A line with an effect runs at every reach; what it reads joins the key.
+        (
+            format!(
+                "{bump}, mk := fn () -> type ( type ( {k}, g := static i32 bump() ) ), \
+                 a := type mk(), a.k = 7, c = 0, b := type mk(), b.k * 10 + c"
+            ),
+            71,
+        ),
+        (
+            format!(
+                "{bump}, mk := fn () -> type ( type ( h := static fn () -> i32 ( bump() ), \
+                 g := static pub i32 self.h(), {k} ) ), \
+                 a := type mk(), a.k = 7, c = 0, b := type mk(), b.k * 10 + c"
+            ),
+            71,
+        ),
+        (format!("{bump}, for 0..3 ( t := type ( g := static i32 bump() ) ), c"), 3),
+        // A write into the function's own frame is no effect; one a held line makes outside it is.
+        (
+            format!(
+                "sq := fn (x := i32 ?) -> i32 ( y := mut i32 0, y = x * x, y ), \
+                 mk := fn () -> type ( type ( g := static pub i32 sq(3), {k} ) ), \
+                 a := type mk(), a.k = 7, b := type mk(), b.k * 100 + b.g"
+            ),
+            709,
+        ),
+        (
+            "n := mut i32 0, set := fn (a := dyad ?) -> i32 ( n = a, 1 ), \
+             mk := fn () -> type ( type ( k := static pub i32 set(i32 4) ) ), \
+             a := type mk(), n = 0, b := type mk(), n"
+                .to_string(),
+            4,
+        ),
+        // What a fixed pointer points at can change, so the type is built at every reach.
+        (
+            "v := mut i32 1, p := &v, mk := fn () -> type ( type ( n := static pub i32 p@ ) ), \
+             a := type mk(), v = 5, b := type mk(), a.n * 10 + b.n"
+                .to_string(),
+            15,
+        ),
+    ];
+    for (src, want) in cases {
+        assert_eq!(run_in_pass(&src), want, "{src}");
+    }
+    let compiled =
+        "arr := fn (t := type ?) -> type ( type ( v := pub t ?, n := static pub mut i32 0 ) ), \
+         g := fn () -> i32 ( a := type arr(i32), a.n = a.n + 1, a.n ), g.compile(), \
+         g() * 10 + g()";
+    assert_eq!(run_in_pass(compiled), 12);
 }

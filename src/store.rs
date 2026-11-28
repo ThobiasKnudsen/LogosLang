@@ -65,6 +65,10 @@ pub struct Store {
     hung: usize,
     #[cfg(test)]
     node_list: Vec<DyadPtr>,
+    /// The contents each held `type ( … )` was built with when its place in `type_mint` kept it,
+    /// by that place, so a test can build it again at a hit and compare.
+    #[cfg(test)]
+    pub(crate) kept_contents: HashMap<u64, Vec<crate::identities::type_mint::KeyPart>>,
     /// The `hashmap` native's tables, keyed and valued by `i64` bit-containers; boxed
     /// because a table owns heap of its own and its `Drop` must run.
     #[allow(clippy::vec_box)]
@@ -178,6 +182,8 @@ impl Store {
             hung: 0,
             #[cfg(test)]
             node_list: Vec::new(),
+            #[cfg(test)]
+            kept_contents: HashMap::new(),
             tables: Vec::new(),
             texts: HashMap::new(),
             artifacts: HashMap::new(),

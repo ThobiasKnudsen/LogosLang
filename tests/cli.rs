@@ -16125,8 +16125,8 @@ fn two_names_of_one_mint_in_a_body_do_not_convert_into_each_other() {
 
 /// A name declared in a body that runs later holds one dyad per mint, found again at the next
 /// run ([[R383]]): its address tells it from another name's of the same contents, `==` still
-/// compares by reading, and a type that is never found again is a new one at each run. A union
-/// in a body gets its name's dyad from the same place, on both tiers.
+/// compares by reading, and a type with a writable `static` is found again by its place alone. A
+/// union in a body gets its name's dyad from the same place, on both tiers.
 #[test]
 fn a_name_in_a_body_holds_one_dyad_per_mint_found_again_at_the_next_run() {
     let defs = "meters := type ( v := pub f64 ? ), seconds := type ( v := pub f64 ? )";
@@ -16177,10 +16177,15 @@ fn a_name_in_a_body_holds_one_dyad_per_mint_found_again_at_the_next_run() {
             ),
             "true\n",
         ),
-        // A writable `static` keeps its type from every other, an earlier run's too.
+        // A writable `static` keeps its type from another place's, and a name declared inside
+        // the type is no read that can change, so an earlier run's mint is found again.
         (
-            format!("f := fn () -> @dyad ( {} ), print «{{f() == f()}}»", own("n := pub static mut i32 0")),
-            "false\n",
+            format!(
+                "f := fn () -> @dyad ( {mut_n} ), g := fn () -> @dyad ( {mut_n} ), \
+                 print «{{f() == f()}} {{f() == g()}}»",
+                mut_n = own("n := pub static mut i32 0")
+            ),
+            "true false\n",
         ),
     ];
     for compile in ["", "f.compile(), g.compile(), "] {
@@ -16299,21 +16304,32 @@ fn a_place_keeps_one_mint_on_both_tiers() {
 }
 
 /// R383's rules (2) and (3): a writable `static` is never shared, so a type that holds one is
-/// found by no other build, and a body is the same only where it is written, so one `type ( … )`
-/// built again is one type and the same text written twice is two. A `static` that holds a float
-/// keeps its type apart until a rule says how a float is minted.
+/// found by no build at another place, and a body is the same only where it is written, so one
+/// `type ( … )` built again is one type and the same text written twice is two. The place a
+/// `type ( … )` is written finds its own mint again, a writable `static` in it too. A `static`
+/// that holds a float keeps its type from another place's until a rule says how a float is minted.
 #[test]
 fn a_writable_static_and_a_body_keep_types_apart() {
     let k = "k := fn (t := type ?) -> type ( t )";
     let body = "x := pub i32 ?, twice := pub static fn () -> i32 ( self.x * 2 )";
     let run = "x := pub i32 ?, run := static pub fn () -> void ( x + 1 )";
-    let mut cases = vec![(
-        format!(
-            "a := fn () -> type ( type ( n := pub static mut i32 0 ) ), {k}, c1 := type k(a()), \
-             c2 := type k(a()), c1.n = 1, print «{{c1 == c2}} {{c1.n}} {{c2.n}}»"
+    let mut_n = "type ( n := pub static mut i32 0 )";
+    let mut cases = vec![
+        (
+            format!(
+                "c1 := {mut_n}, c2 := {mut_n}, c1.n = 1, print «{{c1 == c2}} {{c1.n}} {{c2.n}}»"
+            ),
+            "false 1 0\n",
         ),
-        "false 1 0\n",
-    )];
+        (
+            format!(
+                "a := fn () -> type ( {mut_n} ), b := fn () -> type ( {mut_n} ), {k}, \
+                 c1 := type k(a()), c2 := type k(a()), c3 := type k(b()), c1.n = 1, \
+                 print «{{c1 == c2}} {{c1 == c3}} {{c2.n}} {{c3.n}}»"
+            ),
+            "true false 1 0\n",
+        ),
+    ];
     for compile in ["", "g.compile(), "] {
         for inside in [body, run] {
             cases.push((
@@ -16327,30 +16343,49 @@ fn a_writable_static_and_a_body_keep_types_apart() {
         cases.push((
             format!(
                 "a := fn () -> type ( type ( x := static f64 0.0 ) ), \
-                 g := fn () -> bool ( a() == a() ), {compile}g()"
+                 b := fn () -> type ( type ( x := static f64 0.0 ) ), \
+                 g := fn () -> bool ( a() == a() and a() != b() ), {compile}g()"
             ),
-            "false\n",
+            "true\n",
         ));
     }
     assert_runs(&cases);
 }
 
-/// A `static` line runs at each build, before the type is looked up, so a second build of one
-/// type runs it again; whether it should is open at [[R383]], and [[R297]] has the lines made at
-/// each build.
+/// The place a `type ( … )` is written, with the values of its reads that can change, finds the
+/// mint kept for them ([[R383]], [[R297]]): a `static` line with an effect runs at every reach,
+/// and the rest of the type is not built again, so a writable `static` of the mint found keeps
+/// what the last reach wrote, on both tiers.
 #[test]
-fn a_static_line_runs_at_each_build_of_one_type() {
-    let src = |compile: &str| {
-        format!(
-            "bump := fn () -> i32 ( print «bump», 1 ), mk3 := fn (t := type ?) -> type ( \
-             type ( e := static type t, g := static bump() ) ), print «defined», \
-             same := fn () -> bool ( mk3(i32) == mk3(i32) ), {compile}print «{{same()}}»"
-        )
-    };
-    assert_runs(&[
-        (src(""), "defined\nbump\nbump\ntrue\n"),
-        (src("same.compile(), "), "defined\nbump\nbump\ntrue\n"),
-    ]);
+fn a_type_s_place_and_changing_reads_find_its_mint() {
+    let bump = "bump := fn () -> i32 ( print «bump», 1 )";
+    let arr =
+        "arr := fn (t := type ?) -> type ( type ( v := pub t ?, n := static pub mut i32 0 ) )";
+    let mut cases = vec![(
+        format!("{bump}, for 0..3 ( t := type ( g := static i32 bump() ), print «iter» )"),
+        "bump\niter\nbump\niter\nbump\niter\n",
+    )];
+    for compile in [false, true] {
+        let tier = |f: &str| if compile { format!("{f}.compile(), ") } else { String::new() };
+        cases.push((
+            format!(
+                "{bump}, mk3 := fn (t := type ?) -> type ( \
+                 type ( e := static type t, g := static bump() ) ), print «defined», \
+                 same := fn () -> bool ( mk3(i32) == mk3(i32) ), {}print «{{same()}}»",
+                tier("same")
+            ),
+            "defined\nbump\nbump\ntrue\n",
+        ));
+        cases.push((
+            format!(
+                "{arr}, g := fn () -> i32 ( a := type arr(i32), a.n = a.n + 1, a.n ), \
+                 {}print «{{g()}} {{g()}}», c := type arr(f64), print «{{c.n}}»",
+                tier("g")
+            ),
+            "1 2\n0\n",
+        ));
+    }
+    assert_runs(&cases);
 }
 
 /// ›`array` is a chooser‹ [[R223]]: `array` and `^` keep no memo of their own, and each still has

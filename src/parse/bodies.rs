@@ -34,6 +34,27 @@ pub(super) struct OpenFn {
     pub(super) slot_body: bool,
     /// Where the first of the body's lines that gives the body its value starts.
     pub(super) gives_at: Option<usize>,
+    /// The body does what a caller sees besides its value: the function's `FN_EFFECT`.
+    pub(super) effect: bool,
+}
+
+impl OpenFn {
+    /// The frame of `f`, open where a held body was written, as that body is parsed at its run:
+    /// a read of `f`'s names is no capture, and nothing is claimed in it.
+    pub(super) fn reopened(f: DyadPtr) -> Self {
+        OpenFn {
+            frame: f,
+            size: 0,
+            below: 0,
+            outer: Vec::new(),
+            open_below: 0,
+            returns: Vec::new(),
+            result: std::ptr::null_mut(),
+            slot_body: false,
+            gives_at: None,
+            effect: false,
+        }
+    }
 }
 
 /// A `return` in a function body being parsed. Its line may still end names after it, in a
@@ -360,11 +381,17 @@ pub const FN_OUTER: usize = 5;
 /// `static` function's body reads or writes a field of its value; null for neither.
 pub const FN_RECEIVER: usize = 6;
 
-pub const FN_SLOTS: usize = FN_RECEIVER + 1;
+/// A `u64` leaf holding `1` where the body does what a caller sees besides its value: it prints,
+/// allocates, writes a place outside its own frame, calls a function that does, or builds a
+/// `type ( … )` whose construction does or reads what the walk where it is written cannot follow;
+/// null where it does none.
+pub const FN_EFFECT: usize = 7;
+
+pub const FN_SLOTS: usize = FN_EFFECT + 1;
 
 /// The fields' names in slot order, as reflection reads them.
 pub const FN_FIELDS: [&str; FN_SLOTS] =
-    ["input", "output_type", "body", "bcode", "frame", "outer", "receiver"];
+    ["input", "output_type", "body", "bcode", "frame", "outer", "receiver", "effect"];
 
 /// Refuses a value a function hands on through a pointer result, `made` as `handed_ends` reads
 /// it, that the result does not say: a borrow under an owning `@T`, or, where the result is
@@ -446,6 +473,16 @@ pub(crate) unsafe fn fn_receiver(types: &Core, f: DyadPtr) -> u64 {
     } else {
         std::ptr::read_unaligned(dyad::value(leaf) as *const u64)
     }
+}
+
+/// Whether `f` is a built function whose body has an effect ([`FN_EFFECT`]).
+///
+/// # Safety
+/// `f` must be a resolved dyad from the store.
+pub(crate) unsafe fn fn_effect(types: &Core, f: DyadPtr) -> bool {
+    !f.is_null()
+        && dyad::ty(f) == types.fn_type
+        && !(*(dyad::value(f) as *const DyadPtr).add(FN_EFFECT)).is_null()
 }
 
 /// Deliberately no scope unwrapping: a sequence-valued condition may carry
@@ -953,6 +990,7 @@ impl<'a> Parser<'a> {
             result: std::ptr::null_mut(),
             slot_body: result.is_none() && !run_body,
             gives_at: None,
+            effect: false,
         });
         // SAFETY: `input` is the record just built, `params` its bindings.
         unsafe {
@@ -987,7 +1025,7 @@ impl<'a> Parser<'a> {
         self.cx.runtime_depth -= 1;
         self.cx.scopes.pop();
         self.cx.scopes.pop_barrier();
-        let OpenFn { size: frame_size, outer, returns, result: place, gives_at, .. } =
+        let OpenFn { size: frame_size, outer, returns, result: place, gives_at, effect, .. } =
             self.cx.frames.pop().expect("parse_fn pushed a frame");
         let body = body?;
         if let Some(at) = gives_at.filter(|_| !place.is_null()) {
@@ -1067,12 +1105,19 @@ impl<'a> Parser<'a> {
         } else {
             crate::identities::array::build(self.rt.store, self.types.array_, &outer)
         };
+        let effect = if effect {
+            let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
+            self.rt.store.alloc_blob(u64_ty, &1u64.to_ne_bytes())
+        } else {
+            std::ptr::null_mut()
+        };
         // SAFETY: `node`'s value is the `FN_SLOTS`-word record written above, nothing else's.
         unsafe {
             let slots = dyad::value(node) as *mut DyadPtr;
             *slots.add(FN_BODY) = body;
             *slots.add(FN_FRAME) = frame;
             *slots.add(FN_OUTER) = outer;
+            *slots.add(FN_EFFECT) = effect;
         }
         Ok(node)
     }
@@ -1901,6 +1946,8 @@ impl<'a> Parser<'a> {
         // SAFETY: `callee` is a reduced dyad.
         if unsafe { self.returns_type(callee) } {
             self.check_call_reads(callee)?;
+            // SAFETY: as above.
+            unsafe { self.note_call_effect(callee) };
             // A call that waits for the run gives a type value then.
             if !self.runs_in_pass(&args) {
                 return Ok(call);

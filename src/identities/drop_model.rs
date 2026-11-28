@@ -96,6 +96,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             p.take(init);
         }
         let node = build_alloc(p.store(), types, count, init, gates)?;
+        p.note_effect();
         // `alloc` gives `@T!` (›There is no bare `error «…»`; `abort «…»` stops the program;
         // `alloc` returns `@T!`‹ [[R145]]).
         // SAFETY: `node` is the `alloc` node just built.

@@ -145,6 +145,9 @@ fn construct(
         p.note_receiver_write(target);
     }
     p.note_write(node, &place);
+    if !p.writes_own_frame(&place) {
+        p.note_effect();
+    }
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
 }
