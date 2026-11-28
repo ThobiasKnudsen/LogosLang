@@ -40,30 +40,30 @@ error.needs_float := «a power needs a float result»,
             # and have no whole number to test. A finite exponent, through f64, has a whole
             # number, the `value` of the `i64!` its conversion gives.
             run = (
-                whole_exponent := if rhs - rhs == 0 (
-                    f64 lossy (rhs) == f64 lossy ((i64 lossy (f64 lossy (rhs))).value)
+                whole_exponent := if self.rhs - self.rhs == 0 (
+                    f64 lossy (self.rhs) == f64 lossy ((i64 lossy (f64 lossy (self.rhs))).value)
                 ) else (false),
                 if (whole_exponent) (
-                    power := mut output_type 1,
-                    times := mut (i64 lossy (f64 lossy (rhs))).value,
-                    factor := mut (if (output_type == rational_number) (output_type(lhs)) else (output_type lossy (lhs))),
+                    power := mut self.output_type 1,
+                    times := mut (i64 lossy (f64 lossy (self.rhs))).value,
+                    factor := mut (if (self.output_type == rational_number) (self.output_type(self.lhs)) else (self.output_type lossy (self.lhs))),
                     if times < 0 (
-                        if not (output_type == (f64 or f32 or rational_number))
+                        if not (self.output_type == (f64 or f32 or rational_number))
                             error.not_whole «a negative exponent of a whole number is not whole: write the base as a float»,
-                        factor = output_type 1 / factor,
+                        factor = self.output_type 1 / factor,
                         times = 0 - times
                     ),
                     for 0..times
                         ( power = power * factor ),
                     power
-                ) else if (output_type == (f64 or f32)) (
-                    real_base := f64 lossy (lhs),
+                ) else if (self.output_type == (f64 or f32)) (
+                    real_base := f64 lossy (self.lhs),
                     if real_base < 0.0
                         error.not_real «a negative base has no real power for a fractional exponent»,
                     if real_base == 0.0
-                        output_type 0
+                        self.output_type 0
                     else
-                        output_type lossy (exp(f64 lossy (rhs) * ln(real_base)))
+                        self.output_type lossy (exp(f64 lossy (self.rhs) * ln(real_base)))
                 ) else
                     error.needs_float «a fractional exponent needs a float result»
             )
@@ -76,7 +76,7 @@ error.needs_float := «a power needs a float result»,
     associativity = right,
     parse = (
         exponent := type if (tape[1].gives ⊆ i64) (i64) else (tape[1].gives),
-        tape[0].type = get_mint(tape[-1].gives, exponent),
+        tape[0].type = self.get_mint(tape[-1].gives, exponent),
         tape[0].lhs = tape[-1],
         if (tape[1].gives ⊆ i64) (
             tape[0].rhs = i64 (tape[1])

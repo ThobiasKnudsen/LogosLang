@@ -19,15 +19,15 @@ array := pub type (
     output_type := type ?,
 
     run = (
-        v := mut output_type ?,
+        v := mut self.output_type ?,
         # `ptr` owns the block and reads it only; `w`, a plain pointer into it, writes it. The block
         # is read out of the `@T!` `alloc` gives: stand-in for #159.
-        p := (alloc elements.dyads.size of mut v.element_type ?).value,
+        p := (alloc self.elements.dyads.size of mut v.element_type ?).value,
         w := p + 0,
         v.ptr = move p,
         # size counts only written elements, so a failed `=` leaves free nothing unwritten to walk.
-        for i in 0..elements.dyads.size (
-            (w + i)@ = elements.dyads[i],
+        for i in 0..self.elements.dyads.size (
+            (w + i)@ = self.elements.dyads[i],
             v.size = i + 1
         ),
         move v
@@ -46,29 +46,29 @@ array := pub type (
             if (tape[1].type != type)
                 error.not_a_type «id after array is not a type»,
             t := type tape[1],
-            if bytes_of(t) != 0 (
+            if self.bytes_of(t) != 0 (
                 place := type_mint.step(type_mint.step(0, array), t),
                 mint := mut type type_mint.kept(place),
                 if mint == ? (
                     mint = type (
                         element_type := pub static type t,
-                        ptr := pub mut own @element_type ?,
+                        ptr := pub mut own @self.element_type ?,
                         size := pub mut u64 0,
-                        size_bytes := pub static fn () -> u64 (size * element_type.size_bytes),
+                        size_bytes := pub static fn () -> u64 (self.size * self.element_type.size_bytes),
 
                         free = (
-                            for i in 0..size ( free (ptr + i)@ ),
-                            free ptr
+                            for i in 0..self.size ( free (self.ptr + i)@ ),
+                            free self.ptr
                         ),
 
-                        at := pub static fn (index := u64 ?) -> element_type (
-                            if index >= size error.index_out_of_range «the index is at or past the array's size»,
-                            (ptr + index)@
+                        at := pub static fn (index := u64 ?) -> self.element_type (
+                            if index >= self.size error.index_out_of_range «the index is at or past the array's size»,
+                            (self.ptr + index)@
                         ),
-                        at_signed := static fn (index := i64 ?) -> element_type (
-                            if index < 0 or u64 lossy (index) >= size
+                        at_signed := static fn (index := i64 ?) -> self.element_type (
+                            if index < 0 or u64 lossy (index) >= self.size
                                 error.index_out_of_range «the index is negative or at or past the array's size»,
-                            (ptr + index)@
+                            (self.ptr + index)@
                         ),
 
                         # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
