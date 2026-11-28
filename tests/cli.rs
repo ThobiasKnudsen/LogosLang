@@ -370,7 +370,7 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     assert!(echoes.is_empty() && stderr.contains("a type body line"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"c := type (run = 5)\n");
     assert!(
-        echoes.is_empty() && stderr.contains("`run := static pub fn () -> self.output_type ( … )`"),
+        echoes.is_empty() && stderr.contains("`run := static fn () -> self.output_type ( … )`"),
         "stderr: {stderr}"
     );
     // A field meets no name outside its type (›Members are dot-only; strictness has no
@@ -2603,6 +2603,35 @@ fn prose_may_stand_before_a_field_a_member_or_a_slot() {
     assert_eq!((code, stdout.as_str()), (Some(0), "11\n"), "stderr: {stderr}");
 }
 
+/// R234: a slot is read through `.` from outside its type only where it is `pub`, on both tiers.
+#[test]
+fn a_slot_is_read_from_outside_its_type_only_where_it_is_pub() {
+    for (gates, read, want) in [
+        ("static", "print «{t.parse_rank}»", Err("1:66: error: `parse_rank` is not `pub`")),
+        (
+            "static",
+            "f := fn () -> f64 ( t.parse_rank ), f.compile(), print «{f()}»",
+            Err("1:78: error: `parse_rank` is not `pub`"),
+        ),
+        ("static pub", "print «{t.parse_rank}»", Ok("60.0\n")),
+        (
+            "static pub",
+            "f := fn () -> f64 ( t.parse_rank ), f.compile(), print «{f()}»",
+            Ok("60.0\n"),
+        ),
+    ] {
+        let src = format!("t := type ( x := pub i32 ?, parse_rank := {gates} 60 ), {read}");
+        let (code, stdout, stderr) = run_line(&src);
+        match want {
+            Ok(out) => assert_eq!((code, stdout.as_str()), (Some(0), out), "{src}: {stderr}"),
+            Err(message) => {
+                assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: {stderr}");
+                assert!(stderr.contains(&format!("<command line>:{message}")), "{src}: {stderr}");
+            }
+        }
+    }
+}
+
 #[test]
 fn a_type_body_refuses_what_is_not_its_own() {
     for (src, expect) in [
@@ -2624,7 +2653,7 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (a := static pub mut i32 1, a = 3)\n", "a type body line"),
         (b"t := type (x := pub mut i32 ?, x = 3)\n", "a type body line"),
         (b"t := type (x := pub i32 ?, lex_rank := static pub 2)\n", "write `lex_rank = …`"),
-        (b"t := type (free = 5)\n", "`free := static pub fn () -> void ( … )`"),
+        (b"t := type (free = 5)\n", "`free := static fn () -> void ( … )`"),
         (b"t := type (drop = ( 0 ))\n", "a type body line"),
         (b"t := type (parse := static pub fn (tape := parsing_tape) -> void! ( tape[0].a = tape[-1] ))\n", "no field `a`"),
         (b"t := type (a := i32 ?, parse := static pub fn (tape := parsing_tape) -> void! ( tape[0].b = tape[-1] ))\n", "no field `b`"),
@@ -2634,9 +2663,9 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (static := i32 ?)\n", "it stands right of `:=`"),
         (b"t := type (y := static)\n", "missing an operand"),
         (b"t := type (5)\n", "a type body line"),
-        (b"t := type (parse = fn (a := mut i32 ?) -> void ( a = 1 ))\n", "`parse := static pub fn (tape := parsing_tape) -> void! ( … )`"),
-        (b"t := type (parse = 5)\n", "`parse := static pub fn (tape := parsing_tape) -> void! ( … )`"),
-        (b"t := type (run = 5)\n", "`run := static pub fn () -> self.output_type ( … )`"),
+        (b"t := type (parse = fn (a := mut i32 ?) -> void ( a = 1 ))\n", "`parse := static fn (tape := parsing_tape) -> void! ( … )`"),
+        (b"t := type (parse = 5)\n", "`parse := static fn (tape := parsing_tape) -> void! ( … )`"),
+        (b"t := type (run = 5)\n", "`run := static fn () -> self.output_type ( … )`"),
         (b"t := type (run := static pub fn () -> void ( 5 ))\nt(1)\n", "the call form of a type"),
         (b"t := type (run := static pub fn () -> self.output_type ( 5 ),\n", "never closed"),
     ] {
@@ -10416,7 +10445,7 @@ fn a_free_body_fills_the_values_free() {
         run_line("x := type ( n := u64 ?, free := static pub fn () -> void ( print «gone» ) ), 1");
     assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "stderr: {stderr}");
     for (src, expect) in [
-        ("x := type ( free = 5 ), 1", "`free := static pub fn () -> void ( … )`"),
+        ("x := type ( free = 5 ), 1", "`free := static fn () -> void ( … )`"),
         ("x := type ( p := mut own @i32 ? ), 1", "must be freed by the type's"),
         ("x := type ( p := own i32 ? ), 1", "`own` stands only before a pointer"),
     ] {

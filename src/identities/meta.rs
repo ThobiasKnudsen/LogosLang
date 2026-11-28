@@ -408,6 +408,7 @@ fn record_blob(
     blob.extend_from_slice(&(bindings as usize).to_ne_bytes());
     blob.extend_from_slice(&extent.align.to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
+    blob.extend_from_slice(&0usize.to_ne_bytes());
     blob
 }
 
@@ -431,9 +432,30 @@ pub(crate) fn formed_record(
 }
 
 /// Where a record type's payload ends.
-const RECORD_END: usize = INSTRUCTION_OFF + 8;
+const RECORD_END: usize = CLOSED_SLOTS_OFF + 8;
 
 const INSTRUCTION_OFF: usize = ALIGN_OFF + 8;
+
+const CLOSED_SLOTS_OFF: usize = INSTRUCTION_OFF + 8;
+
+/// The slots the body of the record type `id` declared without `pub`, one bit per slot, which a
+/// read through `.` from outside the type does not reach; none for a type with no record payload.
+///
+/// # Safety
+/// `id` must carry a record.
+pub(crate) unsafe fn closed_slots_of(id: DyadPtr) -> u8 {
+    if is_record_type(id) {
+        *dyad::head(id).add(CLOSED_SLOTS_OFF)
+    } else {
+        0
+    }
+}
+
+/// # Safety
+/// As `record_scope_of`.
+pub(crate) unsafe fn close_slots(id: DyadPtr, slots: u8) {
+    *dyad::head(id).add(CLOSED_SLOTS_OFF) = slots;
+}
 
 /// The machine instruction a mint's run names, kept on the mint once its run is built, which its
 /// nodes run in place of the run (›Which machine operation an operator is (`+` over `i32` →

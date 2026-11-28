@@ -3260,6 +3260,40 @@ fn a_slot_is_declared_in_its_own_form_and_a_run_type_has_no_place() {
 }
 
 #[test]
+fn a_slot_without_pub_ranks_its_parse_and_is_read_only_inside_its_type() {
+    // ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]
+    let sq = |rank: &str| {
+        format!(
+            "sq := type ( a := pub i32 ?, output_type := static type i32, \
+             run := static fn () -> self.output_type ( self.a * self.a ), \
+             parse_rank := static ({rank}), parse := static fn (tape := parsing_tape) -> void! \
+             ( tape[0].type = sq, tape[0].a = tape[1], tape.remove(1), \
+             tape.is_constructed[0] = true ) ),\nf := fn () -> i32 ( sq 2 + 1 ),\n"
+        )
+    };
+    for tail in ["", "f.compile(), "] {
+        assert_eq!(run_script(&format!("{}{tail}f()", sq("+.parse_rank + 1"))), 5, "{tail:?}");
+        assert_eq!(run_script(&format!("{}{tail}f()", sq("+.parse_rank - 1"))), 9, "{tail:?}");
+    }
+    for read in ["t.parse_rank", "f := fn () -> f64 ( t.parse_rank ), f.compile(), f()"] {
+        assert_eq!(
+            parse_err(&format!(
+                "( t := type ( x := pub i32 ?, parse_rank := static 60 ),\n{read} )"
+            )),
+            ParseError::NotPub(Box::new("parse_rank".into())),
+            "{read}"
+        );
+    }
+    let open = "t := type ( x := pub i32 ?, parse_rank := static pub 60 ),\n\
+                f := fn () -> bool ( t.parse_rank == f64 60 ),\n";
+    for tail in ["", "f.compile(), "] {
+        assert_eq!(run_script(&format!("{open}{tail}f()")), 1, "{tail:?}");
+    }
+    // A type built in the seed declares no gates, so its slots are read as they are.
+    assert_eq!(run_script("+.associativity == left"), 1);
+}
+
+#[test]
 fn a_parsing_tape_takes_no_pointer_of_another_type() {
     assert_eq!(parse_err("( x := u64 7, t := parsing_tape (&x) )"), ParseError::TypeMismatch);
 }

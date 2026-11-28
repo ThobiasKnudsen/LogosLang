@@ -351,7 +351,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TypeBodyLine => {
-            "a type body line declares a field (`x := i32 ?`), a member (`y := static 3`) or a slot (`parse_rank := static pub 60`), or is prose".into()
+            "a type body line declares a field (`x := i32 ?`), a member (`y := static 3`) or a slot (`parse_rank := static 60`), or is prose".into()
         }
         ParseError::StaticMisplaced => {
             "`static` makes one place for a type or a function, `y := static 3`, never on a parameter, which each call fills".into()
@@ -394,18 +394,18 @@ pub fn parse_message(e: &ParseError) -> String {
             "associativity is a `direction` known when the type is defined: `left` or `right`".into()
         }
         ParseError::SlotNotWhole(kind) => format!(
-            "`static pub` gates only the value nearest it, so a slot's value is written in brackets: \
+            "`static` gates only the value nearest it, so a slot's value is written in brackets: \
              `{}`",
             match kind {
                 SlotKind::ParseRank => SlotKind::ParseRank.form().to_string(),
-                kind => format!("{} := static pub (…)", kind.spelling()),
+                kind => format!("{} := static (…)", kind.spelling()),
             }
         ),
         ParseError::SlotForm(kind) => format!("the slot `{}` is declared `{}`", kind.spelling(), kind.form()),
         ParseError::SlotFilled(kind, value) => {
             let declared = match kind {
                 SlotKind::ParseRank | SlotKind::Associativity if !value.is_empty() => {
-                    format!("{} := static pub {value}", kind.spelling())
+                    format!("{} := static {value}", kind.spelling())
                 }
                 kind => kind.form().to_string(),
             };
@@ -416,17 +416,17 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::RunArrow(true) => {
             "this type declares an `output_type`, so its `run` gives it: \
-             `run := static pub fn () -> self.output_type ( … )`"
+             `run := static fn () -> self.output_type ( … )`"
                 .into()
         }
         ParseError::RunArrow(false) => {
             "this type declares no `output_type`, so its `run` gives nothing: \
-             `run := static pub fn () -> void ( … )`"
+             `run := static fn () -> void ( … )`"
                 .into()
         }
         ParseError::FreeIsNoPlace => {
             "`free` frees a value, `free x`, and is no place to write; a type declares its own as \
-             `free := static pub fn () -> void ( … )`"
+             `free := static fn () -> void ( … )`"
                 .into()
         }
         ParseError::NoSuchField(name) => {
@@ -572,7 +572,7 @@ pub fn parse_message(e: &ParseError) -> String {
             };
             format!(
                 "the {which} {named} {own}, so {it} must be freed by the type's own `free`, \
-                 `free := static pub fn () -> void ( … )`, which this type body does not declare"
+                 `free := static fn () -> void ( … )`, which this type body does not declare"
             )
         }
         ParseError::KeptEntry(name) => format!(

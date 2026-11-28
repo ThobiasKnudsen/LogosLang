@@ -72,7 +72,7 @@ pub enum ParseError {
     LexRankNeedsName,
     /// `lex_rank := …` in a type body, where the name's rank is written `lex_rank = …`.
     LexRankDeclared,
-    /// A rank or a side whose `static pub` gates only part of its value.
+    /// A rank or a side whose `static` gates only part of its value.
     SlotNotWhole(SlotKind),
     /// A slot declared with other gate words, parameters or arrow than its own.
     SlotForm(SlotKind),

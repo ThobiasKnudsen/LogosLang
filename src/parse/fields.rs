@@ -84,6 +84,24 @@ impl<'a> Parser<'a> {
         Err(ParseError::NotPub(Box::new(Binding::spelling(binding))))
     }
 
+    /// The gate read of the slot `kind` of the type `logos`, read through `.`: one its body
+    /// declared without `pub` is read only from inside the type, as a member is (›Fields are read
+    /// with a dot, outside their type and inside it through `self`‹ [[R234]]).
+    ///
+    /// # Safety
+    /// `logos` must be a type identity node from the store.
+    unsafe fn slot_read_gate(&self, logos: DyadPtr, kind: SlotKind) -> Result<(), ParseError> {
+        use crate::identities::meta;
+        if meta::closed_slots_of(logos) & kind.bit() == 0 {
+            return Ok(());
+        }
+        let from = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
+        if crate::identities::gate::within(from, meta::record_body_of(logos)) {
+            return Ok(());
+        }
+        Err(ParseError::NotPub(Box::new(kind.spelling().to_string())))
+    }
+
     /// The innermost open definition with a value its body is about: a parse's node, a `free`'s
     /// or a `static` function's value.
     fn value_def(&self) -> Option<&OpenType> {
@@ -2162,6 +2180,9 @@ impl<'a> Parser<'a> {
             return Err(ParseError::BadReflectRead);
         }
         let operand_kind = matches!(meta::kind_of(logos), Some(meta::TUPLE_TAG | meta::LIST_TAG));
+        if let Some(kind) = SlotKind::named(name) {
+            self.slot_read_gate(logos, kind)?;
+        }
         match name {
             "arity" if operand_kind => {
                 Ok(self.scalar_value(NumType::I64, meta::arity_of(logos) as i64))

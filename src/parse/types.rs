@@ -17,6 +17,8 @@ pub(super) struct OpenType {
     pub(super) scope: DyadPtr,
     /// The slots the body's lines have declared, one bit per [`SlotKind`].
     declared_slots: u8,
+    /// The declared slots with no `pub`, one bit per [`SlotKind`].
+    closed_slots: u8,
     /// Where the `run` line starts, and whether its arrow is `-> self.output_type`.
     run_arrow: (usize, bool),
     parse_rank: f64,
@@ -61,6 +63,7 @@ impl Carry for OpenType {
         let OpenType {
             scope,
             declared_slots,
+            closed_slots,
             run_arrow,
             parse_rank,
             lex_rank,
@@ -79,7 +82,7 @@ impl Carry for OpenType {
             self_type,
             statics,
         } = self;
-        (*scope, *declared_slots, *run_arrow).carry(out);
+        (*scope, (*declared_slots, *closed_slots), *run_arrow).carry(out);
         (*parse_rank, *lex_rank, *assoc).carry(out);
         (*ctor, *run_body, *this_param).carry(out);
         (*in_parse, *in_free, *tape_param).carry(out);
@@ -90,7 +93,7 @@ impl Carry for OpenType {
     }
 
     fn uncarry(inp: &mut In) -> Self {
-        let (scope, declared_slots, run_arrow) = Carry::uncarry(inp);
+        let (scope, (declared_slots, closed_slots), run_arrow) = Carry::uncarry(inp);
         let (parse_rank, lex_rank, assoc) = Carry::uncarry(inp);
         let (ctor, run_body, this_param) = Carry::uncarry(inp);
         let (in_parse, in_free, tape_param) = Carry::uncarry(inp);
@@ -100,6 +103,7 @@ impl Carry for OpenType {
         OpenType {
             scope,
             declared_slots,
+            closed_slots,
             run_arrow,
             parse_rank,
             lex_rank,
@@ -130,6 +134,7 @@ impl OpenType {
         OpenType {
             scope,
             declared_slots: 0,
+            closed_slots: 0,
             run_arrow: (0, false),
             parse_rank: crate::identities::meta::prec::APPLY,
             lex_rank: None,
@@ -190,7 +195,7 @@ impl SlotKind {
     ];
 
     /// The slot a member line declares under `spelling`.
-    fn named(spelling: &str) -> Option<Self> {
+    pub(super) fn named(spelling: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.spelling() == spelling)
     }
 
@@ -207,18 +212,18 @@ impl SlotKind {
     /// How the slot is declared, as an error shows it.
     pub fn form(self) -> &'static str {
         match self {
-            SlotKind::ParseRank => "parse_rank := static pub (*.parse_rank + 1)",
-            SlotKind::Associativity => "associativity := static pub right",
-            SlotKind::Parse => "parse := static pub fn (tape := parsing_tape) -> void! ( … )",
+            SlotKind::ParseRank => "parse_rank := static (*.parse_rank + 1)",
+            SlotKind::Associativity => "associativity := static right",
+            SlotKind::Parse => "parse := static fn (tape := parsing_tape) -> void! ( … )",
             SlotKind::Run => {
-                "run := static pub fn () -> self.output_type ( … )`, or `-> void` for a type with \
-                 no `output_type"
+                "run := static fn () -> self.output_type ( … )`, or `-> void` for a type with no \
+                 `output_type"
             }
-            SlotKind::Free => "free := static pub fn () -> void ( … )",
+            SlotKind::Free => "free := static fn () -> void ( … )",
         }
     }
 
-    fn bit(self) -> u8 {
+    pub(super) fn bit(self) -> u8 {
         1 << self as u8
     }
 }
@@ -1079,8 +1084,9 @@ impl<'a> Parser<'a> {
 
     /// The slot `kind` a type body declares on the line whose name stands at `start`, read from
     /// after its `:=` (›Every type declares its own slots as `static` fields; `type`'s parse checks
-    /// the mandatory ones‹ [[R219]]). A rank or a side is a value gated `static pub` whole; a
-    /// body slot is a `static pub fn` whose parameters and arrow are the slot's own.
+    /// the mandatory ones‹ [[R219]]). A rank or a side is a value gated `static` whole; a body
+    /// slot is a `static fn` whose parameters and arrow are the slot's own. Either takes `pub`
+    /// where a read through `.` from outside the type must reach it.
     fn slot_member(&mut self, kind: SlotKind, start: usize) -> Result<(), ParseError> {
         let def = self.cx.definitions.last_mut().expect("a slot is declared in a type body");
         if def.declared_slots & kind.bit() != 0 {
@@ -1093,11 +1099,14 @@ impl<'a> Parser<'a> {
         if !Self::slot_gates(types, &words) {
             return Err(self.fail_at(start, ParseError::SlotForm(kind)));
         }
+        if !words.contains(&types.pub_) {
+            self.cx.definitions.last_mut().expect("read above").closed_slots |= kind.bit();
+        }
         match kind {
             SlotKind::ParseRank | SlotKind::Associativity => {
                 let cell = self.parse_expression_cell()?;
-                // The gates stand over a value, `static pub 60`, or over a type standing as
-                // itself, `static pub direction`, which the value's own check refuses.
+                // The gates stand over a value, `static 60`, or over a type standing as itself,
+                // `static direction`, which the value's own check refuses.
                 // SAFETY: a parsed cell holds a reduced dyad from the store.
                 let (value, gates) = unsafe {
                     crate::identities::gate::value_parts(types, cell.dyad)
@@ -1132,9 +1141,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A slot's gate words are `static` and `pub`, in either order.
+    /// A slot's gate words are `static`, and `pub` beside it or not, in either order.
     fn slot_gates(types: &Core, words: &[DyadPtr]) -> bool {
-        words.len() == 2 && words.contains(&types.static_) && words.contains(&types.pub_)
+        words.contains(&types.static_)
+            && words.iter().all(|&word| word == types.static_ || word == types.pub_)
     }
 
     /// A body slot's `fn`, its parameters and its arrow, as the slot is declared:
@@ -1329,6 +1339,7 @@ impl<'a> Parser<'a> {
         self.cx.definitions.push(OpenType {
             scope,
             declared_slots: 0,
+            closed_slots: 0,
             run_arrow: (0, false),
             parse_rank: crate::identities::meta::prec::APPLY,
             lex_rank: None,
@@ -1402,7 +1413,10 @@ impl<'a> Parser<'a> {
         );
         let node = def.self_type;
         // SAFETY: `node` was minted at the open with no record; nothing reads one until now.
-        unsafe { dyad::set_head(node, layout.cast()) };
+        unsafe {
+            dyad::set_head(node, layout.cast());
+            crate::identities::meta::close_slots(node, def.closed_slots);
+        }
         if let Some(rank) = def.lex_rank {
             // The rank is the name's, not the type's: it goes on the binding of
             // the declaration this body is the value of.
@@ -1733,7 +1747,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Whether the held cell `k` is a `parse` slot's own `tape`, `parse := static pub fn (tape`,
+    /// Whether the held cell `k` is a `parse` slot's own `tape`, `parse := static fn (tape`,
     /// which a `parse` written inside another declares again (›`tape` is the parameter of a type's
     /// `parse` function‹ [[R191]]).
     fn parse_parameter(&self, cells: &[Cell], k: usize) -> bool {
