@@ -5,9 +5,10 @@
 //! shared value nodes typed `direction`, as `true` and `false` are `bool`'s (›Associativity's
 //! values are `left` and `right`, the values of the type `direction`‹ [[R216]]).
 
-use super::numtype::NumType;
-use super::{meta, Cx};
-use crate::dyad::DyadPtr;
+use super::numtype::{self, NumType};
+use super::{meta, Core, Cx};
+use crate::dyad::{self, DyadPtr};
+use crate::parse::Assoc;
 
 /// Returns `direction`, `left` and `right`, in that order.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
@@ -21,4 +22,23 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
     cx.declare("right", right);
 
     (direction, left, right)
+}
+
+/// The side of the `direction` value whose bits a run gave, `None` for one neither `left` nor
+/// `right` holds.
+///
+/// # Safety
+/// `types` must hold `left` and `right` as `register` made them.
+pub(crate) unsafe fn side(types: &Core, bits: i64) -> Option<Assoc> {
+    // SAFETY: `left` and `right` are `i32` blobs of `direction`.
+    let held =
+        |value: DyadPtr| unsafe { numtype::read_scalar_nt(NumType::I32, dyad::value(value)) };
+    let bits = bits as i32 as i64;
+    if bits == held(types.left_) {
+        Some(Assoc::Left)
+    } else if bits == held(types.right_) {
+        Some(Assoc::Right)
+    } else {
+        None
+    }
 }

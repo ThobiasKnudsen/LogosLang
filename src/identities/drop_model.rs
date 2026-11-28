@@ -186,7 +186,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // A place: a name that holds its value, an owning field or an owning cell gets its
     // teardown, and a name, field path or cell whose type fills no `free` the inert `free`. A
     // value no name holds is used as any value is: it runs, then its type's `free`. `free = …`
-    // never reaches here: `=` constructs first and takes the lone `free` as the slot's name.
+    // never reaches here: `=` constructs first and refuses the lone `free`.
     let free_ =
         keyword(cx, "free", meta::prec::ONE_RANK, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = match p.place_operand_cell(tape)? {
@@ -2763,7 +2763,7 @@ mod tests {
     }
 
     /// A record type that fills `free`, so its values live behind a pointer of their own.
-    const KEPT: &str = "r := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) ),\n";
+    const KEPT: &str = "r := type ( n := pub mut i32 ?, free := static pub fn () -> void ( print «freed {self.n}» ) ),\n";
 
     #[test]
     fn a_record_behind_its_pointer_is_freed_once_and_never_leaks() {
@@ -2781,7 +2781,7 @@ mod tests {
             ("f := fn () -> r ( r(2) ),\nx := f(),\nx.n".into(), 2),
             ("d := dyad (r, r(1)),\ne := d,\n1".into(), 1),
             (
-                "h := type ( b := mut r ?, free = ( free self.b ) ),\na := r(1),\nv := h(a),\n1"
+                "h := type ( b := mut r ?, free := static pub fn () -> void ( free self.b ) ),\na := r(1),\nv := h(a),\n1"
                     .into(),
                 1,
             ),
@@ -2807,7 +2807,7 @@ mod tests {
 
     /// `x`, a record with two owning fields, `p` holding 5 and `q` 6.
     const PAIR: &str = "r := type ( p := pub mut own @i32 ?, q := pub mut own @i32 ?, \
-        free = ( free self.p, free self.q ), s := static fn () -> i32 ( 2 ) ),\n\
+        free := static pub fn () -> void ( free self.p, free self.q ), s := static fn () -> i32 ( 2 ) ),\n\
         x := mut r ?,\na := try alloc 1 of i32 5,\nx.p = move a,\nb := try alloc 1 of i32 6,\nx.q = move b,\n";
 
     #[test]
@@ -2867,15 +2867,15 @@ mod tests {
     const BAG: &str = "import file «./identities/array.logos», t := type array i32, \
         bagged := type ( \
             items := pub mut t ?, \
-            free = ( free self.items ), \
-            parse_rank = dyad.parse_rank, \
-            parse = ( tape.is_constructed[0] = true ) ), \
+            free := static pub fn () -> void ( free self.items ), \
+            parse_rank := static pub dyad.parse_rank, \
+            parse := static pub fn (tape := parsing_tape) -> void! ( tape.is_constructed[0] = true ) ), \
         bag := type ( \
             output_type := type ?, \
-            run = ( v := mut self.output_type ?, v.items = array i32 [4, 5, 6], move v ), \
-            parse_rank = dyad.parse_rank, \
-            associativity = left, \
-            parse = ( \
+            run := static pub fn () -> self.output_type ( v := mut self.output_type ?, v.items = array i32 [4, 5, 6], move v ), \
+            parse_rank := static pub dyad.parse_rank, \
+            associativity := static pub left, \
+            parse := static pub fn (tape := parsing_tape) -> void! ( \
                 if (tape[1].type == scope) ( \
                     tape[0].type = bag, tape[0].output_type = bagged, tape.remove(1) \
                 ) else ( tape[0] = bagged ), \
@@ -2927,14 +2927,17 @@ mod tests {
             assert_eq!(run(&format!("{BAG}{tail}")), (1, 0), "{tail}");
         }
         // The count sees the array: a free that leaves the field alone leaks its one block.
-        let forgetful = BAG.replace("free = ( free self.items )", "free = ( free (0) )");
+        let forgetful = BAG.replace(
+            "free := static pub fn () -> void ( free self.items )",
+            "free := static pub fn () -> void ( free (0) )",
+        );
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
     /// A plain record whose type fills `free`, kept behind its pointer, with a field of a node
     /// type and no word before it.
     const HELD: &str = "import file «./identities/array.logos», t := type array i32, \
-        held := type ( z := pub mut i32 ?, items := pub mut t ?, free = ( free self.items ) ),\n";
+        held := type ( z := pub mut i32 ?, items := pub mut t ?, free := static pub fn () -> void ( free self.items ) ),\n";
 
     #[test]
     fn a_field_whose_type_fills_free_owns_the_node_written_into_it() {
@@ -2960,7 +2963,10 @@ mod tests {
             assert_eq!(run(&format!("{HELD}{tail}")), (want, 0), "{tail}");
         }
         // The count sees the array: a free that leaves the field alone leaks its one block.
-        let forgetful = HELD.replace("free = ( free self.items )", "free = ( free (0) )");
+        let forgetful = HELD.replace(
+            "free := static pub fn () -> void ( free self.items )",
+            "free := static pub fn () -> void ( free (0) )",
+        );
         assert_eq!(run(&format!("{forgetful}h := mut held ?, h.items = array i32 [1], 1")), (1, 1));
         // A function writing such a field stays interpreted: stand-in for #164.
         let compiled = "f := fn () -> i32 ( h := mut held ?, h.items = array i32 [1, 2], \
@@ -3107,7 +3113,7 @@ mod tests {
         );
         assert_eq!(
             parse_err("t := type ( a := i32 ?, drop = ( 0 ) ),\n1"),
-            ParseError::NoSuchSlot("drop".into())
+            ParseError::TypeBodyLine
         );
         assert_eq!(
             run("import file «./identities/array.logos», x := mut array i32 [1], y := move x, free y, 0"),
@@ -3508,10 +3514,10 @@ mod tests {
     fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                a := i32 ?, b := i32 ?, output_type := type ?, run = ( self.a * self.b * n ),\n\
-                parse_rank = *.parse_rank + 1,\n\
-                associativity = right,\n\
-                parse = (\n\
+                a := i32 ?, b := i32 ?, output_type := type ?, run := static pub fn () -> self.output_type ( self.a * self.b * n ),\n\
+                parse_rank := static pub (*.parse_rank + 1),\n\
+                associativity := static pub right,\n\
+                parse := static pub fn (tape := parsing_tape) -> void! (\n\
                     tape[0].type = ^, tape[0].a = tape[-1],\n\
                     tape[0].b = tape[1],\n\
                     tape[0].output_type = i32,\n\

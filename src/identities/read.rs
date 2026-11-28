@@ -760,10 +760,10 @@ mod tests {
     fn a_node_of_a_run_type_is_a_call_of_its_function_and_a_leafless_record_is_named() {
         let (mut store, _trie, core, exprs) = parse_seq(
             "pw := type (\n\
-                 a := i32 ?, b := i32 ?, output_type := static type i32, run = ( self.a ),\n\
-                 parse_rank = *.parse_rank + 1,\n\
-                 associativity = right,\n\
-                 parse = (\n\
+                 a := i32 ?, b := i32 ?, output_type := static type i32, run := static pub fn () -> self.output_type ( self.a ),\n\
+                 parse_rank := static pub (*.parse_rank + 1),\n\
+                 associativity := static pub right,\n\
+                 parse := static pub fn (tape := parsing_tape) -> void! (\n\
                      tape[0].type = pw, tape[0].a = tape[-1],\n\
                      tape[0].b = tape[1],\n\
                      tape.is_constructed[0] = true,\n\
@@ -965,7 +965,7 @@ mod tests {
         }
         let (_store, _trie, core, exprs) = parse_seq(
             "w := type ( x := i64 ?, y := i64 ? ),\n\
-             c := type ( a := i32 ?, run = ( self.a ) )",
+             c := type ( a := i32 ?, run := static pub fn () -> void ( print «{self.a}» ) )",
         );
         let types = &core;
         // SAFETY: the declared identities were just parsed.

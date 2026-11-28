@@ -422,10 +422,15 @@ pub(crate) unsafe fn add_to_name(store: &mut Store, types: &Core, binding: DyadP
 /// # Safety
 /// `binding` must be a binding dyad from the store; `from` null or a scope node.
 pub(crate) unsafe fn grants_read(types: &Core, binding: DyadPtr, from: DyadPtr) -> bool {
-    if name_has(types, binding, types.pub_) {
-        return true;
-    }
-    let own = Binding::read(binding).scope;
+    name_has(types, binding, types.pub_) || within(from, Binding::read(binding).scope)
+}
+
+/// Whether the scope `from` is `own` or below it, along the parent links: where a name without
+/// `pub` is read.
+///
+/// # Safety
+/// `from` must be null or a scope node.
+pub(crate) unsafe fn within(from: DyadPtr, own: DyadPtr) -> bool {
     let mut at = from;
     while !at.is_null() {
         if at == own {

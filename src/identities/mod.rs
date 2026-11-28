@@ -36,7 +36,7 @@ mod comment;
 pub(crate) mod convert;
 pub(crate) mod copy;
 pub(crate) mod declare;
-mod direction;
+pub(crate) mod direction;
 pub(crate) mod drop_model;
 pub(crate) mod dyad_place;
 pub mod error;

@@ -1099,9 +1099,9 @@ fn logos_comparison(field: &str, rank: &str) -> String {
             lhs := {field} ?,\n\
             rhs := {field} ?,\n\
             output_type := type ?,\n\
-            run = ( self.lhs == self.rhs ),\n\
-            parse_rank = {rank},\n\
-            parse = (\n\
+            run := static pub fn () -> self.output_type ( self.lhs == self.rhs ),\n\
+            parse_rank := static pub ({rank}),\n\
+            parse := static pub fn (tape := parsing_tape) -> void! (\n\
                 tape[0].type = ≈, tape[0].lhs = tape[-1],\n\
                 tape[0].rhs = tape[1],\n\
                 tape[0].output_type = bool,\n\
@@ -2354,7 +2354,24 @@ fn left_and_right_are_the_values_of_direction_on_both_tiers() {
     // ›Associativity's values are `left` and `right`, the values of the type `direction`‹ [[R216]]
     assert_eq!(run_script("right.type == direction"), 1);
     assert_eq!(run_script("left.type == direction"), 1);
-    assert_eq!(run_script("t := type ( associativity = right ), t.associativity == right"), 1);
+    assert_eq!(
+        run_script("t := type ( associativity := static pub right ), t.associativity == right"),
+        1
+    );
+    // The slot reads the value, so a name or a member that holds `right` gives it too.
+    for side in [
+        "d := right, t := type ( associativity := static pub d ),",
+        "u := type ( a := static pub right ), t := type ( associativity := static pub u.a ),",
+    ] {
+        assert_eq!(run_script(&format!("{side} t.associativity == right")), 1, "{side}");
+    }
+    for not_a_side in ["3", "direction ?", "direction"] {
+        assert_eq!(
+            parse_err(&format!("t := type ( associativity := static pub {not_a_side} )")),
+            ParseError::BadAssociativity,
+            "{not_a_side}"
+        );
+    }
     assert_eq!(run_script("+.associativity == left"), 1);
     for tail in ["", "f.compile(), "] {
         let held = "t := type ( a := static pub right ), f := fn () -> bool ( t.a == right ),\n";
@@ -2591,7 +2608,7 @@ fn runaway_depth_is_a_checked_error_not_an_abort() {
         let shut = ")".repeat(1_000_000);
         let skipped = format!("if false ( {deep}1{shut} ) else ( 1 )");
         assert_eq!(parse_err(&skipped), ParseError::TooDeep);
-        let held = format!("t := type ( a := i32 ?, run = ( {deep}1{shut} ) ), 5");
+        let held = format!("t := type ( a := i32 ?, run := static pub fn () -> self.output_type ( {deep}1{shut} ) ), 5");
         assert_eq!(parse_err(&held), ParseError::TooDeep);
         assert_eq!(run_script("(((((1)))))"), 1);
 
@@ -2659,7 +2676,7 @@ fn the_unknown_is_one_value_a_type_or_dyad_place_holds() {
 /// number types or not, takes `?` as its operand and decides what it is there.
 #[test]
 fn the_identity_that_takes_the_unknown_decides_what_it_is() {
-    let q = "q := type ( v := pub u64 ?, parse_rank = i32.parse_rank, parse = ( \
+    let q = "q := type ( v := pub u64 ?, parse_rank := static pub i32.parse_rank, parse := static pub fn (tape := parsing_tape) -> void! ( \
              tape[0].type = q, if tape[1] == ? ( tape[0].v = 1 ) else ( tape[0].v = 2 ), \
              tape.remove(1), tape.is_constructed[0] = true ) ),\n";
     assert_eq!(run_script(&format!("{q}x := q ?, x.v")), 1);
@@ -3036,13 +3053,13 @@ const POW_TYPE: &str = "pw := type (\n\
          place := type_mint.step(type_mint.step(0, pw), l),\n\
          mint := mut type type_mint.kept(place),\n\
          if mint != ? return mint,\n\
-         mint = type ( a := pub l ?, b := pub i32 ?, output_type := static type l, run = ( r := mut self.output_type 1, for 0..self.b ( r = r * self.a ), r ) ),\n\
+         mint = type ( a := pub l ?, b := pub i32 ?, output_type := static type l, run := static pub fn () -> self.output_type ( r := mut self.output_type 1, for 0..self.b ( r = r * self.a ), r ) ),\n\
          type_mint.keep(place, mint),\n\
          mint\n\
      ),\n\
-     parse_rank = *.parse_rank + 1,\n\
-     associativity = right,\n\
-     parse = (\n\
+     parse_rank := static pub (*.parse_rank + 1),\n\
+     associativity := static pub right,\n\
+     parse := static pub fn (tape := parsing_tape) -> void! (\n\
          if tape[-1].type == void abort «pw takes a left operand»,\n\
          tape[0].type = self.get_mint(tape[-1].type), tape[0].a = tape[-1],\n\
          tape[0].b = tape[1],\n\
@@ -3092,7 +3109,10 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
     assert_eq!(run_script(&format!("{POW_TYPE}2 pw 3 pw 2")), 512);
     // A type with a run and no parse of its own has no call form.
     assert_eq!(
-        parse_err_after(&["sq2 := type ( a := i32 ?, run = ( self.a * self.a ) )"], "sq2(5)"),
+        parse_err_after(
+            &["sq2 := type ( a := i32 ?, run := static pub fn () -> void ( self.a * self.a ) )"],
+            "sq2(5)"
+        ),
         ParseError::RunTypeApplied
     );
 }
@@ -3101,8 +3121,8 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
 fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
     let (mut store, mut trie, core) = new_core();
     for def in [
-        "q := type ( parse_rank = dyad.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
-        "chooser := type ( parse_rank = fn.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
+        "q := type ( parse_rank := static pub dyad.parse_rank, parse := static pub fn (tape := parsing_tape) -> void! ( tape.is_constructed[0] = true ) )",
+        "chooser := type ( parse_rank := static pub fn.parse_rank, parse := static pub fn (tape := parsing_tape) -> void! ( tape.is_constructed[0] = true ) )",
     ] {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
@@ -3123,8 +3143,8 @@ fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
 fn a_run_hands_a_static_call_through_self_its_own_value_in_both_tiers() {
     let (mut store, mut trie, core) = new_core();
     let src = "inc := type ( a := i32 ?, output_type := type ?, \
-        twice := static fn () -> i32 ( self.a * 2 ), run = ( self.twice() + 1 ), \
-        parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
+        twice := static fn () -> i32 ( self.a * 2 ), run := static pub fn () -> self.output_type ( self.twice() + 1 ), \
+        parse_rank := static pub (*.parse_rank + 1), parse := static pub fn (tape := parsing_tape) -> void! ( tape[0].type = inc, \
         tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
         tape.remove(-1) ) ),\nf := fn (y := i32 ?) -> i32 ( y inc ),\nf(5)";
     let seq = {
@@ -3175,15 +3195,102 @@ fn a_node_of_a_run_type_compiles_as_a_call_of_its_function() {
 }
 
 #[test]
-fn a_body_slot_takes_a_bracket_and_a_run_type_has_no_place() {
-    assert_eq!(parse_err("t := type (run = 5)"), ParseError::SlotNeedsBody(SlotKind::Run));
-    assert_eq!(parse_err("t := type (parse = 5)"), ParseError::SlotNeedsBody(SlotKind::Parse));
+fn a_slot_is_declared_in_its_own_form_and_a_run_type_has_no_place() {
+    // ›Every type declares its own slots as `static` fields; `type`'s parse checks the mandatory
+    // ones‹ [[R219]]
     assert_eq!(
-        parse_err("t := type (parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))"),
-        ParseError::SlotNeedsBody(SlotKind::Parse)
+        parse_err("t := type (run = 5)"),
+        ParseError::SlotFilled(SlotKind::Run, Box::default())
+    );
+    assert_eq!(
+        parse_err("t := type (parse_rank = 60)"),
+        ParseError::SlotFilled(SlotKind::ParseRank, Box::new("60".into()))
+    );
+    assert_eq!(
+        parse_err("t := type (parse_rank = *.parse_rank + 1)"),
+        ParseError::SlotFilled(SlotKind::ParseRank, Box::new("(*.parse_rank + 1)".into()))
+    );
+    for wrong in [
+        "t := type (run := static pub 5)",
+        "t := type (parse := static pub fn (tape := parsing_tape) -> void ( tape.recenter(0) ))",
+        "t := type (parse := static pub fn (t := parsing_tape) -> void! ( t.recenter(0) ))",
+        "t := type (parse := pub fn (tape := parsing_tape) -> void! ( tape.recenter(0) ))",
+        "t := type (free := static pub fn (x := i32 ?) -> void ( 0 ))",
+        "t := type (free := static pub fn () -> void! ( 0 ))",
+        "t := type (parse_rank := pub 60)",
+        "t := type (associativity := right)",
+    ] {
+        assert!(matches!(parse_err(wrong), ParseError::SlotForm(_)), "{wrong}");
+    }
+    assert_eq!(
+        parse_err("t := type (parse_rank := static pub *.parse_rank + 1)"),
+        ParseError::SlotNotWhole(SlotKind::ParseRank)
+    );
+    assert_eq!(
+        parse_err("t := type (parse_rank := static pub 60, parse_rank := static pub 61)"),
+        ParseError::Resolve(crate::parse::ResolveError::Shadowed("parse_rank".into()))
+    );
+    assert_eq!(
+        parse_err("t := type (a := i32 ?, run := static pub fn () -> self.output_type ( self.a ))"),
+        ParseError::RunArrow(false)
+    );
+    assert_eq!(
+        parse_err(
+            "t := type (a := i32 ?, output_type := static type i32, \
+             run := static pub fn () -> void ( self.a ))"
+        ),
+        ParseError::RunArrow(true)
+    );
+    assert_eq!(parse_err("free = 5"), ParseError::FreeIsNoPlace);
+    // ›Slot words are known only inside a type body‹ [[R220]]: `b = 3` whatever `b` names.
+    for written in [
+        "t := type (a := static pub mut i32 1, a = 3)",
+        "t := type (x := pub mut i32 ?, x = 3)",
+        "t := type (output_type := static type i32, output_type = i64)",
+        "t := type (w = 5)",
+    ] {
+        assert_eq!(parse_err(written), ParseError::TypeBodyLine, "{written}");
+    }
+    assert_eq!(
+        parse_err("t := type (x := pub i32 ?, lex_rank := static pub 2)"),
+        ParseError::LexRankDeclared
     );
     // `pw` is an infix still waiting for its operands, not a type applied to `?`.
     assert!(matches!(parse_err_after(&[POW_TYPE], "p := pw ?"), ParseError::ConstructorFailed(_)));
+}
+
+#[test]
+fn a_slot_without_pub_ranks_its_parse_and_is_read_only_inside_its_type() {
+    // ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]
+    let sq = |rank: &str| {
+        format!(
+            "sq := type ( a := pub i32 ?, output_type := static type i32, \
+             run := static fn () -> self.output_type ( self.a * self.a ), \
+             parse_rank := static ({rank}), parse := static fn (tape := parsing_tape) -> void! \
+             ( tape[0].type = sq, tape[0].a = tape[1], tape.remove(1), \
+             tape.is_constructed[0] = true ) ),\nf := fn () -> i32 ( sq 2 + 1 ),\n"
+        )
+    };
+    for tail in ["", "f.compile(), "] {
+        assert_eq!(run_script(&format!("{}{tail}f()", sq("+.parse_rank + 1"))), 5, "{tail:?}");
+        assert_eq!(run_script(&format!("{}{tail}f()", sq("+.parse_rank - 1"))), 9, "{tail:?}");
+    }
+    for read in ["t.parse_rank", "f := fn () -> f64 ( t.parse_rank ), f.compile(), f()"] {
+        assert_eq!(
+            parse_err(&format!(
+                "( t := type ( x := pub i32 ?, parse_rank := static 60 ),\n{read} )"
+            )),
+            ParseError::NotPub(Box::new("parse_rank".into())),
+            "{read}"
+        );
+    }
+    let open = "t := type ( x := pub i32 ?, parse_rank := static pub 60 ),\n\
+                f := fn () -> bool ( t.parse_rank == f64 60 ),\n";
+    for tail in ["", "f.compile(), "] {
+        assert_eq!(run_script(&format!("{open}{tail}f()")), 1, "{tail:?}");
+    }
+    // A type built in the seed declares no gates, so its slots are read as they are.
+    assert_eq!(run_script("+.associativity == left"), 1);
 }
 
 #[test]
@@ -4853,7 +4960,7 @@ fn a_line_the_pass_ran_keeps_its_node_and_is_not_run_again() {
 fn tape_line_q(body: &str) -> String {
     format!(
         "pt := type ( a := pub mut u64 ?, b := pub mut u64 ? ), \
-         q := type ( v := pub u64 ?, parse_rank = 61, parse = ( tape[0].type = q, \
+         q := type ( v := pub u64 ?, parse_rank := static pub 61, parse := static pub fn (tape := parsing_tape) -> void! ( tape[0].type = q, \
          {body}, tape.remove(1), tape.is_constructed[0] = true ) )"
     )
 }
@@ -4920,7 +5027,7 @@ fn a_tape_line_no_check_narrowed_lands_by_the_type_of_its_place() {
     // The message names the type the place has, a pointer as it is written.
     for (field, named) in [("@u64", "@u64"), ("@bool", "@bool")] {
         let src = format!(
-            "q := type ( p := {field} ?, parse_rank = 61, parse = ( tape[0].type = q, \
+            "q := type ( p := {field} ?, parse_rank := static pub 61, parse := static pub fn (tape := parsing_tape) -> void! ( tape[0].type = q, \
              tape[0].p = tape[1].dyads[0], r := tape[0].p, tape.remove(1), \
              tape.is_constructed[0] = true ) ), n := u64 3, x := q [&n]"
         );
@@ -5033,8 +5140,8 @@ fn a_types_own_bodies_read_every_field_and_member() {
     );
     // `run`, and a `parse` that writes its own type's fields through the tape.
     let inc = "inc := type ( a := i32 ?, output_type := type ?, \
-               twice := static fn () -> i32 ( self.a * 2 ), run = ( self.twice() + 1 ), \
-               parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
+               twice := static fn () -> i32 ( self.a * 2 ), run := static pub fn () -> self.output_type ( self.twice() + 1 ), \
+               parse_rank := static pub (*.parse_rank + 1), parse := static pub fn (tape := parsing_tape) -> void! ( tape[0].type = inc, \
                tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
                tape.remove(-1) ) ), f := fn (y := i32 ?) -> i32 ( y inc )";
     for compile in ["", "f.compile(), "] {
@@ -5103,9 +5210,9 @@ fn a_hashmap_takes_only_the_pub_entries_of_a_scope() {
 fn a_parse_that_stamps_another_type_writes_only_its_pub_fields() {
     let src = |gate: &str, stamp: &str| {
         format!(
-            "box := type ( v := {gate}i32 ?, output_type := static type i32, run = ( self.v + 1 ) ), \
+            "box := type ( v := {gate}i32 ?, output_type := static type i32, run := static pub fn () -> self.output_type ( self.v + 1 ) ), \
              get := fn () -> type ( box ), \
-             wrap := type ( parse_rank = *.parse_rank + 1, parse = ( \
+             wrap := type ( parse_rank := static pub (*.parse_rank + 1), parse := static pub fn (tape := parsing_tape) -> void! ( \
              tape[0].type = {stamp}, tape[0].v = tape[-1], tape.is_constructed[0] = true, \
              tape.remove(-1) ) ), 4 wrap"
         )

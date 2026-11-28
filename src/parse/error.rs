@@ -41,8 +41,8 @@ pub enum ParseError {
     /// A `static` function that works on a value, called where no value is at hand: `name` as
     /// the call spells it, `member` when that is the name of the member holding it.
     StaticFnNeedsValue { name: Box<String>, member: bool },
-    /// A slot word left of `=` where no type is being defined.
-    SlotOutsideDefinition,
+    /// `free = …`: `free` frees a value, and is no place to write.
+    FreeIsNoPlace,
     /// `t.x` where `x` is a place per node, not stored with the type.
     PerNodeThroughType(String),
     /// A binding in a type body inserted a teardown, which no scope exit runs.
@@ -63,15 +63,25 @@ pub enum ParseError {
     /// `x := T ?` for a `T` known only when its line runs, whose value does not move whole into
     /// the new node laid out then.
     RunPlaceNotData,
-    /// `parse_rank = …` whose value is not a number known at the definition.
+    /// A `parse_rank` whose value is not a number known at the definition.
     NonComptimeRank,
-    /// `associativity = …` with something other than `left` or `right`.
+    /// An `associativity` whose value is no `direction` known at the definition.
     BadAssociativity,
     /// `lex_rank = …` in a type body that is not a declaration's value: the
     /// rank is the name's, and here there is no name.
     LexRankNeedsName,
-    /// `parse = …` or `run = …` with anything but a bracket on its right.
-    SlotNeedsBody(SlotKind),
+    /// `lex_rank := …` in a type body, where the name's rank is written `lex_rank = …`.
+    LexRankDeclared,
+    /// A rank or a side whose `static` gates only part of its value.
+    SlotNotWhole(SlotKind),
+    /// A slot declared with other gate words, parameters or arrow than its own.
+    SlotForm(SlotKind),
+    /// A slot written `kind = …`, with the value written for a rank or a side, as its
+    /// declaration shows it.
+    SlotFilled(SlotKind, Box<String>),
+    /// A `run` whose arrow disagrees with the type: `true` where the type declares an
+    /// `output_type` and the arrow is `void`, `false` where it declares none.
+    RunArrow(bool),
     /// A type with a `run` applied to arguments, `sq(3)`: only its `parse`
     /// fills a node's fields and output, so the call form builds no node.
     RunTypeApplied,
@@ -354,10 +364,7 @@ pub enum ParseError {
     /// A `return` in a type's `run` hands on a borrowed pointer, where the `run`'s last value is
     /// a pointer made there and so marks it to hand on what it makes.
     RunReturnBorrows,
-    /// `w = …` in a type body where `w` is no slot and nothing declared.
-    NoSuchSlot(String),
-    /// A type body whose fields, named here, own what they hold, and no `free = (…)` to
-    /// free it.
+    /// A type body whose fields, named here, own what they hold, and no `free` to free it.
     FieldsNeedFree(Vec<String>),
     /// A name of a `{ … }` whose value its scope's end runs a teardown for, or that does not
     /// move whole into a field; carries the name.

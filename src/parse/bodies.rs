@@ -716,7 +716,7 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `ty` must be a record type from the store.
-    unsafe fn declared_output_type(&self, ty: DyadPtr) -> Option<DyadPtr> {
+    pub(super) unsafe fn declared_output_type(&self, ty: DyadPtr) -> Option<DyadPtr> {
         use crate::identities::mint::STATIC_FIELD;
         let body = crate::identities::meta::record_body_of(ty);
         if body.is_null() {

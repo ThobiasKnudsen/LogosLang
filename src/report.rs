@@ -351,7 +351,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TypeBodyLine => {
-            "a type body line fills a slot (`parse_rank = …`, `parse = (…)`), declares a field (`x := i32 ?`) or a member (`y := static 3`), or is prose".into()
+            "a type body line declares a field (`x := i32 ?`), a member (`y := static 3`) or a slot (`parse_rank := static 60`), or is prose".into()
         }
         ParseError::StaticMisplaced => {
             "`static` makes one place for a type or a function, `y := static 3`, never on a parameter, which each call fills".into()
@@ -390,15 +390,44 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::NonComptimeRank => {
             "a parse_rank must be a number known when the type is defined".into()
         }
-        ParseError::BadAssociativity => "associativity is `left` or `right`".into(),
-        ParseError::SlotNeedsBody(SlotKind::Parse) => {
-            "`parse` is a bare body over the tape, `parse = (…)`".into()
+        ParseError::BadAssociativity => {
+            "associativity is a `direction` known when the type is defined: `left` or `right`".into()
         }
-        ParseError::SlotNeedsBody(SlotKind::Free) => {
-            "`free` is a bare body over the value, `free = (…)`".into()
+        ParseError::SlotNotWhole(kind) => format!(
+            "`static` gates only the value nearest it, so a slot's value is written in brackets: \
+             `{}`",
+            match kind {
+                SlotKind::ParseRank => SlotKind::ParseRank.form().to_string(),
+                kind => format!("{} := static (…)", kind.spelling()),
+            }
+        ),
+        ParseError::SlotForm(kind) => format!("the slot `{}` is declared `{}`", kind.spelling(), kind.form()),
+        ParseError::SlotFilled(kind, value) => {
+            let declared = match kind {
+                SlotKind::ParseRank | SlotKind::Associativity if !value.is_empty() => {
+                    format!("{} := static {value}", kind.spelling())
+                }
+                kind => kind.form().to_string(),
+            };
+            format!(
+                "a type declares each of its slots in its own body with `:=`, as a `static` member: \
+                 `{declared}`"
+            )
         }
-        ParseError::SlotNeedsBody(_) => {
-            "`run` is a bare body over the value's fields, `run = (…)`".into()
+        ParseError::RunArrow(true) => {
+            "this type declares an `output_type`, so its `run` gives it: \
+             `run := static fn () -> self.output_type ( … )`"
+                .into()
+        }
+        ParseError::RunArrow(false) => {
+            "this type declares no `output_type`, so its `run` gives nothing: \
+             `run := static fn () -> void ( … )`"
+                .into()
+        }
+        ParseError::FreeIsNoPlace => {
+            "`free` frees a value, `free x`, and is no place to write; a type declares its own as \
+             `free := static fn () -> void ( … )`"
+                .into()
         }
         ParseError::NoSuchField(name) => {
             format!("no field `{name}` is declared above in the type body")
@@ -441,12 +470,14 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::RunBodyFailed { name, rendered } => {
             format!("the run body of `{name}` could not be constructed for these field types:\n{rendered}")
         }
-        ParseError::SlotOutsideDefinition => {
-            "a slot is filled on a line of the type body itself: `parse_rank = …`, `run = (…)`".into()
-        }
         ParseError::PerNodeThroughType(name) => format!(
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),
+        ParseError::LexRankDeclared => {
+            "lex_rank is the rank of the name the type is the value of, not a member of the type: \
+             write `lex_rank = …`"
+                .into()
+        }
         ParseError::LexRankNeedsName => {
             "lex_rank is the name's: write it in a declaration, `x := type (lex_rank = …)`, \
              or on the name, `x:lex_rank = …`"
@@ -501,7 +532,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::EndUnderFree(spelled) => {
             let (path, holder) = &**spelled;
             format!(
-                "the type of `{holder}` fills its own `free = (…)`, which frees `{path}` with \
+                "the type of `{holder}` declares its own `free`, which frees `{path}` with \
                  the rest of `{holder}`: `move` and `free` cannot take `{path}` out alone; free \
                  `{holder}` whole"
             )
@@ -533,10 +564,6 @@ pub fn parse_message(e: &ParseError) -> String {
              only borrows, the last value too"
                 .into()
         }
-        ParseError::NoSuchSlot(name) => format!(
-            "`{name}` names no slot: a type body fills `parse = (…)`, `run = (…)`, \
-             `free = (…)` and its ranks, and declares a member of its own, `{name} := static …`"
-        ),
         ParseError::FieldsNeedFree(fields) => {
             let named = fields.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ");
             let (which, own, it) = match fields.len() {
@@ -544,8 +571,8 @@ pub fn parse_message(e: &ParseError) -> String {
                 _ => ("fields", "own what they hold", "they"),
             };
             format!(
-                "the {which} {named} {own}, so {it} must be freed by the type's \
-                 `free = (…)`, which this type body does not fill"
+                "the {which} {named} {own}, so {it} must be freed by the type's own `free`, \
+                 `free := static fn () -> void ( … )`, which this type body does not declare"
             )
         }
         ParseError::KeptEntry(name) => format!(

@@ -8,10 +8,10 @@
 # that is a call, its output the function's.
 sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
-    a := i32 ?, output_type := type ?, run = ( sq(self.a) ),
-    parse_rank = *.parse_rank + 1,
-    associativity = left,
-    parse = (
+    a := i32 ?, output_type := type ?, run := static pub fn () -> self.output_type ( sq(self.a) ),
+    parse_rank := static pub (*.parse_rank + 1),
+    associativity := static pub left,
+    parse := static pub fn (tape := parsing_tape) -> void! (
         tape[0].type = squared,
         tape[0].a = tape[-1],
         tape[0].output_type = i32,
@@ -22,10 +22,10 @@ squared := type (
 # A binary one: both cells, by name.
 add := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ),
 plus2 := type (
-    a := i32 ?, b := i32 ?, output_type := type ?, run = ( add(self.a, self.b) ),
-    parse_rank = +.parse_rank,
-    associativity = left,
-    parse = (
+    a := i32 ?, b := i32 ?, output_type := type ?, run := static pub fn () -> self.output_type ( add(self.a, self.b) ),
+    parse_rank := static pub (+.parse_rank),
+    associativity := static pub left,
+    parse := static pub fn (tape := parsing_tape) -> void! (
         tape[0].type = plus2,
         tape[0].a = tape[-1],
         tape[0].b = tape[1],
