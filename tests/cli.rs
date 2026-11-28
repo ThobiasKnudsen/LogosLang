@@ -2725,6 +2725,37 @@ fn type_takes_the_type_the_reads_after_it_built() {
     }
 }
 
+/// A word of the one rank that finds a `[ … ]` on its right takes it only where the list is its
+/// own: a number type, `rational_number`, a gate word and `type` stand alone before it, so a type
+/// written in Logos at that rank gets the type and then the list (›Every identity has a
+/// `parse_rank`, and `(` works in two steps‹ [[R259]]).
+#[test]
+fn a_word_of_the_one_rank_leaves_a_list_to_the_word_whose_own_it_is() {
+    let count = "count := type ( parse_rank = i32.parse_rank, associativity = right, \
+                 parse = ( tape[0] = u64 tape[2].dyads.size, tape.remove(2), tape.remove(1), \
+                 tape.is_constructed[0] = true ) )";
+    for (tail, printed) in [
+        ("count i32 [1, 2, 3]", "3"),
+        ("f := fn () -> u64 ( count i32 [1, 2, 3] ), f.compile(), f()", "3"),
+        ("count mut i32 [1, 2]", "2"),
+        ("count type [i32, i64]", "2"),
+    ] {
+        let src = format!("{count}, {tail}");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{src}");
+    }
+    for src in [
+        "i32 [1, 2]",
+        "f := fn () -> i32 ( i32 [1, 2] ), f.compile(), f()",
+        "x := rational_number [1], 0",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("expected one expression, found more"), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn an_or_group_of_non_booleans_is_data_like_the_and_group() {
     let (_echoes, stderr) = repl(b"x := i32 1\ny := i32 2\nif (x or y) (1) else (2)\n");
