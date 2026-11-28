@@ -80,6 +80,10 @@ pub struct Binding {
     /// The value a type's function works on, its `self`: a `static` function's, a `{ … }`
     /// entry's and a `free`'s first parameter, which a call hands where it stands.
     pub receiver: bool,
+    /// A member of a type: a field, a `static` member, a union's line, or a `run`'s parameter
+    /// standing for a field. A bare lookup never finds it, and its name is checked against its
+    /// siblings alone (›Members are dot-only; strictness has no exceptions‹ [[R336]]).
+    pub member: bool,
 }
 
 /// Where a storage binding's bytes lie, with the offset into it.
@@ -113,6 +117,7 @@ impl Binding {
             holds: false,
             body_word: false,
             receiver: false,
+            member: false,
         }
     }
 
@@ -351,6 +356,12 @@ impl Binding {
     /// As `Binding::read`.
     pub unsafe fn set_receiver(dyad: DyadPtr) {
         (*Self::shared(dyad)).receiver = true;
+    }
+
+    /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn set_member(dyad: DyadPtr) {
+        (*Self::shared(dyad)).member = true;
     }
 
     /// # Safety

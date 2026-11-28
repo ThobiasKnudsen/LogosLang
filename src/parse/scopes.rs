@@ -58,6 +58,10 @@ pub enum ResolveError {
     Unknown(String),
     /// Known, but no declaration of it is in an open scope.
     OutOfScope(String),
+    /// Named bare, where only a member of an open type has the spelling: it is reached through
+    /// `self` (›Fields are read with a dot, outside their type and inside it through `self`‹
+    /// [[R234]]).
+    Member(String),
     /// Declaring it would shadow a declaration still live in an open scope.
     Shadowed(String),
     /// Declared in an open scope but made dead by a `move` or `free`; only
@@ -282,6 +286,12 @@ impl ScopeStack {
         self.select(trie, name, false, Left::Value)
     }
 
+    /// As `resolve`, for the name of a member, read right of a `.` or in its type's own scope: a
+    /// member of an open type is found too, before any other name.
+    pub fn resolve_member(&self, trie: &RegexTrie, name: &str) -> Result<Resolved, ResolveError> {
+        self.select(trie, name, false, Left::Member)
+    }
+
     /// As `resolve`, but the fresh-spelling patterns compete too: a spelling
     /// nothing declared answers with `fresh` set and the run's length. `left` is what stands
     /// left of `text`.
@@ -321,15 +331,18 @@ impl ScopeStack {
             }
             // At the frontier "range covers the point" is exactly "not dead".
             // Two live bindings of one spelling are one declared against its siblings alone
-            // (`declare_field`): the innermost open scope's wins (›Slot words are known only
-            // inside a type body‹ [[R220]]). Two in one scope are the spelling's two
-            // identities, and what stands left of it picks one.
-            let live = || {
+            // (`declare_field`, `declare_member`): the innermost open scope's wins (›Slot words
+            // are known only inside a type body‹ [[R220]]). Two in one scope are the spelling's
+            // two identities, and what stands left of it picks one. A member is found only as a
+            // member's name, and there before any other name.
+            let open = || {
                 m.bindings
                     .iter()
                     .copied()
                     .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())
             };
+            let members = left == Left::Member && open().any(|r| fields(r).member);
+            let live = || open().filter(|&r| fields(r).member == members);
             let innermost = live().map(|r| self.position(fields(r).scope)).max();
             let twins: Vec<DyadPtr> =
                 live().filter(|&r| Some(self.position(fields(r).scope)) == innermost).collect();
@@ -352,7 +365,9 @@ impl ScopeStack {
             };
             let Some(binding) = binding else {
                 let spelling = text[..m.matched].to_string();
-                if m.bindings.iter().any(|&r| self.is_open(fields(r).scope)) {
+                if open().next().is_some() {
+                    why_none = Some(ResolveError::Member(spelling));
+                } else if m.bindings.iter().any(|&r| self.is_open(fields(r).scope)) {
                     why_none = Some(ResolveError::Dead(spelling));
                 } else if why_none.is_none() {
                     why_none = Some(ResolveError::OutOfScope(spelling));
@@ -404,40 +419,61 @@ impl ScopeStack {
         binding: DyadPtr,
     ) -> Result<(), ResolveError> {
         let scope = self.current().expect("declare needs an open scope");
+        if self.live(trie, name, binding)?.is_some() {
+            return Err(ResolveError::Shadowed(name.to_string()));
+        }
         // SAFETY: the caller's contract.
-        unsafe { self.declare_in(trie, name, binding, scope) }
+        unsafe { self.enter(trie, name, binding, scope) };
+        Ok(())
     }
 
-    /// `declare` into `scope`, an open scope that need not be the innermost: a type body's fields
-    /// are declared from its lines.
+    /// A member of a type, declared into `scope`, one of its type's: checked against the members
+    /// `siblings` declare, its type's scopes, and against no other name (›Members are dot-only;
+    /// strictness has no exceptions‹ [[R336]]).
     ///
     /// # Safety
-    /// As [`ScopeStack::declare`].
-    pub unsafe fn declare_in(
+    /// `binding` must be a binding dyad from the store; this writes its `scope` and its mark.
+    pub unsafe fn declare_member(
         &mut self,
         trie: &mut RegexTrie,
         name: &str,
         binding: DyadPtr,
         scope: DyadPtr,
+        siblings: &[DyadPtr],
     ) -> Result<(), ResolveError> {
-        if self.live(trie, name, binding)?.is_some() {
-            return Err(ResolveError::Shadowed(name.to_string()));
+        for &sibling in siblings {
+            if self.declared_in(trie, name, sibling)? {
+                return Err(ResolveError::Shadowed(name.to_string()));
+            }
         }
-        // SAFETY: `binding` is a binding dyad from the store, built for this name.
+        // SAFETY: the caller's contract.
+        unsafe {
+            Binding::set_member(binding);
+            self.enter(trie, name, binding, scope);
+        }
+        Ok(())
+    }
+
+    /// `binding` entered under `name` in `scope`, the checks passed.
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store, built for this name; this writes its
+    /// `scope`.
+    unsafe fn enter(&mut self, trie: &mut RegexTrie, name: &str, binding: DyadPtr, scope: DyadPtr) {
+        // SAFETY: the caller's contract.
         let key = unsafe { Binding::read(binding) }.key(name);
         // SAFETY: as above.
         unsafe { Binding::set_scope(binding, scope) };
         trie.insert(&key, binding);
         self.journal.push(Journal::Declared { name: key, scope });
         self.pending.push(Pending { binding, endpoint: Endpoint::Start });
-        Ok(())
     }
 
     /// The live binding a declaration of `name`, keyed as `binding`'s record says, would
     /// shadow: one under that very key, or for a spelling that stands for itself, one its
     /// whole text resolves to. A pattern meets only its own key: two patterns that can
     /// match the same length at equal rank are caught when text hits both (`Tied`), since
-    /// deciding it here needs automaton intersection.
+    /// deciding it here needs automaton intersection. A member is shadowed by no such name.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store.
@@ -451,19 +487,22 @@ impl ScopeStack {
         let fields = |r: DyadPtr| unsafe { Binding::read(r) };
         let rec = fields(binding);
         let keyed = trie.bindings_for_key(&rec.key(name)).and_then(|bindings| {
-            bindings
-                .iter()
-                .copied()
-                .find(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())
+            bindings.iter().copied().find(|&r| {
+                let f = fields(r);
+                self.is_open(f.scope) && !f.is_dead() && !f.member
+            })
         });
         if keyed.is_some() || rec.pattern {
             return Ok(keyed);
         }
         match self.resolve(trie, name) {
             Ok(r) => Ok((r.matched == name.len()).then_some(r.binding)),
-            Err(ResolveError::OutOfScope(_) | ResolveError::Unknown(_) | ResolveError::Dead(_)) => {
-                Ok(None)
-            }
+            Err(
+                ResolveError::OutOfScope(_)
+                | ResolveError::Unknown(_)
+                | ResolveError::Dead(_)
+                | ResolveError::Member(_),
+            ) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -577,8 +616,7 @@ impl ScopeStack {
     /// Checked against its siblings alone: a live binding of the spelling in an enclosing scope
     /// stands beside it, both live until this scope closes. Only a name no program text wrote is
     /// declared so: a type body's slot words (›Slot words are known only inside a type body‹
-    /// [[R220]]), the lines a type's own parse writes, such as `T!`'s `value` and `err`, a kept
-    /// record's mirror of the names it holds, a run's `output_type` over the member.
+    /// [[R220]]), a kept record's mirror of the names it holds.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store; this writes its `scope`.
@@ -592,13 +630,8 @@ impl ScopeStack {
         if self.declared_in(trie, name, scope)? {
             return Err(ResolveError::Shadowed(name.to_string()));
         }
-        // SAFETY: `binding` is a binding dyad from the store, built for this name.
-        let key = unsafe { Binding::read(binding) }.key(name);
-        // SAFETY: as above.
-        unsafe { Binding::set_scope(binding, scope) };
-        trie.insert(&key, binding);
-        self.journal.push(Journal::Declared { name: key, scope });
-        self.pending.push(Pending { binding, endpoint: Endpoint::Start });
+        // SAFETY: the caller's contract.
+        unsafe { self.enter(trie, name, binding, scope) };
         Ok(())
     }
 

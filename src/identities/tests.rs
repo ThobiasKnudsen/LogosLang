@@ -495,8 +495,8 @@ fn parses_a_record_with_typed_fields() {
 
     let mut inner = ScopeStack::new();
     inner.push(scope);
-    assert_eq!(inner.resolve(&trie, "x").unwrap().identity, fx);
-    assert_eq!(inner.resolve(&trie, "y").unwrap().identity, fy);
+    assert_eq!(inner.resolve_member(&trie, "x").unwrap().identity, fx);
+    assert_eq!(inner.resolve_member(&trie, "y").unwrap().identity, fy);
 }
 
 #[test]
@@ -3693,8 +3693,8 @@ fn a_members_gates_are_one_gate_node_in_its_type_however_they_are_written() {
         let t = declare::declared_of(decl);
         let mut body = ScopeStack::new();
         body.push(crate::identities::meta::record_body_of(t));
-        let y = body.resolve(&trie, "y").unwrap().binding;
-        let z = body.resolve(&trie, "z").unwrap().binding;
+        let y = body.resolve_member(&trie, "y").unwrap().binding;
+        let z = body.resolve_member(&trie, "z").unwrap().binding;
         assert!(
             crate::identities::gate::name_has(&core, y, core.static_)
                 && !crate::identities::gate::name_has(&core, y, core.mut_)
@@ -3707,10 +3707,11 @@ fn a_members_gates_are_one_gate_node_in_its_type_however_they_are_written() {
         assert_eq!(Binding::read(z).dyad, core.i32_);
         assert_eq!(under(Binding::gated(z)), core.i32_);
         // One set of gate words is one gate mint, and one gate node over one type.
-        let [a, b] = ["a", "b"].map(|name| body.resolve(&trie, name).unwrap().binding);
+        let [a, b] = ["a", "b"].map(|name| body.resolve_member(&trie, name).unwrap().binding);
         let mut fields = ScopeStack::new();
         fields.push(crate::identities::meta::record_scope_of(t));
-        let [v, w, u] = ["v", "w", "u"].map(|name| fields.resolve(&trie, name).unwrap().binding);
+        let [v, w, u] =
+            ["v", "w", "u"].map(|name| fields.resolve_member(&trie, name).unwrap().binding);
         assert_eq!(Binding::gated(a), Binding::gated(b));
         assert_ne!(Binding::gated(a), Binding::gated(z));
         assert_eq!(word_of_name(&core, v), word_of_name(&core, w));

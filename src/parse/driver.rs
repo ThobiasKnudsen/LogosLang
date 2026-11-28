@@ -168,7 +168,20 @@ impl<'a> Parser<'a> {
             if self.reads_result_place(&cell) {
                 cell.dyad = self.result_place(start)?;
             } else {
-                let field = self.names_own_field(&cell);
+                // `lex_cell` hands back where `self` starts for a member reached through it.
+                let through_self = cell.start != start;
+                let bare = match self.unreached_member(&cell) {
+                    Some(member) => {
+                        cell.dyad = member;
+                        Ok(())
+                    }
+                    None if through_self => Ok(()),
+                    None => {
+                        let next = self.peek_token().map(|(id, _)| id);
+                        self.refuse_bare_member(&cell, next)
+                    }
+                };
+                let field = bare.and_then(|()| self.own_field(&cell));
                 if field.is_err() {
                     self.cx.pos = start;
                 }

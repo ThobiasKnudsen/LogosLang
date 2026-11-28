@@ -370,12 +370,11 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     assert!(echoes.is_empty() && stderr.contains("`precedence` names no slot"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"c := type (run = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("`run = (…)`"), "stderr: {stderr}");
+    // A field meets no name outside its type (›Members are dot-only; strictness has no
+    // exceptions‹ [[R336]]).
     let (echoes, stderr) = repl("x := 1\np := type (x := i32 ?)\nx\n");
     assert_eq!(echoes, ["1"], "stderr: {stderr}");
-    assert!(
-        stderr.contains("<repl>:1:12: error: `x` is already declared and still in scope"),
-        "stderr: {stderr}"
-    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
 #[test]
@@ -2571,9 +2570,10 @@ fn a_parse_body_inside_another_has_its_own_tape() {
             ),
             no_closure.to_string(),
         ),
-        // A slot word's spelling declared in a held body is refused where it is written.
+        // A slot word's spelling declared in a held body is refused where the body is built.
         (
-            "a := type ( f := static fn () -> type ( type ( run := i32 5 ) ) ), 5".to_string(),
+            "a := type ( f := pub static fn () -> type ( type ( run := i32 5 ) ) ), a.f()"
+                .to_string(),
             shadowed("run"),
         ),
     ] {
@@ -3647,7 +3647,8 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
              add := pub static fn (a := dyad ?) -> void ( self.n = a + self.n ), \
              bump := static fn () -> i64 ( self.n = self.n + 1, self.n ), \
              add_bump := pub static fn (a := dyad ?) -> i64 ( a + self.bump() ) )";
-    // A bare field of the `static` function's value is read through that value when the line runs.
+    // A field of the `static` function's value, reached through `self`, is read through that value
+    // when the line runs.
     for (tail, want) in [
         ("v := t (3), v.k(i64 5)", "8"),
         ("v := t (3), w := t (10), v.k(i64 5) + w.k(i64 5)", "23"),
@@ -3661,8 +3662,8 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
         let src = format!("{t}, {tail}");
         assert_eq!(line(&src), want, "{src}");
     }
-    // A field written in a held line, there or in a bare call, is a write of the value the
-    // function is called on, which must be `mut`, checked where the call is written.
+    // A field written in a held line, there or in a call through `self`, is a write of the value
+    // the function is called on, which must be `mut`, checked where the call is written.
     for tail in ["v := t (3), v.add(i64 5)", "v := t (3), v.add_bump(i64 5)"] {
         let src = format!("{t}, {tail}");
         let (code, _, stderr) = run_line(&src);
@@ -3673,7 +3674,7 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
     let (code, _, stderr) = run_line(&format!("{t}, v := t (3), v.last(f64 2.5)"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
-    // A type's `run` body: a bare call there works on the node's own value.
+    // A type's `run` body: a call through `self` there works on the node's own value.
     let inc = "inc := type ( a := i32 ?, output_type := type ?, \
                twice := static fn () -> i32 ( self.a * 2 ), run = ( g() + self.twice() + self.a ), \
                parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
@@ -8190,10 +8191,10 @@ fn t_bang_is_the_union_of_value_and_err() {
     );
 }
 
-/// R379, Thobias's Question 286: the lines a type's own parse writes, a union's `tag`, `T!`'s
-/// `value` and `err` and those of the `void!` a `parse` slot gives, meet only the type's own lines,
-/// never the names where the type is written. A line the program writes, a field or a union's
-/// member, still meets every name in reach (R234). On both tiers.
+/// ›Members are dot-only; strictness has no exceptions‹ [[R336]]: every line of a type, one its own
+/// parse writes, a union's `tag`, `T!`'s `value` and `err` and those of the `void!` a `parse` slot
+/// gives, or one the program writes, a field or a union's member, meets only the type's own lines,
+/// never the names where the type is written. On both tiers.
 #[test]
 fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
     let probe = "probe := type ( value := i32 ?, err := i32 ?, tag := i32 ?, \
@@ -8229,21 +8230,17 @@ fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
         ),
         "1"
     );
-    for (src, at, name) in [
-        ("x := i32 1, p := type ( x := i32 ? )", "1:25", "x"),
-        (
-            "value := i32 3, mk := type ( value := pub i32 ?, \
-             parse = ( tape.is_constructed[0] = true ) ), 0",
-            "1:30",
-            "value",
-        ),
-        ("value := i32 3, u := type union ( value := i32, err := error ), 0", "1:35", "value"),
+    for src in [
+        "x := i32 1, p := type ( x := i32 ? ), x",
+        "value := i32 1, mk := type ( value := pub i32 ?, \
+         parse = ( tape.is_constructed[0] = true ) ), value",
+        "value := i32 1, u := type union ( value := i32, err := error ), value",
     ] {
-        let (code, stdout, stderr) = run_line(src);
-        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{src}: stderr: {stderr}");
-        let want = format!("{at}: error: `{name}` is already declared and still in scope");
-        assert!(stderr.contains(&want), "{src}: stderr: {stderr}");
+        assert_eq!(line(src), "1", "{src}");
     }
+    let (code, stdout, stderr) = run_line("u := type union ( a := i32, a := i64 ), 0");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""), "stderr: {stderr}");
+    assert!(stderr.contains("1:29: error: `a` is already declared"), "stderr: {stderr}");
 }
 
 /// The nodes a run of `src` adds to the store after the core, as `LOGOS_STATS` reports them.
@@ -10253,7 +10250,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         )
     };
     let checked_n = counted("if (tape[0].n.type ⊆ u64) ( tape[0].m = tape[0].n * 2 )");
-    let wide = "p := type ( rhs := i64 ?, output_type := static type i64, run = ( rhs ), \
+    let wide = "p := type ( rhs := i64 ?, output_type := static type i64, run = ( self.rhs ), \
                 parse_rank = 60, parse = ( tape[0].type = p, \
                 if (tape[1].type ⊆ i64) ( tape[0].rhs = i64 (tape[1]) ), \
                 tape.remove(1), tape.is_constructed[0] = true ) )";
@@ -13017,60 +13014,52 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
     }
 }
 
-/// ›A type body describes one level‹ [[R222]]: Logos has no shadowing, so no name declared
-/// inside a type body spells one of its fields.
+/// ›Members are dot-only; strictness has no exceptions‹ [[R336]]: a member is checked against its
+/// siblings alone, so a name declared inside a type body may spell one of its fields, which is
+/// still reached through `self`. A field and a `static` member are siblings.
 #[test]
-fn a_name_declared_inside_a_type_body_reuses_none_of_its_fields() {
+fn a_name_declared_inside_a_type_body_may_spell_one_of_its_fields() {
     let t = "t := type ( x := i32 ?, ";
     for compile in ["", "v.h.compile(), "] {
-        let src = format!(
-            "{t}h := pub static fn (y := i32 ?) -> i32 ( self.x + y ) ), v := t (5), {compile}v.h(3)"
-        );
-        assert_eq!(run_line(&src), (Some(0), "8\n".to_string(), String::new()), "{src}");
+        for h in [
+            "h := pub static fn (y := i32 ?) -> i32 ( self.x + y ) )",
+            "h := pub static fn (x := i32 ?) -> i32 ( self.x + x ) )",
+        ] {
+            let src = format!("{t}{h}, v := t (5), {compile}v.h(3)");
+            assert_eq!(run_line(&src), (Some(0), "8\n".to_string(), String::new()), "{src}");
+        }
     }
-    for (rest, at) in [
-        ("h := pub static fn (x := i32 ?) -> i32 ( x ) ), v := t (5), v.h(3)", "1:45"),
-        ("h := pub static fn (x := i32 ?) -> i32 ( x ) ), v := t (5), v.h.compile(), v.h(3)", "1:45"),
-        ("h := pub static fn () -> i32 ( x := i32 4, x ) ), v := t (5), v.h()", "1:56"),
-        ("h := pub static fn () -> i32 ( k := fn (x := i32 ?) -> i32 ( x ), k(3) ) ), v := t (5), v.h()", "1:65"),
-        ("h := pub static fn () -> i32 ( for x in 0..3 ( ), 1 ) ), v := t (5), v.h()", "1:60"),
-        ("h := pub static fn () -> i32 ( if true ( x := i32 3, x ) else ( 4 ) ) ), v := t (5), v.h()", "1:66"),
-        ("free = ( x := i32 3 ) ), v := t (5)", "1:34"),
-        ("x := static i32 1 )", "1:25"),
-        ("u := static type ( y := i32 ?, k := static fn (x := i32 ?) -> i32 ( x + y ) ) )", "1:72"),
+    for (rest, want) in [
+        ("h := pub static fn () -> i32 ( x := i32 4, x + self.x ) ), v := t (5), v.h()", "9"),
+        ("h := pub static fn () -> i32 ( k := fn (x := i32 ?) -> i32 ( x ), k(3) ) ), v := t (5), v.h()", "3"),
+        ("h := pub static fn () -> i32 ( for x in 0..3 ( ), 1 ) ), v := t (5), v.h()", "1"),
+        ("h := pub static fn () -> i32 ( if true ( x := i32 3, x ) else ( 4 ) ) ), v := t (5), v.h()", "3"),
+        ("free = ( x := i32 3, print «{x} {self.x}» ) ), v := t (5), 1", "3 5\n1"),
+        ("u := static type ( y := i32 ?, k := static fn (x := i32 ?) -> i32 ( x + self.y ) ) ), 1", "1"),
     ] {
         let src = format!("{t}{rest}");
-        let (code, _, stderr) = run_line(&src);
-        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-        let expect = format!("{at}: error: `x` is already declared and still in scope");
-        assert!(stderr.contains(&expect), "{src}: stderr: {stderr}");
+        assert_eq!(line(&src), want, "{src}");
     }
+    let src = format!("{t}x := static i32 1 )");
+    let (code, _, stderr) = run_line(&src);
+    assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    assert!(
+        stderr.contains("1:25: error: `x` is already declared and still in scope"),
+        "{src}: stderr: {stderr}"
+    );
 }
 
-/// ›Fields are read with a dot outside their scope‹ [[R234]]: no shadowing, fields included, so a
-/// field reuses no name live where it is declared, above or below it in the body around it
-/// (›Every name of a scope is seen from anywhere in it; written order counts in four cases only‹
-/// [[R372]]). A body's slot words are its own, and types side by side share no fields. A
-/// `type (…)` in a body that runs later is refused where it is written, called or not, as a
-/// nested `fn` is.
+/// ›Members are dot-only; strictness has no exceptions‹ [[R336]]: a member's name meets only its
+/// siblings, so a field may spell a name live where its type is written, in the body around it, in
+/// a type nested in it or in one a function of it gives; two members of one type never share a
+/// spelling. A body's slot words are its own, and types side by side share no fields. A parameter
+/// of a function in a `type (…)` held in a body that runs later is refused where it is written,
+/// called or not, as a nested `fn`'s is.
 #[test]
 fn a_field_reuses_no_name_live_where_it_is_declared() {
     for (src, at) in [
-        ("x := i32 1, t := type ( x := i32 ? )", "<command line>:1:25"),
-        ("t := type ( x := i32 ?, u := static type ( x := i32 ? ) )", "<command line>:1:44"),
         ("t := type ( x := static i32 1, x := i32 ? )", "<command line>:1:32"),
-        (
-            "t := type ( x := i32 ?, h := pub static fn () -> type ( type ( x := i32 ? ) ) ), v := t (5), v.h()",
-            "<command line>:1:64",
-        ),
-        (
-            "t := type ( h := pub static fn () -> type ( type ( x := i32 ? ) ), x := i32 ? ), v := t (5), v.h()",
-            "type body:1:3",
-        ),
-        ("f := fn () -> i32 ( x := i32 1, t := type ( x := i32 ? ), 2 ), f()", "<command line>:1:45"),
-        ("f := fn () -> i32 ( x := i32 1, t := type ( x := i32 ? ), 2 ), 3", "<command line>:1:45"),
-        ("f := fn (x := i32 ?) -> i32 ( t := type ( x := i32 ? ), 2 ), 3", "<command line>:1:43"),
-        ("for 0..3 ( x := i32 1, t := type ( x := i32 ? ) )", "<command line>:1:36"),
+        ("f := fn () -> i32 ( t := type ( x := i32 ?, x := i32 ? ), 2 ), f()", "type body:1:15"),
         (
             "f := fn () -> i32 ( x := i32 1, t := type ( a := i32 ?, h := static fn (x := i32 ?) -> i32 ( x ) ), 2 ), 3",
             "<command line>:1:73",
@@ -13097,6 +13086,26 @@ fn a_field_reuses_no_name_live_where_it_is_declared() {
             "5\n",
         ),
         ("f := fn () -> i32 ( x := i32 1, free x, t := type ( x := i32 ? ), 2 ), print «{f()}»", "2\n"),
+        ("x := i32 1, t := type ( x := i32 ? ), print «{x}»", "1\n"),
+        ("t := type ( x := i32 ?, u := static type ( x := i32 ? ) ), print «ok»", "ok\n"),
+        (
+            "t := type ( x := i32 ?, h := pub static fn () -> type ( type ( x := i32 ? ) ) ), v := t (5), \
+             w := v.h(), print «ok»",
+            "ok\n",
+        ),
+        (
+            "t := type ( h := pub static fn () -> type ( type ( x := i32 ? ) ), x := i32 ? ), v := t (5), \
+             w := v.h(), print «ok»",
+            "ok\n",
+        ),
+        ("f := fn () -> i32 ( x := i32 1, t := type ( x := i32 ? ), 2 ), print «{f()}»", "2\n"),
+        ("f := fn (x := i32 ?) -> i32 ( t := type ( x := i32 ? ), x ), print «{f(3)}»", "3\n"),
+        ("for 0..3 ( x := i32 1, t := type ( x := i32 ? ) ), print «ok»", "ok\n"),
+        (
+            "f := fn () -> i32 ( x := i32 1, t := type ( x := pub i32 ? ), v := t (4), v.x + x ), \
+             print «{f()}»",
+            "5\n",
+        ),
     ] {
         assert_eq!(run_line(src), (Some(0), out.to_string(), String::new()), "{src}");
     }
@@ -14442,27 +14451,28 @@ fn a_static_function_reaches_each_field_of_a_plain_record_whole() {
         (format!("pt := type ( {ab}, getb := pub static fn () -> i32 ( self.b ) ), {set}, v.getb()"), "7\n"),
         (
             format!(
-                "pt := type ( {ab}, set := pub static fn () -> void ( a = rational_number 3/4 ) ), {set}, \
+                "pt := type ( {ab}, set := pub static fn () -> void ( self.a = rational_number 3/4 ) ), {set}, \
                  v.set(), print «{{v.a}} {{v.b}}»"
             ),
             "3/4 7\n",
         ),
         (
             format!(
-                "pt := type ( {ab}, both := pub static fn (r := rational_number ?) -> void ( a = r, b = 3 ) ), \
+                "pt := type ( {ab}, both := pub static fn (r := rational_number ?) -> void ( self.a = r, self.b = 3 ) ), \
                  {set}, v.both(rational_number 1/5), print «{{v.a}} {{v.b}}»"
             ),
             "1/5 3\n",
         ),
         (
             "pt := type ( a := pub mut rational_number ?, c := pub mut rational_number ?, \
-             cp := pub static fn () -> void ( c = a ) ), v := mut pt ?, v.a = rational_number 1/2, \
+             cp := pub static fn () -> void ( self.c = self.a ) ), v := mut pt ?, v.a = rational_number 1/2, \
              v.c = rational_number 1/3, v.cp(), print «{v.a} {v.c}»"
                 .to_string(),
             "1/2 1/2\n",
         ),
         (
-            "pt := type ( t := pub mut type ?, u := pub mut type ?, swap := pub static fn () -> void ( u = t ) ), \
+            "pt := type ( t := pub mut type ?, u := pub mut type ?, \
+             swap := pub static fn () -> void ( self.u = self.t ) ), \
              v := mut pt ?, v.t = i32, v.u = i64, v.swap(), v.u"
                 .to_string(),
             "i32\n",
@@ -14470,14 +14480,14 @@ fn a_static_function_reaches_each_field_of_a_plain_record_whole() {
         // Packed, `t` lies at an odd offset.
         (
             "pt := type ( c := pub mut i8 ?, t := pub mut type ?, u := pub mut type ?, \
-             swap := pub static fn () -> void ( u = t ) ), v := mut pt ?, v.c = 1, v.t = i32, v.u = i64, \
+             swap := pub static fn () -> void ( self.u = self.t ) ), v := mut pt ?, v.c = 1, v.t = i32, v.u = i64, \
              v.swap(), print «{v.c} {v.u}»"
                 .to_string(),
             "1 i32\n",
         ),
         (
             "q := type ( x := pub i32 ? ), pt := type ( a := pub mut q ?, b := pub mut i32 ?, \
-             seta := pub static fn () -> void ( a = q(9) ) ), v := mut pt ?, v.a = q(1), v.b = 2, v.seta(), \
+             seta := pub static fn () -> void ( self.a = q(9) ) ), v := mut pt ?, v.a = q(1), v.b = 2, v.seta(), \
              print «{v.a.x} {v.b}»"
                 .to_string(),
             "9 2\n",
@@ -15625,14 +15635,14 @@ fn a_field_read_through_self_reads_as_the_field_read_through_the_value() {
         for (head, call, printed) in [
             ("t := type ( s := string ?, f := pub static fn () -> void ( print «{self.s}!» ) ), v := t («hi»)", "v.f()", "hi!"),
             ("t := type ( s := string ?, f := pub static fn () -> string ( self.s ) ), v := t («hi»)", "v.f()", "hi"),
-            ("t := type ( k := type ?, f := pub static fn () -> void ( print «{k}» ) ), v := t (i32)", "v.f()", "i32"),
-            ("t := type ( k := type ?, f := pub static fn () -> type ( k ) ), v := t (i32)", "v.f()", "i32"),
+            ("t := type ( k := type ?, f := pub static fn () -> void ( print «{self.k}» ) ), v := t (i32)", "v.f()", "i32"),
+            ("t := type ( k := type ?, f := pub static fn () -> type ( self.k ) ), v := t (i32)", "v.f()", "i32"),
             ("q := type ( p := pt ?, f := pub static fn () -> i32 ( self.p.x ) ), v := q (pt (1, 2))", "v.f()", "1"),
-            ("q := type ( p := pt ?, f := pub static fn () -> i32 ( p.y + 1 ) ), v := q (pt (1, 2))", "v.f()", "3"),
-            ("q := type ( p := pt ?, f := pub static fn () -> i32 ( p.sum() ) ), v := q (pt (1, 2))", "v.f()", "3"),
-            ("q := type ( p := pt ?, f := pub static fn () -> pt ( p ) ), v := q (pt (1, 2))", "v.f().y", "2"),
+            ("q := type ( p := pt ?, f := pub static fn () -> i32 ( self.p.y + 1 ) ), v := q (pt (1, 2))", "v.f()", "3"),
+            ("q := type ( p := pt ?, f := pub static fn () -> i32 ( self.p.sum() ) ), v := q (pt (1, 2))", "v.f()", "3"),
+            ("q := type ( p := pt ?, f := pub static fn () -> pt ( self.p ) ), v := q (pt (1, 2))", "v.f().y", "2"),
             (
-                "l := type ( a := pt ?, b := pub pt ? ), q := type ( r := l ?, f := pub static fn () -> i32 ( r.b.y ) ), \
+                "l := type ( a := pt ?, b := pub pt ? ), q := type ( r := l ?, f := pub static fn () -> i32 ( self.r.b.y ) ), \
                  v := q (l (pt (1, 2), pt (3, 4)))",
                 "v.f()",
                 "4",
@@ -15653,7 +15663,7 @@ fn a_field_read_through_self_reads_as_the_field_read_through_the_value() {
     }
     let writes = |p: &str, v: &str| {
         format!(
-            "{pt}q := type ( p := pub {p}pt ?, f := pub static fn () -> void ( p.x = 9 ) ), \
+            "{pt}q := type ( p := pub {p}pt ?, f := pub static fn () -> void ( self.p.x = 9 ) ), \
              v := {v}q (pt (1, 2)), v.f(), v.p.x"
         )
     };
@@ -15663,7 +15673,7 @@ fn a_field_read_through_self_reads_as_the_field_read_through_the_value() {
         (writes("mut ", ""), "`v` is not `mut`"),
         (writes("", "mut "), "`p` is not `mut`"),
         (
-            format!("{pt}q := type ( p := pt ?, f := static fn () -> i32 ( p.z ) ), 0"),
+            format!("{pt}q := type ( p := pt ?, f := static fn () -> i32 ( self.p.z ) ), 0"),
             "unknown name `z`",
         ),
     ] {

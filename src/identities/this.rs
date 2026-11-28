@@ -72,8 +72,8 @@ pub struct ThisIds {
     pub block_leaf: DyadPtr,
 }
 
-/// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
-/// name in a `free` or `static` function builds it too, and `=` the write over it.
+/// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, `self.x` in a
+/// `free` or `static` function builds it too, and `=` the write over it.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
         let record = meta::operand_record(
@@ -526,7 +526,7 @@ pub(crate) unsafe fn build_named_write(
 unsafe fn field_named(rt: &Runtime, ty: DyadPtr, name: &str) -> Option<(usize, DyadPtr)> {
     let mut scope = crate::parse::ScopeStack::new();
     scope.push(meta::record_scope_of(ty));
-    let found = scope.resolve(rt.index()?, name).ok().filter(|r| r.matched == name.len())?;
+    let found = scope.resolve_member(rt.index()?, name).ok().filter(|r| r.matched == name.len())?;
     let fields = super::array::items(meta::record_fields_of(ty));
     Some((fields.iter().position(|&f| f == found.identity)?, found.binding))
 }

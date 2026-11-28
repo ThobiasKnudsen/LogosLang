@@ -41,7 +41,7 @@ pub(super) fn load(store: &mut Store, trie: &mut RegexTrie, core: &Core, section
     let pointer = carried::name_in(trie, section, &FILE, "pointer").identity;
     // SAFETY: the file declared `pointer` as a type with a body, and `contains` a function in it.
     unsafe {
-        let contains = carried::name_in(trie, meta::record_body_of(pointer), &FILE, CONTAINS);
+        let contains = carried::member_in(trie, meta::record_body_of(pointer), &FILE, CONTAINS);
         let f = contains.identity;
         assert!(dyad::ty(f) == core.fn_type, "{}: `contains` is no function", FILE.path);
         let slots = dyad::value(f) as *mut DyadPtr;

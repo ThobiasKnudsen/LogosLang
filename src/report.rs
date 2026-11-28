@@ -426,7 +426,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 "by the member that holds it".to_string()
             };
             format!(
-                "`{name}` works on a value of its type: call it through one, {through}, or bare from that type's `run`, `free` or `static` functions; any other call has no value, so it takes only a function that uses no field"
+                "`{name}` works on a value of its type: call it through one, {through}, or through `self` in that type's `run`, `free` or `static` functions; any other call has no value, so it takes only a function that uses no field"
             )
         }
         ParseError::FlagTakesBool => {
@@ -676,6 +676,7 @@ pub(crate) fn resolve_message(e: &ResolveError) -> String {
         ResolveError::Unknown(n) if n.is_empty() => "unknown name".into(),
         ResolveError::Unknown(n) => format!("unknown name `{n}`"),
         ResolveError::OutOfScope(n) => format!("`{n}` is not in scope here"),
+        ResolveError::Member(n) => format!("`{n}` is a member: write `self.{n}`"),
         ResolveError::Shadowed(n) => format!(
             "`{n}` is already declared and still in scope; declaring it again would \
              leave the first one shadowed (a name ended by `free {n}` may be declared again)"

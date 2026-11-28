@@ -67,7 +67,7 @@ pub(super) struct Kept {
 
 /// A line held for the run, as [`Parser::hold_line`] left it: every cell of its text, lexed
 /// against the scopes open where it is written, the part before `cut` parsed there, what a
-/// bare field or a bare call there needs to reach the value its body is about: the type
+/// field or a call through `self` there needs to reach the value its body is about: the type
 /// definitions open there and a `run` body's fields, and whether the line is the `T ?` a `:=`
 /// declares its name with, which lays out a new node of `T`.
 #[derive(Default)]
@@ -763,12 +763,12 @@ impl<'a> Parser<'a> {
     /// Whether `cells[k]`, a cell of a held line, is no outer name: a member spelled after `.` or
     /// `:`, or a field of the value its body is about. What the line's parse notes on the open
     /// definition is noted here, since the body's callers and its later lines read it before the
-    /// line first runs: a bare
-    /// field read, or written where `=` follows it, and a bare call of a `static` function that
-    /// writes mark a `static` function's receiver (›A `static` function writes the value it is
-    /// called on, and respects `mut`‹ [[R239]]); in a parse, a stamp, `.type =`, has the node's
-    /// later fields read by name, since the type it stamps is known only at run. A bare field is
-    /// refused where [`Parser::names_own_field`] refuses it.
+    /// line first runs: a field read through `self`, or written where `=` follows it, and a call
+    /// through `self` of a `static` function that writes mark a `static` function's receiver
+    /// (›A `static` function writes the value it is called on, and respects `mut`‹ [[R239]]); in
+    /// a parse, a stamp, `.type =`, has the node's later fields read by name, since the type it
+    /// stamps is known only at run. A member named bare is refused where
+    /// [`Parser::refuse_bare_member`] refuses it, and a field where [`Parser::own_field`] does.
     fn note_held_use(&mut self, cells: &[Cell], k: usize) -> Result<bool, ParseError> {
         let types = self.types;
         let cell = &cells[k];
@@ -784,11 +784,20 @@ impl<'a> Parser<'a> {
             return Ok(true);
         }
         let member = self.held_member(cells, k);
-        let (cell, next) = match &member {
-            Some(name) => (name, cells.get(k + 3).map(|c| self.cell_identity(c))),
-            None => (cell, next),
+        let unreached = self.unreached_member(cell).map(|dyad| {
+            let mut bound = *cell;
+            bound.dyad = dyad;
+            bound
+        });
+        let (cell, next) = match (&member, &unreached) {
+            (Some(name), _) => (name, cells.get(k + 3).map(|c| self.cell_identity(c))),
+            (None, Some(bound)) => (bound, next),
+            (None, None) => {
+                self.refuse_bare_member(cell, next)?;
+                (cell, next)
+            }
         };
-        let field = self.names_own_field(cell)?;
+        let field = self.own_field(cell)?;
         let bits = if field {
             RECEIVER_READS | (u64::from(next == Some(types.assign)) * RECEIVER_WRITES)
         } else if next == Some(types.open_) {

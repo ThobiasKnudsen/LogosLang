@@ -314,7 +314,7 @@ impl<'a> Parser<'a> {
         let name = match fed {
             Some(k) => self.cx.feed.as_ref().and_then(|feed| self.joined_name(&feed.cells, k)).map(
                 |mut name| {
-                    self.feed_resolve(&mut name);
+                    self.feed_resolve_as(&mut name, true);
                     name
                 },
             ),
@@ -515,7 +515,7 @@ impl<'a> Parser<'a> {
     /// pass runs its line, once everything before the read has run: the node it holds now (›A
     /// `dyad ?` place is transparent: a placeholder for a new node of any type‹ [[R293]]). A name
     /// and an entry of a `{ … }` read alike, the entry through the value it is reached by or
-    /// named bare in a `fn` entry (›`{ … }` outside text is a scope kept as a value, read with
+    /// through `self` in a `fn` entry (›`{ … }` outside text is a scope kept as a value, read with
     /// `.`‹ [[R374]]). `None` where it holds nothing or a type, which is read by dispatching on
     /// it, the name staying the box (›A block settles its boxes as the top level does‹
     /// [[R295]]), and for any other operand.
@@ -631,7 +631,16 @@ impl<'a> Parser<'a> {
     /// the feed's base depth and above: a name declared after the body, in a
     /// scope it is written in, is not one it could see.
     pub(super) fn resolve_fresh(&self, spelling: &str) -> Result<Resolved, ResolveError> {
-        let r = self.cx.scopes.resolve(self.trie, spelling)?;
+        self.resolve_where_built(spelling, false)
+    }
+
+    /// [`Self::resolve_fresh`], or with `member` for a member's name, read right of a `.`.
+    fn resolve_where_built(&self, spelling: &str, member: bool) -> Result<Resolved, ResolveError> {
+        let r = if member {
+            self.cx.scopes.resolve_member(self.trie, spelling)?
+        } else {
+            self.cx.scopes.resolve(self.trie, spelling)?
+        };
         if let Some(feed) = &self.cx.feed {
             if !self.cx.scopes.position(r.scope).is_some_and(|p| p >= feed.base_depth) {
                 return Err(ResolveError::Unknown(spelling.to_string()));
@@ -645,13 +654,18 @@ impl<'a> Parser<'a> {
     /// own then, which is the innermost. An unresolved cell stays as it was lexed, a fresh one
     /// for the boundary to report.
     fn feed_resolve(&self, cell: &mut Cell) {
+        self.feed_resolve_as(cell, false);
+    }
+
+    /// [`Self::feed_resolve`], or with `member` for a member's name, read right of a `.`.
+    fn feed_resolve_as(&self, cell: &mut Cell, member: bool) {
         let binding = cell.binding(self.types);
         // SAFETY: a lexed cell's binding is null or a binding dyad from the store.
         let outer_word = !binding.is_null() && unsafe { Binding::read(binding) }.body_word;
         if !cell.is_fresh(self.types) && !outer_word {
             return;
         }
-        if let Ok(r) = self.resolve_fresh(cell.spelling()) {
+        if let Ok(r) = self.resolve_where_built(cell.spelling(), member) {
             if r.matched == cell.len {
                 let mut bound = *cell;
                 bound.dyad = r.binding;

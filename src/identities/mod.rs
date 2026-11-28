@@ -1274,8 +1274,8 @@ pub(crate) unsafe fn is_comptime_arg(types: &Core, node: DyadPtr) -> bool {
 }
 
 /// What a `static` function's call works on where it has no value: through the type (`t.k()`),
-/// by another name, or bare from a parse (›A bare call of a `static` function works on the value
-/// the calling body is about‹ [[R238]]).
+/// by another name, or through `self` from a parse (›A `static` function called through `self`
+/// works on the value the calling body is about‹ [[R238]]).
 pub(crate) fn no_value(store: &mut Store, types: &Core) -> DyadPtr {
     store.alloc_head(types.dyad_, std::ptr::null_mut())
 }

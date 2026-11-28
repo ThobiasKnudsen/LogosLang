@@ -43,7 +43,7 @@ pub(super) struct OpenType {
     /// The `static` function being read has read a field of its value.
     pub(super) read_receiver: bool,
     /// The `static` function being read has written a field of its value, itself or through a
-    /// bare call.
+    /// call through `self`.
     pub(super) wrote_receiver: bool,
     /// The fields' scope and the fields declared so far: what a body written
     /// below them reaches by name.
@@ -159,9 +159,9 @@ impl OpenType {
     }
 
     /// The `static`, `run` or `free` body being read uses its value as [`RECEIVER_READS`] and
-    /// [`RECEIVER_WRITES`] in `bits` say: by a bare field, or by a bare call of a function that
-    /// uses its own (›A bare call of a `static` function works on the value the calling body is
-    /// about‹ [[R238]]). A parse's node is no value it uses.
+    /// [`RECEIVER_WRITES`] in `bits` say: by a field, or by a call of a function that uses its own,
+    /// each through `self` (›A `static` function called through `self` works on the value the
+    /// calling body is about‹ [[R238]]). A parse's node is no value it uses.
     pub(super) fn note_receiver_use(&mut self, bits: u64) {
         if !self.in_parse {
             self.read_receiver |= bits & RECEIVER_READS != 0;
@@ -610,10 +610,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `name := ty`, a line a type's own parse writes and no program text did, declared in the
-    /// open scope, the type's, against the type's own lines alone and never the names where the
-    /// type is written (›A union holds one of its members at a time: `union ( a := T, b := U )`‹
-    /// [[R379]]), and pushed onto `lines` and `bindings`; an error is placed at `at`.
+    /// `name := ty`, a line a type's own parse writes and no program text did, declared as a
+    /// member in the open scope, the type's, and pushed onto `lines` and `bindings`; an error is
+    /// placed at `at`.
     fn declare_own_line(
         &mut self,
         name: &str,
@@ -628,7 +627,9 @@ impl<'a> Parser<'a> {
             ty,
             std::ptr::null_mut(),
         );
-        bindings.push(self.declare_field_name(name, line, at)?);
+        let scope = self.cx.scopes.current().expect("a type's line is declared in its scope");
+        let binding = self.mint_binding(line, scope, name.as_bytes());
+        bindings.push(self.declare_member(scope, name, binding, at)?);
         lines.push(line);
         Ok(())
     }
@@ -974,7 +975,11 @@ impl<'a> Parser<'a> {
             // The field's name is not stored on the record: declaring it puts
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = self.mint_binding(field, scope, name.as_bytes());
-            self.enter_binding_in(scope, name, binding, start)?;
+            if list == FieldList::Parameters {
+                self.enter_binding(name, binding, start)?;
+            } else {
+                self.declare_member(scope, name, binding, start)?;
+            }
             // SAFETY: `gates` is null or a gate mint.
             let public =
                 unsafe { crate::identities::gate::words_of(gates) }.contains(&self.types.pub_);
@@ -1572,19 +1577,35 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// A name a held body declares, written left of a `:=` on any line of it, is refused where
-    /// the body is written when its cell lexed to a live name of that spelling, as a nested
-    /// `fn`'s is: the names are in the text (›Fields are read with a dot outside their scope‹
-    /// [[R234]]). `at` is where the held text starts in the source.
+    /// A name a held body declares on a line of a function or a `{ … }` in it, a parameter or a
+    /// local, is refused where the body is written when its cell lexed to a live name of that
+    /// spelling, as a nested `fn`'s is: the names are in the text. A line of a type body in it
+    /// declares a member, which meets only its siblings when the body is built (›Members are
+    /// dot-only; strictness has no exceptions‹ [[R336]]). `at` is where the held text starts in
+    /// the source, at the body's own `(`.
     fn refuse_held_shadowing(&mut self, cells: &[Cell], at: usize) -> Result<(), ParseError> {
         let types = self.types;
+        // For each bracket open at the cell, whether it is a type body's.
+        let mut type_bodies: Vec<bool> = Vec::new();
         for (k, cell) in cells.iter().enumerate() {
+            let id = if cell.constructed { std::ptr::null_mut() } else { self.cell_identity(cell) };
+            if self.is_opener(id) {
+                let after = k.checked_sub(1).map(|j| self.cell_identity(&cells[j]));
+                let body = id == types.open_
+                    && (k == 0 || after == Some(types.type_) || after == Some(types.union.union));
+                type_bodies.push(body);
+                continue;
+            }
+            if self.is_closer(id) {
+                type_bodies.pop();
+                continue;
+            }
             let declared = cells
                 .get(k + 1)
                 .is_some_and(|c| !c.constructed && self.cell_identity(c) == types.declare_tok);
             let member = k.checked_sub(1).is_some_and(|j| self.is_unbuilt_tight_read(&cells[j]));
             let binding = cell.binding(types);
-            if !declared || member || binding.is_null() {
+            if !declared || member || binding.is_null() || type_bodies.last() == Some(&true) {
                 continue;
             }
             // A literal, `5`, matches a pattern identity and names nothing.
@@ -1823,6 +1844,7 @@ impl<'a> Parser<'a> {
                 // reaches: fresh when the type itself appeared, the value when a value did.
                 let (input, params) = self.hidden_param_record(
                     &[(Some("tape"), types.tape.parsing_tape), (None, types.dyad_)],
+                    false,
                     at,
                 )?;
                 let def = self.cx.definitions.last_mut().expect("checked above");
@@ -1874,7 +1896,7 @@ impl<'a> Parser<'a> {
                 // One parameter, `self`: the value an owner's teardown hands in.
                 let at = self.cx.pos;
                 let (input, params) =
-                    self.hidden_param_record(&[(Some(SELF_WORD), types.dyad_)], at)?;
+                    self.hidden_param_record(&[(Some(SELF_WORD), types.dyad_)], false, at)?;
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = params[0];
                 def.in_free = true;
@@ -1902,12 +1924,14 @@ impl<'a> Parser<'a> {
     }
 
     /// A parameter record no text spelled: each name declared in its own scope as a body's
-    /// word, checked against every open scope, since the body reopens it; the bindings, one per
-    /// field, spelling-less for an unnamed one, for `fn_over_body` to lay out. `at` is the error
-    /// position.
+    /// word, checked against every open scope, since the body reopens it, or with `members` as a
+    /// member, each standing for a field of the type, checked against the others alone; the
+    /// bindings, one per field, spelling-less for an unnamed one, for `fn_over_body` to lay out.
+    /// `at` is the error position.
     pub(super) fn hidden_param_record(
         &mut self,
         params: &[(Option<&str>, DyadPtr)],
+        members: bool,
         at: usize,
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         let scope = self.open_scope();
@@ -1927,7 +1951,9 @@ impl<'a> Parser<'a> {
             if let Some(name) = name {
                 // SAFETY: `binding` was minted by `Binding::alloc` just above.
                 let entered = unsafe {
-                    if name == SELF_WORD {
+                    if members {
+                        self.cx.scopes.declare_member(self.trie, name, binding, scope, &[scope])
+                    } else if name == SELF_WORD {
                         self.declare_receiver(binding)
                     } else {
                         self.cx.scopes.declare_body_word(self.trie, name, binding)
