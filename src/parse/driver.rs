@@ -888,25 +888,13 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `f` must be a resolved dyad from the store.
     pub(super) unsafe fn takes_this(&self, f: DyadPtr) -> bool {
-        use crate::identities::{array, meta};
         if f.is_null() || dyad::ty(f) != self.types.fn_type {
             return false;
         }
-        let input = *(dyad::value(f) as *const DyadPtr);
-        if input.is_null() || !meta::is_record_type(input) {
-            return false;
-        }
-        let Some(&first) = array::items(meta::record_fields_of(input)).first() else {
-            return false;
-        };
-        // The receiver is the one parameter no name declares: no named binding of the
-        // parameter scope is laid out at the frame's first offset.
-        let scope = meta::record_scope_of(input);
-        crate::identities::hole::type_in(first) == self.types.dyad_
-            && !self.trie.bindings_in(scope).iter().any(|&b| {
-                let b = Binding::read(b);
-                b.frame == f && b.offset == 0
-            })
+        let input = *(dyad::value(f) as *const DyadPtr).add(super::FN_INPUT);
+        !input.is_null()
+            && crate::identities::meta::is_record_type(input)
+            && crate::identities::is_receiver(f, 0)
     }
 
     /// A `fn` node in the constructor slot: judged by the flag alone.

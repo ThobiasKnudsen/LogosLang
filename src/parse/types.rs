@@ -175,6 +175,11 @@ impl OpenType {
 /// the statement keyword, which `=` takes as the slot's name.
 pub const SLOT_NAMES: [&str; 5] = ["parse_rank", "lex_rank", "associativity", "parse", "run"];
 
+/// The word a type's own code reaches its members through: the value in a function that works
+/// on one, the type in a parse and in the body's own lines (›Fields are read with a dot, outside
+/// their type and inside it through `self`‹ [[R234]]).
+pub(super) const SELF_WORD: &str = "self";
+
 /// One of the slots, by `SLOT_NAMES` position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotKind {
@@ -278,7 +283,7 @@ impl<'a> Parser<'a> {
         self.parse_record_taking(None).map(|(input, _)| input)
     }
 
-    /// `parse_record` with an unnamed field of type `leading` first, and the fields'
+    /// `parse_record` with a field `self` of type `leading` first, and the fields'
     /// bindings in order.
     pub(super) fn parse_record_taking(
         &mut self,
@@ -732,8 +737,8 @@ impl<'a> Parser<'a> {
     }
 
     /// A `fn`'s parameter list, in a scope of its own that the body reopens. Also the fields'
-    /// bindings in order, the leading one's spelling-less; their offsets are the caller's to write
-    /// once the record node exists.
+    /// bindings in order, the leading one `self`; their offsets are the caller's to write once the
+    /// record node exists.
     fn parse_field_list(
         &mut self,
         leading: Option<DyadPtr>,
@@ -750,8 +755,14 @@ impl<'a> Parser<'a> {
                 ty,
                 std::ptr::null_mut(),
             );
+            let binding = self.mint_binding(field, scope, SELF_WORD.as_bytes());
+            // SAFETY: `binding` was minted by `Binding::alloc` just above.
+            if let Err(e) = unsafe { self.declare_receiver(binding) } {
+                self.cx.scopes.pop();
+                return Err(ParseError::Resolve(e));
+            }
             fields.push(field);
-            bindings.push(self.mint_binding(field, scope, b""));
+            bindings.push(binding);
         }
         let mut bytes = Vec::new();
         let lines =
@@ -1167,7 +1178,8 @@ impl<'a> Parser<'a> {
         // their own so that a member read through the type never finds them.
         // Each is a marker of this definition, declared against its siblings
         // alone, so that a body inside another's shadows its words. `layout`
-        // stands beside them, one identity in every body.
+        // stands beside them, one identity in every body, and so does `self`,
+        // the type being built.
         let words = self.open_scope();
         let slots = SLOT_NAMES.map(|_| {
             let head = crate::identities::meta::record(
@@ -1189,6 +1201,13 @@ impl<'a> Parser<'a> {
                 self.cx.scopes.pop();
                 return Err(ParseError::Resolve(e));
             }
+        }
+        let own = self.mint_binding(self_type, words, SELF_WORD.as_bytes());
+        // SAFETY: `own` was minted by `Binding::alloc` just above.
+        let declared = unsafe { self.cx.scopes.declare_body_word(self.trie, SELF_WORD, own) };
+        if let Err(e) = declared {
+            self.cx.scopes.pop();
+            return Err(ParseError::Resolve(e));
         }
         let head = crate::identities::meta::record(
             self.rt.store,
@@ -1852,9 +1871,10 @@ impl<'a> Parser<'a> {
                 Ok(self.slot_declare(SlotKind::Run, target, body))
             }
             SlotKind::Free => {
-                // One parameter, unnamed: the value an owner's teardown hands in.
+                // One parameter, `self`: the value an owner's teardown hands in.
                 let at = self.cx.pos;
-                let (input, params) = self.hidden_param_record(&[(None, types.dyad_)], at)?;
+                let (input, params) =
+                    self.hidden_param_record(&[(Some(SELF_WORD), types.dyad_)], at)?;
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = params[0];
                 def.in_free = true;
@@ -1902,11 +1922,17 @@ impl<'a> Parser<'a> {
                 std::ptr::null_mut(),
             );
             // A parameter with no name is a place the body reaches another
-            // way: a receiver, or a run body's field of type `type`.
+            // way: a parse's node, or a run body's field of type `type`.
             let binding = self.mint_binding(field, scope, name.unwrap_or_default().as_bytes());
             if let Some(name) = name {
                 // SAFETY: `binding` was minted by `Binding::alloc` just above.
-                let entered = unsafe { self.cx.scopes.declare_body_word(self.trie, name, binding) };
+                let entered = unsafe {
+                    if name == SELF_WORD {
+                        self.declare_receiver(binding)
+                    } else {
+                        self.cx.scopes.declare_body_word(self.trie, name, binding)
+                    }
+                };
                 if let Err(e) = entered {
                     self.cx.pos = at;
                     declared = Err(ParseError::Resolve(e));
@@ -1924,6 +1950,20 @@ impl<'a> Parser<'a> {
             self.record_node(input, scope, fields_arr, &bindings, std::ptr::null_mut(), call)?,
             bindings,
         ))
+    }
+
+    /// `binding`, a function's first parameter, declared into the open scope as `self`, the value
+    /// the function works on (›Fields are read with a dot, outside their type and inside it through
+    /// `self`‹ [[R234]]); a body inside another has its own.
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store, spelled `self`.
+    unsafe fn declare_receiver(&mut self, binding: DyadPtr) -> Result<(), ResolveError> {
+        // SAFETY: the caller's contract.
+        unsafe {
+            Binding::set_receiver(binding);
+            self.cx.scopes.declare_body_word(self.trie, SELF_WORD, binding)
+        }
     }
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN

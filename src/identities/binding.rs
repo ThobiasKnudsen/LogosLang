@@ -77,6 +77,9 @@ pub struct Binding {
     /// (›`tape` is a word the `parse` slot declares into its body‹ [[R191]]). A body inside
     /// another has its own beside the outer one's, and a lookup finds the innermost.
     pub body_word: bool,
+    /// The value a type's function works on, its `self`: a `static` function's, a `{ … }`
+    /// entry's and a `free`'s first parameter, which a call hands where it stands.
+    pub receiver: bool,
 }
 
 /// Where a storage binding's bytes lie, with the offset into it.
@@ -109,6 +112,7 @@ impl Binding {
             typed_at_run: false,
             holds: false,
             body_word: false,
+            receiver: false,
         }
     }
 
@@ -344,6 +348,12 @@ impl Binding {
     }
 
     /// # Safety
+    /// As `Binding::read`.
+    pub unsafe fn set_receiver(dyad: DyadPtr) {
+        (*Self::shared(dyad)).receiver = true;
+    }
+
+    /// # Safety
     /// As `Binding::read`; `fields` null or an `array` node from the store.
     pub unsafe fn set_unwritten(dyad: DyadPtr, fields: DyadPtr) {
         (*Self::shared(dyad)).unwritten = fields;
@@ -415,16 +425,6 @@ impl Binding {
         } else {
             String::from_utf8_lossy(super::string::text(name)).into_owned()
         }
-    }
-
-    /// Whether a name declares the binding: a receiver and a run body's field of type `type` are
-    /// places no name declares.
-    ///
-    /// # Safety
-    /// As [`Binding::spelling`].
-    pub unsafe fn is_named(dyad: DyadPtr) -> bool {
-        let name = (*Self::shared(dyad)).name;
-        !name.is_null() && !super::string::text(name).is_empty()
     }
 }
 

@@ -28,6 +28,10 @@ pub enum ParseError {
     OnceReadsUnmade,
     /// A field named bare inside a parse, where it goes through `tape[0]`.
     BareFieldInParse(Box<String>),
+    /// `self` with no member after it.
+    SelfReachesMember,
+    /// `self.x` where what `self` stands for has no member `x`.
+    NoMemberThroughSelf(Box<String>),
     /// `tape[0].type = …` anywhere but on a parse's own cell.
     StampOutsideParse,
     /// `tape[0].type = T` for a `T` that gives no type.

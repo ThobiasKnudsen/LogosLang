@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The value a type's bodies work on: a parse's node, `tape[0]`, or a `free`'s or `static`
-//! function's value, bound as an unnamed parameter, a `dyad ?` place holding the value's
-//! address: a node's, or a plain record's bytes. A field read, `tape[0].f` or bare `f`,
+//! function's value, its parameter `self`, a `dyad ?` place holding the value's address: a
+//! node's, or a plain record's bytes. A field read, `tape[0].f`, `self.f` or bare `f`,
 //! reaches field `f` of the value by its index: a node's slot holding the node the field
 //! holds, or for a field of a number or pointer type the value that node yields; a plain
 //! record's bytes at the field's offset. As `=`'s target, the write of the right side's

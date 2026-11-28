@@ -404,8 +404,14 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("no field `{name}` is declared above in the type body")
         }
         ParseError::NotAField(name) => format!("this value's type has no field `{name}`"),
-        ParseError::BareFieldInParse(name) => {
-            format!("a parse writes and reads a field through its cell, `tape[0].{name}`, never bare")
+        ParseError::BareFieldInParse(name) => format!(
+            "a parse writes and reads a field of its node through its cell, `tape[0].{name}`, never bare or through `self`, which is the type there"
+        ),
+        ParseError::SelfReachesMember => {
+            "`self` reaches one of its type's members, `self.x`; the seed does not read it whole".into()
+        }
+        ParseError::NoMemberThroughSelf(name) => {
+            format!("`self` reaches only a member of its own type body, which declares no `{name}`")
         }
         ParseError::StampOutsideParse => {
             "`tape[0].type = T` starts a node only in a parse, on its own cell `tape[0]`".into()

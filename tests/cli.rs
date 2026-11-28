@@ -12778,6 +12778,79 @@ fn a_value_left_unwritten_is_filled_one_field_at_a_time() {
     }
 }
 
+/// ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]: `self`
+/// is the value in a `static` function, a `free`, a `run` and a `{ … }` entry, and the type in a
+/// parse and in the body's own lines; each body has its own, on both tiers.
+#[test]
+fn a_types_own_code_reaches_its_members_through_self() {
+    let t = "t := type ( x := pub mut i32 ?, get := static pub fn () -> i32 ( self.x ), \
+             twice := static pub fn () -> i32 ( self.get() * 2 ), \
+             bump := static pub fn () -> void ( self.x = self.x + 1 ) )";
+    let inc = "inc := type ( a := i32 ?, output_type := type ?, \
+               twice := static fn () -> i32 ( self.a * 2 ), run = ( self.twice() + 1 ), \
+               parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
+               tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
+               tape.remove(-1) ) )";
+    let bag = "bag := type ( n := pub i32 ?, free = ( print «freed {self.n}» ) )";
+    let q = "q := type ( n := pub u64 ?, seven := static fn () -> u64 ( 7 ), parse_rank = 60, \
+             parse = ( tape[0].type = q, tape[0].n = self.seven(), tape.is_constructed[0] = true ) )";
+    for (src, want) in [
+        (format!("{t}, v := t (5), v.get()"), "5\n"),
+        (format!("{t}, f := fn (p := t ?) -> i32 ( p.get() ), f.compile(), f(t (5))"), "5\n"),
+        (format!("{t}, v := t (5), v.twice()"), "10\n"),
+        (format!("{t}, f := fn (p := t ?) -> i32 ( p.twice() ), f.compile(), f(t (4))"), "8\n"),
+        (format!("{t}, v := mut t (5), v.bump(), v.x"), "6\n"),
+        (format!("{t}, f := fn (p := mut t ?) -> i32 ( p.bump(), p.x ), f.compile(), f(mut t (5))"), "6\n"),
+        (format!("{inc}, x := i32 5, x inc"), "11\n"),
+        (format!("{inc}, f := fn (y := i32 ?) -> i32 ( y inc ), f.compile(), f(20)"), "41\n"),
+        (format!("{bag}, a := bag (1), print «end»"), "end\nfreed 1\n"),
+        (format!("{bag}, f := fn () -> void ( a := bag (2), print «in» ), f.compile(), f()"), "in\nfreed 2\n"),
+        (format!("{q}, w := q, print «{{w.n}}»"), "7\n"),
+        (
+            "a := type ( k := static pub i32 1, g := static pub fn () -> i32 ( self.k ), \
+             m := static pub type ( k2 := static pub i32 2, h := static pub fn () -> i32 ( self.k2 ) ) ), \
+             a.g() + a.m.h()"
+                .to_string(),
+            "3\n",
+        ),
+        ("m := { a := pub 3, g := pub fn () -> i32 ( self.a + 1 ) }, m.g()".to_string(), "4\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+    for (src, expect) in [
+        (format!("{t}, t.twice()"), "`twice` works on a value of its type"),
+        (
+            "t := type ( x := pub i32 ?, h := static pub fn () -> i32 ( k := fn () -> i32 ( self.x ), k() ) ), 1"
+                .to_string(),
+            "a nested function cannot use an outer function's local or parameter",
+        ),
+        (
+            "t := type ( x := pub i32 ?, h := static pub fn () -> i32 ( self.y ) ), 1".to_string(),
+            "`self` reaches only a member of its own type body, which declares no `y`",
+        ),
+        (
+            "t := type ( x := pub i32 ?, h := static pub fn () -> i32 ( d := self, 1 ) ), 1".to_string(),
+            "the seed does not read it whole",
+        ),
+        ("t := type ( k := static pub i32 self ), 1".to_string(), "the seed does not read it whole"),
+        (
+            "x := type ( n := u64 ?, parse = ( self.n ) ), 1".to_string(),
+            "never bare or through `self`, which is the type there",
+        ),
+        (
+            "q := type ( n := u64 ?, get := static fn () -> u64 ( self.n ), parse_rank = 60, \
+             parse = ( tape[0].type = q, tape[0].n = self.get(), tape.is_constructed[0] = true ) ), q"
+                .to_string(),
+            "`get` works on a value of its type",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_bare_static_call_works_on_the_value_the_body_is_about() {
     let quad = COUNTED.replace(

@@ -316,6 +316,7 @@ impl<'a> Parser<'a> {
             let at = self.cx.pos;
             let ends_here = at >= self.cx.source.len();
             let r = if ends_here { None } else { Some(self.token_at(at, true)?) };
+            let r = r.map(|r| self.scanned_through_self(at, r)).transpose()?;
             let id = r.as_ref().map(|r| r.identity);
             let boundary = ends_here
                 || id.is_some_and(|id| {
@@ -781,6 +782,11 @@ impl<'a> Parser<'a> {
             }
             return Ok(true);
         }
+        let member = self.held_member(cells, k);
+        let (cell, next) = match &member {
+            Some(name) => (name, cells.get(k + 3).map(|c| self.cell_identity(c))),
+            None => (cell, next),
+        };
         let field = self.names_own_field(cell)?;
         let bits = if field {
             RECEIVER_READS | (u64::from(next == Some(types.assign)) * RECEIVER_WRITES)
@@ -800,7 +806,7 @@ impl<'a> Parser<'a> {
         if let Some(def) = self.about_value_mut() {
             def.note_receiver_use(bits);
         }
-        Ok(field)
+        Ok(field || member.is_some())
     }
 
     /// The line at the cursor parsed up to the cut, the read the run supplies or a reader before

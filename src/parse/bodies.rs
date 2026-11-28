@@ -824,7 +824,7 @@ impl<'a> Parser<'a> {
                 )
             };
         }
-        // The value is the first parameter, the one no name declares.
+        // The value is the first parameter, `self`.
         let this = params[0];
         let in_kept = kept.is_some();
         self.cx.definitions.extend(kept);
