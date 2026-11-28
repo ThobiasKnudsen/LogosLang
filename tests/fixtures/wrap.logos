@@ -14,8 +14,8 @@ wrap := pub type (
             if mint == ? (
                 mint = type (
                     inner := pub static type t,
-                    v := pub mut inner,
-                    get := pub static fn () -> inner ( v ),
+                    v := pub mut self.inner,
+                    get := pub static fn () -> self.inner ( self.v ),
 
                     parse_rank = dyad.parse_rank,
                     associativity = left,

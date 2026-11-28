@@ -313,11 +313,11 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        "g := type (y := pub static 3, z := pub static (y + 3))\nprint «{g.y}»\nprint «{g.z}»\ng.parse_rank\n",
+        "g := type (y := pub static 3, z := pub static (self.y + 3))\nprint «{g.y}»\nprint «{g.z}»\ng.parse_rank\n",
     );
     assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        "g := type (y := pub static i32 7, z := pub static i32 (y + 3))\n\
+        "g := type (y := pub static i32 7, z := pub static i32 (self.y + 3))\n\
           print «{g.y}»\nprint «{g.z}»\ng.y + 1\n",
     );
     assert_eq!(echoes, ["7", "10", "8"], "stderr: {stderr}");
@@ -601,7 +601,7 @@ fn a_gated_type_s_members_are_the_type_s_it_gates() {
 /// a node of `m`; and `p`, a postfix whose parse prints `read` of the node to its left.
 fn static_reader(m_body: &str, read: &str) -> String {
     format!(
-        "m := type ( lhs := pub i32 ?, {m_body}, run = ( lhs ) ), \
+        "m := type ( lhs := pub i32 ?, {m_body}, run = ( self.lhs ) ), \
          q := type ( parse_rank = 60, parse = ( tape[0].type = m, tape[0].lhs = tape[1], \
          tape.is_constructed[0] = true, tape.remove(1) ) ), \
          p := type ( parse_rank = 50, parse = ( print «{{{read}}}», tape.remove(-1), \
@@ -833,7 +833,7 @@ fn a_types_static_output_type_is_what_its_nodes_give() {
     let t = |output: &str| {
         format!(
             "t := type ( lhs := i32 ?, output_type := pub static {output}, \
-             run = ( output_type lossy (lhs) * output_type 2 ), parse_rank = 60, \
+             run = ( self.output_type lossy (self.lhs) * self.output_type 2 ), parse_rank = 60, \
              parse = ( tape[0].type = t, tape[0].lhs = tape[1], tape.is_constructed[0] = true, \
              tape.remove(1) ) )"
         )
@@ -871,7 +871,7 @@ fn chooser(field: &str, output: &str, run: &str, fill: &str) -> String {
     format!(
         "q := type ( get := static fn (l := type ?) -> type ( type ( {field}, \
          output_type := pub static {output}, run = ( {run} ) ) ), parse_rank = 60, \
-         parse = ( tape[0].type = get(tape[1].type), {fill}, tape.is_constructed[0] = true, \
+         parse = ( tape[0].type = self.get(tape[1].type), {fill}, tape.is_constructed[0] = true, \
          tape.remove(1) ) )"
     )
 }
@@ -887,18 +887,18 @@ fn postfix_chooser(name: &str, output: &str, run: &str) -> String {
          if mint != ? return mint, mint = type ( a := pub t ?, output_type := pub static {output}, \
          run = ( {run} ) ), type_mint.keep(place, mint), mint ), \
          parse_rank = *.parse_rank + 1, associativity = left, \
-         parse = ( tape[0].type = get_mint(tape[-1].gives), tape[0].a = tape[-1], \
+         parse = ( tape[0].type = self.get_mint(tape[-1].gives), tape[0].a = tape[-1], \
          tape.is_constructed[0] = true, tape.remove(-1) ) )"
     )
 }
 
 #[test]
 fn a_parse_stamps_a_type_a_function_chooses_and_fills_its_fields_by_name() {
-    let q = chooser("v := pub l ?", "type l", "v + v", "tape[0].v = tape[1]");
+    let q = chooser("v := pub l ?", "type l", "self.v + self.v", "tape[0].v = tape[1]");
     let wide = chooser(
         "v := pub i64 ?",
         "type i64",
-        "v * 3",
+        "self.v * 3",
         "if (tape[1].type ⊆ i64) ( tape[0].v = i64 (tape[1]) )",
     );
     for (src, want) in [
@@ -916,8 +916,8 @@ fn a_parse_stamps_a_type_a_function_chooses_and_fills_its_fields_by_name() {
 
 #[test]
 fn a_parse_that_stamps_a_chosen_type_refuses_what_that_type_cannot_take() {
-    let missing = chooser("v := l ?", "type l", "v", "tape[0].w = tape[1]");
-    let narrow = chooser("v := pub i32 ?", "type i32", "v", "tape[0].v = tape[1]");
+    let missing = chooser("v := l ?", "type l", "self.v", "tape[0].w = tape[1]");
+    let narrow = chooser("v := pub i32 ?", "type i32", "self.v", "tape[0].v = tape[1]");
     let stamp = |ty: &str| {
         format!(
             "q := type ( parse_rank = 60, parse = ( tape[0].type = {ty}, \
@@ -945,10 +945,10 @@ fn a_lossy_conversion_reads_a_rational_value_when_it_runs() {
              q 0.75"
         )
     };
-    let (code, stdout, stderr) = run_line(&q("f64 lossy (a)"));
+    let (code, stdout, stderr) = run_line(&q("f64 lossy (self.a)"));
     assert_eq!((code, stdout.as_str()), (Some(0), "1.5\n"), "stderr: {stderr}");
     // A `rational_number` lies inside no float type: 1/3 has no `f64`.
-    let (code, _, stderr) = run_line(&q("f64 (a)"));
+    let (code, _, stderr) = run_line(&q("f64 (self.a)"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
 }
@@ -992,9 +992,9 @@ const TIMES: &str = "⊗ := type ( \
     place := type_mint.step(type_mint.step(type_mint.step(0, ⊗), l), r), \
     mint := mut type type_mint.kept(place), if mint != ? return mint, \
     mint = type ( lhs := pub l ?, rhs := pub r ?, output_type := static type l, \
-    run = ( lhs * rhs ) ), type_mint.keep(place, mint), mint ), \
+    run = ( self.lhs * self.rhs ) ), type_mint.keep(place, mint), mint ), \
     parse_rank = *.parse_rank, \
-    parse = ( tape[0].type = get_mint(tape[-1].gives, tape[1].gives), tape[0].lhs = tape[-1], \
+    parse = ( tape[0].type = self.get_mint(tape[-1].gives, tape[1].gives), tape[0].lhs = tape[-1], \
     tape[0].rhs = tape[1], tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
 
 /// A parse written in Logos reads its operands through `tape[k]` and `tape[k].gives` as a built-in
@@ -1142,7 +1142,7 @@ fn a_parse_written_in_logos_decides_what_a_side_that_gives_no_value_is() {
             "{operand}: stderr: {stderr}"
         );
     }
-    let takes = "k := type ( a := i32 ?, output_type := static type i32, run = ( a ), \
+    let takes = "k := type ( a := i32 ?, output_type := static type i32, run = ( self.a ), \
                  parse_rank = 60, parse = ( tape[0].type = k, tape[0].a = tape[1], \
                  tape.remove(1), tape.is_constructed[0] = true ) ), n := i32 2, \
                  f := fn () -> i32 ( k n )";
@@ -1196,7 +1196,7 @@ fn type_reads_a_nodes_own_type_and_gives_the_type_it_gives() {
                  tape.remove(-1), tape.is_constructed[0] = true ) ), x := i32 3, y := (x + 2) q, 0";
     cases.push((field.to_owned(), "false true\n0\n"));
     let made = "m := type ( lhs := pub i32 ?, output_type := pub static type i32, \
-                run = ( lhs ) ), q := type ( parse_rank = 60, parse = ( tape[0].type = m, \
+                run = ( self.lhs ) ), q := type ( parse_rank = 60, parse = ( tape[0].type = m, \
                 tape[0].lhs = tape[1], tape.is_constructed[0] = true, tape.remove(1) ) ), \
                 p := type ( parse_rank = 50, parse = ( print «{tape[-1].type == m} \
                 {tape[-1].type.output_type == i32} {tape[-1].gives == i32}», tape.remove(-1), \
@@ -1308,7 +1308,7 @@ fn a_typed_field_read_through_a_name_gives_its_value_on_both_tiers() {
 #[test]
 fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
     // `x[k]` places the call `x.get(k)`, the line `k` its operand, run where it stands.
-    let q = "q := type ( n := u64 ?, get := pub static fn (i := u64 ?) -> u64 ( n + i ), \
+    let q = "q := type ( n := u64 ?, get := pub static fn (i := u64 ?) -> u64 ( self.n + i ), \
              parse_rank = 61, parse = ( \
                if (tape[0].type == type) ( tape[0].type = q, tape[0].n = tape[1], tape.remove(1) ) \
                else ( if (tape[1].type == square_brackets) ( \
@@ -1483,9 +1483,11 @@ fn a_call_result_takes_its_index_as_a_name_does() {
 
 #[test]
 fn a_static_function_called_through_a_record_built_by_application_reads_its_fields() {
-    let p = "p := type ( x := pub mut i32 ?, y := i32 ?, s := pub static fn () -> i32 ( x + y ), \
-             add := pub static fn (k := i32 ?) -> i32 ( x + y + k ), d := pub static fn () -> i32 ( s() * 2 ), \
-             bump := pub static fn () -> i32 ( x = x + 10, x ) ), q := p (1, 2)";
+    let p = "p := type ( x := pub mut i32 ?, y := i32 ?, \
+             s := pub static fn () -> i32 ( self.x + self.y ), \
+             add := pub static fn (k := i32 ?) -> i32 ( self.x + self.y + k ), \
+             d := pub static fn () -> i32 ( self.s() * 2 ), \
+             bump := pub static fn () -> i32 ( self.x = self.x + 10, self.x ) ), q := p (1, 2)";
     for (tail, want) in [
         ("q.s()", "3\n"),
         ("q.add(10)", "13\n"),
@@ -1504,8 +1506,9 @@ fn a_static_function_called_through_a_record_built_by_application_reads_its_fiel
     }
     // Each field is read at its own width.
     let (code, stdout, stderr) = run_line(
-        "p := type ( x := u8 ?, y := i64 ?, z := f64 ?, s := pub static fn () -> f64 ( z ), \
-         t := pub static fn () -> i64 ( y * 2 ), u := pub static fn () -> u8 ( x ) ), q := p (u8 3, -9, 2.5), \
+        "p := type ( x := u8 ?, y := i64 ?, z := f64 ?, s := pub static fn () -> f64 ( self.z ), \
+         t := pub static fn () -> i64 ( self.y * 2 ), u := pub static fn () -> u8 ( self.x ) ), \
+         q := p (u8 3, -9, 2.5), \
          f := fn () -> i64 ( q.t() ), f.compile(), print «{q.s()} {f()} {q.u()}»",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "2.5 -18 3\n"), "stderr: {stderr}");
@@ -1513,10 +1516,10 @@ fn a_static_function_called_through_a_record_built_by_application_reads_its_fiel
 
 #[test]
 fn a_static_function_writes_the_value_it_is_called_on() {
-    let p =
-        "p := type ( x := pub mut i32 ?, y := i32 ?, get := pub static fn () -> i32 ( x + y ), \
-             bump := pub static fn () -> i32 ( x = x + 10, x ), \
-             twice := pub static fn () -> i32 ( free (bump()), bump() ) )";
+    let p = "p := type ( x := pub mut i32 ?, y := i32 ?, \
+             get := pub static fn () -> i32 ( self.x + self.y ), \
+             bump := pub static fn () -> i32 ( self.x = self.x + 10, self.x ), \
+             twice := pub static fn () -> i32 ( free (self.bump()), self.bump() ) )";
     for (tail, want) in [
         ("m := mut p (1, 2), free (m.bump()), m.x", "11\n"),
         ("m := mut p (1, 2), free (m.twice()), m.x", "21\n"),
@@ -1549,14 +1552,16 @@ fn a_static_function_writes_the_value_it_is_called_on() {
     // Each field is written at its own width.
     let (code, stdout, stderr) = run_line(
         "p := type ( x := pub mut u8 ?, y := pub mut i64 ?, z := pub mut f64 ?, \
-         s := pub static fn () -> i64 ( x = x + u8 1, y = y * 2, z = z + 1.0, y ) ), \
+         s := pub static fn () -> i64 ( self.x = self.x + u8 1, self.y = self.y * 2, \
+         self.z = self.z + 1.0, self.y ) ), \
          q := mut p (u8 3, -9, 2.5), f := fn () -> i64 ( q.s() ), f.compile(), \
          print «{f()} {q.x} {q.y} {q.z}»",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "-18 4 -18 3.5\n"), "stderr: {stderr}");
     // A node a parse built is written through too, and meets the same gate.
-    let q = "q := type ( n := mut u64 ?, bump := pub static fn () -> u64 ( n = n + 10, n ), \
-             get := pub static fn () -> u64 ( n ), parse_rank = 61, parse = ( \
+    let q = "q := type ( n := mut u64 ?, \
+             bump := pub static fn () -> u64 ( self.n = self.n + 10, self.n ), \
+             get := pub static fn () -> u64 ( self.n ), parse_rank = 61, parse = ( \
              if (tape[0].type == type) ( tape[0].type = q, tape[0].n = tape[1], tape.remove(1) ), \
              tape.is_constructed[0] = true ) )";
     for (tail, want) in
@@ -1574,7 +1579,8 @@ fn a_static_function_writes_the_value_it_is_called_on() {
 fn a_static_function_writes_only_a_mut_field() {
     let p = |gate: &str| {
         format!(
-            "p := type ( x := pub {gate}i32 ?, bump := pub static fn () -> i32 ( x = x + 10, x ) ), \
+            "p := type ( x := pub {gate}i32 ?, \
+             bump := pub static fn () -> i32 ( self.x = self.x + 10, self.x ) ), \
              m := mut p (1), free (m.bump()), m.x"
         )
     };
@@ -1909,10 +1915,10 @@ const POWER: &str = "^ := type ( \
     get_mint := pub static fn (l := type ?) -> type ( place := type_mint.step(type_mint.step(0, ^), l), \
     mint := mut type type_mint.kept(place), if mint != ? return mint, \
     mint = type ( lhs := pub l ?, rhs := pub i32 ?, output_type := static type l, \
-    run = ( r := mut output_type 1, for 0..rhs ( r = r * lhs ), r ) ), \
+    run = ( r := mut self.output_type 1, for 0..self.rhs ( r = r * self.lhs ), r ) ), \
     type_mint.keep(place, mint), mint ), \
     parse_rank = *.parse_rank + 1, associativity = right, \
-    parse = ( tape[0].type = get_mint(tape[-1].type), tape[0].lhs = tape[-1], tape[0].rhs = tape[1], \
+    parse = ( tape[0].type = self.get_mint(tape[-1].type), tape[0].lhs = tape[-1], tape[0].rhs = tape[1], \
     tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
 
 #[test]
@@ -1960,7 +1966,7 @@ fn a_static_member_is_read_through_a_node_and_through_the_type() {
         assert!(stderr.contains(expect), "{read}: stderr: {stderr}");
     }
     // The run its values share is one place, read through the type.
-    let sq = "sq := type ( a := i32 ?, output_type := static type i32, run = ( a * a ), \
+    let sq = "sq := type ( a := i32 ?, output_type := static type i32, run = ( self.a * self.a ), \
               parse_rank = 60, parse = ( tape[0].type = sq, tape[0].a = tape[1], \
               tape.is_constructed[0] = true, tape.remove(1) ) )";
     let out = logos().args([&format!("{sq}, r := sq.run, sq.run")]).output().unwrap();
@@ -1971,10 +1977,11 @@ fn a_static_member_is_read_through_a_node_and_through_the_type() {
 #[test]
 fn a_static_function_called_on_no_value_uses_no_field() {
     let t = "t := type ( n := i64 ?, k := pub static fn () -> i64 ( 1 ), \
-             inc := pub static fn (a := i64 ?) -> i64 ( a + 1 ), j := pub static fn () -> i64 ( k() + 1 ), \
-             get := pub static fn () -> i64 ( n ), via := pub static fn () -> i64 ( get() ), \
-             held_k := pub static fn (a := dyad ?) -> i64 ( a + k() ), \
-             held_get := pub static fn (a := dyad ?) -> i64 ( a + get() ) )";
+             inc := pub static fn (a := i64 ?) -> i64 ( a + 1 ), \
+             j := pub static fn () -> i64 ( self.k() + 1 ), \
+             get := pub static fn () -> i64 ( self.n ), via := pub static fn () -> i64 ( self.get() ), \
+             held_k := pub static fn (a := dyad ?) -> i64 ( a + self.k() ), \
+             held_get := pub static fn (a := dyad ?) -> i64 ( a + self.get() ) )";
     for (tail, want) in [
         ("t.k()", "1\n"),
         ("t.inc(i64 5)", "6\n"),
@@ -1997,13 +2004,14 @@ fn a_static_function_called_on_no_value_uses_no_field() {
     }
     // So is a bare call in a `static` member's value, made at the definition.
     let (code, stdout, stderr) = run_line(
-        "t := type ( n := i64 ?, k := static fn () -> i64 ( 1 ), c := pub static (k() + 1) ), t.c",
+        "t := type ( n := i64 ?, k := static fn () -> i64 ( 1 ), c := pub static (self.k() + 1) ), \
+         t.c",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "2\n"), "stderr: {stderr}");
     // One that reads or writes a field, itself or through a bare call, has no value to use. The
     // refusal names the function as the call spells it, and shows the call through a value only
     // where that is the member's own name.
-    let set = "s := type ( n := mut i64 ?, set := pub static fn () -> i64 ( n = 2, 0 ) )";
+    let set = "s := type ( n := mut i64 ?, set := pub static fn () -> i64 ( self.n = 2, 0 ) )";
     for (src, name, through) in [
         (format!("{t}, t.get()"), "get", "`v.get(…)`"),
         (format!("{t}, t.via()"), "via", "`v.via(…)`"),
@@ -2027,9 +2035,10 @@ fn a_static_function_called_on_no_value_uses_no_field() {
 
 #[test]
 fn a_static_function_is_called_on_the_record_behind_a_pointer() {
-    let t = "u := type ( a := i64 ?, s := pub static fn () -> i64 ( a ) ), \
+    let t = "u := type ( a := i64 ?, s := pub static fn () -> i64 ( self.a ) ), \
              t := type ( n := pub mut i64 ?, inner := pub u ?, k := pub static fn () -> i64 ( 1 ), \
-             get := pub static fn () -> i64 ( n ), bump := pub static fn () -> i64 ( n = n + 10, n ) ), \
+             get := pub static fn () -> i64 ( self.n ), \
+             bump := pub static fn () -> i64 ( self.n = self.n + 10, self.n ) ), \
              p := try alloc 2 of mut t (i64 3, u (i64 7))";
     for (tail, want) in [
         ("p@.k()", "1\n"),
@@ -2116,7 +2125,8 @@ fn a_constructed_run_body_is_kept_on_the_type_across_repl_lines() {
 
 #[test]
 fn a_run_body_sees_its_definition_and_its_own_locals_only() {
-    let sq = "sq := type ( a := i32 ?, output_type := static type i32, run = ( a * a * k ), \
+    let sq =
+        "sq := type ( a := i32 ?, output_type := static type i32, run = ( self.a * self.a * k ), \
               parse_rank = 60, parse = ( tape[0].type = sq, tape[0].a = tape[1], \
               tape.is_constructed[0] = true, tape.remove(1) ) )";
     let before = format!("k := i32 2, {sq}, f := fn (x := i32 ?) -> i32 ( sq x ), f(5)");
@@ -2366,7 +2376,7 @@ fn an_address_lets_a_read_written_in_logos_that_outranks_it_build_first() {
     let squared = |rank: &str| {
         format!(
             "sq := fn (a := i32 ?) -> i32 ( a * a ), squared := type ( a := i32 ?, \
-             output_type := type ?, run = ( sq(a) ), parse_rank = {rank}, associativity = left, \
+             output_type := type ?, run = ( sq(self.a) ), parse_rank = {rank}, associativity = left, \
              parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
              tape.is_constructed[0] = true, tape.remove(-1) ) ), "
         )
@@ -2424,7 +2434,7 @@ fn the_slot_words_are_names_only_inside_a_type_body() {
     // shadow an outer name and are gone again at the close.
     let (echoes, stderr) = repl(
         "run := 5\nprint «{run + 1}»\nparse := i32 2\nprint «{parse * 3}»\n\
-          m := type (a := i32 ?, output_type := type ?, run = ( a + a ), \
+          m := type (a := i32 ?, output_type := type ?, run = ( self.a + self.a ), \
           parse_rank = *.parse_rank + 1, \
           parse = ( tape[0].type = m, tape[0].a = tape[-1], tape[0].output_type = i32, \
           tape.is_constructed[0] = true, tape.remove(-1) ))\n\
@@ -2444,7 +2454,7 @@ fn a_slot_body_is_read_bare() {
     let (_echoes, stderr) = repl(b"tape := 1\nsp := type (parse = ( tape.recenter(0) ))\n");
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"minus := type (a := i32 ?, b := i32 ?, output_type := type ?, run = ( a - b ), \
+        b"minus := type (a := i32 ?, b := i32 ?, output_type := type ?, run = ( self.a - self.b ), \
           parse_rank = +.parse_rank, associativity = left, \
           parse = ( tape[0].type = minus, tape[0].a = tape[-1], tape[0].b = tape[1], tape[0].output_type = i32, \
           tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ))\n\
@@ -2457,7 +2467,7 @@ fn a_slot_body_is_read_bare() {
     // run that calls a function whose body reads an operator constructs.
     let (echoes, stderr) = repl(
         b"sq := fn (a := i32 ?) -> i32 ( a * a )\n\
-          squared := type (a := i32 ?, output_type := type ?, run = ( sq(a) ), \
+          squared := type (a := i32 ?, output_type := type ?, run = ( sq(self.a) ), \
           parse_rank = *.parse_rank + 1, \
           parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
           tape.is_constructed[0] = true, tape.remove(-1) ))\n\
@@ -2836,7 +2846,7 @@ fn a_held_or_skipped_bracket_is_refused_where_it_is_written_before_anything_runs
         let head = format!("<command line>:1:{col}: error: this bracket is never closed");
         assert!(stderr.starts_with(&head), "{src}: stderr: {stderr}");
     }
-    let nested = bump("x := ((a + 2) * (3)), print «{x}»", "3 bump");
+    let nested = bump("x := ((self.a + 2) * (3)), print «{x}»", "3 bump");
     let (code, stdout, stderr) =
         run_line(&format!("{nested}, if false ( j := zz [(1), [2 (3)]] ) else ( print «ok» )"));
     assert_eq!((code, stdout.as_str()), (Some(0), "15\nok\n"), "stderr: {stderr}");
@@ -3055,7 +3065,7 @@ fn lossy_gives_what_each_number_type_defines_on_both_tiers() {
 
 #[test]
 fn a_value_lands_unwritten_only_in_a_type_that_holds_every_value_of_it() {
-    let pt = "pt := type ( a := i64 ?, output_type := type ?, run = ( a + a ), \
+    let pt = "pt := type ( a := i64 ?, output_type := type ?, run = ( self.a + self.a ), \
               parse_rank = *.parse_rank + 1, parse = ( tape[0].type = pt, \
               tape[0].a = tape[-1], tape[0].output_type = i64, tape.is_constructed[0] = true, \
               tape.remove(-1) ) )";
@@ -3200,7 +3210,7 @@ fn a_dyad_place_takes_every_node_and_a_number_in_a_new_node() {
 
 #[test]
 fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), ";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) ), ";
     for c in ["", "f.compile(), "] {
         for (tail, want) in [
             ("d := mut dyad ?, d = bag (1)".to_string(), "freed 1\n"),
@@ -3273,7 +3283,7 @@ fn a_dyad_place_ends_the_value_it_holds_and_copies_it_deep() {
 
 #[test]
 fn an_if_that_makes_a_dyad_in_one_arm_and_borrows_one_in_another_is_refused() {
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), ";
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), ";
     let head =
         format!("{bag}mk := fn () -> dyad ( bag (6) ), d := mut dyad ?, d = bag (5), c := i32 1, ");
     // Refused wherever the value goes, as over `bag`: at a `free`'s operand, and where a `:=`
@@ -3333,11 +3343,14 @@ fn an_if_that_makes_a_dyad_in_one_arm_and_borrows_one_in_another_is_refused() {
     for c in ["", "f.compile(), "] {
         for (tail, want) in [
             (
-                format!("{}{c}free (f(i32 5)), print «end»", gives_dyad("bag (lhs)")),
+                format!("{}{c}free (f(i32 5)), print «end»", gives_dyad("bag (self.lhs)")),
                 "freed 5\nend\n",
             ),
             (
-                format!("{}{c}free (f(i32 5)), print «end»", gives_dyad("dyad (bag, bag (lhs))")),
+                format!(
+                    "{}{c}free (f(i32 5)), print «end»",
+                    gives_dyad("dyad (bag, bag (self.lhs))")
+                ),
                 "freed 5\nend\n",
             ),
             (format!("f := fn (m := i32 ?) -> i32 ( dyad (i32, m) ), {c}f(i32 3)"), "3\n"),
@@ -3367,7 +3380,7 @@ fn an_if_that_makes_a_dyad_in_one_arm_and_borrows_one_in_another_is_refused() {
 
 #[test]
 fn a_parameter_moves_nothing_whose_type_ends_its_value_a_dyad_as_a_record() {
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), ";
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), ";
     // A type whose values a Logos `parse` builds, with or without a `free` of its own.
     let node = |free: &str| {
         format!(
@@ -3609,12 +3622,13 @@ fn a_line_that_reads_a_dyad_name_is_parsed_where_it_is_written_up_to_the_name() 
 
 #[test]
 fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
-    let t = "t := type ( n := pub mut i64 ?, k := pub static fn (a := dyad ?) -> i64 ( a + n ), \
+    let t = "t := type ( n := pub mut i64 ?, \
+             k := pub static fn (a := dyad ?) -> i64 ( a + self.n ), \
              is_i32 := pub static fn (a := dyad ?) -> bool ( a.type == i32 ), \
              last := pub static fn (a := dyad ?) -> i64 ( a ), \
-             add := pub static fn (a := dyad ?) -> void ( n = a + n ), \
-             bump := static fn () -> i64 ( n = n + 1, n ), \
-             add_bump := pub static fn (a := dyad ?) -> i64 ( a + bump() ) )";
+             add := pub static fn (a := dyad ?) -> void ( self.n = a + self.n ), \
+             bump := static fn () -> i64 ( self.n = self.n + 1, self.n ), \
+             add_bump := pub static fn (a := dyad ?) -> i64 ( a + self.bump() ) )";
     // A bare field of the `static` function's value is read through that value when the line runs.
     for (tail, want) in [
         ("v := t (3), v.k(i64 5)", "8"),
@@ -3643,7 +3657,7 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
     // A type's `run` body: a bare call there works on the node's own value.
     let inc = "inc := type ( a := i32 ?, output_type := type ?, \
-               twice := static fn () -> i32 ( a * 2 ), run = ( g() + twice() + a ), \
+               twice := static fn () -> i32 ( self.a * 2 ), run = ( g() + self.twice() + self.a ), \
                parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
                tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
                tape.remove(-1) ) )";
@@ -3655,7 +3669,7 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
     let parse = |line: &str| {
         format!(
             "d := mut dyad ?, d = i32 1, inc := type ( a := i32 ?, output_type := type ?, \
-             run = ( a ), parse_rank = *.parse_rank + 1, parse = ( \
+             run = ( self.a ), parse_rank = *.parse_rank + 1, parse = ( \
              tape[0].type = inc, tape[0].a = tape[-1], {line}, tape.is_constructed[0] = true, \
              tape.remove(-1) ) )"
         )
@@ -3671,14 +3685,15 @@ fn a_line_of_a_body_written_in_a_type_waits_for_the_run() {
     assert!(stderr.contains("never bare") && !stderr.contains("held line"), "stderr: {stderr}");
     // A held stamp's type is known only when the parse runs, so the parse's later lines read the
     // node's fields by name, not as fields of the type being defined.
-    let src = "w := type ( v := pub i32 ?, output_type := static type i32, run = ( v + v ) ), \
+    let src = "w := type ( v := pub i32 ?, output_type := static type i32, \
+               run = ( self.v + self.v ) ), \
                d := mut dyad ?, d = w, q := type ( parse_rank = 60, parse = ( \
                tape[0].type = d, tape[0].v = tape[1], tape.is_constructed[0] = true, \
                tape.remove(1) ) ), x := i32 4, print «{q x}»";
     assert_eq!(line(src), "8", "{src}");
-    // A type's `free` body reads its value's fields bare, as a `static` function does.
+    // A type's `free` body reads its value's fields through `self`, as a `static` function does.
     let src = "total := mut i64 0, g := fn () -> dyad ( i64 1 ), \
-               t := type ( n := i64 ?, free = ( total = total + g() + n ) ), \
+               t := type ( n := i64 ?, free = ( total = total + g() + self.n ) ), \
                h := fn () -> void ( x := t (3) ), h(), total";
     assert_eq!(line(src), "4", "{src}");
 }
@@ -3690,7 +3705,10 @@ fn a_held_line_checks_the_gates_of_what_it_writes_where_it_is_written() {
     for (src, name) in [
         ("f := fn (a := dyad ?) -> i64 ( x := i64 3, x = a + x, x ), 0", "x"),
         ("f := fn (a := dyad ?) -> i64 ( x := i64 3, x = undefinedname + a, x ), 0", "x"),
-        ("t := type ( n := i64 ?, add := static fn (a := dyad ?) -> void ( n = a + n ) ), 0", "n"),
+        (
+            "t := type ( n := i64 ?, add := static fn (a := dyad ?) -> void ( self.n = a + self.n ) ), 0",
+            "n",
+        ),
         (
             "p := type ( x := pub mut i64 ? ), \
              f := fn (a := dyad ?) -> i64 ( q := p (1), q.x = a + q.x, q.x ), 0",
@@ -3708,7 +3726,8 @@ fn a_held_line_checks_the_gates_of_what_it_writes_where_it_is_written() {
         ("f := fn (a := dyad ?) -> i64 ( if a > 0 ( i64 1 + a ) else ( i64 2 ) ), f(i64 5)", "6"),
         ("f := fn (a := dyad ?) -> i64 ( x := mut i64 3, x = a + x, x ), f(i64 5) + f(i64 1)", "12"),
         (
-            "t := type ( n := pub mut i64 ?, add := pub static fn (a := dyad ?) -> void ( n = a + n ) ), \
+            "t := type ( n := pub mut i64 ?, \
+             add := pub static fn (a := dyad ?) -> void ( self.n = a + self.n ) ), \
              v := mut t (3), v.add(i64 5), v.add(i64 1), v.n",
             "9",
         ),
@@ -4351,7 +4370,7 @@ fn a_binding_has_no_field_type() {
 
 #[test]
 fn a_value_reads_its_type_with_a_dot_on_both_tiers() {
-    let sq = postfix_chooser("sq", "type t", "a * a");
+    let sq = postfix_chooser("sq", "type t", "self.a * self.a");
     let pt = "pt := type ( x := i32 ? ), g := fn (x := i32 ?) -> pt ( pt(x) )";
     for (src, want) in [
         ("x := i32 3, x.type == i32".to_string(), "true"),
@@ -4629,7 +4648,7 @@ fn the_repl_keeps_an_owning_binding_alive_across_lines() {
 #[test]
 fn a_repl_session_frees_each_line_s_value_once_at_its_end() {
     // The session's exit grows a line at a time, text made between its lines.
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) )";
     let lines: String =
         (1..=5).map(|i| format!("v{i} := bag({i})\nt{i} := «text {i}»\n")).collect();
     let (echoes, stderr) = repl(format!("{bag}\n{lines}").as_bytes());
@@ -4706,7 +4725,7 @@ fn a_repl_line_that_faults_keeps_the_end_of_what_it_ended() {
 fn a_failed_repl_line_keeps_the_ends_its_pass_ran() {
     // A parse error after the pass ran the `free` keeps the name ended; a fault the pass
     // meets before the `free` ran leaves it to the session.
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let fns = "g := fn () -> i32 ( abort «x» )\nh := fn () -> i32 ( 1 )";
     let (echoes, stderr) = repl(
         format!("{bag}\n{fns}\n")
@@ -4720,7 +4739,7 @@ fn a_failed_repl_line_keeps_the_ends_its_pass_ran() {
 #[test]
 fn a_fault_in_the_pass_frees_what_a_nested_line_ended_once() {
     // The scope that holds the name decides, from the lines the pass ran.
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), \
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), \
                g := fn () -> i32 ( abort «x» ), h := fn () -> i32 ( 1 ), a := bag(1)";
     for tail in [
         "x := ( free a, n := immediate g(), 1 )",
@@ -4739,7 +4758,7 @@ fn a_fault_in_the_pass_frees_what_a_nested_line_ended_once() {
 #[test]
 fn a_block_that_fails_to_parse_frees_what_its_run_lines_hold() {
     // As the top level does: the pass ran `b`'s line before the error.
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), \
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), \
                h := fn () -> i32 ( 1 )";
     for tail in ["nosuch", "&b", "return b", "return 1, 2"] {
         let src = format!("{bag}, x := ( b := bag(2), n := immediate h(), {tail} )");
@@ -4957,7 +4976,7 @@ fn a_type_body_in_a_function_is_built_per_call_and_minted_by_its_contents() {
 #[test]
 fn a_type_body_in_a_function_declares_fields_from_the_call_s_types() {
     let (echoes, stderr) = repl(
-        "mk := fn (t := type ?) -> type ( type ( e := pub static type t, p := @e ?, v := t ? ) )\n\
+        "mk := fn (t := type ?) -> type ( type ( e := pub static type t, p := @self.e ?, v := t ? ) )\n\
           print «{mk(u8).e == u8}»\nk := fn (t := type ?) -> type ( mk(t) )\nk(i32).e == i32\n",
     );
     assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
@@ -4965,7 +4984,7 @@ fn a_type_body_in_a_function_declares_fields_from_the_call_s_types() {
     // A member declared from the call's type is that type, so a function body may apply it.
     let (echoes, stderr) = repl(
         b"mk := fn (t := type ?) -> type ( type ( e := pub static type t, \
-          f := static fn () -> i32 ( e 5 ) ) )\nmk(i32).e == i32\n",
+          f := static fn () -> i32 ( self.e 5 ) ) )\nmk(i32).e == i32\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -5528,7 +5547,7 @@ fn a_static_function_writes_a_field_of_a_frame_local_record() {
     // The value a `static` function is called through is the record's own bytes, in the
     // caller's frame, so the write lands in the local it was called on.
     let (echoes, stderr) = repl(
-        "pt := type (a := pub mut i32 ?, b := i32 ?, bump := pub static fn () -> void ( a = a + b ))\n\
+        "pt := type (a := pub mut i32 ?, b := i32 ?, bump := pub static fn () -> void ( self.a = self.a + self.b ))\n\
           f := fn () -> i32 ( p := mut pt(1, 2), p.bump(), p.bump(), p.a )\nprint «{f()}»\n\
           q := mut pt(10, 5)\nq.bump()\nq.a\n",
     );
@@ -5760,7 +5779,7 @@ fn a_write_through_a_pointer_needs_mut_on_every_field_after_the_dereference() {
     let t = |gate: &str| format!("t := type ( n := pub {gate}i64 ? )");
     let u = |a: &str, b: &str| {
         format!(
-            "u := type ( a := pub {a}i64 ?, bump := pub static fn () -> void ( a = a + 1 ) ), \
+            "u := type ( a := pub {a}i64 ?, bump := pub static fn () -> void ( self.a = self.a + 1 ) ), \
              t := type ( b := pub {b}u ? ), p := try alloc 1 of mut t (u (5))"
         )
     };
@@ -5986,7 +6005,7 @@ fn a_call_lands_a_filled_box_as_the_type_it_holds() {
 
 #[test]
 fn only_a_marked_place_is_written_or_addressed() {
-    let pw = "pw := type ( a := mut i32 ?, b := mut i32 ?, output_type := type ?, run = ( a * b ), \
+    let pw = "pw := type ( a := mut i32 ?, b := mut i32 ?, output_type := type ?, run = ( self.a * self.b ), \
               parse_rank = *.parse_rank + 1, associativity = right, \
               parse = ( tape[0].type = pw, tape[0].a = tape[-1], tape[0].b = tape[1], tape[0].output_type = i32, \
               tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
@@ -6586,7 +6605,7 @@ fn a_parse_written_in_logos_that_finds_nothing_to_consume_declines() {
     let mk = |otherwise: &str| {
         format!(
             "{pt}, mk := type ( a := pub i32 ?, output_type := type ?, tag := pub static i32 7, \
-             run = ( pt(a) ), parse = ( if (tape[-1].type == i32) ( \
+             run = ( pt(self.a) ), parse = ( if (tape[-1].type == i32) ( \
              tape[0].type = mk, tape[0].a = tape[-1], tape[0].output_type = pt, \
              tape.is_constructed[0] = true, tape.remove(-1) ){otherwise} ) )"
         )
@@ -6658,7 +6677,7 @@ fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_
     }
     // An earlier argument with an end of its own stands in its place too, and the call that holds
     // it, or the line's end, ends it once.
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), \
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), \
                mb := fn () -> bag ( print «mb», bag(4) ), \
                kb := fn (a := bag ?, b := i32 ?, c := i32 ?) -> i32 ( b + c )";
     let gd = "gd := fn () -> dyad ( print «g», i32 2 )";
@@ -6689,7 +6708,7 @@ fn a_value_the_parse_needs_in_an_argument_list_runs_after_the_earlier_arguments_
 fn a_comment_leading_a_line_leaves_that_line_what_it_made_and_runs() {
     let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 ), \
                  k := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b )";
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) )";
     for (src, want) in [
         (format!("{calls}, k(# «a» h(), g() + 1)"), "h\ng\n4"),
         (format!("{calls}, d := dyad (i32, 7), k(# «a» h(), d + 1)"), "h\n9"),
@@ -7020,7 +7039,7 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
 /// word‹ [[R304]]).
 #[test]
 fn a_print_in_a_compiled_body_writes_what_the_interpreted_one_writes() {
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let mut cases = Vec::new();
     for compile in ["", "g.compile(), "] {
         for (program, printed) in [
@@ -7391,9 +7410,9 @@ fn a_body_lexed_once_holds_the_scopes_of_its_quotes() {
         )
     };
     for (src, printed) in [
-        (run_body("print «{a}»"), "3\n"),
-        (run_body("print «{n} {a + 1} {«)»} {«x {«y»}»}»"), "1 4 ) x {«y»}\n"),
-        (run_body("\n# «note {a}»\nprint «a={a}»\n"), "a=3\n"),
+        (run_body("print «{self.a}»"), "3\n"),
+        (run_body("print «{n} {self.a + 1} {«)»} {«x {«y»}»}»"), "1 4 ) x {«y»}\n"),
+        (run_body("\n# «note {a}»\nprint «a={self.a}»\n"), "a=3\n"),
         (
             "f := fn () -> i32 ( t := type ( k := static immediate ( print «v {1}», i32 1 ) ), 1 ), f()"
                 .to_string(),
@@ -7404,7 +7423,7 @@ fn a_body_lexed_once_holds_the_scopes_of_its_quotes() {
         assert_eq!(code, Some(0), "{src}: {stderr}");
         assert!(stdout.starts_with(printed), "{src}: {stdout} {stderr}");
     }
-    let (_, _, stderr) = run_line(&run_body("abort «a is {a}»"));
+    let (_, _, stderr) = run_line(&run_body("abort «a is {self.a}»"));
     assert!(stderr.contains("run error: a is 3"), "{stderr}");
 }
 
@@ -7642,7 +7661,7 @@ fn reading_a_member_a_union_does_not_hold_is_a_run_error() {
             "this union holds `{held}`, not `{read}`: a member is read only while the union holds it"
         )
     };
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let mut cases = vec![
         (format!("{NUM}, v := mut num ?, v.i = 5, v.f"), "", holds("i", "f")),
         (
@@ -7771,7 +7790,7 @@ fn a_union_s_members_are_read_from_outside_and_its_empty_place_is_unwritten() {
 /// On both tiers.
 #[test]
 fn a_write_path_writes_the_member_it_steps_through_and_reads_nothing() {
-    let types = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), \
+    let types = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), \
                  pt := type ( x := pub mut i32 ?, y := pub mut i32 ? ), \
                  u := type union ( a := mut pt, b := mut i32 ), \
                  ub := type union ( a := mut pt, c := mut bag ), \
@@ -7833,7 +7852,7 @@ fn what_a_union_does_not_take_is_refused_where_it_is_written() {
                   `mut` still lets it be written from outside";
     let in_a_row = "a union holds one member, so it is not made from values in a row: declare an \
                     empty place and write the member, `v := mut num ?, v.a = …`";
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let members = (0..256).map(|k| format!("m{k} := i32")).collect::<Vec<_>>().join(", ");
     for (src, message) in [
         ("x := union ( ), 0".to_string(), written),
@@ -8078,7 +8097,7 @@ fn holds_asks_which_member_a_union_holds() {
 /// again when another member is written; on both tiers.
 #[test]
 fn a_union_ends_the_member_it_holds() {
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let u = "u := type union ( b := mut bag, i := mut i32 )";
     let nest = "inner := type union ( b := mut bag, i := mut i32 ), \
                 outer := type union ( x := mut inner, f := mut f64 )";
@@ -8160,7 +8179,7 @@ fn t_bang_is_the_union_of_value_and_err() {
 #[test]
 fn the_lines_a_types_parse_writes_meet_only_its_own_lines() {
     let probe = "probe := type ( value := i32 ?, err := i32 ?, tag := i32 ?, \
-                 run = ( print «{value} {err} {tag}» ), parse_rank = *.parse_rank + 1, \
+                 run = ( print «{self.value} {self.err} {self.tag}» ), parse_rank = *.parse_rank + 1, \
                  parse = ( tape[0].type = probe, tape[0].value = 7, tape[0].err = 8, \
                  tape[0].tag = 9, tape.is_constructed[0] = true ) )";
     for compile in ["", "f.compile(), "] {
@@ -8241,7 +8260,7 @@ fn a_kept_t_bang_declares_its_lines_no_more() {
 fn a_function_that_gives_t_bang_fills_value_with_its_last_value() {
     let half = "half := fn (n := i32 ?) -> i32! ( n / 2 )";
     let pt = "pt := type ( x := pub i32 ?, y := pub i32 ? )";
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     for compile in ["", "half.compile(), f.compile(), "] {
         for (fns, body, want) in [
             (half, "r := half(8), print «{r holds value} {r holds err} {r.value}»", "true false 4"),
@@ -8310,7 +8329,7 @@ fn a_function_hands_on_another_s_owning_union_unchanged() {
 #[test]
 fn a_raise_inside_a_function_that_gives_t_bang_fills_err_and_leaves() {
     let too_big = "error.too_big := «a number is too big»";
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     for compile in ["", "half.compile(), f.compile(), "] {
         for (fns, body, want) in [
             (
@@ -8360,7 +8379,7 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
     let too_big = "error.too_big := «a number is too big»";
     let half = "half := fn (n := i32 ?) -> i32! ( if n > 100 ( error.too_big «{n} is too big» ), \
                 n / 2 )";
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     for tier in ["interpreted", "compiled"] {
         for (fns, body, want) in [
             (
@@ -8459,7 +8478,7 @@ fn try_gives_the_value_or_passes_the_error_on_one_hop_longer() {
 #[test]
 fn the_result_place_is_written_and_read_before_the_function_leaves() {
     let odd = "error.odd := «odd»";
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let pt = "pt := type ( x := pub mut i32 ?, y := pub mut i32 ? )";
     for compile in ["", "g.compile(), f.compile(), "] {
         for (g, body, want) in [
@@ -8584,10 +8603,10 @@ fn the_result_place_is_refused_where_it_cannot_be_read_or_written() {
             format!("1:60: {unwritten}"),
         ),
         (
-            "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), \
+            "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) ), \
              f := fn (c := bool ?) -> bag ( a := bag(1), if c ( return a ), a.n = 2, bag(3) ), 0"
                 .to_string(),
-            "1:130: error: `a` is dead here: it was moved or freed above".to_string(),
+            "1:135: error: `a` is dead here: it was moved or freed above".to_string(),
         ),
         (
             "f := fn () -> i32! ( return.value = 1, i32 5, return ), 0".to_string(),
@@ -8682,16 +8701,16 @@ fn a_type_s_run_body_writes_its_result_place_and_leaves_with_return() {
     let parse = "parse_rank = 60, parse = ( tape[0].type = k, tape[0].a = tape[1], \
                  tape.remove(1), tape.is_constructed[0] = true )";
     for (output, run, call, want) in [
-        ("i32", "return = a + 1, return", "print «{g(i32 2)}»", "3"),
+        ("i32", "return = self.a + 1, return", "print «{g(i32 2)}»", "3"),
         (
             "i32!",
-            "if a % 2 == 1 ( return error.odd «not even» ), return.value = a / 2, return",
+            "if self.a % 2 == 1 ( return error.odd «not even» ), return.value = self.a / 2, return",
             "print «{g(i32 8).value} {g(i32 3) holds err}»",
             "4 true",
         ),
         (
             "pt!",
-            "return.value.x = a, return.value.y = a + 1, return",
+            "return.value.x = self.a, return.value.y = self.a + 1, return",
             "r := g(i32 4), print «{r.value.x} {r.value.y}»",
             "4 5",
         ),
@@ -8708,16 +8727,16 @@ fn a_type_s_run_body_writes_its_result_place_and_leaves_with_return() {
     let failed = "error: the run body of `k` could not be constructed for these field types:";
     for (run, output, at, inner) in [
         (
-            "return = a + 1, i32 9",
+            "return = self.a + 1, i32 9",
             "output_type := static type i32, ",
-            "1:215",
-            "run body of `k`:1:19: error: this body writes `return`, so it leaves only by \
+            "1:220",
+            "run body of `k`:1:24: error: this body writes `return`, so it leaves only by \
              `return` or a raise; no line of it gives a value",
         ),
         (
-            "return = a",
+            "return = self.a",
             "",
-            "1:172",
+            "1:177",
             "run body of `k`:1:3: error: a `-> void` function gives no value, so `return` has no \
              result here to read, write or leave with",
         ),
@@ -8743,7 +8762,7 @@ fn a_type_s_run_body_writes_its_result_place_and_leaves_with_return() {
 fn a_member_of_a_union_made_for_one_read_is_taken_not_copied() {
     let array = "import file «./identities/array.logos», t := type array i32, \
                  mk := fn () -> t! ( a := array i32 [1, 2], print «{a.ptr}», move a )";
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), \
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) ), \
                mk := fn (k := i32 ?) -> bag! ( bag(k) )";
     for compile in ["", "mk.compile(), g.compile(), "] {
         for read in ["x := try mk()", "x := mk().value"] {
@@ -8832,7 +8851,7 @@ fn a_try_at_the_top_level_hands_the_error_to_the_command_line() {
             assert!(stderr.contains(want_err), "{src}\nstderr: {stderr}");
         }
     }
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let (code, stdout, stderr) = run_line(&format!(
         "{bag}, {too_big}, {half}, b := bag(4), defer print «bye», y := try half(300)"
     ));
@@ -8950,7 +8969,7 @@ fn a_static_or_immediate_value_runs_as_a_line_that_holds_what_it_made() {
         assert_eq!((code, stdout.as_str()), (Some(1), "before\n"), "{src}\nstderr: {stderr}");
         assert!(stderr.contains("run error: error.bad: no"), "{src}\nstderr: {stderr}");
     }
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), \
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) ), \
                mb := fn () -> bag ( print «mb», bag(4) ), h := fn () -> i32 ( print «h», 1 )";
     for (tail, want) in [
         ("p := static (mb()).n, print «p {p}»", "mb\nfreed 4\np 4"),
@@ -9019,7 +9038,7 @@ fn a_try_a_parse_writes_into_a_node_runs_as_it_is_placed() {
 fn a_function_that_gives_void_bang_holds_value_where_its_body_ends() {
     let bad = "error.bad := «bad»";
     let check = "check := fn (n := i32 ?) -> void! ( if n > 1 ( error.bad «{n} is bad» ) )";
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     for compile in ["", "check.compile(), g.compile(), f.compile(), "] {
         for (fns, body, want) in [
             (
@@ -9070,7 +9089,7 @@ fn a_function_that_gives_void_bang_holds_value_where_its_body_ends() {
 #[test]
 fn a_parse_gives_void_bang_so_its_raise_or_try_stops_the_parse_with_that_error() {
     let p = "error.p := «p»";
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let check = "check := fn (n := i32 ?) -> i32! ( if n > 1 ( error.p «{n} is too big» ), n )";
     let placed = "tape[0] = i32 v, tape.is_constructed[0] = true";
     let failed = "error: this identity's constructor failed while parsing: error.p:";
@@ -9132,7 +9151,7 @@ fn abort_ends_the_run_with_its_message() {
     // On both tiers, each scope it leaves ended as at its end.
     for compile in ["", "f.compile(), "] {
         let (code, stdout, stderr) = run_line(&format!(
-            "bag := type ( n := pub mut i32 ?, free = ( print «freed {{n}}» ) ), \
+            "bag := type ( n := pub mut i32 ?, free = ( print «freed {{self.n}}» ) ), \
              f := fn (x := i32 ?) -> i32 ( b := bag(x), defer print «bye», \
              if (x > 2) (abort «too big: {{x}}») else (x) ), \
              {compile}print «{{f(1)}}», free (f(5)), print «never»"
@@ -9199,7 +9218,7 @@ fn abort_and_a_raise_read_braces_exactly_as_print_does() {
 #[test]
 fn a_raise_over_a_declared_category_is_a_fault_naming_it() {
     let x = "error.x := «a description»";
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let mut cases = vec![
         (format!("{x}, error.x «msg»"), "", "error.x: msg"),
         (format!("{x}, n := i32 4, error.x «bad {{n}}»"), "", "error.x: bad 4"),
@@ -9207,7 +9226,7 @@ fn a_raise_over_a_declared_category_is_a_fault_naming_it() {
         (
             format!(
                 "{x}, probe := type ( v := i32 ?, \
-                 run = ( error.own := «its own», if v == 0 ( error.own «zero» ), error.x «{{v}}» ), \
+                 run = ( error.own := «its own», if self.v == 0 ( error.own «zero» ), error.x «{{self.v}}» ), \
                  parse_rank = *.parse_rank + 1, parse = ( tape[0].type = probe, \
                  tape[0].v = 7, tape.is_constructed[0] = true ) ), probe"
             ),
@@ -9413,7 +9432,7 @@ fn a_bare_error_is_refused_where_it_is_written() {
 /// ends where no cell holds it. A function that allocates stays interpreted.
 #[test]
 fn alloc_gives_the_block_or_error_out_of_memory() {
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let refused = "run error: error.out_of_memory: this alloc got no memory";
     let too_big = "alloc 100000000000000000 of";
     for (src, printed, error) in [
@@ -9677,7 +9696,7 @@ fn a_constructor_reads_the_scope_cell_to_its_right_line_by_line() {
 fn what_a_constructor_took_runs_first_where_its_node_stands() {
     let calls = "h := fn () -> i32 ( print «h», 1 ), g := fn () -> dyad ( print «g», i32 2 )";
     let times = "times := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, \
-                 run = ( lhs * rhs ), parse_rank = 60, parse = ( tape[0].type = times, \
+                 run = ( self.lhs * self.rhs ), parse_rank = 60, parse = ( tape[0].type = times, \
                  tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = i32, \
                  tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     let lib = "import file «tests/fixtures/scope_cell_lines.logos»";
@@ -9720,11 +9739,11 @@ fn a_declaration_on_the_command_line_is_its_names_start() {
 fn a_nodes_fields_are_read_by_name_without_running_it() {
     let power = POWER;
     let sq = "sq := type ( a := i32 ?, output_type := static type i32, tag := pub static i32 7, \
-              run = ( a * a ), parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
+              run = ( self.a * self.a ), parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
               tape.is_constructed[0] = true, tape.remove(-1) ) )";
     let mk =
         "pt := type ( x := pub i32 ? ), mk := type ( a := pub i32 ?, output_type := pub type ?, \
-              tag := pub static i32 7, run = ( pt(a) ), parse = ( tape[0].type = mk, \
+              tag := pub static i32 7, run = ( pt(self.a) ), parse = ( tape[0].type = mk, \
               tape[0].a = tape[-1], tape[0].output_type = pt, tape.is_constructed[0] = true, \
               tape.remove(-1) ) )";
     for (tail, want) in [
@@ -10062,14 +10081,14 @@ fn run_line(src: &str) -> (Option<i32>, String, String) {
 #[test]
 fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
     let (code, stdout, stderr) = run_line(
-        "probe := type ( v := i32 ?, run = ( print «{v}» ), \
+        "probe := type ( v := i32 ?, run = ( print «{self.v}» ), \
          parse_rank = *.parse_rank + 1, \
          parse = ( tape[0].type = probe, tape[0].v = 7, tape.is_constructed[0] = true ) ), probe",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "7\n"), "stderr: {stderr}");
     for (tail, want) in [("probe", "7\n"), ("probe + 1", "8\n")] {
         let (code, stdout, stderr) = run_line(&format!(
-            "probe := type ( v := i32 ?, output_type := type ?, run = ( v ), \
+            "probe := type ( v := i32 ?, output_type := type ?, run = ( self.v ), \
              parse_rank = *.parse_rank + 1, \
              parse = ( tape[0].type = probe, tape[0].v = 7, tape[0].output_type = i32, \
              tape.is_constructed[0] = true ) ), {tail}"
@@ -10107,7 +10126,7 @@ fn a_node_a_parse_places_inside_a_function_reads_that_functions_frame() {
     // A parse runs in a call of its own, and `f`'s body runs the node the parse built: what read
     // the parse's own names was run as it was placed, and what reads `f`'s reads `f`'s frame.
     let pr = "pr := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, \
-              run = ( lhs + rhs ), parse_rank = *.parse_rank + 1, parse = ( \
+              run = ( self.lhs + self.rhs ), parse_rank = *.parse_rank + 1, parse = ( \
               tape[0].type = pr, tape[0].lhs = tape[-1], tape[0].rhs = tape[0].lhs, \
               tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )";
     let sq = "sq := type ( parse_rank = *.parse_rank + 1, parse = ( n := i32 40, \
@@ -10139,7 +10158,7 @@ fn a_parse_local_inside_a_node_of_a_type_written_in_logos_is_run_as_it_is_placed
     // parse, a call that has ended when the node runs (›A tape read checked against a number
     // type reads as that number‹ [[R229]]).
     let times = "times := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, \
-                 run = ( lhs * rhs ), parse_rank = 60, parse = ( tape[0].type = times, \
+                 run = ( self.lhs * self.rhs ), parse_rank = 60, parse = ( tape[0].type = times, \
                  tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = i32, \
                  tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     let sq = |cell: &str| {
@@ -10182,7 +10201,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
     // `sq` writes `v` from the line before it; `cell` writes the line's cell.
     let sq = |rank: &str, body: &str| {
         format!(
-            "{w}, sq := type ( v := i32 ?, output_type := type ?, run = ( v ), \
+            "{w}, sq := type ( v := i32 ?, output_type := type ?, run = ( self.v ), \
              parse_rank = {rank}, parse = ( tape[0].type = sq, {body}, \
              tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) )"
         )
@@ -10201,7 +10220,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
     let local = |body: &str| cell(&format!("n := i32 40, {body}, tape.is_constructed[0] = true"));
     let any = |body: &str| {
         format!(
-            "sq := type ( v := i32 ?, output_type := static type i32, run = ( v ), \
+            "sq := type ( v := i32 ?, output_type := static type i32, run = ( self.v ), \
              parse_rank = *.parse_rank + 1, parse = ( n := i32 40, tape[0].type = sq, \
              {body}, tape.is_constructed[0] = true, tape.remove(-1) ) )"
         )
@@ -10253,7 +10272,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
         (any("tape[0].v = n") + ", x := i32 7, x sq", "40"),
         (any("tape[0].v = n + 1") + ", x := i32 7, x sq", "41"),
         (
-            "q := type ( n := u64 ?, output_type := static type u64, run = ( n ), \
+            "q := type ( n := u64 ?, output_type := static type u64, run = ( self.n ), \
              parse_rank = 60, parse = ( tape[0].type = q, \
              tape[0].n = tape[1].dyads.size, tape.remove(1), tape.is_constructed[0] = true ) ), \
              q (1, 2, 3)"
@@ -10261,7 +10280,7 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
             "3",
         ),
         (
-            "q := type ( v := u64 ?, output_type := static type u64, run = ( v ), \
+            "q := type ( v := u64 ?, output_type := static type u64, run = ( self.v ), \
              parse_rank = 61, parse = ( tape[0].type = q, \
              if (not tape[1].dyads[0].type ⊆ u64) abort «no», tape[0].v = tape[1].dyads[0] + 1, \
              tape.remove(1), tape.is_constructed[0] = true ) ), q [5]"
@@ -10345,11 +10364,11 @@ fn a_parse_places_tape_lines_and_its_fields_as_nodes_and_runs_its_own_names() {
 }
 
 #[test]
-fn a_static_function_names_its_fields_bare() {
+fn a_static_function_reaches_its_fields_through_self() {
     let (code, _, stderr) =
-        run_line("x := type ( n := u64 ?, twice := static fn () -> u64 ( n * 2 ) ), 1");
+        run_line("x := type ( n := u64 ?, twice := static fn () -> u64 ( self.n * 2 ) ), 1");
     assert_eq!(code, Some(0), "stderr: {stderr}");
-    // Only the type's own functions reach a field by name, and a parse never does.
+    // Only the type's own functions reach a field, and a parse never does.
     for (src, expect) in [
         ("f := fn () -> u64 ( n ), 1", "unknown name `n`"),
         ("x := type ( n := u64 ?, parse = ( n ) ), 1", "`tape[0].n`, never bare"),
@@ -10383,7 +10402,7 @@ fn a_free_body_fills_the_values_free() {
 const BOX: &str = "boxed := type ( \
     p := pub mut own @ mut i32 ?, \
     size := pub mut u64 0, \
-    free = ( print «free», free p ), \
+    free = ( print «free», free self.p ), \
     parse_rank = dyad.parse_rank, \
     parse = ( tape.is_constructed[0] = true ) \
 ), \
@@ -10391,10 +10410,10 @@ box := type ( \
     elements := scope ?, \
     output_type := type ?, \
     run = ( \
-        v := mut output_type ?, \
-        v.p = (alloc elements.dyads.size of mut i32 ?).value, \
-        for i in 0..elements.dyads.size ( \
-            (v.p + i)@ = elements.dyads[i], \
+        v := mut self.output_type ?, \
+        v.p = (alloc self.elements.dyads.size of mut i32 ?).value, \
+        for i in 0..self.elements.dyads.size ( \
+            (v.p + i)@ = self.elements.dyads[i], \
             v.size = i + 1 \
         ), \
         move v \
@@ -10488,8 +10507,8 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
 
 #[test]
 fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ), \
-               get := pub static fn () -> i32 ( n ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ), \
+               get := pub static fn () -> i32 ( self.n ) )";
     for (src, printed) in [
         // Made or moved in the argument: the parameter holds it, on either tier.
         (format!("{BOX}, f := fn (q := box ?) -> i32 ( 1 ), free (f(box (1, 2))), print «after»"), "free\nafter\n"),
@@ -10583,7 +10602,7 @@ fn a_call_holds_a_value_passed_straight_and_frees_it_as_it_returns() {
     }
     // Nothing holds it yet: a record's field and a parameter `=` may write over.
     for tail in [
-        "holder := type ( b := box ?, free = ( free b ) ), h := holder(box (1, 2))",
+        "holder := type ( b := box ?, free = ( free self.b ) ), h := holder(box (1, 2))",
         "f := fn (q := mut box ?) -> i32 ( 1 ), f(box (1, 2))",
     ] {
         let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
@@ -10707,12 +10726,12 @@ fn a_jump_into_compiled_code_keeps_a_fault_parked_before_it() {
     let range = "error.index_out_of_range";
     let checked = "import file «./identities/array.logos», \
          h := fn (x := f64 ?) -> i32 ( (i32 lossy (x)).value ), h.compile(), \
-         bag := type ( v := mut f64 ?, free = ( print «freed {h(v)}» ) ), z := f64 0.0";
+         bag := type ( v := mut f64 ?, free = ( print «freed {h(self.v)}» ) ), z := f64 0.0";
     for (before, after, printed, error) in [
         // The fault's cleanup enters compiled code.
         (
             "h := fn (k := i32 ?) -> i32 ( k ), h.compile(), \
-             bag := type ( n := mut i32 ?, free = ( print «freed {h(n)}» ) ), \
+             bag := type ( n := mut i32 ?, free = ( print «freed {h(self.n)}» ) ), \
              g := fn (x := f64 ?) -> i32 ( b := bag(4), n := (i32 lossy (x)).value, n )"
                 .to_string(),
             "z := f64 0.0, g(z / z)",
@@ -10767,7 +10786,7 @@ fn compiled_code_stops_at_a_fault_as_the_interpreter_does() {
     let range = "error.index_out_of_range";
     let checked = "import file «./identities/array.logos», \
          h := fn (x := f64 ?) -> i32 ( (i32 lossy (x)).value ), h.compile(), \
-         bag := type ( v := mut f64 ?, free = ( print «freed {h(v)}» ) ), z := f64 0.0";
+         bag := type ( v := mut f64 ?, free = ( print «freed {h(self.v)}» ) ), z := f64 0.0";
     let say = "say := fn (k := i32 ?) -> i32 ( print «say {k}», k )";
     let fault = "z := f64 0.0, g(z / z)";
     for (before, after, printed, error) in [
@@ -10940,7 +10959,7 @@ fn assignment_frees_the_value_it_displaces() {
 }
 
 /// A plain record whose type fills `free`, its free printing the one field.
-const RECORD: &str = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+const RECORD: &str = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
 
 #[test]
 fn a_plain_record_s_owner_runs_its_free_once() {
@@ -11119,7 +11138,7 @@ fn a_plain_record_moves_by_its_bytes() {
     let owns_nothing = "a field or cell that owns nothing is not in the seed yet";
     for (holder, expect) in [
         ("h := type ( b := pub mut bag ?, z := i32 ? )", "the field `b` owns what it holds"),
-        ("h := type ( b := pub mut bag ?, free = ( free b ) )", "fills its own `free = (…)`"),
+        ("h := type ( b := pub mut bag ?, free = ( free self.b ) )", "fills its own `free = (…)`"),
     ] {
         for tail in [
             "v := mut h ?, v.b = bag(1), w := move v.b, 1",
@@ -11152,7 +11171,7 @@ fn a_type_frees_the_records_its_fields_hold() {
             "the fields `p`, `b` own what they hold",
         ),
         (
-            "h := type ( b := mut bag ?, free = ( free b ) ), k := type ( c := h ? ), 1",
+            "h := type ( b := mut bag ?, free = ( free self.b ) ), k := type ( c := h ? ), 1",
             "the field `c` owns what it holds",
         ),
         ("f := fn () -> i32 ( h := type ( b := bag ? ), 1 ), f()", "the field `b` owns"),
@@ -11166,7 +11185,7 @@ fn a_type_frees_the_records_its_fields_hold() {
         "m := type ( k := i32 ? ), h := type ( b := m ?, z := pub i32 ? ), v := h(m(1), 2), v.z",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "2\n"), "stderr: {stderr}");
-    let h = "h := type ( b := pub mut bag ?, z := i32 ?, free = ( print «h», free b ) )";
+    let h = "h := type ( b := pub mut bag ?, z := i32 ?, free = ( print «h», free self.b ) )";
     let body = "a := bag(1), v := mut h(a, 2), v.b = bag(3), v.b.n = 7, print «end»";
     for (tail, printed) in [
         ("a := bag(1), v := h(a, 2), print «end»".to_string(), "end\nh\nfreed 1\nfreed 1\n"),
@@ -11258,7 +11277,7 @@ fn a_line_frees_at_its_end_what_it_made_that_nothing_took() {
 /// ends, a `return` or a fault leaving it included.
 #[test]
 fn a_line_frees_what_it_made_where_it_ends() {
-    let sized = BOX.replace("print «free»", "print «free {size}»");
+    let sized = BOX.replace("print «free»", "print «free {self.size}»");
     let mk = "mk := fn () -> boxed ( box (1, 2) )";
     let two_three = "two := fn () -> boxed ( box (1, 2) ), \
                      three := fn () -> boxed ( box (1, 2, 3) )";
@@ -11333,7 +11352,7 @@ fn a_line_frees_what_it_made_where_it_ends() {
 /// value it gave to the line's end, which frees it last made first.
 #[test]
 fn what_a_part_the_pass_ran_early_made_ends_where_its_line_ends() {
-    let sized = BOX.replace("print «free»", "print «free {size}»");
+    let sized = BOX.replace("print «free»", "print «free {self.size}»");
     let defs = "two := fn () -> boxed ( print «two», box (1, 2) ), \
                 three := fn () -> boxed ( box (1, 2, 3) ), tt := mut type ?, tt = u64";
     let k = "p := fn () -> u64 ( print «p», 0 ), k := fn (a := u64 ?, b := u64 ?) -> u64 ( a + b )";
@@ -11414,7 +11433,7 @@ fn the_address_of_a_value_in_a_call_s_arguments_holds_it_to_the_scope_the_call_s
     let g = "g := fn () -> i32 ( f(&bag(4)) )";
     let sum = "g := fn () -> i32 ( s := mut i32 0, for i in 0..2 ( s = s + f(&bag(i)) ), s )";
     let get =
-        "holder := type ( k := i32 ?, get := pub static fn (q := @bag ?) -> i32 ( k + q@.n ) )";
+        "holder := type ( k := i32 ?, get := pub static fn (q := @bag ?) -> i32 ( self.k + q@.n ) )";
     let r = "r := fn (n := i32 ?) -> i32 ( return f(&bag(n)) )";
     let r_if = "r := fn (n := i32 ?) -> i32 ( if f(&bag(n)) > 2 (return f(&bag(n + 10))), 0 )";
     let r_in = "r := fn (n := i32 ?) -> i32 ( f(&bag(n), ( if (n > 2) (return 9), 4 )) )";
@@ -11566,9 +11585,9 @@ fn a_value_whose_type_fills_free_lives_behind_a_pointer() {
         assert_eq!((code, stdout.as_str()), (Some(1), printed), "{tail}: stderr: {stderr}");
         assert!(stderr.contains("run error: stop"), "{tail}: stderr: {stderr}");
     }
-    let static_set = "s := type ( n := mut i32 ?, free = ( print «freed {n}» ), \
-                      set := pub static fn () -> void ( n = 4 ), \
-                      get := pub static fn () -> i32 ( n ) )";
+    let static_set = "s := type ( n := mut i32 ?, free = ( print «freed {self.n}» ), \
+                      set := pub static fn () -> void ( self.n = 4 ), \
+                      get := pub static fn () -> i32 ( self.n ) )";
     let mut cases = vec![
         ("p := try alloc 1 of bag(1), free p@, free p@, print «end»".to_string(), "freed 1\nend\n"),
         ("a := mut bag ?, print «end»".to_string(), "end\n"),
@@ -11766,7 +11785,7 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
     // `return` hands on as its copy, as a function's does. The `run`s read the block out of the
     // `@T!` `alloc` gives with `.value`: stand-in for #159.
     let run = "g := box (1, 2), pk := type ( elements := scope ?, output_type := type ?, \
-               run = ( if (elements.dyads.size == 3) (return g), v := mut output_type ?, \
+               run = ( if (self.elements.dyads.size == 3) (return g), v := mut self.output_type ?, \
                v.p = (alloc 1 of mut i32 ?).value, v.size = 1, move v ), \
                parse_rank = dyad.parse_rank, associativity = left, \
                parse = ( tape[0].type = pk, tape[0].elements = tape[1], \
@@ -11789,7 +11808,7 @@ fn a_return_hands_on_its_value_as_the_last_line_does() {
     let (code, stdout, stderr) = run_line(&pk("(alloc 1 of i32 5).value"));
     assert_eq!((code, stdout.as_str()), (Some(0), "5\n"), "stderr: {stderr}");
     let (code, _, stderr) =
-        run_line(&pk("if (elements.dyads.size == 3) (return q), (alloc 1 of i32 5).value"));
+        run_line(&pk("if (self.elements.dyads.size == 3) (return q), (alloc 1 of i32 5).value"));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("this `return` hands on a borrow"), "{stderr}");
 }
@@ -11859,8 +11878,8 @@ fn a_result_whose_type_fills_free_hands_on_what_it_makes_and_a_copy_of_what_it_b
 
 #[test]
 fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
-    let r = "r := type ( p := pub mut own @i32 ?, free = ( free p ), \
-             set := pub static fn () -> i32! ( a := try alloc 1 of i32 5, p = move a, 1 ) ), x := mut r ?";
+    let r = "r := type ( p := pub mut own @i32 ?, free = ( free self.p ), \
+             set := pub static fn () -> i32! ( a := try alloc 1 of i32 5, self.p = move a, 1 ) ), x := mut r ?";
     for (tail, printed) in [
         ("free (try x.set()), 2", "2"),
         ("a := try alloc 1 of i32 5, x.p = move a, b := try alloc 1 of i32 6, x.p = move b, x.p@", "6"),
@@ -12228,14 +12247,14 @@ fn an_array_holds_arrays_as_their_addresses() {
 const HOLDER: &str = "import file «./identities/array.logos», t := type array i32, \
     held := type ( \
         items := pub mut t ?, \
-        count := pub static fn () -> u64 ( items.size ), \
-        second := pub static fn () -> i32 ( items[1] ), \
-        free = ( free items ), \
+        count := pub static fn () -> u64 ( self.items.size ), \
+        second := pub static fn () -> i32 ( self.items[1] ), \
+        free = ( free self.items ), \
         parse_rank = dyad.parse_rank, \
         parse = ( tape.is_constructed[0] = true ) ), \
     holder := type ( \
         output_type := type ?, \
-        run = ( v := mut output_type ?, v.items = array i32 [4, 5, 6], move v ), \
+        run = ( v := mut self.output_type ?, v.items = array i32 [4, 5, 6], move v ), \
         parse_rank = dyad.parse_rank, \
         associativity = left, \
         parse = ( \
@@ -12268,7 +12287,7 @@ fn a_field_holding_an_array_reads_as_that_array() {
     }
     let (code, _, stderr) = run_line(&format!(
         "{HOLDER}, u := type array u8, g := type ( items := mut t ?, \
-         put := static fn () -> u64 ( items = array u8 [1], 0 ) )"
+         put := static fn () -> u64 ( self.items = array u8 [1], 0 ) )"
     ));
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
@@ -12282,13 +12301,13 @@ fn bag_line(tail: &str) -> String {
          bagged := type ( \
              items := pub mut t ?, \
              b := pub mut boxed ?, \
-             free = ( print «bag», free items, free b ), \
+             free = ( print «bag», free self.items, free self.b ), \
              parse_rank = dyad.parse_rank, \
              parse = ( tape.is_constructed[0] = true ) ), \
          bag := type ( \
              output_type := type ?, \
              run = ( \
-                 v := mut output_type ?, \
+                 v := mut self.output_type ?, \
                  v.items = array i32 [4, 5, 6], v.b = box (7, 1), move v ), \
              parse_rank = dyad.parse_rank, \
              associativity = left, \
@@ -12333,16 +12352,16 @@ fn a_field_under_a_type_that_fills_free_is_refused_where_it_is_written() {
         ("l := array bagged [bag (), bag ()], free l[0].b, 1", unfollowed),
         ("f := fn (q := bagged ?) -> i32 ( y := move q.b, 1 ), 1", unfollowed),
         (
-            "r := type ( p := mut own @i32 ?, free = ( free p ), \
-             s := static fn () -> i32 ( free p, 2 ) )",
+            "r := type ( p := mut own @i32 ?, free = ( free self.p ), \
+             s := static fn () -> i32 ( free self.p, 2 ) )",
             unfollowed,
         ),
         (
-            "r := type ( p := mut own @i32 ?, free = ( free p ), \
-             s := static fn () -> i32 ( a := move p, 2 ) )",
+            "r := type ( p := mut own @i32 ?, free = ( free self.p ), \
+             s := static fn () -> i32 ( a := move self.p, 2 ) )",
             unfollowed,
         ),
-        ("p := type ( x := i32 ?, s := static fn () -> i32 ( free x, 1 ) )", unfollowed),
+        ("p := type ( x := i32 ?, s := static fn () -> i32 ( free self.x, 1 ) )", unfollowed),
     ] {
         let (code, _, stderr) = run_line(&bag_line(tail));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -12449,7 +12468,7 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("mk := fn () -> own t ( array i32 [1] ), 1", "`own` stands only before a pointer"),
         ("nd := type ( n := mut own i32 ? )", "`own` stands only before a pointer"),
         ("f := fn (p := own t ?) -> i32 ( 1 )", "`own` stands only before a pointer"),
-        ("nd := type ( items := mut own t ?, free = ( free items ) )", "`own` stands only"),
+        ("nd := type ( items := mut own t ?, free = ( free self.items ) )", "`own` stands only"),
         ("a := mut own t ?, 1", "`own` stands only before a pointer"),
     ] {
         let (code, _, stderr) = run_line(&bag_line(tail));
@@ -12710,7 +12729,7 @@ fn an_array_is_freed_by_its_owner_and_a_borrow_outliving_it_reads_nothing() {
 
 /// A type with no `run` whose own `parse` builds its nodes.
 const COUNTED: &str = "q := type ( n := pub u64 ?, k := pub u64 7, \
-    twice := pub static fn () -> u64 ( n * 2 ), parse_rank = 60, parse = ( \
+    twice := pub static fn () -> u64 ( self.n * 2 ), parse_rank = 60, parse = ( \
     tape[0].type = q, tape[0].n = tape[1].dyads.size, tape.remove(1), tape.is_constructed[0] = true ) )";
 
 #[test]
@@ -12739,7 +12758,8 @@ fn a_member_function_called_through_a_node_reads_that_node() {
 #[test]
 fn a_value_left_unwritten_is_filled_one_field_at_a_time() {
     let pt = "pt := type ( x := pub mut i32 ?, y := pub mut i32 ? )";
-    let bx = "bx := type ( p := pub mut own @i32 ?, size := pub mut u64 0, free = ( free p ), \
+    let bx =
+        "bx := type ( p := pub mut own @i32 ?, size := pub mut u64 0, free = ( free self.p ), \
               parse_rank = dyad.parse_rank, parse = ( tape.is_constructed[0] = true ) )";
     for (src, want) in [
         (
@@ -12852,17 +12872,18 @@ fn a_types_own_code_reaches_its_members_through_self() {
 }
 
 #[test]
-fn a_bare_static_call_works_on_the_value_the_body_is_about() {
+fn a_static_call_through_self_works_on_the_value_the_body_is_about() {
     let quad = COUNTED.replace(
-        "twice := pub static fn () -> u64 ( n * 2 ),",
-        "twice := pub static fn () -> u64 ( n * 2 ), quad := pub static fn () -> u64 ( twice() * 2 ),",
+        "twice := pub static fn () -> u64 ( self.n * 2 ),",
+        "twice := pub static fn () -> u64 ( self.n * 2 ), \
+         quad := pub static fn () -> u64 ( self.twice() * 2 ),",
     );
     let (code, stdout, stderr) = run_line(&format!("{quad}, a := q (1, 2, 3), a.quad()"));
     assert_eq!((code, stdout.as_str()), (Some(0), "12\n"), "stderr: {stderr}");
     // From a run: a value holding this run's fields, so an operand written as an
     // expression, or a function's parameter, is read as its value.
     let inc = "inc := type ( a := i32 ?, output_type := type ?, \
-        twice := static fn () -> i32 ( a * 2 ), run = ( twice() + 1 ), \
+        twice := static fn () -> i32 ( self.a * 2 ), run = ( self.twice() + 1 ), \
         parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
         tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
         tape.remove(-1) ) )";
@@ -12874,19 +12895,19 @@ fn a_bare_static_call_works_on_the_value_the_body_is_about() {
         let (code, stdout, stderr) = run_line(&format!("{inc}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
     }
-    // A parse has no value to hand one that reads a field, itself or through a bare call;
-    // outside the type it is no name.
+    // In a parse `self` is the type, which has no value to hand one that reads a field, itself
+    // or through another call; outside the type it is no name.
     for (src, expect) in [
         (
-            "q := type ( n := u64 ?, get := static fn () -> u64 ( n ), parse_rank = 60, \
-             parse = ( tape[0].type = q, tape[0].n = get(), tape.is_constructed[0] = true ) ), q"
+            "q := type ( n := u64 ?, get := static fn () -> u64 ( self.n ), parse_rank = 60, \
+             parse = ( tape[0].type = q, tape[0].n = self.get(), tape.is_constructed[0] = true ) ), q"
                 .to_string(),
             "`get` works on a value of its type: call it through one, `v.get(…)`,",
         ),
         (
-            "q := type ( n := u64 ?, get := static fn () -> u64 ( n ), \
-             via := static fn () -> u64 ( get() ), parse_rank = 60, \
-             parse = ( tape[0].type = q, tape[0].n = via(), tape.is_constructed[0] = true ) ), q"
+            "q := type ( n := u64 ?, get := static fn () -> u64 ( self.n ), \
+             via := static fn () -> u64 ( self.get() ), parse_rank = 60, \
+             parse = ( tape[0].type = q, tape[0].n = self.via(), tape.is_constructed[0] = true ) ), q"
                 .to_string(),
             "`via` works on a value of its type: call it through one, `v.via(…)`,",
         ),
@@ -12898,16 +12919,16 @@ fn a_bare_static_call_works_on_the_value_the_body_is_about() {
     }
 }
 
-/// ›A bare call of a `static` function works on the value the calling body is about‹ [[R238]]: a
-/// function written inside a body about a value, or a value made once in it, is about none, so a
-/// bare call there takes only a function that uses no field.
+/// ›A `static` function called through `self` works on the value the calling body is about‹
+/// [[R238]]: a function written inside a body about a value, or a value made once in it, is about
+/// none, so a call there takes only a function that uses no field.
 #[test]
 fn a_function_written_inside_a_body_about_a_value_is_about_none() {
-    let t = "t := type ( x := mut i32 ?, f := static fn () -> i32 ( x ), \
-             g := static fn () -> i32 ( 3 ), set := static fn () -> void ( x = 9 ), ";
+    let t = "t := type ( x := mut i32 ?, f := static fn () -> i32 ( self.x ), \
+             g := static fn () -> i32 ( 3 ), set := static fn () -> void ( self.x = 9 ), ";
     let inc = |run: &str| {
         format!(
-            "inc := type ( a := i32 ?, output_type := type ?, twice := static fn () -> i32 ( a * 2 ), \
+            "inc := type ( a := i32 ?, output_type := type ?, twice := static fn () -> i32 ( self.a * 2 ), \
              three := static fn () -> i32 ( 3 ), run = ( {run} ), \
              parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
              tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
@@ -12916,19 +12937,19 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
     };
     for compile in ["", "v.h.compile(), "] {
         for (h, printed) in [
-            ("h := pub static fn () -> i32 ( k := fn () -> i32 ( g() ), k() + f() ) )", "8"),
-            ("h := pub static fn () -> i32 ( c := static g(), c + x ) )", "8"),
+            ("h := pub static fn () -> i32 ( k := fn () -> i32 ( g() ), k() + self.f() ) )", "8"),
+            ("h := pub static fn () -> i32 ( c := static g(), c + self.x ) )", "8"),
         ] {
             let src = format!("{t}{h}, v := t (5), {compile}v.h()");
             assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
         }
         let src = format!(
             "v := {{ a := i32 7, g := fn () -> i32 ( 3 ), \
-             h := pub fn () -> i32 ( k := fn () -> i32 ( g() ), k() + a ) }}, {compile}v.h()"
+             h := pub fn () -> i32 ( k := fn () -> i32 ( g() ), k() + self.a ) }}, {compile}v.h()"
         );
         assert_eq!(run_line(&src), (Some(0), "10\n".to_string(), String::new()), "{src}");
     }
-    let src = inc("k := fn () -> i32 ( three() ), k() + a");
+    let src = inc("k := fn () -> i32 ( three() ), k() + self.a");
     assert_eq!(run_line(&src), (Some(0), "8\n".to_string(), String::new()), "{src}");
     for (src, expect) in [
         (
@@ -12948,7 +12969,7 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
             "`f` works on a value of its type",
         ),
         (
-            "m := { a := i32 7, f := fn () -> i32 ( a ), h := pub fn () -> i32 ( k := fn () -> i32 ( f() ), k() ) }, m.h()"
+            "m := { a := i32 7, f := fn () -> i32 ( self.a ), h := pub fn () -> i32 ( k := fn () -> i32 ( f() ), k() ) }, m.h()"
                 .to_string(),
             "`f` works on a value of its type: call it through one, by the member that holds it,",
         ),
@@ -12956,7 +12977,7 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
         // A field named bare there is the outer body's parameter, refused as its locals are.
         (
             format!("{t}h := pub static fn () -> i32 ( k := fn () -> i32 ( x ), k() ) ), v := t (5), v.h()"),
-            "1:183: error: a nested function cannot use an outer function's local or parameter",
+            "1:193: error: a nested function cannot use an outer function's local or parameter",
         ),
         (
             format!("{t}free = ( k := fn () -> i32 ( x ), print «{{k()}}» ) ), v := t (5)"),
@@ -12969,7 +12990,7 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
         (inc("k := fn () -> i32 ( a ), k() + 1"), "a nested function cannot use an outer function's local"),
         (
             format!("{t}h := pub static fn () -> i32 ( c := static x, c ) ), v := t (5), v.h()"),
-            "1:175: error: a value made once, where it is written (`static`, `immediate`), cannot use a name",
+            "1:185: error: a value made once, where it is written (`static`, `immediate`), cannot use a name",
         ),
     ] {
         let (code, _, stderr) = run_line(&src);
@@ -12985,7 +13006,7 @@ fn a_name_declared_inside_a_type_body_reuses_none_of_its_fields() {
     let t = "t := type ( x := i32 ?, ";
     for compile in ["", "v.h.compile(), "] {
         let src = format!(
-            "{t}h := pub static fn (y := i32 ?) -> i32 ( x + y ) ), v := t (5), {compile}v.h(3)"
+            "{t}h := pub static fn (y := i32 ?) -> i32 ( self.x + y ) ), v := t (5), {compile}v.h(3)"
         );
         assert_eq!(run_line(&src), (Some(0), "8\n".to_string(), String::new()), "{src}");
     }
@@ -13092,7 +13113,7 @@ fn a_parse_stamps_its_own_cell_before_it_writes_a_field() {
 fn a_field_the_constructor_never_wrote_is_a_checked_error() {
     for src in [
         // The node is used as a value with its field `b` unwritten.
-        "t := type (a := i32 ?, b := i32 ?, output_type := type ?, run = ( a ), \
+        "t := type (a := i32 ?, b := i32 ?, output_type := type ?, run = ( self.a ), \
          parse_rank = *.parse_rank + 1, \
          parse = ( tape[0].type = t, tape[0].a = tape[-1], tape[0].output_type = i32, \
          tape.is_constructed[0] = true, tape.remove(-1) )), x := i32 4, x t",
@@ -13426,7 +13447,7 @@ fn a_node_that_gives_a_type_runs_where_the_pass_builds_it() {
 fn an_empty_place_of_a_type_with_a_run_runs_nothing() {
     let pt = "pt := type ( x := i32 ?, run = ( x ) )";
     let mk = "pt := type ( x := i32 ? ), mk := type ( a := i32 ?, output_type := type ?, \
-              tag := static i32 7, run = ( pt(a) ), parse = ( \
+              tag := static i32 7, run = ( pt(self.a) ), parse = ( \
               if (tape[-1].type == i32) ( tape[0].type = mk, tape[0].a = tape[-1], \
               tape[0].output_type = pt, tape.is_constructed[0] = true, tape.remove(-1) ) ) )";
     for (defs, body, out, want) in [
@@ -13467,7 +13488,7 @@ fn an_empty_place_of_a_type_with_a_run_runs_nothing() {
 #[test]
 fn a_field_default_fills_each_new_node() {
     let q = "q := type ( size := mut u64 5, output_type := type ?, \
-             run = ( size + 1 ), parse_rank = 60, \
+             run = ( self.size + 1 ), parse_rank = 60, \
              parse = ( tape[0].type = q, ";
     let end = "tape[0].output_type = u64, tape.is_constructed[0] = true ) )";
     for (src, want) in [
@@ -13604,7 +13625,7 @@ fn a_record_argument_or_result_is_checked_at_parse() {
 fn a_run_body_takes_a_plain_record_field_by_copy() {
     let fx =
         "p := type ( x := i32 ?, y := pub i32 ? ), fx := type ( a := p ?, output_type := type ?, \
-              run = ( a.y ), parse_rank = 60, parse = ( tape[0].type = fx, \
+              run = ( self.a.y ), parse_rank = 60, parse = ( tape[0].type = fx, \
               tape[0].a = tape[1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
               tape.remove(1) ) ), v := p (1, 2)";
     for tail in ["fx v", "g := fn () -> i32 ( fx v ), g.compile(), g()"] {
@@ -13680,7 +13701,7 @@ fn a_declaration_copies_a_plain_record() {
     }
     // A copy of a value whose type fills `free` owns its copy: each name frees its own.
     cases.push((
-        "r := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), w := r(2), y := w, 0"
+        "r := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), w := r(2), y := w, 0"
             .to_string(),
         "freed 2\nfreed 2\n0\n",
     ));
@@ -13691,7 +13712,7 @@ fn a_declaration_copies_a_plain_record() {
 /// place that holds its value frees the value it displaces and takes a copy of a named owner.
 #[test]
 fn an_assignment_copies_a_value_that_owns_memory() {
-    let r = "r := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let r = "r := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let body = "v := mut r(1), w := r(2), v = w, v.n = 3, 0";
     let freed = "freed 1\nfreed 2\nfreed 3\n0\n";
     let array = "import file «./identities/array.logos»";
@@ -14072,7 +14093,7 @@ fn a_minus_negates_or_subtracts_by_where_it_stands() {
 /// displaces by its type's `free`, on both tiers.
 #[test]
 fn equals_frees_the_record_it_displaces() {
-    let r = "r := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let r = "r := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let body = "x := mut r(1), x = r(2), x.n";
     assert_runs(&[
         (format!("{r}, x := mut r(1), x = r(2), print «{{x.n}}»"), "freed 1\n2\nfreed 2\n"),
@@ -14086,7 +14107,7 @@ fn equals_frees_the_record_it_displaces() {
 /// a named one is copied in, on both tiers.
 #[test]
 fn a_record_written_through_a_pointer_frees_the_one_it_displaces() {
-    let r = "r := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let r = "r := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let body = "p@ = r(2), print «end», 0";
     assert_runs(&[
         (
@@ -14397,10 +14418,10 @@ fn a_static_function_reaches_each_field_of_a_plain_record_whole() {
     let set = "v := mut pt ?, v.a = rational_number 1/2, v.b = 7";
     assert_runs(&[
         (
-            format!("pt := type ( {ab}, get := pub static fn () -> rational_number ( a ) ), {set}, v.get()"),
+            format!("pt := type ( {ab}, get := pub static fn () -> rational_number ( self.a ) ), {set}, v.get()"),
             "1/2\n",
         ),
-        (format!("pt := type ( {ab}, getb := pub static fn () -> i32 ( b ) ), {set}, v.getb()"), "7\n"),
+        (format!("pt := type ( {ab}, getb := pub static fn () -> i32 ( self.b ) ), {set}, v.getb()"), "7\n"),
         (
             format!(
                 "pt := type ( {ab}, set := pub static fn () -> void ( a = rational_number 3/4 ) ), {set}, \
@@ -14445,14 +14466,14 @@ fn a_static_function_reaches_each_field_of_a_plain_record_whole() {
         ),
         (
             format!(
-                "pt := type ( {ab}, get := pub static fn () -> rational_number ( a ) ), \
+                "pt := type ( {ab}, get := pub static fn () -> rational_number ( self.a ) ), \
                  f := fn () -> rational_number ( v := mut pt ?, v.a = rational_number 1/3, v.get() ), f()"
             ),
             "1/3\n",
         ),
         // A node a Logos `parse` built keeps a rational field as its operand node.
         (
-            "pt := type ( a := rational_number ?, output_type := type ?, run = ( a ), \
+            "pt := type ( a := rational_number ?, output_type := type ?, run = ( self.a ), \
              parse_rank = *.parse_rank + 1, parse = ( tape[0].type = pt, \
              tape[0].a = rational_number 1/2, tape[0].output_type = rational_number, \
              tape.is_constructed[0] = true ) ), pt"
@@ -14588,7 +14609,7 @@ fn a_bool_hole_is_a_bool_place_on_both_tiers() {
 
 #[test]
 fn free_and_move_read_the_type_a_dereference_gives_back() {
-    let r = "r := type ( p := pub mut own @i32 ?, free = ( free p ) )";
+    let r = "r := type ( p := pub mut own @i32 ?, free = ( free self.p ) )";
     let q = "q := try alloc 1 of mut own @i32 ?, a := try alloc 1 of i32 5, q@ = move a";
     let x = "x := mut r ?, a := try alloc 1 of i32 5, x.p = move a";
     let src = format!("{q}, free q@, q@@");
@@ -14619,8 +14640,9 @@ fn free_and_move_read_the_type_a_dereference_gives_back() {
 
 #[test]
 fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
-    let isbool = postfix_chooser("isbool", "type i32", "if (a.type == bool) (i32 1) else (i32 2)");
-    let pass = postfix_chooser("pass", "type t", "a");
+    let isbool =
+        postfix_chooser("isbool", "type i32", "if (self.a.type == bool) (i32 1) else (i32 2)");
+    let pass = postfix_chooser("pass", "type t", "self.a");
     let at = "at := fn (q := @i32 ?) -> @i32 ( q )";
     let pt = "pt := type (u := pub i32 ?, v := pub i32 ?)";
     for (src, want) in [
@@ -14699,16 +14721,16 @@ fn a_type_field_is_a_box_its_run_reads_when_it_runs() {
         )
     };
     let pass = format!(
-        "pass := type ( a := type ?, output_type := static type type, run = ( a ), {} )",
+        "pass := type ( a := type ?, output_type := static type type, run = ( self.a ), {} )",
         parse("pass", "tape[0].a = tape[1]")
     );
     let mk = format!(
         "mk := type ( a := type ?, output_type := static type i64, \
-         run = ( x := a 7, i64 (x) ), {} )",
+         run = ( x := self.a 7, i64 (x) ), {} )",
         parse("mk", "tape[0].a = tape[1]")
     );
     let sq = format!(
-        "sq := type ( a := i32 ?, output_type := type ?, run = ( a * a ), {} )",
+        "sq := type ( a := i32 ?, output_type := type ?, run = ( self.a * self.a ), {} )",
         parse("sq", "tape[0].a = i32 4, tape[0].output_type = tape[1]")
     );
     for (src, want) in [
@@ -14839,7 +14861,7 @@ fn a_failed_repl_line_leaves_no_trace() {
     assert!(stderr.contains("unknown name `y`"), "stderr: {stderr}");
     // What the line's own lines hold ends at its fault; what an earlier line holds ends only
     // where the failing line reached its `free`.
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let (echoes, stderr) = repl(
         format!("{bag}\n")
             + "c := bag(7), abort «boom»\nc\nk := bag(1)\nfree k, abort «x»\n\
@@ -14881,7 +14903,7 @@ fn a_file_imported_on_a_failed_repl_line_stays_loaded_for_the_session() {
     );
     assert_eq!(echoes, ["1"], "stderr: {stderr}");
     // The line's own holds still end at its fault, and the names it published roll back.
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) )";
     let line_holds = format!("c := bag(1), {held}, d := bag(2), abort «boom»");
     let (echoes, stderr) = repl(format!("{bag}\n{line_holds}\nh.n\n").as_bytes());
     assert_eq!(echoes, ["freed 2", "freed 1", "freed 9"], "stderr: {stderr}");
@@ -14968,7 +14990,7 @@ fn an_array_element_lands_by_the_element_type() {
     }
     // An element whose type fills `free` is ended once, by the array; a named one is copied in
     // (›A value owns what its elements hold and frees it‹ [[R226]]).
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) )";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) )";
     let src = format!("{array}, {bag}, b := bag(7), a := array bag [b, bag(8)], print «end»");
     assert_eq!(
         run_line(&src),
@@ -15033,7 +15055,7 @@ fn a_curly_bracket_keeps_its_scope_as_a_value_whose_names_are_read_with_a_dot() 
 
 #[test]
 fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
-    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), ";
+    let bag = "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) ), ";
     let run = |src: String, want: &str| {
         let out = logos().arg(&src).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -15108,7 +15130,7 @@ fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
             .into(),
         "end 5\n",
     );
-    let head = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) )\n";
+    let head = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) )\n";
     for (lines, want) in [
         (
             "m := { b := pub bag (1), c := bag (2) }\nk := bag (7)\nfree m.b\nprint «mid»\n",
@@ -15138,7 +15160,7 @@ fn a_curly_bracket_value_ends_its_entries_last_declared_first() {
 /// `{ … }` is too.
 #[test]
 fn two_curly_brackets_of_one_shape_are_one_type() {
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), ";
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), ";
     for compile in ["", "f.compile(), "] {
         for (body, printed) in [
             ("m := mut { a := pub i32 1 }, m = { a := pub i32 2 }, print «{m.a}»", "2"),
@@ -15160,11 +15182,12 @@ fn two_curly_brackets_of_one_shape_are_one_type() {
             ("x := { a := pub k }, y := { a := k }, print «{x.type == y.type}»", "false"),
             ("m := mut { a := pub k }, m = { a := pub i32 2 }, print «{m.a}»", "2"),
             (
-                "x := { a := i32 1, g := pub fn () -> i32 ( a ) }, y := { a := k, g := pub fn () -> i32 ( a ) }, \
+                "x := { a := i32 1, g := pub fn () -> i32 ( self.a ) }, \
+                 y := { a := k, g := pub fn () -> i32 ( self.a ) }, \
                  print «{x.type == y.type} {x.g() + y.g()}»",
                 "false 6",
             ),
-            ("x := { a := k }, y := { a := k, g := fn () -> i32 ( a ) }, print «{x.type == y.type}»", "false"),
+            ("x := { a := k }, y := { a := k, g := fn () -> i32 ( self.a ) }, print «{x.type == y.type}»", "false"),
             ("m := mut { b := bag (k) }, m = { b := bag (2) }, print «end»", "freed 5\nend\nfreed 2"),
         ] {
             let src = format!("{bag}f := fn (k := i32 ?) -> void ( {body} ), {compile}f(5)");
@@ -15193,7 +15216,7 @@ fn two_curly_brackets_of_one_shape_are_one_type() {
         "m := mut { a := pub i32 1 }, m = { a := i32 2 }",
         "m := mut { a := i32 1, b := i32 2 }, m = { b := i32 2, a := i32 1 }",
         "m := mut { a := i32 1 }, m = { a := i64 2 }",
-        "m := mut { a := i32 1, g := fn () -> i32 ( a ) }, m = { a := i32 2, g := fn () -> i32 ( a ) }",
+        "m := mut { a := i32 1, g := fn () -> i32 ( self.a ) }, m = { a := i32 2, g := fn () -> i32 ( self.a ) }",
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
@@ -15201,11 +15224,13 @@ fn two_curly_brackets_of_one_shape_are_one_type() {
     }
 }
 
-/// ›A type body describes one level‹ [[R222]]: a field named bare is read as the field inside a
-/// `static` initializer too, which checks only names for a value made once.
+/// ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]:
+/// `self.x` is read as the field inside a `static` initializer too, which checks only names for a
+/// value made once.
 #[test]
-fn a_field_named_bare_inside_a_static_initializer_is_read() {
-    let src = "w := static ( t := type ( x := i32 ?, f := pub static fn () -> i32 ( x + 1 ) ), \
+fn a_field_read_through_self_inside_a_static_initializer_is_read() {
+    let src =
+        "w := static ( t := type ( x := i32 ?, f := pub static fn () -> i32 ( self.x + 1 ) ), \
                u := t (4), u.f() ), w";
     assert_eq!(run_line(src), (Some(0), "5\n".to_string(), String::new()), "{src}");
 }
@@ -15217,88 +15242,89 @@ fn a_field_named_bare_inside_a_static_initializer_is_read() {
 fn a_fn_entry_of_a_curly_bracket_reads_its_sibling_names_through_the_value() {
     for compile in ["", "f.compile(), "] {
         for (body, printed) in [
-            ("m := { a := i32 1, get := pub fn () -> i32 ( a + 1 ) }, m.get()", "2"),
-            ("m := { a := i32 2, b := i32 3, get := pub fn (c := i32 ?) -> i32 ( a * b + c ) }, m.get(k)", "11"),
-            ("m := { a := k, get := pub fn () -> i32 ( a * 3 ) }, m.get()", "15"),
-            ("m := { a := i32 5, twice := fn () -> i32 ( a * 2 ), get := pub fn () -> i32 ( twice() + 1 ) }, m.get()", "11"),
-            ("m := { a := i32 2, sum := pub fn (x := i32 ?) -> i32 ( if x == 0 ( a ) else ( sum(x - 1) + a ) ) }, m.sum(3)", "8"),
-            ("x := i32 4, m := { p := &x, get := pub fn () -> i32 ( p@ ) }, m.get()", "4"),
-            ("m := mut { a := pub mut k, inc := pub fn () -> void ( a = a + 1 ) }, m.inc(), m.inc(), m.a", "7"),
-            ("m := { a := i32 1, get := pub fn () -> i32 ( a + 1 ) }, n := m, p := &n, n.get() + p@.get()", "4"),
+            ("m := { a := i32 1, get := pub fn () -> i32 ( self.a + 1 ) }, m.get()", "2"),
+            ("m := { a := i32 2, b := i32 3, get := pub fn (c := i32 ?) -> i32 ( self.a * self.b + c ) }, m.get(k)", "11"),
+            ("m := { a := k, get := pub fn () -> i32 ( self.a * 3 ) }, m.get()", "15"),
+            ("m := { a := i32 5, twice := fn () -> i32 ( self.a * 2 ), get := pub fn () -> i32 ( self.twice() + 1 ) }, m.get()", "11"),
+            ("m := { a := i32 2, sum := pub fn (x := i32 ?) -> i32 ( if x == 0 ( self.a ) else ( self.sum(x - 1) + self.a ) ) }, m.sum(3)", "8"),
+            ("x := i32 4, m := { p := &x, get := pub fn () -> i32 ( self.p@ ) }, m.get()", "4"),
+            ("m := mut { a := pub mut k, inc := pub fn () -> void ( self.a = self.a + 1 ) }, m.inc(), m.inc(), m.a", "7"),
+            ("m := { a := i32 1, get := pub fn () -> i32 ( self.a + 1 ) }, n := m, p := &n, n.get() + p@.get()", "4"),
             ("m := { a := i32 1, seven := fn () -> i32 ( 7 ), b := pub seven() }, m.b", "7"),
         ] {
             let src = format!("f := fn (k := i32 ?) -> i32 ( {body} ), {compile}f(5)");
             assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
         }
     }
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), ";
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), ";
     for (src, printed) in [
-        ("m := { a := i32 1, f := pub fn () -> i32 ( a + 1 ) }, m.f()".to_string(), "2\n"),
-        ("m := { a := i32 1, f := pub fn () -> i32 ( a + 1 ) }, m.f.compile(), m.f()".into(), "2\n"),
-        ("m := { x := f64 2.5, f := pub fn () -> f64 ( x * 2 ) }, m.f.compile(), m.f()".into(), "5.0\n"),
-        ("m := { a := i64 1, f := pub fn (d := dyad ?) -> i64 ( d + a ) }, m.f(i64 5)".into(), "6\n"),
-        (format!("{bag}m := {{ b := bag (4), a := i32 3, f := pub fn () -> i32 ( a ) }}, print «{{m.f()}}»"), "3\nfreed 4\n"),
-        ("m := static { a := i32 1, f := pub fn () -> i32 ( a + 1 ) }, m.f()".into(), "2\n"),
+        ("m := { a := i32 1, f := pub fn () -> i32 ( self.a + 1 ) }, m.f()".to_string(), "2\n"),
+        ("m := { a := i32 1, f := pub fn () -> i32 ( self.a + 1 ) }, m.f.compile(), m.f()".into(), "2\n"),
+        ("m := { x := f64 2.5, f := pub fn () -> f64 ( self.x * 2 ) }, m.f.compile(), m.f()".into(), "5.0\n"),
+        ("m := { a := i64 1, f := pub fn (d := dyad ?) -> i64 ( d + self.a ) }, m.f(i64 5)".into(), "6\n"),
+        (format!("{bag}m := {{ b := bag (4), a := i32 3, f := pub fn () -> i32 ( self.a ) }}, print «{{m.f()}}»"), "3\nfreed 4\n"),
+        ("m := static { a := i32 1, f := pub fn () -> i32 ( self.a + 1 ) }, m.f()".into(), "2\n"),
     ] {
         assert_eq!(run_line(&src), (Some(0), printed.to_string(), String::new()), "{src}");
     }
     // Before its `}`, a bare call of an entry reads the names from the scope being built.
     for compile in ["", "f.compile(), "] {
         for (body, printed) in [
-            ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := pub f() }, m.b", "2"),
-            ("x := f64 2.5, f := fn () -> f64 ( x * 2 ), {compile}y := pub f() }, m.y", "5.0"),
-            ("a := i32 5, g := fn () -> i32 ( a * 2 ), f := fn () -> i32 ( g() + 1 ), {compile}b := pub f() }, m.b", "11"),
-            ("a := i32 2, f := fn (x := i32 ?) -> i32 ( if x == 0 ( a ) else ( f(x - 1) + a ) ), {compile}b := pub f(3) }, m.b", "8"),
-            ("p := try alloc 1 of i32 7, f := fn () -> i32 ( p@ ), {compile}b := pub f() }, m.b", "7"),
-            ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := pub f(), t := type ( x := i32 ? ) }, m.b", "2"),
-            ("a := i32 1, f := fn () -> i32 ( a + 1 ), {compile}b := f(), s := pub static (b * 10) }, m.s", "20"),
-            ("a := i32 1, f := pub fn () -> i32 ( a + 1 ), {compile}b := pub f() }, m.f() + m.b", "4"),
+            ("a := i32 1, f := fn () -> i32 ( self.a + 1 ), {compile}b := pub f() }, m.b", "2"),
+            ("x := f64 2.5, f := fn () -> f64 ( self.x * 2 ), {compile}y := pub f() }, m.y", "5.0"),
+            ("a := i32 5, g := fn () -> i32 ( self.a * 2 ), f := fn () -> i32 ( self.g() + 1 ), {compile}b := pub f() }, m.b", "11"),
+            ("a := i32 2, f := fn (x := i32 ?) -> i32 ( if x == 0 ( self.a ) else ( self.f(x - 1) + self.a ) ), {compile}b := pub f(3) }, m.b", "8"),
+            ("p := try alloc 1 of i32 7, f := fn () -> i32 ( self.p@ ), {compile}b := pub f() }, m.b", "7"),
+            ("a := i32 1, f := fn () -> i32 ( self.a + 1 ), {compile}b := pub f(), t := type ( x := i32 ? ) }, m.b", "2"),
+            ("a := i32 1, f := fn () -> i32 ( self.a + 1 ), {compile}b := f(), s := pub static (b * 10) }, m.s", "20"),
+            ("a := i32 1, f := pub fn () -> i32 ( self.a + 1 ), {compile}b := pub f() }, m.f() + m.b", "4"),
         ] {
             let src = format!("m := {{ {}", body.replace("{compile}", compile));
             assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
         }
     }
     for (src, printed) in [
-        ("m := { a := pub mut i32 1, inc := fn () -> void ( a = a + 1 ), inc(), inc() }, m.a".to_string(), "3\n"),
-        ("m := static { a := i32 1, f := fn () -> i32 ( a + 1 ), b := pub f() }, m.b".into(), "2\n"),
-        ("m := { a := pub i32 1, f := fn () -> i32 ( a + 1 ), print «{f()}» }, m.a".into(), "2\n1\n"),
-        (format!("{bag}m := {{ b := bag (4), a := i32 3, f := fn () -> i32 ( a ), c := pub f() }}, print «{{m.c}}»"), "3\nfreed 4\n"),
+        ("m := { a := pub mut i32 1, inc := fn () -> void ( self.a = self.a + 1 ), inc(), inc() }, m.a".to_string(), "3\n"),
+        ("m := static { a := i32 1, f := fn () -> i32 ( self.a + 1 ), b := pub f() }, m.b".into(), "2\n"),
+        ("m := { a := pub i32 1, f := fn () -> i32 ( self.a + 1 ), print «{f()}» }, m.a".into(), "2\n1\n"),
+        (format!("{bag}m := {{ b := bag (4), a := i32 3, f := fn () -> i32 ( self.a ), c := pub f() }}, print «{{m.c}}»"), "3\nfreed 4\n"),
     ] {
         assert_eq!(run_line(&src), (Some(0), printed.to_string(), String::new()), "{src}");
     }
-    let (echoes, stderr) = repl(b"m := { a := i32 1, f := pub fn () -> i32 ( a + 1 ) }\nm.f()\n");
+    let (echoes, stderr) =
+        repl(b"m := { a := i32 1, f := pub fn () -> i32 ( self.a + 1 ) }\nm.f()\n");
     assert_eq!(echoes, ["2"], "stderr: {stderr}");
     let (echoes, stderr) =
-        repl(b"m := { a := i32 1, f := fn () -> i32 ( a + 1 ), b := pub f() }\nm.b\n");
+        repl(b"m := { a := i32 1, f := fn () -> i32 ( self.a + 1 ), b := pub f() }\nm.b\n");
     assert_eq!(echoes, ["2"], "stderr: {stderr}");
     for (src, expect) in [
         (
-            "m := { a := mut i32 1, inc := pub fn () -> void ( a = a + 1 ) }, m.inc()",
+            "m := { a := mut i32 1, inc := pub fn () -> void ( self.a = self.a + 1 ) }, m.inc()",
             "`m` is not `mut`",
         ),
         (
-            "m := mut { a := i32 1, inc := pub fn () -> void ( a = a + 1 ) }, m.inc()",
+            "m := mut { a := i32 1, inc := pub fn () -> void ( self.a = self.a + 1 ) }, m.inc()",
             "`a` is not `mut`",
         ),
         // A call that reaches no value has none to read: by another name, or from an entry of
         // another `{ … }`, which may run once the names are gone.
-        ("m := { a := i32 1, f := pub fn () -> i32 ( a + 1 ) }, h := m.f, h()", "`h` works on a value"),
+        ("m := { a := i32 1, f := pub fn () -> i32 ( self.a + 1 ) }, h := m.f, h()", "`h` works on a value"),
         (
-            "m := { a := i32 7, f := fn () -> i32 ( a ), n := pub { g := pub fn () -> i32 ( f() ) } }, m.n.g()",
+            "m := { a := i32 7, f := fn () -> i32 ( self.a ), n := pub { g := pub fn () -> i32 ( f() ) } }, m.n.g()",
             "`f` works on a value",
         ),
         // Inside a function the names lie in its frame, as a block's do.
         (
-            "g := fn (k := i32 ?) -> i32 ( m := { a := k, f := fn () -> i32 ( a + 1 ), b := f() }, m.b ), g(4)",
+            "g := fn (k := i32 ?) -> i32 ( m := { a := k, f := fn () -> i32 ( self.a + 1 ), b := f() }, m.b ), g(4)",
             "a nested function cannot use an outer function's local or parameter",
         ),
         (
-            "m := { a := i32 1, inc := fn () -> void ( a = a + 1 ), inc() }, m.a",
+            "m := { a := i32 1, inc := fn () -> void ( self.a = self.a + 1 ), inc() }, m.a",
             "`a` is not `mut`",
         ),
         (
-            "m := { a := i32 1, b := i32 2, f := fn () -> i32 ( b ), c := move a }, 0",
-            "1:69: error: `f` reads the names written above it from this `{ … }`'s value, so they \
+            "m := { a := i32 1, b := i32 2, f := fn () -> i32 ( self.b ), c := move a }, 0",
+            "1:74: error: `f` reads the names written above it from this `{ … }`'s value, so they \
              must last to its `}`, and `a` ends before it",
         ),
     ] {
@@ -15338,21 +15364,27 @@ fn a_dyad_entry_of_a_curly_bracket_reads_as_a_dyad_name_does() {
             format!("f := fn () -> {ty} ( {dyad}, {name} ), f()"),
             format!("f := fn () -> {ty} ( m := {{ {held} }}, {entry} ), f()"),
             format!("m := {{ {held} }}, f := fn () -> {ty} ( {entry} ), f()"),
-            format!("m := {{ {dyad}, f := pub fn () -> {ty} ( {name} ) }}, m.f()"),
-            format!("m := {{ {dyad}, f := fn () -> {ty} ( {name} ), b := pub f() }}, m.b"),
+            format!(
+                "m := {{ {dyad}, f := pub fn () -> {ty} ( {} ) }}, m.f()",
+                read.replace('D', "self.d")
+            ),
+            format!(
+                "m := {{ {dyad}, f := fn () -> {ty} ( {} ), b := pub f() }}, m.b",
+                read.replace('D', "self.d")
+            ),
         ] {
             assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
         }
     }
     for src in [
         "m := { d := pub dyad (i32, 3) }, print «{m.d + 1}»",
-        "m := { d := dyad (i32, 3), f := pub fn () -> void ( print «{d + 1}» ) }, m.f()",
-        "m := { d := dyad (i32, 3), g := fn () -> i32 ( d + 1 ), f := pub fn () -> i32 ( g() ) }, m.f()",
+        "m := { d := dyad (i32, 3), f := pub fn () -> void ( print «{self.d + 1}» ) }, m.f()",
+        "m := { d := dyad (i32, 3), g := fn () -> i32 ( self.d + 1 ), f := pub fn () -> i32 ( self.g() ) }, m.f()",
     ] {
         assert_eq!(run_line(src), (Some(0), "4\n".into(), String::new()), "{src}");
     }
     // An entry taken whole stays the place it is, as a name does.
-    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {n}» ) ), ";
+    let bag = "bag := type ( n := mut i32 ?, free = ( print «freed {self.n}» ) ), ";
     for (body, printed) in
         [("free m.b, print «in»", "freed 7\nin\n"), ("e := move m.b, print «in»", "in\nfreed 7\n")]
     {
@@ -15366,7 +15398,7 @@ fn a_dyad_entry_of_a_curly_bracket_reads_as_a_dyad_name_does() {
     // A function whose line waits for the run is not compiled, a `dyad` name's as an entry's.
     for src in [
         "d := dyad (i32, 3), f := fn () -> i32 ( d + 1 ), f.compile(), f()",
-        "m := { d := dyad (i32, 3), f := pub fn () -> i32 ( d + 1 ) }, m.f.compile(), m.f()",
+        "m := { d := dyad (i32, 3), f := pub fn () -> i32 ( self.d + 1 ) }, m.f.compile(), m.f()",
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
@@ -15396,7 +15428,7 @@ fn a_field_of_a_record_a_dyad_holds_is_read_through_it() {
             at(made),
             format!("f := fn (a := dyad ?) -> {ty} ( {} ), f(pt (1, 2))", at("a")),
             format!("f := fn () -> {ty} ( d := {made}, {} ), f()", at("d")),
-            format!("m := {{ d := {made}, f := pub fn () -> {ty} ( {} ) }}, m.f()", at("d")),
+            format!("m := {{ d := {made}, f := pub fn () -> {ty} ( {} ) }}, m.f()", at("self.d")),
             format!("f := fn () -> dyad ( pt (1, 2) ), g := fn () -> {ty} ( {} ), g()", at("f()")),
         ] {
             let src = format!("{pt}{src}");
@@ -15451,7 +15483,7 @@ fn a_field_of_a_record_a_dyad_holds_is_read_through_it() {
 #[test]
 fn a_write_through_what_a_dyad_holds_lands_in_the_node_it_holds() {
     let pt = "pt := type ( x := pub mut i32 ?, y := pub i32 ?, \
-              bump := pub static fn () -> void ( x = x + 1 ), get := pub static fn () -> i32 ( x ) ), ";
+              bump := pub static fn () -> void ( self.x = self.x + 1 ), get := pub static fn () -> i32 ( self.x ) ), ";
     let made = "dyad (pt, pt (1, 2))";
     for (write, printed) in [
         ("D.x = i32 5", "5 2"),
@@ -15493,7 +15525,7 @@ fn a_write_through_what_a_dyad_holds_lands_in_the_node_it_holds() {
         // A copy of the node is a node of its own.
         ("d := mut dyad ?, d = pt (1, 2), e := d, d.x = i32 9, print «{e.x} {d.x}»", "1 9\n"),
         (
-            "bag := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ), d := mut dyad ?, \
+            "bag := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) ), d := mut dyad ?, \
              d = bag (1), d.n = i32 5, print «end»",
             "end\nfreed 5\n",
         ),
@@ -15534,7 +15566,7 @@ fn a_write_through_what_a_dyad_holds_lands_in_the_node_it_holds() {
     let q = "q := type ( x := pub mut i32 ?, y := pub i32 ?, parse_rank = 60, parse = ( \
              tape[0].type = q, tape[0].x = tape[1], tape[0].y = tape[2], \
              tape.is_constructed[0] = true, tape.remove(2), tape.remove(1) ), \
-             bump := pub static fn () -> void ( x = x + 1 ) ), ";
+             bump := pub static fn () -> void ( self.x = self.x + 1 ) ), ";
     for src in [
         "p := mut (q 5 6), p.x = i32 7, p.bump(), print «{p.x} {p.y}»",
         "d := mut dyad ?, d = q 5 6, d.x = i32 7, d.bump(), print «{d.x} {d.y}»",
@@ -15564,20 +15596,20 @@ fn a_write_through_what_a_dyad_holds_lands_in_the_node_it_holds() {
     }
 }
 
-/// ›A type body describes one level‹ [[R222]]: a field named bare in a `static` function, a `free`
-/// or a `fn` entry of a `{ … }` reads as the same field read through the value, on both tiers:
-/// text and a type as what they hold, a record's field with a `.`, and a write through it meets
-/// the gates `v.p.x = …` would.
+/// ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]:
+/// `self.x` in a `static` function, a `free` or a `fn` entry of a `{ … }` reads as the same field
+/// read through the value, on both tiers: text and a type as what they hold, a record's field with
+/// a `.`, and a write through it meets the gates `v.p.x = …` would.
 #[test]
-fn a_field_named_bare_reads_as_the_field_read_through_the_value() {
-    let pt = "pt := type ( x := pub mut i32 ?, y := pub i32 ?, sum := pub static fn () -> i32 ( x + y ) ), ";
+fn a_field_read_through_self_reads_as_the_field_read_through_the_value() {
+    let pt = "pt := type ( x := pub mut i32 ?, y := pub i32 ?, sum := pub static fn () -> i32 ( self.x + self.y ) ), ";
     for compile in ["", "v.f.compile(), "] {
         for (head, call, printed) in [
-            ("t := type ( s := string ?, f := pub static fn () -> void ( print «{s}!» ) ), v := t («hi»)", "v.f()", "hi!"),
-            ("t := type ( s := string ?, f := pub static fn () -> string ( s ) ), v := t («hi»)", "v.f()", "hi"),
+            ("t := type ( s := string ?, f := pub static fn () -> void ( print «{self.s}!» ) ), v := t («hi»)", "v.f()", "hi!"),
+            ("t := type ( s := string ?, f := pub static fn () -> string ( self.s ) ), v := t («hi»)", "v.f()", "hi"),
             ("t := type ( k := type ?, f := pub static fn () -> void ( print «{k}» ) ), v := t (i32)", "v.f()", "i32"),
             ("t := type ( k := type ?, f := pub static fn () -> type ( k ) ), v := t (i32)", "v.f()", "i32"),
-            ("q := type ( p := pt ?, f := pub static fn () -> i32 ( p.x ) ), v := q (pt (1, 2))", "v.f()", "1"),
+            ("q := type ( p := pt ?, f := pub static fn () -> i32 ( self.p.x ) ), v := q (pt (1, 2))", "v.f()", "1"),
             ("q := type ( p := pt ?, f := pub static fn () -> i32 ( p.y + 1 ) ), v := q (pt (1, 2))", "v.f()", "3"),
             ("q := type ( p := pt ?, f := pub static fn () -> i32 ( p.sum() ) ), v := q (pt (1, 2))", "v.f()", "3"),
             ("q := type ( p := pt ?, f := pub static fn () -> pt ( p ) ), v := q (pt (1, 2))", "v.f().y", "2"),
@@ -15587,14 +15619,15 @@ fn a_field_named_bare_reads_as_the_field_read_through_the_value() {
                 "v.f()",
                 "4",
             ),
-            ("v := { s := «hi», f := pub fn () -> void ( print «{s}!» ) }", "v.f()", "hi!"),
-            ("v := { p := pt (1, 2), f := pub fn () -> i32 ( p.x ) }", "v.f()", "1"),
+            ("v := { s := «hi», f := pub fn () -> void ( print «{self.s}!» ) }", "v.f()", "hi!"),
+            ("v := { p := pt (1, 2), f := pub fn () -> i32 ( self.p.x ) }", "v.f()", "1"),
         ] {
             let src = format!("{pt}{head}, {compile}{call}");
             assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
         }
     }
-    let bag = "bag := type ( s := string ?, p := pt ?, free = ( print «freed {s} {p.y}» ) ), ";
+    let bag =
+        "bag := type ( s := string ?, p := pt ?, free = ( print «freed {self.s} {self.p.y}» ) ), ";
     for compile in ["", "f.compile(), "] {
         let src =
             format!("{pt}{bag}f := fn () -> i32 ( b := bag («x», pt (1, 2)), 1 ), {compile}f()");
@@ -15628,7 +15661,7 @@ fn a_field_named_bare_reads_as_the_field_read_through_the_value() {
 #[test]
 fn a_dot_reads_a_field_of_a_record_no_name_holds() {
     let head =
-        "pt := type ( x := pub i32 ?, y := pub i32 ?, sum := pub static fn () -> i32 ( x + y ) ), \
+        "pt := type ( x := pub i32 ?, y := pub i32 ?, sum := pub static fn () -> i32 ( self.x + self.y ) ), \
                 g := fn (n := i32 ?) -> pt ( pt (n * 2, n) ), ";
     for compile in ["", "h.compile(), "] {
         for (body, printed) in [
@@ -16073,7 +16106,7 @@ fn a_place_keeps_one_mint_on_both_tiers() {
 #[test]
 fn a_writable_static_and_a_body_keep_types_apart() {
     let k = "k := fn (t := type ?) -> type ( t )";
-    let body = "x := pub i32 ?, twice := pub static fn () -> i32 ( x * 2 )";
+    let body = "x := pub i32 ?, twice := pub static fn () -> i32 ( self.x * 2 )";
     let run = "x := pub i32 ?, run = ( x + 1 )";
     let mut cases = vec![(
         format!(

@@ -1099,7 +1099,7 @@ fn logos_comparison(field: &str, rank: &str) -> String {
             lhs := {field} ?,\n\
             rhs := {field} ?,\n\
             output_type := type ?,\n\
-            run = ( lhs == rhs ),\n\
+            run = ( self.lhs == self.rhs ),\n\
             parse_rank = {rank},\n\
             parse = (\n\
                 tape[0].type = ≈, tape[0].lhs = tape[-1],\n\
@@ -2992,7 +2992,7 @@ const POW_TYPE: &str = "pw := type (\n\
          place := type_mint.step(type_mint.step(0, pw), l),\n\
          mint := mut type type_mint.kept(place),\n\
          if mint != ? return mint,\n\
-         mint = type ( a := pub l ?, b := pub i32 ?, output_type := static type l, run = ( r := mut output_type 1, for 0..b ( r = r * a ), r ) ),\n\
+         mint = type ( a := pub l ?, b := pub i32 ?, output_type := static type l, run = ( r := mut self.output_type 1, for 0..self.b ( r = r * self.a ), r ) ),\n\
          type_mint.keep(place, mint),\n\
          mint\n\
      ),\n\
@@ -3000,7 +3000,7 @@ const POW_TYPE: &str = "pw := type (\n\
      associativity = right,\n\
      parse = (\n\
          if tape[-1].type == void abort «pw takes a left operand»,\n\
-         tape[0].type = get_mint(tape[-1].type), tape[0].a = tape[-1],\n\
+         tape[0].type = self.get_mint(tape[-1].type), tape[0].a = tape[-1],\n\
          tape[0].b = tape[1],\n\
          tape.is_constructed[0] = true,\n\
          tape.remove(1),\n\
@@ -3048,7 +3048,7 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
     assert_eq!(run_script(&format!("{POW_TYPE}2 pw 3 pw 2")), 512);
     // A type with a run and no parse of its own has no call form.
     assert_eq!(
-        parse_err_after(&["sq2 := type ( a := i32 ?, run = ( a * a ) )"], "sq2(5)"),
+        parse_err_after(&["sq2 := type ( a := i32 ?, run = ( self.a * self.a ) )"], "sq2(5)"),
         ParseError::RunTypeApplied
     );
 }
@@ -3076,10 +3076,10 @@ fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
 }
 
 #[test]
-fn a_run_hands_a_bare_static_call_its_own_value_in_both_tiers() {
+fn a_run_hands_a_static_call_through_self_its_own_value_in_both_tiers() {
     let (mut store, mut trie, core) = new_core();
     let src = "inc := type ( a := i32 ?, output_type := type ?, \
-        twice := static fn () -> i32 ( a * 2 ), run = ( twice() + 1 ), \
+        twice := static fn () -> i32 ( self.a * 2 ), run = ( self.twice() + 1 ), \
         parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
         tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
         tape.remove(-1) ) ),\nf := fn (y := i32 ?) -> i32 ( y inc ),\nf(5)";
@@ -4975,20 +4975,20 @@ fn a_field_is_read_from_outside_its_type_only_when_it_is_pub_both_tiers() {
 fn a_types_own_bodies_read_every_field_and_member() {
     assert_eq!(
         run_script(
-            "pt := type ( x := i32 ?, y := i32 ?, sum := pub static fn () -> i32 ( x + y ) ), \
+            "pt := type ( x := i32 ?, y := i32 ?, sum := pub static fn () -> i32 ( self.x + self.y ) ), \
              p := pt(1, 2), p.sum()"
         ),
         3
     );
     assert_eq!(
         run_script(
-            "mk := type ( tag := static i32 7, get := pub static fn () -> i32 ( tag ) ), mk.get()"
+            "mk := type ( tag := static i32 7, get := pub static fn () -> i32 ( self.tag ) ), mk.get()"
         ),
         7
     );
     // `run`, and a `parse` that writes its own type's fields through the tape.
     let inc = "inc := type ( a := i32 ?, output_type := type ?, \
-               twice := static fn () -> i32 ( a * 2 ), run = ( twice() + 1 ), \
+               twice := static fn () -> i32 ( self.a * 2 ), run = ( self.twice() + 1 ), \
                parse_rank = *.parse_rank + 1, parse = ( tape[0].type = inc, \
                tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
                tape.remove(-1) ) ), f := fn (y := i32 ?) -> i32 ( y inc )";
@@ -5009,7 +5009,7 @@ fn a_static_member_is_read_through_its_type_or_a_value_only_when_it_is_pub() {
     }
     let pt = |gate: &str| {
         format!(
-            "pt := type ( x := i32 ?, s := {gate}static fn () -> i32 ( x ) ), p := pt(3), p.s()"
+            "pt := type ( x := i32 ?, s := {gate}static fn () -> i32 ( self.x ) ), p := pt(3), p.s()"
         )
     };
     assert_eq!(script_parse_err(&pt("")), not_pub("s"));
@@ -5036,8 +5036,8 @@ fn a_kept_scopes_entries_are_read_from_outside_only_when_pub_both_tiers() {
         let src = format!("m := {{ a := pub i32 1 }}, f := fn () -> i32 ( m.a ), {compile}f()");
         assert_eq!(run_script(&src), 1, "{compile}");
     }
-    // A `fn` entry reads its siblings bare.
-    let m = "m := { a := i32 1, f := pub fn () -> i32 ( a + 1 ) }";
+    // A `fn` entry reads its siblings through `self`, `pub` or not.
+    let m = "m := { a := i32 1, f := pub fn () -> i32 ( self.a + 1 ) }";
     assert_eq!(run_script(&format!("{m}, m.f()")), 2);
     assert_eq!(script_parse_err(&format!("{m}, m.a")), not_pub("a"));
 }
@@ -5058,7 +5058,7 @@ fn a_hashmap_takes_only_the_pub_entries_of_a_scope() {
 fn a_parse_that_stamps_another_type_writes_only_its_pub_fields() {
     let src = |gate: &str, stamp: &str| {
         format!(
-            "box := type ( v := {gate}i32 ?, output_type := static type i32, run = ( v + 1 ) ), \
+            "box := type ( v := {gate}i32 ?, output_type := static type i32, run = ( self.v + 1 ) ), \
              get := fn () -> type ( box ), \
              wrap := type ( parse_rank = *.parse_rank + 1, parse = ( \
              tape[0].type = {stamp}, tape[0].v = tape[-1], tape.is_constructed[0] = true, \

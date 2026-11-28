@@ -2763,7 +2763,7 @@ mod tests {
     }
 
     /// A record type that fills `free`, so its values live behind a pointer of their own.
-    const KEPT: &str = "r := type ( n := pub mut i32 ?, free = ( print «freed {n}» ) ),\n";
+    const KEPT: &str = "r := type ( n := pub mut i32 ?, free = ( print «freed {self.n}» ) ),\n";
 
     #[test]
     fn a_record_behind_its_pointer_is_freed_once_and_never_leaks() {
@@ -2780,7 +2780,11 @@ mod tests {
             ("free (r(1)),\n1".into(), 1),
             ("f := fn () -> r ( r(2) ),\nx := f(),\nx.n".into(), 2),
             ("d := dyad (r, r(1)),\ne := d,\n1".into(), 1),
-            ("h := type ( b := mut r ?, free = ( free b ) ),\na := r(1),\nv := h(a),\n1".into(), 1),
+            (
+                "h := type ( b := mut r ?, free = ( free self.b ) ),\na := r(1),\nv := h(a),\n1"
+                    .into(),
+                1,
+            ),
             (format!("f := fn () -> i32 ( {body} ),\nf()"), 3),
             (format!("f := fn () -> i32 ( {body} ),\nf.compile(),\nf()"), 3),
         ] {
@@ -2803,7 +2807,7 @@ mod tests {
 
     /// `x`, a record with two owning fields, `p` holding 5 and `q` 6.
     const PAIR: &str = "r := type ( p := pub mut own @i32 ?, q := pub mut own @i32 ?, \
-        free = ( free p, free q ), s := static fn () -> i32 ( 2 ) ),\n\
+        free = ( free self.p, free self.q ), s := static fn () -> i32 ( 2 ) ),\n\
         x := mut r ?,\na := try alloc 1 of i32 5,\nx.p = move a,\nb := try alloc 1 of i32 6,\nx.q = move b,\n";
 
     #[test]
@@ -2863,12 +2867,12 @@ mod tests {
     const BAG: &str = "import file «./identities/array.logos», t := type array i32, \
         bagged := type ( \
             items := pub mut t ?, \
-            free = ( free items ), \
+            free = ( free self.items ), \
             parse_rank = dyad.parse_rank, \
             parse = ( tape.is_constructed[0] = true ) ), \
         bag := type ( \
             output_type := type ?, \
-            run = ( v := mut output_type ?, v.items = array i32 [4, 5, 6], move v ), \
+            run = ( v := mut self.output_type ?, v.items = array i32 [4, 5, 6], move v ), \
             parse_rank = dyad.parse_rank, \
             associativity = left, \
             parse = ( \
@@ -2923,14 +2927,14 @@ mod tests {
             assert_eq!(run(&format!("{BAG}{tail}")), (1, 0), "{tail}");
         }
         // The count sees the array: a free that leaves the field alone leaks its one block.
-        let forgetful = BAG.replace("free = ( free items )", "free = ( free (0) )");
+        let forgetful = BAG.replace("free = ( free self.items )", "free = ( free (0) )");
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
     /// A plain record whose type fills `free`, kept behind its pointer, with a field of a node
     /// type and no word before it.
     const HELD: &str = "import file «./identities/array.logos», t := type array i32, \
-        held := type ( z := pub mut i32 ?, items := pub mut t ?, free = ( free items ) ),\n";
+        held := type ( z := pub mut i32 ?, items := pub mut t ?, free = ( free self.items ) ),\n";
 
     #[test]
     fn a_field_whose_type_fills_free_owns_the_node_written_into_it() {
@@ -2956,7 +2960,7 @@ mod tests {
             assert_eq!(run(&format!("{HELD}{tail}")), (want, 0), "{tail}");
         }
         // The count sees the array: a free that leaves the field alone leaks its one block.
-        let forgetful = HELD.replace("free = ( free items )", "free = ( free (0) )");
+        let forgetful = HELD.replace("free = ( free self.items )", "free = ( free (0) )");
         assert_eq!(run(&format!("{forgetful}h := mut held ?, h.items = array i32 [1], 1")), (1, 1));
         // A function writing such a field stays interpreted: stand-in for #164.
         let compiled = "f := fn () -> i32 ( h := mut held ?, h.items = array i32 [1, 2], \
@@ -3504,7 +3508,7 @@ mod tests {
     fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                a := i32 ?, b := i32 ?, output_type := type ?, run = ( a * b * n ),\n\
+                a := i32 ?, b := i32 ?, output_type := type ?, run = ( self.a * self.b * n ),\n\
                 parse_rank = *.parse_rank + 1,\n\
                 associativity = right,\n\
                 parse = (\n\
