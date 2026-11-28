@@ -1,9 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! What waits for the run to parse it, since a type its parse needs is known only then: a line of
-//! a body that reads a `dyad` value or reads after a type a name or a call gives only then, or a
-//! `while` condition that reads a `dyad` name, parsed where it is written up to that read and
+//! What waits for the run to parse it, since a type its parse needs is known only then: the part
+//! of a line of a body that reads a `dyad` value or reads after a type any node gives only then,
+//! or a `while` condition that reads a `dyad` call, parsed where it is written up to that read and
 //! from there each time it runs, over the nodes and types such values hold then (›A `dyad ?`
 //! place is transparent: a placeholder for a new node of any type‹ [[R293]], ›A type known only
 //! when the program runs still works; what needs it is parsed when its line runs‹ [[R377]]).

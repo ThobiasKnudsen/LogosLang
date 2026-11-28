@@ -485,6 +485,8 @@ fn lower_read(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     unsafe {
         let (value, into) = parts(node);
         if made_type(lw.types(), value) != Some(into) {
+            // A value that cannot be compiled says why itself, one parsed only when it runs too.
+            lw.lower(value)?;
             return Err(CompileError::NotLowerable(node));
         }
         let carry = carry_of(lw.types(), into).ok_or(CompileError::NotLowerable(node))?;

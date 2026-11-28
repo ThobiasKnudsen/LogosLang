@@ -225,6 +225,27 @@ pub struct ParsingTape {
     /// The words that started a word standing at their side, to take it, the innermost last:
     /// each is being built, so no side of the word it started.
     takers: Vec<usize>,
+    /// The segment the driver lexes onto the tape and builds there.
+    pub(super) segment: Segment,
+}
+
+/// A segment as the driver lexes and builds it on its tape, for a part of it that waits for the
+/// run (›A type known only when the program runs still works; what needs it is parsed when its
+/// line runs‹ [[R377]]).
+#[derive(Debug, Default, Clone, Copy)]
+pub(super) struct Segment {
+    /// How many constructors run on the tape now.
+    pub(super) running: u32,
+    /// Where its lexing began, with how many values and comments its line had noted then.
+    pub(super) from: Option<(usize, (usize, usize))>,
+    /// It ends at a `,`, a closer or the end of the text, not where a right side read stops.
+    pub(super) plain: bool,
+    /// It is a whole line of a scope whose lines are its own.
+    pub(super) line: bool,
+    /// Where its boundary stands, once lexed to it.
+    pub(super) ends_at: Option<usize>,
+    /// Held for the run, through here.
+    pub(super) held_to: Option<usize>,
 }
 
 impl ParsingTape {
@@ -494,8 +515,27 @@ impl ParsingTape {
         self.center
     }
 
+    /// The center back on `mark`, or, once the segment is held for the run, on the cell that
+    /// holds it ([`Self::hold_whole`]).
     pub fn restore(&mut self, mark: Option<usize>) {
-        self.center = mark;
+        self.center = match mark {
+            Some(n) if !self.nodes[n].linked && self.segment.held_to.is_some() => self.tail,
+            mark => mark,
+        };
+    }
+
+    /// The tape holding `cell` alone, the center on it: the segment it held is held whole for the
+    /// run in `cell`, so no constructor took its cells.
+    pub(crate) fn hold_whole(&mut self, cell: Cell) {
+        let mut n = self.head;
+        while let Some(k) = n {
+            n = self.nodes[k].next;
+            self.nodes[k] =
+                Node { cell: self.nodes[k].cell, prev: None, next: None, linked: false };
+        }
+        (self.head, self.tail, self.center, self.len) = (None, None, None, 0);
+        self.takers.clear();
+        self.push(cell);
     }
 
     fn alloc(&mut self, cell: Cell) -> usize {
@@ -717,9 +757,21 @@ impl Carry for Cell {
 
 impl Carry for ParsingTape {
     fn carry(&self, out: &mut Out) {
-        let ParsingTape { nodes, head, tail, center, len, edits, sealed, inner, taken, takers } =
-            self;
+        let ParsingTape {
+            nodes,
+            head,
+            tail,
+            center,
+            len,
+            edits,
+            sealed,
+            inner,
+            taken,
+            takers,
+            segment,
+        } = self;
         debug_assert!(takers.is_empty(), "a tape is carried while no constructor runs on it");
+        debug_assert!(segment.running == 0, "a tape is carried while no constructor runs on it");
         out.usize(nodes.len());
         for &Node { cell, prev, next, linked } in nodes {
             cell.carry(out);
@@ -754,6 +806,7 @@ impl Carry for ParsingTape {
             inner,
             taken: Carry::uncarry(inp),
             takers: Vec::new(),
+            segment: Segment::default(),
         }
     }
 }

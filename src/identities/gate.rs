@@ -497,9 +497,11 @@ fn construct(
     };
     let word_at = word_at.unwrap_or(right.start);
     let inner = p.as_operand(right)?;
-    tape.remove(1);
     let types = p.types();
+    // A value that ends in a line held for the run gives a `dyad`, as a landing does (`land`).
     // SAFETY: `inner` is a reduced dyad just parsed.
+    unsafe { super::waiting::lands_in(types, inner, types.dyad_) };
+    // SAFETY: as above.
     let (declares, gives_nothing) = unsafe {
         (
             dyad::ty(inner) == types.declare_,
@@ -512,6 +514,14 @@ fn construct(
     if gives_nothing {
         return Err(p.fail_at(right.start, ParseError::StatementAsValue));
     }
+    // The type gated is that of the node a `dyad` gives, so in a body a gate over a node known only
+    // when the program runs waits for the run, as an operation reading it does.
+    // SAFETY: `inner` is a reduced dyad just parsed.
+    let inner = match unsafe { super::dyad_place::known_only_at_run(types, inner) } {
+        true if !p.in_pass_order() => p.read_through_value(tape, 1, inner)?,
+        _ => inner,
+    };
+    tape.remove(1);
     // SAFETY: `id` is a gate word, and `inner` a reduced dyad.
     let gated = unsafe {
         let mint = mint_of(p.store(), types, &[id]);

@@ -371,21 +371,55 @@ impl<'a> Parser<'a> {
         // SAFETY: `read` is a reduced dyad from the store, and `type` a type node.
         unsafe {
             if crate::identities::dyad_place::known_only_at_run(types, read) {
-                return Err(ParseError::TypeKnownOnlyAtRun);
+                return Err(self.known_at_run());
             }
             let landed = crate::identities::land(self.rt.store, types, read, types.type_)?;
-            crate::identities::type_identity_of(types, landed).ok_or(ParseError::TypeKnownOnlyAtRun)
+            crate::identities::type_identity_of(types, landed).ok_or_else(|| self.known_at_run())
         }
     }
 
-    /// A tight extender's left context (`.`'s value, `@`'s pointer, `(`'s
-    /// callee); `None` when the construct opens fresh.
+    /// [`Self::type_known_now`] for a reader whose operand, written at `at`, must be a type: one
+    /// that names no type is `refused` there, and one that names a type only running gives stays
+    /// that refusal, so a body's line waits for the run.
+    pub(crate) fn type_operand_now(
+        &mut self,
+        operand: DyadPtr,
+        at: usize,
+        refused: ParseError,
+    ) -> Result<DyadPtr, ParseError> {
+        match self.type_known_now(operand) {
+            Ok(t) => Ok(t),
+            Err(ParseError::TypeKnownOnlyAtRun) => {
+                Err(self.fail_at(at, ParseError::TypeKnownOnlyAtRun))
+            }
+            Err(e) if e.type_given_by_running() => Err(e),
+            Err(_) => Err(self.fail_at(at, refused)),
+        }
+    }
+
+    /// Where the parse needs a type known only when the program runs: in a body the segment that
+    /// needs it waits for the run (›A type known only when the program runs still works; what
+    /// needs it is parsed when its line runs‹ [[R377]]); where nothing runs it later, the
+    /// checked error.
+    pub(super) fn known_at_run(&self) -> ParseError {
+        if self.waits_here() {
+            ParseError::WaitsForRun(None)
+        } else {
+            ParseError::TypeKnownOnlyAtRun
+        }
+    }
+
+    /// `@`'s pointer, the cell to its left, a `dyad` read through to the node it gives as an
+    /// infix's operand is ([`Self::read_through_value`]); `None` when `@` opens fresh.
     pub(crate) fn left_operand(
         &mut self,
-        tape: &ParsingTape,
+        tape: &mut ParsingTape,
     ) -> Result<Option<DyadPtr>, ParseError> {
         match tape.at(-1) {
-            Some(&cell) if self.is_operand_cell(&cell) => self.as_operand(cell).map(Some),
+            Some(&cell) if self.is_operand_cell(&cell) => {
+                let operand = self.as_operand(cell)?;
+                self.read_through_value(tape, -1, operand).map(Some)
+            }
             _ => Ok(None),
         }
     }
@@ -433,7 +467,11 @@ impl<'a> Parser<'a> {
         }
         let mut gives = Vec::with_capacity(N);
         for (&name, cell) in names.iter().zip(&cells) {
+            // A side whose last line waits for the run gives what that line gives then, in a
+            // `dyad`, as a landing does (`identities::land`).
             // SAFETY: `name` is a reduced dyad from the store.
+            unsafe { crate::identities::waiting::lands_in(types, name, types.dyad_) };
+            // SAFETY: as above.
             gives.push(match unsafe { crate::identities::read::value_type(types, name) } {
                 Ok(_) => true,
                 Err(e) if taker == Taker::Parse && crate::identities::read::gives_nothing(&e) => {
@@ -542,13 +580,13 @@ impl<'a> Parser<'a> {
     /// type‹ [[R293]]). Where that node's type is known where the operand is written, it is read
     /// at that type each time the line runs (`dyad_place::read_through`, which every landing in a
     /// typed place reads it by too). An entry of a `{ … }` a field path reaches is read as a
-    /// `dyad` name is where the lexer meets it ([`Self::held_now`]). A call whose node's type is
-    /// known only at run runs now, where the pass has reached its line (the top level, or a
-    /// body's line parsed when it runs), after what stands before it ([`Self::run_before`]), and
-    /// its cell stands for the node it gave, as a `dyad` name read there does; a body's line
-    /// holding either waits for the run (`waiting_line_end`), and so does a `while` condition
-    /// holding one (`hold_condition`).
-    pub(super) fn read_through_value(
+    /// `dyad` name is where the lexer meets it ([`Self::held_now`]). Any other node whose node's
+    /// type is known only at run, a call or a bracket, runs now, where the pass has reached its
+    /// line (the top level, or a body's line parsed when it runs), after what stands before it
+    /// ([`Self::run_before`]), and its cell stands for the node it gave, as a `dyad` name read
+    /// there does. In a body, the read of either waits for the run ([`Self::known_at_run`]), and
+    /// a `while` condition holding a call waits as a whole (`hold_condition`).
+    pub(crate) fn read_through_value(
         &mut self,
         tape: &mut ParsingTape,
         k: isize,
@@ -573,11 +611,18 @@ impl<'a> Parser<'a> {
                 self.cx.each_pass_read |= self.cx.each_pass;
                 return Ok(node);
             }
-            let call = matches!(
-                read::read_kind(types, operand),
-                read::Read::Executable(read::Dispatch::Call(_))
-            );
-            if !call || !self.in_pass_order() {
+            let runs = matches!(read::read_kind(types, operand), read::Read::Executable(_));
+            if !self.in_pass_order() {
+                // A field of the parse's own node is a number only inside a check of its type,
+                // and its line never waits (›A tape read checked against a number type reads as
+                // that number‹ [[R229]]).
+                let own_field = crate::identities::this::is_field_read(types, operand)
+                    && crate::identities::this::is_fill(types, operand);
+                let waits =
+                    self.waits_here() && !own_field && (runs || self.is_dyad_place(operand));
+                return if waits { Err(self.known_at_run()) } else { Ok(operand) };
+            }
+            if !runs {
                 return Ok(operand);
             }
         }
@@ -605,30 +650,24 @@ impl<'a> Parser<'a> {
     /// order, and never twice‹ [[R288]]), so a reader takes it as a type known in the pass (›A
     /// type known only when the program runs still works; what needs it is parsed when its line
     /// runs‹ [[R377]]). `None`, nothing run, for a node that is a type or gives none, a bracket,
+    /// whose lines ran where they were built, unless it is `kept` from a body, where they did not,
     /// a type taken as a value, a place ([`Self::takes_the_place`]), and where the pass does not
     /// run the line: a body, a `while` condition.
     pub(super) fn run_type_where_built(
         &mut self,
         tape: &mut ParsingTape,
+        kept: bool,
     ) -> Result<Option<DyadPtr>, ParseError> {
-        use crate::identities::{read, type_identity_of};
-        let types = self.types;
         if !self.in_pass_order() || self.cx.each_pass {
             return Ok(None);
         }
         let Some(cell) = tape.at(0).copied() else { return Ok(None) };
-        if !cell.constructed || cell.bracket || cell.type_value || cell.dyad.is_null() {
+        if !cell.constructed || (cell.bracket && !kept) || cell.type_value || cell.dyad.is_null() {
             return Ok(None);
         }
         let node = cell.dyad;
         // SAFETY: a constructed cell holds a node from the store.
-        let gives_type = unsafe {
-            !types.is_storage(node)
-                && !types.is_hole(types.through(node))
-                && read::output_type(types, node) == types.type_
-                && type_identity_of(types, node).is_none()
-        };
-        if !gives_type {
+        if !unsafe { self.runs_for_type(node) } {
             return Ok(None);
         }
         let prev = tape.at(-1).map(|c| self.cell_identity(c));
@@ -1189,9 +1228,9 @@ impl<'a> Parser<'a> {
         Some(!(def.in_parse || def.in_free))
     }
 
-    /// The one read every prefix constructor makes (`return x`, `not x`, a
-    /// prefix `-`): its side, read as an operation reads one, so a word there not built yet is
-    /// built first, as `move p` in `return move p`.
+    /// The read a prefix word that takes its side whole makes (`return x`, `try x`, `alloc`'s
+    /// count and value): its side as it stands, so a word there not built yet is built first, as
+    /// `move p` in `return move p`.
     pub(crate) fn take_right(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
         let Some(cell) = self.side_at(tape, 1)? else {
             return Err(ParseError::MissingOperand);
@@ -1199,6 +1238,16 @@ impl<'a> Parser<'a> {
         let node = self.as_operand(cell)?;
         tape.remove(1);
         Ok(node)
+    }
+
+    /// The read a prefix operation makes of its side (`not x`, a prefix `-`): read as an infix
+    /// reads each of its sides ([`Self::operands`]).
+    pub(crate) fn operand_right(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
+        let Some([operand]) = self.operands(tape, [1], Taker::Operation)? else {
+            return Err(ParseError::MissingOperand);
+        };
+        tape.remove(1);
+        Ok(operand)
     }
 
     /// What a type or a gate word at the center takes from its right, the cell at `k`: a built

@@ -49,6 +49,11 @@ pub enum ParseError {
     /// The pass needed a type identity and found a place that will only hold
     /// one when the program runs (DESIGN ›A type is a comptime value‹).
     TypeKnownOnlyAtRun,
+    /// In a body, the parse needs a type known only when the program runs: the segment it stands
+    /// in waits for the run, which the constructor that segment's tape runs first takes up
+    /// (`Parser::run_ctor`). With the place an `=` writes, read where it is written. Reported as
+    /// [`Self::TypeKnownOnlyAtRun`] where nothing takes it up.
+    WaitsForRun(Option<Box<Cell>>),
     /// `=` into an owning place of what owns nothing there: a `&` or a plain
     /// `@T`, or, through a pointer's cell, which takes no copy, a borrowed owner.
     NonOwningIntoOwning,
@@ -420,6 +425,28 @@ impl ParseError {
     /// A refusal from `Parser::type_known_now` of an operand that does name a type, which only
     /// running gives: the program's run, or that of a part of its line that cannot run first.
     pub(crate) fn type_given_by_running(&self) -> bool {
-        matches!(self, ParseError::TypeKnownOnlyAtRun | ParseError::RunsBeforeUnbuilt)
+        matches!(
+            self,
+            ParseError::TypeKnownOnlyAtRun
+                | ParseError::RunsBeforeUnbuilt
+                | ParseError::WaitsForRun(_)
+        )
+    }
+
+    /// This error met in the right side of an `=` into `place`: a wait for the run carries the
+    /// place, which its line writes when it runs.
+    pub(crate) fn written_into(self, place: &Cell) -> ParseError {
+        match self {
+            ParseError::WaitsForRun(None) => ParseError::WaitsForRun(Some(Box::new(*place))),
+            e => e,
+        }
+    }
+
+    /// This error where nothing can wait for the run: the checked refusal a wait stands for.
+    pub(crate) fn refused_now(self) -> ParseError {
+        match self {
+            ParseError::WaitsForRun(_) => ParseError::TypeKnownOnlyAtRun,
+            e => e,
+        }
     }
 }

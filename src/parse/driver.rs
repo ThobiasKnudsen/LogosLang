@@ -138,11 +138,24 @@ impl<'a> Parser<'a> {
         stop_at_open: Option<RightSide>,
     ) -> Result<Boundary, ParseError> {
         let was = std::mem::replace(&mut self.cx.lex_mode, stop_at_open);
+        if tape.segment.from.is_none() {
+            let open = self.cx.open.last().expect("a segment is read in an open scope");
+            tape.segment.from = Some((self.cx.pos, open.line_notes_mark()));
+            tape.segment.plain = stop_at_open.is_none();
+        }
         let result = loop {
-            match self.lex_next(tape, false) {
+            let lexed = self.lex_next(tape, false);
+            if let (Ok(None), Some(end)) = (&lexed, tape.segment.held_to) {
+                self.cx.pos = end;
+                tape.sealed = true;
+                tape.segment.ends_at = Some(end);
+                break self.boundary_at(end);
+            }
+            match lexed {
                 Ok(None) => {}
                 Ok(Some(boundary)) => {
                     tape.sealed = true;
+                    tape.segment.ends_at = Some(self.cx.pos);
                     break Ok(boundary);
                 }
                 Err(e) => break Err(e),
@@ -199,6 +212,9 @@ impl<'a> Parser<'a> {
             self.cx.pos = start;
             return Ok(Some(Boundary::Open));
         }
+        if !cell.constructed && self.waits_for_named_type(tape, &cell)? {
+            return Ok(None);
+        }
         tape.push(cell);
         if !cell.constructed && id == self.types.try_.try_ {
             self.open_try(cell.start);
@@ -252,6 +268,16 @@ impl<'a> Parser<'a> {
         } else {
             None
         }
+    }
+
+    /// The boundary that stands at `at`, where a segment's scan stopped: the end of the text, or
+    /// the token there ([`Self::boundary_of`]).
+    pub(super) fn boundary_at(&mut self, at: usize) -> Result<Boundary, ParseError> {
+        if at >= self.cx.source.len() {
+            return Ok(Boundary::Eof);
+        }
+        let id = self.token_at(at, true)?.identity;
+        Ok(self.boundary_of(id).unwrap_or(Boundary::Eof))
     }
 
     /// A cell a reader's lazy read lexes that would construct before the reader at the
@@ -391,6 +417,9 @@ impl<'a> Parser<'a> {
                 }
                 tape.center_on(n);
                 tape.remove(0);
+            }
+            if self.waits_at_end(tape)? {
+                continue;
             }
             let mut best: Option<(usize, f64, ConstructFn, DyadPtr)> = None;
             for (n, c) in tape.iter() {
@@ -660,19 +689,45 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         discovery: bool,
     ) -> Result<(), ParseError> {
-        let (built_as, gates) = self.gated_type_parts(id);
-        let logos = self.is_logos_ctor(built_as);
+        let outermost = tape.segment.running == 0;
+        tape.segment.running += 1;
+        let parts = self.gated_type_parts(id);
+        let logos = self.is_logos_ctor(parts.0);
         // A word built as it is lexed that takes the node before it, or whose parse is written in
         // Logos and so runs first what stands before it, reads what is written there, so the
         // brackets held there are built first, in order; at the boundary a word takes the nearest
         // node on each side, the bracket to its left built, the one to its right held until it
         // reads it.
-        if discovery && (logos || self.reads_left(id)) {
+        let held = if discovery && (logos || self.reads_left(id)) {
             let at = tape.at(0).map_or(usize::MAX, |c| c.start);
-            self.take_held_before(tape, at)?;
+            self.take_held_before(tape, at)
         } else {
-            self.take_held(tape, -1)?;
+            self.take_held(tape, -1)
+        };
+        let start = if held.is_ok() && outermost { self.ctor_start(tape) } else { None };
+        let built =
+            held.and_then(|()| self.construct_cell(construct, id, parts, logos, tape, discovery));
+        tape.segment.running -= 1;
+        match (built, start) {
+            (Err(e @ ParseError::WaitsForRun(_)), Some(start)) => {
+                self.wait_from(tape, start, discovery, e)
+            }
+            (built, _) => built,
         }
+    }
+
+    /// The constructor of the cell at the center of `tape`, run, and the driver's rule read off
+    /// its outcome ([`Self::run_ctor`]): `id` built as the type its gates stand over, `logos`
+    /// where that type's parse is written in Logos.
+    fn construct_cell(
+        &mut self,
+        construct: ConstructFn,
+        id: DyadPtr,
+        (built_as, gates): (DyadPtr, DyadPtr),
+        logos: bool,
+        tape: &mut ParsingTape,
+        discovery: bool,
+    ) -> Result<(), ParseError> {
         let own = tape.mark();
         let edits = tape.edits();
         let taken = tape.taken_mark();
@@ -739,7 +794,7 @@ impl<'a> Parser<'a> {
                     return Err(e);
                 }
             }
-            let ran = self.run_type_where_built(tape)?.is_some();
+            let ran = self.run_type_where_built(tape, false)?.is_some();
             if ran {
                 cell = *tape.at(0).expect("the cell stands at its mark");
             }
@@ -965,39 +1020,27 @@ impl<'a> Parser<'a> {
             }
             self.skip_whitespace();
             let bare_branch = self.cx.else_ends == Some(self.cx.open.len());
-            if self.cx.pos >= self.cx.source.len()
+            // A held line kept whole where it is written is built from what it kept.
+            let ended = self.cx.pos >= self.cx.source.len()
                 || self.at_close()
-                || (bare_branch && self.at_branch_end())
-            {
+                || (bare_branch && self.at_branch_end());
+            if ended && self.cx.kept.is_none() {
                 return None;
-            }
-            let waits = self
-                .waiting_line_end(false)
-                .and_then(|end| end.map(|e| self.hold_line(e, false)).transpose());
-            match waits {
-                Ok(Some(held)) => {
-                    // SAFETY: `held` holds the line `hold_line` just built.
-                    unsafe { self.fill_if_sibling_write(held.dyad) };
-                    if !bare_branch {
-                        self.consume_separator();
-                    }
-                    self.cx.queued.push_back(held);
-                    continue;
-                }
-                Ok(None) => {}
-                Err(e) => return Some(Err(e)),
             }
             self.note_cuts();
             let mut tape = ParsingTape::new();
-            self.start_from_kept(&mut tape);
-            let boundary = match self.lex_segment(&mut tape) {
+            tape.segment.line = self.cx.open.last().is_some_and(|o| o.own_lines());
+            // A line is where a part of it that waits for the run is taken up: what reaches
+            // here waits for nothing that runs it later.
+            let lexed = self.start_from_kept(&mut tape).and_then(|()| self.lex_segment(&mut tape));
+            let boundary = match lexed {
                 Ok(b) => b,
-                Err(e) => return Some(Err(e)),
+                Err(e) => return Some(Err(e.refused_now())),
             };
             self.cx.line_tape = &tape;
             let Built { items, before, after } = match self.construct_segment(&mut tape) {
                 Ok(built) => built,
-                Err(e) => return Some(Err(e)),
+                Err(e) => return Some(Err(e.refused_now())),
             };
             // The `,` is consumed once the segment before it is constructed; a
             // `,` where nothing stands is purely for the reader.
@@ -1010,7 +1053,7 @@ impl<'a> Parser<'a> {
             }
             if items.len() > 1 {
                 self.cx.pos = items[1].1;
-                return Some(Err(self.leftover_error(items[0].0.dyad)));
+                return Some(Err(self.leftover_error(items[0].0.dyad).refused_now()));
             }
             if let Some(&(item, _)) = items.first() {
                 // SAFETY: `item` is a reduced dyad just constructed.

@@ -147,7 +147,7 @@ impl<'a> Parser<'a> {
     }
 
     /// What answers `.name` after `lhs`, where `lhs` is a read of a tape node or of its type
-    /// word (`tape::node_member`, which the line scan asks too); `None` for any other value.
+    /// word (`tape::node_member`); `None` for any other value.
     fn tape_node_member(&self, lhs: DyadPtr, name: &str) -> Option<NodeMember> {
         use crate::identities::tape;
         // SAFETY: `lhs` is a reduced dyad from the store.
@@ -159,10 +159,9 @@ impl<'a> Parser<'a> {
     /// its type word and `.name` is a member that read does not answer itself: the member is
     /// that node's or that type's, the node read as a node a path reaches is (›`x.type` reads the
     /// type word of the node a name or an expression stands for‹ [[R279]]). It is known where
-    /// the pass has reached the line, once what stands before the read has run, so a body's line
-    /// reading it waits for the run (`waiting_line_end`) as one reading a `dyad` name does
-    /// ([`Self::held_now`]); a read the line scan did not find is refused where it is written.
-    /// `None` for any other read.
+    /// the pass has reached the line, once what stands before the read has run, so in a body the
+    /// read waits for the run ([`Self::known_at_run`]), as one of a `dyad` name does
+    /// ([`Self::held_now`]). `None` for any other read.
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store.
@@ -176,7 +175,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         if !self.in_pass_order() {
-            return Err(ParseError::TypeKnownOnlyAtRun);
+            return Err(self.known_at_run());
         }
         let at = tape.at(-1).map_or(self.cx.pos, |c| c.start);
         self.run_first(tape, at)?;
@@ -204,9 +203,14 @@ impl<'a> Parser<'a> {
         if !self.is_node_cell(cell) || !(*ops.add(2)).is_null() {
             return Err(ParseError::StampOutsideParse);
         }
+        // The type a `dyad` holds is known where its line runs (›A `dyad ?` place is
+        // transparent: a placeholder for a new node of any type‹ [[R293]]).
+        if crate::identities::dyad_place::known_only_at_run(types, value) {
+            return Err(self.known_at_run());
+        }
         let def = self.cx.definitions.last_mut().expect("is_node_cell found a parse body");
         if types.through(value) == def.self_type {
-            return Ok(tape::build_write(self.rt.store, types, cell, def.this_param));
+            return tape::build_write(self.rt.store, types, cell, def.this_param);
         }
         if crate::identities::read::output_type(types, value) != types.type_ {
             return Err(ParseError::StampNeedsType);
@@ -1285,14 +1289,7 @@ impl<'a> Parser<'a> {
         };
         let right = *tape.at(1).expect("`binary_operands` found a right side");
         let refused = |p: &mut Self| p.fail_at(right.start, ParseError::NotACollection);
-        let t = match self.type_known_now(collection) {
-            Ok(t) => t,
-            Err(ParseError::TypeKnownOnlyAtRun) => {
-                return Err(self.fail_at(right.start, ParseError::TypeKnownOnlyAtRun))
-            }
-            Err(e) if e.type_given_by_running() => return Err(e),
-            Err(_) => return Err(refused(self)),
-        };
+        let t = self.type_operand_now(collection, right.start, ParseError::NotACollection)?;
         // SAFETY: `t` is a type node; the member and `element` are reduced dyads from the store.
         let call = unsafe {
             let t = crate::identities::gate::under(t);
@@ -1759,10 +1756,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnsupportedOperands);
         };
         let base = self.operand_dyad(cell)?;
-        // SAFETY: `base` is a resolved dyad from the store.
-        if !unsafe { crate::identities::is_type_value(self.types, base) } {
-            return Err(ParseError::UnsupportedOperands);
-        }
+        let base = self.type_operand_now(base, cell.start, ParseError::UnsupportedOperands)?;
         tape.remove(1);
         // SAFETY: `base` is a type node from the store, gated or not.
         let logos = unsafe {
@@ -2043,7 +2037,7 @@ impl<'a> Parser<'a> {
             return self.view_member(lhs, "type");
         }
         if dyad_place::known_only_at_run(types, lhs) {
-            return Err(ParseError::TypeKnownOnlyAtRun);
+            return Err(self.known_at_run());
         }
         let t = match which {
             TypeRead::Own => match read::operator_node(types, lhs) {
@@ -2056,7 +2050,7 @@ impl<'a> Parser<'a> {
             TypeRead::Gives => read::gives(types, lhs)?,
         };
         if t.is_null() {
-            return Err(ParseError::TypeKnownOnlyAtRun);
+            return Err(self.known_at_run());
         }
         Ok(t)
     }

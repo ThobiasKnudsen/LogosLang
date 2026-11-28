@@ -96,8 +96,21 @@ fn construct(
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
-    let types = p.types();
     let (place, slot) = read_target(p, tape)?;
+    // A wait for the run met past the place carries it: its line writes it when it runs.
+    write_into(p, id, tape, &place, slot).map_err(|e| e.written_into(&place))
+}
+
+/// `=` over `place`, read by [`read_target`], `slot` the body slot it names.
+fn write_into(
+    p: &mut crate::parse::Parser,
+    id: DyadPtr,
+    tape: &mut crate::parse::ParsingTape,
+    place: &crate::parse::Cell,
+    slot: Option<crate::parse::SlotKind>,
+) -> Result<crate::parse::Constructed, ParseError> {
+    let types = p.types();
+    p.write_waits(place)?;
     let target = place.dyad;
     // Anything but a bracket right of a body slot is `slot_fill`'s checked error.
     if matches!(
@@ -114,6 +127,9 @@ fn construct(
         return Ok(crate::parse::Constructed::Placed);
     }
     let value = p.parse_expression()?;
+    // A right side that ends in a line held for the run gives a `dyad`, as a landing does.
+    // SAFETY: `value` is a reduced dyad just parsed.
+    unsafe { super::waiting::lands_in(types, value, types.dyad_) };
     let value = p.held_type_or(value);
     // SAFETY: `target` and `value` are reduced dyads from the store.
     let value = unsafe { p.land_in_run_type(target, value) }?;
@@ -175,7 +191,7 @@ fn construct(
             }
             p.note_receiver_write(target);
         }
-        p.note_write(node, &place);
+        p.note_write(node, place);
         node
     };
     tape.place(node);
@@ -234,7 +250,7 @@ pub(super) fn build_store(
             return Err(ParseError::ArmsDiffer);
         }
         // SAFETY: `lhs_d` is a tape cell read, `rhs` a reduced dyad.
-        return Ok(unsafe { super::tape::build_write(store, types, lhs_d, rhs) });
+        return unsafe { super::tape::build_write(store, types, lhs_d, rhs) };
     }
     if lhs_ty == types.hashmap.get {
         // SAFETY: `lhs_d` is a get node, `rhs` a reduced dyad.

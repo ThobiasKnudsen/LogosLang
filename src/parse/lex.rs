@@ -227,40 +227,53 @@ impl<'a> Parser<'a> {
             }
             cell
         };
-        // A place holding a node is read by the pass wherever it stands as an operand, and the
-        // read is honest only if everything parsed before it has run; so where parse order is
-        // run order, its cell is the point the pass runs to. A box, `type ?` or `dyad ?`, is
-        // read for the identity it holds, so the part of its own line before it runs first too
-        // (›The pass runs only as far as it must, in order, and never twice‹ [[R288]]).
-        if in_run_order && self.cx.runtime_depth == 0 {
-            use crate::identities::read::{read_kind, Read};
-            let id = cell.identity(self.types);
-            // SAFETY: the binding the trie resolved, or the fresh spelling's node, is a dyad
-            // from the store.
-            let kind = unsafe { read_kind(self.types, id) };
-            let dyad_box = kind == Read::Container(self.types.dyad_);
-            if dyad_box {
-                self.run_first(tape, cell.start)?;
-            } else if self.is_box(id) {
-                self.read_type_box(tape, id, cell.start)?;
-            } else if matches!(kind, Read::Container(t) if !t.is_null()) {
-                self.drain()?;
-            }
-            if dyad_box {
-                if let Some(held) = self.read_through(id)? {
-                    self.cx.each_pass_read |= self.cx.each_pass;
-                    cell.dyad = held;
-                }
-            } else if self.is_live_call_slot(id) {
-                // The running call's slot is that call's value (DESIGN ›A type is a
-                // comptime value‹): a use of it in the held body is the type it holds.
-                let held = self.settled_type(id);
-                if held != id {
-                    cell.dyad = held;
-                }
-            }
+        if in_run_order {
+            self.read_where_lexed(tape, &mut cell)?;
         }
         Ok(Some((cell, cell.start)))
+    }
+
+    /// `cell`, lexed where parse order is run order, read as the pass reads it there. A place
+    /// holding a node is read by the pass wherever it stands as an operand, and the read is
+    /// honest only if everything parsed before it has run; so its cell is the point the pass runs
+    /// to. A box, `type ?` or `dyad ?`, is read for the identity it holds, so the part of its own
+    /// line before it runs first too (›The pass runs only as far as it must, in order, and never
+    /// twice‹ [[R288]]).
+    pub(super) fn read_where_lexed(
+        &mut self,
+        tape: &mut ParsingTape,
+        cell: &mut Cell,
+    ) -> Result<(), ParseError> {
+        use crate::identities::read::{read_kind, Read};
+        if self.cx.runtime_depth != 0 {
+            return Ok(());
+        }
+        let id = cell.identity(self.types);
+        // SAFETY: the binding the trie resolved, or the fresh spelling's node, is a dyad from the
+        // store.
+        let kind = unsafe { read_kind(self.types, id) };
+        let dyad_box = kind == Read::Container(self.types.dyad_);
+        if dyad_box {
+            self.run_first(tape, cell.start)?;
+        } else if self.is_box(id) {
+            self.read_type_box(tape, id, cell.start)?;
+        } else if matches!(kind, Read::Container(t) if !t.is_null()) {
+            self.drain()?;
+        }
+        if dyad_box {
+            if let Some(held) = self.read_through(id)? {
+                self.cx.each_pass_read |= self.cx.each_pass;
+                cell.dyad = held;
+            }
+        } else if self.is_live_call_slot(id) {
+            // The running call's slot is that call's value (DESIGN ›A type is a comptime
+            // value‹): a use of it in the held body is the type it holds.
+            let held = self.settled_type(id);
+            if held != id {
+                cell.dyad = held;
+            }
+        }
+        Ok(())
     }
 
     /// Whether `id` names a box, a `type ?` or `dyad ?` place, read for the identity it holds
@@ -549,16 +562,9 @@ impl<'a> Parser<'a> {
         Some((r.identity, r.matched))
     }
 
-    /// The identity of the token after the cursor, `None` at the end or where nothing resolves;
-    /// at the end of a held line cut before its `=`, that `=`.
+    /// The identity of the token after the cursor, `None` at the end or where nothing resolves.
     pub(super) fn next_identity(&mut self) -> Option<DyadPtr> {
-        match self.peek_token() {
-            Some((id, _)) => Some(id),
-            None if self.cx.cut_before_assign && self.cx.pos >= self.cx.source.len() => {
-                Some(self.types.assign)
-            }
-            None => None,
-        }
+        self.peek_token().map(|(id, _)| id)
     }
 
     /// The token at the cursor read as the start of what follows a word, no value to its left, so

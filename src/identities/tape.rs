@@ -332,11 +332,11 @@ pub(crate) unsafe fn build_write(
     types: &Core,
     slot: DyadPtr,
     cell: DyadPtr,
-) -> DyadPtr {
+) -> Result<DyadPtr, ParseError> {
     let ops = dyad::value(slot) as *const DyadPtr;
     let (recv, k) = (*ops, *ops.add(1));
-    let cell = super::place::build(store, types, cell);
-    act(store, types.tape.write, types.tape.write_leaf, &[recv, k, cell])
+    let cell = super::place::build(store, types, cell)?;
+    Ok(act(store, types.tape.write, types.tape.write_leaf, &[recv, k, cell]))
 }
 
 /// The cell takes a new node of the type `ty` gives when the stamp runs.
@@ -505,7 +505,7 @@ pub(crate) enum NodeMember {
     Held,
 }
 
-/// The one decision the line scan and the member read share: what answers `.name` after `read`.
+/// What answers `.name` after `read`.
 pub(crate) fn node_member(read: NodeRead, name: &str) -> NodeMember {
     match (name, read) {
         _ if TypeRead::of_member(name).is_some() => NodeMember::Type,

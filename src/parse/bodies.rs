@@ -325,13 +325,41 @@ impl OpenScope {
         stood
     }
 
-    pub(super) fn take_line_notes(&mut self) -> LineNotes {
-        LineNotes { made: std::mem::take(&mut self.made), prose: std::mem::take(&mut self.prose) }
-    }
-
     pub(super) fn add_line_notes(&mut self, notes: LineNotes) {
         self.made.extend(notes.made);
         self.prose.extend(notes.prose);
+    }
+
+    /// How far the line being parsed has gone in what it holds, ends, runs and gives, its noted
+    /// values and comments apart: a constructor that failed part-way left the line as it found it
+    /// where this is unchanged.
+    pub(super) fn line_reach(&self) -> [usize; 11] {
+        [
+            self.exit.len(),
+            self.ended.len(),
+            self.unrun.len(),
+            self.stood.len(),
+            self.held.len(),
+            self.address_holds.len(),
+            self.narrowed.len(),
+            self.unsettled.len(),
+            self.closed_runs.len(),
+            usize::from(self.moves_through),
+            usize::from(self.gives_held),
+        ]
+    }
+
+    /// How many values and comments the line being parsed has noted so far.
+    pub(super) fn line_notes_mark(&self) -> (usize, usize) {
+        (self.made.len(), self.prose.len())
+    }
+
+    /// What the line noted since `mark`, taken off it.
+    pub(super) fn line_notes_since(&mut self, (made, prose): (usize, usize)) -> LineNotes {
+        LineNotes {
+            made: self.made.split_off(made.min(self.made.len())),
+            prose: self.prose.split_off(prose.min(self.prose.len())),
+        }
     }
 }
 
@@ -797,15 +825,17 @@ impl<'a> Parser<'a> {
             let was = std::mem::replace(&mut self.cx.result_type, true);
             let items = self.drive_until_open(RightSide::ReturnType);
             self.cx.result_type = was;
-            let out = self.one_of(items?).map_err(|e| match e {
-                ParseError::Empty => ParseError::ExpectedReturnType,
-                e => e,
-            })?;
-            // The function is built here, so its result type is needed now (›`fn` is not a
-            // primitive: a function is a type in this same shape‹ [[R199]]).
+            let out =
+                self.one_of(items.map_err(ParseError::refused_now)?).map_err(|e| match e {
+                    ParseError::Empty => ParseError::ExpectedReturnType,
+                    e => e,
+                })?;
+            // The function is built here, so its result type is needed now, and nothing of it
+            // waits for the run (›`fn` is not a primitive: a function is a type in this same
+            // shape‹ [[R199]]).
             self.operand_dyad(out)
                 .and_then(|d| self.type_known_now(d))
-                .map_err(|e| self.fail_at(start, e))?
+                .map_err(|e| self.fail_at(start, e.refused_now()))?
         };
         let source = self.cx.source;
         // The source after `->`, as an error names the type.
@@ -1395,7 +1425,10 @@ impl<'a> Parser<'a> {
         let cond = self.parse_block(false, LinesEnd::Condition);
         self.cx.next_block = BlockValue::Used;
         let cond = cond?.1.dyad;
+        // A condition that ends in a line held for the run lands in `bool` when it runs.
         // SAFETY: `cond` is the reduced dyad just parsed.
+        unsafe { crate::identities::waiting::lands_in(self.types, cond, self.types.bool_) };
+        // SAFETY: as above.
         if unsafe { crate::identities::read::output_type(self.types, cond) } != self.types.bool_ {
             return Err(ParseError::NonBoolCondition);
         }
@@ -1616,6 +1649,16 @@ impl<'a> Parser<'a> {
         if let Some(s) = step {
             parts.push(s);
         }
+        // The parts' types decide the counter's, so a part of a type known only when the program
+        // runs is read then (›A type known only when the program runs still works; what needs it
+        // is parsed when its line runs‹ [[R377]]).
+        let at_run = |&p: &DyadPtr| {
+            // SAFETY: `parts` are reduced dyads just parsed.
+            unsafe { crate::identities::dyad_place::known_only_at_run(types, p) }
+        };
+        if parts.iter().any(at_run) {
+            return Err(self.known_at_run());
+        }
         // SAFETY: `parts` are reduced dyads just parsed.
         let logos =
             unsafe { crate::identities::resolve_loop_parts(self.rt.store, types, &mut parts)? };
@@ -1722,9 +1765,12 @@ impl<'a> Parser<'a> {
             }
         }
         for (i, &arg) in args.iter().enumerate() {
-            // An `if` whose arms give two types gives one where its parameter's type lands each
-            // arm.
+            // A value that ends in a line held for the run gives a `dyad`, as a landing does
+            // (`identities::land`). An `if` whose arms give two types gives one where its
+            // parameter's type lands each arm.
             // SAFETY: `args` are reduced dyads just parsed.
+            unsafe { crate::identities::waiting::lands_in(self.types, arg, self.types.dyad_) };
+            // SAFETY: as above.
             match unsafe { crate::identities::read::value_type(self.types, arg) } {
                 Ok(_) | Err(ParseError::ArmsDiffer) => {}
                 Err(e) => return Err(e),
@@ -2593,7 +2639,7 @@ impl<'a> Parser<'a> {
 
     /// Where the pass runs each line once it has parsed it: the top level, or a held line
     /// parsed when it runs, outside every deferred body.
-    pub(super) fn in_pass_order(&self) -> bool {
+    pub(crate) fn in_pass_order(&self) -> bool {
         self.cx.feed.as_ref().is_none_or(|f| f.in_run_order) && self.cx.runtime_depth == 0
     }
 

@@ -1018,7 +1018,9 @@ pub(crate) unsafe fn resolve_binary(
 /// converted exactly, a value whose type lies inside `ty` under the conversion node a written
 /// `ty (value)` builds, and a number of a type gated `lossy` into a number type `ty` with loss;
 /// anything else is refused where it is written. An `if` lands each arm,
-/// so arms of two types meet in `ty`, and a block its last line. A type no place can have takes
+/// so arms of two types meet in `ty`, and a block its last line; a line held for the run gives
+/// a `dyad` there, read through at `ty` (›A type known only when the program runs still works;
+/// what needs it is parsed when its line runs‹ [[R377]]). A type no place can have takes
 /// the value as it stands. DESIGN ›A type's `parse` decides what converts into it; unwritten, a
 /// value converts only into a type that holds it exactly‹, ›`if` reads its own right side‹.
 ///
@@ -1125,6 +1127,7 @@ unsafe fn land_with(
     else {
         return Ok(value);
     };
+    waiting::lands_in(types, value, types.dyad_);
     match read::value_type(types, value) {
         Ok(_) | Err(ParseError::ArmsDiffer) => {}
         Err(e) => return Err(e),
@@ -1187,6 +1190,11 @@ unsafe fn land_leaf(
         }
         read::Read::Pointer(_) => subset::includes(types, from, ty) == Some(true),
         read::Read::Container(t) if t == types.type_ => {
+            // The box takes the node a `dyad` holds, which its line has only when it runs
+            // (›A `type ?` place is a box, written any number of times‹ [[R291]]).
+            if dyad_place::known_only_at_run(types, value) {
+                return Err(ParseError::WaitsForRun(None));
+            }
             if !assign::box_takes(types, t, value) {
                 return Err(ParseError::BadDeclaredType);
             }

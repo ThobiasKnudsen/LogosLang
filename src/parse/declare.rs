@@ -114,9 +114,28 @@ impl<'a> Parser<'a> {
         }
         let held = self.settled_type(place);
         if held == place {
-            return Err(ParseError::TypeKnownOnlyAtRun);
+            return Err(self.known_at_run());
         }
         crate::identities::land(self.rt.store, types, value, dyad::ty(held))
+    }
+
+    /// An `=` into `place`, read before its right side, where the place's type is known only when
+    /// the program runs and the write waits for it: in a body, before the right side is parsed,
+    /// so the write is held from its `=`, with the place it writes ([`Self::land_in_run_type`]).
+    pub(crate) fn write_waits(&self, place: &Cell) -> Result<(), ParseError> {
+        let target = place.dyad;
+        // SAFETY: a read target holds a reduced dyad from the store.
+        let waits = self.waits_here()
+            && !target.is_null()
+            && unsafe {
+                dyad::ty(target) == self.types.binding_
+                    && Binding::read(target).typed_at_run
+                    && self.settled_type(target) == target
+            };
+        if waits {
+            return Err(ParseError::WaitsForRun(Some(Box::new(*place))));
+        }
+        Ok(())
     }
 
     /// The bindings a write into the cell's node must be granted by: the cell's path, or
@@ -1147,28 +1166,6 @@ impl<'a> Parser<'a> {
         self.gates_ahead().0.contains(&self.types.static_)
     }
 
-    /// The value of the `:=` at the cursor where it waits for the run, held from after the gate
-    /// words that open it, whether it is a place with no value, and the gate mint of those words,
-    /// which gate the place the run fills; `None`, the cursor where it was, for a value parsed
-    /// here.
-    fn waiting_gated(&mut self) -> Result<Option<(Cell, bool, DyadPtr)>, ParseError> {
-        let at = self.cx.pos;
-        let (words, after) = self.gates_ahead();
-        self.cx.pos = after;
-        let Some((held, hole)) = self.waiting_value()? else {
-            self.cx.pos = at;
-            return Ok(None);
-        };
-        let mut gates = std::ptr::null_mut();
-        for gate in words {
-            // SAFETY: `gates` is null or a gate mint, and `gate` is a gate word.
-            let joined =
-                unsafe { crate::identities::gate::joined(self.rt.store, self.types, gates, gate) };
-            gates = joined.ok_or_else(|| self.fail_at(at, ParseError::DoubleGate))?;
-        }
-        Ok(Some((held, hole, gates)))
-    }
-
     /// A word that gates the value to its right.
     pub(super) fn is_gate_word(&self, id: DyadPtr) -> bool {
         crate::identities::gate::words(self.types).iter().any(|&(word, _)| word == id)
@@ -1226,20 +1223,35 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = binding;
         self.cx.filling.push(binding);
         self.cx.filling_at.push(self.cx.pos);
-        let (mut typed_at_run, mut unwritten) = (false, false);
-        let mut held_gates = std::ptr::null_mut();
-        let value = self.waiting_gated().and_then(|held| match held {
-            Some((held, hole, gates)) => {
-                (typed_at_run, unwritten, held_gates) = (true, hole, gates);
-                Ok(held)
-            }
-            None => self.parse_expression_cell(),
-        });
+        self.skip_whitespace();
+        let (from, notes) = (self.cx.pos, self.cx.open.last().map(|o| o.line_notes_mark()));
+        let value = self.parse_expression_cell();
         self.cx.filling.pop();
         self.cx.filling_at.pop();
         self.cx.last_declared = binding;
         self.cx.pending_binding = std::ptr::null_mut();
-        let cell = if typed_at_run { value? } else { self.declared_value(value?)? };
+        let value = value?;
+        // A line held for the run is what the gate words over it gave: the held line keeps those
+        // gates for the name.
+        // SAFETY: a built cell holds a reduced dyad from the store.
+        let (under, written) =
+            unsafe { crate::identities::gate::value_parts(self.types, value.dyad) }
+                .unwrap_or((value.dyad, std::ptr::null_mut()));
+        let mut held = value;
+        held.dyad = under;
+        // SAFETY: as above.
+        let (typed_at_run, unwritten) = match unsafe { self.held_lays_out(under) } {
+            Some(lays_out) => (true, lays_out),
+            None => match self.hold_bare_type(from, notes.unwrap_or_default(), held)? {
+                Some(line) => {
+                    held = line;
+                    (true, true)
+                }
+                None => (false, false),
+            },
+        };
+        let held_gates = if typed_at_run { written } else { std::ptr::null_mut() };
+        let cell = if typed_at_run { held } else { self.declared_value(value)? };
         if self.is_bare_unknown(&cell) {
             return Err(self.untyped(tok.start, false));
         }
@@ -1408,6 +1420,7 @@ impl<'a> Parser<'a> {
         let value = if hole {
             value
         } else {
+            crate::identities::waiting::lands_in(self.types, value, self.types.dyad_);
             crate::identities::read::value_type(self.types, value)?;
             crate::identities::copy::taken(self.rt.store, self.types, value)
         };

@@ -363,7 +363,7 @@ pub fn parse_message(e: &ParseError) -> String {
             "a value made once, where it is written (`static`, `immediate`), cannot use a name that has no value there yet: a parameter or local of the function around it, or a name of the loop or branch around it".into()
         }
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
-        ParseError::TypeKnownOnlyAtRun => {
+        ParseError::TypeKnownOnlyAtRun | ParseError::WaitsForRun(_) => {
             "which type this is is known only when the program runs, and this needs it now".into()
         }
         ParseError::NonOwningIntoOwning => {

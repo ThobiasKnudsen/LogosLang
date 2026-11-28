@@ -512,7 +512,7 @@ fn construct_negate(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     let types = p.types();
-    let operand = p.take_right(tape)?;
+    let operand = p.operand_right(tape)?;
     // SAFETY: `operand` is the reduced dyad to the right.
     let node = unsafe { build_negate(p.store(), types, id, operand) }?;
     // SAFETY: `node` was just built over a reduced dyad.

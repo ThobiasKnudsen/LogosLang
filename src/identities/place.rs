@@ -37,10 +37,23 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> PlaceIds {
     PlaceIds { place, place_leaf }
 }
 
-/// The operand of a write that keeps `value` as a node.
-pub(crate) fn build(store: &mut Store, types: &Core, value: DyadPtr) -> DyadPtr {
+/// The operand of a write that keeps `value` as a node. A line held for the run is parsed only
+/// where it runs, so it is no node to keep: the write waits with it, and is parsed whole when it
+/// runs (›A type known only when the program runs still works; what needs it is parsed when its
+/// line runs‹ [[R377]]).
+///
+/// # Safety
+/// `value` must be null or a reduced dyad from the store.
+pub(crate) unsafe fn build(
+    store: &mut Store,
+    types: &Core,
+    value: DyadPtr,
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    if !value.is_null() && dyad::ty(value) == types.waiting.line {
+        return Err(crate::parse::ParseError::WaitsForRun(None));
+    }
     let output = super::pointer::at_dyad(store, types);
-    store.alloc_words(types.place.place, &[value, types.place.place_leaf, output])
+    Ok(store.alloc_words(types.place.place, &[value, types.place.place_leaf, output]))
 }
 
 /// What a parse's placed right side makes of a node of one type, held by the type's record

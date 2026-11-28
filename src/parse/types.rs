@@ -560,10 +560,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::MissingOperand);
         };
         let lhs = self.operand_dyad(left)?;
-        // SAFETY: `lhs` is a reduced dyad off the tape.
-        let Some(value) = (unsafe { crate::identities::type_identity_of(self.types, lhs) }) else {
-            return Err(self.fail_at(left.start, ParseError::FallibleNeedsType));
-        };
+        let value = self.type_operand_now(lhs, left.start, ParseError::FallibleNeedsType)?;
         let mint = self.fallible_of(value, left.start)?;
         tape.remove(-1);
         tape.place(mint);

@@ -26,7 +26,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("not", id);
     cx.metas.insert(id, |p, id, tape| {
-        let operand = p.take_right(tape)?;
+        let operand = p.operand_right(tape)?;
         // SAFETY: `operand` is the constructed cell just taken off the tape.
         let node = unsafe { p.build_not(id, operand) }?;
         tape.place(node);
