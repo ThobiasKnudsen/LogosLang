@@ -2364,8 +2364,33 @@ fn left_and_right_are_the_values_of_direction_on_both_tiers() {
         assert_eq!(run_script(&format!("{is_right}{tail}f(left)")), 0, "{tail:?}");
         let gives = "f := fn () -> direction ( left ),\n";
         assert_eq!(run_script(&format!("{gives}{tail}f() == left")), 1, "{tail:?}");
+        let branches = "f := fn (b := bool) -> direction ( if b (left) else (right) ),\n";
+        assert_eq!(run_script(&format!("{branches}{tail}f(false) == right")), 1, "{tail:?}");
+        assert_eq!(run_script(&format!("{branches}{tail}f(true) == left")), 1, "{tail:?}");
     }
-    assert_eq!(parse_err("right + 1"), parse_err("true + 1"));
+    // Held in a place, as a `bool` is.
+    assert_eq!(run_script("d := mut right, d = left, d == left"), 1);
+    assert_eq!(run_script("d := mut direction, d = right, d == right"), 1);
+    let field = "pt := type ( d := pub mut direction, n := pub i32 ), p := mut pt (right, 3),";
+    assert_eq!(run_script(&format!("{field} p.d = left, p.d == left")), 1);
+    assert_eq!(run_script("d := right, x := immediate d, x == right"), 1);
+    assert_eq!(run_script("f := fn () -> direction ( right ), x := immediate f(), x == right"), 1);
+    assert_eq!(run_script("b := true, x := immediate b, x"), 1);
+    // A `direction` is no number, as a `bool` is none.
+    for (direction, bool_) in [
+        ("right + 1", "true + 1"),
+        ("right == 1", "true == 1"),
+        ("i32 right", "i32 true"),
+        ("x := mut i32 1, x = right", "x := mut i32 1, x = true"),
+        ("right < left", "true < false"),
+    ] {
+        assert_eq!(script_parse_err(direction), script_parse_err(bool_), "{direction}");
+    }
+    assert_eq!(script_parse_err("if right (1) else (2)"), ParseError::NonBoolCondition);
+    // No rule names it a map's key or value type yet, as none names `bool`.
+    for map in ["hashmap direction -> i32", "hashmap i32 -> direction", "hashmap bool -> i32"] {
+        assert_eq!(script_parse_err(&format!("m := {map}, 0")), ParseError::HashmapShape, "{map}");
+    }
 }
 
 #[test]

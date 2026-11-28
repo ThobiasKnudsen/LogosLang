@@ -309,9 +309,17 @@ fn a_value_reads_its_type_and_a_reached_node_its_operands() {
 fn left_and_right_show_as_the_values_of_direction() {
     let (echoes, stderr) = repl(
         "t := type ( a := static pub right )\nprint «{t.a == right}»\nprint «{right.type}»\n\
-          print «{+.associativity}»\nleft\n",
+          print «{+.associativity}»\ne := mut right\ne = left\nprint «{e}»\n\
+          pt := type ( d := pub mut direction, n := pub i32 )\np := mut pt (right, 3)\n\
+          print «{p.d}»\np.d = left\nprint «{p.d}»\n\
+          f := fn (b := bool) -> direction ( if b (left) else (right) )\nf.compile()\n\
+          print «{f(false)}»\nx := immediate f(true)\nx\n",
     );
-    assert_eq!(echoes, ["true", "direction", "left", "left"], "stderr: {stderr}");
+    assert_eq!(
+        echoes,
+        ["true", "direction", "left", "left", "right", "left", "right", "left"],
+        "stderr: {stderr}"
+    );
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 

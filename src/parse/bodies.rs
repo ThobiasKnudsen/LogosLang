@@ -2894,9 +2894,9 @@ impl<'a> Parser<'a> {
     }
 
     /// What an `immediate` operand stands as: itself when nothing runs, else what the
-    /// graph can hold of its result: a number, a bool, a type or a node. Its line holds what else
-    /// the run made ([`Self::run_held`]); `before` is [`Self::line_made`] before the operand was
-    /// parsed.
+    /// graph can hold of its result: a value its type keeps in a machine word, a type or a node.
+    /// Its line holds what else the run made ([`Self::run_held`]); `before` is
+    /// [`Self::line_made`] before the operand was parsed.
     ///
     /// # Safety
     /// `node` must be a reduced dyad this parser built into its store.
@@ -2906,7 +2906,7 @@ impl<'a> Parser<'a> {
         before: &[DyadPtr],
     ) -> Result<DyadPtr, ParseError> {
         use crate::identities::numtype::NumType;
-        use crate::identities::read::{read_kind, Dispatch, Read};
+        use crate::identities::read::{output_type, place_layout, read_kind, Dispatch, Read};
         use crate::identities::{operand_of, Operand};
         let types = self.types;
         let kind = read_kind(types, node);
@@ -2919,11 +2919,10 @@ impl<'a> Parser<'a> {
                 return self.eval_type_call(node);
             }
         }
-        let bool_ = crate::identities::read::output_type(types, node) == types.bool_;
-        let nt = match operand_of(types, node) {
-            Operand::Concrete(nt) => nt,
-            Operand::Literal => NumType::I32,
-            _ if bool_ => NumType::I32,
+        let given = output_type(types, node);
+        let (ty, nt) = match (operand_of(types, node), place_layout(types, given)) {
+            (Operand::Literal, _) => (types.i32_, NumType::I32),
+            (_, Some((Read::Scalar(nt), _))) => (given, nt),
             _ => return Err(ParseError::ImmediateNotHeld),
         };
         self.drain()?;
@@ -2931,15 +2930,7 @@ impl<'a> Parser<'a> {
         let depth = self.cx.open.len() - 1;
         let bits =
             self.run_held(depth, node, &plan, |p| p.run_on_pass(node).map_err(ParseError::Run))?;
-        if bool_ {
-            let bool_ty = types.bool_;
-            return Ok(crate::identities::bool_mod::literal_node(
-                self.rt.store,
-                bool_ty,
-                bits != 0,
-            ));
-        }
-        Ok(self.scalar_value(nt, bits))
+        Ok(self.rt.store.alloc_blob(ty, &bits.to_ne_bytes()[..nt.bytes()]))
     }
 
     /// The end of the program: the root scope's own run (DESIGN ›The scope's
