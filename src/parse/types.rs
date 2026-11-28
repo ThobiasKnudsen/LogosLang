@@ -916,11 +916,14 @@ impl<'a> Parser<'a> {
             // `name := static …`: one place stored with the type, not a field of the layout;
             // never a parameter, which each call fills.
             if self.static_ahead() {
-                self.cx.pos = start;
                 if !relaxed {
+                    self.cx.pos = start;
                     return Err(ParseError::StaticMisplaced);
                 }
-                self.static_member(start)?;
+                self.static_member(name, start)?;
+                if !self.consume_separator() {
+                    break;
+                }
                 continue;
             }
             // `name := T ?` declares the field's type through the hole `?` built, and so does
@@ -934,12 +937,7 @@ impl<'a> Parser<'a> {
             // A field line's comments are the body's, as a `static` line's are; a parameter's
             // go to the line the `fn` stands in.
             if relaxed {
-                let body = self.cx.definitions.last().expect("a relaxed field list is a type body");
-                let open = self.cx.open.last_mut().expect("the type body's scope is open");
-                for comment in std::mem::take(&mut open.prose) {
-                    // SAFETY: the pending bindings were minted by this parser's declares.
-                    unsafe { self.cx.scopes.settle_item(body.scope, comment) };
-                }
+                self.settle_body_prose();
             }
             // SAFETY: a parsed cell holds a reduced dyad from the store.
             let (value, mut gates) =
@@ -1032,54 +1030,35 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `name := static value` in a type body, read from the name at `at`: one place stored with
-    /// the type, declared in the body scope (DESIGN ›Two muts, and the storage partition‹). The
-    /// fields and the members stay one scope for no-shadowing.
-    fn static_member(&mut self, at: usize) -> Result<(), ParseError> {
+    /// `name := static value` in a type body, read from after its `:=`, with `name`, written at
+    /// `at`, read as the spelling it declares, as a field's is: one place stored with the type
+    /// (DESIGN ›Two muts, and the storage partition‹), met by its siblings alone (›Members are
+    /// dot-only; strictness has no exceptions‹ [[R336]]).
+    fn static_member(&mut self, name: &str, at: usize) -> Result<(), ParseError> {
         let body = self.cx.definitions.last().expect("a member is declared in a type body").scope;
-        self.cx.last_declared = std::ptr::null_mut();
+        self.note_cuts();
         let outer_member = self.cx.member_fn_depth.replace(self.cx.frames.len());
-        let items = self.static_line();
+        let node = self.declare_value(name, false, at);
         self.cx.member_fn_depth = outer_member;
-        // The line's one declaration, with its prose lifted out beside it.
-        let mut declared = None;
-        for item in items? {
-            // SAFETY: `item` is a reduced dyad just parsed.
-            let ty = unsafe { dyad::ty(item) };
-            if ty == self.types.comment_ {
-                // SAFETY: the pending bindings were minted by this parser's declares.
-                unsafe { self.cx.scopes.settle_item(body, item) };
-            } else if ty == self.types.declare_ && declared.is_none() {
-                declared = Some(item);
-            } else {
-                self.cx.pos = at;
-                return Err(ParseError::TypeBodyLine);
-            }
-        }
-        let binding = self.cx.last_declared;
-        let Some(item) = declared.filter(|_| !binding.is_null()) else {
-            self.cx.pos = at;
-            return Err(ParseError::TypeBodyLine);
-        };
+        let node = node?;
+        self.pend_line(node);
+        // SAFETY: `node` is the declare node just built.
+        let binding = unsafe { crate::identities::declare::binding_of(node) };
         self.cx.definitions.last_mut().expect("read above").statics.push(binding);
         // SAFETY: the pending bindings were minted by this parser's declares.
-        unsafe { self.cx.scopes.settle_item(body, item) };
+        unsafe { self.cx.scopes.settle_item(body, node) };
+        self.settle_body_prose();
         Ok(())
     }
 
-    /// The first `parse_next` lexes and constructs the segment and queues
-    /// what it yielded; the rest are taken while queued, before anything
-    /// further is lexed, so none is left for the enclosing body's loop.
-    fn static_line(&mut self) -> Result<Vec<DyadPtr>, ParseError> {
-        let mut items = Vec::new();
-        let Some(first) = self.parse_next() else {
-            return Ok(items);
-        };
-        items.push(first?);
-        while !self.cx.queued.is_empty() {
-            items.push(self.parse_next().expect("a queued item comes out first")?);
+    /// The comments the type body's line just read lifted out are lines of the body.
+    fn settle_body_prose(&mut self) {
+        let body = self.cx.definitions.last().expect("a member is declared in a type body").scope;
+        let open = self.cx.open.last_mut().expect("the type body's scope is open");
+        for comment in std::mem::take(&mut open.prose) {
+            // SAFETY: the pending bindings were minted by this parser's declares.
+            unsafe { self.cx.scopes.settle_item(body, comment) };
         }
-        Ok(items)
     }
 
     /// The slot `kind` a type body declares on the line whose name stands at `start`, read from

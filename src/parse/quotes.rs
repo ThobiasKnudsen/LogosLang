@@ -403,7 +403,6 @@ impl<'a> Parser<'a> {
             }
             e => e,
         })?;
-        self.cx.last_declared = std::ptr::null_mut();
         let (store, types) = (&mut *self.rt.store, self.types);
         let node =
             crate::identities::declare::build(store, types, binding, description, description);

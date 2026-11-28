@@ -949,13 +949,7 @@ impl<'a> Parser<'a> {
             // What the last segment yielded, its expression and the prose
             // lifted out of it, goes out first.
             if let Some(item) = self.cx.queued.pop_front() {
-                // Where parse order is run order the item is pending: it runs
-                // when the pass needs a value, or when its scope or the call
-                // that takes it runs. A loop's condition runs on every pass instead.
-                if self.cx.runtime_depth == 0 && !self.cx.each_pass {
-                    let open = self.cx.open.last_mut().expect("the root scope is open");
-                    open.unrun.push(UnrunLine::new(item.dyad, open.lines));
-                }
+                self.pend_line(item.dyad);
                 return Some(Ok(item));
             }
             self.skip_whitespace();
@@ -1018,6 +1012,16 @@ impl<'a> Parser<'a> {
             self.cx.queued.extend(before.into_iter().map(prose));
             self.cx.queued.extend(items.into_iter().map(|(item, _)| item));
             self.cx.queued.extend(handed.into_iter().chain(after).map(prose));
+        }
+    }
+
+    /// Where parse order is run order the line `item` is pending: it runs when the pass needs a
+    /// value, or when its scope or the call that takes it runs. A loop's condition runs on every
+    /// pass instead.
+    pub(super) fn pend_line(&mut self, item: DyadPtr) {
+        if self.cx.runtime_depth == 0 && !self.cx.each_pass {
+            let open = self.cx.open.last_mut().expect("the root scope is open");
+            open.unrun.push(UnrunLine::new(item, open.lines));
         }
     }
 

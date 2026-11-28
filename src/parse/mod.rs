@@ -84,9 +84,6 @@ struct Context<'a> {
     filling: Vec<DyadPtr>,
     /// Where each of those right sides starts in the source.
     filling_at: Vec<usize>,
-    /// The binding of the last declaration that reduced: what a gate word to
-    /// its left marks.
-    last_declared: DyadPtr,
     /// The binding of the name left of the `.` being constructed, or null.
     member_root: DyadPtr,
     /// The bindings the member read under construction reaches, root first: what `.` writes
@@ -216,7 +213,6 @@ impl<'a> Context<'a> {
             pending_binding: std::ptr::null_mut(),
             filling: Vec::new(),
             filling_at: Vec::new(),
-            last_declared: std::ptr::null_mut(),
             member_root: std::ptr::null_mut(),
             member_path: Vec::new(),
             run_fields: None,
@@ -268,7 +264,6 @@ impl<'a> Context<'a> {
             dir: outer.dir.clone(),
             root: outer.root.clone(),
             held_depth: outer.held_depth,
-            last_declared: outer.last_declared,
             last_write: outer.last_write,
             reader: outer.reader,
             ..Context::top(source, scopes)
