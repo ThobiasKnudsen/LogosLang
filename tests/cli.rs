@@ -306,10 +306,28 @@ fn a_value_reads_its_type_and_a_reached_node_its_operands() {
 }
 
 #[test]
+fn left_and_right_show_as_the_values_of_direction() {
+    let (echoes, stderr) = repl(
+        "t := type ( a := static pub right )\nprint «{t.a == right}»\nprint «{right.type}»\n\
+          print «{+.associativity}»\ne := mut right\ne = left\nprint «{e}»\n\
+          pt := type ( d := pub mut direction, n := pub i32 )\np := mut pt (right, 3)\n\
+          print «{p.d}»\np.d = left\nprint «{p.d}»\n\
+          f := fn (b := bool) -> direction ( if b (left) else (right) )\nf.compile()\n\
+          print «{f(false)}»\nx := immediate f(true)\nx\n",
+    );
+    assert_eq!(
+        echoes,
+        ["true", "direction", "left", "left", "right", "left", "right", "left"],
+        "stderr: {stderr}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn a_type_body_fills_its_slots_and_declares_its_members() {
     let (echoes, stderr) = repl(
         "t := type (parse_rank = *.parse_rank + 1, associativity = right)\n\
-          print «{t.parse_rank}»\nprint «{t.associativity == right}»\nright.type == type\n",
+          print «{t.parse_rank}»\nprint «{t.associativity == right}»\nright.type == direction\n",
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
     let (echoes, stderr) = repl(

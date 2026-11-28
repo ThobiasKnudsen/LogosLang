@@ -9,7 +9,6 @@
 //! field names them, so no Logos code forges one. The natives run interpreted.
 
 use super::callable::{self, Callables};
-use super::read::Read;
 use super::{array, meta, Cx};
 use crate::dyad;
 use crate::dyad::DyadPtr;
@@ -203,14 +202,9 @@ fn param(p: &mut Parser, tape: &mut ParsingTape, offset: isize) -> Result<DyadPt
     // SAFETY: `d` is a resolved dyad from the store.
     unsafe {
         let t = super::type_identity_of(types, d).ok_or(ParseError::HashmapShape)?;
-        let fits = t == types.type_
-            || t == types.dyad_
-            || t == types.string_
-            || (t != types.bool_
-                && matches!(
-                    super::read::place_layout(types, t),
-                    Some((Read::Scalar(nt), _)) if !nt.is_float()
-                ));
+        let integer =
+            super::is_numtype_node(types, t) && !super::numtype::of_type_node(t).is_float();
+        let fits = t == types.type_ || t == types.dyad_ || t == types.string_ || integer;
         if fits {
             Ok(t)
         } else {

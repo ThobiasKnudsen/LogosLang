@@ -21,28 +21,17 @@ pub(super) fn register_root(store: &mut Store) -> DyadPtr {
     type_
 }
 
-/// Returns `,`, `left` and `right`, in that order.
-pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
+/// Returns `,`.
+pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // Spelled here, not in `register_root`: the trie and the root scope did not exist yet.
     cx.declare("type", cx.type_);
     cx.metas.insert(cx.type_, |p, id, tape| p.construct_type(id, tape));
-
-    // `left` and `right` carry a type's own record, not a delimiter's, so each
-    // stands as an operand.
-    let side = |cx: &mut Cx, name: &str| {
-        let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::INERT);
-        let id = cx.store.alloc_head(cx.type_, record);
-        cx.declare(name, id);
-        id
-    };
-    let left_ = side(cx, "left");
-    let right_ = side(cx, "right");
 
     let record = meta::token_record(cx, meta::prec::COMMA, crate::parse::Assoc::Left, &[]);
     let comma = cx.store.alloc_head(cx.type_, record);
     cx.declare(",", comma);
 
-    (comma, left_, right_)
+    comma
 }
 
 /// `layout`, a word only a type body knows, which declares it beside the slot words: its node
