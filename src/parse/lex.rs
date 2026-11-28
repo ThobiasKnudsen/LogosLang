@@ -185,6 +185,17 @@ pub(super) struct Feed {
     pub(super) in_run_order: bool,
 }
 
+/// What `self.x` reaches (›Fields are read with a dot, outside their type and inside it through
+/// `self`‹ [[R234]]).
+enum Reach {
+    /// `x`, a member of what `self` stands for, as a cell bound to it.
+    Member(Cell),
+    /// `x`, a name no member of it has.
+    NoMember(Cell),
+    /// No name after `self`, which reads what it stands for whole.
+    Whole,
+}
+
 impl<'a> Parser<'a> {
     /// The next token of the source as a tape cell with its offset, or `None`
     /// at the end; a spelling the trie does not know becomes a fresh-name
@@ -227,6 +238,7 @@ impl<'a> Parser<'a> {
             }
             cell
         };
+        let lexed = cell.start;
         let mut cell = self.self_member(cell)?;
         // A place holding a node is read by the pass wherever it stands as an operand, and the
         // read is honest only if everything parsed before it has run; so where parse order is
@@ -241,9 +253,9 @@ impl<'a> Parser<'a> {
             let kind = unsafe { read_kind(self.types, id) };
             let dyad_box = kind == Read::Container(self.types.dyad_);
             if dyad_box {
-                self.run_first(tape, cell.start)?;
+                self.run_first(tape, lexed)?;
             } else if self.is_box(id) {
-                self.read_type_box(tape, id, cell.start)?;
+                self.read_type_box(tape, id, lexed)?;
             } else if matches!(kind, Read::Container(t) if !t.is_null()) {
                 self.drain()?;
             }
@@ -261,7 +273,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        Ok(Some((cell, cell.start)))
+        Ok(Some((cell, lexed)))
     }
 
     /// `self.x`, `x` a member of what `self` stands for: the member's cell, read as a bare `x` is,
@@ -269,33 +281,86 @@ impl<'a> Parser<'a> {
     /// `self`‹ [[R234]]). `self.x` naming no member is refused, and so is `self` with no member
     /// after it: the seed hands on no value or type as a whole through it.
     fn self_member(&mut self, cell: Cell) -> Result<Cell, ParseError> {
-        let Some(holder) = self.self_word(&cell) else {
-            return Ok(cell);
-        };
-        let after = if self.cx.feed.is_some() {
-            self.fed_member()
-        } else {
-            self.written_member(cell.end()).map(|name| (name, None))
-        };
-        if let Some((name, next)) = after {
-            // SAFETY: `holder` is a binding dyad, and a cell's binding null or one.
-            if unsafe { self.member_of_self(holder, name.binding(self.types)) } {
+        let fed = self.cx.feed.as_ref().and_then(|feed| feed.next.checked_sub(1));
+        match self.reach_through_self(&cell, fed) {
+            None => Ok(cell),
+            Some(Reach::Member(name)) => {
                 self.cx.pos = name.end();
-                if let (Some(feed), Some(next)) = (self.cx.feed.as_mut(), next) {
-                    feed.next = next;
+                if let (Some(feed), Some(k)) = (self.cx.feed.as_mut(), fed) {
+                    feed.next = k + 3;
                 }
                 if self.unbuilt(&name) {
                     self.cx.pos = name.start;
                     let spelling = name.spelling().to_string();
                     return Err(ParseError::Resolve(ResolveError::Unbuilt(spelling)));
                 }
-                return Ok(name);
+                Ok(name)
             }
-            self.cx.pos = name.start;
-            return Err(ParseError::NoMemberThroughSelf(Box::new(name.spelling().into())));
+            Some(Reach::NoMember(name)) => {
+                self.cx.pos = name.start;
+                Err(ParseError::NoMemberThroughSelf(Box::new(name.spelling().into())))
+            }
+            Some(Reach::Whole) => {
+                self.cx.pos = cell.start;
+                Err(ParseError::SelfReachesMember)
+            }
         }
-        self.cx.pos = cell.start;
-        Err(ParseError::SelfReachesMember)
+    }
+
+    /// What `cell` reaches where it is the `self` word, `None` where it is not: the name after its
+    /// `.`, read from the feed when `fed` is the feed's index of `cell`, else from the source.
+    fn reach_through_self(&self, cell: &Cell, fed: Option<usize>) -> Option<Reach> {
+        let holder = self.self_word(cell)?;
+        let name = match fed {
+            Some(k) => self.cx.feed.as_ref().and_then(|feed| self.joined_name(&feed.cells, k)).map(
+                |mut name| {
+                    self.feed_resolve(&mut name);
+                    name
+                },
+            ),
+            None => self.written_member(cell.end()),
+        };
+        let Some(name) = name else { return Some(Reach::Whole) };
+        // SAFETY: `holder` is a binding dyad, and a cell's binding null or one.
+        Some(if unsafe { self.member_of_self(holder, name.binding(self.types)) } {
+            Reach::Member(name)
+        } else {
+            Reach::NoMember(name)
+        })
+    }
+
+    /// `r`, the token resolved at `at` in the source, read through `self` where it is `self.x`:
+    /// the member, through the end of `x`; `None` where it is not the `self` word.
+    fn reach_at(&self, at: usize, r: &Resolved) -> Option<Result<Resolved, Reach>> {
+        if r.fresh {
+            return None;
+        }
+        // SAFETY: a cell over the resolved binding, read for its spelling and binding alone.
+        let cell = unsafe { Cell::lexed(r.binding, self.cx.source, at, r.matched) };
+        Some(match self.reach_through_self(&cell, None)? {
+            Reach::Member(name) => {
+                let member = name.binding(self.types);
+                // SAFETY: a member is a binding dyad from the store.
+                let (identity, scope) =
+                    unsafe { (self.types.through(member), Binding::read(member).scope) };
+                let matched = name.end() - at;
+                Ok(Resolved { fresh: false, matched, binding: member, identity, scope })
+            }
+            refused => Err(refused),
+        })
+    }
+
+    /// The cell a peek at `k` in the feed sees: `self.x` is the member `x`, its length through the
+    /// end of `x`, as the lexer will take it.
+    fn fed_through_self(&self, cell: Cell, k: usize) -> Cell {
+        match self.reach_through_self(&cell, Some(k)) {
+            Some(Reach::Member(mut name)) => {
+                name.len = name.end() - cell.start;
+                name.start = cell.start;
+                name
+            }
+            _ => cell,
+        }
     }
 
     /// The binding of `cell` where it is the `self` the language declares: a function's value, or
@@ -324,14 +389,6 @@ impl<'a> Parser<'a> {
         Some(unsafe { Cell::lexed(bound, source, start, r.matched) })
     }
 
-    /// The name right after `self.` in a held body's feed, `self` the cell just taken, with the
-    /// feed's index past it.
-    fn fed_member(&self) -> Option<(Cell, Option<usize>)> {
-        let feed = self.cx.feed.as_ref()?;
-        let name = self.joined_name(&feed.cells, feed.next.checked_sub(1)?)?;
-        Some((name, Some(feed.next + 2)))
-    }
-
     /// `cells[k + 2]`, where a `.` joins it to `cells[k]` with no space on either side.
     fn joined_name(&self, cells: &[Cell], k: usize) -> Option<Cell> {
         let (cell, dot, name) = (cells.get(k)?, cells.get(k + 1)?, cells.get(k + 2)?);
@@ -355,25 +412,15 @@ impl<'a> Parser<'a> {
     /// `self` stands for, scans as a bare `x` does, through the end of `x`. A `self` the lexer
     /// refuses fails the scan, so the line is parsed where it is written and refused there.
     pub(super) fn scanned_through_self(
-        &mut self,
+        &self,
         at: usize,
         r: Resolved,
     ) -> Result<Resolved, ParseError> {
-        let source = self.cx.source;
-        // SAFETY: a cell over the resolved binding, read for its spelling and binding alone.
-        let cell = unsafe { Cell::lexed(r.binding, source, at, r.matched) };
-        if self.self_word(&cell).is_none() || self.cx.feed.is_some() {
-            return Ok(r);
+        match self.reach_at(at, &r) {
+            None => Ok(r),
+            Some(Ok(member)) => Ok(member),
+            Some(Err(_)) => Err(ParseError::SelfReachesMember),
         }
-        let pos = self.cx.pos;
-        let read = self.self_member(cell);
-        self.cx.pos = pos;
-        let member = read?;
-        // SAFETY: a member's cell is bound to its binding, a binding dyad from the store.
-        let (identity, scope) =
-            unsafe { (self.types.through(member.dyad), Binding::read(member.dyad).scope) };
-        let matched = member.end() - at;
-        Ok(Resolved { fresh: false, matched, binding: member.dyad, identity, scope })
     }
 
     /// Whether `member`, the binding read after the `self` that `holder` binds, is a member of
@@ -640,6 +687,7 @@ impl<'a> Parser<'a> {
         let i = self.feed_index()?;
         let mut cell = self.cx.feed.as_ref()?.cells[i];
         self.feed_resolve(&mut cell);
+        let cell = self.fed_through_self(cell, i);
         if cell.is_fresh(self.types) {
             return None;
         }
@@ -691,6 +739,10 @@ impl<'a> Parser<'a> {
         }
         let (r, _) =
             token(&self.cx.scopes, self.trie, &source[self.cx.pos..], false, Left::Value).ok()?;
+        let r = match self.reach_at(self.cx.pos, &r) {
+            Some(Ok(member)) => member,
+            _ => r,
+        };
         Some((r.identity, r.matched))
     }
 
@@ -713,13 +765,19 @@ impl<'a> Parser<'a> {
             let i = self.feed_index()?;
             let mut cell = self.cx.feed.as_ref()?.cells[i];
             self.feed_resolve(&mut cell);
+            let cell = self.fed_through_self(cell, i);
             return Some((!cell.is_fresh(self.types)).then(|| cell.identity(self.types)));
         }
         self.skip_whitespace();
         let source = self.cx.source;
         let rest = source.get(self.cx.pos..).filter(|rest| !rest.is_empty())?;
         let resolved = token(&self.cx.scopes, self.trie, rest, true, Left::Nothing);
-        Some(resolved.ok().filter(|(r, _)| !r.fresh).map(|(r, _)| r.identity))
+        let Ok((r, _)) = resolved else { return Some(None) };
+        let r = match self.reach_at(self.cx.pos, &r) {
+            Some(Ok(member)) => member,
+            _ => r,
+        };
+        Some((!r.fresh).then_some(r.identity))
     }
 
     pub(super) fn consume_token(&mut self, id: DyadPtr) -> bool {

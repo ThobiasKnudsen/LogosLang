@@ -223,6 +223,7 @@ impl<'a> Parser<'a> {
                 return Ok(None);
             }
             let r = self.token_at(at, true)?;
+            let r = self.scanned_through_self(at, r)?;
             let id = r.identity;
             if id == types.sep_ || self.is_closer(id) || id == types.else_ {
                 return Ok(None);
