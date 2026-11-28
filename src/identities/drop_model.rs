@@ -86,10 +86,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             // SAFETY: `init` is a reduced dyad just parsed.
             match unsafe { super::gate::value_parts(types, init) } {
                 Some((init, gates)) => (gates, Some(init)),
-                None => (std::ptr::null_mut(), Some(init)),
+                None => (super::gate::Gates::NONE, Some(init)),
             }
         } else {
-            (std::ptr::null_mut(), None)
+            (super::gate::Gates::NONE, None)
         };
         // The cells keep the value in their bytes, so the block holds it, not the line.
         if let Some(init) = init {
@@ -365,7 +365,7 @@ pub(super) fn build_alloc(
     types: &Core,
     count: DyadPtr,
     init: Option<DyadPtr>,
-    gates: DyadPtr,
+    gates: super::gate::Gates,
 ) -> Result<DyadPtr, ParseError> {
     use crate::identities::Operand;
     // SAFETY: `count` and `init` are reduced dyads just parsed.
@@ -404,8 +404,7 @@ pub(super) fn build_alloc(
             init
         }
     };
-    // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store; `gates`
-    // null or a gate mint.
+    // SAFETY: `count` is a reduced dyad and `pointee` a type node, both from the store.
     unsafe {
         let pointee = super::gate::gated(store, types, gates, pointee);
         let key = [super::read::output_type(types, count), pointee];
@@ -827,7 +826,7 @@ unsafe fn end_parts(rt: &mut Runtime, t: DyadPtr, this: i64) -> Result<(), RunEr
         if teardown_of_type(rt.types(), ty) == Teardown::Nothing {
             continue;
         }
-        let at = (this as *mut u8).add(crate::binding::Binding::read(binding).offset);
+        let at = (this as *mut u8).add(super::instance::field_byte(rt.types(), binding));
         let value = if super::this::in_bytes(rt.types(), ty) {
             at as i64
         } else {

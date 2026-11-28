@@ -7956,7 +7956,7 @@ fn what_a_union_does_not_take_is_refused_where_it_is_written() {
     }
 }
 
-/// R379: a union's own first line is its tag, `tag := layout (u8, 0)`, and its members lie at
+/// R379: a union's own first line is its tag, a `u8` at byte 0, and its members lie at
 /// the largest member's alignment, as C lays out a struct of the tag and a C union of the members
 /// (R385). A program reads `v.tag`, the held member's place among the lines, and never writes
 /// it; the line meets the union's other lines alone, never the names where the union is written;
@@ -13248,8 +13248,7 @@ fn self_in_a_type_reaches_its_own_member_wherever_the_type_is_written() {
 
 /// ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]: a
 /// member named bare is refused, with `self.x` as the way to it only where this body's `self`
-/// reaches it. A member does not take the spelling of a word a body around it declares, `tape`
-/// or `self` (›`tape` is the parameter of a type's `parse` function‹ [[R191]]).
+/// reaches it.
 #[test]
 fn a_member_named_bare_is_refused() {
     for (src, expect) in [
@@ -13265,19 +13264,39 @@ fn a_member_named_bare_is_refused() {
             "t := type ( k := static pub type i32, h := pub static fn (a := k ?) -> i32 ( a ) ), t.h(4)",
             "1:64: error: `k` is a member: write `self.k`",
         ),
-        (
-            "a := type ( parse := static pub fn (tape := parsing_tape) -> void! ( m := type ( tape := pub i32 ? ), tape.is_constructed[0] = true ) ), a",
-            "1:82: error: `tape` is already declared and still in scope",
-        ),
-        (
-            "t := type ( self := pub i32 ?, h := pub static fn () -> i32 ( self.self ) ), v := t (5), v.h()",
-            "1:13: error: `self` is already declared and still in scope",
-        ),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
     }
+}
+
+/// ›Name resolution: a bare name is the innermost declaration of its spelling, each leading dot
+/// skips one more outward, and a spelling is declared again only in another scope‹ [[R335]]: a
+/// member is checked against its own scope alone, so it may take the spelling of a word its body
+/// knows, `offset`, `self` or a `parse`'s `tape`, and is read through `.` as any other.
+#[test]
+fn a_member_may_take_the_spelling_of_a_body_word() {
+    assert_runs(&[
+        (
+            "pt := type ( offset := pub i32 ?, len := pub i32 ? ), v := pt (1, 2), \
+             print «{v.offset}»"
+                .to_string(),
+            "1\n",
+        ),
+        (
+            "t := type ( self := pub i32 ?, h := pub static fn () -> i32 ( self.self ) ), \
+             v := t (5), v.h()"
+                .to_string(),
+            "5\n",
+        ),
+        (
+            "a := type ( parse := static pub fn (tape := parsing_tape) -> void! ( m := type ( \
+             tape := pub i32 ? ), print «{(m (7)).tape}», tape.is_constructed[0] = true ) ), a"
+                .to_string(),
+            "7\ntype\n",
+        ),
+    ]);
 }
 
 #[test]
@@ -14489,20 +14508,47 @@ fn plain_fields_lie_as_c_lays_out_a_struct() {
     assert_runs(&cases);
 }
 
-/// ›Inside a type body, `layout` gives a field its type and its byte: `a := layout (mut i32, 1)`‹
-/// [[R385]]: a `layout` field lies at its byte, a plain field after the field written before it
-/// at its alignment, and the size reaches the end of every field, rounded up to the widest
-/// alignment; both tiers read and write the fields there, and the byte is part of the mint.
+/// ›Inside a type body, a field's byte is its `offset N` relation: `a := offset 1 mut i32`‹
+/// [[R385]]: a field whose type holds `offset N` lies at that byte, however that type reached the
+/// field's line, a plain field after the field written before it at its alignment, and the size
+/// reaches the end of every field, rounded up to the widest alignment; both tiers read and write
+/// the fields there. The gate is in the field's type, `v.a.type` showing it and `==` reading
+/// through it, and a copy drops it (›Gates are type nodes: `x := mut i32 5`; the record holds no
+/// gates‹ [[R381]]). A value that is no field's own, a local, a parameter, an argument or a value
+/// in a bracket within a field's line, takes no `offset`.
 #[test]
-fn a_type_body_s_layout_gives_a_field_its_type_and_its_byte() {
-    let t = "t := type ( a := layout (pub mut i32, 1), b := pub mut u8 )";
-    let u = "u := type ( i := layout (pub mut i32, 8), f := layout (pub mut f64, 8) )";
+fn a_field_s_offset_gate_gives_it_its_byte() {
+    let t = "t := type ( a := offset 1 pub mut i32, b := pub mut u8 )";
+    let u = "u := type ( i := offset 8 pub mut i32, f := offset 8 pub mut f64 )";
+    let t4 = "t := type ( a := offset 4 pub mut i32, b := pub mut u8 ), v := mut t (70000, 9)";
     let mut cases = vec![
-        ("t := type ( a := layout (pub mut i32, 1) ), t.size_bytes".to_string(), "8\n"),
+        (format!("{t}, print «{{t.size_bytes}}»"), "8\n"),
+        ("t := type ( a := offset 1 pub mut i32 ), t.size_bytes".to_string(), "8\n"),
         (format!("{u}, u.size_bytes"), "16\n"),
         (
-            "p := type ( a := layout (pub mut u8, 4), b := pub mut i32 ), p.size_bytes".to_string(),
+            "p := type ( a := offset 4 pub mut u8, b := pub mut i32 ), p.size_bytes".to_string(),
             "12\n",
+        ),
+        (
+            "p := type ( a := offset 4 pub mut i32 ?, b := pub mut u8 ), v := p (7, 2), \
+             print «{v.a} {v.b} {p.size_bytes}»"
+                .to_string(),
+            "7 2 12\n",
+        ),
+        (
+            "p := type ( a := pub offset 2 u8 ), v := p (3), print «{v.a.type}»".to_string(),
+            "offset 2 pub u8\n",
+        ),
+        (
+            format!("{t}, v := t (70000, 9), k := v.a, print «{{v.a.type}} {{k.type}} {{k}}»"),
+            "offset 1 pub mut i32 i32 70000\n",
+        ),
+        (format!("{t}, v := t (70000, 9), print «{{v.a.type == i32}}»"), "true\n"),
+        (
+            "p := type ( a := offset 4 pub i32, b := offset 0 pub i32 ), v := p (3, 4), \
+             y := v.a + v.b, print «{y} {y.type}»"
+                .to_string(),
+            "7 i32\n",
         ),
         (format!("{u}, v := mut u ?, v.i = 5, v.i"), "5\n"),
         (format!("{u}, v := mut u ?, v.i = 5, v.f = 2.5, v.f"), "2.5\n"),
@@ -14514,25 +14560,50 @@ fn a_type_body_s_layout_gives_a_field_its_type_and_its_byte() {
         ),
         (format!("{t}, v := t (70000, 9), print «{{v.a}} {{v.b}}»"), "70000 9\n"),
         (
-            "g := fn () -> i32 ( t := type ( a := layout (pub mut i32, 1), b := pub mut u8 ), \
+            "g := fn () -> i32 ( t := type ( a := offset 1 pub mut i32, b := pub mut u8 ), \
              v := t (70000, 9), v.a + v.b ), g()"
                 .to_string(),
             "70009\n",
         ),
-        ("t := type ( a := layout (i32, u64 3) ), t.size_bytes".to_string(), "8\n"),
+        ("t := type ( a := offset u64 3 i32 ), t.size_bytes".to_string(), "8\n"),
         (
-            "a := type ( x := layout (i32, 0) ), b := type ( x := i32 ), \
-             c := type ( x := layout (i32, 4) ), print «{a == b} {a == c}»"
+            "a := type ( x := offset 0 i32 ), b := type ( x := i32 ), \
+             c := type ( x := offset 4 i32 ), d := type ( x := offset 4 i32 ), \
+             print «{a == b} {a == c} {c == d}»"
                 .to_string(),
-            "true false\n",
+            "false false true\n",
         ),
         (
-            "layout := i32 5, t := type ( a := layout (i32, 2) ), print «{layout} {t.size_bytes}»"
+            "offset := i32 5, t := type ( a := offset 2 i32 ), print «{offset} {t.size_bytes}»"
                 .to_string(),
             "5 8\n",
         ),
+        (
+            format!(
+                "{t4}, x := type v.a.type, s1 := type ( c := x ), s2 := type ( c := x ), \
+                 s3 := type ( c := pub mut i32 ), s4 := type ( c := v.a.type ), \
+                 s5 := type ( c := v.a.type ), print «{{s1 == s2}} {{s1 == s3}} {{s4 == s5}} \
+                 {{s1 == s4}} {{s1.size_bytes}} {{s4.size_bytes}} {{x}}»"
+            ),
+            "true false true true 8 8 offset 4 pub mut i32\n",
+        ),
+        (
+            "f := fn (n := type ?) -> type ( n ), t := type ( a := pub f(offset 4 i32), \
+             b := pub u8 ), v := t (1, 2), print «{t.size_bytes} {v.a.type}»"
+                .to_string(),
+            "12 offset 4 pub i32\n",
+        ),
+        ("t := type ( a := offset (1 + 3) pub i32 ), t.size_bytes".to_string(), "8\n"),
     ];
     for compile in ["", "h.compile(), "] {
+        cases.push((
+            format!(
+                "{t4}, x := type v.a.type, s := type ( c := x, d := pub mut u8 ), \
+                 h := fn (w := s ?) -> i32 ( w.c * 10 + w.d ), \
+                 {compile}print «{{h(s (5, 6))}} {{s.size_bytes}}»"
+            ),
+            "56 12\n",
+        ));
         cases.push((
             format!(
                 "{t}, h := fn (x := t ?) -> t ( y := mut t ?, y.a = x.a + 1, y.b = x.b, y ), \
@@ -14540,23 +14611,86 @@ fn a_type_body_s_layout_gives_a_field_its_type_and_its_byte() {
             ),
             "70001 9\n",
         ));
+        cases.push((
+            format!(
+                "{t}, h := fn (x := t ?) -> i32 ( k := x.a, k + x.b ), \
+                 {compile}print «{{h(t (70000, 9))}}»"
+            ),
+            "70009\n",
+        ));
     }
     assert_runs(&cases);
+    let form = "`offset` stands right of a field's `:=`, under no pointer, and takes the byte";
+    let no_field = "`offset` gives a field its byte, and this is no field";
     for (src, message) in [
-        ("t := type ( a := layout i32 ), 0", "`layout` takes the field's type, then the byte"),
-        ("t := type ( a := layout (5, 1) ), 0", "`layout` takes the field's type, then the byte"),
-        ("t := type ( a := layout (i32, 1, 2) ), 0", "`layout` takes the field's type, then the byte"),
-        ("t := type ( a := layout (i32, -1) ), 0", "is a `u64` known where the type is built"),
-        ("n := u64 3, t := type ( a := layout (i32, n) ), 0", "is a `u64` known where the type is built"),
+        ("t := type ( a := offset ), 0".to_string(), form),
+        ("t := type ( a := offset 1 ), 0".to_string(), form),
         (
-            "t := type ( f := static fn (a := layout (i32, 1)) -> i32 ( 1 ) ), 0",
-            "`layout` gives a field of a type body its type and its byte, and this is no such field",
+            "t := type ( a := offset 1 + 1 pub i32 ), 0".to_string(),
+            "a byte worked out by a sum stands in brackets",
         ),
-        ("t := type ( a := layout (i32, 1073741821) ), 0", "the store's whole room"),
-        ("t := type ( a := layout (i32, 9223372036854775800) ), 0", "the store's whole room"),
-        ("x := layout (i32, 1), 0", "`layout` is not in scope here"),
+        ("t := type ( p := pub @ offset 4 i32 ), 0".to_string(), form),
+        (
+            "t := type ( a := offset i32 ), 0".to_string(),
+            "is a `u64` known where the type is built",
+        ),
+        (
+            "t := type ( a := offset (-1) i32 ), 0".to_string(),
+            "is a `u64` known where the type is built",
+        ),
+        (
+            "t := type ( a := offset 2.5 i32 ), 0".to_string(),
+            "is a `u64` known where the type is built",
+        ),
+        (
+            "n := u64 3, t := type ( a := offset n i32 ), 0".to_string(),
+            "is a `u64` known where the type is built",
+        ),
+        ("t := type ( a := offset 1 offset 2 i32 ), 0".to_string(), "already gates the value"),
+        ("t := type ( f := static fn (a := offset 1 i32) -> i32 ( 1 ) ), 0".to_string(), no_field),
+        (
+            "t := type ( f := static fn () -> i32 ( x := offset 1 i32 5, x ) ), 0".to_string(),
+            no_field,
+        ),
+        ("t := type ( n := static offset 1 i32 0 ), 0".to_string(), no_field),
+        ("t := type ( n := offset 1 static i32 0 ), 0".to_string(), no_field),
+        (format!("{t4}, k := v.a.type ?, 0"), no_field),
+        (format!("{t4}, k := v.a.type 3, 0"), no_field),
+        (format!("{t4}, d := dyad (v.a.type, 5), 0"), no_field),
+        (format!("{t4}, g := fn () -> i32 ( k := v.a.type ?, k = 3, k ), g()"), no_field),
+        (
+            "t := type ( a := offset 4 mut i32, g := static pub fn (n := self.a.type ?) -> i32 ( \
+             n ) ), 0"
+                .to_string(),
+            no_field,
+        ),
+        (
+            "t := type ( a := pub ( k := offset 4 fn () -> i32 ( 1 ), i32 ), b := pub u8 ), 0"
+                .to_string(),
+            no_field,
+        ),
+        (
+            "t := type ( a := pub ( k := offset 4 i32 5, i32 ), b := pub u8 ), 0".to_string(),
+            no_field,
+        ),
+        (
+            "f := fn (n := i32 ?) -> type ( i32 ), t := type ( a := pub f(offset 1 i32 5) ), 0"
+                .to_string(),
+            no_field,
+        ),
+        ("t := type ( a := pub mut i32 (offset 1 i32 5) ), 0".to_string(), no_field),
+        ("t := type ( a := offset 1073741821 i32 ), 0".to_string(), "the store's whole room"),
+        (
+            "t := type ( a := offset 9223372036854775800 i32 ), 0".to_string(),
+            "the store's whole room",
+        ),
+        ("x := offset 1 i32, 0".to_string(), "`offset` is not in scope here"),
+        (
+            "u := type union ( a := offset 1 i32, b := f64 ), 0".to_string(),
+            "`offset` is not in scope here",
+        ),
     ] {
-        let (code, _, stderr) = run_line(src);
+        let (code, _, stderr) = run_line(&src);
         assert!(code != Some(0) && stderr.contains(message), "{src}: stderr: {stderr}");
     }
 }

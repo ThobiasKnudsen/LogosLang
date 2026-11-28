@@ -657,19 +657,18 @@ pub fn parse_message(e: &ParseError) -> String {
              place and write the member, `v := mut num ?, v.a = …`"
                 .into()
         }
-        ParseError::LayoutForm => {
-            "`layout` takes the field's type, then the byte the field starts at: \
-             `a := layout (mut i32, 4)`"
+        ParseError::OffsetForm => {
+            "`offset` stands right of a field's `:=`, under no pointer, and takes the byte the \
+             field starts at, then the field's type: `a := offset 4 mut i32`; a byte worked out \
+             by a sum stands in brackets: `a := offset (1 + 1) mut i32`"
                 .into()
         }
-        ParseError::LayoutByte => {
-            "the byte `layout` gives a field is a `u64` known where the type is built, such as `4`"
+        ParseError::OffsetByte => {
+            "the byte `offset` gives a field is a `u64` known where the type is built, such as `4`"
                 .into()
         }
-        ParseError::LayoutOutsideField => {
-            "`layout` gives a field of a type body its type and its byte, and this is no such \
-             field: `t := type ( a := layout (mut i32, 4) )`"
-                .into()
+        ParseError::OffsetOutsideField => {
+            "`offset` gives a field its byte, and this is no field".into()
         }
         ParseError::LayoutTooFar => format!(
             "a field ends past byte {}, the store's whole room, which no value outgrows",

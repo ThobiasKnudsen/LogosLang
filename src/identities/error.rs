@@ -433,7 +433,7 @@ unsafe fn first_hop(
         let k = bindings.iter().position(|&b| Binding::spelling(b) == name);
         let k = k.expect("error.logos declares the field");
         let field = super::array::items(meta::record_fields_of(ty))[k];
-        (k, super::hole::type_in(field), Binding::read(bindings[k]).offset)
+        (k, super::hole::type_in(field), super::instance::field_byte(types, bindings[k]))
     };
     let ((ptr, ptr_type, _), (size, size_type, _)) = (field(hops, "ptr"), field(hops, "size"));
     let first = super::this::slot_value(rt, value, ptr, ptr_type)? as *const u8;
@@ -575,7 +575,7 @@ mod tests {
             let laid: Vec<(String, usize)> =
                 super::super::array::items(meta::record_field_bindings_of(hops))
                     .iter()
-                    .map(|&b| (Binding::spelling(b), Binding::read(b).offset))
+                    .map(|&b| (Binding::spelling(b), super::super::instance::field_byte(&core, b)))
                     .filter(|(name, _)| name == "ptr" || name == "size")
                     .collect();
             assert_eq!(laid, [("ptr".to_string(), 0), ("size".to_string(), 8)]);

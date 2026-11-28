@@ -170,7 +170,7 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
     }
     if meta::is_record_type(logos) {
         return Shape::Instance {
-            fields: instance::field_offsets(logos).collect(),
+            fields: instance::field_offsets(types, logos).collect(),
             size: meta::record_size_of(logos) as usize,
         };
     }
@@ -636,7 +636,7 @@ mod tests {
             // As C lays out an `i32` then an `i64`: `b` at its alignment, byte 8.
             assert_eq!(size_bytes, 16);
             let offsets: Vec<usize> =
-                instance::field_offsets(slots[1].node).map(|(_, at)| at).collect();
+                instance::field_offsets(types, slots[1].node).map(|(_, at)| at).collect();
             assert_eq!(offsets, [0, 8]);
 
             let Shape::Tuple { slots } = describe(types, roots[2]) else {

@@ -244,7 +244,7 @@ unsafe fn deepen_fields(
 ) -> Result<(), RunError> {
     for (binding, field_ty) in fields {
         if let Some(what) = field_owned(rt.types(), binding, field_ty) {
-            deepen_as(rt, what, at.add(Binding::read(binding).offset))?;
+            deepen_as(rt, what, at.add(super::instance::field_byte(rt.types(), binding)))?;
         }
     }
     Ok(())

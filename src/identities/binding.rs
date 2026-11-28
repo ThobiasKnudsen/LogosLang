@@ -204,6 +204,14 @@ impl Binding {
         (*f).offset = offset;
     }
 
+    /// A field of each value of `ty` whose byte its `offset` gate holds, not the binding.
+    ///
+    /// # Safety
+    /// As `Binding::read`; `ty` a type node.
+    pub unsafe fn set_field_frame(dyad: DyadPtr, ty: DyadPtr) {
+        (*Self::shared(dyad)).frame = ty;
+    }
+
     /// Store `rec` and return its dyad, the value every trie entry is and every use of the name
     /// points at.
     pub fn alloc(store: &mut Store, binding_ty: DyadPtr, rec: Binding) -> DyadPtr {
