@@ -737,7 +737,7 @@ unsafe fn field_at(
         let k = rt.run(*ops.add(1))?;
         let (index, (field, offset)) = usize::try_from(k)
             .ok()
-            .and_then(|k| Some((k, super::instance::field_offsets(owner).nth(k)?)))
+            .and_then(|k| Some((k, super::instance::field_offsets(rt.types(), owner).nth(k)?)))
             .ok_or(RunError::BadIndex(k))?;
         return Ok(Field::Bytes(bytes.add(offset), super::hole::type_in(field), index));
     }
@@ -1093,7 +1093,7 @@ fn lower_store(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             }
             _ => lower_receiver(lw, this, owner)?,
         };
-        let offset = crate::binding::Binding::read(binding).offset as i64;
+        let offset = super::instance::field_byte(lw.types(), binding) as i64;
         super::assign::lower_put(lw, carry, base, offset, taken);
         Ok(lw.const_i32(0))
     }
@@ -1169,7 +1169,7 @@ pub(crate) unsafe fn lower_held_slot(
         let ops = dyad::value(place) as *const DyadPtr;
         let (this, binding, owner) = (*ops, *ops.add(3), *ops.add(5));
         if !binding.is_null() && is_plain(lw.types(), owner) {
-            let offset = crate::binding::Binding::read(binding).offset as i64;
+            let offset = super::instance::field_byte(lw.types(), binding) as i64;
             if in_bytes(lw.types(), owner) {
                 let base = lower_receiver(lw, this, owner)?;
                 return Ok(lw.offset_addr(base, offset));

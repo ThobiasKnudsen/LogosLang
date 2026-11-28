@@ -657,18 +657,18 @@ pub fn parse_message(e: &ParseError) -> String {
              place and write the member, `v := mut num ?, v.a = …`"
                 .into()
         }
-        ParseError::LayoutForm => {
-            "`layout` takes the field's type, then the byte the field starts at: \
-             `a := layout (mut i32, 4)`"
+        ParseError::OffsetForm => {
+            "`offset` takes the byte the field starts at, then the field's type: \
+             `a := offset 4 mut i32`"
                 .into()
         }
-        ParseError::LayoutByte => {
-            "the byte `layout` gives a field is a `u64` known where the type is built, such as `4`"
+        ParseError::OffsetByte => {
+            "the byte `offset` gives a field is a `u64` known where the type is built, such as `4`"
                 .into()
         }
-        ParseError::LayoutOutsideField => {
-            "`layout` gives a field of a type body its type and its byte, and this is no such \
-             field: `t := type ( a := layout (mut i32, 4) )`"
+        ParseError::OffsetOutsideField => {
+            "`offset` gives a field of a type body its byte, and this is no such field: \
+             `t := type ( a := offset 4 mut i32 )`"
                 .into()
         }
         ParseError::LayoutTooFar => format!(

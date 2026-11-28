@@ -16,7 +16,6 @@ use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
 pub use numtype::NumType;
-pub(crate) use type_mod::layout_of;
 
 pub mod binding;
 pub mod dyad;
@@ -182,8 +181,9 @@ pub struct Core {
     pub static_: DyadPtr,
     /// The type of the gate mints, and the former `type_mint` keeps them under.
     pub gate_: DyadPtr,
-    /// `layout`, a word of a type body, and the type of the node it builds.
-    pub layout_: DyadPtr,
+    /// `offset`, the gate a type body's field takes its byte from, a word only a type body knows,
+    /// and the type of the instance a gate node with it points to.
+    pub offset: DyadPtr,
     /// Its node is the trace of the load; running it does nothing.
     pub import_: DyadPtr,
     pub file: DyadPtr,
@@ -400,7 +400,8 @@ impl Core {
         op_leaves.return_ = return_leaf;
         let (declare_, declare_leaf, declare_tok) = declare::register(&mut cx, &callables);
         op_leaves.declare_ = declare_leaf;
-        let gate::GateIds { words: [pub_, mut_, static_, lossy], gate_ } = gate::register(&mut cx);
+        let gate::GateIds { words: [pub_, mut_, static_, lossy], offset, gate_ } =
+            gate::register(&mut cx);
         // SAFETY: `gate_` is the former `gate::register` gave, and `pub_` a gate word.
         let pub_mint = unsafe { gate::early_mint(cx.store, gate_, &[pub_]) };
         let (import_, import_leaf) = import::register(&mut cx, &callables);
@@ -411,7 +412,6 @@ impl Core {
         let unknown = hole::register(&mut cx);
         cx.unknown = unknown;
         let sep_ = type_mod::register_syntax(&mut cx);
-        let layout_ = type_mod::register_layout(&mut cx);
         let logos = logos::register(&mut cx);
         let unknown_name = fresh::register(&mut cx);
         let instance::InstanceIds {
@@ -604,7 +604,7 @@ impl Core {
             mut_,
             static_,
             gate_,
-            layout_,
+            offset,
             import_,
             file,
             dyad_,
@@ -712,7 +712,7 @@ impl Core {
         if dyad::ty(p) == self.field_ {
             let (record, field) = instance::field_parts(p);
             let (frame, base) = self.frame_of(self.through(record))?;
-            return Some((frame, base + Binding::read(field).offset));
+            return Some((frame, base + instance::field_byte(self, field)));
         }
         if dyad::ty(p) != self.binding_ {
             return None;

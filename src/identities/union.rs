@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `union ( a := T, b := U )`: a type whose value holds one of its members at a time. Its first
-//! line is its own, `tag := layout (u8, 0)`, then each member at [`room_at`], the first byte after
+//! line is its own, `tag := offset 0 u8`, then each member at [`room_at`], the first byte after
 //! the tag its widest member's alignment allows. The tag is the held member's place among the
 //! lines, so 0, the tag's own, while it holds none. A member read `v.a` is a
 //! dereference of a `member` node `{type: member, value: [base, union, tag, access, op,
@@ -339,8 +339,8 @@ pub(crate) unsafe fn is_union(types: &Core, t: DyadPtr) -> bool {
 /// Each line's byte in a value of the union `ty`, written onto its binding, as C lays out a
 /// struct of the tag and a C union of the members: the tag at 0, every member at the first byte
 /// after it that the widest member's alignment allows, and the size rounded up to that alignment
-/// (›Inside a type body, `layout` gives a field its type and its byte: `a := layout (mut i32,
-/// 1)`‹ [[R385]]).
+/// (›Inside a type body, a field's byte is its `offset N` relation: `a := offset 1 mut i32`‹
+/// [[R385]]).
 ///
 /// # Safety
 /// `ty` must be a type node from the store, `lines` its tag hole and then its member holes, and

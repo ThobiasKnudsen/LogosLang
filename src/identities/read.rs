@@ -997,8 +997,9 @@ mod tests {
             assert_eq!(place_align(types, std::ptr::null_mut()), 8);
             let offsets = |k: usize| {
                 let t = declare::declared_of(exprs[k]);
-                let at: Vec<usize> =
-                    crate::identities::instance::field_offsets(t).map(|(_, at)| at).collect();
+                let at: Vec<usize> = crate::identities::instance::field_offsets(types, t)
+                    .map(|(_, at)| at)
+                    .collect();
                 (at, meta::record_size_of(t), place_align(types, t))
             };
             assert_eq!(offsets(0), (vec![0, 8, 16], 24, 8));

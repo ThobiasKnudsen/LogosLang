@@ -3827,7 +3827,7 @@ fn a_members_gates_are_one_gate_node_in_its_type_however_they_are_written() {
         assert!(!is_node(word_of_name(&core, u)));
         // Gating a gated type gives the node of the joined set over the type under it.
         let mint = crate::identities::gate::mint_of(&mut store, &core, &[core.mut_]);
-        let mut_i32 = crate::identities::gate::over(&mut store, &core, mint, core.i32_);
+        let mut_i32 = crate::identities::gate::over(&mut store, &core, mint, core.i32_, None);
         let again = crate::identities::gate::with(&mut store, &core, mut_i32, core.mut_);
         assert_eq!(again, mut_i32);
         let both = crate::identities::gate::with(&mut store, &core, mut_i32, core.pub_);

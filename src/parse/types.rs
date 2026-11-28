@@ -258,36 +258,41 @@ impl OwnName {
     }
 }
 
-/// Each field's offset inside a value of `ty`, written onto the field's binding, and the value's
-/// extent: a field that `bytes` gives a byte starts at that byte, and every other at the next
-/// byte its type's alignment allows after the field written before it, as C lays out a struct;
+/// Each field's offset inside a value of `ty`, and the value's extent: a field whose type holds an
+/// `offset` gate starts at its byte, and every other at the next byte its type's alignment allows
+/// after the field written before it, as C lays out a struct, written onto the field's binding;
 /// the size reaches the end of the field that ends last, rounded up to the widest field's
 /// alignment, which is the record's (›Every name of a scope is seen from anywhere in it; written
-/// order counts in four cases only‹ [[R372]], ›Inside a type body, `layout` gives a field its
-/// type and its byte: `a := layout (mut i32, 1)`‹ [[R385]], ›`.size_bytes` is a `u64`‹
-/// [[R282]]). `None` where a field would end past the store's whole room, which no value
-/// outgrows.
+/// order counts in four cases only‹ [[R372]], ›Inside a type body, a field's byte is its `offset
+/// N` relation: `a := offset 1 mut i32`‹ [[R385]], ›`.size_bytes` is a `u64`‹ [[R282]]). `None`
+/// where a field would end past the store's whole room, which no value outgrows.
 ///
 /// # Safety
 /// `ty` must be a type node from the store, `fields` its field holes and `bindings` their
-/// bindings in the same order; `bytes` holds a byte or none for each field, or is empty.
+/// bindings in the same order.
 unsafe fn lay_out_fields(
     types: &Core,
     ty: DyadPtr,
     fields: &[DyadPtr],
     bindings: &[DyadPtr],
-    bytes: &[Option<u64>],
 ) -> Option<(Vec<usize>, crate::identities::meta::Extent)> {
+    use crate::identities::{gate, hole};
     let (mut end, mut size, mut align) = (0usize, 0usize, 1);
     let mut offsets = Vec::with_capacity(fields.len());
-    for (k, (&field, &binding)) in fields.iter().zip(bindings).enumerate() {
-        let t = crate::identities::hole::type_in(field);
+    for (&field, &binding) in fields.iter().zip(bindings) {
+        let t = hole::type_in(field);
         let field_align = crate::identities::read::place_align(types, t);
-        let offset = match bytes.get(k).copied().flatten() {
-            Some(byte) => usize::try_from(byte).ok()?,
-            None => end.checked_next_multiple_of(field_align)?,
+        let offset = match gate::byte_of(types, hole::gated_type_in(field)) {
+            Some(byte) => {
+                Binding::set_field_frame(binding, ty);
+                usize::try_from(byte).ok()?
+            }
+            None => {
+                let offset = end.checked_next_multiple_of(field_align)?;
+                Binding::set_field_offset(binding, ty, offset);
+                offset
+            }
         };
-        Binding::set_field_offset(binding, ty, offset);
         end = offset.checked_add(crate::identities::by_copy::place_width(types, t))?;
         if end > crate::store::ARENA_CAP {
             return None;
@@ -341,7 +346,7 @@ impl<'a> Parser<'a> {
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         let laid = unsafe {
             let holes = crate::identities::array::items(fields);
-            lay_out_fields(self.types, input, holes, bindings, &[])
+            lay_out_fields(self.types, input, holes, bindings)
         };
         let (_, extent) = laid.ok_or(ParseError::LayoutTooFar)?;
         let bindings = crate::identities::array::build(self.rt.store, self.types.array_, bindings);
@@ -477,13 +482,13 @@ impl<'a> Parser<'a> {
         self.expect_open()?;
         let depth = self.cx.scopes.depth();
         let scope = self.open_scope();
-        let (mut lines, mut bindings, mut bytes) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut lines, mut bindings) = (Vec::new(), Vec::new());
         let u8_ = self.types.numtypes[crate::identities::NumType::U8 as usize];
         let tag = crate::identities::union::TAG_LINE;
         // The tag line is declared after the members, so a member's type reads an outer `tag`, and
         // then stands first.
         let read = self
-            .field_lines(FieldList::Members, scope, &mut lines, &mut bindings, &mut bytes)
+            .field_lines(FieldList::Members, scope, &mut lines, &mut bindings)
             .and_then(|()| self.declare_own_line(tag, u8_, opened_at, &mut lines, &mut bindings))
             .map(|()| {
                 lines.rotate_right(1);
@@ -518,67 +523,35 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// `layout`'s constructor, read in a type body: `( T, byte )` as the node that gives a field
-    /// the type `T`, with the gate words written before it, and the byte it starts at in each
-    /// value, a `u64` known here (›Inside a type body, `layout` gives a field its type and its
-    /// byte: `a := layout (mut i32, 1)`‹ [[R385]]).
-    pub(crate) fn construct_layout(
+    /// `offset`'s constructor, read in a type body's field line: the byte to its right, a `u64`
+    /// known here, then the value after it, given with `offset` holding that byte among the gates
+    /// of its type, as a gate word gives one (›Inside a type body, a field's byte is its `offset
+    /// N` relation: `a := offset 1 mut i32`‹ [[R385]]).
+    pub(crate) fn construct_offset(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if !self.finds_right_side(tape) {
-            return Ok(Constructed::Decline);
+        let word_at = tape.at(0).map_or(self.cx.pos, |word| word.start);
+        if !self.cx.field_hole {
+            return Err(self.fail_at(word_at, ParseError::OffsetOutsideField));
         }
-        let at = self.cx.pos;
-        if !self.at_open() {
-            return Err(ParseError::LayoutForm);
-        }
-        self.expect_open()?;
-        let outer = std::mem::replace(&mut self.cx.field_hole, false);
-        let parts = self.layout_parts();
-        self.cx.field_hole = outer;
-        let (gated, byte) = parts?;
-        if !self.at_close() {
-            return Err(self.fail_at(at, ParseError::LayoutForm));
-        }
-        self.expect_close()?;
-        let u64_ = self.types.numtypes[crate::identities::NumType::U64 as usize];
-        let byte = self.rt.store.alloc_blob(u64_, &byte.to_ne_bytes());
-        let node = self.rt.store.alloc_words(self.types.layout_, &[gated, byte]);
-        tape.place(node);
-        Ok(Constructed::Placed)
-    }
-
-    /// The two lines of `layout ( … )`: the gated type and the byte.
-    fn layout_parts(&mut self) -> Result<(DyadPtr, u64), ParseError> {
+        let Some(byte) = self.type_operand(tape, 1)? else {
+            return Err(self.fail_at(word_at, ParseError::OffsetForm));
+        };
+        let node = self.as_operand(byte)?;
         let types = self.types;
-        let (words, after) = self.gates_ahead();
-        let start = self.cx.pos;
-        self.cx.pos = after;
-        let cell = self.parse_expression_cell()?;
-        // SAFETY: a parsed cell holds a reduced dyad from the store.
-        let ty = unsafe { crate::identities::type_identity_of(types, cell.dyad) };
-        let ty = ty.ok_or_else(|| self.fail_at(start, ParseError::LayoutForm))?;
-        // SAFETY: `ty` is a type node.
-        let (ty, mut gates) = unsafe { crate::identities::gate::parts(ty) };
-        for word in words {
-            // SAFETY: `gates` is null or a gate mint, and `word` is a gate word.
-            let joined =
-                unsafe { crate::identities::gate::joined(self.rt.store, types, gates, word) };
-            gates = joined.ok_or_else(|| self.fail_at(start, ParseError::DoubleGate))?;
-        }
-        // SAFETY: `ty` is a type node, `gates` null or a gate mint.
-        let gated = unsafe { crate::identities::gate::gated(self.rt.store, types, gates, ty) };
-        if !self.consume_separator() {
-            return Err(self.fail_at(start, ParseError::LayoutForm));
-        }
-        let start = self.cx.pos;
-        let cell = self.parse_expression_cell()?;
         let u64_ = types.numtypes[crate::identities::NumType::U64 as usize];
-        // SAFETY: as above; `u64_` is a number type node.
-        let byte = unsafe { crate::identities::tape::constant_value(types, cell.dyad, u64_) };
-        let byte = byte.map_err(|_| self.fail_at(start, ParseError::LayoutByte))?;
-        Ok((gated, byte as u64))
+        // SAFETY: `node` is a reduced dyad just parsed, and `u64_` a number type node.
+        let n = unsafe { crate::identities::tape::constant_value(types, node, u64_) };
+        let n = n.map_err(|_| self.fail_at(byte.start, ParseError::OffsetByte))?;
+        tape.remove(1);
+        if tape.at(1).is_none() {
+            return Err(self.fail_at(word_at, ParseError::OffsetForm));
+        }
+        // SAFETY: `offset` is a gate.
+        let mint =
+            unsafe { crate::identities::gate::mint_of(self.rt.store, types, &[types.offset]) };
+        crate::identities::gate::mark(self, tape, mint, Some(n as u64), Some(word_at))
     }
 
     /// `T!`, a value of `T` or an error: `union ( value := T, err := error )`, that very mint,
@@ -788,9 +761,7 @@ impl<'a> Parser<'a> {
             bindings.push(binding);
             binding
         });
-        let mut bytes = Vec::new();
-        let lines =
-            self.field_lines(FieldList::Parameters, scope, &mut fields, &mut bindings, &mut bytes);
+        let lines = self.field_lines(FieldList::Parameters, scope, &mut fields, &mut bindings);
         // The signature's `self` is the type's, so the function's own is declared for the body.
         let declared = match (lines, receiver) {
             (Ok(()), Some(binding)) => {
@@ -809,14 +780,13 @@ impl<'a> Parser<'a> {
     /// The lines of a parameter list, of a union's members, or of a type body (DESIGN ›A type
     /// body describes one level‹): its fields among its slot fills, `static` members and prose.
     /// Each name is declared into `scope`, below the type's own in a type body, against every
-    /// name open there. `bytes` gets, for each field, the byte a type body's `layout` gives it.
+    /// name open there.
     fn field_lines(
         &mut self,
         list: FieldList,
         scope: DyadPtr,
         fields: &mut Vec<DyadPtr>,
         bindings: &mut Vec<DyadPtr>,
-        bytes: &mut Vec<Option<u64>>,
     ) -> Result<(), ParseError> {
         let relaxed = list == FieldList::TypeBody;
         loop {
@@ -941,29 +911,25 @@ impl<'a> Parser<'a> {
                     unsafe { self.cx.scopes.settle_item(body.scope, comment) };
                 }
             }
+            use crate::identities::gate;
             // SAFETY: a parsed cell holds a reduced dyad from the store.
-            let (value, mut gates) =
-                unsafe { crate::identities::gate::value_parts(self.types, cell.dyad) }
-                    .unwrap_or((cell.dyad, std::ptr::null_mut()));
+            let (value, gates, byte) = match unsafe { gate::value_parts(self.types, cell.dyad) } {
+                Some((value, gates)) => {
+                    // SAFETY: as above; a value the gates gave is typed by their gate node.
+                    let byte = unsafe { gate::byte_of(self.types, dyad::ty(cell.dyad)) };
+                    (value, gates, byte)
+                }
+                None => (cell.dyad, std::ptr::null_mut(), None),
+            };
             if self.is_bare_unknown(&cell) {
                 return Err(self.untyped(start, relaxed));
             }
-            let mut byte = None;
-            // SAFETY: `value` is a reduced dyad just parsed.
-            let laid = unsafe { crate::identities::layout_of(self.types, value) };
-            let logos = if let Some((gated, at)) = laid {
-                if !relaxed {
-                    self.cx.pos = start;
-                    return Err(ParseError::LayoutOutsideField);
-                }
-                byte = Some(at);
-                // SAFETY: a `layout` node holds a type node, and `gates` is null or a gate mint.
-                unsafe {
-                    let (ty, own) = crate::identities::gate::parts(gated);
-                    gates = crate::identities::gate::union(self.rt.store, self.types, gates, own);
-                    ty
-                }
-            } else if cell.hole {
+            // SAFETY: `gates` is null or a gate mint.
+            if byte.is_some() && unsafe { gate::words_of(gates) }.contains(&self.types.static_) {
+                self.cx.pos = start;
+                return Err(ParseError::OffsetOutsideField);
+            }
+            let logos = if cell.hole {
                 // A type whose nodes run has no place for a field or a parameter: its `T ?` is an
                 // empty node, not a hole.
                 // SAFETY: `value` is the place `?` just built.
@@ -1004,8 +970,16 @@ impl<'a> Parser<'a> {
                 self.cx.pos = start;
                 return Err(ParseError::OwnParameterNotInSeed);
             }
-            let field =
-                crate::identities::hole::build(self.rt.store, self.types.unknown, logos, default);
+            // The gates the value was given are the field's, in the type its `?` node holds
+            // (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]).
+            // SAFETY: `gates` is null or a gate mint, and `logos` a type node.
+            let declared = unsafe { gate::gated_at(self.rt.store, self.types, gates, byte, logos) };
+            let field = crate::identities::hole::build(
+                self.rt.store,
+                self.types.unknown,
+                declared,
+                default,
+            );
             // The field's name is not stored on the record: declaring it puts
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = self.mint_binding(field, scope, name.as_bytes());
@@ -1015,16 +989,13 @@ impl<'a> Parser<'a> {
                 self.declare_member(scope, name, binding, start)?;
             }
             // SAFETY: `gates` is null or a gate mint.
-            let public =
-                unsafe { crate::identities::gate::words_of(gates) }.contains(&self.types.pub_);
+            let public = unsafe { gate::words_of(gates) }.contains(&self.types.pub_);
             if public && list == FieldList::Parameters {
                 self.cx.pos = start;
                 return Err(ParseError::PubParameter);
             }
-            self.gate_name(binding, gates);
             fields.push(field);
             bindings.push(binding);
-            bytes.push(byte);
             if !self.consume_separator() {
                 break;
             }
@@ -1311,15 +1282,15 @@ impl<'a> Parser<'a> {
         self.expect_open()?;
         let opened_at = self.cx.pos;
         let depth = self.cx.scopes.depth();
-        // `layout` and `self`, the type being built, are words of the body's lines and nowhere
+        // `offset` and `self`, the type being built, are words of the body's lines and nowhere
         // outside them, in a scope of their own so that a member read through the type never
         // finds them; a body inside another has its own.
         let words = self.open_scope();
-        let layout = self.mint_binding(self.types.layout_, words, b"layout");
-        // SAFETY: `layout` was minted by `Binding::alloc` just above.
+        let offset = self.mint_binding(self.types.offset, words, b"offset");
+        // SAFETY: `offset` was minted by `Binding::alloc` just above.
         let declared = unsafe {
-            Binding::set_body_word(layout);
-            self.cx.scopes.declare_field(self.trie, "layout", layout)
+            Binding::set_body_word(offset);
+            self.cx.scopes.declare_field(self.trie, "offset", offset)
         };
         if let Err(e) = declared {
             self.cx.scopes.pop();
@@ -1367,10 +1338,9 @@ impl<'a> Parser<'a> {
         let outer = self.drain();
         self.cx.open.push(OpenScope::default());
         let saved_depth = std::mem::replace(&mut self.cx.runtime_depth, 0);
-        let (mut fields, mut bindings, mut bytes) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut fields, mut bindings) = (Vec::new(), Vec::new());
         let lines = outer.and_then(|_| {
-            let list = FieldList::TypeBody;
-            self.field_lines(list, field_scope, &mut fields, &mut bindings, &mut bytes)
+            self.field_lines(FieldList::TypeBody, field_scope, &mut fields, &mut bindings)
         });
         let lines = lines.and_then(|()| {
             self.drain().map_err(|e| match e {
@@ -1393,7 +1363,7 @@ impl<'a> Parser<'a> {
         }
         self.expect_close()?;
         // SAFETY: the bindings were just minted for these fields; `def.self_type` is the type node.
-        let laid = unsafe { lay_out_fields(self.types, def.self_type, &fields, &bindings, &bytes) };
+        let laid = unsafe { lay_out_fields(self.types, def.self_type, &fields, &bindings) };
         let (offsets, extent) =
             laid.ok_or_else(|| self.fail_at(opened_at, ParseError::LayoutTooFar))?;
         // SAFETY: `def` was just closed over these fields and their names.

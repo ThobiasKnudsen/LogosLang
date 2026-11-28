@@ -1307,10 +1307,12 @@ impl<'a> Parser<'a> {
             .unwrap_or((cell.dyad, std::ptr::null_mut()));
         let place = self.empty_place_of(value).map_err(|e| self.fail_at(cell.start, e))?;
         let Some((place, own)) = place else { return Ok(cell) };
-        // SAFETY: `written` and `own` are null or gate mints, and `place` a node just built.
+        // SAFETY: `written` and `own` are null or gate mints, `value` a reduced dyad and `place` a
+        // node just built.
         let place = unsafe {
             let gates = gate::union(self.rt.store, self.types, written, own);
-            gate::give(self.rt.store, self.types, gates, place, false)
+            let byte = gate::byte_of(self.types, value);
+            gate::give_at(self.rt.store, self.types, gates, byte, place, false)
         }
         .map_err(|e| self.fail_at(cell.start, e))?;
         let mut cell = cell;
@@ -1649,9 +1651,13 @@ impl<'a> Parser<'a> {
 
     /// [`Self::valueless_place`] of `t`, gated as `t` is: `mut i32 ?` is `i32 ?` gated `mut`.
     fn gated_place(&mut self, t: DyadPtr) -> Result<DyadPtr, ParseError> {
+        use crate::identities::gate;
         let (node, gates) = self.valueless_place(t)?;
-        // SAFETY: `gates` is null or a gate mint, and `node` a node just built.
-        unsafe { crate::identities::gate::give(self.rt.store, self.types, gates, node, false) }
+        // SAFETY: `gates` is null or a gate mint, `t` a type node and `node` a node just built.
+        unsafe {
+            let byte = gate::byte_of(self.types, t);
+            gate::give_at(self.rt.store, self.types, gates, byte, node, false)
+        }
     }
 
     /// The type `t` at the center, whose parse takes the value to its right, finding `?` alone

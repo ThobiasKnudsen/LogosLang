@@ -827,7 +827,7 @@ unsafe fn end_parts(rt: &mut Runtime, t: DyadPtr, this: i64) -> Result<(), RunEr
         if teardown_of_type(rt.types(), ty) == Teardown::Nothing {
             continue;
         }
-        let at = (this as *mut u8).add(crate::binding::Binding::read(binding).offset);
+        let at = (this as *mut u8).add(super::instance::field_byte(rt.types(), binding));
         let value = if super::this::in_bytes(rt.types(), ty) {
             at as i64
         } else {

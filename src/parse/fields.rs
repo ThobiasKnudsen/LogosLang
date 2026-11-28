@@ -813,9 +813,14 @@ impl<'a> Parser<'a> {
                 // Only the name's own type is gated by it: a `dyad` place's `.type` is the type of
                 // the node it holds, which the place's gates do not reach.
                 use crate::identities::gate;
-                let (own, gates) = gate::parts(gate::word_of_name(self.types, named));
-                let gated =
-                    if own == t { gate::gated(self.rt.store, self.types, gates, t) } else { t };
+                let word = gate::word_of_name(self.types, named);
+                let (own, gates) = gate::parts(word);
+                let gated = if own == t {
+                    let byte = gate::byte_of(self.types, word);
+                    gate::gated_at(self.rt.store, self.types, gates, byte, t)
+                } else {
+                    t
+                };
                 return Ok((gated, 0));
             }
             // A member the read of a tape node answers where it is written; any other one the
@@ -1539,7 +1544,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(DyadPtr, usize, DyadPtr), ParseError> {
         let (field, binding) = self.find_field(record_logos, nstart, nlen)?;
         self.read_gate(binding)?;
-        Ok((field, Binding::read(binding).offset, binding))
+        Ok((field, crate::identities::instance::field_byte(self.types, binding), binding))
     }
 
     /// Against `record_logos`'s own scope alone: an enclosing binding of the
@@ -1764,7 +1769,7 @@ impl<'a> Parser<'a> {
             return gate::under(leaf);
         }
         let mint = gate::mint_of(self.rt.store, types, &gates);
-        gate::over(self.rt.store, types, mint, gate::under(leaf))
+        gate::over(self.rt.store, types, mint, gate::under(leaf), gate::byte_of(types, leaf))
     }
 
     /// `&` of a value nothing names: the value lands in an unspelled name of the open scope, as
@@ -1955,7 +1960,8 @@ impl<'a> Parser<'a> {
             // The binding is a value of type `binding` laid out in the store's arena, the
             // program frame: its field is a place read through two bindings, as `p.x` is.
             let (_, _, field_binding) = self.resolve_field(types.binding_, nstart, nlen)?;
-            let record = self.binding_record_place(lhs, Binding::read(field_binding).offset);
+            let at = crate::identities::instance::field_byte(types, field_binding);
+            let record = self.binding_record_place(lhs, at);
             return Ok(crate::identities::instance::build_field(
                 self.rt.store,
                 types,

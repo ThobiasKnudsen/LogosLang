@@ -7956,7 +7956,7 @@ fn what_a_union_does_not_take_is_refused_where_it_is_written() {
     }
 }
 
-/// R379: a union's own first line is its tag, `tag := layout (u8, 0)`, and its members lie at
+/// R379: a union's own first line is its tag, `tag := offset 0 u8`, and its members lie at
 /// the largest member's alignment, as C lays out a struct of the tag and a C union of the members
 /// (R385). A program reads `v.tag`, the held member's place among the lines, and never writes
 /// it; the line meets the union's other lines alone, never the names where the union is written;
@@ -14452,20 +14452,44 @@ fn plain_fields_lie_as_c_lays_out_a_struct() {
     assert_runs(&cases);
 }
 
-/// ›Inside a type body, `layout` gives a field its type and its byte: `a := layout (mut i32, 1)`‹
-/// [[R385]]: a `layout` field lies at its byte, a plain field after the field written before it
-/// at its alignment, and the size reaches the end of every field, rounded up to the widest
-/// alignment; both tiers read and write the fields there, and the byte is part of the mint.
+/// ›Inside a type body, a field's byte is its `offset N` relation: `a := offset 1 mut i32`‹
+/// [[R385]]: a field whose type holds `offset N` lies at that byte, a plain field after the field
+/// written before it at its alignment, and the size reaches the end of every field, rounded up to
+/// the widest alignment; both tiers read and write the fields there. The gate is in the field's
+/// type, `v.a.type` showing it and `==` reading through it, and a copy drops it (›Gates are type
+/// nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]).
 #[test]
-fn a_type_body_s_layout_gives_a_field_its_type_and_its_byte() {
-    let t = "t := type ( a := layout (pub mut i32, 1), b := pub mut u8 )";
-    let u = "u := type ( i := layout (pub mut i32, 8), f := layout (pub mut f64, 8) )";
+fn a_field_s_offset_gate_gives_it_its_byte() {
+    let t = "t := type ( a := offset 1 pub mut i32, b := pub mut u8 )";
+    let u = "u := type ( i := offset 8 pub mut i32, f := offset 8 pub mut f64 )";
     let mut cases = vec![
-        ("t := type ( a := layout (pub mut i32, 1) ), t.size_bytes".to_string(), "8\n"),
+        (format!("{t}, print «{{t.size_bytes}}»"), "8\n"),
+        ("t := type ( a := offset 1 pub mut i32 ), t.size_bytes".to_string(), "8\n"),
         (format!("{u}, u.size_bytes"), "16\n"),
         (
-            "p := type ( a := layout (pub mut u8, 4), b := pub mut i32 ), p.size_bytes".to_string(),
+            "p := type ( a := offset 4 pub mut u8, b := pub mut i32 ), p.size_bytes".to_string(),
             "12\n",
+        ),
+        (
+            "p := type ( a := offset 4 pub mut i32 ?, b := pub mut u8 ), v := p (7, 2), \
+             print «{v.a} {v.b} {p.size_bytes}»"
+                .to_string(),
+            "7 2 12\n",
+        ),
+        (
+            "p := type ( a := pub offset 2 u8 ), v := p (3), print «{v.a.type}»".to_string(),
+            "offset 2 pub u8\n",
+        ),
+        (
+            format!("{t}, v := t (70000, 9), k := v.a, print «{{v.a.type}} {{k.type}} {{k}}»"),
+            "offset 1 pub mut i32 i32 70000\n",
+        ),
+        (format!("{t}, v := t (70000, 9), print «{{v.a.type == i32}}»"), "true\n"),
+        (
+            "p := type ( a := offset 4 pub i32, b := offset 0 pub i32 ), v := p (3, 4), \
+             y := v.a + v.b, print «{y} {y.type}»"
+                .to_string(),
+            "7 i32\n",
         ),
         (format!("{u}, v := mut u ?, v.i = 5, v.i"), "5\n"),
         (format!("{u}, v := mut u ?, v.i = 5, v.f = 2.5, v.f"), "2.5\n"),
@@ -14477,20 +14501,21 @@ fn a_type_body_s_layout_gives_a_field_its_type_and_its_byte() {
         ),
         (format!("{t}, v := t (70000, 9), print «{{v.a}} {{v.b}}»"), "70000 9\n"),
         (
-            "g := fn () -> i32 ( t := type ( a := layout (pub mut i32, 1), b := pub mut u8 ), \
+            "g := fn () -> i32 ( t := type ( a := offset 1 pub mut i32, b := pub mut u8 ), \
              v := t (70000, 9), v.a + v.b ), g()"
                 .to_string(),
             "70009\n",
         ),
-        ("t := type ( a := layout (i32, u64 3) ), t.size_bytes".to_string(), "8\n"),
+        ("t := type ( a := offset u64 3 i32 ), t.size_bytes".to_string(), "8\n"),
         (
-            "a := type ( x := layout (i32, 0) ), b := type ( x := i32 ), \
-             c := type ( x := layout (i32, 4) ), print «{a == b} {a == c}»"
+            "a := type ( x := offset 0 i32 ), b := type ( x := i32 ), \
+             c := type ( x := offset 4 i32 ), d := type ( x := offset 4 i32 ), \
+             print «{a == b} {a == c} {c == d}»"
                 .to_string(),
-            "true false\n",
+            "false false true\n",
         ),
         (
-            "layout := i32 5, t := type ( a := layout (i32, 2) ), print «{layout} {t.size_bytes}»"
+            "offset := i32 5, t := type ( a := offset 2 i32 ), print «{offset} {t.size_bytes}»"
                 .to_string(),
             "5 8\n",
         ),
@@ -14503,21 +14528,46 @@ fn a_type_body_s_layout_gives_a_field_its_type_and_its_byte() {
             ),
             "70001 9\n",
         ));
+        cases.push((
+            format!(
+                "{t}, h := fn (x := t ?) -> i32 ( k := x.a, k + x.b ), \
+                 {compile}print «{{h(t (70000, 9))}}»"
+            ),
+            "70009\n",
+        ));
     }
     assert_runs(&cases);
     for (src, message) in [
-        ("t := type ( a := layout i32 ), 0", "`layout` takes the field's type, then the byte"),
-        ("t := type ( a := layout (5, 1) ), 0", "`layout` takes the field's type, then the byte"),
-        ("t := type ( a := layout (i32, 1, 2) ), 0", "`layout` takes the field's type, then the byte"),
-        ("t := type ( a := layout (i32, -1) ), 0", "is a `u64` known where the type is built"),
-        ("n := u64 3, t := type ( a := layout (i32, n) ), 0", "is a `u64` known where the type is built"),
+        ("t := type ( a := offset ), 0", "`offset` takes the byte the field starts at, then"),
+        ("t := type ( a := offset 1 ), 0", "`offset` takes the byte the field starts at, then"),
+        ("t := type ( a := offset i32 ), 0", "is a `u64` known where the type is built"),
+        ("t := type ( a := offset (-1) i32 ), 0", "is a `u64` known where the type is built"),
+        ("t := type ( a := offset 2.5 i32 ), 0", "is a `u64` known where the type is built"),
         (
-            "t := type ( f := static fn (a := layout (i32, 1)) -> i32 ( 1 ) ), 0",
-            "`layout` gives a field of a type body its type and its byte, and this is no such field",
+            "n := u64 3, t := type ( a := offset n i32 ), 0",
+            "is a `u64` known where the type is built",
         ),
-        ("t := type ( a := layout (i32, 1073741821) ), 0", "the store's whole room"),
-        ("t := type ( a := layout (i32, 9223372036854775800) ), 0", "the store's whole room"),
-        ("x := layout (i32, 1), 0", "`layout` is not in scope here"),
+        ("t := type ( a := offset 1 offset 2 i32 ), 0", "already gates the value"),
+        (
+            "t := type ( f := static fn (a := offset 1 i32) -> i32 ( 1 ) ), 0",
+            "`offset` gives a field of a type body its byte, and this is no such field",
+        ),
+        (
+            "t := type ( f := static fn () -> i32 ( x := offset 1 i32 5, x ) ), 0",
+            "`offset` gives a field of a type body its byte, and this is no such field",
+        ),
+        (
+            "t := type ( n := static offset 1 i32 0 ), 0",
+            "`offset` gives a field of a type body its byte, and this is no such field",
+        ),
+        (
+            "t := type ( n := offset 1 static i32 0 ), 0",
+            "`offset` gives a field of a type body its byte, and this is no such field",
+        ),
+        ("t := type ( a := offset 1073741821 i32 ), 0", "the store's whole room"),
+        ("t := type ( a := offset 9223372036854775800 i32 ), 0", "the store's whole room"),
+        ("x := offset 1 i32, 0", "`offset` is not in scope here"),
+        ("u := type union ( a := offset 1 i32, b := f64 ), 0", "`offset` is not in scope here"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert!(code != Some(0) && stderr.contains(message), "{src}: stderr: {stderr}");

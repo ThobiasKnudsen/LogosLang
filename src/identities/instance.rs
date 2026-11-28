@@ -204,16 +204,32 @@ pub(crate) unsafe fn field_parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     (*p, *p.add(1))
 }
 
-/// Each field of a value of `ty` with its offset in the value, the one its binding carries.
+/// The byte the field `binding` starts at in each value of its type: the one the `offset` gate of
+/// its type holds, else the one its holder laid it out at, which its binding carries (›Inside a
+/// type body, a field's byte is its `offset N` relation: `a := offset 1 mut i32`‹ [[R385]]).
+///
+/// # Safety
+/// `binding` must be a field's binding dyad from the store.
+pub(crate) unsafe fn field_byte(types: &Core, binding: DyadPtr) -> usize {
+    match super::gate::byte_of(types, super::gate::word_of_name(types, binding)) {
+        Some(byte) => byte as usize,
+        None => Binding::read(binding).offset,
+    }
+}
+
+/// Each field of a value of `ty` with its byte in the value, as [`field_byte`] reads it.
 ///
 /// # Safety
 /// `ty` must be a record type node from the store.
-pub(crate) unsafe fn field_offsets<'a>(ty: DyadPtr) -> impl Iterator<Item = (DyadPtr, usize)> + 'a {
+pub(crate) unsafe fn field_offsets<'a>(
+    types: &'a Core,
+    ty: DyadPtr,
+) -> impl Iterator<Item = (DyadPtr, usize)> + 'a {
     let fields = super::array::items(meta::record_fields_of(ty));
     let bindings = super::array::items(meta::record_field_bindings_of(ty));
     fields.iter().zip(bindings).map(|(&field, &binding)| {
         // SAFETY: the record keeps a binding per field, minted when its field was declared.
-        (field, unsafe { Binding::read(binding) }.offset)
+        (field, unsafe { field_byte(types, binding) })
     })
 }
 
@@ -223,7 +239,7 @@ pub(crate) unsafe fn field_offsets<'a>(ty: DyadPtr) -> impl Iterator<Item = (Dya
 /// # Safety
 /// `ty` must be a record type node from the store.
 unsafe fn places(types: &Core, ty: DyadPtr) -> Option<Vec<(usize, Carry)>> {
-    field_offsets(ty)
+    field_offsets(types, ty)
         .map(|(field, offset)| Some((offset, carry_of(types, super::hole::type_in(field))?)))
         .collect()
 }
