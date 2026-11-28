@@ -281,6 +281,7 @@ impl<'a> Parser<'a> {
         }
         let parts = self.interpolated_quote("print")?;
         let node = crate::identities::print::build(self.rt.store, self.types, &parts);
+        self.note_effect();
         tape.place(node);
         Ok(Constructed::Placed)
     }

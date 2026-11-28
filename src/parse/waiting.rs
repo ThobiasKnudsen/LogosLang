@@ -729,6 +729,13 @@ impl<'a> Parser<'a> {
             self.check_held_read(binding, start + cell.start)?;
             self.note_outer_read(binding);
         }
+        let cut = waits.cut - start;
+        let own_write = place.filter(|p| self.writes_own_frame(p)).and_then(|_| {
+            held_cells.iter().position(|c| c.start >= cut && self.cell_identity(c) == types.assign)
+        });
+        if self.held_effect(&held_cells, own_write) {
+            self.note_effect();
+        }
         self.cx.pos = end;
         // SAFETY: `held` is the store's copy of the line, which holds each kept cell's spelling
         // `start` bytes before the source did.
@@ -758,6 +765,36 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `node` was just built in the store.
         Ok(unsafe { Cell::built(node) })
+    }
+
+    /// Whether a held line does what a caller of the function it is written in sees, which its
+    /// parse at run notes on no function: a `print` or an `alloc`, an `=` but `cells[own_write]`,
+    /// the line's own write into the function's frame, or a call of a function with an effect.
+    fn held_effect(&self, cells: &[Cell], own_write: Option<usize>) -> bool {
+        let types = self.types;
+        (0..cells.len()).any(|k| {
+            let id = self.cell_identity(&cells[k]);
+            if id == types.print.print || id == types.alloc_ {
+                return true;
+            }
+            if id == types.assign {
+                return own_write != Some(k);
+            }
+            let binding = cells[k].binding(types);
+            if binding.is_null()
+                || cells.get(k + 1).map(|c| self.cell_identity(c)) != Some(types.open_)
+            {
+                return false;
+            }
+            // SAFETY: a lexed cell's binding is a binding dyad from the store, and what it holds
+            // a dyad from the store.
+            unsafe {
+                let f = types.through(binding);
+                !f.is_null()
+                    && crate::dyad::ty(f) == types.fn_type
+                    && (fn_effect(types, f) || fn_receiver(types, f) & RECEIVER_WRITES != 0)
+            }
+        })
     }
 
     /// Whether `cells[k]`, a cell of a held line, is no outer name: a member spelled after `.` or
@@ -930,20 +967,7 @@ impl<'a> Parser<'a> {
         // One frame per function open where the line was written, so a read of their names is
         // no capture and a name declared in the line is laid out in the program frame.
         let depth = open_fns.len();
-        let frames = open_fns
-            .iter()
-            .map(|&f| OpenFn {
-                frame: f,
-                size: 0,
-                below: 0,
-                outer: Vec::new(),
-                open_below: 0,
-                returns: Vec::new(),
-                result: std::ptr::null_mut(),
-                slot_body: false,
-                gives_at: None,
-            })
-            .collect();
+        let frames = open_fns.iter().map(|&f| OpenFn::reopened(f)).collect();
         let cx = Context {
             pos: line.cut,
             frames,

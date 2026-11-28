@@ -76,7 +76,7 @@ pub(super) fn load(
 }
 
 /// One argument of a mint's key.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum KeyPart {
     /// A type, or another node that is one identity wherever it stands, by its address.
     Node(DyadPtr),

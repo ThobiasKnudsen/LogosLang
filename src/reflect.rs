@@ -445,7 +445,16 @@ mod tests {
         let roles: Vec<&[u8]> = slots.iter().map(|s| unsafe { text_of(s.role) }).collect();
         assert_eq!(
             roles,
-            [b"input" as &[u8], b"output_type", b"body", b"bcode", b"frame", b"outer", b"receiver"]
+            [
+                b"input" as &[u8],
+                b"output_type",
+                b"body",
+                b"bcode",
+                b"frame",
+                b"outer",
+                b"receiver",
+                b"effect"
+            ]
         );
         assert!(!slots[4].node.is_null(), "a fn with locals carries its frame size");
         assert!(!slots[5].node.is_null(), "a fn whose body reads an outer name lists it");
@@ -465,6 +474,25 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, ["-", ":=", "n"]);
+    }
+
+    #[test]
+    fn the_effect_slot_marks_a_body_whose_run_a_caller_sees() {
+        let (_store, core, roots) = parse_all(&[
+            "n := mut i32 0",
+            "p := fn () -> i32 ( print «p», 1 )",
+            "fn () -> i32 ( y := mut i32 0, y = 2, y )",
+            "fn () -> i32 ( 2 + 1 )",
+            "fn () -> i32 ( n = 1, 1 )",
+            "fn () -> i32 ( print «x», 1 )",
+            "fn () -> i32 ( p() )",
+            "fn (a := dyad ?) -> i32 ( n = a, 1 )",
+            "fn (a := dyad ?) -> i32 ( y := mut i32 0, y = a, y )",
+        ]);
+        // SAFETY: each root from the third is the fn value just parsed.
+        let effects: Vec<bool> =
+            roots[2..].iter().map(|&f| unsafe { crate::parse::fn_effect(&core, f) }).collect();
+        assert_eq!(effects, [false, false, true, true, true, true, false]);
     }
 
     #[test]
