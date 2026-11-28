@@ -655,7 +655,7 @@ mod tests {
 
     #[test]
     fn every_identity_is_an_identity() {
-        // Every root and everything classified by it, `left`/`right` included.
+        // Every root and everything classified by it.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -674,10 +674,12 @@ mod tests {
                 core.rational,
                 core.dyad_,
                 core.plus,
-                types.left_,
-                types.right_,
+                core.direction,
             ] {
                 assert_eq!(read_kind(types, id), Read::Identity, "{id:p}");
+            }
+            for value in [types.left_, types.right_] {
+                assert_eq!(read_kind(types, value), Read::Scalar(NumType::I32), "{value:p}");
             }
             for &n in &types.numtypes {
                 assert_eq!(read_kind(types, n), Read::Identity);

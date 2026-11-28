@@ -2129,7 +2129,7 @@ impl<'a> Parser<'a> {
                 Ok(self.scalar_value(NumType::F64, meta::parse_rank_of(logos).to_bits() as i64))
             }
             // `lex_rank` is the name's binding's, not the type's, so it falls to
-            // the unknown-member error below. Associativity's values are the identities `left` and `right`.
+            // the unknown-member error below.
             "associativity" => Ok(match meta::assoc_of(logos) {
                 Assoc::Left => self.types.left_,
                 Assoc::Right => self.types.right_,
