@@ -26,8 +26,10 @@ pub enum ParseError {
     /// holds no value there: a parameter or local of the function around it, or a
     /// name declared in the loop or branch around it.
     OnceReadsUnmade,
-    /// A field named bare inside a parse, where it goes through `tape[0]`.
+    /// A field read bare or through `self` inside a parse, where it goes through `tape[0]`.
     BareFieldInParse(Box<String>),
+    /// A member of a type around the innermost one, named bare: no `self` here reaches it.
+    MemberOfTypeAround(Box<String>),
     /// `self` with no member after it.
     SelfReachesMember,
     /// `self.x` where what `self` stands for has no member `x`.

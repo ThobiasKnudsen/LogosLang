@@ -423,6 +423,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether `self.x` written here reaches `member`, the binding of a member named `x`.
+    pub(super) fn self_reaches(&self, member: DyadPtr) -> bool {
+        let Ok(r) = self.cx.scopes.resolve(self.trie, super::types::SELF_WORD) else {
+            return false;
+        };
+        // SAFETY: a resolved binding is a binding dyad from the store, and `member` is a member's.
+        unsafe {
+            r.matched == super::types::SELF_WORD.len()
+                && Binding::read(r.binding).body_word
+                && self.member_of_self(r.binding, member)
+        }
+    }
+
     /// Whether `member`, the binding read after the `self` that `holder` binds, is a member of
     /// what that `self` stands for: the innermost definition, or the type whose `run` body is
     /// being built, its fields being that body's parameters.
@@ -657,12 +670,14 @@ impl<'a> Parser<'a> {
         self.feed_resolve_as(cell, false);
     }
 
-    /// [`Self::feed_resolve`], or with `member` for a member's name, read right of a `.`.
+    /// [`Self::feed_resolve`], or with `member` for a member's name, read right of a `.`, which is
+    /// always resolved where it is built: what it lexed to where it was written names no member
+    /// of the body being built.
     fn feed_resolve_as(&self, cell: &mut Cell, member: bool) {
         let binding = cell.binding(self.types);
         // SAFETY: a lexed cell's binding is null or a binding dyad from the store.
         let outer_word = !binding.is_null() && unsafe { Binding::read(binding) }.body_word;
-        if !cell.is_fresh(self.types) && !outer_word {
+        if !member && !cell.is_fresh(self.types) && !outer_word {
             return;
         }
         if let Ok(r) = self.resolve_where_built(cell.spelling(), member) {

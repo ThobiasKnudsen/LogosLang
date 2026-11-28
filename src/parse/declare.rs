@@ -182,7 +182,8 @@ impl<'a> Parser<'a> {
     }
 
     /// A `static` function that writes a field of its value meets the gates `receiver.f = …`
-    /// would (DESIGN ›There is no `this`‹).
+    /// would (›A `static` function writes the value it is called on, and respects `mut`‹
+    /// [[R239]]).
     ///
     /// # Safety
     /// `member` must be a reduced dyad from the store.

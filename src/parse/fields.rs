@@ -143,18 +143,24 @@ impl<'a> Parser<'a> {
         }
         let spelling = cell.spelling();
         let member = if cell.is_fresh(types) {
-            matches!(self.resolve_fresh(spelling), Err(ResolveError::Member(_)))
+            match self.resolve_fresh(spelling) {
+                Err(ResolveError::Member(_)) => {
+                    self.cx.scopes.resolve_member(self.trie, spelling).ok().map(|r| r.binding)
+                }
+                _ => None,
+            }
         } else {
             let binding = cell.binding(types);
             // SAFETY: a lexed cell's binding is null or a binding dyad from the store.
-            !binding.is_null()
+            let entry = !binding.is_null()
                 && self
                     .about_value()
-                    .is_some_and(|d| d.block.0 == unsafe { Binding::read(binding) }.scope)
+                    .is_some_and(|d| d.block.0 == unsafe { Binding::read(binding) }.scope);
+            entry.then_some(binding)
         };
-        if !member {
+        let Some(member) = member else {
             return Ok(());
-        }
+        };
         let node_field = self.about_value().is_some_and(|d| {
             d.in_parse
                 && self
@@ -165,24 +171,11 @@ impl<'a> Parser<'a> {
         });
         Err(if node_field {
             ParseError::BareFieldInParse(Box::new(spelling.to_string()))
-        } else {
+        } else if self.self_reaches(member) {
             ParseError::Resolve(ResolveError::Member(spelling.to_string()))
+        } else {
+            ParseError::MemberOfTypeAround(Box::new(spelling.to_string()))
         })
-    }
-
-    /// The member a bare fresh `cell` spells where the line is written inside a body about a value
-    /// and is about none, a function written in it or a value made once there: the line reads that
-    /// member. stand-in for Question 369.
-    pub(super) fn unreached_member(&self, cell: &Cell) -> Option<DyadPtr> {
-        let inside = self.value_def().is_some_and(|d| self.reach_value(d).is_err())
-            || self.cx.run_fields.as_ref().is_some_and(|r| self.reach_frame(r.2).is_err());
-        if !inside || !cell.is_fresh(self.types) {
-            return None;
-        }
-        let r = self.cx.scopes.resolve_member(self.trie, cell.spelling()).ok()?;
-        // SAFETY: a resolved binding is a binding dyad from the store.
-        let member = unsafe { Binding::read(r.binding) }.member;
-        (member && r.matched == cell.len).then_some(r.binding)
     }
 
     /// `tape[0]` inside a parse body: the cell the parse was woken on, holding its node.
@@ -239,9 +232,10 @@ impl<'a> Parser<'a> {
     }
 
     /// `tape[0].type = T`: a fresh node of `T` placed in the parse's own cell, from where its
-    /// fields are written by name (DESIGN ›There is no `this`‹). The type being defined has its
-    /// node made before the parse runs; any other `T`, such as a mint a function chooses
-    /// (›The v0.1.0 demo: a user-defined power operator `^`‹ [[R366]]), when the stamp runs.
+    /// fields are written by name, `tape[0].x` (›Fields are read with a dot, outside their type
+    /// and inside it through `self`‹ [[R234]]). The type being defined has its node made before
+    /// the parse runs; any other `T`, such as a mint a function chooses (›The v0.1.0 demo: a
+    /// user-defined power operator `^`‹ [[R366]]), when the stamp runs.
     ///
     /// # Safety
     /// `target` must be a `tape.cell_type` node from the store; `value` a reduced dyad.
@@ -810,7 +804,8 @@ impl<'a> Parser<'a> {
             // caller read through to the node the tape holds ([`Self::held_tape_node`]).
             if self.tape_node_member(lhs, name) == Some(NodeMember::Own) {
                 // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
-                // (DESIGN ›There is no `this`‹).
+                // (›Fields are read with a dot, outside their type and inside it through `self`‹
+                // [[R234]]).
                 if self.cx.definitions.last().is_some_and(|d| d.stamps_at_run) {
                     let (types, store) = (self.types, &mut *self.rt.store);
                     let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
@@ -1079,9 +1074,9 @@ impl<'a> Parser<'a> {
         }
         // A `static` member of the record's type, or a field: the field's offset inside the
         // record's storage, read through the record's binding and the field's. A record value no
-        // name lays out, a field named bare or what a call returns, has the field read off what it
-        // gives when it runs (›Reading a path runs nothing‹ [[R273]]), as has a record a place
-        // keeps behind its pointer (›`free` and `move` end a name; no drop flag‹ [[R60]]).
+        // name lays out, a field read through `self` or what a call returns, has the field read
+        // off what it gives when it runs (›Reading a path runs nothing‹ [[R273]]), as has a record
+        // a place keeps behind its pointer (›`free` and `move` end a name; no drop flag‹ [[R60]]).
         let storage = self.types.is_storage(lhs);
         if (!storage || behind(self.types, self.types.type_of(lhs))) && !self.types.is_hole(lhs) {
             let t = crate::identities::read::output_type(self.types, lhs);

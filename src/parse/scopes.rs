@@ -428,8 +428,9 @@ impl ScopeStack {
     }
 
     /// A member of a type, declared into `scope`, one of its type's: checked against the members
-    /// `siblings` declare, its type's scopes, and against no other name (›Members are dot-only;
-    /// strictness has no exceptions‹ [[R336]]).
+    /// `siblings` declare, its type's scopes, and the words live bodies declare, such as `tape`
+    /// and `self`, and against no other name (›Members are dot-only; strictness has no
+    /// exceptions‹ [[R336]]).
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store; this writes its `scope` and its mark.
@@ -445,6 +446,12 @@ impl ScopeStack {
             if self.declared_in(trie, name, sibling)? {
                 return Err(ResolveError::Shadowed(name.to_string()));
             }
+        }
+        // stand-in for Question 372
+        let word = self.resolve(trie, name).ok().filter(|r| r.matched == name.len());
+        // SAFETY: a resolved binding is a binding dyad from the store.
+        if word.is_some_and(|r| unsafe { Binding::read(r.binding) }.body_word) {
+            return Err(ResolveError::Shadowed(name.to_string()));
         }
         // SAFETY: the caller's contract.
         unsafe {

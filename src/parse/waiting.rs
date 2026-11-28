@@ -784,15 +784,9 @@ impl<'a> Parser<'a> {
             return Ok(true);
         }
         let member = self.held_member(cells, k);
-        let unreached = self.unreached_member(cell).map(|dyad| {
-            let mut bound = *cell;
-            bound.dyad = dyad;
-            bound
-        });
-        let (cell, next) = match (&member, &unreached) {
-            (Some(name), _) => (name, cells.get(k + 3).map(|c| self.cell_identity(c))),
-            (None, Some(bound)) => (bound, next),
-            (None, None) => {
+        let (cell, next) = match &member {
+            Some(name) => (name, cells.get(k + 3).map(|c| self.cell_identity(c))),
+            None => {
                 self.refuse_bare_member(cell, next)?;
                 (cell, next)
             }

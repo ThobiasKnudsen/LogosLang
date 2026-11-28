@@ -749,7 +749,7 @@ impl<'a> Parser<'a> {
 
         let mut fields = Vec::new();
         let mut bindings = Vec::new();
-        if let Some(ty) = leading {
+        let receiver = leading.map(|ty| {
             let field = crate::identities::hole::build(
                 self.rt.store,
                 self.types.unknown,
@@ -757,19 +757,23 @@ impl<'a> Parser<'a> {
                 std::ptr::null_mut(),
             );
             let binding = self.mint_binding(field, scope, SELF_WORD.as_bytes());
-            // SAFETY: `binding` was minted by `Binding::alloc` just above.
-            if let Err(e) = unsafe { self.declare_receiver(binding) } {
-                self.cx.scopes.pop();
-                return Err(ParseError::Resolve(e));
-            }
             fields.push(field);
             bindings.push(binding);
-        }
+            binding
+        });
         let mut bytes = Vec::new();
         let lines =
             self.field_lines(FieldList::Parameters, scope, &mut fields, &mut bindings, &mut bytes);
+        // The signature's `self` is the type's, so the function's own is declared for the body.
+        let declared = match (lines, receiver) {
+            (Ok(()), Some(binding)) => {
+                // SAFETY: `binding` was minted by `Binding::alloc` just above.
+                unsafe { self.declare_receiver(binding) }.map_err(ParseError::Resolve)
+            }
+            (lines, _) => lines,
+        };
         self.cx.scopes.pop();
-        lines?;
+        declared?;
         self.expect_close()?;
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         Ok((scope, fields_arr, bindings))
@@ -1581,8 +1585,8 @@ impl<'a> Parser<'a> {
     /// local, is refused where the body is written when its cell lexed to a live name of that
     /// spelling, as a nested `fn`'s is: the names are in the text. A line of a type body in it
     /// declares a member, which meets only its siblings when the body is built (›Members are
-    /// dot-only; strictness has no exceptions‹ [[R336]]). `at` is where the held text starts in
-    /// the source, at the body's own `(`.
+    /// dot-only; strictness has no exceptions‹ [[R336]]), and a word a live body declares, which
+    /// is refused here. `at` is where the held text starts in the source, at the body's own `(`.
     fn refuse_held_shadowing(&mut self, cells: &[Cell], at: usize) -> Result<(), ParseError> {
         let types = self.types;
         // For each bracket open at the cell, whether it is a type body's.
@@ -1605,12 +1609,16 @@ impl<'a> Parser<'a> {
                 .is_some_and(|c| !c.constructed && self.cell_identity(c) == types.declare_tok);
             let member = k.checked_sub(1).is_some_and(|j| self.is_unbuilt_tight_read(&cells[j]));
             let binding = cell.binding(types);
-            if !declared || member || binding.is_null() || type_bodies.last() == Some(&true) {
+            if !declared || member || binding.is_null() {
                 continue;
             }
             // A literal, `5`, matches a pattern identity and names nothing.
             // SAFETY: a lexed cell's binding is a binding dyad from the store.
-            if unsafe { Binding::spelling(binding) } != cell.spelling() {
+            let (spelling, word) =
+                unsafe { (Binding::spelling(binding), Binding::read(binding).body_word) };
+            // stand-in for Question 372
+            let member_line = type_bodies.last() == Some(&true) && !word;
+            if spelling != cell.spelling() || member_line {
                 continue;
             }
             self.cx.pos = at + cell.start;

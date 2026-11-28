@@ -1555,7 +1555,8 @@ fn a_static_function_writes_the_value_it_is_called_on() {
         let (code, stdout, stderr) = run_line(&format!("{p}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
     }
-    // A function that writes, itself or through a bare call, meets the gate `m.x = …` meets.
+    // A function that writes, itself or through a call through `self`, meets the gate `m.x = …`
+    // meets.
     for (tail, name) in [
         ("m := p (1, 2), m.bump()", "m"),
         ("m := p (1, 2), m.twice()", "m"),
@@ -2013,21 +2014,22 @@ fn a_static_function_called_on_no_value_uses_no_field() {
         // By another name the call has no value either.
         ("f := t.k, f()", "1\n"),
         ("f := t.inc, g := fn () -> i64 ( f(i64 1) ), g.compile(), g()", "2\n"),
-        // A function that reads a field through a bare call reads it through a value as well.
+        // A function that reads a field through a call through `self` reads it through a value
+        // as well.
         ("v := t (3), v.via() + v.j()", "5\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{t}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
     }
-    // So is a bare call in a `static` member's value, made at the definition.
+    // So is a call through `self` in a `static` member's value, made at the definition.
     let (code, stdout, stderr) = run_line(
         "t := type ( n := i64 ?, k := static fn () -> i64 ( 1 ), c := pub static (self.k() + 1) ), \
          t.c",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "2\n"), "stderr: {stderr}");
-    // One that reads or writes a field, itself or through a bare call, has no value to use. The
-    // refusal names the function as the call spells it, and shows the call through a value only
-    // where that is the member's own name.
+    // One that reads or writes a field, itself or through a call through `self`, has no value
+    // to use. The refusal names the function as the call spells it, and shows the call through a
+    // value only where that is the member's own name.
     let set = "s := type ( n := mut i64 ?, set := pub static fn () -> i64 ( self.n = 2, 0 ) )";
     for (src, name, through) in [
         (format!("{t}, t.get()"), "get", "`v.get(…)`"),
@@ -12952,60 +12954,78 @@ fn a_function_written_inside_a_body_about_a_value_is_about_none() {
     };
     for compile in ["", "v.h.compile(), "] {
         for (h, printed) in [
-            ("h := pub static fn () -> i32 ( k := fn () -> i32 ( g() ), k() + self.f() ) )", "8"),
-            ("h := pub static fn () -> i32 ( c := static g(), c + self.x ) )", "8"),
+            (
+                "h := pub static fn () -> i32 ( k := fn () -> i32 ( self.g() ), k() + self.f() ) )",
+                "8",
+            ),
+            ("h := pub static fn () -> i32 ( c := static self.g(), c + self.x ) )", "8"),
         ] {
             let src = format!("{t}{h}, v := t (5), {compile}v.h()");
             assert_eq!(run_line(&src), (Some(0), format!("{printed}\n"), String::new()), "{src}");
         }
         let src = format!(
             "v := {{ a := i32 7, g := fn () -> i32 ( 3 ), \
-             h := pub fn () -> i32 ( k := fn () -> i32 ( g() ), k() + self.a ) }}, {compile}v.h()"
+             h := pub fn () -> i32 ( k := fn () -> i32 ( self.g() ), k() + self.a ) }}, {compile}v.h()"
         );
         assert_eq!(run_line(&src), (Some(0), "10\n".to_string(), String::new()), "{src}");
     }
-    let src = inc("k := fn () -> i32 ( three() ), k() + self.a");
+    let src = inc("k := fn () -> i32 ( self.three() ), k() + self.a");
     assert_eq!(run_line(&src), (Some(0), "8\n".to_string(), String::new()), "{src}");
     for (src, expect) in [
         (
-            format!("{t}h := pub static fn () -> i32 ( k := fn () -> i32 ( f() ), k() ) ), v := t (5), v.h()"),
+            format!("{t}h := pub static fn () -> i32 ( k := fn () -> i32 ( self.f() ), k() ) ), v := t (5), v.h()"),
             "`f` works on a value of its type: call it through one, `v.f(…)`,",
         ),
         (
-            format!("{t}h := pub static fn () -> i32 ( k := fn () -> void ( set() ), x ) ), v := mut t (5), v.h()"),
+            format!(
+                "{t}h := pub static fn () -> i32 ( k := fn () -> void ( self.set() ), self.x ) ), v := mut t (5), v.h()"
+            ),
             "`set` works on a value of its type",
         ),
         (
-            format!("{t}h := pub static fn () -> i32 ( c := static f(), c ) ), v := t (5), v.h()"),
+            format!("{t}h := pub static fn () -> i32 ( c := static self.f(), c ) ), v := t (5), v.h()"),
             "`f` works on a value of its type",
         ),
         (
-            format!("{t}free = ( k := fn () -> i32 ( f() ), print «{{k()}}» ) ), v := t (5)"),
+            format!("{t}free = ( k := fn () -> i32 ( self.f() ), print «{{k()}}» ) ), v := t (5)"),
             "`f` works on a value of its type",
         ),
         (
-            "m := { a := i32 7, f := fn () -> i32 ( self.a ), h := pub fn () -> i32 ( k := fn () -> i32 ( f() ), k() ) }, m.h()"
+            "m := { a := i32 7, f := fn () -> i32 ( self.a ), h := pub fn () -> i32 ( k := fn () -> i32 ( self.f() ), k() ) }, m.h()"
                 .to_string(),
             "`f` works on a value of its type: call it through one, by the member that holds it,",
         ),
-        (inc("k := fn () -> i32 ( twice() ), k() + 1"), "`twice` works on a value of its type"),
-        // A field named bare there is the outer body's parameter, refused as its locals are.
+        (inc("k := fn () -> i32 ( self.twice() ), k() + 1"), "`twice` works on a value of its type"),
+        // A field read there is the outer body's parameter's, refused as its locals are.
         (
-            format!("{t}h := pub static fn () -> i32 ( k := fn () -> i32 ( x ), k() ) ), v := t (5), v.h()"),
+            format!("{t}h := pub static fn () -> i32 ( k := fn () -> i32 ( self.x ), k() ) ), v := t (5), v.h()"),
             "1:193: error: a nested function cannot use an outer function's local or parameter",
         ),
         (
-            format!("{t}free = ( k := fn () -> i32 ( x ), print «{{k()}}» ) ), v := t (5)"),
+            format!("{t}free = ( k := fn () -> i32 ( self.x ), print «{{k()}}» ) ), v := t (5)"),
             "a nested function cannot use an outer function's local or parameter",
         ),
         (
-            "m := { a := i32 7, h := pub fn () -> i32 ( k := fn () -> i32 ( a ), k() ) }, m.h()".to_string(),
+            "m := { a := i32 7, h := pub fn () -> i32 ( k := fn () -> i32 ( self.a ), k() ) }, m.h()"
+                .to_string(),
             "1:64: error: a nested function cannot use an outer function's local or parameter",
         ),
-        (inc("k := fn () -> i32 ( a ), k() + 1"), "a nested function cannot use an outer function's local"),
         (
-            format!("{t}h := pub static fn () -> i32 ( c := static x, c ) ), v := t (5), v.h()"),
+            inc("k := fn () -> i32 ( self.a ), k() + 1"),
+            "a nested function cannot use an outer function's local",
+        ),
+        (
+            format!("{t}h := pub static fn () -> i32 ( c := static self.x, c ) ), v := t (5), v.h()"),
             "1:185: error: a value made once, where it is written (`static`, `immediate`), cannot use a name",
+        ),
+        // A function written there reaches a member only through `self`.
+        (
+            format!("{t}h := pub static fn () -> i32 ( k := fn () -> i32 ( g() ), k() ) ), v := t (5), v.h()"),
+            "1:193: error: `g` is a member: write `self.g`",
+        ),
+        (
+            format!("{t}h := pub static fn () -> i32 ( c := static g(), c ) ), v := t (5), v.h()"),
+            "1:185: error: `g` is a member: write `self.g`",
         ),
     ] {
         let (code, _, stderr) = run_line(&src);
@@ -13056,7 +13076,7 @@ fn a_name_declared_inside_a_type_body_may_spell_one_of_its_fields() {
 /// of a function in a `type (…)` held in a body that runs later is refused where it is written,
 /// called or not, as a nested `fn`'s is.
 #[test]
-fn a_field_reuses_no_name_live_where_it_is_declared() {
+fn a_field_meets_only_its_siblings_while_a_parameter_meets_every_live_name() {
     for (src, at) in [
         ("t := type ( x := static i32 1, x := i32 ? )", "<command line>:1:32"),
         ("f := fn () -> i32 ( t := type ( x := i32 ?, x := i32 ? ), 2 ), f()", "type body:1:15"),
@@ -13108,6 +13128,71 @@ fn a_field_reuses_no_name_live_where_it_is_declared() {
         ),
     ] {
         assert_eq!(run_line(src), (Some(0), out.to_string(), String::new()), "{src}");
+    }
+}
+
+/// ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]: `self.n`
+/// reaches the member of the body it is written in, also in a `type (…)` built when the body around
+/// it runs, whatever `n` names where that body is written: a local, a parameter, a root name, or a
+/// member of the type around it, as in a mint built inside a `parse`. A function's signature is
+/// read in the type's body, so `self` there is the type.
+#[test]
+fn self_in_a_type_reaches_its_own_member_wherever_the_type_is_written() {
+    let t =
+        "t := type ( n := pub i32 ?, h := pub static fn () -> i32 ( self.n ) ), v := t (9), v.h()";
+    for src in [
+        format!("g := fn () -> i32 ( n := i32 4, {t} ), g()"),
+        format!("g := fn (n := i32 ?) -> i32 ( {t} ), g(4)"),
+        format!("n := i32 4, g := fn () -> i32 ( {t} ), g()"),
+    ] {
+        assert_eq!(run_line(&src), (Some(0), "9\n".to_string(), String::new()), "{src}");
+    }
+    let src = "t := type ( k := static pub i32 1, parse_rank = 60, parse = ( m := type ( \
+               k := static pub i32 2, g := static pub fn () -> i32 ( self.k ) ), print «{m.g()}», \
+               tape.is_constructed[0] = true ) ), t";
+    assert_eq!(run_line(src), (Some(0), "2\ntype\n".to_string(), String::new()), "{src}");
+    for compile in ["", "f.compile(), "] {
+        for sig in ["(a := self.k ?) -> i32", "(a := i32 ?) -> self.k"] {
+            let src = format!(
+                "t := type ( k := static pub type i32, h := pub static fn {sig} ( a ) ), \
+                 f := fn () -> i32 ( t.h(4) ), {compile}f()"
+            );
+            assert_eq!(run_line(&src), (Some(0), "4\n".to_string(), String::new()), "{src}");
+        }
+    }
+}
+
+/// ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]: a
+/// member named bare is refused, with `self.x` as the way to it only where this body's `self`
+/// reaches it. A member does not take the spelling of a word a body around it declares, `tape`
+/// or `self` (›`tape` is the parameter of a type's `parse` function‹ [[R191]]).
+#[test]
+fn a_member_named_bare_is_refused() {
+    for (src, expect) in [
+        (
+            "t := type ( x := i32 ?, h := pub static fn () -> i32 ( x ) ), 1",
+            "1:56: error: `x` is a member: write `self.x`",
+        ),
+        (
+            "t := type ( x := i32 ?, u := pub static type ( y := i32 ?, k := pub static fn () -> i32 ( x ) ) ), 1",
+            "1:91: error: `x` is a member of a type around this one, which this body's `self` does not reach",
+        ),
+        (
+            "t := type ( k := static pub type i32, h := pub static fn (a := k ?) -> i32 ( a ) ), t.h(4)",
+            "1:64: error: `k` is a member: write `self.k`",
+        ),
+        (
+            "a := type ( parse = ( m := type ( tape := pub i32 ? ), tape.is_constructed[0] = true ) ), a",
+            "1:35: error: `tape` is already declared and still in scope",
+        ),
+        (
+            "t := type ( self := pub i32 ?, h := pub static fn () -> i32 ( self.self ) ), v := t (5), v.h()",
+            "1:13: error: `self` is already declared and still in scope",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
     }
 }
 
@@ -14437,8 +14522,9 @@ fn a_constructor_fills_each_field_at_its_place() {
     assert_runs(&cases);
 }
 
-/// DESIGN ›There is no `this`‹: a `static` function over a plain record reads and writes each
-/// field at the offset its binding carries, a rational, a type and a record as whole values.
+/// ›Fields are read with a dot, outside their type and inside it through `self`‹ [[R234]]: a
+/// `static` function over a plain record reads and writes each field through `self` at the offset
+/// its binding carries, a rational, a type and a record as whole values.
 #[test]
 fn a_static_function_reaches_each_field_of_a_plain_record_whole() {
     let ab = "a := pub mut rational_number ?, b := pub mut i32 ?";
@@ -15363,8 +15449,8 @@ fn a_fn_entry_of_a_curly_bracket_reads_its_sibling_names_through_the_value() {
 }
 
 /// ›`{ … }` outside text is a scope kept as a value, read with `.`‹ [[R374]]: an entry is an
-/// ordinary name, so a `dyad` entry, read through the value or named bare in a `fn` entry, reads
-/// through to the node it holds as a `dyad` name does (›A `dyad ?` place is transparent: a
+/// ordinary name, so a `dyad` entry, read through the value or through `self` in a `fn` entry,
+/// reads through to the node it holds as a `dyad` name does (›A `dyad ?` place is transparent: a
 /// placeholder for a new node of any type‹ [[R293]]), at the top level and in a body, whose line
 /// waits for the run.
 #[test]

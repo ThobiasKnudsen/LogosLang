@@ -407,6 +407,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BareFieldInParse(name) => format!(
             "a parse writes and reads a field of its node through its cell, `tape[0].{name}`, never bare or through `self`, which is the type there"
         ),
+        ParseError::MemberOfTypeAround(name) => format!(
+            "`{name}` is a member of a type around this one, which this body's `self` does not reach"
+        ),
         ParseError::SelfReachesMember => {
             "`self` reaches one of its type's members, `self.x`; the seed does not read it whole".into()
         }
