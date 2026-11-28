@@ -658,8 +658,9 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::OffsetForm => {
-            "`offset` takes the byte the field starts at, then the field's type: \
-             `a := offset 4 mut i32`"
+            "`offset` stands right of a field's `:=`, under no pointer, and takes the byte the \
+             field starts at, then the field's type: `a := offset 4 mut i32`; a byte worked out \
+             by a sum stands in brackets: `a := offset (1 + 1) mut i32`"
                 .into()
         }
         ParseError::OffsetByte => {
@@ -667,9 +668,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::OffsetOutsideField => {
-            "`offset` gives a field of a type body its byte, and this is no such field: \
-             `t := type ( a := offset 4 mut i32 )`"
-                .into()
+            "`offset` gives a field its byte, and this is no field".into()
         }
         ParseError::LayoutTooFar => format!(
             "a field ends past byte {}, the store's whole room, which no value outgrows",

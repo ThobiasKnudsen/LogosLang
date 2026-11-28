@@ -523,18 +523,21 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// `offset`'s constructor, read in a type body's field line: the byte to its right, a `u64`
-    /// known here, then the value after it, given with `offset` holding that byte among the gates
-    /// of its type, as a gate word gives one (›Inside a type body, a field's byte is its `offset
-    /// N` relation: `a := offset 1 mut i32`‹ [[R385]]).
+    /// Whether the value being built is a type body field's own, read at the depth of its field
+    /// line and not in a bracket within it.
+    pub(crate) fn in_field_line(&self) -> bool {
+        self.cx.field_hole == Some(self.cx.open.len())
+    }
+
+    /// `offset`'s constructor: the byte to its right, a `u64` known here, then the value after it,
+    /// given with `offset` holding that byte among the gates of its type, as a gate word gives one
+    /// (›Inside a type body, a field's byte is its `offset N` relation: `a := offset 1 mut i32`‹
+    /// [[R385]]).
     pub(crate) fn construct_offset(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let word_at = tape.at(0).map_or(self.cx.pos, |word| word.start);
-        if !self.cx.field_hole {
-            return Err(self.fail_at(word_at, ParseError::OffsetOutsideField));
-        }
         let Some(byte) = self.type_operand(tape, 1)? else {
             return Err(self.fail_at(word_at, ParseError::OffsetForm));
         };
@@ -548,10 +551,12 @@ impl<'a> Parser<'a> {
         if tape.at(1).is_none() {
             return Err(self.fail_at(word_at, ParseError::OffsetForm));
         }
-        // SAFETY: `offset` is a gate.
-        let mint =
-            unsafe { crate::identities::gate::mint_of(self.rt.store, types, &[types.offset]) };
-        crate::identities::gate::mark(self, tape, mint, Some(n as u64), Some(word_at))
+        let gates = crate::identities::gate::offset(self.rt.store, types, n as u64);
+        // A word built after the byte, `offset 1 + 1`, leaves the field's type unread.
+        crate::identities::gate::mark(self, tape, gates, Some(word_at)).map_err(|e| match e {
+            ParseError::GateBeforeLaterWord => ParseError::OffsetForm,
+            e => e,
+        })
     }
 
     /// `T!`, a value of `T` or an error: `union ( value := T, err := error )`, that very mint,
@@ -897,7 +902,8 @@ impl<'a> Parser<'a> {
             // `name := T`. A default, `size := u64 0`, is a constant: the field's dyad is that
             // value, and each new node starts with it in the field's slot.
             let mut default = std::ptr::null_mut();
-            let outer = std::mem::replace(&mut self.cx.field_hole, relaxed);
+            let line = relaxed.then_some(self.cx.open.len());
+            let outer = std::mem::replace(&mut self.cx.field_hole, line);
             let value = self.parse_expression_cell().and_then(|c| self.declared_value(c));
             self.cx.field_hole = outer;
             let cell = value?;
@@ -913,21 +919,10 @@ impl<'a> Parser<'a> {
             }
             use crate::identities::gate;
             // SAFETY: a parsed cell holds a reduced dyad from the store.
-            let (value, gates, byte) = match unsafe { gate::value_parts(self.types, cell.dyad) } {
-                Some((value, gates)) => {
-                    // SAFETY: as above; a value the gates gave is typed by their gate node.
-                    let byte = unsafe { gate::byte_of(self.types, dyad::ty(cell.dyad)) };
-                    (value, gates, byte)
-                }
-                None => (cell.dyad, std::ptr::null_mut(), None),
-            };
+            let (value, gates) = unsafe { gate::value_parts(self.types, cell.dyad) }
+                .unwrap_or((cell.dyad, gate::Gates::NONE));
             if self.is_bare_unknown(&cell) {
                 return Err(self.untyped(start, relaxed));
-            }
-            // SAFETY: `gates` is null or a gate mint.
-            if byte.is_some() && unsafe { gate::words_of(gates) }.contains(&self.types.static_) {
-                self.cx.pos = start;
-                return Err(ParseError::OffsetOutsideField);
             }
             let logos = if cell.hole {
                 // A type whose nodes run has no place for a field or a parameter: its `T ?` is an
@@ -972,8 +967,8 @@ impl<'a> Parser<'a> {
             }
             // The gates the value was given are the field's, in the type its `?` node holds
             // (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]).
-            // SAFETY: `gates` is null or a gate mint, and `logos` a type node.
-            let declared = unsafe { gate::gated_at(self.rt.store, self.types, gates, byte, logos) };
+            // SAFETY: `logos` is a type node.
+            let declared = unsafe { gate::gated(self.rt.store, self.types, gates, logos) };
             let field = crate::identities::hole::build(
                 self.rt.store,
                 self.types.unknown,
@@ -988,7 +983,7 @@ impl<'a> Parser<'a> {
             } else {
                 self.declare_member(scope, name, binding, start)?;
             }
-            // SAFETY: `gates` is null or a gate mint.
+            // SAFETY: `gates` came from this store.
             let public = unsafe { gate::words_of(gates) }.contains(&self.types.pub_);
             if public && list == FieldList::Parameters {
                 self.cx.pos = start;
@@ -1081,9 +1076,9 @@ impl<'a> Parser<'a> {
                 // SAFETY: a parsed cell holds a reduced dyad from the store.
                 let (value, gates) = unsafe {
                     crate::identities::gate::value_parts(types, cell.dyad)
-                        .unwrap_or_else(|| crate::identities::gate::parts(cell.dyad))
+                        .unwrap_or_else(|| crate::identities::gate::parts(types, cell.dyad))
                 };
-                // SAFETY: `gates` is null or a gate mint.
+                // SAFETY: `gates` came from this store.
                 let words = unsafe { crate::identities::gate::words_of(gates) };
                 if !Self::slot_gates(types, &words) {
                     return Err(self.fail_at(start, ParseError::SlotNotWhole(kind)));
@@ -1675,8 +1670,8 @@ impl<'a> Parser<'a> {
     /// local, is refused where the body is written when its cell lexed to a live name of that
     /// spelling, as a nested `fn`'s is: the names are in the text. A line of a type body in it
     /// declares a member, which meets only its siblings when the body is built (›Members are
-    /// dot-only; strictness has no exceptions‹ [[R336]]), and a word a live body declares, which
-    /// is refused here. `at` is where the held text starts in the source, at the body's own `(`.
+    /// dot-only; strictness has no exceptions‹ [[R336]]). `at` is where the held text starts in
+    /// the source, at the body's own `(`.
     fn refuse_held_shadowing(&mut self, cells: &[Cell], at: usize) -> Result<(), ParseError> {
         let types = self.types;
         // For each bracket open at the cell, whether it is a type body's.
@@ -1704,10 +1699,8 @@ impl<'a> Parser<'a> {
             }
             // A literal, `5`, matches a pattern identity and names nothing.
             // SAFETY: a lexed cell's binding is a binding dyad from the store.
-            let (spelling, word) =
-                unsafe { (Binding::spelling(binding), Binding::read(binding).body_word) };
-            // stand-in for Question 372
-            let member_line = type_bodies.last() == Some(&true) && !word;
+            let spelling = unsafe { Binding::spelling(binding) };
+            let member_line = type_bodies.last() == Some(&true);
             if spelling != cell.spelling() || member_line || self.parse_parameter(cells, k) {
                 continue;
             }

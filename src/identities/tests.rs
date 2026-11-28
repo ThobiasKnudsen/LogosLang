@@ -97,7 +97,8 @@ fn place(store: &mut Store, core: &Core, ty: DyadPtr, bytes: &[u8]) -> (DyadPtr,
     // SAFETY: `binding` was just built into the store; `ty` is a type node.
     unsafe {
         Binding::lay_out(binding, ty, core.root_scope, offset);
-        crate::identities::gate::add_to_name(store, core, binding, core.mut_);
+        let gates = crate::identities::gate::of_words(store, core, &[core.mut_]);
+        crate::identities::gate::add_to_name(store, core, binding, gates);
     }
     (binding, at)
 }
@@ -3826,11 +3827,13 @@ fn a_members_gates_are_one_gate_node_in_its_type_however_they_are_written() {
         // No gate word is no gate node.
         assert!(!is_node(word_of_name(&core, u)));
         // Gating a gated type gives the node of the joined set over the type under it.
-        let mint = crate::identities::gate::mint_of(&mut store, &core, &[core.mut_]);
-        let mut_i32 = crate::identities::gate::over(&mut store, &core, mint, core.i32_, None);
-        let again = crate::identities::gate::with(&mut store, &core, mut_i32, core.mut_);
+        use crate::identities::gate::{gated, of_words, over};
+        let mut_ = of_words(&mut store, &core, &[core.mut_]);
+        let mut_i32 = over(&mut store, &core, mut_, core.i32_);
+        let again = gated(&mut store, &core, mut_, mut_i32);
         assert_eq!(again, mut_i32);
-        let both = crate::identities::gate::with(&mut store, &core, mut_i32, core.pub_);
+        let pub_ = of_words(&mut store, &core, &[core.pub_]);
+        let both = gated(&mut store, &core, pub_, mut_i32);
         assert_eq!(under(both), core.i32_);
         assert_eq!(set_of(both).len(), 2);
     }

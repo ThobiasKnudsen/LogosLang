@@ -814,13 +814,9 @@ impl<'a> Parser<'a> {
                 // the node it holds, which the place's gates do not reach.
                 use crate::identities::gate;
                 let word = gate::word_of_name(self.types, named);
-                let (own, gates) = gate::parts(word);
-                let gated = if own == t {
-                    let byte = gate::byte_of(self.types, word);
-                    gate::gated_at(self.rt.store, self.types, gates, byte, t)
-                } else {
-                    t
-                };
+                let (own, gates) = gate::parts(self.types, word);
+                let gated =
+                    if own == t { gate::gated(self.rt.store, self.types, gates, t) } else { t };
                 return Ok((gated, 0));
             }
             // A member the read of a tape node answers where it is written; any other one the
@@ -1764,12 +1760,9 @@ impl<'a> Parser<'a> {
         if !gate::has(leaf, types.mut_) || self.check_write(cell).is_ok() {
             return leaf;
         }
-        let gates: Vec<_> = gate::set_of(leaf).into_iter().filter(|&g| g != types.mut_).collect();
-        if gates.is_empty() {
-            return gate::under(leaf);
-        }
-        let mint = gate::mint_of(self.rt.store, types, &gates);
-        gate::over(self.rt.store, types, mint, gate::under(leaf), gate::byte_of(types, leaf))
+        let (under, gates) = gate::parts(types, leaf);
+        let gates = gate::without(self.rt.store, types, gates, types.mut_);
+        gate::gated(self.rt.store, types, gates, under)
     }
 
     /// `&` of a value nothing names: the value lands in an unspelled name of the open scope, as

@@ -5,12 +5,12 @@
 //! takes its byte from, and where a gate lives: in the type of the value it gates. Each set of
 //! gates is one gate mint, a type, whatever byte an `offset` holds, and the gates over `X` are
 //! one gate node, `[gate mint | X]`, or `[gate mint | X, the offset instance]` where `offset` is
-//! among them, and `X` is never a gate node itself. `type_mint` keeps the gate mints, the
-//! `offset` instances and the gate nodes over a type, the gated types. A name's gate node
-//! stands where its binding points: over the type of its bytes for a name laid out in a frame,
-//! over the node it denotes for any other, and in the declared type a field's `?` node holds.
-//! No gate node is no gate: the name is read from its own scope and below, and written
-//! nowhere after its declaration.
+//! among them, and `X` is never a gate node itself. `type_mint` keeps the gate mints and the gate
+//! nodes over a type, the gated types, one per byte where `offset` is among the gates, each made
+//! with its own `offset` instance. A name's gate node stands where its binding points: over the
+//! type of its bytes for a name laid out in a frame, over the node it denotes for any other, and
+//! in the declared type a field's `?` node holds. No gate node is no gate: the name is read from
+//! its own scope and below, and written nowhere after its declaration.
 //! ›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]
 
 use super::type_mint::KeyPart;
@@ -41,14 +41,55 @@ pub(super) fn register(cx: &mut Cx) -> GateIds {
         cx.metas.insert(id, construct);
         id
     });
-    // Only a type body knows `offset`, which declares it beside its slot words (›Inside a type
-    // body, a field's byte is its `offset N` relation: `a := offset 1 mut i32`‹ [[R385]]).
+    // Only a type body knows `offset`, which declares it beside `self` (›Inside a type body, a
+    // field's byte is its `offset N` relation: `a := offset 1 mut i32`‹ [[R385]]).
     let record = meta::token_record(cx, meta::prec::ONE_RANK, crate::parse::Assoc::Right, &[]);
     let offset = cx.store.alloc_head(cx.type_, record);
     cx.metas.insert(offset, |p, _id, tape| p.construct_offset(tape));
     let former = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::INERT);
     let gate_ = cx.store.alloc_head(cx.type_, former);
     GateIds { words, offset, gate_ }
+}
+
+/// The gates of a gate node apart from the type they stand over: their mint, and the byte its
+/// `offset` instance holds where `offset` is among them, carried as one so that whatever moves a
+/// node's gates onto another node moves its byte too (›Inside a type body, a field's byte is its
+/// `offset N` relation: `a := offset 1 mut i32`‹ [[R385]]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Gates {
+    mint: DyadPtr,
+    byte: Option<u64>,
+}
+
+impl Gates {
+    pub(crate) const NONE: Self = Self { mint: std::ptr::null_mut(), byte: None };
+
+    pub(crate) fn is_none(self) -> bool {
+        self.mint.is_null()
+    }
+}
+
+/// The gates of the gate words `words`.
+///
+/// # Safety
+/// Each of `words` must be a gate word's identity from the store, and none `offset`, which
+/// [`offset`] gives with its byte.
+///
+/// # Panics
+/// As [`mint_of`].
+pub(crate) unsafe fn of_words(store: &mut Store, types: &Core, words: &[DyadPtr]) -> Gates {
+    debug_assert!(!words.contains(&types.offset), "`offset` is given with its byte");
+    Gates { mint: mint_of(store, types, words), byte: None }
+}
+
+/// The gate `offset` alone, giving the byte `byte`.
+///
+/// # Panics
+/// As [`mint_of`].
+pub(crate) fn offset(store: &mut Store, types: &Core, byte: u64) -> Gates {
+    // SAFETY: `offset` is a gate's identity from the store.
+    let mint = unsafe { mint_of(store, types, &[types.offset]) };
+    Gates { mint, byte: Some(byte) }
 }
 
 /// Every gate word with its spelling.
@@ -134,98 +175,82 @@ pub(crate) unsafe fn is_value(types: &Core, p: DyadPtr) -> bool {
     !mint.is_null() && dyad::ty(mint) == types.gate_
 }
 
-/// The value a gate word gave `p` over, and the gate mint of its words; `None` for any other node.
+/// The value a gate word gave `p` over, and its gates; `None` for any other node.
 ///
 /// # Safety
 /// As [`is_value`].
-pub(crate) unsafe fn value_parts(types: &Core, p: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
-    is_value(types, p).then(|| (dyad::head(p) as DyadPtr, dyad::ty(dyad::ty(p))))
+pub(crate) unsafe fn value_parts(types: &Core, p: DyadPtr) -> Option<(DyadPtr, Gates)> {
+    is_value(types, p).then(|| (dyad::head(p) as DyadPtr, parts(types, dyad::ty(p)).1))
 }
 
-/// `value` with the gates of `mint` among those of its type (›A gate word reads the nearest value
-/// to its right and gives it with its type gated‹ [[R102]]): a type standing as itself gives the
-/// gated type, `mut i32`; a value the gate words gave has its one gate node grow; any other
-/// value, a type `held` as a value of `type` among them, gives `[G | value]`, `G` the gate node
-/// of `mint` over the type the value gives. A name read there is a copy, so its own gates are not
+/// `value` with `gates` among those of its type (›A gate word reads the nearest value to its
+/// right and gives it with its type gated‹ [[R102]]): a type standing as itself gives the gated
+/// type, `mut i32`; a value the gate words gave has its one gate node grow; any other value, a
+/// type `held` as a value of `type` among them, gives `[G | value]`, `G` the gate node of the
+/// gates over the type the value gives. A name read there is a copy, so its own gates are not
 /// among them (›Gates are type nodes: `x := mut i32 5`; the record holds no gates‹ [[R381]]).
 /// A group's members are gated each (›`and`/`or` on non-booleans build a group; every operator
-/// on a group applies to each member‹ [[R37]]). Null `mint` gives `value` as it is.
+/// on a group applies to each member‹ [[R37]]). No gate gives `value` as it is. `field` says the
+/// value is a type body field's own, the one value an `offset` may gate.
 ///
 /// # Errors
-/// `DoubleGate` where a gate of `mint` is among the gates already, `TypeKnownOnlyAtRun` where the
-/// type the value gives is known only when the program runs.
+/// `DoubleGate` where one of `gates` is among the gates already, `TypeKnownOnlyAtRun` where the
+/// type the value gives is known only when the program runs, `OffsetOutsideField` where an
+/// `offset` would gate a value that is no field's own.
 ///
 /// # Safety
-/// `value` must be a reduced dyad from the store; `mint` null or a gate mint.
+/// `value` must be a reduced dyad from the store.
 ///
 /// # Panics
 /// As [`mint_of`].
 pub(crate) unsafe fn give(
     store: &mut Store,
     types: &Core,
-    mint: DyadPtr,
+    gates: Gates,
     value: DyadPtr,
     held: bool,
+    field: bool,
 ) -> Result<DyadPtr, ParseError> {
-    give_at(store, types, mint, None, value, held)
-}
-
-/// [`give`], with `byte` the byte an `offset` among the gates of `mint` gives; an `offset` the
-/// value's own gates hold keeps its byte.
-///
-/// # Errors
-/// As [`give`].
-///
-/// # Safety
-/// As [`give`].
-///
-/// # Panics
-/// As [`mint_of`].
-pub(crate) unsafe fn give_at(
-    store: &mut Store,
-    types: &Core,
-    mint: DyadPtr,
-    byte: Option<u64>,
-    value: DyadPtr,
-    held: bool,
-) -> Result<DyadPtr, ParseError> {
-    if mint.is_null() {
+    if gates.is_none() {
         return Ok(value);
     }
     if let Some((connective, a, b)) = super::group::members(types, value) {
-        let a = give_at(store, types, mint, byte, a, false)?;
-        let b = give_at(store, types, mint, byte, b, false)?;
+        let a = give(store, types, gates, a, false, field)?;
+        let b = give(store, types, gates, b, false, field)?;
         return super::group::join(store, types, connective, a, b);
     }
-    let (under, own, is_type, had_byte) = match value_parts(types, value) {
-        Some((v, own)) => (v, own, false, byte_of(types, dyad::ty(value))),
+    let (under, own, is_type) = match value_parts(types, value) {
+        Some((v, own)) => (v, own, false),
         // `?` is a value, the unknown, though the seed spells it as a type node (›`?` is one
         // value, the unknown; `key := T` declares without a value, and `key := T ?` is refused‹
         // [[R103]]).
         None => {
             match super::type_identity_of(types, value).filter(|&t| !held && t != types.unknown) {
                 Some(t) => {
-                    let (under, own) = parts(t);
-                    (under, own, true, byte_of(types, t))
+                    let (under, own) = parts(types, t);
+                    (under, own, true)
                 }
-                None => (value, std::ptr::null_mut(), false, None),
+                None => (value, Gates::NONE, false),
             }
         }
     };
     let had = words_of(own);
-    if words_of(mint).iter().any(|g| had.contains(g)) {
+    if words_of(gates).iter().any(|g| had.contains(g)) {
         return Err(ParseError::DoubleGate);
     }
-    let mint = union(store, types, own, mint);
-    let byte = byte.or(had_byte);
+    let gates = union(store, types, own, gates);
     if is_type {
-        return Ok(over(store, types, mint, under, byte));
+        return Ok(over(store, types, gates, under));
+    }
+    // stand-in for Question 384
+    if gates.byte.is_some() && (!field || words_of(gates).contains(&types.static_)) {
+        return Err(ParseError::OffsetOutsideField);
     }
     let t = super::read::output_type(types, under);
     if t.is_null() {
         return Err(ParseError::TypeKnownOnlyAtRun);
     }
-    let gated = over(store, types, mint, t, byte);
+    let gated = over(store, types, gates, t);
     Ok(store.alloc_head(gated, under as *mut u8))
 }
 
@@ -253,16 +278,16 @@ pub(crate) unsafe fn under(p: DyadPtr) -> DyadPtr {
     }
 }
 
-/// What the gates of `p` stand over, and their mint: `p` itself and null where `p` is no gate
+/// What the gates of `p` stand over, and the gates: `p` itself and no gate where `p` is no gate
 /// node.
 ///
 /// # Safety
 /// As [`is_node`].
-pub(crate) unsafe fn parts(p: DyadPtr) -> (DyadPtr, DyadPtr) {
+pub(crate) unsafe fn parts(types: &Core, p: DyadPtr) -> (DyadPtr, Gates) {
     if is_node(p) {
-        (dyad::head(p) as DyadPtr, dyad::ty(p))
+        (dyad::head(p) as DyadPtr, Gates { mint: dyad::ty(p), byte: byte_of(types, p) })
     } else {
-        (p, std::ptr::null_mut())
+        (p, Gates::NONE)
     }
 }
 
@@ -272,14 +297,6 @@ pub(crate) unsafe fn parts(p: DyadPtr) -> (DyadPtr, DyadPtr) {
 /// As [`is_node`].
 pub(crate) unsafe fn has(p: DyadPtr, gate: DyadPtr) -> bool {
     is_node(p) && meta::gates_of(dyad::ty(p)).any(|g| g == gate)
-}
-
-/// Whether `gate` is among the gates of the gate mint `mint`; none for null.
-///
-/// # Safety
-/// `mint` must be null or a gate mint.
-unsafe fn mint_has(mint: DyadPtr, gate: DyadPtr) -> bool {
-    !mint.is_null() && meta::gates_of(mint).any(|g| g == gate)
 }
 
 /// The gates of `p`, in the order their mint keeps.
@@ -322,45 +339,48 @@ pub(crate) unsafe fn mint_of(store: &mut Store, types: &Core, gates: &[DyadPtr])
     type_mint::mint_of(store, types, gate_, &set, made).expect("a gate mint is made")
 }
 
-/// The gate node of `mint` over `x`, made once per pair; where `offset` is among the gates of
-/// `mint`, once per pair and `byte`, pointing to an `offset` instance holding `byte` (›Inside a
-/// type body, a field's byte is its `offset N` relation: `a := offset 1 mut i32`‹ [[R385]]).
-/// `byte` is read only there.
+/// The gate node of `gates` over `x`, made once per pair; where `offset` is among them, once per
+/// pair and byte, pointing to an `offset` instance holding the byte (›Inside a type body, a
+/// field's byte is its `offset N` relation: `a := offset 1 mut i32`‹ [[R385]]).
 ///
 /// # Safety
-/// `mint` must be a gate mint; `x` null or a dyad from the store that is no gate node.
+/// `gates` must be some gate; `x` null or a dyad from the store that is no gate node.
 ///
 /// # Panics
 /// As [`mint_of`].
-pub(crate) unsafe fn over(
-    store: &mut Store,
-    types: &Core,
-    mint: DyadPtr,
-    x: DyadPtr,
-    byte: Option<u64>,
-) -> DyadPtr {
+pub(crate) unsafe fn over(store: &mut Store, types: &Core, gates: Gates, x: DyadPtr) -> DyadPtr {
     debug_assert!(!is_node(x), "gates never nest");
-    if !mint_has(mint, types.offset) {
-        let made = |store: &mut Store| Some(store.alloc_head(mint, x as *mut u8));
-        return type_mint::mint_of(store, types, mint, &[x], made).expect("a gate node is made");
+    let Some(n) = gates.byte else {
+        let make = |store: &mut Store| Some(made(store, types, gates, x));
+        return type_mint::mint_of(store, types, gates.mint, &[x], make)
+            .expect("a gate node is made");
+    };
+    if !types.type_mint.is_read() {
+        return made(store, types, gates, x);
     }
-    debug_assert!(byte.is_some(), "an `offset` gate is made with its byte");
-    let offset = types.offset;
-    let made = |store: &mut Store| {
-        let at = byte.map_or(std::ptr::null_mut(), |n| store.alloc_blob(offset, &n.to_ne_bytes()));
-        store.alloc_words(mint, &[x, at])
-    };
-    let Some(n) = byte.filter(|_| types.type_mint.is_read()) else {
-        return made(store);
-    };
     let key = [KeyPart::Node(x), KeyPart::Word(n)];
-    let (place, kept) = type_mint::find(store, types, mint, &key).expect("`type_mint` walks a key");
+    let (place, kept) =
+        type_mint::find(store, types, gates.mint, &key).expect("`type_mint` walks a key");
     if let Some(node) = kept {
         return node;
     }
-    let node = made(store);
+    let node = made(store, types, gates, x);
     type_mint::keep(store, types, place, node).expect("`type_mint` keeps a mint");
     node
+}
+
+/// A new gate node of `gates` over `x`: `[mint | x]`, or `[mint | x, the offset instance]`.
+///
+/// # Safety
+/// As [`over`].
+unsafe fn made(store: &mut Store, types: &Core, gates: Gates, x: DyadPtr) -> DyadPtr {
+    match gates.byte {
+        None => store.alloc_head(gates.mint, x as *mut u8),
+        Some(n) => {
+            let at = store.alloc_blob(types.offset, &n.to_ne_bytes());
+            store.alloc_words(gates.mint, &[x, at])
+        }
+    }
 }
 
 /// The gate node of `mint` over the node `x` a name denotes, a function, a type or a number:
@@ -373,84 +393,61 @@ pub(super) unsafe fn over_node(store: &mut Store, mint: DyadPtr, x: DyadPtr) -> 
     store.alloc_head(mint, x as *mut u8)
 }
 
-/// The gate mint of `p`'s gates and `gate`.
+/// The type `t` with `gates` among its own, `t` itself where there is no gate: a gate word over a
+/// type with nothing after it gives the gated type, `mut i32`, as `i32` alone gives `i32` (›A
+/// gate word reads the nearest value to its right and gives it with its type gated‹ [[R102]]).
 ///
 /// # Safety
-/// `p` must be null or a dyad from the store; `gate` a gate word's identity.
+/// `t` must be a type node from the store.
 ///
 /// # Panics
 /// As [`mint_of`].
-unsafe fn mint_with(store: &mut Store, types: &Core, p: DyadPtr, gate: DyadPtr) -> DyadPtr {
-    let mut set = set_of(p);
-    set.push(gate);
-    mint_of(store, types, &set)
-}
-
-/// The type `p` with `gate` added to its gates: the gate node of the larger set over the type
-/// `p`'s gates stand over, an `offset` among them keeping its byte.
-///
-/// # Safety
-/// `p` must be null or a type node from the store; `gate` a gate word's identity.
-///
-/// # Panics
-/// As [`mint_of`].
-pub(crate) unsafe fn with(store: &mut Store, types: &Core, p: DyadPtr, gate: DyadPtr) -> DyadPtr {
-    let mint = mint_with(store, types, p, gate);
-    over(store, types, mint, under(p), byte_of(types, p))
-}
-
-/// The type `t` with the gates of `mint` among its own, `t` itself where `mint` is null: a gate
-/// word over a type with nothing after it gives the gated type, `mut i32`, as `i32` alone gives
-/// `i32` (›A gate word reads the nearest value to its right and gives it with its type gated‹
-/// [[R102]]).
-///
-/// # Safety
-/// `t` must be a type node from the store; `mint` null or a gate mint.
-///
-/// # Panics
-/// As [`mint_of`].
-pub(crate) unsafe fn gated(store: &mut Store, types: &Core, mint: DyadPtr, t: DyadPtr) -> DyadPtr {
-    gated_at(store, types, mint, None, t)
-}
-
-/// [`gated`], with `byte` the byte an `offset` among the gates of `mint` gives; an `offset` the
-/// gates of `t` hold keeps its byte.
-///
-/// # Safety
-/// As [`gated`].
-///
-/// # Panics
-/// As [`mint_of`].
-pub(crate) unsafe fn gated_at(
-    store: &mut Store,
-    types: &Core,
-    mint: DyadPtr,
-    byte: Option<u64>,
-    t: DyadPtr,
-) -> DyadPtr {
-    if mint.is_null() {
+pub(crate) unsafe fn gated(store: &mut Store, types: &Core, gates: Gates, t: DyadPtr) -> DyadPtr {
+    if gates.is_none() {
         return t;
     }
-    let byte = byte.or(byte_of(types, t));
-    let (t, own) = parts(t);
-    let mint = union(store, types, own, mint);
-    over(store, types, mint, t, byte)
+    let (t, own) = parts(types, t);
+    let gates = union(store, types, own, gates);
+    over(store, types, gates, t)
 }
 
-/// The gate mint of the gates of the mints `a` and `b` together, either null for no gates.
+/// The gates `a` and `b` together, no gate where neither has one; an `offset` among them keeps
+/// its byte.
 ///
 /// # Safety
-/// `a` and `b` must be null or gate mints.
+/// `a` and `b` must come from this store.
 ///
 /// # Panics
 /// As [`mint_of`].
-pub(crate) unsafe fn union(store: &mut Store, types: &Core, a: DyadPtr, b: DyadPtr) -> DyadPtr {
-    if a.is_null() || b.is_null() {
-        return if a.is_null() { b } else { a };
+pub(crate) unsafe fn union(store: &mut Store, types: &Core, a: Gates, b: Gates) -> Gates {
+    if a.is_none() || b.is_none() {
+        return if a.is_none() { b } else { a };
     }
     let mut set = words_of(a);
     set.extend(words_of(b));
-    mint_of(store, types, &set)
+    Gates { mint: mint_of(store, types, &set), byte: a.byte.or(b.byte) }
+}
+
+/// `gates` without `gate`, no gate where none is left; an `offset` left among them keeps its
+/// byte.
+///
+/// # Safety
+/// As [`union`]; `gate` a gate's identity.
+///
+/// # Panics
+/// As [`mint_of`].
+pub(crate) unsafe fn without(
+    store: &mut Store,
+    types: &Core,
+    gates: Gates,
+    gate: DyadPtr,
+) -> Gates {
+    let set: Vec<DyadPtr> = words_of(gates).into_iter().filter(|&g| g != gate).collect();
+    if set.is_empty() {
+        return Gates::NONE;
+    }
+    let byte = gates.byte.filter(|_| gate != types.offset);
+    Gates { mint: mint_of(store, types, &set), byte }
 }
 
 /// [`mint_of`] while the seed registers its identities, before a core stands.
@@ -494,22 +491,26 @@ pub(crate) unsafe fn name_has(types: &Core, binding: DyadPtr, gate: DyadPtr) -> 
     has(word_of_name(types, binding), gate)
 }
 
-/// Gives the name `binding` the gate `gate` beside those it has.
+/// Gives the name `binding` `gates` beside those it has.
 ///
 /// # Safety
 /// As [`name_has`].
 ///
 /// # Panics
 /// As [`mint_of`].
-pub(crate) unsafe fn add_to_name(store: &mut Store, types: &Core, binding: DyadPtr, gate: DyadPtr) {
+pub(crate) unsafe fn add_to_name(store: &mut Store, types: &Core, binding: DyadPtr, gates: Gates) {
+    if gates.is_none() {
+        return;
+    }
     let word = Binding::gated(binding);
     if hole::is_hole(types.unknown, word) {
-        hole::set_type(word, with(store, types, hole::gated_type_in(word), gate));
+        hole::set_type(word, gated(store, types, gates, hole::gated_type_in(word)));
     } else if Binding::read(binding).is_storage() {
-        Binding::set_dyad(binding, with(store, types, word, gate));
+        Binding::set_dyad(binding, gated(store, types, gates, word));
     } else {
-        let mint = mint_with(store, types, word, gate);
-        Binding::set_dyad(binding, over_node(store, mint, under(word)));
+        let (under, own) = parts(types, word);
+        let gates = union(store, types, own, gates);
+        Binding::set_dyad(binding, made(store, types, gates, under));
     }
 }
 
@@ -541,37 +542,35 @@ pub(crate) unsafe fn within(from: DyadPtr, own: DyadPtr) -> bool {
     false
 }
 
-/// The gate mint of `mint`'s gates and `gate`, `None` where `gate` stands among them already.
+/// `gates` and the gate word `gate`, `None` where `gate` stands among them already.
 ///
 /// # Safety
-/// `mint` must be null or a gate mint; `gate` a gate word's identity.
+/// As [`union`]; `gate` a gate word's identity.
 ///
 /// # Panics
 /// As [`mint_of`].
 pub(crate) unsafe fn joined(
     store: &mut Store,
     types: &Core,
-    mint: DyadPtr,
+    gates: Gates,
     gate: DyadPtr,
-) -> Option<DyadPtr> {
-    let mut set: Vec<DyadPtr> =
-        if mint.is_null() { Vec::new() } else { meta::gates_of(mint).collect() };
-    if set.contains(&gate) {
+) -> Option<Gates> {
+    if words_of(gates).contains(&gate) {
         return None;
     }
-    set.push(gate);
-    Some(mint_of(store, types, &set))
+    let word = of_words(store, types, &[gate]);
+    Some(union(store, types, gates, word))
 }
 
-/// The gates of the gate mint `mint`, none for null.
+/// The gates of `gates` by their identities, `offset` among them where it is one.
 ///
 /// # Safety
-/// `mint` must be null or a gate mint.
-pub(crate) unsafe fn words_of(mint: DyadPtr) -> Vec<DyadPtr> {
-    if mint.is_null() {
+/// `gates` must come from this store.
+pub(crate) unsafe fn words_of(gates: Gates) -> Vec<DyadPtr> {
+    if gates.is_none() {
         Vec::new()
     } else {
-        meta::gates_of(mint).collect()
+        meta::gates_of(gates.mint).collect()
     }
 }
 
@@ -589,18 +588,17 @@ fn construct(
     let word_at = tape.at(0).map(|word| word.start);
     let types = p.types();
     // SAFETY: `id` is a gate word.
-    let mint = unsafe { mint_of(p.store(), types, &[id]) };
-    mark(p, tape, mint, None, word_at)
+    let gates = unsafe { of_words(p.store(), types, &[id]) };
+    mark(p, tape, gates, word_at)
 }
 
-/// The value right of the word at the center, given with the gates of `mint` among those of its
-/// type, as [`give_at`] gives it with `byte`, in that word's place; an error is placed at
-/// `word_at`, where the word stands.
+/// The value right of the word at the center, given with `gates` among those of its type, as
+/// [`give`] gives it, in that word's place; an error is placed at `word_at`, where the word
+/// stands.
 pub(crate) fn mark(
     p: &mut crate::parse::Parser,
     tape: &mut crate::parse::ParsingTape,
-    mint: DyadPtr,
-    byte: Option<u64>,
+    gates: Gates,
     word_at: Option<usize>,
 ) -> Result<Constructed, ParseError> {
     // The value as built, so a gate word nearer the value built there joins this one's gates:
@@ -633,8 +631,9 @@ pub(crate) fn mark(
     if gives_nothing {
         return Err(p.fail_at(right.start, ParseError::StatementAsValue));
     }
-    // SAFETY: `mint` is a gate mint, and `inner` a reduced dyad.
-    let gated = unsafe { give_at(p.store(), types, mint, byte, inner, right.type_value) };
+    let field = p.in_field_line();
+    // SAFETY: `inner` is a reduced dyad.
+    let gated = unsafe { give(p.store(), types, gates, inner, right.type_value, field) };
     let gated = gated.map_err(|e| match e {
         ParseError::DoubleGate => p.fail_at(word_at, e),
         e => p.fail_at(right.start, e),

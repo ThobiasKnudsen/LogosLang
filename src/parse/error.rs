@@ -392,7 +392,8 @@ pub enum ParseError {
     OffsetForm,
     /// `offset`'s byte is no `u64` known where the type is built.
     OffsetByte,
-    /// `offset` anywhere but in the value of a type body's field line.
+    /// `offset` on a value that is no type body field's own: a local, a parameter, an argument,
+    /// a value in a bracket within a field line, a `static` line.
     OffsetOutsideField,
     /// A field that would end past the store's whole room, which no value outgrows.
     LayoutTooFar,

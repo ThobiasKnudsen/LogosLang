@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `union ( a := T, b := U )`: a type whose value holds one of its members at a time. Its first
-//! line is its own, `tag := offset 0 u8`, then each member at [`room_at`], the first byte after
-//! the tag its widest member's alignment allows. The tag is the held member's place among the
+//! line is its own, the tag, a `u8` at byte 0, then each member at [`room_at`], the first byte
+//! after the tag its widest member's alignment allows. The tag is the held member's place among the
 //! lines, so 0, the tag's own, while it holds none. A member read `v.a` is a
 //! dereference of a `member` node `{type: member, value: [base, union, tag, access, op,
 //! output_type]}`, which runs to the room's address: a write sets the tag, ending the member
@@ -276,7 +276,7 @@ unsafe fn begin(union: DyadPtr, tag: u64, at: *mut u8) {
 pub(crate) unsafe fn put(types: &Core, union: DyadPtr, member: DyadPtr, at: *mut u8, taken: i64) {
     begin(union, tag(union, member), at);
     if let Some(carry) = super::read::carry_of(types, hole::type_in(member)) {
-        super::assign::put(carry, at.add(room_at(union)), taken);
+        super::assign::put(carry, at.add(room_at(types, union)), taken);
     }
 }
 
@@ -292,7 +292,7 @@ fn run_fill(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let at = rt.scratch(meta::record_size_of(union) as usize);
         start(node, at);
         if let Some((carry, taken)) = taken {
-            super::assign::put(carry, at.add(room_at(union)), taken);
+            super::assign::put(carry, at.add(room_at(rt.types(), union)), taken);
         }
         Ok(at as i64)
     }
@@ -311,7 +311,8 @@ fn lower_fill(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let node = lw.node_addr(node);
         lw.call_seed(compiled_start as *const () as usize, &[node, at])?;
         if let Some((carry, taken)) = taken {
-            super::assign::lower_put(lw, carry, at, room_at(union) as i64, taken);
+            let room = room_at(lw.types(), union) as i64;
+            super::assign::lower_put(lw, carry, at, room, taken);
         }
         Ok(at)
     }
@@ -394,8 +395,8 @@ pub(crate) unsafe fn is_tag_line(union: DyadPtr, line: DyadPtr) -> bool {
 ///
 /// # Safety
 /// As [`members`].
-unsafe fn room_at(union: DyadPtr) -> usize {
-    Binding::read(member_bindings(union)[0]).offset
+unsafe fn room_at(types: &Core, union: DyadPtr) -> usize {
+    super::instance::field_byte(types, member_bindings(union)[0])
 }
 
 /// The place of the member `member` of the union value `value`, of the union type `union`: a
@@ -559,9 +560,13 @@ pub(crate) unsafe fn held(at: *const u8) -> Option<usize> {
 ///
 /// # Safety
 /// `at` must be the address of a value of `union`, a union type.
-pub(crate) unsafe fn held_member(union: DyadPtr, at: *const u8) -> Option<(DyadPtr, *const u8)> {
+pub(crate) unsafe fn held_member(
+    types: &Core,
+    union: DyadPtr,
+    at: *const u8,
+) -> Option<(DyadPtr, *const u8)> {
     let lines = array::items(meta::record_fields_of(union));
-    Some((*lines.get(held(at)?)?, at.add(room_at(union))))
+    Some((*lines.get(held(at)?)?, at.add(room_at(types, union))))
 }
 
 /// # Safety
@@ -628,7 +633,7 @@ unsafe fn enter(rt: &mut Runtime, node: DyadPtr, at: *mut u8) -> Result<i64, Run
     } else if access == Access::Take {
         std::ptr::write_bytes(at, 0, TAG_BYTES);
     }
-    Ok(at.add(room_at(union)) as i64)
+    Ok(at.add(room_at(rt.types(), union)) as i64)
 }
 
 fn run_member(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
